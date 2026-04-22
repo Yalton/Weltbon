@@ -2,7 +2,9 @@ import { drizzle } from 'drizzle-orm/node-postgres';
 import pg from 'pg';
 import { sql } from 'drizzle-orm';
 import { migrate } from 'drizzle-orm/node-postgres/migrator';
+import bcrypt from 'bcrypt';
 import * as schema from '../src/db/schema.js';
+import { users } from '../src/db/schema.js';
 
 export interface TestDbHandle {
   db: ReturnType<typeof drizzle<typeof schema>>;
@@ -66,6 +68,26 @@ export async function cleanDb(handle: TestDbHandle): Promise<void> {
   await handle.db.execute(sql`
     TRUNCATE TABLE invite_codes, refresh_tokens, universes, users RESTART IDENTITY CASCADE
   `);
+}
+
+/**
+ * Creates a test user directly in the database (bypasses registration flow).
+ * Returns the user row with id, email, displayName.
+ */
+export async function createTestUser(
+  handle: TestDbHandle,
+  input: { email: string; password: string; displayName?: string },
+): Promise<{ id: string; email: string; displayName: string }> {
+  const passwordHash = await bcrypt.hash(input.password, 4); // Low rounds for test speed
+  const [user] = await handle.db
+    .insert(users)
+    .values({
+      email: input.email,
+      displayName: input.displayName ?? input.email.split('@')[0],
+      passwordHash,
+    })
+    .returning({ id: users.id, email: users.email, displayName: users.displayName });
+  return user;
 }
 
 /**
