@@ -3,6 +3,8 @@ import pg from 'pg';
 import { sql } from 'drizzle-orm';
 import { migrate } from 'drizzle-orm/node-postgres/migrator';
 import * as schema from '../src/db/schema.js';
+import { hashPassword } from '../src/services/auth.js';
+import { users } from '../src/db/schema.js';
 
 export interface TestDbHandle {
   db: ReturnType<typeof drizzle<typeof schema>>;
@@ -47,11 +49,6 @@ export async function cleanDb(handle: TestDbHandle): Promise<void> {
 export function authHeader(accessToken: string): { Authorization: string } {
   return { Authorization: `Bearer ${accessToken}` };
 }
-
-// --- Plan 01-02 extensions ---
-
-import { hashPassword } from '../src/services/auth.js';
-import { users } from '../src/db/schema.js';
 
 export interface TestUserInput {
   email: string;
