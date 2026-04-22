@@ -23,7 +23,7 @@ export const universeRoutes = new Hono<{ Variables: AuthVariables }>()
   // GET /universes -- list caller's universes
   .get('/', async (c) => {
     const userId = c.var.userId;
-    const rows = await db
+    const rows = await db()
       .select()
       .from(universes)
       .where(eq(universes.userId, userId))
@@ -35,7 +35,7 @@ export const universeRoutes = new Hono<{ Variables: AuthVariables }>()
   .post('/', zValidator('json', createSchema), async (c) => {
     const userId = c.var.userId;
     const { name, description } = c.req.valid('json');
-    const [created] = await db
+    const [created] = await db()
       .insert(universes)
       .values({
         userId,
@@ -61,7 +61,7 @@ export const universeRoutes = new Hono<{ Variables: AuthVariables }>()
     const id = c.req.param('id');
     await requireUniverse(id, userId);
     const patch = c.req.valid('json');
-    const [updated] = await db
+    const [updated] = await db()
       .update(universes)
       .set({ ...patch, updatedAt: new Date() })
       .where(and(eq(universes.id, id), eq(universes.userId, userId)))
@@ -74,7 +74,7 @@ export const universeRoutes = new Hono<{ Variables: AuthVariables }>()
     const userId = c.var.userId;
     const id = c.req.param('id');
     await requireUniverse(id, userId);
-    await db
+    await db()
       .delete(universes)
       .where(and(eq(universes.id, id), eq(universes.userId, userId)));
     return c.body(null, 204);

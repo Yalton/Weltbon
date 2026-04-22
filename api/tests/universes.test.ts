@@ -4,7 +4,7 @@ import { createApp } from '../src/index.js';
 import { createTestDb, cleanDb, createTestUser, authHeader, type TestDbHandle } from './helpers.js';
 import { issueAccessToken } from '../src/services/auth.js';
 import { universes } from '../src/db/schema.js';
-import { __setTestDb } from '../src/db/client.js';
+import { setTestDb } from '../src/db/client.js';
 
 describe('universe routes (UNIV-01..06)', () => {
   let handle: TestDbHandle;
@@ -14,7 +14,7 @@ describe('universe routes (UNIV-01..06)', () => {
     handle = await createTestDb();
     // Redirect the app-level db client to the dedicated schema-pinned pool
     // from createTestDb() so route handlers write into the test schema.
-    __setTestDb(handle.db, handle.pool);
+    setTestDb(handle.db as any, handle.pool);
     app = createApp();
   });
 

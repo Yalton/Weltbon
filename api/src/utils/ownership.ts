@@ -12,7 +12,7 @@ import { universes } from '../db/schema.js';
  * Do NOT convert this to middleware -- Hono middleware runs before param validation.
  */
 export async function requireUniverse(universeId: string, userId: string) {
-  const row = await db.query.universes.findFirst({
+  const row = await db().query.universes.findFirst({
     where: eq(universes.id, universeId),
   });
   if (!row) {
