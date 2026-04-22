@@ -1,7 +1,8 @@
 import { drizzle } from 'drizzle-orm/node-postgres';
 import pg from 'pg';
 import { sql } from 'drizzle-orm';
-import { migrate } from 'drizzle-orm/node-postgres/migrator';
+import { readFileSync } from 'node:fs';
+import { join } from 'node:path';
 import bcrypt from 'bcrypt';
 import * as schema from '../src/db/schema.js';
 import { users } from '../src/db/schema.js';
@@ -45,9 +46,14 @@ export async function createTestDb(): Promise<TestDbHandle> {
 
   const db = drizzle(pool, { schema });
 
-  // Apply Drizzle migrations inside the new schema (connections here are
-  // already pinned to it, so CREATE TABLE lands in the right place).
-  await migrate(db, { migrationsFolder: './drizzle' });
+  // Apply migration SQL directly (not via drizzle-kit migrate, which tracks
+  // applied migrations globally and won't re-apply per test schema).
+  const migrationSql = readFileSync(join(process.cwd(), 'drizzle', '0000_melted_shiva.sql'), 'utf-8');
+  // Split on the drizzle statement breakpoint marker and execute each statement
+  const statements = migrationSql.split('--> statement-breakpoint').map(s => s.trim()).filter(Boolean);
+  for (const stmt of statements) {
+    await pool.query(stmt);
+  }
 
   const cleanup = async () => {
     // Drop schema via a fresh public-schema pool so we're not tearing down
