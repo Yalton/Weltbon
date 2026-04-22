@@ -18,17 +18,17 @@ async function main() {
     process.exit(1);
   }
 
-  const user = await db.query.users.findFirst({ where: eq(users.email, email) });
+  const user = await db().query.users.findFirst({ where: eq(users.email, email) });
   if (!user) {
     console.error(`No user with email: ${email}`);
     process.exit(1);
   }
 
   const passwordHash = await hashPassword(newPassword);
-  await db.update(users).set({ passwordHash }).where(eq(users.id, user.id));
+  await db().update(users).set({ passwordHash }).where(eq(users.id, user.id));
   const revoked = await revokeAllForUser(user.id);
   console.log(`Password updated for ${email}. Revoked ${revoked} refresh token(s).`);
-  await pool.end();
+  await pool().end();
 }
 
 main().catch((err) => {

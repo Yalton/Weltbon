@@ -2,7 +2,7 @@ import bcrypt from 'bcrypt';
 import { SignJWT, jwtVerify } from 'jose';
 import { randomBytes, randomUUID } from 'node:crypto';
 import { and, eq, gt, isNull } from 'drizzle-orm';
-import { db as defaultDb } from '../db/client.js';
+import { db as getDb } from '../db/client.js';
 import { refreshTokens } from '../db/schema.js';
 import { env } from '../config.js';
 
@@ -12,7 +12,7 @@ export const REFRESH_TTL_MS = 30 * 24 * 60 * 60 * 1000; // 30 days
 export const REFRESH_COOKIE_NAME = 'refresh';
 
 // eslint-disable-next-line @typescript-eslint/no-explicit-any
-type DrizzleDb = Pick<typeof defaultDb, 'insert' | 'update' | 'select' | 'delete' | 'query' | 'transaction'> & Record<string, any>;
+type DrizzleDb = Pick<ReturnType<typeof getDb>, 'insert' | 'update' | 'select' | 'delete' | 'query' | 'transaction'> & Record<string, any>;
 
 export async function hashPassword(plaintext: string): Promise<string> {
   return bcrypt.hash(plaintext, BCRYPT_COST);
@@ -38,7 +38,7 @@ export async function issueAccessToken(userId: string): Promise<string> {
  */
 export async function issueRefreshToken(
   userId: string,
-  dbHandle: DrizzleDb = defaultDb
+  dbHandle: DrizzleDb = getDb()
 ): Promise<string> {
   const id = randomUUID();
   const secret = randomBytes(32).toString('base64url');
@@ -55,7 +55,7 @@ export async function issueRefreshToken(
  */
 export async function rotateRefreshToken(
   composite: string,
-  dbHandle: DrizzleDb = defaultDb
+  dbHandle: DrizzleDb = getDb()
 ): Promise<{ userId: string; newToken: string } | null> {
   const [id, secret] = composite.split('.');
   if (!id || !secret) return null;
@@ -86,7 +86,7 @@ export async function rotateRefreshToken(
  */
 export async function revokeRefreshToken(
   composite: string,
-  dbHandle: DrizzleDb = defaultDb
+  dbHandle: DrizzleDb = getDb()
 ): Promise<void> {
   const [id] = composite.split('.');
   if (!id) return;
@@ -101,7 +101,7 @@ export async function revokeRefreshToken(
  */
 export async function revokeAllForUser(
   userId: string,
-  dbHandle: DrizzleDb = defaultDb
+  dbHandle: DrizzleDb = getDb()
 ): Promise<number> {
   const result = await dbHandle
     .update(refreshTokens)
