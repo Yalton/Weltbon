@@ -3,7 +3,7 @@ import { afterAll, beforeAll } from 'vitest';
 // Set minimum valid env BEFORE any module (including config.ts) is imported.
 // Tests that validate the guard itself explicitly call loadEnv(customEnv).
 process.env.JWT_SECRET = process.env.JWT_SECRET ?? 'test-secret-that-is-at-least-32-characters-long';
-process.env.DATABASE_URL = process.env.DATABASE_URL ?? 'postgresql://weltbon:weltbon@127.0.0.1:5432/weltbon_test';
+process.env.DATABASE_URL = process.env.DATABASE_URL ?? 'postgresql://weltbon:weltbon@127.0.0.1:5432/weltbon';
 process.env.PORT = process.env.PORT ?? '3001';
 
 beforeAll(async () => {

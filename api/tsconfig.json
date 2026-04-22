@@ -11,7 +11,7 @@
     "isolatedModules": true,
     "verbatimModuleSyntax": false,
     "outDir": "dist",
-    "rootDir": "src",
+    "rootDir": ".",
     "types": ["node", "vitest/globals"]
   },
   "include": ["src/**/*", "tests/**/*"]
