@@ -1,4 +1,4 @@
-import { pgTable, uuid, text, timestamp } from 'drizzle-orm/pg-core';
+import { pgTable, uuid, text, timestamp, jsonb, boolean } from 'drizzle-orm/pg-core';
 
 export const users = pgTable('users', {
   id:           uuid('id').primaryKey().defaultRandom(),
@@ -35,4 +35,29 @@ export const inviteCodes = pgTable('invite_codes', {
   createdAt:    timestamp('created_at').defaultNow().notNull(),
   usedAt:       timestamp('used_at'),
   usedByUserId: uuid('used_by_user_id').references(() => users.id, { onDelete: 'set null' }),
+});
+
+export const entries = pgTable('entries', {
+  id:          uuid('id').primaryKey().defaultRandom(),
+  universeId:  uuid('universe_id').references(() => universes.id, { onDelete: 'cascade' }).notNull(),
+  title:       text('title').notNull(),
+  entryType:   text('entry_type').notNull(),
+  summary:     text('summary').default('').notNull(),
+  body:        text('body').default('').notNull(),
+  tags:        text('tags').array().default([]).notNull(),
+  meta:        jsonb('meta').default({}).notNull(),
+  icon:        text('icon').default('').notNull(),
+  categoryId:  uuid('category_id'),
+  createdAt:   timestamp('created_at').defaultNow().notNull(),
+  updatedAt:   timestamp('updated_at').defaultNow().notNull(),
+});
+
+export const links = pgTable('links', {
+  id:            uuid('id').primaryKey().defaultRandom(),
+  universeId:    uuid('universe_id').references(() => universes.id, { onDelete: 'cascade' }).notNull(),
+  sourceEntryId: uuid('source_entry_id').references(() => entries.id, { onDelete: 'cascade' }).notNull(),
+  targetEntryId: uuid('target_entry_id').references(() => entries.id, { onDelete: 'cascade' }).notNull(),
+  label:         text('label').notNull(),
+  bidirectional: boolean('bidirectional').default(false).notNull(),
+  createdAt:     timestamp('created_at').defaultNow().notNull(),
 });
