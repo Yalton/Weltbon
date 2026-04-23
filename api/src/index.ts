@@ -6,6 +6,7 @@ import { HTTPException } from 'hono/http-exception';
 import { env } from './config.js';
 import { authRoutes } from './routes/auth.js';
 import { universeRoutes } from './routes/universes.js';
+import { entryRoutes } from './routes/entries.js';
 import { requireAuth } from './middleware/auth.js';
 
 const cfg = env();
@@ -22,6 +23,7 @@ export function createApp() {
   app.route('/auth', authRoutes);
   app.use('/universes/*', requireAuth);
   app.route('/universes', universeRoutes);
+  app.route('/universes/:uid/entries', entryRoutes);
   app.get('/health', (c) => c.json({ ok: true }));
 
   app.onError((err, c) => {
