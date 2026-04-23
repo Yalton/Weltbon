@@ -1,0 +1,51 @@
+import { eq } from 'drizzle-orm';
+import { db } from '../db/client.js';
+import { universes, entries, links } from '../db/schema.js';
+
+export async function exportUniverseJson(universeId: string) {
+  const universe = await db().query.universes.findFirst({
+    where: eq(universes.id, universeId),
+  });
+  if (!universe) throw new Error('Universe not found');
+
+  const entryRows = await db()
+    .select()
+    .from(entries)
+    .where(eq(entries.universeId, universeId));
+
+  const linkRows = await db()
+    .select()
+    .from(links)
+    .where(eq(links.universeId, universeId));
+
+  return {
+    weltbon_version: '1.0.0',
+    exported_at: new Date().toISOString(),
+    universe: {
+      name: universe.name,
+      description: universe.description,
+      entryTypes: universe.entryTypes,
+    },
+    entries: entryRows.map((e) => ({
+      id: e.id,
+      title: e.title,
+      entryType: e.entryType,
+      summary: e.summary,
+      body: e.body,
+      tags: e.tags,
+      meta: e.meta,
+      icon: e.icon,
+      categoryId: e.categoryId,
+      createdAt: e.createdAt.toISOString(),
+      updatedAt: e.updatedAt.toISOString(),
+    })),
+    links: linkRows.map((l) => ({
+      id: l.id,
+      sourceEntryId: l.sourceEntryId,
+      targetEntryId: l.targetEntryId,
+      label: l.label,
+      bidirectional: l.bidirectional,
+      createdAt: l.createdAt.toISOString(),
+    })),
+  };
+}
