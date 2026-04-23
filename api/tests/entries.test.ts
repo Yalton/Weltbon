@@ -273,4 +273,172 @@ describe('entry routes (ENT-01..06)', () => {
     const res = await req('GET', '/universes/00000000-0000-0000-0000-000000000000/entries', { headers: hdrs });
     expect(res.status).toBe(404);
   });
+
+  // --- Link integration tests (LINK-04, LINK-05, LINK-06) ---
+
+  async function createEntry(uid: string, hdrs: Record<string, string>, overrides: Record<string, unknown> = {}) {
+    const defaults = { title: 'Test Entry', entryType: 'concept' };
+    const res = await req('POST', `/universes/${uid}/entries`, {
+      headers: hdrs,
+      body: { ...defaults, ...overrides },
+    });
+    return json(res);
+  }
+
+  async function createLink(uid: string, hdrs: Record<string, string>, body: Record<string, unknown>) {
+    const res = await req('POST', `/universes/${uid}/links`, {
+      headers: hdrs,
+      body,
+    });
+    return json(res);
+  }
+
+  // LINK-04: entry detail includes outbound links
+  it('GET entry detail includes outbound links with target title and icon', async () => {
+    const { hdrs } = await userWithToken('link1@test.com');
+    const universe = await createUniverse(hdrs);
+    const entryA = await createEntry(universe.id, hdrs, { title: 'Entry A', icon: 'A' });
+    const entryB = await createEntry(universe.id, hdrs, { title: 'Entry B', icon: 'B' });
+
+    await createLink(universe.id, hdrs, {
+      sourceEntryId: entryA.id,
+      targetEntryId: entryB.id,
+      label: 'created by',
+    });
+
+    const res = await req('GET', `/universes/${universe.id}/entries/${entryA.id}`, { headers: hdrs });
+    expect(res.status).toBe(200);
+    const detail = await json(res);
+
+    expect(detail.outboundLinks).toHaveLength(1);
+    expect(detail.outboundLinks[0].targetEntryId).toBe(entryB.id);
+    expect(detail.outboundLinks[0].targetTitle).toBe('Entry B');
+    expect(detail.outboundLinks[0].targetIcon).toBe('B');
+    expect(detail.outboundLinks[0].label).toBe('created by');
+    expect(detail.outboundLinks[0].bidirectional).toBe(false);
+    expect(detail.outboundLinks[0].id).toBeTruthy();
+  });
+
+  // LINK-05: entry detail includes backlinks
+  it('GET entry detail includes backlinks with source title and icon', async () => {
+    const { hdrs } = await userWithToken('link2@test.com');
+    const universe = await createUniverse(hdrs);
+    const entryA = await createEntry(universe.id, hdrs, { title: 'Entry A', icon: 'A' });
+    const entryB = await createEntry(universe.id, hdrs, { title: 'Entry B', icon: 'B' });
+
+    await createLink(universe.id, hdrs, {
+      sourceEntryId: entryA.id,
+      targetEntryId: entryB.id,
+      label: 'created by',
+    });
+
+    // B should have a backlink from A
+    const res = await req('GET', `/universes/${universe.id}/entries/${entryB.id}`, { headers: hdrs });
+    expect(res.status).toBe(200);
+    const detail = await json(res);
+
+    expect(detail.backlinks).toHaveLength(1);
+    expect(detail.backlinks[0].sourceEntryId).toBe(entryA.id);
+    expect(detail.backlinks[0].sourceTitle).toBe('Entry A');
+    expect(detail.backlinks[0].sourceIcon).toBe('A');
+    expect(detail.backlinks[0].label).toBe('created by');
+    expect(detail.backlinks[0].bidirectional).toBe(false);
+  });
+
+  // LINK-02/04/05: bidirectional link shows in both directions
+  it('bidirectional link shows bidirectional=true in both outbound and backlink', async () => {
+    const { hdrs } = await userWithToken('link3@test.com');
+    const universe = await createUniverse(hdrs);
+    const entryA = await createEntry(universe.id, hdrs, { title: 'Entry A' });
+    const entryB = await createEntry(universe.id, hdrs, { title: 'Entry B' });
+
+    await createLink(universe.id, hdrs, {
+      sourceEntryId: entryA.id,
+      targetEntryId: entryB.id,
+      label: 'allied with',
+      bidirectional: true,
+    });
+
+    // A's outbound should show bidirectional=true
+    const resA = await req('GET', `/universes/${universe.id}/entries/${entryA.id}`, { headers: hdrs });
+    const detailA = await json(resA);
+    expect(detailA.outboundLinks).toHaveLength(1);
+    expect(detailA.outboundLinks[0].bidirectional).toBe(true);
+
+    // B's backlinks should show bidirectional=true
+    const resB = await req('GET', `/universes/${universe.id}/entries/${entryB.id}`, { headers: hdrs });
+    const detailB = await json(resB);
+    expect(detailB.backlinks).toHaveLength(1);
+    expect(detailB.backlinks[0].bidirectional).toBe(true);
+  });
+
+  // LINK-06: cascade delete removes links
+  it('cascade delete removes links when entry is deleted', async () => {
+    const { hdrs } = await userWithToken('link4@test.com');
+    const universe = await createUniverse(hdrs);
+    const entryA = await createEntry(universe.id, hdrs, { title: 'Entry A' });
+    const entryB = await createEntry(universe.id, hdrs, { title: 'Entry B' });
+
+    await createLink(universe.id, hdrs, {
+      sourceEntryId: entryA.id,
+      targetEntryId: entryB.id,
+      label: 'created by',
+    });
+
+    // Delete entry A
+    const delRes = await req('DELETE', `/universes/${universe.id}/entries/${entryA.id}`, { headers: hdrs });
+    expect(delRes.status).toBe(204);
+
+    // B should now have no backlinks from A
+    const resB = await req('GET', `/universes/${universe.id}/entries/${entryB.id}`, { headers: hdrs });
+    const detailB = await json(resB);
+    expect(detailB.backlinks).toHaveLength(0);
+
+    // Links list should be empty
+    const linksRes = await req('GET', `/universes/${universe.id}/links`, { headers: hdrs });
+    const linksList = await json(linksRes);
+    expect(linksList).toHaveLength(0);
+  });
+
+  // LINK-06: cascade delete -- no orphaned backlinks (3-way scenario)
+  it('cascade delete: no orphaned backlinks in multi-entry graph', async () => {
+    const { hdrs } = await userWithToken('link5@test.com');
+    const universe = await createUniverse(hdrs);
+    const entryA = await createEntry(universe.id, hdrs, { title: 'Entry A' });
+    const entryB = await createEntry(universe.id, hdrs, { title: 'Entry B' });
+    const entryC = await createEntry(universe.id, hdrs, { title: 'Entry C' });
+
+    // A -> B (A is source)
+    await createLink(universe.id, hdrs, {
+      sourceEntryId: entryA.id,
+      targetEntryId: entryB.id,
+      label: 'contains',
+    });
+
+    // C -> A (C is source, A is target)
+    await createLink(universe.id, hdrs, {
+      sourceEntryId: entryC.id,
+      targetEntryId: entryA.id,
+      label: 'references',
+    });
+
+    // Delete A -- should cascade both links
+    const delRes = await req('DELETE', `/universes/${universe.id}/entries/${entryA.id}`, { headers: hdrs });
+    expect(delRes.status).toBe(204);
+
+    // B should have no backlinks from A
+    const resB = await req('GET', `/universes/${universe.id}/entries/${entryB.id}`, { headers: hdrs });
+    const detailB = await json(resB);
+    expect(detailB.backlinks).toHaveLength(0);
+
+    // C should have no outbound to A
+    const resC = await req('GET', `/universes/${universe.id}/entries/${entryC.id}`, { headers: hdrs });
+    const detailC = await json(resC);
+    expect(detailC.outboundLinks).toHaveLength(0);
+
+    // Links list should be empty
+    const linksRes = await req('GET', `/universes/${universe.id}/links`, { headers: hdrs });
+    const linksList = await json(linksRes);
+    expect(linksList).toHaveLength(0);
+  });
 });
