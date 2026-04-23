@@ -7,6 +7,7 @@ import { env } from './config.js';
 import { authRoutes } from './routes/auth.js';
 import { universeRoutes } from './routes/universes.js';
 import { entryRoutes } from './routes/entries.js';
+import { linkRoutes, relationRoutes } from './routes/links.js';
 import { requireAuth } from './middleware/auth.js';
 
 const cfg = env();
@@ -24,6 +25,8 @@ export function createApp() {
   app.use('/universes/*', requireAuth);
   app.route('/universes', universeRoutes);
   app.route('/universes/:uid/entries', entryRoutes);
+  app.route('/universes/:uid/links', linkRoutes);
+  app.route('/universes/:uid/relations', relationRoutes);
   app.get('/health', (c) => c.json({ ok: true }));
 
   app.onError((err, c) => {
