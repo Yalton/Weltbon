@@ -82,7 +82,7 @@ export function UniverseList() {
           {universes!.map((u) => (
             <li key={u.id}>
               <Link
-                to={`/universes/${u.id}/settings`}
+                to={`/universes/${u.id}/entries`}
                 className="block rounded-md border border-neutral-200 dark:border-neutral-800 p-4 hover:border-[color:var(--color-accent)] transition-colors"
               >
                 <h2 className="font-semibold">{u.name}</h2>
