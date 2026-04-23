@@ -7,6 +7,8 @@ import { env } from './config.js';
 import { authRoutes } from './routes/auth.js';
 import { universeRoutes } from './routes/universes.js';
 import { entryRoutes } from './routes/entries.js';
+import { exportRoutes } from './routes/export.js';
+import { importRoutes } from './routes/import.js';
 import { requireAuth } from './middleware/auth.js';
 
 const cfg = env();
@@ -22,8 +24,10 @@ export function createApp() {
   }));
   app.route('/auth', authRoutes);
   app.use('/universes/*', requireAuth);
+  app.route('/universes/import', importRoutes);
   app.route('/universes', universeRoutes);
   app.route('/universes/:uid/entries', entryRoutes);
+  app.route('/universes/:uid/export', exportRoutes);
   app.get('/health', (c) => c.json({ ok: true }));
 
   app.onError((err, c) => {
