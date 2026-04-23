@@ -4,11 +4,12 @@ import { useEntry, useDeleteEntry } from '../hooks/useEntries';
 import { TypeBadge } from '../components/TypeBadge';
 import { MarkdownRenderer } from '../components/MarkdownRenderer';
 import { ConfirmDialog } from '../components/ConfirmDialog';
+import { LinkSection } from '../components/LinkSection';
 
 export function EntryDetail() {
   const { uid, entryId } = useParams<{ uid: string; entryId: string }>();
   const navigate = useNavigate();
-  const { data: entry, isLoading } = useEntry(uid!, entryId!);
+  const { data: entry, isLoading, refetch } = useEntry(uid!, entryId!);
   const deleteEntry = useDeleteEntry(uid!);
   const [confirmOpen, setConfirmOpen] = useState(false);
 
@@ -85,15 +86,14 @@ export function EntryDetail() {
         </div>
       )}
 
-      {/* Links placeholder section */}
-      {/* TODO: Replace with <LinkSection> in Plan 06 */}
-      <div className="mt-8 pt-6 border-t border-neutral-200 dark:border-neutral-800">
-        <p className="text-sm text-neutral-500">
-          {entry.outboundLinks.length} outbound link{entry.outboundLinks.length !== 1 ? 's' : ''}
-          {' '}&middot;{' '}
-          {entry.backlinks.length} backlink{entry.backlinks.length !== 1 ? 's' : ''}
-        </p>
-      </div>
+      {/* Links + Backlinks */}
+      <LinkSection
+        outboundLinks={entry.outboundLinks}
+        backlinks={entry.backlinks}
+        universeId={uid!}
+        entryId={entryId!}
+        onLinkCreated={() => refetch()}
+      />
 
       {/* Meta section */}
       {metaEntries.length > 0 && (
