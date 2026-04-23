@@ -4,7 +4,7 @@ import { z } from 'zod';
 import { and, eq, desc } from 'drizzle-orm';
 import { HTTPException } from 'hono/http-exception';
 import { db } from '../db/client.js';
-import { entries } from '../db/schema.js';
+import { entries, links } from '../db/schema.js';
 import { requireUniverse } from '../utils/ownership.js';
 import type { AuthVariables } from '../middleware/auth.js';
 
@@ -87,7 +87,7 @@ export const entryRoutes = new Hono<{ Variables: AuthVariables }>()
     return c.json(created, 201);
   })
 
-  // GET /:id -- entry detail (includes body)
+  // GET /:id -- entry detail (includes body, outbound links, backlinks)
   .get('/:id', async (c) => {
     const uid = c.req.param('uid');
     const entryId = c.req.param('id');
@@ -103,7 +103,35 @@ export const entryRoutes = new Hono<{ Variables: AuthVariables }>()
       throw new HTTPException(404, { message: 'Entry not found' });
     }
 
-    return c.json(entry);
+    // Outbound links (this entry is source)
+    const outboundLinks = await db()
+      .select({
+        id: links.id,
+        targetEntryId: links.targetEntryId,
+        targetTitle: entries.title,
+        targetIcon: entries.icon,
+        label: links.label,
+        bidirectional: links.bidirectional,
+      })
+      .from(links)
+      .innerJoin(entries, eq(links.targetEntryId, entries.id))
+      .where(eq(links.sourceEntryId, entryId));
+
+    // Backlinks (this entry is target)
+    const backlinks = await db()
+      .select({
+        id: links.id,
+        sourceEntryId: links.sourceEntryId,
+        sourceTitle: entries.title,
+        sourceIcon: entries.icon,
+        label: links.label,
+        bidirectional: links.bidirectional,
+      })
+      .from(links)
+      .innerJoin(entries, eq(links.sourceEntryId, entries.id))
+      .where(eq(links.targetEntryId, entryId));
+
+    return c.json({ ...entry, outboundLinks, backlinks });
   })
 
   // PATCH /:id -- update entry
