@@ -525,4 +525,89 @@ describe('entry routes (ENT-01..06)', () => {
     const linksList = await json(linksRes);
     expect(linksList).toHaveLength(0);
   });
+
+  // --- ISS-06: GET /:id includes open issues ---
+
+  async function createIssue(uid: string, hdrs: Record<string, string>, body: Record<string, unknown>) {
+    const res = await req('POST', `/universes/${uid}/issues`, { headers: hdrs, body });
+    return json(res);
+  }
+
+  async function patchIssue(uid: string, issueId: string, hdrs: Record<string, string>, body: Record<string, unknown>) {
+    const res = await req('PATCH', `/universes/${uid}/issues/${issueId}`, { headers: hdrs, body });
+    return json(res);
+  }
+
+  describe('GET /:id includes open issues (ISS-06)', () => {
+    it('surfaces an open issue associated with the entry', async () => {
+      const { hdrs } = await userWithToken('iss06a@test.com');
+      const universe = await createUniverse(hdrs);
+      const entry = await createEntry(universe.id, hdrs, { title: 'Protagonist' });
+
+      const issue = await createIssue(universe.id, hdrs, {
+        title: 'Age inconsistency',
+        severity: 'major',
+        entryIds: [entry.id],
+      });
+
+      const res = await req('GET', `/universes/${universe.id}/entries/${entry.id}`, { headers: hdrs });
+      expect(res.status).toBe(200);
+      const detail = await json(res);
+      expect(Array.isArray(detail.issues)).toBe(true);
+      expect(detail.issues).toHaveLength(1);
+      expect(detail.issues[0]).toEqual({
+        id: issue.id,
+        title: 'Age inconsistency',
+        severity: 'major',
+      });
+    });
+
+    it('omits resolved issues from the entry detail response', async () => {
+      const { hdrs } = await userWithToken('iss06b@test.com');
+      const universe = await createUniverse(hdrs);
+      const entry = await createEntry(universe.id, hdrs, { title: 'Location X' });
+
+      const issue = await createIssue(universe.id, hdrs, {
+        title: 'Already fixed',
+        severity: 'minor',
+        entryIds: [entry.id],
+      });
+      await patchIssue(universe.id, issue.id, hdrs, { resolved: true });
+
+      const res = await req('GET', `/universes/${universe.id}/entries/${entry.id}`, { headers: hdrs });
+      const detail = await json(res);
+      expect(detail.issues).toEqual([]);
+    });
+
+    it('returns issues: [] for an entry with no associations', async () => {
+      const { hdrs } = await userWithToken('iss06c@test.com');
+      const universe = await createUniverse(hdrs);
+      const entry = await createEntry(universe.id, hdrs, { title: 'Clean' });
+
+      const res = await req('GET', `/universes/${universe.id}/entries/${entry.id}`, { headers: hdrs });
+      const detail = await json(res);
+      expect(detail.issues).toEqual([]);
+    });
+
+    it('only includes issues associated with this entry (not sibling entries)', async () => {
+      const { hdrs } = await userWithToken('iss06d@test.com');
+      const universe = await createUniverse(hdrs);
+      const entryA = await createEntry(universe.id, hdrs, { title: 'A' });
+      const entryB = await createEntry(universe.id, hdrs, { title: 'B' });
+
+      await createIssue(universe.id, hdrs, {
+        title: 'Only on A',
+        severity: 'moderate',
+        entryIds: [entryA.id],
+      });
+
+      const resA = await req('GET', `/universes/${universe.id}/entries/${entryA.id}`, { headers: hdrs });
+      const detailA = await json(resA);
+      expect(detailA.issues).toHaveLength(1);
+
+      const resB = await req('GET', `/universes/${universe.id}/entries/${entryB.id}`, { headers: hdrs });
+      const detailB = await json(resB);
+      expect(detailB.issues).toEqual([]);
+    });
+  });
 });
