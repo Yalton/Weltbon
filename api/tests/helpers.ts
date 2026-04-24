@@ -28,7 +28,11 @@ export async function createTestDb(): Promise<TestDbHandle> {
 
   const db = drizzle(pool, { schema });
 
-  await migrate(db, { migrationsFolder: './drizzle' });
+  // Isolate the migrations bookkeeping table into THIS schema so every test
+  // universe starts from migration 0. Otherwise drizzle reuses the global
+  // `drizzle.__drizzle_migrations` and skips all migrations once any suite
+  // has run them before, leaving new test schemas empty.
+  await migrate(db, { migrationsFolder: './drizzle', migrationsSchema: schemaName });
 
   const cleanup = async () => {
     const tearDown = new pg.Pool({ connectionString: url });
