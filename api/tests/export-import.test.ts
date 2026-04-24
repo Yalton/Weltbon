@@ -3,7 +3,8 @@ import { createApp } from '../src/index.js';
 import { createTestDb, cleanDb, createTestUser, authHeader, type TestDbHandle } from './helpers.js';
 import { issueAccessToken } from '../src/services/auth.js';
 import { setTestDb, db } from '../src/db/client.js';
-import { links } from '../src/db/schema.js';
+import { links, graphPositions } from '../src/db/schema.js';
+import { eq } from 'drizzle-orm';
 
 describe('export/import (EXP-01, IMP-01..03)', () => {
   let handle: TestDbHandle;
@@ -477,6 +478,101 @@ describe('export/import (EXP-01, IMP-01..03)', () => {
     expect(res.status).toBe(201);
     const result = await json(res);
     expect(result.issueCount).toBe(0);
+    expect(result.entryCount).toBe(1);
+  });
+
+  // --- Graph positions round-trip (GRAPH-05 export/import coverage) ---
+
+  it('export includes graphPositions array with entryId, x, y', async () => {
+    const { hdrs } = await userWithToken('gp-exp@test.com');
+    const universe = await createUniverse(hdrs, 'GPExport');
+    const e1 = await createEntry(universe.id, hdrs, { title: 'E1' });
+    const e2 = await createEntry(universe.id, hdrs, { title: 'E2' });
+
+    await db().insert(graphPositions).values({ universeId: universe.id, entryId: e1.id, x: 10.5, y: -5.25 });
+    await db().insert(graphPositions).values({ universeId: universe.id, entryId: e2.id, x: 100, y: 200 });
+
+    const res = await req('GET', `/universes/${universe.id}/export?format=json`, { headers: hdrs });
+    expect(res.status).toBe(200);
+    const data = await json(res);
+    expect(Array.isArray(data.graphPositions)).toBe(true);
+    expect(data.graphPositions).toHaveLength(2);
+    const byEntry = new Map<string, { x: number; y: number }>(
+      data.graphPositions.map((p: { entryId: string; x: number; y: number }) => [p.entryId, { x: p.x, y: p.y }])
+    );
+    expect(byEntry.get(e1.id)).toEqual({ x: 10.5, y: -5.25 });
+    expect(byEntry.get(e2.id)).toEqual({ x: 100, y: 200 });
+  });
+
+  it('round-trip preserves graph positions with remapped entry IDs', async () => {
+    const { hdrs } = await userWithToken('gp-rt@test.com');
+    const universe = await createUniverse(hdrs, 'GPRoundTrip');
+    const e1 = await createEntry(universe.id, hdrs, { title: 'Alpha' });
+    const e2 = await createEntry(universe.id, hdrs, { title: 'Beta' });
+
+    await db().insert(graphPositions).values({ universeId: universe.id, entryId: e1.id, x: 1.25, y: 2.75 });
+    await db().insert(graphPositions).values({ universeId: universe.id, entryId: e2.id, x: -42, y: 99.5 });
+
+    const exportRes = await req('GET', `/universes/${universe.id}/export?format=json`, { headers: hdrs });
+    const exportData = await json(exportRes);
+    expect(exportData.graphPositions).toHaveLength(2);
+
+    const importRes = await req('POST', '/universes/import', { headers: hdrs, body: exportData });
+    expect(importRes.status).toBe(201);
+    const importResult = await json(importRes);
+    expect(importResult.positionCount).toBe(2);
+
+    // Positions in the new universe use the NEW entry UUIDs
+    const newPositions = await db().select().from(graphPositions).where(eq(graphPositions.universeId, importResult.universeId));
+    expect(newPositions).toHaveLength(2);
+
+    // Cross-reference by title -> new entry id
+    const reExportRes = await req('GET', `/universes/${importResult.universeId}/export?format=json`, { headers: hdrs });
+    const reExport = await json(reExportRes);
+    const titleToNewId = new Map<string, string>(
+      reExport.entries.map((e: { id: string; title: string }) => [e.title, e.id])
+    );
+    const newByEntry = new Map<string, { x: number; y: number }>(
+      reExport.graphPositions.map((p: { entryId: string; x: number; y: number }) => [p.entryId, { x: p.x, y: p.y }])
+    );
+    expect(newByEntry.get(titleToNewId.get('Alpha')!)).toEqual({ x: 1.25, y: 2.75 });
+    expect(newByEntry.get(titleToNewId.get('Beta')!)).toEqual({ x: -42, y: 99.5 });
+
+    // And they reference NEW entry uuids only
+    const newEntryIds = new Set(reExport.entries.map((e: { id: string }) => e.id));
+    for (const pos of reExport.graphPositions) {
+      expect(newEntryIds.has(pos.entryId)).toBe(true);
+    }
+  });
+
+  it('import accepts legacy JSON without graphPositions field (backward compat)', async () => {
+    const { hdrs } = await userWithToken('gp-bc@test.com');
+
+    const legacy = {
+      weltbon_version: '1.0.0',
+      exported_at: new Date().toISOString(),
+      universe: { name: 'NoGraphPos', description: '' },
+      entries: [
+        {
+          id: 'aaaaaaaa-aaaa-4aaa-8aaa-aaaaaaaaaaa2',
+          title: 'Only Entry',
+          entryType: 'concept',
+          summary: '',
+          body: '',
+          tags: [],
+          meta: {},
+          icon: '',
+          categoryId: null,
+        },
+      ],
+      links: [],
+      // NO graphPositions field
+    };
+
+    const res = await req('POST', '/universes/import', { headers: hdrs, body: legacy });
+    expect(res.status).toBe(201);
+    const result = await json(res);
+    expect(result.positionCount).toBe(0);
     expect(result.entryCount).toBe(1);
   });
 
