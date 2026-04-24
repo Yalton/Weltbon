@@ -1,7 +1,7 @@
 import { Hono } from 'hono';
 import { zValidator } from '@hono/zod-validator';
 import { z } from 'zod';
-import { and, eq, desc } from 'drizzle-orm';
+import { and, eq, desc, isNull, sql, arrayContains, type SQL } from 'drizzle-orm';
 import { HTTPException } from 'hono/http-exception';
 import { db } from '../db/client.js';
 import { entries, links, categories } from '../db/schema.js';
@@ -41,28 +41,60 @@ async function categoryBelongsToUniverse(categoryId: string, universeId: string)
 }
 
 export const entryRoutes = new Hono<{ Variables: AuthVariables }>()
-  // GET / -- list entries (no body field), ordered by updatedAt desc
+  // GET / -- list entries (no body field), ordered by updatedAt desc (or ts_rank DESC when ?q=)
+  // Optional filters: ?type=, ?tag=a&tag=b (AND), ?category=<uuid|uncategorized>, ?q=<fts>
   .get('/', async (c) => {
     const uid = c.req.param('uid');
     const userId = c.var.userId;
     await requireUniverse(uid, userId);
 
+    const type = c.req.query('type')?.trim() || undefined;
+    const tags = (c.req.queries('tag') ?? []).map((t) => t.trim()).filter((t) => t.length > 0);
+    const category = c.req.query('category')?.trim() || undefined;
+    const rawQ = c.req.query('q')?.trim() || '';
+    const q = rawQ.length > 0 ? rawQ : undefined;
+
+    if (category && category !== 'uncategorized' && !/^[0-9a-f-]{36}$/i.test(category)) {
+      return c.json({ error: 'Invalid category id' }, 400);
+    }
+
+    const conditions: SQL[] = [eq(entries.universeId, uid)];
+    if (type) conditions.push(eq(entries.entryType, type));
+    if (tags.length > 0) conditions.push(arrayContains(entries.tags, tags));
+    if (category === 'uncategorized') conditions.push(isNull(entries.categoryId));
+    else if (category) conditions.push(eq(entries.categoryId, category));
+    if (q) conditions.push(sql`search_vector @@ websearch_to_tsquery('english', ${q})`);
+
+    const baseShape = {
+      id: entries.id,
+      universeId: entries.universeId,
+      title: entries.title,
+      entryType: entries.entryType,
+      summary: entries.summary,
+      tags: entries.tags,
+      meta: entries.meta,
+      icon: entries.icon,
+      categoryId: entries.categoryId,
+      createdAt: entries.createdAt,
+      updatedAt: entries.updatedAt,
+    };
+
+    if (q) {
+      const rows = await db()
+        .select({
+          ...baseShape,
+          rank: sql<number>`ts_rank(search_vector, websearch_to_tsquery('english', ${q}))`,
+        })
+        .from(entries)
+        .where(and(...conditions))
+        .orderBy(sql`ts_rank(search_vector, websearch_to_tsquery('english', ${q})) DESC`, desc(entries.updatedAt));
+      return c.json(rows);
+    }
+
     const rows = await db()
-      .select({
-        id: entries.id,
-        universeId: entries.universeId,
-        title: entries.title,
-        entryType: entries.entryType,
-        summary: entries.summary,
-        tags: entries.tags,
-        meta: entries.meta,
-        icon: entries.icon,
-        categoryId: entries.categoryId,
-        createdAt: entries.createdAt,
-        updatedAt: entries.updatedAt,
-      })
+      .select(baseShape)
       .from(entries)
-      .where(eq(entries.universeId, uid))
+      .where(and(...conditions))
       .orderBy(desc(entries.updatedAt));
 
     return c.json(rows);
