@@ -42,7 +42,7 @@ export async function createTestDb(): Promise<TestDbHandle> {
 
 export async function cleanDb(handle: TestDbHandle): Promise<void> {
   await handle.db.execute(sql`
-    TRUNCATE TABLE invite_codes, refresh_tokens, links, entries, universes, users RESTART IDENTITY CASCADE
+    TRUNCATE TABLE invite_codes, refresh_tokens, graph_positions, issue_entries, issues, links, entries, categories, universes, users RESTART IDENTITY CASCADE
   `);
 }
 
@@ -71,3 +71,6 @@ export async function createTestUser(
     .returning({ id: users.id, email: users.email, displayName: users.displayName });
   return user;
 }
+
+export { seedLargeUniverse } from './fixtures/seed-large-universe.js';
+export type { SeedLargeUniverseOptions, SeedLargeUniverseResult } from './fixtures/seed-large-universe.js';
