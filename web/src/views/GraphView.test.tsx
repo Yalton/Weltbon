@@ -85,8 +85,13 @@ describe('GraphView', () => {
 
     renderGraphView();
 
-    expect(await screen.findByText(/301 entries/i)).toBeInTheDocument();
-    expect(screen.getByText(/too many to render/i)).toBeInTheDocument();
+    // Banner text lives inside a <p> inside the filter region; the full
+    // string ("This universe has 301 entries — too many to render at once.")
+    // is one match. We look up the banner by the "too many to render" phrase
+    // which only appears in the subgraph filter.
+    expect(await screen.findByText(/too many to render at once/i)).toBeInTheDocument();
+    // And the count is embedded in that same node:
+    expect(screen.getByText(/this universe has 301 entries/i)).toBeInTheDocument();
   });
 
   it('renders a reduced node set after the user picks a focus entry in the subgraph filter', async () => {
