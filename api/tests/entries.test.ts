@@ -400,6 +400,90 @@ describe('entry routes (ENT-01..06)', () => {
     expect(linksList).toHaveLength(0);
   });
 
+  // --- CAT-02: category assignment on entries ---
+
+  async function createCategory(uid: string, hdrs: Record<string, string>, body: Record<string, unknown>) {
+    const res = await req('POST', `/universes/${uid}/categories`, { headers: hdrs, body });
+    return json(res);
+  }
+
+  it('POST entry accepts optional categoryId and stores it', async () => {
+    const { hdrs } = await userWithToken('entry-cat1@test.com');
+    const universe = await createUniverse(hdrs);
+    const cat = await createCategory(universe.id, hdrs, { label: 'Factions' });
+
+    const res = await req('POST', `/universes/${universe.id}/entries`, {
+      headers: hdrs,
+      body: { title: 'Guild', entryType: 'faction', categoryId: cat.id },
+    });
+    expect(res.status).toBe(201);
+    const entry = await json(res);
+    expect(entry.categoryId).toBe(cat.id);
+  });
+
+  it('POST entry rejects categoryId from a different universe with 400', async () => {
+    const { hdrs } = await userWithToken('entry-cat2@test.com');
+    const uniA = await createUniverse(hdrs, 'A');
+    const uniB = await createUniverse(hdrs, 'B');
+    const catB = await createCategory(uniB.id, hdrs, { label: 'InB' });
+
+    const res = await req('POST', `/universes/${uniA.id}/entries`, {
+      headers: hdrs,
+      body: { title: 'X', entryType: 'concept', categoryId: catB.id },
+    });
+    expect(res.status).toBe(400);
+  });
+
+  it('PATCH entry with valid categoryId succeeds and GET returns new categoryId', async () => {
+    const { hdrs } = await userWithToken('entry-cat3@test.com');
+    const universe = await createUniverse(hdrs);
+    const cat = await createCategory(universe.id, hdrs, { label: 'Locations' });
+    const created = await createEntry(universe.id, hdrs, { title: 'Citadel' });
+
+    const patchRes = await req('PATCH', `/universes/${universe.id}/entries/${created.id}`, {
+      headers: hdrs,
+      body: { categoryId: cat.id },
+    });
+    expect(patchRes.status).toBe(200);
+
+    const getRes = await req('GET', `/universes/${universe.id}/entries/${created.id}`, { headers: hdrs });
+    const entry = await json(getRes);
+    expect(entry.categoryId).toBe(cat.id);
+  });
+
+  it('PATCH entry with categoryId:null clears category assignment', async () => {
+    const { hdrs } = await userWithToken('entry-cat4@test.com');
+    const universe = await createUniverse(hdrs);
+    const cat = await createCategory(universe.id, hdrs, { label: 'Locations' });
+    const created = await createEntry(universe.id, hdrs, { title: 'Citadel' });
+
+    await req('PATCH', `/universes/${universe.id}/entries/${created.id}`, {
+      headers: hdrs,
+      body: { categoryId: cat.id },
+    });
+    const patchRes = await req('PATCH', `/universes/${universe.id}/entries/${created.id}`, {
+      headers: hdrs,
+      body: { categoryId: null },
+    });
+    expect(patchRes.status).toBe(200);
+    const updated = await json(patchRes);
+    expect(updated.categoryId).toBeNull();
+  });
+
+  it('PATCH entry with categoryId from a different universe returns 400', async () => {
+    const { hdrs } = await userWithToken('entry-cat5@test.com');
+    const uniA = await createUniverse(hdrs, 'A');
+    const uniB = await createUniverse(hdrs, 'B');
+    const catB = await createCategory(uniB.id, hdrs, { label: 'InB' });
+    const entryA = await createEntry(uniA.id, hdrs, { title: 'In A' });
+
+    const res = await req('PATCH', `/universes/${uniA.id}/entries/${entryA.id}`, {
+      headers: hdrs,
+      body: { categoryId: catB.id },
+    });
+    expect(res.status).toBe(400);
+  });
+
   // LINK-06: cascade delete -- no orphaned backlinks (3-way scenario)
   it('cascade delete: no orphaned backlinks in multi-entry graph', async () => {
     const { hdrs } = await userWithToken('link5@test.com');

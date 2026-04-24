@@ -4,7 +4,7 @@ import { z } from 'zod';
 import { and, eq, desc } from 'drizzle-orm';
 import { HTTPException } from 'hono/http-exception';
 import { db } from '../db/client.js';
-import { entries, links } from '../db/schema.js';
+import { entries, links, categories } from '../db/schema.js';
 import { requireUniverse } from '../utils/ownership.js';
 import type { AuthVariables } from '../middleware/auth.js';
 
@@ -16,6 +16,7 @@ const createEntrySchema = z.object({
   tags: z.array(z.string().max(50)).max(20).optional().default([]),
   meta: z.record(z.string(), z.unknown()).optional().default({}),
   icon: z.string().max(10).optional().default(''),
+  categoryId: z.string().uuid().nullable().optional(),
 });
 
 const patchEntrySchema = z.object({
@@ -26,9 +27,18 @@ const patchEntrySchema = z.object({
   tags: z.array(z.string().max(50)).max(20).optional(),
   meta: z.record(z.string(), z.unknown()).optional(),
   icon: z.string().max(10).optional(),
+  categoryId: z.string().uuid().nullable().optional(),
 }).refine((v) => Object.values(v).some((val) => val !== undefined), {
   message: 'At least one field is required',
 });
+
+async function categoryBelongsToUniverse(categoryId: string, universeId: string): Promise<boolean> {
+  const [cat] = await db()
+    .select({ id: categories.id })
+    .from(categories)
+    .where(and(eq(categories.id, categoryId), eq(categories.universeId, universeId)));
+  return !!cat;
+}
 
 export const entryRoutes = new Hono<{ Variables: AuthVariables }>()
   // GET / -- list entries (no body field), ordered by updatedAt desc
@@ -70,6 +80,13 @@ export const entryRoutes = new Hono<{ Variables: AuthVariables }>()
       return c.json({ error: 'Invalid entry type' }, 400);
     }
 
+    // Validate categoryId belongs to this universe (when supplied)
+    if (data.categoryId) {
+      if (!(await categoryBelongsToUniverse(data.categoryId, uid))) {
+        return c.json({ error: 'Category not found in universe' }, 400);
+      }
+    }
+
     const [created] = await db()
       .insert(entries)
       .values({
@@ -81,6 +98,7 @@ export const entryRoutes = new Hono<{ Variables: AuthVariables }>()
         tags: data.tags,
         meta: data.meta,
         icon: data.icon,
+        categoryId: data.categoryId ?? null,
       })
       .returning();
 
@@ -145,6 +163,13 @@ export const entryRoutes = new Hono<{ Variables: AuthVariables }>()
     // If entryType is being changed, validate against universe's types
     if (patch.entryType && !universe.entryTypes.includes(patch.entryType)) {
       return c.json({ error: 'Invalid entry type' }, 400);
+    }
+
+    // When a non-null categoryId is supplied, ensure it belongs to this universe
+    if (typeof patch.categoryId === 'string') {
+      if (!(await categoryBelongsToUniverse(patch.categoryId, uid))) {
+        return c.json({ error: 'Category not found in universe' }, 400);
+      }
     }
 
     const [updated] = await db()
