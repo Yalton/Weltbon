@@ -1,14 +1,9 @@
 import { EmptyState } from '../components/EmptyState';
 
 /**
- * Placeholder view for /universes/:uid/graph. Plan 08 replaces this with the
- * force-directed graph of entries and links.
+ * Placeholder stub — replaced by the real GraphView implementation in
+ * Task 3 GREEN.
  */
 export function GraphView() {
-  return (
-    <EmptyState
-      title="Graph view"
-      body="Coming in Plan 08 — force-directed graph of entries and links."
-    />
-  );
+  return <EmptyState title="Graph view" body="Loading…" />;
 }
