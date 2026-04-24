@@ -1,5 +1,6 @@
 import { useMutation, useQuery, useQueryClient } from '@tanstack/react-query';
 import { api } from '../api/client';
+import type { Severity } from './useIssues';
 
 export interface Entry {
   id: string;
@@ -33,10 +34,18 @@ export interface Backlink {
   bidirectional: boolean;
 }
 
+export interface EntryIssueRef {
+  id: string;
+  title: string;
+  severity: Severity;
+}
+
 export interface EntryDetail extends Entry {
   body: string;
   outboundLinks: OutboundLink[];
   backlinks: Backlink[];
+  /** Open (resolved=false) issues referencing this entry. Added in Plan 03-04 backend / Plan 03-09 UI. */
+  issues: EntryIssueRef[];
 }
 
 export type CreateEntryInput = {
