@@ -4,7 +4,7 @@ import { z } from 'zod';
 import { and, eq, desc, isNull, sql, arrayContains, type SQL } from 'drizzle-orm';
 import { HTTPException } from 'hono/http-exception';
 import { db } from '../db/client.js';
-import { entries, links, categories } from '../db/schema.js';
+import { entries, links, categories, issues, issueEntries } from '../db/schema.js';
 import { requireUniverse } from '../utils/ownership.js';
 import type { AuthVariables } from '../middleware/auth.js';
 
@@ -181,7 +181,19 @@ export const entryRoutes = new Hono<{ Variables: AuthVariables }>()
       .innerJoin(entries, eq(links.sourceEntryId, entries.id))
       .where(eq(links.targetEntryId, entryId));
 
-    return c.json({ ...entry, outboundLinks, backlinks });
+    // Open issues associated with this entry (ISS-06)
+    const entryIssues = await db()
+      .select({
+        id: issues.id,
+        title: issues.title,
+        severity: issues.severity,
+      })
+      .from(issues)
+      .innerJoin(issueEntries, eq(issueEntries.issueId, issues.id))
+      .where(and(eq(issueEntries.entryId, entryId), eq(issues.resolved, false)))
+      .orderBy(issues.createdAt);
+
+    return c.json({ ...entry, outboundLinks, backlinks, issues: entryIssues });
   })
 
   // PATCH /:id -- update entry
