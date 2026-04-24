@@ -1,6 +1,6 @@
 import { z } from 'zod';
 import { db } from '../db/client.js';
-import { universes, entries, links, categories, issues, issueEntries } from '../db/schema.js';
+import { universes, entries, links, categories, issues, issueEntries, graphPositions } from '../db/schema.js';
 
 export const importSchema = z.object({
   weltbon_version: z.string().refine(
@@ -51,6 +51,16 @@ export const importSchema = z.object({
         severity: z.enum(['critical', 'major', 'moderate', 'minor']),
         resolved: z.boolean().optional().default(false),
         entryIds: z.array(z.string().uuid()).optional().default([]),
+      })
+    )
+    .optional()
+    .default([]),
+  graphPositions: z
+    .array(
+      z.object({
+        entryId: z.string().uuid(),
+        x: z.number().finite(),
+        y: z.number().finite(),
       })
     )
     .optional()
@@ -153,6 +163,20 @@ export async function importUniverseJson(userId: string, rawData: unknown) {
       }
     }
 
+    // 6. Insert graph_positions with remapped entry IDs (match links behavior: raise on orphan)
+    for (const pos of data.graphPositions) {
+      const newEntryId = entryIdMap.get(pos.entryId);
+      if (!newEntryId) {
+        throw new Error('Graph position references unknown entry ID');
+      }
+      await tx.insert(graphPositions).values({
+        universeId: universe.id,
+        entryId: newEntryId,
+        x: pos.x,
+        y: pos.y,
+      });
+    }
+
     return {
       universeId: universe.id,
       universeName: universe.name,
@@ -160,6 +184,7 @@ export async function importUniverseJson(userId: string, rawData: unknown) {
       linkCount: data.links.length,
       categoryCount: data.categories.length,
       issueCount: data.issues.length,
+      positionCount: data.graphPositions.length,
     };
   });
 }

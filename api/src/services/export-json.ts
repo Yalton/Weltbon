@@ -1,6 +1,6 @@
 import { eq } from 'drizzle-orm';
 import { db } from '../db/client.js';
-import { universes, entries, links, categories, issues, issueEntries } from '../db/schema.js';
+import { universes, entries, links, categories, issues, issueEntries, graphPositions } from '../db/schema.js';
 
 export async function exportUniverseJson(universeId: string) {
   const universe = await db().query.universes.findFirst({
@@ -42,6 +42,15 @@ export async function exportUniverseJson(universeId: string) {
     if (list) list.push(a.entryId);
     else assocByIssue.set(a.issueId, [a.entryId]);
   }
+
+  const positionRows = await db()
+    .select({
+      entryId: graphPositions.entryId,
+      x: graphPositions.x,
+      y: graphPositions.y,
+    })
+    .from(graphPositions)
+    .where(eq(graphPositions.universeId, universeId));
 
   return {
     weltbon_version: '1.0.0',
@@ -86,6 +95,11 @@ export async function exportUniverseJson(universeId: string) {
       resolved: i.resolved,
       createdAt: i.createdAt.toISOString(),
       entryIds: assocByIssue.get(i.id) ?? [],
+    })),
+    graphPositions: positionRows.map((p) => ({
+      entryId: p.entryId,
+      x: p.x,
+      y: p.y,
     })),
   };
 }
