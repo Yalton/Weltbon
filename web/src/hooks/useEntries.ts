@@ -47,6 +47,7 @@ export type CreateEntryInput = {
   tags?: string[];
   meta?: Record<string, unknown>;
   icon?: string;
+  categoryId?: string | null;
 };
 
 export type UpdateEntryInput = Partial<CreateEntryInput>;

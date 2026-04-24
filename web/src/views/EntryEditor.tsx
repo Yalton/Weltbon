@@ -7,6 +7,7 @@ import { useEntry, useCreateEntry, useUpdateEntry } from '../hooks/useEntries';
 import { useUniverse } from '../hooks/useUniverse';
 import { TagInput } from '../components/TagInput';
 import { MetaEditor } from '../components/MetaEditor';
+import { EntryCategoryPicker } from '../components/EntryCategoryPicker';
 import type { Entry } from '../hooks/useEntries';
 
 const entryFormSchema = z.object({
@@ -31,6 +32,7 @@ export function EntryEditor() {
 
   const [tags, setTags] = useState<string[]>([]);
   const [meta, setMeta] = useState<Record<string, string>>({});
+  const [categoryId, setCategoryId] = useState<string | null>(null);
 
   const {
     register,
@@ -60,6 +62,7 @@ export function EntryEditor() {
       });
       setTags(existingEntry.tags ?? []);
       setMeta((existingEntry.meta as Record<string, string>) ?? {});
+      setCategoryId(existingEntry.categoryId ?? null);
     }
   }, [isEditMode, existingEntry, reset]);
 
@@ -76,6 +79,7 @@ export function EntryEditor() {
       icon: values.icon,
       tags,
       meta,
+      categoryId,
     };
 
     if (isEditMode) {
@@ -145,6 +149,19 @@ export function EntryEditor() {
           {errors.entryType && (
             <p className="text-sm text-red-500 mt-1">{errors.entryType.message}</p>
           )}
+        </div>
+
+        {/* Category */}
+        <div>
+          <label htmlFor="entry-category" className="block text-sm mb-1">
+            Category
+          </label>
+          <EntryCategoryPicker
+            id="entry-category"
+            universeId={uid!}
+            value={categoryId}
+            onChange={setCategoryId}
+          />
         </div>
 
         {/* Summary */}
