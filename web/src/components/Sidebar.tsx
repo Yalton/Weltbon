@@ -1,6 +1,29 @@
 import { useState } from 'react';
 import { NavLink } from 'react-router-dom';
-import { useCategories } from '../hooks/useCategories';
+import {
+  DndContext,
+  closestCenter,
+  KeyboardSensor,
+  PointerSensor,
+  useSensor,
+  useSensors,
+  type DragEndEvent,
+} from '@dnd-kit/core';
+import {
+  SortableContext,
+  sortableKeyboardCoordinates,
+  verticalListSortingStrategy,
+} from '@dnd-kit/sortable';
+import {
+  useCategories,
+  useDeleteCategory,
+  useReorderCategories,
+  type Category,
+} from '../hooks/useCategories';
+import { CategorySidebarItem } from './CategorySidebarItem';
+import { CategoryManageDialog } from './CategoryManageDialog';
+import { ConfirmDialog } from './ConfirmDialog';
+import { computeNewCategoryOrder } from './categoryReorder';
 
 function SidebarNavLink({ to, children }: { to: string; children: React.ReactNode }) {
   return (
@@ -25,8 +48,47 @@ export function Sidebar({ universeId }: { universeId: string }) {
   const { data, isLoading, error } = useCategories(universeId);
   const [collapsed, setCollapsed] = useState<Record<string, boolean>>({});
 
+  const [dialogOpen, setDialogOpen] = useState(false);
+  const [editingCategory, setEditingCategory] = useState<Category | null>(null);
+  const [deleteTarget, setDeleteTarget] = useState<Category | null>(null);
+
+  const reorder = useReorderCategories(universeId);
+  const deleteCategory = useDeleteCategory(universeId);
+
+  const sensors = useSensors(
+    useSensor(PointerSensor, { activationConstraint: { distance: 5 } }),
+    useSensor(KeyboardSensor, { coordinateGetter: sortableKeyboardCoordinates }),
+  );
+
   const toggle = (id: string) =>
     setCollapsed((prev) => ({ ...prev, [id]: !prev[id] }));
+
+  const openCreate = () => {
+    setEditingCategory(null);
+    setDialogOpen(true);
+  };
+
+  const openRename = (category: Category) => {
+    setEditingCategory(category);
+    setDialogOpen(true);
+  };
+
+  const handleDragEnd = (e: DragEndEvent) => {
+    if (!e.over || !data) return;
+    const activeId = String(e.active.id);
+    const overId = String(e.over.id);
+    if (activeId === overId) return;
+    const currentIds = data.categories.map((c) => c.id);
+    const nextIds = computeNewCategoryOrder(currentIds, activeId, overId);
+    if (nextIds === currentIds) return;
+    reorder.mutate(nextIds);
+  };
+
+  const confirmDelete = async () => {
+    if (!deleteTarget) return;
+    await deleteCategory.mutateAsync(deleteTarget.id);
+    setDeleteTarget(null);
+  };
 
   return (
     <nav
@@ -40,7 +102,17 @@ export function Sidebar({ universeId }: { universeId: string }) {
       </div>
 
       <div className="mt-4 px-3">
-        <h3 className="text-xs uppercase tracking-wide text-neutral-500">Categories</h3>
+        <div className="flex items-center justify-between">
+          <h3 className="text-xs uppercase tracking-wide text-neutral-500">Categories</h3>
+          <button
+            type="button"
+            onClick={openCreate}
+            aria-label="New category"
+            className="text-xs px-2 py-0.5 rounded text-neutral-500 hover:text-neutral-700 dark:hover:text-neutral-200 hover:bg-neutral-100 dark:hover:bg-neutral-900"
+          >
+            + New
+          </button>
+        </div>
 
         {isLoading && (
           <p className="text-sm mt-2 text-neutral-500">Loading…</p>
@@ -50,38 +122,54 @@ export function Sidebar({ universeId }: { universeId: string }) {
         )}
 
         {data && (
-          <ul className="mt-2 space-y-0.5" data-testid="category-list">
-            {data.categories.map((c) => {
-              const isCollapsed = !!collapsed[c.id];
-              return (
-                <li key={c.id}>
-                  <button
-                    type="button"
-                    onClick={() => toggle(c.id)}
-                    data-collapsed={isCollapsed ? 'true' : 'false'}
-                    className="w-full flex items-center justify-between py-1 px-2 rounded hover:bg-neutral-100 dark:hover:bg-neutral-900 text-sm"
-                  >
-                    <span className="flex items-center gap-2">
-                      <span aria-hidden className="w-3 inline-block text-neutral-400">
-                        {isCollapsed ? '▸' : '▾'}
-                      </span>
-                      {c.icon && <span aria-hidden>{c.icon}</span>}
-                      <span>{c.label}</span>
-                    </span>
-                    <span className="text-neutral-500 tabular-nums">{c.entryCount}</span>
-                  </button>
+          <DndContext
+            sensors={sensors}
+            collisionDetection={closestCenter}
+            onDragEnd={handleDragEnd}
+          >
+            <SortableContext
+              items={data.categories.map((c) => c.id)}
+              strategy={verticalListSortingStrategy}
+            >
+              <ul className="mt-2 space-y-0.5" data-testid="category-list">
+                {data.categories.map((c) => (
+                  <CategorySidebarItem
+                    key={c.id}
+                    category={c}
+                    isCollapsed={!!collapsed[c.id]}
+                    onToggleCollapse={toggle}
+                    onRename={openRename}
+                    onDelete={setDeleteTarget}
+                  />
+                ))}
+                <li>
+                  <div className="flex items-center justify-between py-1 px-2 text-sm text-neutral-500">
+                    <span className="pl-5">Uncategorized</span>
+                    <span className="tabular-nums">{data.uncategorizedCount}</span>
+                  </div>
                 </li>
-              );
-            })}
-            <li>
-              <div className="flex items-center justify-between py-1 px-2 text-sm text-neutral-500">
-                <span className="pl-5">Uncategorized</span>
-                <span className="tabular-nums">{data.uncategorizedCount}</span>
-              </div>
-            </li>
-          </ul>
+              </ul>
+            </SortableContext>
+          </DndContext>
         )}
       </div>
+
+      <CategoryManageDialog
+        universeId={universeId}
+        open={dialogOpen}
+        onOpenChange={setDialogOpen}
+        initialCategory={editingCategory}
+      />
+
+      <ConfirmDialog
+        open={deleteTarget !== null}
+        onOpenChange={(open) => { if (!open) setDeleteTarget(null); }}
+        title={deleteTarget ? `Delete "${deleteTarget.label}"?` : 'Delete category'}
+        body="Entries in this category will become uncategorized."
+        confirmLabel="Delete"
+        destructive
+        onConfirm={confirmDelete}
+      />
     </nav>
   );
 }

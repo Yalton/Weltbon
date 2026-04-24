@@ -90,7 +90,9 @@ describe('Sidebar', () => {
 
     renderSidebar();
 
-    const button = await screen.findByRole('button', { name: /characters/i });
+    // Plan 10 adds an ellipsis menu trigger per row — scope to the collapse
+    // button via exact name match on the category label.
+    const button = await screen.findByRole('button', { name: 'Characters' });
     expect(button).toHaveAttribute('data-collapsed', 'false');
 
     await userEvent.click(button);
@@ -124,5 +126,63 @@ describe('Sidebar', () => {
     renderSidebar();
 
     expect(await screen.findByText(/failed to load/i)).toBeInTheDocument();
+  });
+
+  it('renders a "New category" button that opens CategoryManageDialog', async () => {
+    vi.mocked(api).mockResolvedValue({ categories: [], uncategorizedCount: 0 });
+
+    renderSidebar();
+
+    const newBtn = await screen.findByRole('button', { name: /new category/i });
+    await userEvent.click(newBtn);
+
+    // Dialog uses Radix -- look for the dialog + its title role
+    const dialog = await screen.findByRole('dialog');
+    expect(dialog).toBeInTheDocument();
+    // Title is a Radix Dialog.Title — present in the a11y tree as a heading
+    expect(screen.getByRole('heading', { name: /new category/i })).toBeInTheDocument();
+  });
+
+  it('shows a Rename/Delete menu when the ellipsis trigger is clicked', async () => {
+    vi.mocked(api).mockResolvedValue({
+      categories: [
+        { id: 'c1', label: 'Characters', icon: '🧝', sortOrder: 0, entryCount: 12 },
+      ],
+      uncategorizedCount: 0,
+    });
+
+    renderSidebar();
+
+    const trigger = await screen.findByRole('button', { name: /category actions for characters/i });
+    await userEvent.click(trigger);
+
+    // Menu items from Radix DropdownMenu render as menuitems
+    expect(await screen.findByRole('menuitem', { name: /rename/i })).toBeInTheDocument();
+    expect(screen.getByRole('menuitem', { name: /delete/i })).toBeInTheDocument();
+  });
+});
+
+// Pure-function unit tests for the drag-end reorder helper. dnd-kit's keyboard
+// coordinate-getter doesn't work reliably in jsdom, so we export the pure
+// arrayMove-based helper and test it in isolation.
+describe('computeNewCategoryOrder', () => {
+  it('moves the active id to the over-id slot and returns the new id list', async () => {
+    const { computeNewCategoryOrder } = await import('./categoryReorder');
+    const ids = ['a', 'b', 'c', 'd'];
+    expect(computeNewCategoryOrder(ids, 'a', 'c')).toEqual(['b', 'c', 'a', 'd']);
+    expect(computeNewCategoryOrder(ids, 'd', 'a')).toEqual(['d', 'a', 'b', 'c']);
+  });
+
+  it('returns the same list when active === over', async () => {
+    const { computeNewCategoryOrder } = await import('./categoryReorder');
+    const ids = ['a', 'b', 'c'];
+    expect(computeNewCategoryOrder(ids, 'b', 'b')).toEqual(['a', 'b', 'c']);
+  });
+
+  it('returns the same list when either id is missing', async () => {
+    const { computeNewCategoryOrder } = await import('./categoryReorder');
+    const ids = ['a', 'b', 'c'];
+    expect(computeNewCategoryOrder(ids, 'a', 'zzz')).toEqual(['a', 'b', 'c']);
+    expect(computeNewCategoryOrder(ids, 'zzz', 'a')).toEqual(['a', 'b', 'c']);
   });
 });
