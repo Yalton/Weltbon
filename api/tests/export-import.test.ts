@@ -354,6 +354,132 @@ describe('export/import (EXP-01, IMP-01..03)', () => {
     expect(result.categoryCount).toBe(0);
   });
 
+  // --- Issue round-trip (ISS-01..06 export/import coverage) ---
+
+  async function createIssue(uid: string, hdrs: Record<string, string>, body: Record<string, unknown>) {
+    const res = await req('POST', `/universes/${uid}/issues`, { headers: hdrs, body });
+    return json(res);
+  }
+
+  async function patchIssue(uid: string, issueId: string, hdrs: Record<string, string>, body: Record<string, unknown>) {
+    const res = await req('PATCH', `/universes/${uid}/issues/${issueId}`, { headers: hdrs, body });
+    return json(res);
+  }
+
+  it('export includes issues array with entryIds denormalized per issue', async () => {
+    const { hdrs } = await userWithToken('iss-exp@test.com');
+    const universe = await createUniverse(hdrs, 'IssExport');
+    const e1 = await createEntry(universe.id, hdrs, { title: 'E1' });
+    const e2 = await createEntry(universe.id, hdrs, { title: 'E2' });
+
+    await createIssue(universe.id, hdrs, { title: 'Open one', severity: 'critical', entryIds: [e1.id] });
+    const iss2 = await createIssue(universe.id, hdrs, { title: 'Will resolve', severity: 'minor', entryIds: [e1.id, e2.id] });
+    await patchIssue(universe.id, iss2.id, hdrs, { resolved: true });
+
+    const res = await req('GET', `/universes/${universe.id}/export?format=json`, { headers: hdrs });
+    expect(res.status).toBe(200);
+    const data = await json(res);
+    expect(Array.isArray(data.issues)).toBe(true);
+    expect(data.issues).toHaveLength(2);
+    // Each issue exposes entryIds array
+    const byTitle = new Map<string, { severity: string; resolved: boolean; entryIds: string[] }>(
+      data.issues.map((i: { title: string; severity: string; resolved: boolean; entryIds: string[] }) => [i.title, i])
+    );
+    expect(byTitle.get('Open one')!.severity).toBe('critical');
+    expect(byTitle.get('Open one')!.resolved).toBe(false);
+    expect(byTitle.get('Open one')!.entryIds).toHaveLength(1);
+    expect(byTitle.get('Will resolve')!.resolved).toBe(true);
+    expect(byTitle.get('Will resolve')!.entryIds.sort()).toEqual([e1.id, e2.id].sort());
+  });
+
+  it('round-trip preserves issues + entry associations + resolved state', async () => {
+    const { hdrs } = await userWithToken('iss-rt@test.com');
+    const universe = await createUniverse(hdrs, 'IssRoundTrip');
+    const e1 = await createEntry(universe.id, hdrs, { title: 'E1' });
+    const e2 = await createEntry(universe.id, hdrs, { title: 'E2' });
+    const e3 = await createEntry(universe.id, hdrs, { title: 'E3' });
+
+    await createIssue(universe.id, hdrs, { title: 'Open', severity: 'major', entryIds: [e1.id] });
+    const iss2 = await createIssue(universe.id, hdrs, { title: 'Resolved', severity: 'minor', entryIds: [e1.id, e2.id] });
+    await patchIssue(universe.id, iss2.id, hdrs, { resolved: true });
+    void e3; // not associated with any issue
+
+    // Export
+    const exportRes = await req('GET', `/universes/${universe.id}/export?format=json`, { headers: hdrs });
+    const exportData = await json(exportRes);
+    expect(exportData.issues).toHaveLength(2);
+    const origAssocCount = exportData.issues.reduce(
+      (sum: number, i: { entryIds: string[] }) => sum + i.entryIds.length,
+      0
+    );
+    expect(origAssocCount).toBe(3);
+
+    // Import
+    const importRes = await req('POST', '/universes/import', { headers: hdrs, body: exportData });
+    expect(importRes.status).toBe(201);
+    const importResult = await json(importRes);
+    expect(importResult.issueCount).toBe(2);
+
+    // Re-export
+    const reExportRes = await req('GET', `/universes/${importResult.universeId}/export?format=json`, { headers: hdrs });
+    const reExport = await json(reExportRes);
+
+    expect(reExport.issues).toHaveLength(2);
+    const byTitle = new Map<string, { severity: string; resolved: boolean; entryIds: string[] }>(
+      reExport.issues.map((i: { title: string; severity: string; resolved: boolean; entryIds: string[] }) => [i.title, i])
+    );
+    expect(byTitle.get('Open')!.severity).toBe('major');
+    expect(byTitle.get('Open')!.resolved).toBe(false);
+    expect(byTitle.get('Open')!.entryIds).toHaveLength(1);
+    expect(byTitle.get('Resolved')!.resolved).toBe(true);
+    expect(byTitle.get('Resolved')!.entryIds).toHaveLength(2);
+
+    // Associations point to the NEW entry uuids, not the originals
+    const newEntryIds = new Set(reExport.entries.map((e: { id: string }) => e.id));
+    for (const issue of reExport.issues) {
+      for (const eid of issue.entryIds) {
+        expect(newEntryIds.has(eid)).toBe(true);
+      }
+    }
+
+    const reAssocCount = reExport.issues.reduce(
+      (sum: number, i: { entryIds: string[] }) => sum + i.entryIds.length,
+      0
+    );
+    expect(reAssocCount).toBe(origAssocCount);
+  });
+
+  it('import accepts legacy JSON without issues field (backward compat)', async () => {
+    const { hdrs } = await userWithToken('iss-bc@test.com');
+
+    const legacy = {
+      weltbon_version: '1.0.0',
+      exported_at: new Date().toISOString(),
+      universe: { name: 'NoIssues', description: '' },
+      entries: [
+        {
+          id: 'aaaaaaaa-aaaa-4aaa-8aaa-aaaaaaaaaaa1',
+          title: 'Only Entry',
+          entryType: 'concept',
+          summary: '',
+          body: '',
+          tags: [],
+          meta: {},
+          icon: '',
+          categoryId: null,
+        },
+      ],
+      links: [],
+      // NO issues field at all
+    };
+
+    const res = await req('POST', '/universes/import', { headers: hdrs, body: legacy });
+    expect(res.status).toBe(201);
+    const result = await json(res);
+    expect(result.issueCount).toBe(0);
+    expect(result.entryCount).toBe(1);
+  });
+
   // Import creates new UUIDs (not reused from source)
   it('import creates new UUIDs different from original', async () => {
     const { hdrs } = await userWithToken('uuid@test.com');
