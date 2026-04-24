@@ -1,12 +1,18 @@
 import { eq } from 'drizzle-orm';
 import { db } from '../db/client.js';
-import { universes, entries, links } from '../db/schema.js';
+import { universes, entries, links, categories } from '../db/schema.js';
 
 export async function exportUniverseJson(universeId: string) {
   const universe = await db().query.universes.findFirst({
     where: eq(universes.id, universeId),
   });
   if (!universe) throw new Error('Universe not found');
+
+  const categoryRows = await db()
+    .select()
+    .from(categories)
+    .where(eq(categories.universeId, universeId))
+    .orderBy(categories.sortOrder);
 
   const entryRows = await db()
     .select()
@@ -26,6 +32,12 @@ export async function exportUniverseJson(universeId: string) {
       description: universe.description,
       entryTypes: universe.entryTypes,
     },
+    categories: categoryRows.map((c) => ({
+      id: c.id,
+      label: c.label,
+      icon: c.icon,
+      sortOrder: c.sortOrder,
+    })),
     entries: entryRows.map((e) => ({
       id: e.id,
       title: e.title,

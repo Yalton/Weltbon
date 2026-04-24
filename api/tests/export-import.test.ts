@@ -244,6 +244,116 @@ describe('export/import (EXP-01, IMP-01..03)', () => {
     expect(afterUniverses.length).toBe(countBefore);
   });
 
+  // --- CAT round-trip ---
+
+  async function createCategory(uid: string, hdrs: Record<string, string>, body: Record<string, unknown>) {
+    const res = await req('POST', `/universes/${uid}/categories`, { headers: hdrs, body });
+    return json(res);
+  }
+
+  async function patchEntry(uid: string, entryId: string, hdrs: Record<string, string>, body: Record<string, unknown>) {
+    const res = await req('PATCH', `/universes/${uid}/entries/${entryId}`, { headers: hdrs, body });
+    return json(res);
+  }
+
+  it('export includes categories array with label, icon, sortOrder', async () => {
+    const { hdrs } = await userWithToken('cat-exp@test.com');
+    const universe = await createUniverse(hdrs, 'CatsExport');
+    await createCategory(universe.id, hdrs, { label: 'Locations', icon: '🗺️' });
+    await createCategory(universe.id, hdrs, { label: 'Factions', icon: '⚔️' });
+
+    const res = await req('GET', `/universes/${universe.id}/export?format=json`, { headers: hdrs });
+    expect(res.status).toBe(200);
+    const data = await json(res);
+    expect(Array.isArray(data.categories)).toBe(true);
+    expect(data.categories).toHaveLength(2);
+    const labels = data.categories.map((c: { label: string }) => c.label).sort();
+    expect(labels).toEqual(['Factions', 'Locations']);
+    expect(data.categories[0]).toHaveProperty('sortOrder');
+  });
+
+  it('round-trip preserves categories and entry→category associations by label', async () => {
+    const { hdrs } = await userWithToken('cat-rt@test.com');
+    const universe = await createUniverse(hdrs, 'CatRoundTrip');
+
+    const locations = await createCategory(universe.id, hdrs, { label: 'Locations' });
+    const factions = await createCategory(universe.id, hdrs, { label: 'Factions' });
+
+    const e1 = await createEntry(universe.id, hdrs, { title: 'Capital' });
+    const e2 = await createEntry(universe.id, hdrs, { title: 'Harbor' });
+    const e3 = await createEntry(universe.id, hdrs, { title: 'Guild' });
+    const e4 = await createEntry(universe.id, hdrs, { title: 'Loose Note' });
+
+    await patchEntry(universe.id, e1.id, hdrs, { categoryId: locations.id });
+    await patchEntry(universe.id, e2.id, hdrs, { categoryId: locations.id });
+    await patchEntry(universe.id, e3.id, hdrs, { categoryId: factions.id });
+    // e4 stays uncategorized
+
+    // Export
+    const exportRes = await req('GET', `/universes/${universe.id}/export?format=json`, { headers: hdrs });
+    const exportData = await json(exportRes);
+
+    // Import under same user
+    const importRes = await req('POST', '/universes/import', { headers: hdrs, body: exportData });
+    expect(importRes.status).toBe(201);
+    const importResult = await json(importRes);
+    expect(importResult.categoryCount).toBe(2);
+
+    // List imported categories with counts
+    const listRes = await req('GET', `/universes/${importResult.universeId}/categories`, { headers: hdrs });
+    const listData = await json(listRes);
+    const byLabel = new Map<string, { id: string; entryCount: number }>(
+      listData.categories.map((c: { id: string; label: string; entryCount: number }) => [c.label, c])
+    );
+    expect(byLabel.get('Locations')!.entryCount).toBe(2);
+    expect(byLabel.get('Factions')!.entryCount).toBe(1);
+    expect(listData.uncategorizedCount).toBe(1);
+
+    // Sanity: the newly-imported entries point at the NEWLY created category ids
+    const reExportRes = await req('GET', `/universes/${importResult.universeId}/export?format=json`, { headers: hdrs });
+    const reExport = await json(reExportRes);
+    const newLocationsId = byLabel.get('Locations')!.id;
+    const newFactionsId = byLabel.get('Factions')!.id;
+    const entryCatByTitle = new Map<string, string | null>(
+      reExport.entries.map((e: { title: string; categoryId: string | null }) => [e.title, e.categoryId])
+    );
+    expect(entryCatByTitle.get('Capital')).toBe(newLocationsId);
+    expect(entryCatByTitle.get('Harbor')).toBe(newLocationsId);
+    expect(entryCatByTitle.get('Guild')).toBe(newFactionsId);
+    expect(entryCatByTitle.get('Loose Note')).toBeNull();
+  });
+
+  it('import accepts Phase-2-era JSON without a categories field (backward compat)', async () => {
+    const { hdrs } = await userWithToken('cat-bc@test.com');
+
+    // Older export shape — no categories field at all
+    const legacyImport = {
+      weltbon_version: '1.0.0',
+      exported_at: new Date().toISOString(),
+      universe: { name: 'LegacyWorld', description: '' },
+      entries: [
+        {
+          id: 'aaaaaaaa-aaaa-4aaa-8aaa-aaaaaaaaaaaa',
+          title: 'Legacy Entry',
+          entryType: 'concept',
+          summary: '',
+          body: '',
+          tags: [],
+          meta: {},
+          icon: '',
+          categoryId: null,
+        },
+      ],
+      links: [],
+    };
+
+    const res = await req('POST', '/universes/import', { headers: hdrs, body: legacyImport });
+    expect(res.status).toBe(201);
+    const result = await json(res);
+    expect(result.entryCount).toBe(1);
+    expect(result.categoryCount).toBe(0);
+  });
+
   // Import creates new UUIDs (not reused from source)
   it('import creates new UUIDs different from original', async () => {
     const { hdrs } = await userWithToken('uuid@test.com');

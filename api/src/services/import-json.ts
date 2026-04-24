@@ -1,6 +1,6 @@
 import { z } from 'zod';
 import { db } from '../db/client.js';
-import { universes, entries, links } from '../db/schema.js';
+import { universes, entries, links, categories } from '../db/schema.js';
 
 export const importSchema = z.object({
   weltbon_version: z.string().refine(
@@ -13,6 +13,17 @@ export const importSchema = z.object({
     description: z.string().max(500).optional().default(''),
     entryTypes: z.array(z.string()).optional(),
   }),
+  categories: z
+    .array(
+      z.object({
+        id: z.string().uuid(),
+        label: z.string().min(1).max(80),
+        icon: z.string().optional().default(''),
+        sortOrder: z.number().int().optional().default(0),
+      })
+    )
+    .optional()
+    .default([]),
   entries: z.array(z.object({
     id: z.string().uuid(),
     title: z.string().min(1),
@@ -53,9 +64,27 @@ export async function importUniverseJson(userId: string, rawData: unknown) {
       })
       .returning();
 
-    // 2. Build old-UUID -> new-UUID map for entries
+    // 2. Insert categories first so entries can reference them
+    const categoryIdMap = new Map<string, string>();
+    for (const cat of data.categories) {
+      const [created] = await tx
+        .insert(categories)
+        .values({
+          universeId: universe.id,
+          label: cat.label,
+          icon: cat.icon,
+          sortOrder: cat.sortOrder,
+        })
+        .returning({ id: categories.id });
+      categoryIdMap.set(cat.id, created.id);
+    }
+
+    // 3. Build old-UUID -> new-UUID map for entries; remap categoryId via categoryIdMap
     const entryIdMap = new Map<string, string>();
     for (const entry of data.entries) {
+      const mappedCategoryId = entry.categoryId
+        ? categoryIdMap.get(entry.categoryId) ?? null
+        : null;
       const [created] = await tx
         .insert(entries)
         .values({
@@ -67,13 +96,13 @@ export async function importUniverseJson(userId: string, rawData: unknown) {
           tags: entry.tags,
           meta: entry.meta,
           icon: entry.icon,
-          // categoryId: null for now (Phase 3 handles category import)
+          categoryId: mappedCategoryId,
         })
         .returning({ id: entries.id });
       entryIdMap.set(entry.id, created.id);
     }
 
-    // 3. Insert links with remapped entry IDs
+    // 4. Insert links with remapped entry IDs
     for (const link of data.links) {
       const sourceId = entryIdMap.get(link.sourceEntryId);
       const targetId = entryIdMap.get(link.targetEntryId);
@@ -94,6 +123,7 @@ export async function importUniverseJson(userId: string, rawData: unknown) {
       universeName: universe.name,
       entryCount: data.entries.length,
       linkCount: data.links.length,
+      categoryCount: data.categories.length,
     };
   });
 }
