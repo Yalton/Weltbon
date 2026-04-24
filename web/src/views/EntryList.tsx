@@ -1,15 +1,19 @@
 import { useState, useEffect } from 'react';
 import { Link, useParams } from 'react-router-dom';
-import { useEntries } from '../hooks/useEntries';
+import { useFilterParams } from '../hooks/useFilterParams';
+import { useFilteredEntries } from '../hooks/useFilteredEntries';
 import { useUniverse } from '../hooks/useUniverse';
 import { EntryCard } from '../components/EntryCard';
 import { EmptyState } from '../components/EmptyState';
 import { ImportDialog } from '../components/ImportDialog';
+import { SearchBar } from '../components/SearchBar';
+import { FilterChipRow } from '../components/FilterChipRow';
 import { getAccessToken } from '../api/client';
 
 export function EntryList() {
   const { uid } = useParams<{ uid: string }>();
-  const { data: entries, isLoading } = useEntries(uid!);
+  const [filters, updateFilters] = useFilterParams();
+  const { data: entries, isLoading } = useFilteredEntries(uid!, filters);
   const { data: universe } = useUniverse(uid);
 
   const [importOpen, setImportOpen] = useState(false);
@@ -23,9 +27,8 @@ export function EntryList() {
     return () => clearTimeout(timer);
   }, [toast]);
 
-  if (isLoading) return <p className="text-sm text-neutral-500">Loading...</p>;
-
-  const isEmpty = !entries || entries.length === 0;
+  const hasActiveFilters =
+    !!filters.q || !!filters.type || filters.tags.length > 0 || !!filters.category;
 
   async function handleExport() {
     setExporting(true);
@@ -50,8 +53,16 @@ export function EntryList() {
     }
   }
 
+  const isEmpty = !entries || entries.length === 0;
+
   return (
     <div className="max-w-4xl mx-auto">
+      {/* Search + filter UI above the existing toolbar */}
+      <div className="mb-4 space-y-3">
+        <SearchBar />
+        <FilterChipRow universeId={uid!} />
+      </div>
+
       <div className="flex items-center justify-between mb-6">
         <h1 className="text-2xl font-semibold">Entries</h1>
         <div className="flex items-center gap-2">
@@ -81,7 +92,25 @@ export function EntryList() {
         </div>
       </div>
 
-      {isEmpty ? (
+      {isLoading ? (
+        <p className="text-sm text-neutral-500">Loading...</p>
+      ) : isEmpty && hasActiveFilters ? (
+        <EmptyState
+          title="No entries match your filters"
+          body="Try removing a filter or clearing the search."
+          action={
+            <button
+              type="button"
+              onClick={() =>
+                updateFilters({ q: '', type: null, tags: [], category: null })
+              }
+              className="rounded-md bg-[color:var(--color-accent)] text-white text-sm px-4 py-2"
+            >
+              Clear filters
+            </button>
+          }
+        />
+      ) : isEmpty ? (
         <EmptyState
           title="No entries yet"
           body="Entries are the building blocks of your universe -- people, places, events, and ideas. Create your first entry to start building."
