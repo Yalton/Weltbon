@@ -1,6 +1,6 @@
 import { z } from 'zod';
 import { db } from '../db/client.js';
-import { universes, entries, links, categories } from '../db/schema.js';
+import { universes, entries, links, categories, issues, issueEntries } from '../db/schema.js';
 
 export const importSchema = z.object({
   weltbon_version: z.string().refine(
@@ -42,6 +42,19 @@ export const importSchema = z.object({
     label: z.string(),
     bidirectional: z.boolean().optional().default(false),
   })),
+  issues: z
+    .array(
+      z.object({
+        id: z.string().uuid(),
+        title: z.string().min(1).max(200),
+        description: z.string().optional().default(''),
+        severity: z.enum(['critical', 'major', 'moderate', 'minor']),
+        resolved: z.boolean().optional().default(false),
+        entryIds: z.array(z.string().uuid()).optional().default([]),
+      })
+    )
+    .optional()
+    .default([]),
 });
 
 const DEFAULT_ENTRY_TYPES = [
@@ -118,12 +131,35 @@ export async function importUniverseJson(userId: string, rawData: unknown) {
       });
     }
 
+    // 5. Insert issues + remap entryIds through entryIdMap
+    for (const issue of data.issues) {
+      const [created] = await tx
+        .insert(issues)
+        .values({
+          universeId: universe.id,
+          title: issue.title,
+          description: issue.description,
+          severity: issue.severity,
+          resolved: issue.resolved,
+        })
+        .returning({ id: issues.id });
+
+      for (const oldEntryId of issue.entryIds) {
+        const newEntryId = entryIdMap.get(oldEntryId);
+        if (!newEntryId) {
+          throw new Error('Issue references unknown entry ID');
+        }
+        await tx.insert(issueEntries).values({ issueId: created.id, entryId: newEntryId });
+      }
+    }
+
     return {
       universeId: universe.id,
       universeName: universe.name,
       entryCount: data.entries.length,
       linkCount: data.links.length,
       categoryCount: data.categories.length,
+      issueCount: data.issues.length,
     };
   });
 }

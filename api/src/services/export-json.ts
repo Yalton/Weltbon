@@ -1,6 +1,6 @@
 import { eq } from 'drizzle-orm';
 import { db } from '../db/client.js';
-import { universes, entries, links, categories } from '../db/schema.js';
+import { universes, entries, links, categories, issues, issueEntries } from '../db/schema.js';
 
 export async function exportUniverseJson(universeId: string) {
   const universe = await db().query.universes.findFirst({
@@ -23,6 +23,25 @@ export async function exportUniverseJson(universeId: string) {
     .select()
     .from(links)
     .where(eq(links.universeId, universeId));
+
+  const issueRows = await db()
+    .select()
+    .from(issues)
+    .where(eq(issues.universeId, universeId));
+
+  // Only fetch associations scoped to this universe's issues via the INNER JOIN
+  const assocRows = await db()
+    .select({ issueId: issueEntries.issueId, entryId: issueEntries.entryId })
+    .from(issueEntries)
+    .innerJoin(issues, eq(issueEntries.issueId, issues.id))
+    .where(eq(issues.universeId, universeId));
+
+  const assocByIssue = new Map<string, string[]>();
+  for (const a of assocRows) {
+    const list = assocByIssue.get(a.issueId);
+    if (list) list.push(a.entryId);
+    else assocByIssue.set(a.issueId, [a.entryId]);
+  }
 
   return {
     weltbon_version: '1.0.0',
@@ -58,6 +77,15 @@ export async function exportUniverseJson(universeId: string) {
       label: l.label,
       bidirectional: l.bidirectional,
       createdAt: l.createdAt.toISOString(),
+    })),
+    issues: issueRows.map((i) => ({
+      id: i.id,
+      title: i.title,
+      description: i.description,
+      severity: i.severity,
+      resolved: i.resolved,
+      createdAt: i.createdAt.toISOString(),
+      entryIds: assocByIssue.get(i.id) ?? [],
     })),
   };
 }
