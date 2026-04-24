@@ -8,6 +8,7 @@ import { authRoutes } from './routes/auth.js';
 import { universeRoutes } from './routes/universes.js';
 import { entryRoutes } from './routes/entries.js';
 import { linkRoutes, relationRoutes } from './routes/links.js';
+import { categoryRoutes } from './routes/categories.js';
 import { exportRoutes } from './routes/export.js';
 import { importRoutes } from './routes/import.js';
 import { requireAuth } from './middleware/auth.js';
@@ -30,6 +31,7 @@ export function createApp() {
   app.route('/universes/:uid/entries', entryRoutes);
   app.route('/universes/:uid/links', linkRoutes);
   app.route('/universes/:uid/relations', relationRoutes);
+  app.route('/universes/:uid/categories', categoryRoutes);
   app.route('/universes/:uid/export', exportRoutes);
   app.get('/health', (c) => c.json({ ok: true }));
 
