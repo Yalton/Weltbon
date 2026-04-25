@@ -14,25 +14,37 @@
     "user:reset-password": "tsx src/scripts/reset-password.ts"
   },
   "dependencies": {
-    "hono": "4.12.12",
     "@hono/node-server": "1.19.14",
     "@hono/zod-validator": "0.7.6",
-    "zod": "4.1.4",
+    "archiver": "^7",
+    "bcrypt": "6.0.0",
+    "docx": "^9",
     "drizzle-orm": "0.45.2",
-    "pg": "8.20.0",
+    "github-slugger": "^2",
+    "hono": "4.12.12",
     "jose": "6.2.2",
-    "bcrypt": "6.0.0"
+    "pg": "8.20.0",
+    "puppeteer-core": "^24",
+    "remark": "^15",
+    "remark-gfm": "^4",
+    "unist-util-visit": "^5",
+    "yaml": "^2",
+    "zod": "4.1.4"
   },
   "devDependencies": {
-    "typescript": "5.7.3",
-    "tsx": "4.21.0",
-    "drizzle-kit": "0.31.10",
-    "dotenv": "16.4.7",
-    "vitest": "3.2.4",
-    "supertest": "7.2.2",
+    "@types/archiver": "^7.0.0",
+    "@types/bcrypt": "5.0.2",
     "@types/node": "22.10.5",
     "@types/pg": "8.11.10",
-    "@types/bcrypt": "5.0.2",
-    "@types/supertest": "6.0.2"
+    "@types/supertest": "6.0.2",
+    "@types/yauzl": "^2",
+    "dotenv": "16.4.7",
+    "drizzle-kit": "0.31.10",
+    "pdf-parse": "^2",
+    "supertest": "7.2.2",
+    "tsx": "4.21.0",
+    "typescript": "5.7.3",
+    "vitest": "3.2.4",
+    "yauzl": "^3"
   }
 }
