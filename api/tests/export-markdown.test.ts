@@ -1,35 +1,40 @@
-import { describe, it } from 'vitest';
+import { describe, it, expect } from 'vitest';
+import { buildMarkdownZip } from '../src/services/export/markdown.js';
+import type { ExportPayload } from '../src/services/export/payload.js';
 
-// Wave 0 stub for EXP-02 — implementation lands in plan 04-02.
-// describe.skip keeps suites compiling under tsc -b without spinning up
-// not-yet-existing exporter modules.
+// Smoke test for plan 04-02 Task 1 RED → GREEN. Real integration coverage
+// (yauzl unzip, frontmatter parsing, link resolution) lands in Task 2 below.
+describe('EXP-02 buildMarkdownZip: smoke', () => {
+  it('returns a web ReadableStream<Uint8Array> for an empty payload', async () => {
+    const payload: ExportPayload = {
+      universe: {
+        id: '00000000-0000-0000-0000-000000000000',
+        name: 'Empty World',
+        description: '',
+        entryTypes: ['concept'],
+      },
+      categories: [],
+      entries: [],
+      links: [],
+      openIssues: [],
+      fullIssues: [],
+      graphPositions: [],
+      entrySlugMap: new Map(),
+    };
+    const stream = buildMarkdownZip(payload);
+    expect(stream).toBeDefined();
+    expect(typeof (stream as ReadableStream).getReader).toBe('function');
 
-describe.skip('EXP-02: ZIP layout — universe-slug folder with _index.md and per-category subfolders', () => {
-  it('placeholder', () => {
-    // TODO plan 04-02
-  });
-});
-
-describe.skip('EXP-02: per-entry .md has YAML frontmatter (parses via yaml.parse), H1 title, summary blockquote, body, ## Links, ## Backlinks, ## Open Issues', () => {
-  it('placeholder', () => {
-    // TODO plan 04-02
-  });
-});
-
-describe.skip('EXP-02: relative links from _index.md and entries resolve to existing files in the ZIP', () => {
-  it('placeholder', () => {
-    // TODO plan 04-02
-  });
-});
-
-describe.skip('EXP-02: resolved=true issues are NOT in any entry\'s ## Open Issues section', () => {
-  it('placeholder', () => {
-    // TODO plan 04-02
-  });
-});
-
-describe.skip('EXP-02: Uncategorized folder holds entries with categoryId=null and appears last in _index.md TOC', () => {
-  it('placeholder', () => {
-    // TODO plan 04-02
+    // Drain the stream so archiver finalizes cleanly under the test runner.
+    const reader = (stream as ReadableStream<Uint8Array>).getReader();
+    let total = 0;
+    // eslint-disable-next-line no-constant-condition
+    while (true) {
+      const { done, value } = await reader.read();
+      if (done) break;
+      total += value.byteLength;
+    }
+    // Empty universe still ships an _index.md inside a ZIP container — bytes > 0.
+    expect(total).toBeGreaterThan(0);
   });
 });
