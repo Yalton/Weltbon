@@ -262,10 +262,14 @@ describe('EXP-05: PDF browser-leak (mock-based; no Chromium required)', () => {
     }));
 
     // Re-import after the mock is registered so the route's transitive
-    // import of puppeteer-core picks up the fake.
+    // import of puppeteer-core picks up the fake. Re-import setTestDb from
+    // the fresh module graph too — vi.resetModules() makes the freshly
+    // imported route bind to a NEW db/client module, not the one the
+    // top-of-file `setTestDb` import points at.
     const { createApp: createAppLocal } = await import('../src/index.js');
+    const { setTestDb: setTestDbLocal } = await import('../src/db/client.js');
     const handle = await createTestDb();
-    setTestDb(handle.db as never, handle.pool);
+    setTestDbLocal(handle.db as never, handle.pool);
     const app = createAppLocal();
 
     try {

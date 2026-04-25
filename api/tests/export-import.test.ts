@@ -152,16 +152,34 @@ describe('export/import (EXP-01, IMP-01..03)', () => {
     await res.arrayBuffer();
   });
 
-  // 04-01: ?format=pdf returns 503 stub (plan 04-03 replaces this branch).
-  it('export?format=pdf returns 503 stub', async () => {
+  // 04-03: ?format=pdf is real now. With Chromium installed we expect 200
+  // application/pdf + dated filename; without, the launch error surfaces as a
+  // 500 (puppeteer.launch throws "Failed to launch the browser process" or
+  // similar). Either way the 503-stub assertion is gone — we settle for
+  // asserting the route doesn't claim "not yet implemented".
+  it('export?format=pdf no longer returns the 503 stub', async () => {
+    const fs = await import('node:fs');
+    const HAS_CHROMIUM = Boolean(
+      process.env.CHROMIUM_PATH && fs.existsSync(process.env.CHROMIUM_PATH),
+    );
+
     const { hdrs } = await userWithToken('fmt-pdf@test.com');
     const universe = await createUniverse(hdrs, 'Stub PDF');
 
     const res = await req('GET', `/universes/${universe.id}/export?format=pdf`, { headers: hdrs });
-    expect(res.status).toBe(503);
-    const body = await json(res);
-    expect(body.error).toMatch(/pdf/i);
-    expect(body.error).toMatch(/04-03/);
+
+    if (HAS_CHROMIUM) {
+      expect(res.status).toBe(200);
+      expect(res.headers.get('content-type')).toBe('application/pdf');
+      const cd = res.headers.get('content-disposition') ?? '';
+      expect(cd).toMatch(/filename="stub-pdf-\d{4}-\d{2}-\d{2}\.pdf"/);
+      // Drain so Chromium closes via the wrapper's finally block.
+      await res.arrayBuffer();
+    } else {
+      // No Chromium → puppeteer.launch throws → Hono surfaces as 500. Critical
+      // assertion: it's NOT 503 with "not yet implemented" anymore.
+      expect(res.status).not.toBe(503);
+    }
   });
 
   // 04-01: ?format=docx returns 503 stub (plan 04-04 replaces this branch).
