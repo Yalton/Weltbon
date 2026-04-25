@@ -8,7 +8,7 @@ import { EmptyState } from '../components/EmptyState';
 import { ImportDialog } from '../components/ImportDialog';
 import { SearchBar } from '../components/SearchBar';
 import { FilterChipRow } from '../components/FilterChipRow';
-import { getAccessToken } from '../api/client';
+import { ExportMenu } from '../components/ExportMenu';
 
 export function EntryList() {
   const { uid } = useParams<{ uid: string }>();
@@ -17,7 +17,6 @@ export function EntryList() {
   const { data: universe } = useUniverse(uid);
 
   const [importOpen, setImportOpen] = useState(false);
-  const [exporting, setExporting] = useState(false);
   const [toast, setToast] = useState<string | null>(null);
 
   // Auto-dismiss toast after 4 seconds
@@ -29,29 +28,6 @@ export function EntryList() {
 
   const hasActiveFilters =
     !!filters.q || !!filters.type || filters.tags.length > 0 || !!filters.category;
-
-  async function handleExport() {
-    setExporting(true);
-    try {
-      const token = getAccessToken();
-      const res = await fetch(`/api/universes/${uid}/export?format=json`, {
-        credentials: 'include',
-        headers: token ? { Authorization: `Bearer ${token}` } : {},
-      });
-      if (!res.ok) throw new Error('Export failed');
-      const blob = await res.blob();
-      const url = URL.createObjectURL(blob);
-      const a = document.createElement('a');
-      a.href = url;
-      a.download = `${universe?.name || 'universe'}.json`;
-      a.click();
-      URL.revokeObjectURL(url);
-    } catch {
-      setToast('Export failed. Try again.');
-    } finally {
-      setExporting(false);
-    }
-  }
 
   const isEmpty = !entries || entries.length === 0;
 
@@ -66,14 +42,11 @@ export function EntryList() {
       <div className="flex items-center justify-between mb-6">
         <h1 className="text-2xl font-semibold">Entries</h1>
         <div className="flex items-center gap-2">
-          <button
-            type="button"
-            onClick={handleExport}
-            disabled={exporting}
-            className="rounded-md border border-neutral-300 dark:border-neutral-700 text-sm px-3 py-1.5"
-          >
-            {exporting ? 'Exporting...' : 'Export JSON'}
-          </button>
+          <ExportMenu
+            universeId={uid!}
+            fallbackFilename={universe?.name ?? 'universe'}
+            onToast={setToast}
+          />
           <button
             type="button"
             onClick={() => setImportOpen(true)}
