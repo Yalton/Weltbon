@@ -81,6 +81,29 @@ describe('EntryList', () => {
     expect(await screen.findByText('Alpha')).toBeInTheDocument();
   });
 
+  it('renders the ExportMenu trigger and reveals 4 export items on click', async () => {
+    setupApi({
+      universe: { id: 'U1', entryTypes: ['character'] },
+      categories: [],
+      entriesByQuery: () => [mkEntry('e1', 'Alpha')],
+    });
+
+    renderAt('/universes/U1/entries');
+
+    // Trigger label is "Export" (not "Export JSON").
+    const trigger = await screen.findByRole('button', { name: /^Export/ });
+    expect(trigger).toBeInTheDocument();
+    // The standalone "Export JSON" button is gone.
+    expect(screen.queryByRole('button', { name: /Export JSON/ })).not.toBeInTheDocument();
+
+    await userEvent.click(trigger);
+
+    expect(await screen.findByText('JSON')).toBeInTheDocument();
+    expect(screen.getByText('Markdown ZIP')).toBeInTheDocument();
+    expect(screen.getByText('PDF')).toBeInTheDocument();
+    expect(screen.getByText('DOCX')).toBeInTheDocument();
+  });
+
   it('passes URL filters through to the entries query', async () => {
     setupApi({
       universe: { id: 'U1', entryTypes: ['character'] },
