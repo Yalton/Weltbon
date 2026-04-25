@@ -5,6 +5,7 @@ import { TypeBadge } from '../components/TypeBadge';
 import { MarkdownRenderer } from '../components/MarkdownRenderer';
 import { ConfirmDialog } from '../components/ConfirmDialog';
 import { LinkSection } from '../components/LinkSection';
+import { IssueSection } from '../components/IssueSection';
 
 export function EntryDetail() {
   const { uid, entryId } = useParams<{ uid: string; entryId: string }>();
@@ -93,6 +94,14 @@ export function EntryDetail() {
         universeId={uid!}
         entryId={entryId!}
         onLinkCreated={() => refetch()}
+      />
+
+      {/* Issues (ISS-06: open-only from GET /entries/:id) */}
+      <IssueSection
+        universeId={uid!}
+        entryId={entryId!}
+        issues={entry.issues ?? []}
+        onChanged={() => refetch()}
       />
 
       {/* Meta section */}
