@@ -1,21 +1,41 @@
 import { Hono } from 'hono';
 import { requireUniverse } from '../utils/ownership.js';
-import { exportUniverseJson } from '../services/export-json.js';
+import { exportUniverseJson } from '../services/export/json.js';
+import { exportFilename } from '../services/export/slug.js';
 import type { AuthVariables } from '../middleware/auth.js';
 
-export const exportRoutes = new Hono<{ Variables: AuthVariables }>()
-  .get('/', async (c) => {
-    const uid = c.req.param('uid')!;
-    const userId = c.var.userId;
-    const universe = await requireUniverse(uid, userId);
+/**
+ * /universes/:uid/export — switches on ?format= query.
+ *
+ * Plans 04-02 (markdown), 04-03 (pdf), 04-04 (docx) each replace ONE 503
+ * branch below with their handler call. The minimal-diff layout means the
+ * three Wave 2 plans never fight over the same file when they run in
+ * parallel.
+ *
+ * Default format is json (no ?format query) — preserves existing client
+ * behavior. Cross-tenant authorization happens up front via requireUniverse.
+ */
+export const exportRoutes = new Hono<{ Variables: AuthVariables }>().get('/', async (c) => {
+  const uid = c.req.param('uid')!;
+  const universe = await requireUniverse(uid, c.var.userId);
+  const format = c.req.query('format') ?? 'json';
 
-    const format = c.req.query('format') || 'json';
-    if (format !== 'json') {
-      return c.json({ error: `Unsupported format: ${format}` }, 400);
-    }
-
+  if (format === 'json') {
     const data = await exportUniverseJson(uid);
-    const filename = `${universe.name.replace(/[^a-zA-Z0-9\-_ ]/g, '')}.json`;
-    c.header('Content-Disposition', `attachment; filename="${filename}"`);
+    c.header(
+      'Content-Disposition',
+      `attachment; filename="${exportFilename(universe.name, 'json')}"`,
+    );
     return c.json(data);
-  });
+  }
+  if (format === 'markdown') {
+    return c.json({ error: 'markdown export not yet implemented (plan 04-02)' }, 503);
+  }
+  if (format === 'pdf') {
+    return c.json({ error: 'pdf export not yet implemented (plan 04-03)' }, 503);
+  }
+  if (format === 'docx') {
+    return c.json({ error: 'docx export not yet implemented (plan 04-04)' }, 503);
+  }
+  return c.json({ error: `Unsupported format: ${format}` }, 400);
+});
