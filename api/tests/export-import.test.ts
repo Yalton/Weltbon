@@ -122,6 +122,78 @@ describe('export/import (EXP-01, IMP-01..03)', () => {
     expect(res.headers.get('content-disposition')).toContain('.json');
   });
 
+  // 04-01: Phase 4 dated filename in Content-Disposition.
+  // Filenames now go through exportFilename() (slug + YYYY-MM-DD) so successive
+  // exports of the same universe coexist in Downloads without manual rename.
+  it('export?format=json filename uses slug + ISO date', async () => {
+    const { hdrs } = await userWithToken('exp-fname@test.com');
+    const universe = await createUniverse(hdrs, 'Post Sundering');
+
+    const res = await req('GET', `/universes/${universe.id}/export?format=json`, { headers: hdrs });
+    expect(res.status).toBe(200);
+    const cd = res.headers.get('content-disposition') ?? '';
+    expect(cd).toMatch(/filename="post-sundering-\d{4}-\d{2}-\d{2}\.json"/);
+  });
+
+  // 04-01: ?format=markdown returns 503 stub (plan 04-02 replaces this branch).
+  it('export?format=markdown returns 503 stub', async () => {
+    const { hdrs } = await userWithToken('fmt-md@test.com');
+    const universe = await createUniverse(hdrs, 'Stub MD');
+
+    const res = await req('GET', `/universes/${universe.id}/export?format=markdown`, { headers: hdrs });
+    expect(res.status).toBe(503);
+    const body = await json(res);
+    expect(body.error).toMatch(/markdown/i);
+    expect(body.error).toMatch(/04-02/);
+  });
+
+  // 04-01: ?format=pdf returns 503 stub (plan 04-03 replaces this branch).
+  it('export?format=pdf returns 503 stub', async () => {
+    const { hdrs } = await userWithToken('fmt-pdf@test.com');
+    const universe = await createUniverse(hdrs, 'Stub PDF');
+
+    const res = await req('GET', `/universes/${universe.id}/export?format=pdf`, { headers: hdrs });
+    expect(res.status).toBe(503);
+    const body = await json(res);
+    expect(body.error).toMatch(/pdf/i);
+    expect(body.error).toMatch(/04-03/);
+  });
+
+  // 04-01: ?format=docx returns 503 stub (plan 04-04 replaces this branch).
+  it('export?format=docx returns 503 stub', async () => {
+    const { hdrs } = await userWithToken('fmt-docx@test.com');
+    const universe = await createUniverse(hdrs, 'Stub DOCX');
+
+    const res = await req('GET', `/universes/${universe.id}/export?format=docx`, { headers: hdrs });
+    expect(res.status).toBe(503);
+    const body = await json(res);
+    expect(body.error).toMatch(/docx/i);
+    expect(body.error).toMatch(/04-04/);
+  });
+
+  // 04-01: unknown format returns 400 (preserved from old route).
+  it('export?format=html returns 400 with unsupported format error', async () => {
+    const { hdrs } = await userWithToken('fmt-bad@test.com');
+    const universe = await createUniverse(hdrs, 'Stub Bad');
+
+    const res = await req('GET', `/universes/${universe.id}/export?format=html`, { headers: hdrs });
+    expect(res.status).toBe(400);
+    const body = await json(res);
+    expect(body.error).toMatch(/unsupported format/i);
+    expect(body.error).toContain('html');
+  });
+
+  // 04-01: omitting ?format defaults to json (no behavior change for existing clients).
+  it('export with no ?format query defaults to json', async () => {
+    const { hdrs } = await userWithToken('fmt-default@test.com');
+    const universe = await createUniverse(hdrs, 'Default JSON');
+
+    const res = await req('GET', `/universes/${universe.id}/export`, { headers: hdrs });
+    expect(res.status).toBe(200);
+    const data = await json(res);
+    expect(data.weltbon_version).toBe('1.0.0');
+  });
+
   // IMP-01: import valid JSON creates universe
   it('import valid JSON creates universe with 201', async () => {
     const { hdrs } = await userWithToken('imp1@test.com');
