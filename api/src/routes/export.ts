@@ -1,6 +1,8 @@
 import { Hono } from 'hono';
 import { requireUniverse } from '../utils/ownership.js';
 import { exportUniverseJson } from '../services/export/json.js';
+import { buildMarkdownZip } from '../services/export/markdown.js';
+import { loadUniverseExportPayload } from '../services/export/payload.js';
 import { exportFilename } from '../services/export/slug.js';
 import type { AuthVariables } from '../middleware/auth.js';
 
@@ -29,7 +31,13 @@ export const exportRoutes = new Hono<{ Variables: AuthVariables }>().get('/', as
     return c.json(data);
   }
   if (format === 'markdown') {
-    return c.json({ error: 'markdown export not yet implemented (plan 04-02)' }, 503);
+    const payload = await loadUniverseExportPayload(uid);
+    c.header('Content-Type', 'application/zip');
+    c.header(
+      'Content-Disposition',
+      `attachment; filename="${exportFilename(universe.name, 'zip')}"`,
+    );
+    return c.body(buildMarkdownZip(payload));
   }
   if (format === 'pdf') {
     return c.json({ error: 'pdf export not yet implemented (plan 04-03)' }, 503);

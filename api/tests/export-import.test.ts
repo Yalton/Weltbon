@@ -135,16 +135,21 @@ describe('export/import (EXP-01, IMP-01..03)', () => {
     expect(cd).toMatch(/filename="post-sundering-\d{4}-\d{2}-\d{2}\.json"/);
   });
 
-  // 04-01: ?format=markdown returns 503 stub (plan 04-02 replaces this branch).
-  it('export?format=markdown returns 503 stub', async () => {
+  // 04-02: ?format=markdown returns 200 ZIP (replaced the 04-01 503 stub).
+  // Detailed content/streaming assertions live in export-markdown.test.ts /
+  // export-streaming.test.ts; here we only confirm the route now returns
+  // application/zip with a dated filename.
+  it('export?format=markdown returns 200 application/zip with dated filename', async () => {
     const { hdrs } = await userWithToken('fmt-md@test.com');
     const universe = await createUniverse(hdrs, 'Stub MD');
 
     const res = await req('GET', `/universes/${universe.id}/export?format=markdown`, { headers: hdrs });
-    expect(res.status).toBe(503);
-    const body = await json(res);
-    expect(body.error).toMatch(/markdown/i);
-    expect(body.error).toMatch(/04-02/);
+    expect(res.status).toBe(200);
+    expect(res.headers.get('content-type')).toBe('application/zip');
+    const cd = res.headers.get('content-disposition') ?? '';
+    expect(cd).toMatch(/filename="stub-md-\d{4}-\d{2}-\d{2}\.zip"/);
+    // Drain so the underlying archiver stream finalizes cleanly.
+    await res.arrayBuffer();
   });
 
   // 04-01: ?format=pdf returns 503 stub (plan 04-03 replaces this branch).
