@@ -85,7 +85,7 @@ describe('EXP-04: DOCX exporter — full integration', () => {
       headers: { ...hdrs, 'Content-Type': 'application/json' },
       body: JSON.stringify({ name: 'Docx Test World', description: 'A small world' }),
     });
-    const universe = await createUniverseRes.json();
+    const universe = (await createUniverseRes.json()) as { id: string; name: string };
 
     // 2 categories
     const [people] = await db()
@@ -226,10 +226,12 @@ describe('EXP-04: DOCX exporter — full integration', () => {
     expect(xml).toMatch(/TOC[^<]*1-2/);
 
     // ---------- features.updateFields = true ----------
-    // docx package serializes this as <w:updateFields w:val="true"/> in settings.xml
-    // — but settings.xml is not document.xml. Read settings.xml separately.
+    // OOXML serializes this as a self-closing <w:updateFields/> flag in
+    // settings.xml. The presence of the element is the "true" signal —
+    // omitting the element is the "false" default. Word reads the element
+    // existence to decide whether to refresh fields on first open.
     const settingsXml = await readSettingsXml(buf);
-    expect(settingsXml).toMatch(/<w:updateFields\s+w:val="true"/);
+    expect(settingsXml).toMatch(/<w:updateFields\b/);
 
     // ---------- Walker output: bold + italic in body ----------
     expect(xml).toMatch(/<w:b\s*\/>/);

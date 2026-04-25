@@ -182,16 +182,20 @@ describe('export/import (EXP-01, IMP-01..03)', () => {
     }
   });
 
-  // 04-01: ?format=docx returns 503 stub (plan 04-04 replaces this branch).
-  it('export?format=docx returns 503 stub', async () => {
+  // 04-04: ?format=docx now returns the wordprocessingml DOCX (was a 503 stub
+  // in 04-01). Full integration coverage lives in export-docx.test.ts; this
+  // assertion just keeps the matrix-of-formats sanity check green.
+  it('export?format=docx returns a wordprocessingml DOCX', async () => {
     const { hdrs } = await userWithToken('fmt-docx@test.com');
     const universe = await createUniverse(hdrs, 'Stub DOCX');
 
     const res = await req('GET', `/universes/${universe.id}/export?format=docx`, { headers: hdrs });
-    expect(res.status).toBe(503);
-    const body = await json(res);
-    expect(body.error).toMatch(/docx/i);
-    expect(body.error).toMatch(/04-04/);
+    expect(res.status).toBe(200);
+    expect(res.headers.get('content-type')).toBe(
+      'application/vnd.openxmlformats-officedocument.wordprocessingml.document',
+    );
+    const cd = res.headers.get('content-disposition') ?? '';
+    expect(cd).toMatch(/filename="stub-docx-\d{4}-\d{2}-\d{2}\.docx"/);
   });
 
   // 04-01: unknown format returns 400 (preserved from old route).

@@ -3,6 +3,7 @@ import { requireUniverse } from '../utils/ownership.js';
 import { exportUniverseJson } from '../services/export/json.js';
 import { buildMarkdownZip } from '../services/export/markdown.js';
 import { renderUniversePdf } from '../services/export/pdf/render.js';
+import { renderUniverseDocx } from '../services/export/docx/render.js';
 import { loadUniverseExportPayload } from '../services/export/payload.js';
 import { exportFilename } from '../services/export/slug.js';
 import type { AuthVariables } from '../middleware/auth.js';
@@ -50,7 +51,17 @@ export const exportRoutes = new Hono<{ Variables: AuthVariables }>().get('/', as
     return c.body(await renderUniversePdf(payload));
   }
   if (format === 'docx') {
-    return c.json({ error: 'docx export not yet implemented (plan 04-04)' }, 503);
+    const payload = await loadUniverseExportPayload(uid);
+    c.header(
+      'Content-Type',
+      'application/vnd.openxmlformats-officedocument.wordprocessingml.document',
+    );
+    c.header(
+      'Content-Disposition',
+      `attachment; filename="${exportFilename(universe.name, 'docx')}"`,
+    );
+    const bytes = await renderUniverseDocx(payload);
+    return c.body(bytes);
   }
   return c.json({ error: `Unsupported format: ${format}` }, 400);
 });

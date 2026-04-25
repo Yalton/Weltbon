@@ -38,6 +38,7 @@
   "devDependencies": {
     "@types/archiver": "^7.0.0",
     "@types/bcrypt": "5.0.2",
+    "@types/mdast": "^4.0.4",
     "@types/node": "22.10.5",
     "@types/pg": "8.11.10",
     "@types/supertest": "6.0.2",
