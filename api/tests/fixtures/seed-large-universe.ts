@@ -1,5 +1,5 @@
 import type { TestDbHandle } from '../helpers.js';
-import { universes, categories, entries } from '../../src/db/schema.js';
+import { universes, categories, entries, timelinePins } from '../../src/db/schema.js';
 
 /**
  * Seeds a "large" universe for Phase 3 tests that exercise filtering + FTS perf
@@ -10,12 +10,20 @@ export interface SeedLargeUniverseOptions {
   entryCount?: number;
   categoryCount?: number;
   seed?: number;
+  /**
+   * Optional Phase-5 timeline pin seeding. When > 0, after entries are inserted,
+   * `pinCount` pins are placed on a random subset of entries (deterministic via
+   * the same mulberry32 stream). Precision distribution: ~50% exact, ~30%
+   * approximate, ~20% era. Positions span [-10000, 5e17].
+   */
+  pinCount?: number;
 }
 
 export interface SeedLargeUniverseResult {
   universeId: string;
   categoryIds: string[];
   entryIds: string[];
+  pinIds: string[];
 }
 
 const DEFAULT_ENTRY_TYPES = [
@@ -170,5 +178,39 @@ export async function seedLargeUniverse(
     for (const row of inserted) entryIds.push(row.id);
   }
 
-  return { universeId: universe.id, categoryIds, entryIds };
+  // Phase-5: optional timeline pin seeding for Plan 02 perf tests.
+  const pinIds: string[] = [];
+  const pinCount = opts.pinCount ?? 0;
+  if (pinCount > 0) {
+    // Pick `pinCount` distinct entry indices via the same PRNG stream so the
+    // distribution stays deterministic across runs (UNIQUE on entry_id forbids
+    // duplicates anyway, so we pick without replacement).
+    const indices = pickUnique(rng, entryIds, Math.min(pinCount, entryIds.length));
+    const PIN_MIN = -10000;
+    const PIN_MAX = 5e17;
+    const PIN_RANGE = PIN_MAX - PIN_MIN;
+    const pinRows = indices.map((entryId, i) => {
+      const r = rng();
+      // 50% exact, 30% approximate, 20% era
+      const precision = r < 0.5 ? 'exact' : r < 0.8 ? 'approximate' : 'era';
+      const position = PIN_MIN + rng() * PIN_RANGE;
+      return {
+        entryId,
+        label: `Pin ${i}`,
+        position,
+        precision,
+      };
+    });
+    // Chunk inserts the same way entries are chunked.
+    for (let i = 0; i < pinRows.length; i += CHUNK) {
+      const slice = pinRows.slice(i, i + CHUNK);
+      const inserted = await handle.db
+        .insert(timelinePins)
+        .values(slice)
+        .returning({ id: timelinePins.id });
+      for (const row of inserted) pinIds.push(row.id);
+    }
+  }
+
+  return { universeId: universe.id, categoryIds, entryIds, pinIds };
 }

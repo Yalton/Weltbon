@@ -43,6 +43,29 @@ describe('Sidebar', () => {
     expect(issuesLink).toHaveAttribute('href', '/universes/UA/issues');
   });
 
+  // Phase 5 Plan 05 will wire the Timeline link into Sidebar between Graph and
+  // Issues. Wave-0 stub kept as it.skip so this file passes today; Plan 05 just
+  // removes the .skip when the link lands.
+  it.skip('renders the Timeline nav link in the right position (Plan 05 fills in)', async () => {
+    vi.mocked(api).mockResolvedValue({ categories: [], uncategorizedCount: 0 });
+
+    renderSidebar('UA');
+
+    const timelineLink = await screen.findByRole('link', { name: /timeline/i });
+    expect(timelineLink).toHaveAttribute('href', '/universes/UA/timeline');
+
+    // DOM order assertion: Entries → Graph → Timeline → Issues
+    const all = screen.getAllByRole('link').map((el) => el.textContent?.trim().toLowerCase());
+    const idxEntries = all.findIndex((t) => t?.includes('entries'));
+    const idxGraph = all.findIndex((t) => t?.includes('graph'));
+    const idxTimeline = all.findIndex((t) => t?.includes('timeline'));
+    const idxIssues = all.findIndex((t) => t?.includes('issues'));
+    expect(idxEntries).toBeGreaterThanOrEqual(0);
+    expect(idxGraph).toBeGreaterThan(idxEntries);
+    expect(idxTimeline).toBeGreaterThan(idxGraph);
+    expect(idxIssues).toBeGreaterThan(idxTimeline);
+  });
+
   it('renders categories with counts when useCategories returns data', async () => {
     vi.mocked(api).mockResolvedValue({
       categories: [
