@@ -1,16 +1,45 @@
 import { describe, it, expect } from 'vitest';
+import { parsePosition } from './parsePosition';
 
-describe.skip('parsePosition (TIME-04 float parsing) — Wave 0 stub (Plan 04 fills in)', () => {
-  it('placeholder', () => {
-    expect(true).toBe(true);
+describe('parsePosition', () => {
+  it('accepts negative integers', () => {
+    expect(parsePosition('-10000')).toEqual({ ok: true, value: -10000 });
   });
-  // Plan 04 adds:
-  //  - parsePosition('-10000') → ok
-  //  - parsePosition('4.35e17') → ok
-  //  - parsePosition('0') → ok (zero is valid)
-  //  - parsePosition('') → error 'Required'
-  //  - parsePosition('  ') → error 'Required'
-  //  - parsePosition('10abc') → error (Number is strict)
-  //  - parsePosition('NaN') → error (not finite)
-  //  - parsePosition('Infinity') → error (not finite)
+
+  it('accepts scientific notation', () => {
+    expect(parsePosition('4.35e17')).toEqual({ ok: true, value: 4.35e17 });
+  });
+
+  it('accepts zero', () => {
+    expect(parsePosition('0')).toEqual({ ok: true, value: 0 });
+  });
+
+  it('rejects empty string', () => {
+    const r = parsePosition('');
+    expect(r.ok).toBe(false);
+    expect((r as { ok: false; error: string }).error).toBe('Required');
+  });
+
+  it('rejects whitespace-only', () => {
+    const r = parsePosition('   ');
+    expect(r.ok).toBe(false);
+    expect((r as { ok: false; error: string }).error).toBe('Required');
+  });
+
+  it('rejects "10abc" (Number is strict, parseFloat would not be)', () => {
+    const r = parsePosition('10abc');
+    expect(r.ok).toBe(false);
+  });
+
+  it('rejects NaN literal', () => {
+    expect(parsePosition('NaN').ok).toBe(false);
+  });
+
+  it('rejects Infinity literal', () => {
+    expect(parsePosition('Infinity').ok).toBe(false);
+  });
+
+  it('trims whitespace before parsing', () => {
+    expect(parsePosition('  42  ')).toEqual({ ok: true, value: 42 });
+  });
 });
