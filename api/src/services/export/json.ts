@@ -64,5 +64,12 @@ export async function exportUniverseJson(universeId: string) {
       x: g.x,
       y: g.y,
     })),
+    timelinePins: p.timelinePins.map((t) => ({
+      id: t.id,
+      entryId: t.entryId,
+      label: t.label,
+      position: t.position,
+      precision: t.precision,
+    })),
   };
 }

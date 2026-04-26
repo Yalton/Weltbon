@@ -3,7 +3,7 @@ import { createApp } from '../src/index.js';
 import { createTestDb, cleanDb, createTestUser, authHeader, type TestDbHandle } from './helpers.js';
 import { issueAccessToken } from '../src/services/auth.js';
 import { setTestDb, db } from '../src/db/client.js';
-import { links, graphPositions } from '../src/db/schema.js';
+import { links, graphPositions, timelinePins } from '../src/db/schema.js';
 import { eq } from 'drizzle-orm';
 
 describe('export/import (EXP-01, IMP-01..03)', () => {
@@ -642,6 +642,113 @@ describe('export/import (EXP-01, IMP-01..03)', () => {
     for (const pos of reExport.graphPositions) {
       expect(newEntryIds.has(pos.entryId)).toBe(true);
     }
+  });
+
+  // --- Timeline pins round-trip (TIME-01..04 / EXP-01 export/import coverage) ---
+
+  it('export includes timelinePins with id, entryId, label, position, precision', async () => {
+    const { hdrs } = await userWithToken('pin-exp@test.com');
+    const universe = await createUniverse(hdrs, 'PinExport');
+    const e1 = await createEntry(universe.id, hdrs, { title: 'Founding' });
+    const e2 = await createEntry(universe.id, hdrs, { title: 'Present' });
+    const e3 = await createEntry(universe.id, hdrs, { title: 'Far future' });
+
+    await db().insert(timelinePins).values([
+      { entryId: e1.id, label: 'Founding', position: -10000, precision: 'era' },
+      { entryId: e2.id, label: 'Present', position: 0, precision: 'exact' },
+      { entryId: e3.id, label: 'Far future', position: 4.35e17, precision: 'approximate' },
+    ]);
+
+    const res = await req('GET', `/universes/${universe.id}/export?format=json`, { headers: hdrs });
+    expect(res.status).toBe(200);
+    const data = await json(res);
+    expect(Array.isArray(data.timelinePins)).toBe(true);
+    expect(data.timelinePins).toHaveLength(3);
+    const positions = data.timelinePins.map((p: { position: number }) => p.position);
+    expect(positions).toContain(4.35e17);
+    expect(positions).toContain(-10000);
+    expect(positions).toContain(0);
+  });
+
+  it('round-trip preserves timeline pins with remapped entry IDs (incl. extreme floats)', async () => {
+    const { hdrs } = await userWithToken('pin-rt@test.com');
+    const universe = await createUniverse(hdrs, 'PinRoundTrip');
+    const e1 = await createEntry(universe.id, hdrs, { title: 'Founding' });
+    const e2 = await createEntry(universe.id, hdrs, { title: 'Present' });
+    const e3 = await createEntry(universe.id, hdrs, { title: 'Far future' });
+
+    await db().insert(timelinePins).values([
+      { entryId: e1.id, label: 'Founding', position: -10000, precision: 'era' },
+      { entryId: e2.id, label: 'Present', position: 0, precision: 'exact' },
+      { entryId: e3.id, label: 'Far future', position: 4.35e17, precision: 'approximate' },
+    ]);
+
+    // Export
+    const exportRes = await req('GET', `/universes/${universe.id}/export?format=json`, { headers: hdrs });
+    const exportData = await json(exportRes);
+    expect(exportData.timelinePins).toHaveLength(3);
+
+    // Import
+    const importRes = await req('POST', '/universes/import', { headers: hdrs, body: exportData });
+    expect(importRes.status).toBe(201);
+    const importResult = await json(importRes);
+    expect(importResult.pinCount).toBe(3);
+
+    // Re-export and assert preservation
+    const reExportRes = await req('GET', `/universes/${importResult.universeId}/export?format=json`, { headers: hdrs });
+    const reExport = await json(reExportRes);
+    expect(reExport.timelinePins).toHaveLength(3);
+
+    // Each (label, position, precision) triple from the original is present in the re-export.
+    type Pin = { entryId: string; label: string; position: number; precision: string };
+    const orig = exportData.timelinePins as Pin[];
+    const rt = reExport.timelinePins as Pin[];
+    for (const p of orig) {
+      const match = rt.find(
+        (x) => x.label === p.label && x.position === p.position && x.precision === p.precision,
+      );
+      expect(match, `missing round-trip for ${p.label}`).toBeTruthy();
+    }
+
+    // Float8 round-trip: bit-identical extreme value preserved.
+    expect(rt.map((p) => p.position)).toContain(4.35e17);
+
+    // FK invariant: every pin.entryId references an entry in the new universe.
+    const newEntryIds = new Set(reExport.entries.map((e: { id: string }) => e.id));
+    for (const pin of rt) {
+      expect(newEntryIds.has(pin.entryId)).toBe(true);
+    }
+  });
+
+  it('import accepts legacy JSON without timelinePins field (backward compat)', async () => {
+    const { hdrs } = await userWithToken('pin-bc@test.com');
+
+    const legacy = {
+      weltbon_version: '1.0.0',
+      exported_at: new Date().toISOString(),
+      universe: { name: 'NoPins', description: '' },
+      entries: [
+        {
+          id: 'aaaaaaaa-aaaa-4aaa-8aaa-aaaaaaaaaaa3',
+          title: 'Only Entry',
+          entryType: 'concept',
+          summary: '',
+          body: '',
+          tags: [],
+          meta: {},
+          icon: '',
+          categoryId: null,
+        },
+      ],
+      links: [],
+      // NO timelinePins field
+    };
+
+    const res = await req('POST', '/universes/import', { headers: hdrs, body: legacy });
+    expect(res.status).toBe(201);
+    const result = await json(res);
+    expect(result.pinCount).toBe(0);
+    expect(result.entryCount).toBe(1);
   });
 
   it('import accepts legacy JSON without graphPositions field (backward compat)', async () => {

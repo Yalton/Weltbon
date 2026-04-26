@@ -1,6 +1,6 @@
 import { z } from 'zod';
 import { db } from '../db/client.js';
-import { universes, entries, links, categories, issues, issueEntries, graphPositions } from '../db/schema.js';
+import { universes, entries, links, categories, issues, issueEntries, graphPositions, timelinePins } from '../db/schema.js';
 
 export const importSchema = z.object({
   weltbon_version: z.string().refine(
@@ -61,6 +61,18 @@ export const importSchema = z.object({
         entryId: z.string().uuid(),
         x: z.number().finite(),
         y: z.number().finite(),
+      })
+    )
+    .optional()
+    .default([]),
+  timelinePins: z
+    .array(
+      z.object({
+        id: z.string().uuid().optional(),
+        entryId: z.string().uuid(),
+        label: z.string().min(1).max(200),
+        position: z.number().finite(),
+        precision: z.enum(['exact', 'approximate', 'era']),
       })
     )
     .optional()
@@ -177,6 +189,21 @@ export async function importUniverseJson(userId: string, rawData: unknown) {
       });
     }
 
+    // 7. Insert timeline pins with remapped entry IDs (orphan = throw, matches
+    // links/issues/graphPositions behavior — corrupted exports fail loud).
+    for (const pin of data.timelinePins) {
+      const newEntryId = entryIdMap.get(pin.entryId);
+      if (!newEntryId) {
+        throw new Error('Timeline pin references unknown entry ID');
+      }
+      await tx.insert(timelinePins).values({
+        entryId: newEntryId,
+        label: pin.label,
+        position: pin.position,
+        precision: pin.precision,
+      });
+    }
+
     return {
       universeId: universe.id,
       universeName: universe.name,
@@ -185,6 +212,7 @@ export async function importUniverseJson(userId: string, rawData: unknown) {
       categoryCount: data.categories.length,
       issueCount: data.issues.length,
       positionCount: data.graphPositions.length,
+      pinCount: data.timelinePins.length,
     };
   });
 }

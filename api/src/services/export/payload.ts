@@ -8,6 +8,7 @@ import {
   issues,
   issueEntries,
   graphPositions,
+  timelinePins,
 } from '../../db/schema.js';
 import { buildSlugMap } from './slug.js';
 
@@ -76,6 +77,14 @@ export interface ExportPayloadGraphPosition {
   y: number;
 }
 
+export interface ExportPayloadTimelinePin {
+  id: string;
+  entryId: string;
+  label: string;
+  position: number;
+  precision: string;
+}
+
 export interface ExportPayloadUniverse {
   id: string;
   name: string;
@@ -94,6 +103,8 @@ export interface ExportPayload {
   /** Every issue (resolved + open). The JSON exporter consumes this for round-trip integrity. */
   fullIssues: ExportPayloadIssue[];
   graphPositions: ExportPayloadGraphPosition[];
+  /** Timeline pins for the universe (one per entry per architecture.md spec). */
+  timelinePins: ExportPayloadTimelinePin[];
   /** entryId → unique filename slug, computed once via buildSlugMap. */
   entrySlugMap: Map<string, string>;
 }
@@ -157,6 +168,20 @@ export async function loadUniverseExportPayload(universeId: string): Promise<Exp
     .from(graphPositions)
     .where(eq(graphPositions.universeId, universeId));
 
+  // INNER JOIN scopes timeline pins to this universe via the entry FK — same
+  // pattern issueEntries uses for cross-table tenancy filtering.
+  const pinRows = await db()
+    .select({
+      id: timelinePins.id,
+      entryId: timelinePins.entryId,
+      label: timelinePins.label,
+      position: timelinePins.position,
+      precision: timelinePins.precision,
+    })
+    .from(timelinePins)
+    .innerJoin(entries, eq(entries.id, timelinePins.entryId))
+    .where(eq(entries.universeId, universeId));
+
   const issuePayloads: ExportPayloadIssue[] = issueRows.map((i) => ({
     id: i.id,
     title: i.title,
@@ -213,6 +238,13 @@ export async function loadUniverseExportPayload(universeId: string): Promise<Exp
       entryId: p.entryId,
       x: p.x,
       y: p.y,
+    })),
+    timelinePins: pinRows.map((p) => ({
+      id: p.id,
+      entryId: p.entryId,
+      label: p.label,
+      position: p.position,
+      precision: p.precision,
     })),
     entrySlugMap,
   };
