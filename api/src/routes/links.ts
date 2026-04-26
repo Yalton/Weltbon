@@ -1,7 +1,7 @@
 import { Hono } from 'hono';
 import { zValidator } from '@hono/zod-validator';
 import { z } from 'zod';
-import { and, eq, desc } from 'drizzle-orm';
+import { and, eq, desc, asc, count } from 'drizzle-orm';
 import { HTTPException } from 'hono/http-exception';
 import { db } from '../db/client.js';
 import { entries, links } from '../db/schema.js';
@@ -91,7 +91,12 @@ export const linkRoutes = new Hono<{ Variables: AuthVariables }>()
     return c.body(null, 204);
   });
 
-/** Distinct relation labels -- mounted at /universes/:uid/relations */
+/**
+ * POL-03 backend: relation labels with usage counts
+ * Mounted at /universes/:uid/relations
+ * Returns [{ label, count }] sorted by count DESC, then label ASC for deterministic tiebreak.
+ * BREAKING CHANGE — was string[]; web/src/hooks/useLinks.ts useRelations updated by Plan 06.
+ */
 export const relationRoutes = new Hono<{ Variables: AuthVariables }>()
   .get('/', async (c) => {
     const uid = c.req.param('uid');
@@ -99,10 +104,11 @@ export const relationRoutes = new Hono<{ Variables: AuthVariables }>()
     await requireUniverse(uid, userId);
 
     const rows = await db()
-      .selectDistinct({ label: links.label })
+      .select({ label: links.label, count: count() })
       .from(links)
       .where(eq(links.universeId, uid))
-      .orderBy(links.label);
+      .groupBy(links.label)
+      .orderBy(desc(count()), asc(links.label));
 
-    return c.json(rows.map((r) => r.label));
+    return c.json(rows);
   });
