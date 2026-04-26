@@ -13,6 +13,7 @@ import { issueRoutes } from './routes/issues.js';
 import { graphRoutes, graphPositionRoutes } from './routes/graph.js';
 import { exportRoutes } from './routes/export.js';
 import { importRoutes } from './routes/import.js';
+import { timelinePinRoutes, timelineListRoutes } from './routes/timeline.js';
 import { requireAuth } from './middleware/auth.js';
 
 const cfg = env();
@@ -31,6 +32,7 @@ export function createApp() {
   app.route('/universes/import', importRoutes);
   app.route('/universes', universeRoutes);
   app.route('/universes/:uid/entries', entryRoutes);
+  app.route('/universes/:uid/entries', timelinePinRoutes);
   app.route('/universes/:uid/links', linkRoutes);
   app.route('/universes/:uid/relations', relationRoutes);
   app.route('/universes/:uid/categories', categoryRoutes);
@@ -38,6 +40,7 @@ export function createApp() {
   app.route('/universes/:uid/graph-data', graphRoutes);
   app.route('/universes/:uid/graph-positions', graphPositionRoutes);
   app.route('/universes/:uid/export', exportRoutes);
+  app.route('/universes/:uid', timelineListRoutes);
   app.get('/health', (c) => c.json({ ok: true }));
 
   app.onError((err, c) => {
