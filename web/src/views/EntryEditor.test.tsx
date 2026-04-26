@@ -36,13 +36,16 @@ function setupApi({
   });
 }
 
-function renderEditor() {
+function renderEditor(opts?: { state?: unknown }) {
   const qc = new QueryClient({
     defaultOptions: { queries: { retry: false }, mutations: { retry: false } },
   });
+  const initialEntry = opts?.state
+    ? { pathname: '/universes/U1/entries/new', state: opts.state }
+    : '/universes/U1/entries/new';
   return render(
     <QueryClientProvider client={qc}>
-      <MemoryRouter initialEntries={['/universes/U1/entries/new']}>
+      <MemoryRouter initialEntries={[initialEntry]}>
         <Routes>
           <Route path="/universes/:uid/entries/new" element={<EntryEditor />} />
           <Route path="/universes/:uid/entries/:entryId" element={<div>Entry detail</div>} />
@@ -119,6 +122,84 @@ describe('EntryEditor category picker', () => {
       expect(body.categoryId).toBe('c1');
       expect(body.title).toBe('Frodo');
       expect(body.entryType).toBe('character');
+    });
+  });
+});
+
+describe('EntryEditor template prefill (POL-04)', () => {
+  beforeEach(() => vi.mocked(api).mockReset());
+
+  it('pre-fills entryType, body, and meta from location.state.template on mount', async () => {
+    setupApi({
+      universe: { entryTypes: ['location', 'character'] },
+      categories: [],
+      createResponse: { id: 'new-id' },
+    });
+
+    renderEditor({
+      state: {
+        template: {
+          id: 'location',
+          label: 'Location',
+          entryType: 'location',
+          category: 'Setting',
+          body: '## Geography\n\n## Population\n',
+          meta: { region: '', climate: '' },
+        },
+      },
+    });
+
+    const typeSelect = (await screen.findByLabelText(/type/i)) as HTMLSelectElement;
+    await waitFor(() => {
+      expect(typeSelect.value).toBe('location');
+    });
+
+    const bodyTextarea = (await screen.findByLabelText(/body/i)) as HTMLTextAreaElement;
+    expect(bodyTextarea.value).toContain('## Geography');
+
+    // Meta keys 'region' and 'climate' both render as Key inputs
+    const keyInputs = screen.getAllByPlaceholderText('Key') as HTMLInputElement[];
+    const keyValues = keyInputs.map((i) => i.value).sort();
+    expect(keyValues).toEqual(['climate', 'region']);
+  });
+
+  it('disables Save when MetaEditor reports invalid (duplicate keys)', async () => {
+    setupApi({
+      universe: { entryTypes: ['character'] },
+      categories: [],
+      createResponse: { id: 'new-id' },
+    });
+
+    // Start with one meta key 'foo' so we can produce duplicates
+    renderEditor({
+      state: {
+        template: {
+          id: 'concept',
+          label: 'Concept',
+          entryType: 'character',
+          category: 'Setting',
+          body: '',
+          meta: { foo: 'a' },
+        },
+      },
+    });
+
+    // Wait for the prefilled meta row to render
+    await screen.findByDisplayValue('foo');
+
+    const submitBtn = screen.getByRole('button', {
+      name: /create entry/i,
+    }) as HTMLButtonElement;
+    expect(submitBtn.disabled).toBe(false);
+
+    // Add a second meta row with the same key 'foo'
+    await userEvent.click(screen.getByRole('button', { name: /\+ add field/i }));
+    const keyInputs = screen.getAllByPlaceholderText('Key') as HTMLInputElement[];
+    await userEvent.type(keyInputs[1], 'foo');
+
+    // Save should now be disabled due to dup
+    await waitFor(() => {
+      expect(submitBtn.disabled).toBe(true);
     });
   });
 });

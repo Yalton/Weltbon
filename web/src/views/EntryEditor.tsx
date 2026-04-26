@@ -1,5 +1,5 @@
 import { useState, useEffect } from 'react';
-import { useParams, useNavigate, Link } from 'react-router-dom';
+import { useParams, useNavigate, Link, useLocation } from 'react-router-dom';
 import { useForm } from 'react-hook-form';
 import { zodResolver } from '@hookform/resolvers/zod';
 import { z } from 'zod';
@@ -9,6 +9,7 @@ import { TagInput } from '../components/TagInput';
 import { MetaEditor } from '../components/MetaEditor';
 import { EntryCategoryPicker } from '../components/EntryCategoryPicker';
 import type { Entry } from '../hooks/useEntries';
+import type { EntryTemplate } from '../lib/entryTemplates';
 
 const entryFormSchema = z.object({
   title: z.string().min(1, 'Title is required').max(200),
@@ -23,6 +24,7 @@ type EntryFormValues = z.infer<typeof entryFormSchema>;
 export function EntryEditor() {
   const { uid, entryId } = useParams<{ uid: string; entryId: string }>();
   const navigate = useNavigate();
+  const location = useLocation();
   const isEditMode = !!entryId;
 
   const { data: universe } = useUniverse(uid);
@@ -33,6 +35,7 @@ export function EntryEditor() {
   const [tags, setTags] = useState<string[]>([]);
   const [meta, setMeta] = useState<Record<string, string>>({});
   const [categoryId, setCategoryId] = useState<string | null>(null);
+  const [metaValid, setMetaValid] = useState(true);
 
   const {
     register,
@@ -50,7 +53,7 @@ export function EntryEditor() {
     },
   });
 
-  // Pre-fill in edit mode
+  // Pre-fill in edit mode, or from template state in create mode.
   useEffect(() => {
     if (isEditMode && existingEntry) {
       reset({
@@ -63,8 +66,28 @@ export function EntryEditor() {
       setTags(existingEntry.tags ?? []);
       setMeta((existingEntry.meta as Record<string, string>) ?? {});
       setCategoryId(existingEntry.categoryId ?? null);
+      return;
     }
-  }, [isEditMode, existingEntry, reset]);
+    // Create mode: optionally pre-fill from template state passed via
+    // location.state (set by TemplatePicker on /entries/new navigation).
+    const template = (location.state as { template?: EntryTemplate } | null)
+      ?.template;
+    if (template) {
+      reset({
+        title: '',
+        entryType: template.entryType,
+        summary: '',
+        body: template.body,
+        icon: '',
+      });
+      setMeta(template.meta);
+      setTags([]);
+      setCategoryId(null);
+    }
+    // No template state: useForm() defaultValues apply (empty form).
+    // Note: depending on universe?.entryTypes too so the native <select>
+    // value is re-applied once options are mounted (race avoidance).
+  }, [isEditMode, existingEntry, reset, location.state, universe?.entryTypes]);
 
   if (isEditMode && entryLoading) {
     return <p className="text-sm text-neutral-500">Loading...</p>;
@@ -202,7 +225,11 @@ export function EntryEditor() {
         {/* Meta */}
         <div>
           <label className="block text-sm mb-1">Details</label>
-          <MetaEditor value={meta} onChange={setMeta} />
+          <MetaEditor
+            value={meta}
+            onChange={setMeta}
+            onValidityChange={setMetaValid}
+          />
         </div>
 
         {/* Form actions */}
@@ -219,7 +246,7 @@ export function EntryEditor() {
           </Link>
           <button
             type="submit"
-            disabled={isPending}
+            disabled={isPending || !metaValid}
             className="rounded-md bg-[color:var(--color-accent)] text-white text-sm px-3 py-1.5 disabled:opacity-50"
           >
             {isPending
