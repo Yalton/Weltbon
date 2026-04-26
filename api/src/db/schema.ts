@@ -99,3 +99,14 @@ export const graphPositions = pgTable('graph_positions', {
 }, (t) => ({
   pk: primaryKey({ columns: [t.universeId, t.entryId] }),
 }));
+
+export const timelinePins = pgTable('timeline_pins', {
+  id:        uuid('id').primaryKey().defaultRandom(),
+  entryId:   uuid('entry_id')
+              .references(() => entries.id, { onDelete: 'cascade' })
+              .notNull()
+              .unique(),
+  label:     text('label').notNull(),
+  position:  doublePrecision('position').notNull(),
+  precision: text('precision').default('exact').notNull(),
+});
