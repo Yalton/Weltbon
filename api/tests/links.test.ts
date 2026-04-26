@@ -205,14 +205,15 @@ describe('link routes (LINK-01..06)', () => {
     expect(list).toHaveLength(2);
   });
 
-  // Relations endpoint returns distinct labels
-  it('GET /universes/:uid/relations returns distinct label strings', async () => {
+  // POL-03 backend: GET /relations returns [{label, count}] sorted by count desc
+  it('GET /universes/:uid/relations returns [{label,count}] sorted by count desc', async () => {
     const { hdrs } = await userWithToken('h@test.com');
     const universe = await createUniverse(hdrs);
     const entryA = await createEntry(universe.id, hdrs, { title: 'A' });
     const entryB = await createEntry(universe.id, hdrs, { title: 'B' });
     const entryC = await createEntry(universe.id, hdrs, { title: 'C' });
 
+    // 'created by' x2, 'located in' x1
     await req('POST', `/universes/${universe.id}/links`, {
       headers: hdrs,
       body: { sourceEntryId: entryA.id, targetEntryId: entryB.id, label: 'created by' },
@@ -221,7 +222,6 @@ describe('link routes (LINK-01..06)', () => {
       headers: hdrs,
       body: { sourceEntryId: entryB.id, targetEntryId: entryC.id, label: 'located in' },
     });
-    // Duplicate label
     await req('POST', `/universes/${universe.id}/links`, {
       headers: hdrs,
       body: { sourceEntryId: entryA.id, targetEntryId: entryC.id, label: 'created by' },
@@ -229,8 +229,47 @@ describe('link routes (LINK-01..06)', () => {
 
     const res = await req('GET', `/universes/${universe.id}/relations`, { headers: hdrs });
     expect(res.status).toBe(200);
-    const labels = await json(res);
-    expect(labels).toEqual(['created by', 'located in']);
+    const rows = await json(res);
+    expect(rows).toEqual([
+      { label: 'created by', count: 2 },
+      { label: 'located in', count: 1 },
+    ]);
+  });
+
+  it('GET /relations sorts equal counts by label ASC for deterministic tiebreak', async () => {
+    const { hdrs } = await userWithToken('h-tiebreak@test.com');
+    const universe = await createUniverse(hdrs);
+    const entryA = await createEntry(universe.id, hdrs, { title: 'A' });
+    const entryB = await createEntry(universe.id, hdrs, { title: 'B' });
+    const entryC = await createEntry(universe.id, hdrs, { title: 'C' });
+
+    // Each label used exactly once -> tiebreak by label ASC
+    await req('POST', `/universes/${universe.id}/links`, {
+      headers: hdrs,
+      body: { sourceEntryId: entryA.id, targetEntryId: entryB.id, label: 'zeta' },
+    });
+    await req('POST', `/universes/${universe.id}/links`, {
+      headers: hdrs,
+      body: { sourceEntryId: entryB.id, targetEntryId: entryC.id, label: 'alpha' },
+    });
+    await req('POST', `/universes/${universe.id}/links`, {
+      headers: hdrs,
+      body: { sourceEntryId: entryA.id, targetEntryId: entryC.id, label: 'mu' },
+    });
+
+    const res = await req('GET', `/universes/${universe.id}/relations`, { headers: hdrs });
+    const rows = await json(res);
+    expect(rows.map((r: { label: string }) => r.label)).toEqual(['alpha', 'mu', 'zeta']);
+    expect(rows.every((r: { count: number }) => r.count === 1)).toBe(true);
+  });
+
+  it('GET /relations returns [] for a universe with no links', async () => {
+    const { hdrs } = await userWithToken('h-empty@test.com');
+    const universe = await createUniverse(hdrs);
+    const res = await req('GET', `/universes/${universe.id}/relations`, { headers: hdrs });
+    expect(res.status).toBe(200);
+    const rows = await json(res);
+    expect(rows).toEqual([]);
   });
 
   // Cross-tenant access returns 403
