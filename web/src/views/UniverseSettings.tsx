@@ -2,6 +2,7 @@ import { useState, useEffect } from 'react';
 import { useParams, useNavigate } from 'react-router-dom';
 import { useUniverse, useUpdateUniverse, useDeleteUniverse } from '../hooks/useUniverse';
 import { ConfirmDialog } from '../components/ConfirmDialog';
+import { EntryTypesSection } from '../components/EntryTypesSection';
 
 export function UniverseSettings() {
   const { id } = useParams<{ id: string }>();
@@ -57,6 +58,14 @@ export function UniverseSettings() {
           onChange={(e) => setDescription(e.target.value)}
           className="w-full rounded-md border border-neutral-300 dark:border-neutral-700 bg-transparent px-3 py-2 text-sm"
         />
+      </div>
+      <div className="pt-4 border-t border-neutral-200 dark:border-neutral-800">
+        <h2 className="text-lg font-medium mb-2">Entry types</h2>
+        <p className="text-sm text-neutral-500 mb-3">
+          The default types ship with every universe. Add custom types or remove ones you don&rsquo;t need.
+          Removing a type used by entries will prompt for a fallback.
+        </p>
+        <EntryTypesSection universe={data} />
       </div>
       <div className="flex items-center justify-between pt-4 border-t border-neutral-200 dark:border-neutral-800">
         <button
