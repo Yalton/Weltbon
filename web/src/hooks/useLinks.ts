@@ -11,6 +11,11 @@ export interface Link {
   createdAt: string;
 }
 
+export interface RelationCount {
+  label: string;
+  count: number;
+}
+
 export type CreateLinkInput = {
   sourceEntryId: string;
   targetEntryId: string;
@@ -28,6 +33,9 @@ export function useCreateLink(universeId: string) {
       }),
     onSuccess: () => {
       qc.invalidateQueries({ queryKey: ['entry', universeId] });
+      // A newly-typed label should appear in the relation combobox next time
+      // it opens, so its usage count reflects the new link.
+      qc.invalidateQueries({ queryKey: ['relations', universeId] });
     },
   });
 }
@@ -41,14 +49,20 @@ export function useDeleteLink(universeId: string) {
       }),
     onSuccess: () => {
       qc.invalidateQueries({ queryKey: ['entry', universeId] });
+      qc.invalidateQueries({ queryKey: ['relations', universeId] });
     },
   });
 }
 
+/**
+ * Fetches relation labels with their usage counts for a universe.
+ * Backend (Plan 05-03) returns the array sorted by count DESC, label ASC.
+ * Consumed by RelationCombobox in LinkEditor.
+ */
 export function useRelations(universeId: string) {
   return useQuery({
     queryKey: ['relations', universeId],
-    queryFn: () => api<string[]>(`/universes/${universeId}/relations`),
+    queryFn: () => api<RelationCount[]>(`/universes/${universeId}/relations`),
     enabled: !!universeId,
   });
 }

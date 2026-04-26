@@ -3,6 +3,7 @@ import * as Popover from '@radix-ui/react-popover';
 import { useEntries, type Entry } from '../hooks/useEntries';
 import { useCreateLink } from '../hooks/useLinks';
 import { TypeBadge } from './TypeBadge';
+import { RelationCombobox } from './RelationCombobox';
 
 interface Props {
   universeId: string;
@@ -111,12 +112,11 @@ export function LinkEditor({ universeId, entryId, onLinkCreated, children }: Pro
             {/* Relation label */}
             <div>
               <label className="block text-sm text-neutral-400 mb-1">Relation</label>
-              <input
-                type="text"
+              <RelationCombobox
+                universeId={universeId}
                 value={label}
-                onChange={(e) => setLabel(e.target.value)}
+                onChange={setLabel}
                 placeholder='e.g. "created by"'
-                className="w-full rounded-md border border-neutral-300 dark:border-neutral-700 bg-transparent px-3 py-1.5 text-sm outline-none focus:border-[color:var(--color-accent)]"
               />
             </div>
 

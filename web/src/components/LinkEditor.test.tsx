@@ -21,7 +21,7 @@ function renderEditor(universeId = 'U1', entryId = 'E1') {
         entryId={entryId}
         onLinkCreated={onLinkCreated}
       >
-        <button type="button">Add link</button>
+        <button type="button">Open link editor</button>
       </LinkEditor>
     </QueryClientProvider>
   );
@@ -72,7 +72,7 @@ describe('LinkEditor', () => {
     const user = userEvent.setup();
     renderEditor();
 
-    await user.click(screen.getByRole('button', { name: /add link/i }));
+    await user.click(screen.getByRole('button', { name: /open link editor/i }));
     const search = await screen.findByPlaceholderText(/search entries/i);
     await user.type(search, 'ara');
 
@@ -85,7 +85,7 @@ describe('LinkEditor', () => {
     const user = userEvent.setup();
     renderEditor();
 
-    await user.click(screen.getByRole('button', { name: /add link/i }));
+    await user.click(screen.getByRole('button', { name: /open link editor/i }));
     const combobox = await screen.findByRole('combobox');
     expect(combobox).toHaveAttribute('placeholder', expect.stringMatching(/created by/i));
   });
@@ -96,7 +96,7 @@ describe('LinkEditor', () => {
     const user = userEvent.setup();
     renderEditor();
 
-    await user.click(screen.getByRole('button', { name: /add link/i }));
+    await user.click(screen.getByRole('button', { name: /open link editor/i }));
     const search = await screen.findByPlaceholderText(/search entries/i);
     await user.type(search, 'Aragorn');
     await user.click(await screen.findByText('Aragorn'));
@@ -119,7 +119,7 @@ describe('LinkEditor', () => {
     const user = userEvent.setup();
     renderEditor();
 
-    await user.click(screen.getByRole('button', { name: /add link/i }));
+    await user.click(screen.getByRole('button', { name: /open link editor/i }));
     const search = await screen.findByPlaceholderText(/search entries/i);
     await user.type(search, 'Aragorn');
     await user.click(await screen.findByText('Aragorn'));
@@ -143,7 +143,7 @@ describe('LinkEditor', () => {
     const user = userEvent.setup();
     renderEditor();
 
-    await user.click(screen.getByRole('button', { name: /add link/i }));
+    await user.click(screen.getByRole('button', { name: /open link editor/i }));
     const search = await screen.findByPlaceholderText(/search entries/i);
     await user.type(search, 'Aragorn');
     await user.click(await screen.findByText('Aragorn'));
@@ -170,7 +170,7 @@ describe('LinkEditor', () => {
     const { qc } = renderEditor();
     const spy = vi.spyOn(qc, 'invalidateQueries');
 
-    await user.click(screen.getByRole('button', { name: /add link/i }));
+    await user.click(screen.getByRole('button', { name: /open link editor/i }));
     const search = await screen.findByPlaceholderText(/search entries/i);
     await user.type(search, 'Aragorn');
     await user.click(await screen.findByText('Aragorn'));
