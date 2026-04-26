@@ -9,6 +9,7 @@ import { ImportDialog } from '../components/ImportDialog';
 import { SearchBar } from '../components/SearchBar';
 import { FilterChipRow } from '../components/FilterChipRow';
 import { ExportMenu } from '../components/ExportMenu';
+import { TemplatePicker } from '../components/TemplatePicker';
 
 export function EntryList() {
   const { uid } = useParams<{ uid: string }>();
@@ -17,6 +18,7 @@ export function EntryList() {
   const { data: universe } = useUniverse(uid);
 
   const [importOpen, setImportOpen] = useState(false);
+  const [pickerOpen, setPickerOpen] = useState(false);
   const [toast, setToast] = useState<string | null>(null);
 
   // Auto-dismiss toast after 4 seconds
@@ -55,12 +57,13 @@ export function EntryList() {
             Import JSON
           </button>
           {!isEmpty && (
-            <Link
-              to="new"
+            <button
+              type="button"
+              onClick={() => setPickerOpen(true)}
               className="rounded-md bg-[color:var(--color-accent)] text-white text-sm px-3 py-1.5"
             >
               Create entry
-            </Link>
+            </button>
           )}
         </div>
       </div>
@@ -88,12 +91,13 @@ export function EntryList() {
           title="No entries yet"
           body="Entries are the building blocks of your universe -- people, places, events, and ideas. Create your first entry to start building."
           action={
-            <Link
-              to="new"
+            <button
+              type="button"
+              onClick={() => setPickerOpen(true)}
               className="rounded-md bg-[color:var(--color-accent)] text-white text-sm px-4 py-2"
             >
               Create your first entry
-            </Link>
+            </button>
           }
         />
       ) : (
@@ -108,6 +112,13 @@ export function EntryList() {
 
       {/* Import dialog */}
       <ImportDialog open={importOpen} onOpenChange={setImportOpen} />
+
+      {/* Template picker */}
+      <TemplatePicker
+        open={pickerOpen}
+        onOpenChange={setPickerOpen}
+        universeId={uid!}
+      />
 
       {/* Toast notification */}
       {toast && (

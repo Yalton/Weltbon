@@ -148,9 +148,9 @@ describe('EntryList', () => {
     renderAt('/universes/U1/entries');
 
     expect(await screen.findByText(/no entries yet/i)).toBeInTheDocument();
-    // Create-entry CTA from the existing empty state stays.
+    // Create-entry CTA is now a button (opens TemplatePicker) instead of a Link.
     expect(
-      screen.getByRole('link', { name: /create your first entry/i }),
+      screen.getByRole('button', { name: /create your first entry/i }),
     ).toBeInTheDocument();
   });
 
