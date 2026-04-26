@@ -2,12 +2,24 @@
 
 A self-hostable worldbuilding web app: create entries, link them with named relations, organize into categories, visualize as a graph, and export to multiple formats. Built for a close circle of worldbuilders -- not for SaaS scale.
 
-**Current status: Phase 1 complete.** Authentication, universe CRUD, and self-host startup guards are in place. Entries, links, graph view, and exports are coming in Phases 2-5.
+**Status:** v1 ready. All 65 v1 requirements implemented across 5 phases. Self-host friendly.
+
+## Contents
+
+- [Quickstart (Development)](#quickstart-development)
+- [Self-Host](#self-host)
+- [Backup](#backup)
+- [Environment Variables](#environment-variables)
+- [Admin / Operator Commands](#admin--operator-commands)
+- [Tech Stack](#tech-stack)
+- [Architecture at a Glance](#architecture-at-a-glance)
+- [Security Posture](#security-posture)
+- [Running Tests](#running-tests)
 
 ## Tech Stack
 
-- **API**: Node.js 22 LTS, [Hono](https://hono.dev/) 4, [Drizzle ORM](https://orm.drizzle.team/) 0.45, PostgreSQL 16, [`jose`](https://github.com/panva/jose) v6 for JWT, [`bcrypt`](https://www.npmjs.com/package/bcrypt) v6 for passwords
-- **Web**: React 19, Vite 8 (Rolldown), Tailwind CSS v4, TanStack Query 5, Zustand 5, React Router v7 (library mode), Radix UI primitives
+- **API**: Node.js 22 LTS, [Hono](https://hono.dev/) 4, [Drizzle ORM](https://orm.drizzle.team/) 0.45, PostgreSQL 16, [`jose`](https://github.com/panva/jose) v6 for JWT, [`bcrypt`](https://www.npmjs.com/package/bcrypt) v6 for passwords, [`puppeteer-core`](https://pptr.dev/) for PDF export, [`docx`](https://docx.js.org/) for DOCX export, [`archiver`](https://www.archiverjs.com/) for Markdown ZIP export
+- **Web**: React 19, Vite 8 (Rolldown), Tailwind CSS v4, TanStack Query 5, Zustand 5, React Router v7 (library mode), Radix UI primitives, d3-force for graph view
 - **Deployment**: bare Node processes for API and web build; PostgreSQL in docker-compose; LAN-only posture
 
 Full package list and versions: see `api/package.json` and `web/package.json`.
@@ -59,7 +71,7 @@ pnpm --filter api db:migrate
 
 ### 6. Create your first invite code
 
-Phase 1 registration is invite-code gated. Generate a code before you can register:
+Registration is invite-code gated. Generate a code before you can register:
 
 ```bash
 pnpm --filter api invite:new
@@ -87,6 +99,92 @@ Opens `http://localhost:5173`. All `/api/*` requests are proxied to the API auto
 
 Visit `/register`, enter your email, a password (minimum 12 characters), a display name, and the invite code from step 6. Submit to create your account and land on the universe list.
 
+## Self-Host
+
+PDF export uses `puppeteer-core` against system Chromium. You must install Chromium and point `CHROMIUM_PATH` at the binary. If PDF export returns a 500 with `Failed to launch the browser process` or `ENOENT`, it is almost always a wrong `CHROMIUM_PATH`.
+
+### Debian (Bookworm / Trixie)
+
+```bash
+sudo apt install chromium
+# Then in your .env:
+CHROMIUM_PATH=/usr/bin/chromium
+```
+
+Note: on Debian the package is `chromium`, **not** `chromium-browser`. The latter only exists on Ubuntu and is a Snap wrapper that breaks `puppeteer-core`.
+
+### Ubuntu (22.04+)
+
+Ubuntu's `apt install chromium-browser` is a transitional Snap wrapper. Snap's sandbox confinement frequently breaks `puppeteer-core`'s launch path with cryptic crashes.
+
+**Recommended** -- install the native `.deb` from the xtradeb PPA:
+
+```bash
+sudo add-apt-repository ppa:xtradeb/apps
+sudo apt update
+sudo apt install chromium
+# Then in your .env:
+CHROMIUM_PATH=/usr/bin/chromium
+```
+
+**Or** accept the Snap path (fragile -- expect launch failures under load):
+
+```bash
+sudo apt install chromium-browser
+# Then in your .env:
+CHROMIUM_PATH=/snap/bin/chromium
+```
+
+### macOS
+
+```bash
+brew install --cask chromium
+# Then in your .env:
+CHROMIUM_PATH=/Applications/Chromium.app/Contents/MacOS/Chromium
+```
+
+### Verifying
+
+After installing and setting `CHROMIUM_PATH`, restart the API process and trigger a PDF export from the entry list. If you get `Failed to launch the browser process` or `ENOENT`, the path is wrong -- run `which chromium` (Linux) or `ls /Applications/Chromium.app/Contents/MacOS/` (macOS) and update `.env`.
+
+## Backup
+
+Postgres lives in `docker compose`'s `db` service. Use `pg_dump` for backups and a cron line for automation. We don't ship retention -- rotate manually if you care; disk is cheap.
+
+### Recommended cron line
+
+Install with `crontab -e` and paste:
+
+```cron
+0 3 * * * pg_dump weltbon | gzip > /backups/weltbon-$(date +\%F).sql.gz
+```
+
+The `\%F` escape is required. Bare `%` in a crontab is interpreted as a newline / stdin separator and your backup file silently ends up named `weltbon-.sql.gz` (every run overwrites the previous one). Adjust `weltbon` to your `POSTGRES_DB` name and `/backups/` to your preferred directory (which must exist and be writable by the user owning the crontab).
+
+If your Postgres runs in `docker compose`, prefix with the container exec:
+
+```cron
+0 3 * * * docker compose -f /opt/weltbon/docker-compose.yml exec -T db pg_dump -U weltbon weltbon | gzip > /backups/weltbon-$(date +\%F).sql.gz
+```
+
+After installing, verify with `crontab -l` -- the listed line should contain `\%F` literally (backslash visible). If the backslash is gone, your editor stripped it; reinstall with `crontab -e` and paste again.
+
+### Restore
+
+```bash
+gunzip -c /backups/weltbon-2026-04-23.sql.gz | psql weltbon
+# Or via docker compose:
+gunzip -c /backups/weltbon-2026-04-23.sql.gz | docker compose exec -T db psql -U weltbon weltbon
+```
+
+### Rotation
+
+We deliberately ship no retention logic. Delete files older than N days however you like:
+
+```bash
+find /backups -name 'weltbon-*.sql.gz' -mtime +30 -delete
+```
+
 ## Environment Variables
 
 ### Required
@@ -99,10 +197,10 @@ Visit `/register`, enter your email, a password (minimum 12 characters), a displ
 
 ### Optional
 
-| Variable         | Purpose                               | Default                                      |
-|------------------|---------------------------------------|----------------------------------------------|
-| `PORT`           | API listen port                       | `3000`                                       |
-| `CHROMIUM_PATH`  | System Chromium binary for PDF export | Unused in Phase 1; required in Phase 3+.     |
+| Variable         | Purpose                                                            | Default                                      |
+|------------------|--------------------------------------------------------------------|----------------------------------------------|
+| `PORT`           | API listen port                                                    | `3000`                                       |
+| `CHROMIUM_PATH`  | System Chromium binary path for PDF export (`puppeteer-core`)      | unset; PDF export 503s without it. See [Self-Host](#self-host) for per-OS values. |
 
 ### Startup Guard
 
@@ -117,7 +215,7 @@ This guard is covered by `api/tests/startup.test.ts`. See the "Verifying the Sta
 
 ## Admin / Operator Commands
 
-Phase 1 has two CLI commands for operators. Both are run from the repo root.
+Two CLI commands for operators. Both run from the repo root.
 
 ### Issue a New Invite Code
 
@@ -146,11 +244,12 @@ weltbon/
 ├── api/                       # Hono + Drizzle + PostgreSQL
 │   ├── src/
 │   │   ├── config.ts                # Startup env guard (OPS-04)
-│   │   ├── db/schema.ts             # users, universes, refresh_tokens, invite_codes
-│   │   ├── middleware/auth.ts        # JWT verification middleware
-│   │   ├── routes/auth.ts           # /auth/register, login, refresh, logout
-│   │   ├── routes/universes.ts      # /universes CRUD with ownership enforcement
-│   │   ├── services/auth.ts         # Token lifecycle, bcrypt, jose
+│   │   ├── db/schema.ts             # users, universes, entries, links, categories, issues, graph_positions, refresh_tokens, invite_codes
+│   │   ├── middleware/auth.ts       # JWT verification middleware
+│   │   ├── routes/                  # auth, universes, entries, links, categories, issues, graph, export, import
+│   │   ├── services/
+│   │   │   ├── auth.ts              # Token lifecycle, bcrypt, jose
+│   │   │   └── export/              # markdown-zip, pdf, docx, json exporters
 │   │   └── scripts/
 │   │       ├── invite-new.ts        # CLI: generate invite code
 │   │       └── reset-password.ts    # CLI: reset user password
@@ -159,40 +258,15 @@ weltbon/
 │   └── src/
 │       ├── api/client.ts            # Fetch wrapper, silent refresh on 401
 │       ├── store/auth.ts            # Zustand: user + theme state
-│       ├── hooks/
-│       │   ├── useAuth.ts
-│       │   └── useUniverse.ts
-│       ├── components/              # Layout, UserMenu, ConfirmDialog, EmptyState
-│       └── views/                   # Login, Register, UniverseList, UniverseSettings
+│       ├── hooks/                   # useAuth, useUniverse, useEntries, useLinks, useGraph, ...
+│       ├── components/              # Layout, ExportMenu, GraphCanvas, LinkEditor, ImportDialog, ...
+│       └── views/                   # Login, Register, UniverseList, EntryList, EntryDetail, GraphView, ...
 ├── docker-compose.yml         # PostgreSQL 16-alpine on 127.0.0.1:5432
 ├── .env.example               # Template for .env (never commit real .env)
 └── README.md
 ```
 
-## API Endpoints (Phase 1)
-
-### Authentication
-
-| Method | Path             | Body / Cookie                                  | Success           | Notes                                                  |
-|--------|------------------|-------------------------------------------------|-------------------|--------------------------------------------------------|
-| POST   | `/auth/register` | `{ email, password, displayName, inviteCode }` | 200 + refresh cookie | Invite code is consumed atomically                     |
-| POST   | `/auth/login`    | `{ email, password }`                           | 200 + refresh cookie | 401 on mismatch; same message for wrong email or password (no user enumeration) |
-| POST   | `/auth/refresh`  | httpOnly refresh cookie                         | 200 `{ accessToken }` + rotated cookie | Old refresh token revoked in same DB transaction       |
-| POST   | `/auth/logout`   | httpOnly refresh cookie                         | 204               | Revokes only the current session's refresh token       |
-
-### Universes (all require valid access token)
-
-| Method | Path              | Body                              | Success     | Notes                              |
-|--------|-------------------|-----------------------------------|-------------|------------------------------------|
-| GET    | `/universes`      | --                                | 200         | Returns only the authenticated user's universes |
-| POST   | `/universes`      | `{ name }`                        | 201         | Creates a universe owned by the authenticated user      |
-| GET    | `/universes/:id`  | --                                | 200         | 404 if not found; 403 if cross-tenant                  |
-| PATCH  | `/universes/:id`  | `{ name?, description? }`        | 200         | 403 if not owner                   |
-| DELETE | `/universes/:id`  | --                                | 204         | 403 if not owner                   |
-
-Cross-tenant access returns **403**. Nonexistent universe returns **404**. Unauthenticated requests return **401**.
-
-## Security Posture (Phase 1)
+## Security Posture
 
 - **Passwords**: bcrypt cost 12. Async hashing only (no `hashSync` / `compareSync`).
 - **Access tokens**: HS256 JWT signed via `jose`. Every `jwtVerify` call pins `algorithms: ['HS256']` to prevent algorithm confusion. TTL: 1 hour. Held in memory on the client -- never in localStorage.
@@ -209,25 +283,26 @@ Cross-tenant access returns **403**. Nonexistent universe returns **404**. Unaut
 | Token          | Storage (client)         | Storage (server)                          | TTL     | Rotation                                      |
 |----------------|--------------------------|-------------------------------------------|---------|-----------------------------------------------|
 | Access (JWT)   | In-memory only           | Stateless (verified by signature)         | 1 hour  | Issued on login, register, and refresh        |
-| Refresh        | httpOnly cookie           | `refresh_tokens` table (bcrypt hash)      | 30 days | Rotated on every `/auth/refresh` call         |
+| Refresh        | httpOnly cookie          | `refresh_tokens` table (bcrypt hash)      | 30 days | Rotated on every `/auth/refresh` call         |
 
 - **Logout** revokes only the current session's refresh token. Other devices remain logged in.
 - **Password reset** (CLI) revokes ALL refresh tokens for the user.
-- **"Logout everywhere"** is not implemented in Phase 1.
+- **"Logout everywhere"** is not implemented.
 
-## Production Deployment (Phase 1)
+## Production Deployment
 
 The target is a personal Linux server, not a cloud PaaS. Two processes: the API (bare Node) and PostgreSQL (docker-compose). The web app builds to static files served by nginx.
 
 1. Clone the repo (e.g., under `/opt/weltbon/`).
 2. Install dependencies: `pnpm install`.
-3. Copy `.env.example` to `.env` and fill in a production `JWT_SECRET` and `POSTGRES_PASSWORD`.
+3. Copy `.env.example` to `.env` and fill in a production `JWT_SECRET`, `POSTGRES_PASSWORD`, and `CHROMIUM_PATH` (see [Self-Host](#self-host)).
 4. Start the database: `docker compose up -d db`.
 5. Apply migrations: `pnpm --filter api db:migrate`.
 6. Build the API: `pnpm --filter api build` (produces `api/dist/`).
 7. Build the web app: `pnpm --filter web build` (produces `web/dist/`).
 8. Serve the API via systemd. Key command: `ExecStart=/usr/bin/node /opt/weltbon/api/dist/index.js`, with `EnvironmentFile=/opt/weltbon/.env`.
 9. Serve `web/dist/` via nginx and proxy `/api/` to `http://127.0.0.1:3000/`.
+10. Install the [Backup](#backup) cron line.
 
 Example nginx snippet:
 
@@ -261,8 +336,6 @@ pnpm --filter api test -- --run
 pnpm --filter web test -- --run
 ```
 
-Phase 1 test coverage: startup guard (6 assertions), auth endpoints (11 integration tests), universe CRUD with cross-tenant isolation (13 integration tests), web smoke tests (6 assertions across Login/Register/UniverseList).
-
 ## Verifying the Startup Guard
 
 A deliberate foot-gun check: start the API without `JWT_SECRET`. It must exit non-zero.
@@ -282,15 +355,6 @@ JWT_SECRET=too-short DATABASE_URL=postgresql://x pnpm --filter api dev
 
 This is the manual smoke test for OPS-04: the application must refuse to start with invalid configuration.
 
-## What's Next
-
-- **Phase 2**: Entries, named links, backlinks, JSON export + import round-trip
-- **Phase 3**: Categories, full-text search, force-directed graph view, issue tracker
-- **Phase 4**: Markdown ZIP / PDF / DOCX exports
-- **Phase 5**: Timeline view, meta fields UI, custom entry types, relation autocomplete, operational docs for Chromium + pg_dump backups
-
-Full roadmap: project documentation.
-
 ## License
 
-(To be chosen by the project owner. No license is declared in Phase 1.)
+(To be chosen by the project owner. No license is declared in v1.)
