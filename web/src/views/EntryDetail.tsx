@@ -6,6 +6,7 @@ import { MarkdownRenderer } from '../components/MarkdownRenderer';
 import { ConfirmDialog } from '../components/ConfirmDialog';
 import { LinkSection } from '../components/LinkSection';
 import { IssueSection } from '../components/IssueSection';
+import { TimelinePinSection } from '../components/TimelinePinSection';
 
 export function EntryDetail() {
   const { uid, entryId } = useParams<{ uid: string; entryId: string }>();
@@ -103,6 +104,9 @@ export function EntryDetail() {
         issues={entry.issues ?? []}
         onChanged={() => refetch()}
       />
+
+      {/* Timeline pin (TIME-02: per-entry pin section) */}
+      <TimelinePinSection universeId={uid!} entryId={entryId!} />
 
       {/* Meta section */}
       {metaEntries.length > 0 && (

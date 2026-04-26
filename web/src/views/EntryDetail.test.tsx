@@ -35,6 +35,9 @@ function mkEntryDetail(overrides: Record<string, unknown> = {}) {
 function renderAt(path: string, entry: ReturnType<typeof mkEntryDetail>) {
   vi.mocked(api).mockImplementation(async (p?: string) => {
     if (p === '/universes/U1/entries/E1') return entry;
+    // TimelinePinSection issues a GET /timeline; default to empty so the
+    // existing EntryDetail tests don't have to think about pin rows.
+    if (typeof p === 'string' && p.endsWith('/timeline')) return [];
     return undefined;
   });
 
@@ -80,5 +83,20 @@ describe('EntryDetail (issues section)', () => {
     await userEvent.click(screen.getByRole('button', { name: /flag issue/i }));
 
     expect(await screen.findByRole('dialog')).toBeInTheDocument();
+  });
+});
+
+describe('EntryDetail (timeline section)', () => {
+  beforeEach(() => vi.mocked(api).mockReset());
+
+  it('renders the Timeline section with Not pinned + Add pin when entry has no pin', async () => {
+    renderAt('/universes/U1/entries/E1', mkEntryDetail({ issues: [] }));
+
+    expect(
+      await screen.findByRole('heading', { name: /^timeline$/i }),
+    ).toBeInTheDocument();
+    // Wait for the timeline query to resolve (renders Loading… first).
+    expect(await screen.findByText(/not pinned/i)).toBeInTheDocument();
+    expect(screen.getByRole('button', { name: /add pin/i })).toBeInTheDocument();
   });
 });
