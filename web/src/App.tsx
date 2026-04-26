@@ -11,6 +11,7 @@ import { EntryDetail } from './views/EntryDetail';
 import { EntryEditor } from './views/EntryEditor';
 import { GraphView } from './views/GraphView';
 import { IssuesView } from './views/IssuesView';
+import { TimelineView } from './views/TimelineView';
 
 export default function App() {
   return (
@@ -31,6 +32,7 @@ export default function App() {
           <Route path="/universes/:uid/entries/:entryId" element={<EntryDetail />} />
           <Route path="/universes/:uid/entries/:entryId/edit" element={<EntryEditor />} />
           <Route path="/universes/:uid/graph" element={<GraphView />} />
+          <Route path="/universes/:uid/timeline" element={<TimelineView />} />
           <Route path="/universes/:uid/issues" element={<IssuesView />} />
         </Route>
       </Route>

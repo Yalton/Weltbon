@@ -98,6 +98,7 @@ export function Sidebar({ universeId }: { universeId: string }) {
       <div className="px-3 pb-3 border-b border-neutral-200 dark:border-neutral-800 space-y-1">
         <SidebarNavLink to={`/universes/${universeId}/entries`}>Entries</SidebarNavLink>
         <SidebarNavLink to={`/universes/${universeId}/graph`}>Graph</SidebarNavLink>
+        <SidebarNavLink to={`/universes/${universeId}/timeline`}>Timeline</SidebarNavLink>
         <SidebarNavLink to={`/universes/${universeId}/issues`}>Issues</SidebarNavLink>
       </div>
 

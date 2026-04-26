@@ -29,30 +29,20 @@ describe('Sidebar', () => {
     vi.mocked(api).mockReset();
   });
 
-  it('renders the three top-level nav links with correct hrefs', async () => {
+  it('renders the four top-level nav links in order Entries → Graph → Timeline → Issues with correct hrefs', async () => {
     vi.mocked(api).mockResolvedValue({ categories: [], uncategorizedCount: 0 });
 
     renderSidebar('UA');
 
     const entriesLink = await screen.findByRole('link', { name: /entries/i });
     const graphLink = screen.getByRole('link', { name: /graph/i });
+    const timelineLink = screen.getByRole('link', { name: /timeline/i });
     const issuesLink = screen.getByRole('link', { name: /issues/i });
 
     expect(entriesLink).toHaveAttribute('href', '/universes/UA/entries');
     expect(graphLink).toHaveAttribute('href', '/universes/UA/graph');
-    expect(issuesLink).toHaveAttribute('href', '/universes/UA/issues');
-  });
-
-  // Phase 5 Plan 05 will wire the Timeline link into Sidebar between Graph and
-  // Issues. Wave-0 stub kept as it.skip so this file passes today; Plan 05 just
-  // removes the .skip when the link lands.
-  it.skip('renders the Timeline nav link in the right position (Plan 05 fills in)', async () => {
-    vi.mocked(api).mockResolvedValue({ categories: [], uncategorizedCount: 0 });
-
-    renderSidebar('UA');
-
-    const timelineLink = await screen.findByRole('link', { name: /timeline/i });
     expect(timelineLink).toHaveAttribute('href', '/universes/UA/timeline');
+    expect(issuesLink).toHaveAttribute('href', '/universes/UA/issues');
 
     // DOM order assertion: Entries → Graph → Timeline → Issues
     const all = screen.getAllByRole('link').map((el) => el.textContent?.trim().toLowerCase());
