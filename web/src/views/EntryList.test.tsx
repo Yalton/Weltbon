@@ -130,7 +130,7 @@ describe('EntryList', () => {
     renderAt('/universes/U1/entries?q=nomatch');
 
     expect(
-      await screen.findByText(/no entries match your filters/i),
+      await screen.findByText(/nothing matches these filters/i),
     ).toBeInTheDocument();
     // Clear-filters button should be present as an action.
     expect(
@@ -147,10 +147,10 @@ describe('EntryList', () => {
 
     renderAt('/universes/U1/entries');
 
-    expect(await screen.findByText(/no entries yet/i)).toBeInTheDocument();
+    expect(await screen.findByText(/start with one idea/i)).toBeInTheDocument();
     // Create-entry CTA is now a button (opens TemplatePicker) instead of a Link.
     expect(
-      screen.getByRole('button', { name: /create your first entry/i }),
+      screen.getByRole('button', { name: /new entry/i }),
     ).toBeInTheDocument();
   });
 
@@ -167,6 +167,6 @@ describe('EntryList', () => {
     await userEvent.click(clearBtn);
 
     // After clearing, the universe-empty copy should appear (no filters → no results → default empty state).
-    expect(await screen.findByText(/no entries yet/i)).toBeInTheDocument();
+    expect(await screen.findByText(/start with one idea/i)).toBeInTheDocument();
   });
 });

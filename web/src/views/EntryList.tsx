@@ -72,7 +72,7 @@ export function EntryList() {
         <p className="text-sm text-neutral-500">Loading...</p>
       ) : isEmpty && hasActiveFilters ? (
         <EmptyState
-          title="No entries match your filters"
+          title="Nothing matches these filters"
           body="Try removing a filter or clearing the search."
           action={
             <button
@@ -80,7 +80,7 @@ export function EntryList() {
               onClick={() =>
                 updateFilters({ q: '', type: null, tags: [], category: null })
               }
-              className="rounded-md bg-[color:var(--color-accent)] text-white text-sm px-4 py-2"
+              className="bg-[color:var(--color-accent)] text-white text-sm font-medium px-4 py-2 rounded-md hover:opacity-90 focus:outline-none focus:ring-2 focus:ring-[color:var(--color-accent)] focus:ring-offset-2"
             >
               Clear filters
             </button>
@@ -88,15 +88,15 @@ export function EntryList() {
         />
       ) : isEmpty ? (
         <EmptyState
-          title="No entries yet"
-          body="Entries are the building blocks of your universe -- people, places, events, and ideas. Create your first entry to start building."
+          title="Start with one idea"
+          body="Entries are the building blocks of your universe — people, places, events, ideas. Pick a template or start from scratch."
           action={
             <button
               type="button"
               onClick={() => setPickerOpen(true)}
-              className="rounded-md bg-[color:var(--color-accent)] text-white text-sm px-4 py-2"
+              className="bg-[color:var(--color-accent)] text-white text-sm font-medium px-4 py-2 rounded-md hover:opacity-90 focus:outline-none focus:ring-2 focus:ring-[color:var(--color-accent)] focus:ring-offset-2"
             >
-              Create your first entry
+              New entry
             </button>
           }
         />

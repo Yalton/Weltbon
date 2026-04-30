@@ -32,9 +32,9 @@ describe('TimelineView', () => {
     vi.mocked(api).mockResolvedValue([]);
     renderAt();
 
-    expect(await screen.findByText(/no pins yet/i)).toBeInTheDocument();
+    expect(await screen.findByText(/pin a moment to your timeline/i)).toBeInTheDocument();
     expect(
-      screen.getByText(/open an entry and add one from its timeline section/i),
+      screen.getByText(/open any entry, then add it to the timeline/i),
     ).toBeInTheDocument();
   });
 

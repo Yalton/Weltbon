@@ -65,15 +65,15 @@ export function UniverseList() {
 
       {isEmpty ? (
         <EmptyState
-          title="No universes yet"
-          body="A universe holds the entries, links, and categories of a world you're building. Create your first one to get started."
+          title="Start a universe"
+          body="A universe is a self-contained world — its own entries, categories, and timeline. Create one to get going."
           action={
             <button
               type="button"
               onClick={() => setShowForm(true)}
-              className="rounded-md bg-[color:var(--color-accent)] text-white text-sm px-4 py-2"
+              className="bg-[color:var(--color-accent)] text-white text-sm font-medium px-4 py-2 rounded-md hover:opacity-90 focus:outline-none focus:ring-2 focus:ring-[color:var(--color-accent)] focus:ring-offset-2"
             >
-              Create your first universe
+              New universe
             </button>
           }
         />
