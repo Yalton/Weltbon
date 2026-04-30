@@ -7,6 +7,19 @@
 @theme {
   --font-sans: 'Inter', ui-sans-serif, system-ui, sans-serif;
   --color-accent: oklch(0.6 0.18 270);
+  --color-accent-soft: oklch(0.6 0.18 270 / 0.18);
+
+  --motion-dialog-enter-duration: 180ms;
+  --motion-dialog-exit-duration:  140ms;
+  --motion-popover-duration:      120ms;
+  --motion-ease-out:              cubic-bezier(0.16, 1, 0.3, 1);
+  --motion-ease-in:               cubic-bezier(0.7, 0, 0.84, 0);
+  --motion-translate-dialog:      8px;
+  --motion-translate-popover:     4px;
+
+  --sim-body-glow-radius:         3px;
+  --sim-line-opacity-dark:        0.18;
+  --sim-line-opacity-light:       0.22;
 }
 
 @variant dark (&:where(.dark, .dark *));
@@ -16,3 +29,12 @@ body { font-family: var(--font-sans); }
 
 .prose a { color: var(--color-accent); }
 .prose a:hover { text-decoration: underline; }
+
+@media (prefers-reduced-motion: reduce) {
+  *, *::before, *::after {
+    animation-duration: 0.01ms !important;
+    animation-iteration-count: 1 !important;
+    transition-duration: 0.01ms !important;
+    scroll-behavior: auto !important;
+  }
+}
