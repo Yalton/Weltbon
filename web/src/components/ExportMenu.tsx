@@ -74,7 +74,7 @@ export function ExportMenu({ universeId, fallbackFilename, onToast }: Props) {
         <DropdownMenu.Content
           align="end"
           sideOffset={4}
-          className="min-w-[220px] rounded-md border border-neutral-200 dark:border-neutral-800 bg-white dark:bg-neutral-900 p-1 shadow-lg z-50"
+          className="min-w-[220px] rounded-md border border-neutral-200 dark:border-neutral-800 bg-white dark:bg-neutral-900 p-1 shadow-lg z-50 data-[state=open]:animate-popover-in data-[state=closed]:animate-popover-out"
         >
           {FORMAT_ITEMS.map((item) => {
             const isLoading = !!loading[item.format];

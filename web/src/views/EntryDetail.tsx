@@ -38,7 +38,7 @@ export function EntryDetail() {
       <div className="mt-4">
         <div className="flex items-center gap-3">
           {entry.icon && <span className="text-[28px] leading-none">{entry.icon}</span>}
-          <h1 className="text-2xl font-semibold">{entry.title}</h1>
+          <h1 className="text-2xl font-semibold tracking-tight">{entry.title}</h1>
         </div>
         <div className="mt-1">
           <TypeBadge type={entry.entryType} />
@@ -62,7 +62,7 @@ export function EntryDetail() {
 
       {/* Summary */}
       {entry.summary && (
-        <p className="text-base text-neutral-300 dark:text-neutral-300 mt-4">
+        <p className="text-base leading-[1.6] text-neutral-700 dark:text-neutral-300 mt-4">
           {entry.summary}
         </p>
       )}
