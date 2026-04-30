@@ -44,8 +44,8 @@ export function TimelineView() {
   if (!pins || pins.length === 0) {
     return (
       <EmptyState
-        title="No pins yet"
-        body="Open an entry and add one from its Timeline section."
+        title="Pin a moment to your timeline"
+        body="Open any entry, then add it to the timeline at the position you want."
       />
     );
   }

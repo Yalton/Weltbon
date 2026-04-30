@@ -30,8 +30,8 @@ describe('UniverseList view', () => {
     vi.stubGlobal('fetch', fetchMock);
 
     renderList();
-    expect(await screen.findByText(/no universes yet/i)).toBeInTheDocument();
-    expect(screen.getByRole('button', { name: /create your first universe/i })).toBeInTheDocument();
+    expect(await screen.findByText(/start a universe/i)).toBeInTheDocument();
+    expect(screen.getByRole('button', { name: /new universe/i })).toBeInTheDocument();
   });
 
   it('creates a universe when the name form is submitted', async () => {
@@ -56,8 +56,8 @@ describe('UniverseList view', () => {
     vi.stubGlobal('fetch', fetchMock);
 
     renderList();
-    await screen.findByText(/no universes yet/i);
-    await userEvent.click(screen.getByRole('button', { name: /create your first universe/i }));
+    await screen.findByText(/start a universe/i);
+    await userEvent.click(screen.getByRole('button', { name: /new universe/i }));
     const input = await screen.findByPlaceholderText(/universe name/i);
     await userEvent.type(input, 'Post-Sundering');
     await userEvent.click(screen.getByRole('button', { name: /^create$/i }));

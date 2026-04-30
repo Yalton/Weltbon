@@ -23,6 +23,7 @@ import {
 import { CategorySidebarItem } from './CategorySidebarItem';
 import { CategoryManageDialog } from './CategoryManageDialog';
 import { ConfirmDialog } from './ConfirmDialog';
+import { EmptyState } from './EmptyState';
 import { computeNewCategoryOrder } from './categoryReorder';
 
 function SidebarNavLink({ to, children }: { to: string; children: React.ReactNode }) {
@@ -122,7 +123,32 @@ export function Sidebar({ universeId }: { universeId: string }) {
           <p className="text-sm mt-2 text-red-500">Failed to load</p>
         )}
 
-        {data && (
+        {data && data.categories.length === 0 && (
+          <div className="mt-2">
+            <EmptyState
+              title="Group your entries"
+              body="Categories let you organise entries into folders that show up here."
+              action={
+                <button
+                  type="button"
+                  onClick={openCreate}
+                  className="bg-[color:var(--color-accent)] text-white text-sm font-medium px-4 py-2 rounded-md hover:opacity-90 focus:outline-none focus:ring-2 focus:ring-[color:var(--color-accent)] focus:ring-offset-2"
+                >
+                  Add a category
+                </button>
+              }
+            />
+            <ul className="mt-2 space-y-0.5" data-testid="category-list">
+              <li>
+                <div className="flex items-center justify-between py-1 px-2 text-sm text-neutral-500">
+                  <span className="pl-5">Uncategorized</span>
+                  <span className="tabular-nums">{data.uncategorizedCount}</span>
+                </div>
+              </li>
+            </ul>
+          </div>
+        )}
+        {data && data.categories.length > 0 && (
           <DndContext
             sensors={sensors}
             collisionDetection={closestCenter}

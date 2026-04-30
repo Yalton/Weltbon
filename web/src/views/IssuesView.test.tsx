@@ -157,6 +157,6 @@ describe('IssuesView', () => {
 
     await userEvent.selectOptions(await screen.findByLabelText(/severity/i), 'critical');
 
-    expect(await screen.findByText(/no issues match/i)).toBeInTheDocument();
+    expect(await screen.findByText(/nothing matches these filters/i)).toBeInTheDocument();
   });
 });

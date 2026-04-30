@@ -88,8 +88,17 @@ export function GraphView() {
   if (data.nodes.length === 0) {
     return (
       <EmptyState
-        title="No entries yet"
-        body="Add entries and links first — the graph needs something to draw."
+        title="The graph draws itself once entries exist"
+        body="Create entries and link them — relationships show up here automatically."
+        action={
+          <button
+            type="button"
+            onClick={() => navigate(`/universes/${universeId}/entries`)}
+            className="bg-[color:var(--color-accent)] text-white text-sm font-medium px-4 py-2 rounded-md hover:opacity-90 focus:outline-none focus:ring-2 focus:ring-[color:var(--color-accent)] focus:ring-offset-2"
+          >
+            New entry
+          </button>
+        }
       />
     );
   }

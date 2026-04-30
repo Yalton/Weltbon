@@ -59,7 +59,7 @@ describe('GraphView', () => {
 
     renderGraphView();
 
-    expect(await screen.findByText(/no entries yet/i)).toBeInTheDocument();
+    expect(await screen.findByText(/the graph draws itself once entries exist/i)).toBeInTheDocument();
   });
 
   it('renders the GraphCanvas with every node when the universe is small', async () => {
