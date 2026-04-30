@@ -70,7 +70,7 @@ export function RelationCombobox({ universeId, value, onChange, placeholder }: P
       <Popover.Portal>
         <Popover.Content
           id="relation-suggestions"
-          className="w-[var(--radix-popover-trigger-width)] max-h-48 overflow-y-auto bg-white dark:bg-neutral-900 border border-neutral-200 dark:border-neutral-800 rounded-md shadow-lg z-50"
+          className="w-[var(--radix-popover-trigger-width)] max-h-48 overflow-y-auto bg-white dark:bg-neutral-900 border border-neutral-200 dark:border-neutral-800 rounded-md shadow-lg z-50 data-[state=open]:animate-popover-in data-[state=closed]:animate-popover-out"
           align="start"
           sideOffset={4}
           onOpenAutoFocus={(e) => e.preventDefault()}
