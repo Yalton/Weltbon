@@ -12,6 +12,7 @@ import { EntryEditor } from './views/EntryEditor';
 import { GraphView } from './views/GraphView';
 import { IssuesView } from './views/IssuesView';
 import { TimelineView } from './views/TimelineView';
+import Settings from './views/Settings';
 
 export default function App() {
   return (
@@ -20,10 +21,12 @@ export default function App() {
       <Route path="/login" element={<Login />} />
       <Route path="/register" element={<Register />} />
       <Route element={<ProtectedRoute />}>
-        {/* Header-only shell for the universe picker and per-universe settings. */}
+        {/* Header-only shell for the universe picker, per-universe settings, and app settings. */}
         <Route element={<Layout />}>
           <Route path="/universes" element={<UniverseList />} />
           <Route path="/universes/:id/settings" element={<UniverseSettings />} />
+          {/* /settings placed after /universes/:id/settings so the more-specific route still matches first */}
+          <Route path="/settings" element={<Settings />} />
         </Route>
         {/* Sidebar shell for everything scoped inside a single universe. */}
         <Route element={<UniverseLayout />}>
