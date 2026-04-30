@@ -238,5 +238,114 @@ describe('createCanvas2dRenderer', () => {
       // dispose is idempotent
       expect(() => renderer.dispose()).not.toThrow();
     });
+
+    // Plan 08-03: entry-body layer tests
+    it('setEntries([{id:"a", type:"concept"}]) adds 1 entry body; ambient count unchanged', () => {
+      const renderer = createCanvas2dRenderer({
+        config: DEFAULT_SIM_CONFIG,
+        lcg: createLcg(0x57454c54),
+      });
+      const canvas = makeMockCanvas();
+      renderer.init(canvas, true, false);
+      const ambientBefore = renderer.getBodies().filter(b => b.hue === 'ambient').length;
+      renderer.setEntries([{ id: 'a', type: 'concept' }]);
+      const bodies = renderer.getBodies();
+      expect(bodies.filter(b => b.hue === 'entry').length).toBe(1);
+      expect(bodies.filter(b => b.hue === 'ambient').length).toBe(ambientBefore);
+    });
+
+    it('setEntries([]) after entries removes all entry bodies; ambient count unchanged', () => {
+      const renderer = createCanvas2dRenderer({
+        config: DEFAULT_SIM_CONFIG,
+        lcg: createLcg(0x57454c54),
+      });
+      const canvas = makeMockCanvas();
+      renderer.init(canvas, true, false);
+      renderer.setEntries([{ id: 'a', type: 'concept' }, { id: 'b', type: 'entity' }]);
+      const ambientCount = renderer.getBodies().filter(b => b.hue === 'ambient').length;
+      renderer.setEntries([]);
+      expect(renderer.getBodies().filter(b => b.hue === 'entry').length).toBe(0);
+      expect(renderer.getBodies().filter(b => b.hue === 'ambient').length).toBe(ambientCount);
+    });
+
+    it('setEntries with 100 entries keeps exactly 80 entry bodies (entryCap truncation)', () => {
+      const renderer = createCanvas2dRenderer({
+        config: DEFAULT_SIM_CONFIG,
+        lcg: createLcg(0x57454c54),
+      });
+      const canvas = makeMockCanvas(1280, 720);
+      renderer.init(canvas, true, false);
+      const entries = Array.from({ length: 100 }, (_, i) => ({
+        id: `entry-${i}`,
+        type: 'concept',
+      }));
+      renderer.setEntries(entries);
+      expect(renderer.getBodies().filter(b => b.hue === 'entry').length).toBe(80);
+    });
+
+    it('setEntries is idempotent: calling with same ids does not reseed positions', () => {
+      const renderer = createCanvas2dRenderer({
+        config: DEFAULT_SIM_CONFIG,
+        lcg: createLcg(0x57454c54),
+      });
+      const canvas = makeMockCanvas(1280, 720);
+      renderer.init(canvas, true, false);
+      const entries = [{ id: 'a', type: 'concept' }];
+      renderer.setEntries(entries);
+      const body1 = { ...renderer.getBodies().find(b => b.hue === 'entry')! };
+      // Move the body to a new position to confirm it's not reseeded
+      renderer.getBodies().find(b => b.hue === 'entry')!.x = 999;
+      renderer.setEntries(entries);
+      // Same id list: body should still be at x=999 (not reseeded)
+      const body2 = renderer.getBodies().find(b => b.hue === 'entry')!;
+      expect(body2.x).toBe(999);
+    });
+
+    it('entry body has radius in range [2.5, 3.5] per UI-SPEC §5.2', () => {
+      const renderer = createCanvas2dRenderer({
+        config: DEFAULT_SIM_CONFIG,
+        lcg: createLcg(0x57454c54),
+      });
+      const canvas = makeMockCanvas(1280, 720);
+      renderer.init(canvas, true, false);
+      renderer.setEntries([{ id: 'a', type: 'concept' }]);
+      const entryBody = renderer.getBodies().find(b => b.hue === 'entry')!;
+      expect(entryBody.r).toBeGreaterThanOrEqual(2.5);
+      expect(entryBody.r).toBeLessThanOrEqual(3.5);
+    });
+
+    it('total body count is ambient + entries (additive)', () => {
+      const renderer = createCanvas2dRenderer({
+        config: DEFAULT_SIM_CONFIG,
+        lcg: createLcg(0x57454c54),
+      });
+      const canvas = makeMockCanvas(1280, 720);
+      renderer.init(canvas, true, false);
+      const ambientCount = renderer.getBodies().length;
+      renderer.setEntries([
+        { id: 'a', type: 'concept' },
+        { id: 'b', type: 'entity' },
+        { id: 'c', type: 'location' },
+      ]);
+      expect(renderer.getBodies().length).toBe(ambientCount + 3);
+    });
+
+    it('draw() calls arc() for ambient + entry bodies (83 total when 3 entries added)', () => {
+      const renderer = createCanvas2dRenderer({
+        config: DEFAULT_SIM_CONFIG,
+        lcg: createLcg(0x57454c54),
+      });
+      const canvas = makeMockCanvas(1440, 900);
+      renderer.init(canvas, true, false);
+      renderer.setEntries([
+        { id: 'a', type: 'concept' },
+        { id: 'b', type: 'entity' },
+        { id: 'c', type: 'location' },
+      ]);
+      const ctx = canvas.getContext('2d') as unknown as { arc: ReturnType<typeof vi.fn> };
+      renderer.draw();
+      // 70 ambient + 3 entry = 73 arc calls
+      expect(ctx.arc).toHaveBeenCalledTimes(73);
+    });
   });
 });

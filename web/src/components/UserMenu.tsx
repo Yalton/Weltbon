@@ -1,7 +1,7 @@
 import * as DropdownMenu from '@radix-ui/react-dropdown-menu';
 import { useAuthStore } from '../store/auth';
 import { useLogout } from '../hooks/useAuth';
-import { useNavigate } from 'react-router-dom';
+import { useNavigate, Link } from 'react-router-dom';
 
 export function UserMenu() {
   const user = useAuthStore((s) => s.user);
@@ -35,6 +35,16 @@ export function UserMenu() {
             className="px-3 py-1.5 text-sm rounded hover:bg-neutral-100 dark:hover:bg-neutral-800 cursor-pointer outline-none"
           >
             Theme: {theme === 'dark' ? 'Dark' : 'Light'}
+          </DropdownMenu.Item>
+          <DropdownMenu.Separator className="my-1 h-px bg-neutral-200 dark:bg-neutral-800" />
+          {/* Settings link — POL-03 §14.3, positioned above Log out */}
+          <DropdownMenu.Item asChild>
+            <Link
+              to="/settings"
+              className="block px-3 py-1.5 text-sm rounded hover:bg-neutral-100 dark:hover:bg-neutral-800 cursor-pointer outline-none"
+            >
+              Settings
+            </Link>
           </DropdownMenu.Item>
           <DropdownMenu.Separator className="my-1 h-px bg-neutral-200 dark:bg-neutral-800" />
           <DropdownMenu.Item

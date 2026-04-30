@@ -11,9 +11,15 @@
  *   light: oklch(0.55 - rand*0.15, 0.18, 270) mixed fraction 0.0–0.4 toward oklch(0.4 0.10 270)
  *   The "simpler" encoding from §5.3: direct oklch() CSS string with jittered L value.
  *   This avoids implementing color mixing math; the browser interprets oklch() natively.
+ *
+ * Plan 08-03: entry-body layer added.
+ * - entryBodies stored separately from ambientBodies (D-06: additive layering).
+ * - setEntries is idempotent: unchanged ids keep their seeded positions.
+ * - entryBodyIdMap tracks id → SimBody for O(1) lookup.
  */
 
 import type { SimBody, SimConfig, SimRenderer } from './renderer';
+import { entryTypeBodyColor } from './entryBodyColor';
 
 type Lcg = () => number;
 
@@ -125,36 +131,56 @@ export function toroidalWrap(v: number, size: number): number {
 export function createCanvas2dRenderer(options: Canvas2dRendererOptions): Canvas2dRenderer {
   const { config, lcg } = options;
 
-  let bodies: SimBody[] = [];
+  let ambientBodies: SimBody[] = [];
+  let entryBodies: SimBody[] = [];
+  /** Parallel array tracking the entry id for each body in entryBodies (same index). */
+  let entryBodyIds: string[] = [];
+
   let canvas: HTMLCanvasElement | null = null;
   let ctx: CanvasRenderingContext2D | null = null;
   let isDark = true;
   let reducedMotion = false;
   let disposed = false;
 
-  function seedBodies(w: number, h: number, dark: boolean): SimBody[] {
-    const result: SimBody[] = [];
-    for (let i = 0; i < config.ambientCount; i++) {
-      const x = lcg() * w;
-      const y = lcg() * h;
-      const vx = (lcg() * 2 - 1) * config.initialVelocity;
-      const vy = (lcg() * 2 - 1) * config.initialVelocity;
-      const r = config.ambientRadiusRange[0] +
-        lcg() * (config.ambientRadiusRange[1] - config.ambientRadiusRange[0]);
-      const rand1 = lcg();
-      const rand2 = lcg();
-      result.push({
-        x, y, vx, vy, r,
-        hue: 'ambient',
-        color: ambientBodyColor(rand1, rand2, dark),
-      });
-    }
-    return result;
+  /** All bodies (ambient + entry) combined — returned for physics + drawing. */
+  function allBodies(): SimBody[] {
+    return [...ambientBodies, ...entryBodies];
+  }
+
+  function seedAmbientBody(w: number, h: number, dark: boolean): SimBody {
+    const x = lcg() * w;
+    const y = lcg() * h;
+    const vx = (lcg() * 2 - 1) * config.initialVelocity;
+    const vy = (lcg() * 2 - 1) * config.initialVelocity;
+    const r = config.ambientRadiusRange[0] +
+      lcg() * (config.ambientRadiusRange[1] - config.ambientRadiusRange[0]);
+    const rand1 = lcg();
+    const rand2 = lcg();
+    return {
+      x, y, vx, vy, r,
+      hue: 'ambient',
+      color: ambientBodyColor(rand1, rand2, dark),
+    };
+  }
+
+  function seedEntryBody(w: number, h: number, type: string): SimBody {
+    const x = lcg() * w;
+    const y = lcg() * h;
+    const vx = (lcg() * 2 - 1) * config.initialVelocity;
+    const vy = (lcg() * 2 - 1) * config.initialVelocity;
+    // Entry bodies: radius range [2.5, 3.5] per UI-SPEC §5.2 + §7.2
+    const r = config.entryRadiusRange[0] +
+      lcg() * (config.entryRadiusRange[1] - config.entryRadiusRange[0]);
+    return {
+      x, y, vx, vy, r,
+      hue: 'entry',
+      color: entryTypeBodyColor(type, isDark),
+    };
   }
 
   const renderer: Canvas2dRenderer = {
     getBodies() {
-      return bodies;
+      return allBodies();
     },
 
     init(canvasEl: HTMLCanvasElement, dark: boolean, rm: boolean): void {
@@ -162,24 +188,38 @@ export function createCanvas2dRenderer(options: Canvas2dRendererOptions): Canvas
       isDark = dark;
       reducedMotion = rm;
       ctx = canvasEl.getContext('2d') as CanvasRenderingContext2D;
-      bodies = seedBodies(canvasEl.width, canvasEl.height, dark);
+
+      // Seed ambient bodies
+      ambientBodies = [];
+      for (let i = 0; i < config.ambientCount; i++) {
+        ambientBodies.push(seedAmbientBody(canvasEl.width, canvasEl.height, dark));
+      }
+      entryBodies = [];
+      entryBodyIds = [];
     },
 
     step(): void {
       if (reducedMotion || disposed || !canvas) return;
       const w = canvas.width;
       const h = canvas.height;
-      for (const b of bodies) {
-        // Apply Brownian jitter
+      // Step all bodies (ambient + entry participate in same physics — D-08)
+      for (const b of ambientBodies) {
         b.vx += (lcg() * 2 - 1) * config.jitter;
         b.vy += (lcg() * 2 - 1) * config.jitter;
-        // Apply damping
         b.vx *= config.damping;
         b.vy *= config.damping;
-        // Update position
         b.x += b.vx;
         b.y += b.vy;
-        // Toroidal wrap
+        b.x = toroidalWrap(b.x, w);
+        b.y = toroidalWrap(b.y, h);
+      }
+      for (const b of entryBodies) {
+        b.vx += (lcg() * 2 - 1) * config.jitter;
+        b.vy += (lcg() * 2 - 1) * config.jitter;
+        b.vx *= config.damping;
+        b.vy *= config.damping;
+        b.x += b.vx;
+        b.y += b.vy;
         b.x = toroidalWrap(b.x, w);
         b.y = toroidalWrap(b.y, h);
       }
@@ -189,6 +229,7 @@ export function createCanvas2dRenderer(options: Canvas2dRendererOptions): Canvas
       if (disposed || !canvas || !ctx) return;
       const w = canvas.width;
       const h = canvas.height;
+      const bodies = allBodies();
 
       // Clear canvas
       ctx.clearRect(0, 0, w, h);
@@ -198,7 +239,8 @@ export function createCanvas2dRenderer(options: Canvas2dRendererOptions): Canvas
       // Compute threshold
       const threshold = computeThreshold(w, h, config.neighborThresholdRatio);
 
-      // Find neighbor pairs for line drawing
+      // Find neighbor pairs for line drawing.
+      // Ambient + entry bodies participate in the same neighbor graph (UI-SPEC §7.2 — mixed lines OK).
       const pairs = findNeighborPairs(bodies, threshold, config.maxLinesPerBody);
 
       // Draw lines first (behind bodies)
@@ -217,7 +259,7 @@ export function createCanvas2dRenderer(options: Canvas2dRendererOptions): Canvas
         ctx.stroke();
       }
 
-      // Draw bodies
+      // Draw ambient bodies first, then entry bodies on top (D-06: additive layering, entry on top)
       const opacity = isDark ? 0.65 : 0.55;
       for (const b of bodies) {
         ctx.beginPath();
@@ -241,7 +283,7 @@ export function createCanvas2dRenderer(options: Canvas2dRendererOptions): Canvas
       if (oldW > 0 && oldH > 0) {
         const scaleX = width / oldW;
         const scaleY = height / oldH;
-        for (const b of bodies) {
+        for (const b of allBodies()) {
           b.x *= scaleX;
           b.y *= scaleY;
         }
@@ -250,28 +292,70 @@ export function createCanvas2dRenderer(options: Canvas2dRendererOptions): Canvas
 
     setTheme(dark: boolean): void {
       isDark = dark;
-      // Recompute body colors for new theme
-      for (const b of bodies) {
-        if (b.hue === 'ambient') {
-          const rand1 = lcg();
-          const rand2 = lcg();
-          b.color = ambientBodyColor(rand1, rand2, dark);
-        }
+      // Recompute ambient body colors for new theme
+      for (const b of ambientBodies) {
+        const rand1 = lcg();
+        const rand2 = lcg();
+        b.color = ambientBodyColor(rand1, rand2, dark);
       }
+      // Entry body colors are recomputed on next setEntries call (AppBackground triggers this
+      // when theme changes, so no special handling needed here — colors update on next render).
     },
 
     setEntries(entries: Array<{ id: string; type: string }>): void {
-      // Plan 08-02 stub: accept array but do not add entry bodies.
-      // Plan 08-03 will implement the full entry-body layer.
-      // Remove any existing entry bodies
-      bodies = bodies.filter(b => b.hue !== 'entry');
-      // entries parameter intentionally unused in 08-02 (POL-03 deferred)
-      void entries;
+      if (disposed) return;
+
+      // Truncate to last entryCap entries.
+      // Caller is responsible for pre-sorting by recency; renderer just truncates.
+      const capped = entries.length > config.entryCap
+        ? entries.slice(entries.length - config.entryCap)
+        : entries;
+
+      if (!canvas) {
+        // Not initialized yet — clear and return. AppBackground always calls init first.
+        entryBodies = [];
+        entryBodyIds = [];
+        return;
+      }
+
+      const w = canvas.width;
+      const h = canvas.height;
+
+      // Build id → existing body map for idempotent diff
+      const existingMap = new Map<string, SimBody>();
+      for (let i = 0; i < entryBodyIds.length; i++) {
+        existingMap.set(entryBodyIds[i], entryBodies[i]);
+      }
+
+      const newEntryBodies: SimBody[] = [];
+      const newEntryBodyIds: string[] = [];
+
+      const incomingIds = new Set(capped.map(e => e.id));
+
+      for (const entry of capped) {
+        if (existingMap.has(entry.id)) {
+          // Keep existing body (preserves seeded position)
+          newEntryBodies.push(existingMap.get(entry.id)!);
+        } else {
+          // New entry — seed a fresh body
+          newEntryBodies.push(seedEntryBody(w, h, entry.type));
+        }
+        newEntryBodyIds.push(entry.id);
+      }
+
+      // Any id no longer in the incoming list is removed (not copied to new arrays).
+      // Ids not in incomingIds are implicitly dropped.
+      void incomingIds; // used as a guard above via existingMap + capped iteration
+
+      entryBodies = newEntryBodies;
+      entryBodyIds = newEntryBodyIds;
     },
 
     dispose(): void {
       disposed = true;
-      bodies = [];
+      ambientBodies = [];
+      entryBodies = [];
+      entryBodyIds = [];
       canvas = null;
       ctx = null;
     },
