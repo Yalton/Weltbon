@@ -1,0 +1,28 @@
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 32 32" width="32" height="32">
+  <!--
+    Weltbon favicon — Sharp Geometric "W" letterform (Option A, §14.1).
+    Two merged v-chevrons, sharp ~60° angles, no curves, equal stroke weights.
+    Bold geometric fill — single closed path.
+    Fill: #7c5cff (computed approximation of oklch(0.6 0.18 270)).
+    Background: transparent. Min effective weight ≥2px in 32-unit viewBox (§4.2).
+    Readable at 16×16.
+  -->
+  <path
+    d="
+      M 2 4
+      L 7 4
+      L 11 20
+      L 16 8
+      L 21 20
+      L 25 4
+      L 30 4
+      L 24 28
+      L 19 28
+      L 16 18
+      L 13 28
+      L 8 28
+      Z
+    "
+    fill="#7c5cff"
+  />
+</svg>
