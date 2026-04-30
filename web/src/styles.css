@@ -20,6 +20,13 @@
   --sim-body-glow-radius:         3px;
   --sim-line-opacity-dark:        0.18;
   --sim-line-opacity-light:       0.22;
+
+  --animate-overlay-in:  fade-in   var(--motion-dialog-enter-duration) var(--motion-ease-out) both;
+  --animate-overlay-out: fade-out  var(--motion-dialog-exit-duration)  var(--motion-ease-in)  both;
+  --animate-dialog-in:   dialog-in var(--motion-dialog-enter-duration) var(--motion-ease-out) both;
+  --animate-dialog-out:  dialog-out var(--motion-dialog-exit-duration) var(--motion-ease-in)  both;
+  --animate-popover-in:  popover-in  var(--motion-popover-duration) var(--motion-ease-out) both;
+  --animate-popover-out: popover-out var(--motion-popover-duration) var(--motion-ease-in)  both;
 }
 
 @variant dark (&:where(.dark, .dark *));
@@ -29,6 +36,68 @@ body { font-family: var(--font-sans); }
 
 .prose a { color: var(--color-accent); }
 .prose a:hover { text-decoration: underline; }
+
+/* §2.2 prose overrides — editorial typography for entry markdown bodies */
+.prose {
+  font-size: 16px;
+  line-height: 1.7;
+  --tw-prose-body: theme(colors.neutral.800);
+  --tw-prose-headings: theme(colors.neutral.900);
+}
+.dark .prose {
+  --tw-prose-body: theme(colors.neutral.200);
+  --tw-prose-headings: theme(colors.neutral.50);
+}
+.prose p { margin-top: 0.9em; margin-bottom: 0.9em; }
+.prose h1 { font-size: 24px; font-weight: 600; margin-top: 1.6em; margin-bottom: 0.6em; }
+.prose h2 { font-size: 20px; font-weight: 600; margin-top: 1.4em; margin-bottom: 0.5em; }
+.prose h3 { font-size: 16px; font-weight: 600; margin-top: 1.2em; margin-bottom: 0.4em; }
+.prose ul, .prose ol { margin-top: 0.6em; margin-bottom: 0.6em; padding-left: 1.6em; }
+.prose li { margin-top: 0.3em; margin-bottom: 0.3em; }
+.prose code {
+  font-size: 0.9em;
+  padding: 0.1em 0.35em;
+  background: theme(colors.neutral.100);
+  border-radius: 4px;
+}
+.dark .prose code { background: theme(colors.neutral.800); }
+.prose pre {
+  font-size: 14px;
+  line-height: 1.6;
+  padding: 16px;
+  background: theme(colors.neutral.100);
+  border-radius: 6px;
+  overflow-x: auto;
+}
+.dark .prose pre { background: theme(colors.neutral.900); border: 1px solid theme(colors.neutral.800); }
+.prose pre code { background: transparent; padding: 0; }
+.prose blockquote {
+  border-left: 3px solid var(--color-accent);
+  padding-left: 16px;
+  font-style: normal;
+  color: theme(colors.neutral.600);
+}
+.dark .prose blockquote { color: theme(colors.neutral.400); }
+
+/* §8.2 dialog/popover keyframes */
+@keyframes fade-in   { from { opacity: 0 } to { opacity: 1 } }
+@keyframes fade-out  { from { opacity: 1 } to { opacity: 0 } }
+@keyframes dialog-in {
+  from { opacity: 0; transform: translate(-50%, calc(-50% + var(--motion-translate-dialog))) scale(0.98); }
+  to   { opacity: 1; transform: translate(-50%, -50%) scale(1); }
+}
+@keyframes dialog-out {
+  from { opacity: 1; transform: translate(-50%, -50%) scale(1); }
+  to   { opacity: 0; transform: translate(-50%, calc(-50% + var(--motion-translate-dialog))) scale(0.98); }
+}
+@keyframes popover-in {
+  from { opacity: 0; transform: translateY(calc(-1 * var(--motion-translate-popover))); }
+  to   { opacity: 1; transform: translateY(0); }
+}
+@keyframes popover-out {
+  from { opacity: 1; transform: translateY(0); }
+  to   { opacity: 0; transform: translateY(calc(-1 * var(--motion-translate-popover))); }
+}
 
 @media (prefers-reduced-motion: reduce) {
   *, *::before, *::after {
