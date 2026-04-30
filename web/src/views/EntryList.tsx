@@ -42,7 +42,7 @@ export function EntryList() {
       </div>
 
       <div className="flex items-center justify-between mb-6">
-        <h1 className="text-2xl font-semibold">Entries</h1>
+        <h1 className="text-2xl font-semibold tracking-tight">Entries</h1>
         <div className="flex items-center gap-2">
           <ExportMenu
             universeId={uid!}

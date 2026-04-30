@@ -10,7 +10,7 @@ export function EntryCard({ entry }: { entry: Entry }) {
         )}
       </span>
 
-      <span className="text-sm truncate font-semibold">{entry.title}</span>
+      <span className="text-base leading-[1.5] truncate font-semibold">{entry.title}</span>
 
       <TypeBadge type={entry.entryType} />
 
