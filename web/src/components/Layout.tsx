@@ -1,9 +1,11 @@
 import { Outlet, Link } from 'react-router-dom';
 import { UserMenu } from './UserMenu';
+import { AppBackground } from './AppBackground';
 
 export function Layout() {
   return (
     <div className="min-h-full flex flex-col">
+      <AppBackground />
       <header className="border-b border-neutral-200 dark:border-neutral-800 px-6 py-3 flex items-center justify-between">
         <Link to="/universes" className="font-semibold text-[color:var(--color-accent)]">
           Weltbon
