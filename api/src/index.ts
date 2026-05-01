@@ -20,6 +20,7 @@ import { requireAuth } from './middleware/auth.js';
 import { db } from './db/client.js';
 import { seedInviteCode } from './db/seedInviteCode.js';
 import { createApiRouter } from './openapi/app.js';
+import { scalarHtml } from './openapi/scalar.js';
 
 const cfg = env();
 
@@ -50,6 +51,8 @@ export function createApp() {
   apiR.route('/universes/:uid', timelineListRoutes);
   app.route('/api', apiR);
   // D-08: OpenAPI schema at /api/openapi.json
+  // D-07: Scalar docs at /api/docs — Hono-mounted so SPA fallback never intercepts
+  app.get('/api/docs', (c) => c.html(scalarHtml));
   app.get('/api/openapi.json', (c) =>
     c.json(
       apiR.getOpenAPIDocument({
