@@ -30,6 +30,16 @@ export const refreshTokens = pgTable('refresh_tokens', {
   createdAt:  timestamp('created_at').defaultNow().notNull(),
 });
 
+export const personalAccessTokens = pgTable('personal_access_tokens', {
+  id:         uuid('id').primaryKey().defaultRandom(),
+  userId:     uuid('user_id').references(() => users.id, { onDelete: 'cascade' }).notNull(),
+  label:      text('label').default('').notNull(),
+  hash:       text('hash').notNull().unique(),
+  bodySuffix: text('body_suffix').notNull(),
+  createdAt:  timestamp('created_at', { withTimezone: true }).defaultNow().notNull(),
+  lastUsedAt: timestamp('last_used_at', { withTimezone: true }),
+});
+
 export const inviteCodes = pgTable('invite_codes', {
   code:         text('code').primaryKey(),
   createdAt:    timestamp('created_at').defaultNow().notNull(),
