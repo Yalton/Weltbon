@@ -1,12 +1,19 @@
-import { Hono } from 'hono';
-import { zValidator } from '@hono/zod-validator';
-import { z } from 'zod';
+import { OpenAPIHono, createRoute, z } from '@hono/zod-openapi';
 import { and, eq, desc, isNull, sql, arrayContains, type SQL } from 'drizzle-orm';
 import { HTTPException } from 'hono/http-exception';
 import { db } from '../db/client.js';
 import { entries, links, categories, issues, issueEntries } from '../db/schema.js';
 import { requireUniverse } from '../utils/ownership.js';
 import type { AuthVariables } from '../middleware/auth.js';
+
+type AppEnv = { Variables: AuthVariables };
+
+// ─── Path param schemas ──────────────────────────────────────────────────────
+
+const uidParams = z.object({ uid: z.string().uuid() });
+const uidAndIdParams = z.object({ uid: z.string().uuid(), id: z.string().uuid() });
+
+// ─── Zod schemas ────────────────────────────────────────────────────────────
 
 const createEntrySchema = z.object({
   title: z.string().min(1).max(200),
@@ -32,6 +39,49 @@ const patchEntrySchema = z.object({
   message: 'At least one field is required',
 });
 
+const errorSchema = z.object({ error: z.string() });
+
+const entrySchema = z.object({
+  id: z.string(),
+  universeId: z.string(),
+  title: z.string(),
+  entryType: z.string(),
+  summary: z.string(),
+  tags: z.array(z.string()),
+  meta: z.record(z.string(), z.unknown()),
+  icon: z.string(),
+  categoryId: z.string().nullable(),
+  createdAt: z.string(),
+  updatedAt: z.string(),
+});
+
+const entryDetailSchema = entrySchema.extend({
+  body: z.string().optional(),
+  outboundLinks: z.array(z.object({
+    id: z.string(),
+    targetEntryId: z.string(),
+    targetTitle: z.string(),
+    targetIcon: z.string(),
+    label: z.string(),
+    bidirectional: z.boolean(),
+  })),
+  backlinks: z.array(z.object({
+    id: z.string(),
+    sourceEntryId: z.string(),
+    sourceTitle: z.string(),
+    sourceIcon: z.string(),
+    label: z.string(),
+    bidirectional: z.boolean(),
+  })),
+  issues: z.array(z.object({
+    id: z.string(),
+    title: z.string(),
+    severity: z.string(),
+  })),
+});
+
+// ─── Helper ──────────────────────────────────────────────────────────────────
+
 async function categoryBelongsToUniverse(categoryId: string, universeId: string): Promise<boolean> {
   const [cat] = await db()
     .select({ id: categories.id })
@@ -40,11 +90,211 @@ async function categoryBelongsToUniverse(categoryId: string, universeId: string)
   return !!cat;
 }
 
-export const entryRoutes = new Hono<{ Variables: AuthVariables }>()
-  // GET / -- list entries (no body field), ordered by updatedAt desc (or ts_rank DESC when ?q=)
-  // Optional filters: ?type=, ?tag=a&tag=b (AND), ?category=<uuid|uncategorized>, ?q=<fts>
-  .get('/', async (c) => {
-    const uid = c.req.param('uid');
+// ─── Route definitions ───────────────────────────────────────────────────────
+
+const listRoute = createRoute({
+  method: 'get',
+  path: '/',
+  tags: ['Entries'],
+  summary: 'List entries in a universe',
+  description: 'Returns entries for the given universe. Supports optional filters: ?type=, ?tag=, ?category=, ?q= (FTS).',
+  security: [{ bearerAuth: [] }],
+  request: {
+    params: uidParams,
+    query: z.object({
+      type: z.string().optional(),
+      tag: z.union([z.string(), z.array(z.string())]).optional(),
+      category: z.string().optional(),
+      q: z.string().optional(),
+    }),
+  },
+  responses: {
+    200: {
+      content: {
+        'application/json': {
+          schema: z.array(entrySchema),
+        },
+      },
+      description: 'List of entries (no body field in list view)',
+    },
+    400: {
+      content: { 'application/json': { schema: errorSchema } },
+      description: 'Invalid category id format',
+    },
+    401: {
+      content: { 'application/json': { schema: errorSchema } },
+      description: 'Unauthorized',
+    },
+    404: {
+      content: { 'application/json': { schema: errorSchema } },
+      description: 'Universe not found',
+    },
+    500: {
+      content: { 'application/json': { schema: errorSchema } },
+      description: 'Internal error',
+    },
+  },
+});
+
+const createRoute_ = createRoute({
+  method: 'post',
+  path: '/',
+  tags: ['Entries'],
+  summary: 'Create an entry',
+  security: [{ bearerAuth: [] }],
+  request: {
+    params: uidParams,
+    body: {
+      content: {
+        'application/json': {
+          schema: createEntrySchema,
+        },
+      },
+      required: true,
+    },
+  },
+  responses: {
+    201: {
+      content: {
+        'application/json': {
+          schema: entrySchema,
+        },
+      },
+      description: 'Entry created',
+    },
+    400: {
+      content: { 'application/json': { schema: errorSchema } },
+      description: 'Validation error, invalid entry type, or invalid category',
+    },
+    401: {
+      content: { 'application/json': { schema: errorSchema } },
+      description: 'Unauthorized',
+    },
+    404: {
+      content: { 'application/json': { schema: errorSchema } },
+      description: 'Universe not found',
+    },
+    500: {
+      content: { 'application/json': { schema: errorSchema } },
+      description: 'Internal error',
+    },
+  },
+});
+
+const getOneRoute = createRoute({
+  method: 'get',
+  path: '/{id}',
+  tags: ['Entries'],
+  summary: 'Get entry detail',
+  description: 'Returns the entry with outbound links, backlinks, and open issues.',
+  security: [{ bearerAuth: [] }],
+  request: {
+    params: uidAndIdParams,
+  },
+  responses: {
+    200: {
+      content: {
+        'application/json': {
+          schema: entryDetailSchema,
+        },
+      },
+      description: 'Entry detail with links and issues',
+    },
+    401: {
+      content: { 'application/json': { schema: errorSchema } },
+      description: 'Unauthorized',
+    },
+    404: {
+      content: { 'application/json': { schema: errorSchema } },
+      description: 'Entry not found',
+    },
+    500: {
+      content: { 'application/json': { schema: errorSchema } },
+      description: 'Internal error',
+    },
+  },
+});
+
+const patchRoute = createRoute({
+  method: 'patch',
+  path: '/{id}',
+  tags: ['Entries'],
+  summary: 'Update an entry',
+  security: [{ bearerAuth: [] }],
+  request: {
+    params: uidAndIdParams,
+    body: {
+      content: {
+        'application/json': {
+          schema: patchEntrySchema,
+        },
+      },
+      required: true,
+    },
+  },
+  responses: {
+    200: {
+      content: {
+        'application/json': {
+          schema: entrySchema,
+        },
+      },
+      description: 'Updated entry',
+    },
+    400: {
+      content: { 'application/json': { schema: errorSchema } },
+      description: 'Validation error',
+    },
+    401: {
+      content: { 'application/json': { schema: errorSchema } },
+      description: 'Unauthorized',
+    },
+    404: {
+      content: { 'application/json': { schema: errorSchema } },
+      description: 'Entry not found',
+    },
+    500: {
+      content: { 'application/json': { schema: errorSchema } },
+      description: 'Internal error',
+    },
+  },
+});
+
+const deleteRoute = createRoute({
+  method: 'delete',
+  path: '/{id}',
+  tags: ['Entries'],
+  summary: 'Delete an entry',
+  security: [{ bearerAuth: [] }],
+  request: {
+    params: uidAndIdParams,
+  },
+  responses: {
+    204: {
+      description: 'Entry deleted',
+    },
+    401: {
+      content: { 'application/json': { schema: errorSchema } },
+      description: 'Unauthorized',
+    },
+    404: {
+      content: { 'application/json': { schema: errorSchema } },
+      description: 'Entry not found',
+    },
+    500: {
+      content: { 'application/json': { schema: errorSchema } },
+      description: 'Internal error',
+    },
+  },
+});
+
+// ─── Router ──────────────────────────────────────────────────────────────────
+
+export const entryRoutes = new OpenAPIHono<AppEnv>()
+
+  // GET / -- list entries
+  .openapi(listRoute, async (c) => {
+    const { uid } = c.req.valid('param');
     const userId = c.var.userId;
     await requireUniverse(uid, userId);
 
@@ -88,7 +338,7 @@ export const entryRoutes = new Hono<{ Variables: AuthVariables }>()
         .from(entries)
         .where(and(...conditions))
         .orderBy(sql`ts_rank(search_vector, websearch_to_tsquery('english', ${q})) DESC`, desc(entries.updatedAt));
-      return c.json(rows);
+      return c.json(rows as any, 200);
     }
 
     const rows = await db()
@@ -97,22 +347,20 @@ export const entryRoutes = new Hono<{ Variables: AuthVariables }>()
       .where(and(...conditions))
       .orderBy(desc(entries.updatedAt));
 
-    return c.json(rows);
+    return c.json(rows as any, 200);
   })
 
   // POST / -- create entry
-  .post('/', zValidator('json', createEntrySchema), async (c) => {
-    const uid = c.req.param('uid');
+  .openapi(createRoute_, async (c) => {
+    const { uid } = c.req.valid('param');
     const userId = c.var.userId;
     const universe = await requireUniverse(uid, userId);
     const data = c.req.valid('json');
 
-    // Validate entryType against universe's entryTypes list
     if (!universe.entryTypes.includes(data.entryType)) {
       return c.json({ error: 'Invalid entry type' }, 400);
     }
 
-    // Validate categoryId belongs to this universe (when supplied)
     if (data.categoryId) {
       if (!(await categoryBelongsToUniverse(data.categoryId, uid))) {
         return c.json({ error: 'Category not found in universe' }, 400);
@@ -134,13 +382,12 @@ export const entryRoutes = new Hono<{ Variables: AuthVariables }>()
       })
       .returning();
 
-    return c.json(created, 201);
+    return c.json(created as any, 201);
   })
 
-  // GET /:id -- entry detail (includes body, outbound links, backlinks)
-  .get('/:id', async (c) => {
-    const uid = c.req.param('uid');
-    const entryId = c.req.param('id');
+  // GET /:id -- entry detail
+  .openapi(getOneRoute, async (c) => {
+    const { uid, id: entryId } = c.req.valid('param');
     const userId = c.var.userId;
     await requireUniverse(uid, userId);
 
@@ -153,7 +400,6 @@ export const entryRoutes = new Hono<{ Variables: AuthVariables }>()
       throw new HTTPException(404, { message: 'Entry not found' });
     }
 
-    // Outbound links (this entry is source)
     const outboundLinks = await db()
       .select({
         id: links.id,
@@ -167,7 +413,6 @@ export const entryRoutes = new Hono<{ Variables: AuthVariables }>()
       .innerJoin(entries, eq(links.targetEntryId, entries.id))
       .where(eq(links.sourceEntryId, entryId));
 
-    // Backlinks (this entry is target)
     const backlinks = await db()
       .select({
         id: links.id,
@@ -181,7 +426,6 @@ export const entryRoutes = new Hono<{ Variables: AuthVariables }>()
       .innerJoin(entries, eq(links.sourceEntryId, entries.id))
       .where(eq(links.targetEntryId, entryId));
 
-    // Open issues associated with this entry (ISS-06)
     const entryIssues = await db()
       .select({
         id: issues.id,
@@ -193,23 +437,20 @@ export const entryRoutes = new Hono<{ Variables: AuthVariables }>()
       .where(and(eq(issueEntries.entryId, entryId), eq(issues.resolved, false)))
       .orderBy(issues.createdAt);
 
-    return c.json({ ...entry, outboundLinks, backlinks, issues: entryIssues });
+    return c.json({ ...entry, outboundLinks, backlinks, issues: entryIssues } as any, 200);
   })
 
   // PATCH /:id -- update entry
-  .patch('/:id', zValidator('json', patchEntrySchema), async (c) => {
-    const uid = c.req.param('uid');
-    const entryId = c.req.param('id');
+  .openapi(patchRoute, async (c) => {
+    const { uid, id: entryId } = c.req.valid('param');
     const userId = c.var.userId;
     const universe = await requireUniverse(uid, userId);
     const patch = c.req.valid('json');
 
-    // If entryType is being changed, validate against universe's types
     if (patch.entryType && !universe.entryTypes.includes(patch.entryType)) {
       return c.json({ error: 'Invalid entry type' }, 400);
     }
 
-    // When a non-null categoryId is supplied, ensure it belongs to this universe
     if (typeof patch.categoryId === 'string') {
       if (!(await categoryBelongsToUniverse(patch.categoryId, uid))) {
         return c.json({ error: 'Category not found in universe' }, 400);
@@ -226,13 +467,12 @@ export const entryRoutes = new Hono<{ Variables: AuthVariables }>()
       throw new HTTPException(404, { message: 'Entry not found' });
     }
 
-    return c.json(updated);
+    return c.json(updated as any, 200);
   })
 
   // DELETE /:id -- delete entry
-  .delete('/:id', async (c) => {
-    const uid = c.req.param('uid');
-    const entryId = c.req.param('id');
+  .openapi(deleteRoute, async (c) => {
+    const { uid, id: entryId } = c.req.valid('param');
     const userId = c.var.userId;
     await requireUniverse(uid, userId);
 
