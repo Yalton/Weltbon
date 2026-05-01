@@ -19,6 +19,7 @@ import { timelinePinRoutes, timelineListRoutes } from './routes/timeline.js';
 import { requireAuth } from './middleware/auth.js';
 import { db } from './db/client.js';
 import { seedInviteCode } from './db/seedInviteCode.js';
+import { createApiRouter } from './openapi/app.js';
 
 const cfg = env();
 
@@ -31,7 +32,7 @@ export function createApp() {
     origin: (origin) => origin,
     credentials: true,
   }));
-  const apiR = new Hono();
+  const apiR = createApiRouter();
   apiR.route('/auth/tokens', tokenRoutes);
   apiR.route('/auth', authRoutes);
   apiR.use('/universes/*', requireAuth);
@@ -48,6 +49,24 @@ export function createApp() {
   apiR.route('/universes/:uid/export', exportRoutes);
   apiR.route('/universes/:uid', timelineListRoutes);
   app.route('/api', apiR);
+  // D-08: OpenAPI schema at /api/openapi.json
+  app.get('/api/openapi.json', (c) =>
+    c.json(
+      apiR.getOpenAPIDocument({
+        openapi: '3.0.0',
+        info: {
+          title: 'Weltbon API',
+          version: '1.0.0',
+          description:
+            'Weltbon is a free, self-hostable worldbuilding API. ' +
+            'All authenticated endpoints accept either a JWT access token or a Personal Access Token (PAT). ' +
+            'The PAT meta-API (/api/auth/tokens) is JWT-only (D-13). ' +
+            'Rate limiting is not enforced in v2.0 — the operator owns the host.',
+        },
+        servers: [{ url: '/api', description: 'Weltbon API' }],
+      })
+    )
+  );
   app.get('/health', (c) => c.json({ ok: true }));
 
   app.use('/assets/*', serveStatic({ root: './web-dist' }));
