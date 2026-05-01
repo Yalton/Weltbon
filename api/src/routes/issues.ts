@@ -1,12 +1,19 @@
-import { Hono } from 'hono';
-import { zValidator } from '@hono/zod-validator';
-import { z } from 'zod';
+import { OpenAPIHono, createRoute, z } from '@hono/zod-openapi';
 import { and, eq, desc, inArray, type SQL } from 'drizzle-orm';
 import { HTTPException } from 'hono/http-exception';
 import { db } from '../db/client.js';
 import { issues, issueEntries, entries } from '../db/schema.js';
 import { requireUniverse } from '../utils/ownership.js';
 import type { AuthVariables } from '../middleware/auth.js';
+
+type AppEnv = { Variables: AuthVariables };
+
+// ─── Path param schemas ──────────────────────────────────────────────────────
+
+const uidParams = z.object({ uid: z.string().uuid() });
+const uidAndIdParams = z.object({ uid: z.string().uuid(), id: z.string().uuid() });
+
+// ─── Zod schemas ─────────────────────────────────────────────────────────────
 
 const SEVERITIES = ['critical', 'major', 'moderate', 'minor'] as const;
 
@@ -28,6 +35,28 @@ const patchSchema = z
   .refine((v) => Object.values(v).some((x) => x !== undefined), {
     message: 'At least one field is required',
   });
+
+const issueEntrySchema = z.object({
+  id: z.string(),
+  title: z.string(),
+  icon: z.string(),
+});
+
+const issueSchema = z.object({
+  id: z.string(),
+  universeId: z.string(),
+  title: z.string(),
+  description: z.string(),
+  severity: z.enum(SEVERITIES),
+  resolved: z.boolean(),
+  createdAt: z.string().or(z.date()),
+  updatedAt: z.string().or(z.date()),
+  entries: z.array(issueEntrySchema).optional(),
+});
+
+const errorSchema = z.object({ error: z.string() });
+
+// ─── Helpers ─────────────────────────────────────────────────────────────────
 
 /**
  * Assert every entryId belongs to the given universe. Uses a transactional reader
@@ -71,10 +100,194 @@ async function fetchAssociationsByIssue(issueIds: string[]): Promise<Map<string,
   return grouped;
 }
 
-export const issueRoutes = new Hono<{ Variables: AuthVariables }>()
+// ─── Route definitions ───────────────────────────────────────────────────────
+
+const listIssuesRoute = createRoute({
+  method: 'get',
+  path: '/',
+  tags: ['Issues'],
+  summary: 'List issues in a universe',
+  description: 'Returns all issues with per-issue entries[]. Supports optional ?severity= and ?resolved= filters.',
+  security: [{ bearerAuth: [] }],
+  request: {
+    params: uidParams,
+    query: z.object({
+      severity: z.enum(SEVERITIES).optional(),
+      resolved: z.enum(['true', 'false']).optional(),
+    }),
+  },
+  responses: {
+    200: {
+      content: { 'application/json': { schema: z.array(issueSchema) } },
+      description: 'List of issues',
+    },
+    400: {
+      content: { 'application/json': { schema: errorSchema } },
+      description: 'Invalid filter',
+    },
+    401: {
+      content: { 'application/json': { schema: errorSchema } },
+      description: 'Unauthorized',
+    },
+    404: {
+      content: { 'application/json': { schema: errorSchema } },
+      description: 'Universe not found',
+    },
+    500: {
+      content: { 'application/json': { schema: errorSchema } },
+      description: 'Internal error',
+    },
+  },
+});
+
+const createIssueRoute = createRoute({
+  method: 'post',
+  path: '/',
+  tags: ['Issues'],
+  summary: 'Create an issue',
+  security: [{ bearerAuth: [] }],
+  request: {
+    params: uidParams,
+    body: {
+      content: {
+        'application/json': {
+          schema: createSchema,
+        },
+      },
+      required: true,
+    },
+  },
+  responses: {
+    201: {
+      content: { 'application/json': { schema: issueSchema } },
+      description: 'Issue created',
+    },
+    400: {
+      content: { 'application/json': { schema: errorSchema } },
+      description: 'Validation error',
+    },
+    401: {
+      content: { 'application/json': { schema: errorSchema } },
+      description: 'Unauthorized',
+    },
+    404: {
+      content: { 'application/json': { schema: errorSchema } },
+      description: 'Universe not found',
+    },
+    500: {
+      content: { 'application/json': { schema: errorSchema } },
+      description: 'Internal error',
+    },
+  },
+});
+
+const getIssueRoute = createRoute({
+  method: 'get',
+  path: '/{id}',
+  tags: ['Issues'],
+  summary: 'Get a single issue',
+  security: [{ bearerAuth: [] }],
+  request: {
+    params: uidAndIdParams,
+  },
+  responses: {
+    200: {
+      content: { 'application/json': { schema: issueSchema } },
+      description: 'Issue with associated entries',
+    },
+    401: {
+      content: { 'application/json': { schema: errorSchema } },
+      description: 'Unauthorized',
+    },
+    404: {
+      content: { 'application/json': { schema: errorSchema } },
+      description: 'Issue not found',
+    },
+    500: {
+      content: { 'application/json': { schema: errorSchema } },
+      description: 'Internal error',
+    },
+  },
+});
+
+const patchIssueRoute = createRoute({
+  method: 'patch',
+  path: '/{id}',
+  tags: ['Issues'],
+  summary: 'Update an issue',
+  description: 'Updates scalar fields. When entryIds is supplied (including []), replaces all associations atomically.',
+  security: [{ bearerAuth: [] }],
+  request: {
+    params: uidAndIdParams,
+    body: {
+      content: {
+        'application/json': {
+          schema: patchSchema,
+        },
+      },
+      required: true,
+    },
+  },
+  responses: {
+    200: {
+      content: { 'application/json': { schema: issueSchema } },
+      description: 'Updated issue',
+    },
+    400: {
+      content: { 'application/json': { schema: errorSchema } },
+      description: 'Validation error',
+    },
+    401: {
+      content: { 'application/json': { schema: errorSchema } },
+      description: 'Unauthorized',
+    },
+    404: {
+      content: { 'application/json': { schema: errorSchema } },
+      description: 'Issue not found',
+    },
+    500: {
+      content: { 'application/json': { schema: errorSchema } },
+      description: 'Internal error',
+    },
+  },
+});
+
+const deleteIssueRoute = createRoute({
+  method: 'delete',
+  path: '/{id}',
+  tags: ['Issues'],
+  summary: 'Delete an issue',
+  description: 'Deletes the issue and cascades to remove all issueEntries associations.',
+  security: [{ bearerAuth: [] }],
+  request: {
+    params: uidAndIdParams,
+  },
+  responses: {
+    204: {
+      description: 'Issue deleted',
+    },
+    401: {
+      content: { 'application/json': { schema: errorSchema } },
+      description: 'Unauthorized',
+    },
+    404: {
+      content: { 'application/json': { schema: errorSchema } },
+      description: 'Issue not found',
+    },
+    500: {
+      content: { 'application/json': { schema: errorSchema } },
+      description: 'Internal error',
+    },
+  },
+});
+
+// ─── Router ──────────────────────────────────────────────────────────────────
+
+export const issueRoutes = new OpenAPIHono<AppEnv>()
+
   // GET / -- list issues, with per-issue entries[]; optional ?severity= + ?resolved=
-  .get('/', async (c) => {
-    const uid = c.req.param('uid');
+  .openapi(listIssuesRoute, async (c) => {
+    const { uid } = c.req.valid('param');
     const userId = c.var.userId;
     await requireUniverse(uid, userId);
 
@@ -107,13 +320,14 @@ export const issueRoutes = new Hono<{ Variables: AuthVariables }>()
       issueRows.map((i) => ({
         ...i,
         entries: grouped.get(i.id) ?? [],
-      }))
+      })) as any,
+      200
     );
   })
 
   // POST / -- create issue (+ associations) atomically
-  .post('/', zValidator('json', createSchema), async (c) => {
-    const uid = c.req.param('uid');
+  .openapi(createIssueRoute, async (c) => {
+    const { uid } = c.req.valid('param');
     const userId = c.var.userId;
     await requireUniverse(uid, userId);
     const data = c.req.valid('json');
@@ -137,13 +351,12 @@ export const issueRoutes = new Hono<{ Variables: AuthVariables }>()
       return created;
     });
 
-    return c.json({ ...result, entryIds: data.entryIds }, 201);
+    return c.json({ ...result, entryIds: data.entryIds } as any, 201);
   })
 
   // GET /:id -- single issue with entries[]
-  .get('/:id', async (c) => {
-    const uid = c.req.param('uid');
-    const issueId = c.req.param('id');
+  .openapi(getIssueRoute, async (c) => {
+    const { uid, id: issueId } = c.req.valid('param');
     const userId = c.var.userId;
     await requireUniverse(uid, userId);
 
@@ -157,13 +370,12 @@ export const issueRoutes = new Hono<{ Variables: AuthVariables }>()
     }
 
     const grouped = await fetchAssociationsByIssue([row.id]);
-    return c.json({ ...row, entries: grouped.get(row.id) ?? [] });
+    return c.json({ ...row, entries: grouped.get(row.id) ?? [] } as any, 200);
   })
 
   // PATCH /:id -- update fields; when entryIds supplied (incl. []) replace associations
-  .patch('/:id', zValidator('json', patchSchema), async (c) => {
-    const uid = c.req.param('uid');
-    const issueId = c.req.param('id');
+  .openapi(patchIssueRoute, async (c) => {
+    const { uid, id: issueId } = c.req.valid('param');
     const userId = c.var.userId;
     await requireUniverse(uid, userId);
     const patch = c.req.valid('json');
@@ -204,13 +416,12 @@ export const issueRoutes = new Hono<{ Variables: AuthVariables }>()
       return row;
     });
 
-    return c.json(updated);
+    return c.json(updated as any, 200);
   })
 
   // DELETE /:id -- cascade removes issue_entries rows
-  .delete('/:id', async (c) => {
-    const uid = c.req.param('uid');
-    const issueId = c.req.param('id');
+  .openapi(deleteIssueRoute, async (c) => {
+    const { uid, id: issueId } = c.req.valid('param');
     const userId = c.var.userId;
     await requireUniverse(uid, userId);
 
