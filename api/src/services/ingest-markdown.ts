@@ -466,3 +466,342 @@ export function isMarkdownFile(filename: string): boolean {
 export function isHiddenPath(path: string): boolean {
   return path.split('/').some(seg => seg.startsWith('.'));
 }
+
+// ---------------------------------------------------------------------------
+// Wikilink types + scanWikilinks — D-17 / D-17b
+// ---------------------------------------------------------------------------
+
+/**
+ * A single wikilink occurrence extracted during Pass 2.
+ *
+ * `target`  — Resolution target after stripping `|alias`, `#heading`, `.md`.
+ * `label`   — Display text (right side of `|`, else `target`).
+ * `raw`     — Original `[[...]]` text as found in the body.
+ */
+export type Wikilink = {
+  target: string;
+  label: string;
+  raw: string;
+};
+
+/**
+ * Extract every wikilink from a markdown body, skipping fenced code blocks
+ * and inline code spans (D-17b).
+ *
+ * Implementation:
+ *   1. Walk body via `walkBodyExcludingCode` — only text nodes outside code
+ *      are visited. This is the SAME helper used by inferTags, so code-block
+ *      exclusion is guaranteed consistent.
+ *   2. Per text chunk, apply regex `/\[\[([^\]\n]+?)\]\]/g`.
+ *      The negated char class `[^\]\n]+?` is bounded by both `\]` (closing
+ *      bracket) and `\n` (newline), so no multi-line greedy match is possible
+ *      and the pattern cannot backtrack catastrophically (T-11-02b).
+ *   3. For each match, parse the inner text:
+ *      a. Split on first `|`  → left = ref, right = explicit label.
+ *      b. On ref, split on first `#` → keep left side (strip heading anchor).
+ *      c. Strip case-insensitive trailing `.md` from ref (D-04).
+ *      d. Trim ref. If empty after trimming, skip (malformed `[[]]`).
+ *      e. label = explicit right side if present, else ref (post-strip).
+ *
+ * Security:
+ *   T-11-02a / T-11-02b: regex pattern is non-backtracking; body size is
+ *   bounded upstream by the 1 MB per-file cap from D-15 (endpoint's job).
+ *
+ * @param body  Markdown body string (without frontmatter block).
+ */
+export function scanWikilinks(body: string): Wikilink[] {
+  // Regex: non-greedy, no-newline, bounded by ] — safe from backtracking (T-11-02b)
+  const WIKILINK_RE = /\[\[([^\]\n]+?)\]\]/g;
+  const results: Wikilink[] = [];
+
+  walkBodyExcludingCode(body, (textValue) => {
+    let match: RegExpExecArray | null;
+    WIKILINK_RE.lastIndex = 0;
+    while ((match = WIKILINK_RE.exec(textValue)) !== null) {
+      const raw = match[0];
+      const inner = match[1];
+
+      // a. Split on first `|` for alias
+      const pipeIdx = inner.indexOf('|');
+      let ref: string;
+      let label: string | undefined;
+      if (pipeIdx !== -1) {
+        ref = inner.slice(0, pipeIdx);
+        label = inner.slice(pipeIdx + 1);
+      } else {
+        ref = inner;
+        label = undefined;
+      }
+
+      // b. Strip heading anchor: split on first `#`
+      const hashIdx = ref.indexOf('#');
+      if (hashIdx !== -1) {
+        ref = ref.slice(0, hashIdx);
+      }
+
+      // c. Strip trailing `.md` (case-insensitive) (D-04)
+      ref = ref.replace(/\.md$/i, '');
+
+      // d. Trim ref; skip empty/malformed
+      ref = ref.trim();
+      if (ref.length === 0) continue;
+
+      // e. Default label = ref (post-strip) if no explicit alias
+      const finalLabel = label !== undefined ? label : ref;
+
+      results.push({ target: ref, label: finalLabel, raw });
+    }
+  });
+
+  return results;
+}
+
+// ---------------------------------------------------------------------------
+// ParseBatchContext + parseBatch — D-17a two-pass orchestrator
+// ---------------------------------------------------------------------------
+
+/**
+ * Caller-supplied context. The endpoint (11-03) is responsible for the DB reads
+ * before calling parseBatch — this service performs NO IO.
+ */
+export type ParseBatchContext = {
+  /** Universe id; echoed into preview metadata only. */
+  universeId: string;
+  /** The universe's valid entry types (case-preserved). */
+  validTypes: string[];
+  /**
+   * Existing entries in the target universe. Used for cross-batch wikilink
+   * resolution: a `[[Target]]` that doesn't match a same-batch title falls
+   * through to this list (case-insensitive title match). (D-06)
+   */
+  existingEntries: Array<{ id: string; title: string }>;
+  /**
+   * Existing category names in the target universe. Used to flag new
+   * categories on parsed entries (D-07a). Case-sensitive comparison.
+   */
+  existingCategories: string[];
+};
+
+/**
+ * Omit keys from an object by returning a shallow copy without them.
+ * Used to strip recognized frontmatter fields from `meta`.
+ */
+function omitKeys(obj: Record<string, unknown>, keys: string[]): Record<string, unknown> {
+  const keySet = new Set(keys);
+  const result: Record<string, unknown> = {};
+  for (const [k, v] of Object.entries(obj)) {
+    if (!keySet.has(k)) result[k] = v;
+  }
+  return result;
+}
+
+/**
+ * Two-pass batch orchestrator (D-17a). Pure function; no side effects; no IO.
+ *
+ * Pass 1 — Per-file inference:
+ *   For each .md file (hidden paths and non-md silently partitioned out), run all
+ *   inference helpers and build `titleMap: Map<lowercased_title, ParsedRecord>`.
+ *   Duplicate titles (D-05): first-encountered wins; collisions are tracked in a Set.
+ *
+ * Pass 2 — Wikilink resolution:
+ *   For each parsed file, call `scanWikilinks(body)` then resolve each link:
+ *     1. Batch-level lookup (titleMap) — case-insensitive → target_path.
+ *     2. Existing-universe lookup (ctx.existingEntries) — case-insensitive → target_id.
+ *     3. Unresolved → resolved=false + warning text (D-06).
+ *
+ * Output is sorted by `path` for determinism (T-11-02d).
+ *
+ * Security (T-11-04): warning messages use file path as provided by the caller
+ * (relative, never an absolute server path); no FS operations occur here.
+ *
+ * @param files  Array of decoded file inputs.
+ * @param ctx    Caller-supplied context (universe id, valid types, existing entries/categories).
+ */
+export function parseBatch(files: FileInput[], ctx: ParseBatchContext): IngestPreview {
+  // -------------------------------------------------------------------------
+  // Step A — Pre-filter
+  // -------------------------------------------------------------------------
+  let hiddenCount = 0;
+  let nonMdCount = 0;
+  const mdFiles: FileInput[] = [];
+
+  for (const file of files) {
+    if (isHiddenPath(file.path)) {
+      hiddenCount++;
+      continue;
+    }
+    if (!isMarkdownFile(file.path)) {
+      nonMdCount++;
+      continue;
+    }
+    mdFiles.push(file);
+  }
+
+  // -------------------------------------------------------------------------
+  // Step B — Pass 1 (per-file inference + title map)
+  // -------------------------------------------------------------------------
+  type ParsedRecord = {
+    file: FileInput;
+    filename: string;
+    title: string;
+    type: string;
+    tags: string[];
+    category: string | null;
+    body: string;
+    meta: Record<string, unknown>;
+  };
+
+  const parsedRecords: ParsedRecord[] = [];
+  // titleMap: lowercased_title → first-encountered ParsedRecord (D-05)
+  const titleMap = new Map<string, ParsedRecord>();
+  // collision titles: titles that appeared more than once
+  const collisionTitles = new Set<string>();
+
+  for (const file of mdFiles) {
+    const content = typeof file.content === 'string' ? file.content : String(file.content);
+    const { data, body } = parseFrontmatter(content);
+    const filename = file.path.split('/').pop()!;
+    const title = inferTitle(data, body, filename);
+    const type = inferType(data, file.path, ctx.validTypes);
+    const tags = inferTags(data, body);
+    const category = inferCategory(file.path);
+    const meta = omitKeys(data, ['title', 'type', 'tags']);
+
+    const record: ParsedRecord = { file, filename, title, type, tags, category, body, meta };
+    parsedRecords.push(record);
+
+    const key = title.toLowerCase();
+    if (titleMap.has(key)) {
+      // D-05: collision — mark the title; first-encountered stays in map
+      collisionTitles.add(key);
+    } else {
+      titleMap.set(key, record);
+    }
+  }
+
+  // -------------------------------------------------------------------------
+  // Step C — Pass 2 (wikilink resolution per file)
+  // -------------------------------------------------------------------------
+  // Build existing-universe lookup (case-insensitive)
+  const existingByTitle = new Map<string, { id: string; title: string }>();
+  for (const entry of ctx.existingEntries) {
+    existingByTitle.set(entry.title.toLowerCase(), entry);
+  }
+
+  type EntryWithLinks = ParsedFile & {
+    linksOut: Array<{
+      target: string;
+      target_path?: string;
+      target_id?: string;
+      label: string;
+      resolved: boolean;
+      warning?: string;
+    }>;
+    categoryIsNew?: boolean;
+    titleCollision?: boolean;
+  };
+
+  let unresolvedCount = 0;
+  const entries: EntryWithLinks[] = [];
+
+  for (const rec of parsedRecords) {
+    const links = scanWikilinks(rec.body);
+
+    const linksOut = links.map(link => {
+      const key = link.target.toLowerCase();
+
+      // 1. Same-batch resolution (D-01)
+      const batchHit = titleMap.get(key);
+      if (batchHit) {
+        return {
+          target: link.target,
+          target_path: batchHit.file.path,
+          label: link.label,
+          resolved: true as const,
+        };
+      }
+
+      // 2. Existing-universe resolution (D-06)
+      const existingHit = existingByTitle.get(key);
+      if (existingHit) {
+        return {
+          target: link.target,
+          target_id: existingHit.id,
+          label: link.label,
+          resolved: true as const,
+        };
+      }
+
+      // 3. Unresolved (D-06)
+      unresolvedCount++;
+      return {
+        target: link.target,
+        label: link.label,
+        resolved: false as const,
+        warning: `Target '${link.target}' not found in batch or existing universe`,
+      };
+    });
+
+    // D-07a: category-is-new flag
+    const categoryIsNew =
+      rec.category != null && !ctx.existingCategories.includes(rec.category);
+
+    // D-05: title collision flag
+    const titleCollision = collisionTitles.has(rec.title.toLowerCase());
+
+    entries.push({
+      filename: rec.filename,
+      path: rec.file.path,
+      title: rec.title,
+      type: rec.type,
+      tags: rec.tags,
+      category: rec.category,
+      body: rec.body,
+      meta: rec.meta,
+      linksOut,
+      categoryIsNew,
+      titleCollision,
+    });
+  }
+
+  // -------------------------------------------------------------------------
+  // Step D — Warnings + summary
+  // -------------------------------------------------------------------------
+  const warnings: Array<{ file: string; message: string }> = [];
+
+  // D-05: one warning per file in each collision class
+  for (const collisionKey of collisionTitles) {
+    // Gather all records with this (lowercased) title
+    const collided = parsedRecords.filter(
+      r => r.title.toLowerCase() === collisionKey
+    );
+    // The canonical title from the first-encountered (titleMap winner)
+    const canonicalTitle = titleMap.get(collisionKey)?.title ?? collisionKey;
+    for (const rec of collided) {
+      warnings.push({
+        file: rec.filename,
+        message: `Duplicate title '${canonicalTitle}' — multiple files share this title; first match used.`,
+      });
+    }
+  }
+
+  // -------------------------------------------------------------------------
+  // Step E — Sort entries by path for determinism (T-11-02d)
+  // -------------------------------------------------------------------------
+  entries.sort((a, b) => a.path.localeCompare(b.path));
+
+  // -------------------------------------------------------------------------
+  // Step F — Return
+  // -------------------------------------------------------------------------
+  return {
+    summary: {
+      markdown_files_parsed: mdFiles.length,
+      non_markdown_files_skipped: nonMdCount,
+      hidden_paths_filtered: hiddenCount,
+      duplicate_titles_in_batch: collisionTitles.size,
+      unresolved_wikilinks: unresolvedCount,
+    },
+    entries,
+    warnings,
+  };
+}
