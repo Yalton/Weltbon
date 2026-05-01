@@ -1,12 +1,19 @@
-import { Hono } from 'hono';
-import { zValidator } from '@hono/zod-validator';
-import { z } from 'zod';
+import { OpenAPIHono, createRoute, z } from '@hono/zod-openapi';
 import { and, eq, isNull, sql } from 'drizzle-orm';
 import { HTTPException } from 'hono/http-exception';
 import { db } from '../db/client.js';
 import { categories, entries } from '../db/schema.js';
 import { requireUniverse } from '../utils/ownership.js';
 import type { AuthVariables } from '../middleware/auth.js';
+
+type AppEnv = { Variables: AuthVariables };
+
+// ─── Path param schemas ──────────────────────────────────────────────────────
+
+const uidParams = z.object({ uid: z.string().uuid() });
+const uidAndIdParams = z.object({ uid: z.string().uuid(), id: z.string().uuid() });
+
+// ─── Zod schemas ────────────────────────────────────────────────────────────
 
 const createSchema = z.object({
   label: z.string().min(1).max(80),
@@ -26,10 +33,233 @@ const reorderSchema = z.object({
   orderedIds: z.array(z.string().uuid()).min(1),
 });
 
-export const categoryRoutes = new Hono<{ Variables: AuthVariables }>()
+const categorySchema = z.object({
+  id: z.string(),
+  universeId: z.string(),
+  label: z.string(),
+  icon: z.string(),
+  sortOrder: z.number(),
+});
+
+const categoryWithCountSchema = categorySchema.extend({
+  entryCount: z.number(),
+});
+
+const listResponseSchema = z.object({
+  categories: z.array(categoryWithCountSchema),
+  uncategorizedCount: z.number(),
+});
+
+const errorSchema = z.object({ error: z.string() });
+
+// ─── Route definitions ───────────────────────────────────────────────────────
+
+const listRoute = createRoute({
+  method: 'get',
+  path: '/',
+  tags: ['Categories'],
+  summary: 'List categories in a universe',
+  description: 'Returns all categories with per-category entry counts plus the uncategorized count.',
+  security: [{ bearerAuth: [] }],
+  request: {
+    params: uidParams,
+  },
+  responses: {
+    200: {
+      content: {
+        'application/json': {
+          schema: listResponseSchema,
+        },
+      },
+      description: 'Categories with entry counts',
+    },
+    401: {
+      content: { 'application/json': { schema: errorSchema } },
+      description: 'Unauthorized',
+    },
+    404: {
+      content: { 'application/json': { schema: errorSchema } },
+      description: 'Universe not found',
+    },
+    500: {
+      content: { 'application/json': { schema: errorSchema } },
+      description: 'Internal error',
+    },
+  },
+});
+
+const createRoute_ = createRoute({
+  method: 'post',
+  path: '/',
+  tags: ['Categories'],
+  summary: 'Create a category',
+  security: [{ bearerAuth: [] }],
+  request: {
+    params: uidParams,
+    body: {
+      content: {
+        'application/json': {
+          schema: createSchema,
+        },
+      },
+      required: true,
+    },
+  },
+  responses: {
+    201: {
+      content: {
+        'application/json': {
+          schema: categorySchema,
+        },
+      },
+      description: 'Category created',
+    },
+    400: {
+      content: { 'application/json': { schema: errorSchema } },
+      description: 'Validation error',
+    },
+    401: {
+      content: { 'application/json': { schema: errorSchema } },
+      description: 'Unauthorized',
+    },
+    404: {
+      content: { 'application/json': { schema: errorSchema } },
+      description: 'Universe not found',
+    },
+    500: {
+      content: { 'application/json': { schema: errorSchema } },
+      description: 'Internal error',
+    },
+  },
+});
+
+const reorderRoute = createRoute({
+  method: 'put',
+  path: '/reorder',
+  tags: ['Categories'],
+  summary: 'Reorder categories',
+  description: 'Rewrites sort_order by the index position of orderedIds. All IDs must belong to the universe.',
+  security: [{ bearerAuth: [] }],
+  request: {
+    params: uidParams,
+    body: {
+      content: {
+        'application/json': {
+          schema: reorderSchema,
+        },
+      },
+      required: true,
+    },
+  },
+  responses: {
+    200: {
+      content: {
+        'application/json': {
+          schema: z.object({ ok: z.boolean() }),
+        },
+      },
+      description: 'Reorder successful',
+    },
+    400: {
+      content: { 'application/json': { schema: errorSchema } },
+      description: 'One or more category ids do not belong to this universe',
+    },
+    401: {
+      content: { 'application/json': { schema: errorSchema } },
+      description: 'Unauthorized',
+    },
+    404: {
+      content: { 'application/json': { schema: errorSchema } },
+      description: 'Universe not found',
+    },
+    500: {
+      content: { 'application/json': { schema: errorSchema } },
+      description: 'Internal error',
+    },
+  },
+});
+
+const patchRoute = createRoute({
+  method: 'patch',
+  path: '/{id}',
+  tags: ['Categories'],
+  summary: 'Update a category',
+  security: [{ bearerAuth: [] }],
+  request: {
+    params: uidAndIdParams,
+    body: {
+      content: {
+        'application/json': {
+          schema: patchSchema,
+        },
+      },
+      required: true,
+    },
+  },
+  responses: {
+    200: {
+      content: {
+        'application/json': {
+          schema: categorySchema,
+        },
+      },
+      description: 'Updated category',
+    },
+    400: {
+      content: { 'application/json': { schema: errorSchema } },
+      description: 'Validation error',
+    },
+    401: {
+      content: { 'application/json': { schema: errorSchema } },
+      description: 'Unauthorized',
+    },
+    404: {
+      content: { 'application/json': { schema: errorSchema } },
+      description: 'Category not found',
+    },
+    500: {
+      content: { 'application/json': { schema: errorSchema } },
+      description: 'Internal error',
+    },
+  },
+});
+
+const deleteRoute = createRoute({
+  method: 'delete',
+  path: '/{id}',
+  tags: ['Categories'],
+  summary: 'Delete a category',
+  description: 'Deletes a category. Entries with this category get category_id = NULL via FK cascade.',
+  security: [{ bearerAuth: [] }],
+  request: {
+    params: uidAndIdParams,
+  },
+  responses: {
+    204: {
+      description: 'Category deleted',
+    },
+    401: {
+      content: { 'application/json': { schema: errorSchema } },
+      description: 'Unauthorized',
+    },
+    404: {
+      content: { 'application/json': { schema: errorSchema } },
+      description: 'Category not found',
+    },
+    500: {
+      content: { 'application/json': { schema: errorSchema } },
+      description: 'Internal error',
+    },
+  },
+});
+
+// ─── Router ──────────────────────────────────────────────────────────────────
+
+export const categoryRoutes = new OpenAPIHono<AppEnv>()
+
   // GET / -- list categories with per-category entryCount + uncategorizedCount
-  .get('/', async (c) => {
-    const uid = c.req.param('uid');
+  .openapi(listRoute, async (c) => {
+    const { uid } = c.req.valid('param');
     const userId = c.var.userId;
     await requireUniverse(uid, userId);
 
@@ -52,12 +282,13 @@ export const categoryRoutes = new Hono<{ Variables: AuthVariables }>()
       .from(entries)
       .where(and(eq(entries.universeId, uid), isNull(entries.categoryId)));
 
-    return c.json({ categories: rows, uncategorizedCount });
+    return c.json({ categories: rows as any, uncategorizedCount }, 200);
   })
 
   // POST / -- create category; sort_order = max(existing) + 1
-  .post('/', zValidator('json', createSchema), async (c) => {
-    const uid = c.req.param('uid');
+  // IMPORTANT: register before /:id routes so "reorder" doesn't match :id
+  .openapi(createRoute_, async (c) => {
+    const { uid } = c.req.valid('param');
     const userId = c.var.userId;
     await requireUniverse(uid, userId);
     const data = c.req.valid('json');
@@ -77,13 +308,13 @@ export const categoryRoutes = new Hono<{ Variables: AuthVariables }>()
       })
       .returning();
 
-    return c.json(created, 201);
+    return c.json(created as any, 201);
   })
 
   // PUT /reorder -- rewrite sort_order by index of orderedIds
   // IMPORTANT: register before /:id route so "reorder" doesn't match :id
-  .put('/reorder', zValidator('json', reorderSchema), async (c) => {
-    const uid = c.req.param('uid');
+  .openapi(reorderRoute, async (c) => {
+    const { uid } = c.req.valid('param');
     const userId = c.var.userId;
     await requireUniverse(uid, userId);
     const { orderedIds } = c.req.valid('json');
@@ -109,13 +340,12 @@ export const categoryRoutes = new Hono<{ Variables: AuthVariables }>()
       }
     });
 
-    return c.json({ ok: true });
+    return c.json({ ok: true }, 200);
   })
 
   // PATCH /:id -- update label and/or icon
-  .patch('/:id', zValidator('json', patchSchema), async (c) => {
-    const uid = c.req.param('uid');
-    const catId = c.req.param('id');
+  .openapi(patchRoute, async (c) => {
+    const { uid, id: catId } = c.req.valid('param');
     const userId = c.var.userId;
     await requireUniverse(uid, userId);
     const patch = c.req.valid('json');
@@ -130,13 +360,12 @@ export const categoryRoutes = new Hono<{ Variables: AuthVariables }>()
       throw new HTTPException(404, { message: 'Category not found' });
     }
 
-    return c.json(updated);
+    return c.json(updated as any, 200);
   })
 
   // DELETE /:id -- delete; entries with this category get category_id = NULL via FK
-  .delete('/:id', async (c) => {
-    const uid = c.req.param('uid');
-    const catId = c.req.param('id');
+  .openapi(deleteRoute, async (c) => {
+    const { uid, id: catId } = c.req.valid('param');
     const userId = c.var.userId;
     await requireUniverse(uid, userId);
 
