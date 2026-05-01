@@ -69,7 +69,7 @@ describe('auth routes (AUTH-01..06)', () => {
   // AUTH-01: register with valid invite
   it('register: creates user and returns access token + refresh cookie', async () => {
     const code = await seedInvite();
-    const res = await appRequest('POST', '/auth/register', {
+    const res = await appRequest('POST', '/api/auth/register', {
       body: { email: 'a@test.com', password: 'longenoughpw12', displayName: 'Alice', inviteCode: code },
     });
     expect(res.status).toBe(200);
@@ -85,7 +85,7 @@ describe('auth routes (AUTH-01..06)', () => {
 
   // AUTH-01: rejects invalid invite
   it('register rejects invalid invite code', async () => {
-    const res = await appRequest('POST', '/auth/register', {
+    const res = await appRequest('POST', '/api/auth/register', {
       body: { email: 'b@test.com', password: 'longenoughpw12', displayName: 'Bob', inviteCode: 'nope' },
     });
     expect(res.status).toBe(400);
@@ -95,11 +95,11 @@ describe('auth routes (AUTH-01..06)', () => {
 
   it('register rejects used invite code', async () => {
     const code = await seedInvite();
-    const first = await appRequest('POST', '/auth/register', {
+    const first = await appRequest('POST', '/api/auth/register', {
       body: { email: 'c@test.com', password: 'longenoughpw12', displayName: 'Cara', inviteCode: code },
     });
     expect(first.status).toBe(200);
-    const second = await appRequest('POST', '/auth/register', {
+    const second = await appRequest('POST', '/api/auth/register', {
       body: { email: 'd@test.com', password: 'longenoughpw12', displayName: 'Dee', inviteCode: code },
     });
     expect(second.status).toBe(400);
@@ -108,7 +108,7 @@ describe('auth routes (AUTH-01..06)', () => {
   // AUTH-02: login
   it('login: returns access token on correct credentials', async () => {
     await createTestUser(handle, { email: 'e@test.com', password: 'longenoughpw12' });
-    const res = await appRequest('POST', '/auth/login', {
+    const res = await appRequest('POST', '/api/auth/login', {
       body: { email: 'e@test.com', password: 'longenoughpw12' },
     });
     expect(res.status).toBe(200);
@@ -118,14 +118,14 @@ describe('auth routes (AUTH-01..06)', () => {
 
   it('login rejects wrong password with 401', async () => {
     await createTestUser(handle, { email: 'f@test.com', password: 'longenoughpw12' });
-    const res = await appRequest('POST', '/auth/login', {
+    const res = await appRequest('POST', '/api/auth/login', {
       body: { email: 'f@test.com', password: 'wrongwrongwrong' },
     });
     expect(res.status).toBe(401);
   });
 
   it('login returns 401 with same message for unknown email (no user enumeration)', async () => {
-    const res = await appRequest('POST', '/auth/login', {
+    const res = await appRequest('POST', '/api/auth/login', {
       body: { email: 'ghost@test.com', password: 'longenoughpw12' },
     });
     expect(res.status).toBe(401);
@@ -135,13 +135,13 @@ describe('auth routes (AUTH-01..06)', () => {
   // AUTH-03: refresh persists session
   it('refresh: returns new access token and rotates refresh cookie', async () => {
     const code = await seedInvite('inv1');
-    const reg = await appRequest('POST', '/auth/register', {
+    const reg = await appRequest('POST', '/api/auth/register', {
       body: { email: 'g@test.com', password: 'longenoughpw12', displayName: 'G', inviteCode: code },
     });
     const refreshValue = extractRefreshCookie(reg.setCookieHeader);
     expect(refreshValue).toBeTruthy();
 
-    const refresh = await appRequest('POST', '/auth/refresh', {
+    const refresh = await appRequest('POST', '/api/auth/refresh', {
       headers: { Cookie: `refresh=${refreshValue}` },
     });
     expect(refresh.status).toBe(200);
@@ -149,27 +149,27 @@ describe('auth routes (AUTH-01..06)', () => {
     expect(refresh.setCookieHeader).toMatch(/^refresh=/);
 
     // Old refresh cookie value should no longer work (rotation)
-    const reuse = await appRequest('POST', '/auth/refresh', {
+    const reuse = await appRequest('POST', '/api/auth/refresh', {
       headers: { Cookie: `refresh=${refreshValue}` },
     });
     expect(reuse.status).toBe(401);
   });
 
   it('refresh without cookie returns 401', async () => {
-    const res = await appRequest('POST', '/auth/refresh');
+    const res = await appRequest('POST', '/api/auth/refresh');
     expect(res.status).toBe(401);
   });
 
   // AUTH-04: logout revokes server-side
   it('logout revokes the current refresh token row', async () => {
     const code = await seedInvite('inv2');
-    const reg = await appRequest('POST', '/auth/register', {
+    const reg = await appRequest('POST', '/api/auth/register', {
       body: { email: 'h@test.com', password: 'longenoughpw12', displayName: 'H', inviteCode: code },
     });
     const refreshValue = extractRefreshCookie(reg.setCookieHeader);
     expect(refreshValue).toBeTruthy();
 
-    const out = await appRequest('POST', '/auth/logout', {
+    const out = await appRequest('POST', '/api/auth/logout', {
       headers: { Cookie: `refresh=${refreshValue}` },
     });
     expect(out.status).toBe(204);
@@ -180,7 +180,7 @@ describe('auth routes (AUTH-01..06)', () => {
     expect(rows[0].revokedAt).not.toBeNull();
 
     // Further refresh with that cookie must fail
-    const again = await appRequest('POST', '/auth/refresh', {
+    const again = await appRequest('POST', '/api/auth/refresh', {
       headers: { Cookie: `refresh=${refreshValue}` },
     });
     expect(again.status).toBe(401);
@@ -189,7 +189,7 @@ describe('auth routes (AUTH-01..06)', () => {
   // AUTH-05: hashing + JWT signing
   it('stores bcrypt hashes not plaintext; JWT header alg=HS256', async () => {
     const code = await seedInvite('inv3');
-    const reg = await appRequest('POST', '/auth/register', {
+    const reg = await appRequest('POST', '/api/auth/register', {
       body: { email: 'i@test.com', password: 'longenoughpw12', displayName: 'I', inviteCode: code },
     });
     const user = await handle.db.query.users.findFirst({ where: eq(users.email, 'i@test.com') });
@@ -205,10 +205,10 @@ describe('auth routes (AUTH-01..06)', () => {
     const { revokeAllForUser } = await import('../src/services/auth.js');
     const user = await createTestUser(handle, { email: 'j@test.com', password: 'longenoughpw12' });
     // login twice -> two refresh_tokens rows for this user
-    await appRequest('POST', '/auth/login', {
+    await appRequest('POST', '/api/auth/login', {
       body: { email: 'j@test.com', password: 'longenoughpw12' },
     });
-    await appRequest('POST', '/auth/login', {
+    await appRequest('POST', '/api/auth/login', {
       body: { email: 'j@test.com', password: 'longenoughpw12' },
     });
     const before = await handle.db.select().from(refreshTokens);
@@ -219,20 +219,20 @@ describe('auth routes (AUTH-01..06)', () => {
     expect(after.every(r => r.revokedAt !== null)).toBe(true);
   });
 
-  // GET /auth/me -- identity rehydration after cold-load silent refresh
-  it('GET /auth/me returns { id, email, displayName } for the authenticated user', async () => {
+  // GET /api/auth/me -- identity rehydration after cold-load silent refresh
+  it('GET /api/auth/me returns { id, email, displayName } for the authenticated user', async () => {
     const { issueAccessToken } = await import('../src/services/auth.js');
     const user = await createTestUser(handle, { email: 'me@test.com', password: 'longenoughpw12', displayName: 'Me' });
     const token = await issueAccessToken(user.id);
-    const res = await appRequest('GET', '/auth/me', {
+    const res = await appRequest('GET', '/api/auth/me', {
       headers: { Authorization: `Bearer ${token}` },
     });
     expect(res.status).toBe(200);
     expect(res.body).toEqual({ id: user.id, email: 'me@test.com', displayName: 'Me' });
   });
 
-  it('GET /auth/me without Authorization returns 401', async () => {
-    const res = await appRequest('GET', '/auth/me');
+  it('GET /api/auth/me without Authorization returns 401', async () => {
+    const res = await appRequest('GET', '/api/auth/me');
     expect(res.status).toBe(401);
   });
 });
