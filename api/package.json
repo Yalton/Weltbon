@@ -23,6 +23,7 @@
     "docx": "^9",
     "drizzle-orm": "0.45.2",
     "github-slugger": "^2",
+    "gray-matter": "^4.0.3",
     "hono": "4.12.12",
     "jose": "6.2.2",
     "pg": "8.20.0",
