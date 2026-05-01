@@ -13,6 +13,8 @@ import { GraphView } from './views/GraphView';
 import { IssuesView } from './views/IssuesView';
 import { TimelineView } from './views/TimelineView';
 import Settings from './views/Settings';
+import { SettingsLayout } from './components/SettingsLayout';
+import Tokens from './views/Tokens';
 
 export default function App() {
   return (
@@ -26,7 +28,10 @@ export default function App() {
           <Route path="/universes" element={<UniverseList />} />
           <Route path="/universes/:id/settings" element={<UniverseSettings />} />
           {/* /settings placed after /universes/:id/settings so the more-specific route still matches first */}
-          <Route path="/settings" element={<Settings />} />
+          <Route path="/settings" element={<SettingsLayout />}>
+            <Route index element={<Settings />} />
+            <Route path="tokens" element={<Tokens />} />
+          </Route>
         </Route>
         {/* Sidebar shell for everything scoped inside a single universe. */}
         <Route element={<UniverseLayout />}>

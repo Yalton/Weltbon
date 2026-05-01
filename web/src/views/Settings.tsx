@@ -15,7 +15,7 @@ export default function Settings() {
   const setShowEntriesAsBodies = useSimSettings((s) => s.setShowEntriesAsBodies);
 
   return (
-    <div className="max-w-2xl mx-auto p-6">
+    <div className="max-w-2xl">
       {/* H1 — UI-SPEC §2.1 H1 recipe: text-2xl font-semibold tracking-tight */}
       <h1 className="text-2xl font-semibold tracking-tight">Settings</h1>
 
