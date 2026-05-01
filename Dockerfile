@@ -17,7 +17,7 @@ RUN --mount=type=cache,id=pnpm,target=/pnpm/store \
 ###############################################################################
 FROM deps AS build
 COPY . .
-RUN pnpm --filter api build && pnpm --filter web build
+RUN pnpm --filter api build:docker && pnpm --filter web build
 RUN --mount=type=cache,id=pnpm,target=/pnpm/store \
     pnpm deploy --filter @weltbon/api --prod /out/api
 
