@@ -9,4 +9,4 @@ CREATE TABLE "personal_access_tokens" (
 	CONSTRAINT "personal_access_tokens_hash_unique" UNIQUE("hash")
 );
 --> statement-breakpoint
-ALTER TABLE "personal_access_tokens" ADD CONSTRAINT "personal_access_tokens_user_id_users_id_fk" FOREIGN KEY ("user_id") REFERENCES "public"."users"("id") ON DELETE cascade ON UPDATE no action;
+ALTER TABLE "personal_access_tokens" ADD CONSTRAINT "personal_access_tokens_user_id_users_id_fk" FOREIGN KEY ("user_id") REFERENCES "users"("id") ON DELETE cascade ON UPDATE no action;
