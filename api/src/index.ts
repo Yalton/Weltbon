@@ -6,6 +6,7 @@ import { logger } from 'hono/logger';
 import { HTTPException } from 'hono/http-exception';
 import { env } from './config.js';
 import { authRoutes } from './routes/auth.js';
+import { tokenRoutes } from './routes/tokens.js';
 import { universeRoutes } from './routes/universes.js';
 import { entryRoutes } from './routes/entries.js';
 import { linkRoutes, relationRoutes } from './routes/links.js';
@@ -31,6 +32,7 @@ export function createApp() {
     credentials: true,
   }));
   const apiR = new Hono();
+  apiR.route('/auth/tokens', tokenRoutes);
   apiR.route('/auth', authRoutes);
   apiR.use('/universes/*', requireAuth);
   apiR.route('/universes/import', importRoutes);
