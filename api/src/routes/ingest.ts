@@ -26,6 +26,7 @@
  *   T-11-09  zip_size DoS         → File.size short-circuit BEFORE arrayBuffer().
  */
 
+import path from 'node:path';
 import { OpenAPIHono, createRoute, z } from '@hono/zod-openapi';
 import { eq } from 'drizzle-orm';
 import { db } from '../db/client.js';
@@ -266,6 +267,16 @@ export const ingestRoutes = new OpenAPIHono<AppEnv>().openapi(
       // T-11-04: do not echo internal details; map to 500 with neutral text.
       console.error('[ingest] unexpected error during input materialisation', err);
       return c.json({ error: 'Internal error' }, 500);
+    }
+
+    // T-11-05 defense-in-depth: even though parseBatch performs no IO, normalize
+    // attacker-supplied paths and reject any that escape the upload root. Phase 12
+    // commits derive paths from these strings; this is the trust-boundary cut.
+    for (const input of inputs) {
+      const normalized = path.posix.normalize(input.path);
+      if (normalized.startsWith('..') || normalized === '..' || path.posix.isAbsolute(normalized)) {
+        return c.json({ error: 'Invalid path' }, 400);
+      }
     }
 
     // 5. Read parser context — ONE query for entries (id+title only, T-11-04

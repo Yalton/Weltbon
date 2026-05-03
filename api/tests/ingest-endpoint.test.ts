@@ -349,6 +349,16 @@ describe('POST /api/universes/:uid/ingest (Phase 11-03 Task 2)', () => {
     expect(res.status).toBe(400);
   });
 
+  it('400: rejects path-traversal entries (T-11-05 defense-in-depth)', async () => {
+    const { userId, jwt } = await createUserAndJwt('400-traversal@test.com');
+    const u = await createUniverse(userId);
+    const fd = new FormData();
+    fd.append('files', makeFile('../escape.md', '# escape'));
+    const res = await ingestRequest(u.id, fd, `Bearer ${jwt}`);
+    expect(res.status).toBe(400);
+    expect(String(res.body.error)).toMatch(/Invalid path/);
+  });
+
   // ─── OpenAPI doc presence ────────────────────────────────────────────────
 
   it('GET /api/openapi.json includes /universes/{uid}/ingest with bearerAuth security', async () => {
