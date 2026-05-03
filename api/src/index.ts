@@ -15,6 +15,7 @@ import { issueRoutes } from './routes/issues.js';
 import { graphRoutes, graphPositionRoutes } from './routes/graph.js';
 import { exportRoutes } from './routes/export.js';
 import { importRoutes } from './routes/import.js';
+import { ingestRoutes } from './routes/ingest.js';
 import { timelinePinRoutes, timelineListRoutes } from './routes/timeline.js';
 import { requireAuth } from './middleware/auth.js';
 import { db } from './db/client.js';
@@ -38,6 +39,9 @@ export function createApp() {
   apiR.route('/auth', authRoutes);
   apiR.use('/universes/*', requireAuth);
   apiR.route('/universes/import', importRoutes);
+  // 11-03: mount /universes/:uid/ingest BEFORE the bare /universes mount so
+  // the more-specific path wins, mirroring the /universes/import precedence.
+  apiR.route('/universes/:uid/ingest', ingestRoutes);
   apiR.route('/universes', universeRoutes);
   apiR.route('/universes/:uid/entries', entryRoutes);
   apiR.route('/universes/:uid/entries', timelinePinRoutes);

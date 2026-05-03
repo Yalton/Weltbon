@@ -36,6 +36,7 @@
     "unified": "^11",
     "unist-util-visit": "^5",
     "yaml": "^2",
+    "yauzl": "^3",
     "zod": "4.1.4"
   },
   "devDependencies": {
@@ -53,6 +54,6 @@
     "tsx": "4.21.0",
     "typescript": "5.7.3",
     "vitest": "3.2.4",
-    "yauzl": "^3"
+    "yazl": "^3"
   }
 }
