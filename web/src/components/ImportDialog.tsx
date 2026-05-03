@@ -1,7 +1,8 @@
 import { useState, useRef } from 'react';
 import { useNavigate } from 'react-router-dom';
 import * as Dialog from '@radix-ui/react-dialog';
-import { api, ApiError } from '../api/client';
+import { api } from '../api/client';
+import { formatBytes, classifyError } from '../lib/format';
 
 interface Props {
   open: boolean;
@@ -21,30 +22,6 @@ type State =
   | { step: 'loading' }
   | { step: 'success'; result: ImportResult }
   | { step: 'error'; message: string; file: File };
-
-function formatBytes(bytes: number): string {
-  if (bytes < 1024) return `${bytes} B`;
-  if (bytes < 1024 * 1024) return `${(bytes / 1024).toFixed(1)} KB`;
-  return `${(bytes / (1024 * 1024)).toFixed(1)} MB`;
-}
-
-function classifyError(err: unknown): string {
-  if (err instanceof ApiError) {
-    const body = err.body as Record<string, unknown> | null;
-    const msg = body && typeof body === 'object' && 'error' in body
-      ? String(body.error)
-      : err.message;
-
-    if (msg.toLowerCase().includes('version'))
-      return 'This file was created with an incompatible version of Weltbon. Export from a matching version and try again.';
-    if (msg.toLowerCase().includes('invalid') || msg.toLowerCase().includes('format') || msg.toLowerCase().includes('parse'))
-      return 'This file is not a valid Weltbon export. Check the file and try again.';
-    return msg;
-  }
-  if (err instanceof SyntaxError)
-    return 'This file is not a valid Weltbon export. Check the file and try again.';
-  return 'Import failed. No data was changed. Check the file and try again.';
-}
 
 export function ImportDialog({ open, onOpenChange }: Props) {
   const navigate = useNavigate();
