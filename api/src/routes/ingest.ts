@@ -29,11 +29,17 @@
 import path from 'node:path';
 import { OpenAPIHono, createRoute, z } from '@hono/zod-openapi';
 import { eq } from 'drizzle-orm';
+import { ZodError } from 'zod';
 import { db } from '../db/client.js';
 import { universes, entries, categories } from '../db/schema.js';
 import { requireUniverse } from '../utils/ownership.js';
 import { parseBatch, type FileInput } from '../services/ingest-markdown.js';
 import { unpackZip, BatchLimitError } from '../services/ingest-zip.js';
+import {
+  commitIngest,
+  TitleCollisionError,
+  CommitSizeError,
+} from '../services/ingest-commit.js';
 import type { AuthVariables } from '../middleware/auth.js';
 
 type AppEnv = { Variables: AuthVariables };
@@ -155,12 +161,121 @@ const ingestRoute = createRoute({
   },
 });
 
+// ─── Commit route (Phase 12-01) ──────────────────────────────────────────────
+
+// The commit body Zod schema is owned by the service (single source of truth);
+// here we use a passthrough/loose schema for OpenAPI documentation purposes
+// because zod-openapi's schema needs to live on the route, but the actual parse
+// happens inside commitIngest (which uses the canonical commitBodySchema).
+const commitLinkOutSchema = z.object({
+  target: z.string(),
+  target_path: z.string().optional(),
+  target_id: z.string().optional(),
+  label: z.string(),
+  resolved: z.boolean(),
+  warning: z.string().optional(),
+});
+
+const commitDecisionSchemaForDoc = z.union([
+  z.object({ disposition: z.literal('accept') }),
+  z.object({ disposition: z.literal('rename'), newTitle: z.string() }),
+  z.object({ disposition: z.literal('skip') }),
+]);
+
+const commitCategorySchemaForDoc = z.union([
+  z.object({ existingId: z.string().uuid() }),
+  z.object({ newName: z.string() }),
+  z.null(),
+]);
+
+const commitEntrySchemaForDoc = z.object({
+  filename: z.string(),
+  path: z.string(),
+  title: z.string(),
+  entryType: z.string(),
+  tags: z.array(z.string()),
+  category: commitCategorySchemaForDoc,
+  body: z.string(),
+  meta: z.record(z.string(), z.unknown()),
+  linksOut: z.array(commitLinkOutSchema),
+  decision: commitDecisionSchemaForDoc,
+});
+
+const commitBodyDocSchema = z.object({
+  entries: z.array(commitEntrySchemaForDoc),
+});
+
+const commitResultDocSchema = z.object({
+  entryIds: z.array(z.string().uuid()),
+  linksCreated: z.number().int().nonnegative(),
+  categoriesCreated: z.number().int().nonnegative(),
+});
+
+const commitRoute = createRoute({
+  method: 'post',
+  path: '/commit',
+  tags: ['Ingest'],
+  summary: 'Commit a reviewed markdown batch (atomic transaction)',
+  description:
+    'Accepts a reviewed IngestPreview body with per-entry decisions and edits. Inserts new categories, entries, and resolved links inside ONE Postgres transaction (D-24 atomicity). Returns { entryIds, linksCreated, categoriesCreated } on success. All-or-nothing per ING-05.',
+  security: [{ bearerAuth: [] }],
+  request: {
+    params: uidParams,
+    body: {
+      content: {
+        'application/json': {
+          schema: commitBodyDocSchema,
+        },
+      },
+      required: true,
+    },
+  },
+  responses: {
+    200: {
+      content: { 'application/json': { schema: commitResultDocSchema } },
+      description: 'Atomic commit succeeded.',
+    },
+    400: {
+      content: { 'application/json': { schema: errorSchema } },
+      description:
+        'Invalid commit body (Zod validation, invalid path, invalid entryType, no accepted entries).',
+    },
+    401: {
+      content: { 'application/json': { schema: errorSchema } },
+      description: 'Missing or invalid bearer token.',
+    },
+    403: {
+      content: { 'application/json': { schema: errorSchema } },
+      description: 'Universe is owned by another user.',
+    },
+    404: {
+      content: { 'application/json': { schema: errorSchema } },
+      description: 'Universe not found.',
+    },
+    409: {
+      content: { 'application/json': { schema: errorSchema } },
+      description:
+        'Title collision — an accepted entry would duplicate an existing title (or two batch entries would).',
+    },
+    413: {
+      content: { 'application/json': { schema: errorSchema } },
+      description:
+        'Batch size exceeds the commit_size cap. Split the batch and retry.',
+    },
+    500: {
+      content: { 'application/json': { schema: errorSchema } },
+      description: 'Internal commit error.',
+    },
+  },
+});
+
 // ─── Router ──────────────────────────────────────────────────────────────────
 
-export const ingestRoutes = new OpenAPIHono<AppEnv>().openapi(
-  ingestRoute,
-  // eslint-disable-next-line @typescript-eslint/no-explicit-any
-  async (c): Promise<any> => {
+export const ingestRoutes = new OpenAPIHono<AppEnv>()
+  .openapi(
+    ingestRoute,
+    // eslint-disable-next-line @typescript-eslint/no-explicit-any
+    async (c): Promise<any> => {
     const userId = c.var.userId;
     const { uid } = c.req.valid('param');
 
@@ -313,5 +428,60 @@ export const ingestRoutes = new OpenAPIHono<AppEnv>().openapi(
     }
 
     return c.json(preview, 200);
-  }
-);
+  },
+  )
+  .openapi(
+    commitRoute,
+    // eslint-disable-next-line @typescript-eslint/no-explicit-any
+    async (c): Promise<any> => {
+      const userId = c.var.userId;
+      const { uid } = c.req.valid('param');
+
+      // 1. Verify universe ownership BEFORE reading the body. requireUniverse
+      //    throws HTTPException(404) missing / HTTPException(403) cross-tenant —
+      //    both handled by app.onError().
+      await requireUniverse(uid, userId);
+
+      // 2. Read raw JSON body (Hono's parseBody helper); commitIngest re-validates
+      //    via Zod, so we only need the unknown-shaped JSON here.
+      let rawBody: unknown;
+      try {
+        rawBody = await c.req.json();
+      } catch {
+        return c.json({ error: 'Invalid JSON body' }, 400);
+      }
+
+      // 3. Run the atomic commit; map typed service errors to HTTP statuses.
+      try {
+        const result = await commitIngest(uid, userId, rawBody);
+        return c.json(result, 200);
+      } catch (err) {
+        if (err instanceof ZodError) {
+          return c.json({ error: 'Invalid commit body' }, 400);
+        }
+        if (err instanceof TitleCollisionError) {
+          return c.json({ error: err.message }, 409);
+        }
+        if (err instanceof CommitSizeError) {
+          return c.json({ error: err.message }, 413);
+        }
+        if (err instanceof Error) {
+          if (err.message.startsWith('Invalid path')) {
+            return c.json({ error: err.message }, 400);
+          }
+          if (err.message.startsWith('Invalid entryType')) {
+            return c.json({ error: err.message }, 400);
+          }
+          if (err.message.startsWith('Invalid category id')) {
+            return c.json({ error: err.message }, 400);
+          }
+          if (err.message.startsWith('commit_empty')) {
+            return c.json({ error: 'No entries to commit' }, 400);
+          }
+        }
+        // T-12-04 / T-11-04: log internals, return neutral.
+        console.error('[ingest-commit] unexpected error', err);
+        return c.json({ error: 'Internal error' }, 500);
+      }
+    },
+  );
