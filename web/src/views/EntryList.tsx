@@ -1,4 +1,4 @@
-import { useState, useEffect } from 'react';
+import { useState } from 'react';
 import { Link, useParams } from 'react-router-dom';
 import { useFilterParams } from '../hooks/useFilterParams';
 import { useFilteredEntries } from '../hooks/useFilteredEntries';
@@ -10,6 +10,7 @@ import { SearchBar } from '../components/SearchBar';
 import { FilterChipRow } from '../components/FilterChipRow';
 import { ExportMenu } from '../components/ExportMenu';
 import { TemplatePicker } from '../components/TemplatePicker';
+import { Toast } from '../components/Toast';
 
 export function EntryList() {
   const { uid } = useParams<{ uid: string }>();
@@ -21,12 +22,7 @@ export function EntryList() {
   const [pickerOpen, setPickerOpen] = useState(false);
   const [toast, setToast] = useState<string | null>(null);
 
-  // Auto-dismiss toast after 4 seconds
-  useEffect(() => {
-    if (!toast) return;
-    const timer = setTimeout(() => setToast(null), 4000);
-    return () => clearTimeout(timer);
-  }, [toast]);
+  // Toast auto-dismiss is now handled inside <Toast />.
 
   const hasActiveFilters =
     !!filters.q || !!filters.type || filters.tags.length > 0 || !!filters.category;
@@ -122,9 +118,7 @@ export function EntryList() {
 
       {/* Toast notification */}
       {toast && (
-        <div className="fixed bottom-4 left-1/2 -translate-x-1/2 bg-red-600 text-white text-sm px-4 py-2 rounded-md shadow-lg z-50">
-          {toast}
-        </div>
+        <Toast message={toast} variant="error" onDismiss={() => setToast(null)} />
       )}
     </div>
   );

@@ -1,0 +1,123 @@
+/**
+ * Source-of-truth TypeScript types for the Phase 12 markdown-ingestion review
+ * UI and the atomic-commit endpoint.
+ *
+ * Shape contracts:
+ *   - IngestPreview / PreviewEntry / LinkOut: verbatim mirror of
+ *     `api/src/services/ingest-markdown.ts:64-85` — what the Phase 11
+ *     `POST /api/universes/:uid/ingest` endpoint returns.
+ *   - CommitBody / CommitEntry: wire shape POSTed to
+ *     `/api/universes/:uid/ingest/commit` (Plan 12-01 commitBodySchema).
+ *   - CommitResult: response shape from the same endpoint.
+ *   - ReviewDecisions / EntryEdits / CommitDecision: client-side review
+ *     state, serialized to localStorage as part of SavedDraft.
+ *
+ * Pure-type module: no React, no runtime exports. Vite tree-shakes this to
+ * nothing at build time.
+ */
+
+// ---------------------------------------------------------------------------
+// Mirror of api/src/services/ingest-markdown.ts (IngestPreview shape)
+// ---------------------------------------------------------------------------
+
+export type LinkOut = {
+  target: string;
+  target_path?: string;
+  target_id?: string;
+  label: string;
+  resolved: boolean;
+  warning?: string;
+};
+
+export type PreviewEntry = {
+  filename: string;
+  path: string;
+  title: string;
+  type: string;
+  tags: string[];
+  category: string | null;
+  body: string;
+  meta: Record<string, unknown>;
+  linksOut: LinkOut[];
+  categoryIsNew?: boolean;
+  titleCollision?: boolean;
+};
+
+export type IngestPreview = {
+  summary: {
+    markdown_files_parsed: number;
+    non_markdown_files_skipped: number;
+    hidden_paths_filtered: number;
+    duplicate_titles_in_batch: number;
+    unresolved_wikilinks: number;
+  };
+  entries: PreviewEntry[];
+  warnings: Array<{ file: string; message: string }>;
+};
+
+// ---------------------------------------------------------------------------
+// Per-entry user decisions (review state). Indexed by entry.path.
+// ---------------------------------------------------------------------------
+
+export type CommitDecision =
+  | { disposition: 'accept' }
+  | { disposition: 'reject' } // client-side only; filtered before commit
+  | { disposition: 'rename'; newTitle: string }
+  | { disposition: 'skip' };
+
+export type EntryEdits = {
+  title?: string;
+  entryType?: string;
+  tags?: string[];
+  category?: { existingId: string } | { newName: string } | null;
+  body?: string;
+  meta?: Record<string, unknown>;
+};
+
+export type ReviewDecisions = Record<
+  string,
+  {
+    decision: CommitDecision;
+    edits: EntryEdits;
+    metaValid: boolean;
+  }
+>;
+
+// ---------------------------------------------------------------------------
+// Wire shape POSTed to /api/universes/:uid/ingest/commit
+// (mirrors Plan 12-01 commitBodySchema).
+// ---------------------------------------------------------------------------
+
+export type CommitEntry = {
+  filename: string;
+  path: string;
+  title: string;
+  entryType: string;
+  tags: string[];
+  category: { existingId: string } | { newName: string } | null;
+  body: string;
+  meta: Record<string, unknown>;
+  linksOut: Omit<LinkOut, 'warning'>[];
+  decision:
+    | { disposition: 'accept' }
+    | { disposition: 'rename'; newTitle: string }
+    | { disposition: 'skip' };
+};
+
+export type CommitBody = { entries: CommitEntry[] };
+
+export type CommitResult = {
+  entryIds: string[];
+  linksCreated: number;
+  categoriesCreated: number;
+};
+
+// ---------------------------------------------------------------------------
+// localStorage draft slot (D-20). Key: `weltbon.import.${uid}`.
+// ---------------------------------------------------------------------------
+
+export type SavedDraft = {
+  preview: IngestPreview;
+  decisions: ReviewDecisions;
+  savedAt: string; // ISO 8601
+};

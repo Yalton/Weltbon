@@ -37,16 +37,26 @@ export async function api<T = unknown>(
   path: string,
   init: RequestInit = {}
 ): Promise<T> {
-  const doFetch = (token: string | null): Promise<Response> =>
-    fetch(`/api${path}`, {
+  const doFetch = (token: string | null): Promise<Response> => {
+    // When the body is FormData, the browser sets
+    // `multipart/form-data; boundary=...` automatically — overriding it
+    // with `application/json` here would strip the boundary parameter and
+    // make the server unable to parse the body. JSON callsites (string /
+    // undefined body) keep the existing default.
+    const isFormData = init.body instanceof FormData;
+    const baseHeaders: Record<string, string> = isFormData
+      ? {}
+      : { 'Content-Type': 'application/json' };
+    return fetch(`/api${path}`, {
       ...init,
       credentials: 'include',
       headers: {
-        'Content-Type': 'application/json',
+        ...baseHeaders,
         ...(init.headers ?? {}),
         ...(token ? { Authorization: `Bearer ${token}` } : {}),
       },
     });
+  };
 
   let res = await doFetch(accessToken);
   // Only attempt silent refresh for protected (non-/auth) endpoints.
