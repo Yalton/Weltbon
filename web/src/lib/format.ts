@@ -1,4 +1,10 @@
 import { ApiError } from '../api/client';
+import {
+  BATCH_LIMIT_FILES,
+  BATCH_LIMIT_MB,
+  BATCH_LIMIT_FILE_SIZE_MB,
+  BATCH_LIMIT_TOTAL_UNCOMPRESSED_MB,
+} from './ingestLimits';
 
 /**
  * Format a byte count as a human-readable string.
@@ -54,6 +60,26 @@ export function classifyError(err: unknown): string {
     if (err.status === 409)
       return 'Could not resolve a category name. Pick existing categories for any new ones.';
     if (err.status === 413) {
+      // Phase 12-05 parse-time discriminator: the Phase 11 ingest endpoint
+      // returns `{ error, limit: 'file_count' | 'file_size' | 'zip_size' |
+      // 'total_uncompressed_size' }` on a 413. Match exactly on the typed
+      // `limit` field (NOT the human-readable error text) and return the
+      // §10/§6.6 copy with the limit interpolated from ingestLimits.ts.
+      const limit =
+        body && typeof body === 'object' && 'limit' in body
+          ? String(body.limit)
+          : null;
+      if (limit === 'file_count')
+        return `Too many files (max ${BATCH_LIMIT_FILES}). Try splitting your upload.`;
+      if (limit === 'file_size')
+        return `One file is too large (max ${BATCH_LIMIT_FILE_SIZE_MB} MB per file).`;
+      if (limit === 'zip_size')
+        return `That ZIP is too large (max ${BATCH_LIMIT_MB} MB compressed). Try splitting it.`;
+      if (limit === 'total_uncompressed_size')
+        return `That ZIP would expand beyond ${BATCH_LIMIT_TOTAL_UNCOMPRESSED_MB} MB after unzipping.`;
+
+      // Legacy commit-time keyword fallback (preserved for callers without a
+      // structured `limit` field — e.g., the commit endpoint per Plan 12-02).
       if (
         msg.includes('zip_size') ||
         msg.includes('file_size') ||
