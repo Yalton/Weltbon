@@ -10,6 +10,7 @@ import { EntryList } from './views/EntryList';
 import { EntryDetail } from './views/EntryDetail';
 import { EntryEditor } from './views/EntryEditor';
 import { GraphView } from './views/GraphView';
+import { IngestImport } from './views/IngestImport';
 import { IssuesView } from './views/IssuesView';
 import { TimelineView } from './views/TimelineView';
 import Settings from './views/Settings';
@@ -42,6 +43,7 @@ export default function App() {
           <Route path="/universes/:uid/graph" element={<GraphView />} />
           <Route path="/universes/:uid/timeline" element={<TimelineView />} />
           <Route path="/universes/:uid/issues" element={<IssuesView />} />
+          <Route path="/universes/:uid/import" element={<IngestImport />} />
         </Route>
       </Route>
       <Route path="*" element={<Navigate to="/universes" replace />} />
