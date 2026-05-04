@@ -47,13 +47,15 @@ function setupApi({
   });
 }
 
-function renderAt(path: string) {
+function renderAt(path: string, opts: { state?: unknown } = {}) {
   const qc = new QueryClient({
     defaultOptions: { queries: { retry: false }, mutations: { retry: false } },
   });
+  const initial =
+    opts.state !== undefined ? [{ pathname: path, state: opts.state }] : [path];
   return render(
     <QueryClientProvider client={qc}>
-      <MemoryRouter initialEntries={[path]}>
+      <MemoryRouter initialEntries={initial}>
         <Routes>
           <Route path="/universes/:uid/entries" element={<EntryList />} />
         </Routes>
@@ -152,6 +154,36 @@ describe('EntryList', () => {
     expect(
       screen.getByRole('button', { name: /new entry/i }),
     ).toBeInTheDocument();
+  });
+
+  it('renders a success toast from location.state.toast on mount', async () => {
+    setupApi({
+      universe: { id: 'U1', entryTypes: ['character'] },
+      categories: [],
+      entriesByQuery: () => [],
+    });
+
+    renderAt('/universes/U1/entries', {
+      state: {
+        toast: 'Imported 3 entries, 1 link, 0 new categories.',
+        toastVariant: 'success',
+      },
+    });
+
+    expect(await screen.findByText(/Imported 3 entries/)).toBeInTheDocument();
+  });
+
+  it('renders an "Import notes" Link to /universes/:uid/import', async () => {
+    setupApi({
+      universe: { id: 'U1', entryTypes: ['character'] },
+      categories: [],
+      entriesByQuery: () => [],
+    });
+
+    renderAt('/universes/U1/entries');
+
+    const link = await screen.findByRole('link', { name: /Import notes/i });
+    expect(link).toHaveAttribute('href', '/universes/U1/import');
   });
 
   it('clicking "Clear filters" invokes the URL updater to reset all filters', async () => {

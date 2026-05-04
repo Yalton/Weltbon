@@ -1,5 +1,5 @@
-import { useState } from 'react';
-import { Link, useParams } from 'react-router-dom';
+import { useEffect, useState } from 'react';
+import { Link, useLocation, useParams } from 'react-router-dom';
 import { useFilterParams } from '../hooks/useFilterParams';
 import { useFilteredEntries } from '../hooks/useFilteredEntries';
 import { useUniverse } from '../hooks/useUniverse';
@@ -12,17 +12,36 @@ import { ExportMenu } from '../components/ExportMenu';
 import { TemplatePicker } from '../components/TemplatePicker';
 import { Toast } from '../components/Toast';
 
+type ToastState = { message: string; variant: 'success' | 'error' } | null;
+
 export function EntryList() {
   const { uid } = useParams<{ uid: string }>();
+  const location = useLocation();
   const [filters, updateFilters] = useFilterParams();
   const { data: entries, isLoading } = useFilteredEntries(uid!, filters);
   const { data: universe } = useUniverse(uid);
 
   const [importOpen, setImportOpen] = useState(false);
   const [pickerOpen, setPickerOpen] = useState(false);
-  const [toast, setToast] = useState<string | null>(null);
+  const [toast, setToast] = useState<ToastState>(null);
 
   // Toast auto-dismiss is now handled inside <Toast />.
+
+  // One-shot bridge: if we landed here with location.state.toast set (e.g.,
+  // from the Phase 12 IngestImport post-commit navigation per UI-SPEC §6.7),
+  // surface it via the existing <Toast> with the supplied variant.
+  useEffect(() => {
+    const stateToast = location.state as
+      | { toast?: string; toastVariant?: 'success' | 'error' }
+      | null;
+    if (stateToast?.toast) {
+      setToast({
+        message: stateToast.toast,
+        variant: stateToast.toastVariant ?? 'success',
+      });
+    }
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, []);
 
   const hasActiveFilters =
     !!filters.q || !!filters.type || filters.tags.length > 0 || !!filters.category;
@@ -43,7 +62,7 @@ export function EntryList() {
           <ExportMenu
             universeId={uid!}
             fallbackFilename={universe?.name ?? 'universe'}
-            onToast={setToast}
+            onToast={(message) => setToast({ message, variant: 'error' })}
           />
           <button
             type="button"
@@ -52,6 +71,12 @@ export function EntryList() {
           >
             Import JSON
           </button>
+          <Link
+            to={`/universes/${uid}/import`}
+            className="rounded-md border border-neutral-300 dark:border-neutral-700 text-sm px-3 py-1.5"
+          >
+            Import notes
+          </Link>
           {!isEmpty && (
             <button
               type="button"
@@ -118,7 +143,11 @@ export function EntryList() {
 
       {/* Toast notification */}
       {toast && (
-        <Toast message={toast} variant="error" onDismiss={() => setToast(null)} />
+        <Toast
+          message={toast.message}
+          variant={toast.variant}
+          onDismiss={() => setToast(null)}
+        />
       )}
     </div>
   );
