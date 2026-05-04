@@ -137,6 +137,52 @@ describe('classifyError — Phase 12 status-code branches', () => {
   });
 });
 
+describe('classifyError — Phase 12-05 parse-time 413/limit branches', () => {
+  it('413 with limit="file_count" → too-many-files copy', () => {
+    const err = new ApiError(
+      413,
+      { error: 'Batch limit exceeded', limit: 'file_count' },
+      'Batch limit exceeded',
+    );
+    expect(classifyError(err)).toBe(
+      'Too many files (max 1000). Try splitting your upload.',
+    );
+  });
+
+  it('413 with limit="file_size" → per-file-too-large copy', () => {
+    const err = new ApiError(
+      413,
+      { error: 'Batch limit exceeded', limit: 'file_size' },
+      'Batch limit exceeded',
+    );
+    expect(classifyError(err)).toBe(
+      'One file is too large (max 1 MB per file).',
+    );
+  });
+
+  it('413 with limit="zip_size" → zip-too-large copy', () => {
+    const err = new ApiError(
+      413,
+      { error: 'Batch limit exceeded', limit: 'zip_size' },
+      'Batch limit exceeded',
+    );
+    expect(classifyError(err)).toBe(
+      'That ZIP is too large (max 50 MB compressed). Try splitting it.',
+    );
+  });
+
+  it('413 with limit="total_uncompressed_size" → unzipped-too-large copy', () => {
+    const err = new ApiError(
+      413,
+      { error: 'Batch limit exceeded', limit: 'total_uncompressed_size' },
+      'Batch limit exceeded',
+    );
+    expect(classifyError(err)).toBe(
+      'That ZIP would expand beyond 100 MB after unzipping.',
+    );
+  });
+});
+
 describe('pluralize', () => {
   it('returns "1 entry" for n === 1', () => {
     expect(pluralize(1, 'entry', 'entries')).toBe('1 entry');
