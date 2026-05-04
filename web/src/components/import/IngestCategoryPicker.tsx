@@ -94,6 +94,7 @@ export function IngestCategoryPicker({
             }
           }}
           placeholder="New category name"
+          aria-label="New category name"
           className="w-full rounded-md border border-neutral-300 dark:border-neutral-700 bg-transparent px-3 py-2 text-sm"
         />
         <p className="text-xs text-emerald-500 mt-1">Will be created</p>
