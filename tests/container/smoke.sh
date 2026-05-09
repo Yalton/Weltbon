@@ -68,6 +68,9 @@ bash "$SCRIPT_DIR/check-size.sh" || abort check-size
 echo "[smoke] docker compose up -d"
 docker compose up -d || abort "compose up"
 
+echo "[smoke] check-runtime-config"
+bash "$SCRIPT_DIR/check-runtime-config.sh" || abort check-runtime-config
+
 echo "[smoke] smoke-bringup"
 bash "$SCRIPT_DIR/smoke-bringup.sh" || abort smoke-bringup
 
