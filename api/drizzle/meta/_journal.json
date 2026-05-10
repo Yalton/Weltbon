@@ -36,6 +36,13 @@
       "when": 1746000000000,
       "tag": "0004_personal_access_tokens",
       "breakpoints": true
+    },
+    {
+      "idx": 5,
+      "version": "7",
+      "when": 1747000000000,
+      "tag": "0005_invite_codes_v2",
+      "breakpoints": true
     }
   ]
 }

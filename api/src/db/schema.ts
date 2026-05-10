@@ -1,4 +1,5 @@
 import { pgTable, uuid, text, timestamp, jsonb, boolean, integer, doublePrecision, primaryKey } from 'drizzle-orm/pg-core';
+import { relations } from 'drizzle-orm';
 
 export const users = pgTable('users', {
   id:           uuid('id').primaryKey().defaultRandom(),
@@ -41,11 +42,21 @@ export const personalAccessTokens = pgTable('personal_access_tokens', {
 });
 
 export const inviteCodes = pgTable('invite_codes', {
-  code:         text('code').primaryKey(),
-  createdAt:    timestamp('created_at').defaultNow().notNull(),
-  usedAt:       timestamp('used_at'),
-  usedByUserId: uuid('used_by_user_id').references(() => users.id, { onDelete: 'set null' }),
+  id:                uuid('id').primaryKey().defaultRandom(),
+  ownerId:           uuid('owner_id').references(() => users.id, { onDelete: 'set null' }),
+  label:             text('label').default('').notNull(),
+  hash:              text('hash').notNull().unique(),
+  bodySuffix:        text('body_suffix').notNull(),
+  createdAt:         timestamp('created_at', { withTimezone: true }).defaultNow().notNull(),
+  usedAt:            timestamp('used_at', { withTimezone: true }),
+  revokedAt:         timestamp('revoked_at', { withTimezone: true }),
+  consumedByUserId:  uuid('consumed_by_user_id').references(() => users.id, { onDelete: 'set null' }),
 });
+
+export const inviteCodesRelations = relations(inviteCodes, ({ one }) => ({
+  owner:       one(users, { fields: [inviteCodes.ownerId], references: [users.id], relationName: 'invite_owner' }),
+  consumedBy:  one(users, { fields: [inviteCodes.consumedByUserId], references: [users.id], relationName: 'invite_consumer' }),
+}));
 
 export const categories = pgTable('categories', {
   id:         uuid('id').primaryKey().defaultRandom(),
