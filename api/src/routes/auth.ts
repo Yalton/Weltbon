@@ -93,7 +93,7 @@ const registerRoute = createRoute({
     },
     400: {
       content: { 'application/json': { schema: errorSchema } },
-      description: 'Invalid or used invite code, or email already registered',
+      description: 'Invalid or used invite code (collapses duplicate-email per D-INV-11 to prevent enumeration)',
     },
     500: {
       content: { 'application/json': { schema: errorSchema } },
@@ -223,49 +223,62 @@ export const authRoutes = new OpenAPIHono<AppEnv>()
   .openapi(registerRoute, async (c) => {
     const { email, password, displayName, inviteCode } = c.req.valid('json');
 
-    // 1. Consume invite code atomically by SHA-256 hash lookup
-    //    (single UPDATE with active guards: not used AND not revoked).
-    //    The error response collapses invalid/used/revoked into the same shape
-    //    so attackers cannot probe code state (D-INV-11).
+    // Consume invite + create user + link in one transaction. Any failure
+    // (invalid invite, duplicate email, transient DB error) rolls back the
+    // invite consumption so retries with a valid email still succeed.
+    // D-INV-11: invalid/used/revoked invite AND duplicate email collapse to
+    // the same 400 message so an attacker cannot probe registered emails
+    // even when they hold a valid invite.
     const inputHash = hashInviteToken(inviteCode);
-    const consumed = await getDb()
-      .update(inviteCodes)
-      .set({ usedAt: new Date() })
-      .where(and(
-        eq(inviteCodes.hash, inputHash),
-        isNull(inviteCodes.usedAt),
-        isNull(inviteCodes.revokedAt),
-      ))
-      .returning({ id: inviteCodes.id });
-    if (consumed.length === 0) {
-      return c.json({ error: 'Invalid or used invite code' }, 400);
-    }
+    const InvalidInvite = Symbol('InvalidInvite');
 
-    // 2. Create user
     try {
-      const passwordHash = await hashPassword(password);
-      const [user] = await getDb()
-        .insert(users)
-        .values({ email, displayName, passwordHash })
-        .returning({ id: users.id, email: users.email, displayName: users.displayName });
+      const user = await getDb().transaction(async (tx) => {
+        const consumed = await tx
+          .update(inviteCodes)
+          .set({ usedAt: new Date() })
+          .where(and(
+            eq(inviteCodes.hash, inputHash),
+            isNull(inviteCodes.usedAt),
+            isNull(inviteCodes.revokedAt),
+          ))
+          .returning({ id: inviteCodes.id });
+        if (consumed.length === 0) {
+          throw InvalidInvite;
+        }
 
-      // 3. Link invite -> user (consumedByUserId is the new column name)
-      await getDb()
-        .update(inviteCodes)
-        .set({ consumedByUserId: user.id })
-        .where(eq(inviteCodes.id, consumed[0].id));
+        const passwordHash = await hashPassword(password);
+        let newUser;
+        try {
+          [newUser] = await tx
+            .insert(users)
+            .values({ email, displayName, passwordHash })
+            .returning({ id: users.id, email: users.email, displayName: users.displayName });
+        } catch (err: any) {
+          if (err?.code === '23505') {
+            // Duplicate email: collapse to InvalidInvite so the consumption
+            // rolls back and the response never confirms email existence.
+            throw InvalidInvite;
+          }
+          throw err;
+        }
 
-      // 4. Issue tokens
+        await tx
+          .update(inviteCodes)
+          .set({ consumedByUserId: newUser.id })
+          .where(eq(inviteCodes.id, consumed[0].id));
+
+        return newUser;
+      });
+
       const accessToken = await issueAccessToken(user.id);
       const refreshToken = await issueRefreshToken(user.id);
       setRefreshCookie(c, refreshToken);
 
       return c.json({ accessToken, user }, 200);
-    } catch (err: any) {
-      // If user creation failed (e.g. duplicate email), the invite was burned.
-      // This is acceptable: operator issues a new one. Alternative is a transaction; keeping simple for v1.
-      if (err?.code === '23505') {
-        return c.json({ error: 'Email already registered' }, 400);
+    } catch (err) {
+      if (err === InvalidInvite) {
+        return c.json({ error: 'Invalid or used invite code' }, 400);
       }
       throw err;
     }
