@@ -19,6 +19,7 @@ import { importRoutes } from './routes/import.js';
 import { ingestRoutes } from './routes/ingest.js';
 import { timelinePinRoutes, timelineListRoutes } from './routes/timeline.js';
 import { requireAuth } from './middleware/auth.js';
+import { forwarded } from './middleware/forwarded.js';
 import { db } from './db/client.js';
 import { seedInviteCode } from './db/seedInviteCode.js';
 import { createApiRouter } from './openapi/app.js';
@@ -32,9 +33,18 @@ export function createApp() {
     console.log(msg.replace(/(authorization|cookie):\s*[^\n]+/gi, '$1: [redacted]'));
   }));
   app.use('*', cors({
-    origin: (origin) => origin,
+    origin: (origin) => {
+      // PROXY-01: when WELTBON_PUBLIC_ORIGIN is set, allow ONLY that origin.
+      // When unset, retain the dev (o) => o reflect-all behavior (CONTEXT.md §CORS).
+      if (cfg.publicOrigin) {
+        return origin === cfg.publicOrigin ? origin : undefined;
+      }
+      return origin;
+    },
     credentials: true,
   }));
+  // PROXY-02: resolve the public origin once per request from X-Forwarded-* headers.
+  app.use('*', forwarded);
   const apiR = createApiRouter();
   apiR.route('/auth/tokens', tokenRoutes);
   apiR.route('/auth/invites', inviteRoutes);
