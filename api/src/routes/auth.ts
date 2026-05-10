@@ -14,6 +14,7 @@ import {
   REFRESH_COOKIE_NAME,
   REFRESH_TTL_MS,
 } from '../services/auth.js';
+import { hashInviteToken } from '../services/invite.js';
 
 type AppEnv = { Variables: AuthVariables };
 
@@ -222,12 +223,20 @@ export const authRoutes = new OpenAPIHono<AppEnv>()
   .openapi(registerRoute, async (c) => {
     const { email, password, displayName, inviteCode } = c.req.valid('json');
 
-    // 1. Consume invite code atomically (only succeeds if unused)
+    // 1. Consume invite code atomically by SHA-256 hash lookup
+    //    (single UPDATE with active guards: not used AND not revoked).
+    //    The error response collapses invalid/used/revoked into the same shape
+    //    so attackers cannot probe code state (D-INV-11).
+    const inputHash = hashInviteToken(inviteCode);
     const consumed = await getDb()
       .update(inviteCodes)
       .set({ usedAt: new Date() })
-      .where(and(eq(inviteCodes.code, inviteCode), isNull(inviteCodes.usedAt)))
-      .returning();
+      .where(and(
+        eq(inviteCodes.hash, inputHash),
+        isNull(inviteCodes.usedAt),
+        isNull(inviteCodes.revokedAt),
+      ))
+      .returning({ id: inviteCodes.id });
     if (consumed.length === 0) {
       return c.json({ error: 'Invalid or used invite code' }, 400);
     }
@@ -240,11 +249,11 @@ export const authRoutes = new OpenAPIHono<AppEnv>()
         .values({ email, displayName, passwordHash })
         .returning({ id: users.id, email: users.email, displayName: users.displayName });
 
-      // 3. Link invite -> user
+      // 3. Link invite -> user (consumedByUserId is the new column name)
       await getDb()
         .update(inviteCodes)
-        .set({ usedByUserId: user.id })
-        .where(eq(inviteCodes.code, inviteCode));
+        .set({ consumedByUserId: user.id })
+        .where(eq(inviteCodes.id, consumed[0].id));
 
       // 4. Issue tokens
       const accessToken = await issueAccessToken(user.id);

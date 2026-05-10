@@ -1,11 +1,13 @@
-import { randomBytes } from 'node:crypto';
 import { db, pool } from '../db/client.js';
 import { inviteCodes } from '../db/schema.js';
+import { generateInviteToken } from '../services/invite.js';
 
 async function main() {
-  const code = randomBytes(12).toString('base64url'); // ~16 url-safe chars
-  await db().insert(inviteCodes).values({ code });
-  console.log(`Invite code: ${code}`);
+  const { plaintext, hash, bodySuffix } = generateInviteToken();
+  await db()
+    .insert(inviteCodes)
+    .values({ ownerId: null, label: 'cli-mint', hash, bodySuffix });
+  console.log(`Invite code: ${plaintext}`);
   console.log(`Share this once. Consumed on first use.`);
   await pool().end();
 }
