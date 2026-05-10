@@ -1,6 +1,7 @@
 import type { NodePgDatabase } from 'drizzle-orm/node-postgres';
 import { sql } from 'drizzle-orm';
 import { inviteCodes } from './schema.js';
+import { hashInviteToken } from '../services/invite.js';
 
 /**
  * Boot-time seeder for the very first invite code on a fresh deployment.
@@ -29,7 +30,12 @@ export async function seedInviteCode(db: NodePgDatabase<any>): Promise<void> {
   if (existing.rows.length > 0) return;
 
   try {
-    await db.insert(inviteCodes).values({ code }).onConflictDoNothing();
+    await db.insert(inviteCodes).values({
+      hash: hashInviteToken(code),
+      bodySuffix: code.slice(-3),
+      label: 'bootstrap',
+      ownerId: null,
+    }).onConflictDoNothing();
     console.log('[seed] invite_codes seeded with INVITE_CODE env value');
   } catch (err) {
     const pgErrCode =
