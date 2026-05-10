@@ -106,6 +106,16 @@ export function createApp() {
 export const app = createApp();
 
 if (import.meta.url === `file://${process.argv[1]}`) {
+  // PROXY-01 operator warning: when WELTBON_PUBLIC_ORIGIN is unset the CORS
+  // middleware reflects any Origin back with credentials: true — fine for
+  // local dev, an XS-attack surface in production. Surface it loudly at boot.
+  if (!cfg.publicOrigin) {
+    console.warn(
+      '[weltbon] WELTBON_PUBLIC_ORIGIN is not set — CORS will reflect any Origin with credentials. ' +
+      'This is acceptable for local dev. For production, set WELTBON_PUBLIC_ORIGIN=https://your.domain ' +
+      'to restrict CORS to your operator-controlled origin.'
+    );
+  }
   await seedInviteCode(db());
   serve({ fetch: app.fetch, port: cfg.port });
   console.log(`Weltbon API listening on :${cfg.port}`);
