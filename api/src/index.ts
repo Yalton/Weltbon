@@ -7,6 +7,7 @@ import { HTTPException } from 'hono/http-exception';
 import { env } from './config.js';
 import { authRoutes } from './routes/auth.js';
 import { tokenRoutes } from './routes/tokens.js';
+import { inviteRoutes } from './routes/invites.js';
 import { universeRoutes } from './routes/universes.js';
 import { entryRoutes } from './routes/entries.js';
 import { linkRoutes, relationRoutes } from './routes/links.js';
@@ -36,6 +37,7 @@ export function createApp() {
   }));
   const apiR = createApiRouter();
   apiR.route('/auth/tokens', tokenRoutes);
+  apiR.route('/auth/invites', inviteRoutes);
   apiR.route('/auth', authRoutes);
   apiR.use('/universes/*', requireAuth);
   apiR.route('/universes/import', importRoutes);
