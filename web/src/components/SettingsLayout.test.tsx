@@ -23,6 +23,7 @@ function renderAt(path: string) {
         <Route path="/settings" element={<SettingsLayout />}>
           <Route index element={<div data-testid="index-child">INDEX_CHILD</div>} />
           <Route path="tokens" element={<div data-testid="tokens-child">TOKENS_CHILD</div>} />
+          <Route path="invites" element={<div data-testid="invites-child">INVITES_CHILD</div>} />
         </Route>
       </Routes>
     </MemoryRouter>,
@@ -37,20 +38,18 @@ describe('SettingsLayout', () => {
     expect(nav.tagName).toBe('NAV');
   });
 
-  it('renders two NavLinks: "Visual" → /settings and "API tokens" → /settings/tokens', () => {
+  it('renders three NavLinks: "Visual", "API tokens", "Invite codes"', () => {
     renderAt('/settings');
     const visual = screen.getByRole('link', { name: 'Visual' });
     const apiTokens = screen.getByRole('link', { name: 'API tokens' });
+    const inviteCodes = screen.getByRole('link', { name: 'Invite codes' });
 
-    expect(visual).toBeInTheDocument();
-    expect(apiTokens).toBeInTheDocument();
     expect(visual.getAttribute('href')).toBe('/settings');
     expect(apiTokens.getAttribute('href')).toBe('/settings/tokens');
+    expect(inviteCodes.getAttribute('href')).toBe('/settings/invites');
 
-    // Confirm exactly two links inside the nav
     const nav = screen.getByRole('navigation', { name: 'Settings sections' });
-    const links = nav.querySelectorAll('a');
-    expect(links.length).toBe(2);
+    expect(nav.querySelectorAll('a').length).toBe(3);
   });
 
   it('applies active classes to the "Visual" link when route is /settings', () => {
@@ -115,5 +114,26 @@ describe('SettingsLayout', () => {
     expect(screen.getByText('TOKENS_CHILD')).toBeInTheDocument();
     // The index child must NOT render at /settings/tokens
     expect(screen.queryByTestId('index-child')).not.toBeInTheDocument();
+  });
+
+  it('applies active classes to "Invite codes" link when route is /settings/invites', () => {
+    renderAt('/settings/invites');
+    const inviteCodes = screen.getByRole('link', { name: 'Invite codes' });
+    const cls = inviteCodes.getAttribute('class') ?? '';
+    expect(cls).toContain('bg-[color:var(--color-accent)]/10');
+    expect(cls).toContain('text-[color:var(--color-accent)]');
+    expect(cls).toContain('font-medium');
+    // Other links must NOT carry the active classes
+    const visual = screen.getByRole('link', { name: 'Visual' });
+    expect(visual.getAttribute('class') ?? '').not.toContain('bg-[color:var(--color-accent)]/10');
+    const apiTokens = screen.getByRole('link', { name: 'API tokens' });
+    expect(apiTokens.getAttribute('class') ?? '').not.toContain('bg-[color:var(--color-accent)]/10');
+  });
+
+  it('renders Outlet with the nested /invites route child', () => {
+    renderAt('/settings/invites');
+    expect(screen.getByTestId('invites-child')).toBeInTheDocument();
+    expect(screen.queryByTestId('index-child')).not.toBeInTheDocument();
+    expect(screen.queryByTestId('tokens-child')).not.toBeInTheDocument();
   });
 });
