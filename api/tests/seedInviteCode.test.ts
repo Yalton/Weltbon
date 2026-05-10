@@ -2,6 +2,7 @@ import { describe, it, expect, beforeAll, afterAll, beforeEach, afterEach } from
 import { sql } from 'drizzle-orm';
 import { createTestDb, cleanDb, type TestDbHandle } from './helpers.js';
 import { inviteCodes } from '../src/db/schema.js';
+import { hashInviteToken } from '../src/services/invite.js';
 
 describe('seedInviteCode (CONT-01 first-boot invite seeder)', () => {
   let handle: TestDbHandle;
@@ -41,31 +42,45 @@ describe('seedInviteCode (CONT-01 first-boot invite seeder)', () => {
     expect(await countInvites()).toBe(0);
   });
 
-  it('INVITE_CODE set + table empty → exactly one row inserted with that code', async () => {
-    process.env.INVITE_CODE = 'fresh-clone-invite-abc123';
+  it('INVITE_CODE set + table empty → exactly one row inserted hashed', async () => {
+    const plaintext = 'fresh-clone-invite-abc123';
+    process.env.INVITE_CODE = plaintext;
     await seedInviteCode(handle.db);
     const rows = await handle.db.select().from(inviteCodes);
     expect(rows).toHaveLength(1);
-    expect(rows[0].code).toBe('fresh-clone-invite-abc123');
+    expect(rows[0].hash).toBe(hashInviteToken(plaintext));
+    expect(rows[0].bodySuffix).toBe(plaintext.slice(-3));
   });
 
   it('INVITE_CODE set + table already has rows → no-op (existing rows preserved, no second insert)', async () => {
     // Operator-created invite already there
-    await handle.db.insert(inviteCodes).values({ code: 'operator-issued-zzz' });
+    const operatorCode = 'operator-issued-zzz';
+    await handle.db.insert(inviteCodes).values({
+      hash: hashInviteToken(operatorCode),
+      bodySuffix: operatorCode.slice(-3),
+      label: 'operator',
+      ownerId: null,
+    });
     process.env.INVITE_CODE = 'env-supplied-aaa';
     await seedInviteCode(handle.db);
     const rows = await handle.db.select().from(inviteCodes);
     // Should NOT have inserted env-supplied-aaa; only the operator code remains.
     expect(rows).toHaveLength(1);
-    expect(rows[0].code).toBe('operator-issued-zzz');
+    expect(rows[0].hash).toBe(hashInviteToken(operatorCode));
   });
 
   it('INVITE_CODE set + matching row already inserted (race) → does not throw, idempotent', async () => {
     // Simulate the race: another process already inserted this exact code.
     // Since the empty-table guard runs first, this case won't actually hit the
     // insert path — but we still verify no throw and no duplication.
-    await handle.db.insert(inviteCodes).values({ code: 'racey-invite' });
-    process.env.INVITE_CODE = 'racey-invite';
+    const plaintext = 'racey-invite';
+    await handle.db.insert(inviteCodes).values({
+      hash: hashInviteToken(plaintext),
+      bodySuffix: plaintext.slice(-3),
+      label: 'racey',
+      ownerId: null,
+    });
+    process.env.INVITE_CODE = plaintext;
     await expect(seedInviteCode(handle.db)).resolves.not.toThrow();
     expect(await countInvites()).toBe(1);
   });
