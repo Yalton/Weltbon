@@ -304,7 +304,7 @@ export function ImportUploadStep({
 
       <div className="mt-6 flex items-center justify-end gap-2">
         <Link
-          to={`/universes/${universeId}`}
+          to={`/universes/${universeId}/entries`}
           onClick={onCancel}
           className="px-3 py-1.5 text-sm rounded-md border border-neutral-300 dark:border-neutral-700"
         >

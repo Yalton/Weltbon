@@ -281,11 +281,11 @@ describe('ImportUploadStep — idle render and interactive flows', () => {
     expect(screen.getByRole('button', { name: /upload/i })).not.toBeDisabled();
   });
 
-  it('Cancel renders as an <a href="/universes/U1"> and onCancel runs on click', async () => {
+  it('Cancel renders as an <a href="/universes/U1/entries"> and onCancel runs on click', async () => {
     const onCancel = vi.fn();
     renderStep({ onCancel });
     const cancel = screen.getByRole('link', { name: /cancel/i });
-    expect(cancel).toHaveAttribute('href', '/universes/U1');
+    expect(cancel).toHaveAttribute('href', '/universes/U1/entries');
     await userEvent.click(cancel);
     expect(onCancel).toHaveBeenCalledTimes(1);
   });
