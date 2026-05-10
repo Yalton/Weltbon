@@ -76,8 +76,7 @@ export function createApp() {
   );
   app.get('/health', (c) => c.json({ ok: true }));
 
-  app.use('/assets/*', serveStatic({ root: './web-dist' }));
-  app.use('/favicon.ico', serveStatic({ path: './web-dist/favicon.ico' }));
+  app.use('*', serveStatic({ root: './web-dist' }));
   app.get('/', serveStatic({ path: './web-dist/index.html' }));
   app.get('*', serveStatic({ path: './web-dist/index.html' }));
 
