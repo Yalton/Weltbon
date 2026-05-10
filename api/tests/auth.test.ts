@@ -2,6 +2,7 @@ import { describe, it, expect, beforeAll, afterAll, beforeEach } from 'vitest';
 import { eq } from 'drizzle-orm';
 import { createTestDb, cleanDb, createTestUser, type TestDbHandle } from './helpers.js';
 import { users, refreshTokens, inviteCodes } from '../src/db/schema.js';
+import { hashInviteToken } from '../src/services/invite.js';
 
 describe('auth routes (AUTH-01..06)', () => {
   let handle: TestDbHandle;
@@ -26,7 +27,12 @@ describe('auth routes (AUTH-01..06)', () => {
   });
 
   async function seedInvite(code = 'valid-invite-123') {
-    await handle.db.insert(inviteCodes).values({ code });
+    await handle.db.insert(inviteCodes).values({
+      hash: hashInviteToken(code),
+      bodySuffix: code.slice(-3),
+      label: 'test',
+      ownerId: null,
+    });
     return code;
   }
 
