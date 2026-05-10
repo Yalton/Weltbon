@@ -3,6 +3,7 @@ export interface Env {
   jwtSecret: Uint8Array;
   databaseUrl: string;
   chromiumPath: string | undefined;
+  publicOrigin: string | undefined;
   port: number;
 }
 
@@ -28,11 +29,18 @@ export function loadEnv(source: NodeJS.ProcessEnv = process.env): Env {
       `DATABASE_URL must start with postgresql:// or postgres:// (got: ${db.slice(0, 20)}...)`
     );
   }
+  const publicOrigin = source.WELTBON_PUBLIC_ORIGIN;
+  if (publicOrigin !== undefined && !publicOrigin.startsWith('http://') && !publicOrigin.startsWith('https://')) {
+    throw new Error(
+      `WELTBON_PUBLIC_ORIGIN must start with http:// or https:// (got: ${publicOrigin.slice(0, 30)}...)`
+    );
+  }
 
   return {
     jwtSecret: new TextEncoder().encode(jwt),
     databaseUrl: db,
     chromiumPath: source.CHROMIUM_PATH,
+    publicOrigin,
     port: Number(source.PORT ?? 3000),
   };
 }
