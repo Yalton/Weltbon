@@ -1,5 +1,9 @@
 services:
   app:
+    # To use a published image instead of building locally:
+    #   1. Uncomment the `image:` line below
+    #   2. Comment out (or delete) the `build: .` line
+    # image: ghcr.io/<owner>/weltbon:latest
     build: .
     restart: unless-stopped
     env_file: .env
