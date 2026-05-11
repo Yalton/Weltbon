@@ -213,23 +213,30 @@ After installing and setting `CHROMIUM_PATH`, restart the API process and trigge
 
 Postgres lives in `docker compose`'s `db` service. Use `pg_dump` for backups and a cron line for automation. We don't ship retention -- rotate manually if you care; disk is cheap.
 
-### Recommended cron line
+### Recommended cron line (docker compose)
 
 Install with `crontab -e` and paste:
-
-```cron
-0 3 * * * pg_dump weltbon | gzip > /backups/weltbon-$(date +\%F).sql.gz
-```
-
-The `\%F` escape is required. Bare `%` in a crontab is interpreted as a newline / stdin separator and your backup file silently ends up named `weltbon-.sql.gz` (every run overwrites the previous one). Adjust `weltbon` to your `POSTGRES_DB` name and `/backups/` to your preferred directory (which must exist and be writable by the user owning the crontab).
-
-If your Postgres runs in `docker compose`, prefix with the container exec:
 
 ```cron
 0 3 * * * docker compose -f /opt/weltbon/docker-compose.yml exec -T db pg_dump -U weltbon weltbon | gzip > /backups/weltbon-$(date +\%F).sql.gz
 ```
 
+The `\%F` escape is required. Bare `%` in a crontab is interpreted as a newline / stdin separator and your backup file silently ends up named `weltbon-.sql.gz` (every run overwrites the previous one). Adjust the `-f` path to your `docker-compose.yml` location and `/backups/` to your preferred directory (which must exist and be writable by the user owning the crontab).
+
+### Host-installed Postgres alternative
+
+If you run Postgres directly on the host (not in docker compose), use the bare form instead:
+
+```cron
+0 3 * * * pg_dump weltbon | gzip > /backups/weltbon-$(date +\%F).sql.gz
+```
+
 After installing, verify with `crontab -l` -- the listed line should contain `\%F` literally (backslash visible). If the backslash is gone, your editor stripped it; reinstall with `crontab -e` and paste again.
+
+### What to back up
+
+- **The `pg_dump` output** -- produced by the cron line above. This is the portable, restorable artifact; you do not also need to back up the `pgdata` Docker volume (the SQL dump captures everything).
+- **`.env`** -- losing `JWT_SECRET` invalidates every active session and refresh token; losing `POSTGRES_PASSWORD` breaks `DATABASE_URL`. Back up `.env` to an encrypted store (a password manager works) -- do NOT commit it.
 
 ### Restore
 
@@ -246,6 +253,14 @@ We deliberately ship no retention logic. Delete files older than N days however 
 ```bash
 find /backups -name 'weltbon-*.sql.gz' -mtime +30 -delete
 ```
+
+### What NOT to commit
+
+Keep these out of git regardless of where you back them up:
+
+- `.env` -- contains `JWT_SECRET` and `POSTGRES_PASSWORD`. The committed template is `.env.example`.
+- The `/backups/` directory (or wherever your cron writes) -- contains user data and Postgres internals.
+- Any TLS certificates or private keys you place in the repo for the reverse proxy (see [docs/reverse-proxy/](docs/reverse-proxy/)).
 
 ## Environment Variables
 
