@@ -7,7 +7,8 @@ A self-hostable worldbuilding web app: create entries, link them with named rela
 ## Contents
 
 - [Quickstart (Development)](#quickstart-development)
-- [Self-Host](#self-host)
+- [Self-Host (Docker)](#self-host-docker)
+- [Self-Host (Bare Node)](#self-host-bare-node)
 - [Backup](#backup)
 - [Environment Variables](#environment-variables)
 - [Admin / Operator Commands](#admin--operator-commands)
@@ -99,7 +100,68 @@ Opens `http://localhost:5173`. All `/api/*` requests are proxied to the API auto
 
 Visit `/register`, enter your email, a password (minimum 12 characters), a display name, and the invite code from step 6. Submit to create your account and land on the universe list.
 
-## Self-Host
+## Self-Host (Docker)
+
+Pull the published image, configure `.env`, run `docker compose up -d`.
+
+### Prerequisites
+
+- Docker Engine 24+
+- Docker Compose v2 (the `docker compose` plugin, not the legacy `docker-compose` binary)
+- An open host port (3000 by default; change via `PORT`)
+- Optional: a reverse proxy for production — see [docs/reverse-proxy/](docs/reverse-proxy/)
+
+### Environment Variables
+
+Every variable from `.env.example`. Replace `<owner>` with the GitHub user or org publishing the image (e.g., `ghcr.io/<owner>/weltbon:latest`).
+
+| Variable | Required | Purpose | How to generate |
+|----------|----------|---------|-----------------|
+| `JWT_SECRET` | yes | HS256 signing key for access tokens; the API refuses to boot if missing or shorter than 32 characters | `openssl rand -hex 32` |
+| `POSTGRES_PASSWORD` | yes | Password for the `db` service in `docker-compose.yml`; also embedded in `DATABASE_URL` | Any strong secret; `openssl rand -base64 24` works |
+| `DATABASE_URL` | yes | Postgres connection string for the API | Templated as `postgresql://weltbon:${POSTGRES_PASSWORD}@db:5432/weltbon` |
+| `INVITE_CODE` | first boot only | Seeds the `invite_codes` table on cold start if the table is empty; required only for the first registration | Any string; can be removed from `.env` after the first user account exists |
+| `PORT` | no | API listen port inside the container | Default: `3000` |
+| `CHROMIUM_PATH` | no | System Chromium binary for PDF export | Container ships `/usr/bin/chromium` and sets this automatically; only set for bare-Node runs — see [Self-Host (Bare Node)](#self-host-bare-node) |
+| `WELTBON_PUBLIC_ORIGIN` | no | Public origin for CORS allow-list when behind a reverse proxy (e.g., `https://welt.example.com`); absent keeps dev-friendly permissive CORS | The operator's external origin — see [docs/reverse-proxy/](docs/reverse-proxy/) |
+
+### Quickstart
+
+```bash
+mkdir weltbon && cd weltbon
+curl -O https://raw.githubusercontent.com/<owner>/weltbon/v2.1/docker-compose.yml
+curl -O https://raw.githubusercontent.com/<owner>/weltbon/v2.1/.env.example
+mv .env.example .env
+# Edit .env: set JWT_SECRET, POSTGRES_PASSWORD, INVITE_CODE
+# Edit docker-compose.yml: uncomment the `image:` line (ghcr.io/<owner>/weltbon:latest), remove (or comment) `build: .`
+docker compose up -d
+docker compose logs -f app
+```
+
+### Verifying
+
+```bash
+curl http://localhost:3000/health
+# Expected: {"ok":true}
+```
+
+Then open `http://localhost:3000/register` in a browser and register the first account using `INVITE_CODE`.
+
+### Updating
+
+```bash
+docker compose pull
+docker compose up -d
+```
+
+### Where to next
+
+- Production behind a reverse proxy: [docs/reverse-proxy/](docs/reverse-proxy/)
+- Backups: [Backup](#backup)
+- Running without Docker: [Self-Host (Bare Node)](#self-host-bare-node)
+- PDF export still failing after install: [Troubleshooting](#troubleshooting)
+
+## Self-Host (Bare Node)
 
 PDF export uses `puppeteer-core` against system Chromium. You must install Chromium and point `CHROMIUM_PATH` at the binary. If PDF export returns a 500 with `Failed to launch the browser process` or `ENOENT`, it is almost always a wrong `CHROMIUM_PATH`.
 
@@ -143,31 +205,74 @@ brew install --cask chromium
 CHROMIUM_PATH=/Applications/Chromium.app/Contents/MacOS/Chromium
 ```
 
+### Windows
+
+**Recommended** -- install WSL2 (Ubuntu) and follow the [Ubuntu (22.04+)](#ubuntu-2204) instructions inside your WSL2 distribution. The bare-Node API process and Chromium both run inside WSL2; the Windows-side browser hits `http://localhost:3000`.
+
+**Fallback** -- native Windows Chrome:
+
+```
+# In your .env (literal backslashes -- .env files don't escape):
+CHROMIUM_PATH=C:\Program Files\Google\Chrome\Application\chrome.exe
+```
+
+The native fallback works for occasional PDF exports but has not been smoke-tested for sustained use. WSL2 is the supported path.
+
 ### Verifying
 
 After installing and setting `CHROMIUM_PATH`, restart the API process and trigger a PDF export from the entry list. If you get `Failed to launch the browser process` or `ENOENT`, the path is wrong -- run `which chromium` (Linux) or `ls /Applications/Chromium.app/Contents/MacOS/` (macOS) and update `.env`.
+
+### Troubleshooting
+
+PDF export failures almost always trace to Chromium. Work through this checklist in order:
+
+1. **PDF export returns 500.** Check `CHROMIUM_PATH` is set in `.env` and points to a Chromium binary -- not a Snap wrapper (Ubuntu's `apt install chromium-browser`), not a `.app` bundle directory (macOS), not a symlink that resolves to nothing.
+2. **`CHROMIUM_PATH` looks right.** Verify the path resolves and is executable:
+   ```bash
+   which $CHROMIUM_PATH   # Linux/macOS -- should echo the same path
+   ls -l $CHROMIUM_PATH   # should show executable permission
+   ```
+3. **Binary launches manually but PDF export still fails.** Confirm Noto fonts are visible to the rendering process:
+   ```bash
+   fc-list | grep -i noto
+   ```
+   No output means font lookup fails inside Chromium and you'll see `Failed to launch the browser process` with a font-related stack frame.
+4. **Fonts are present but launch hangs or crashes under load.** Increase Docker shared memory:
+   - In `docker-compose.yml`, add `shm_size: 1gb` under the `app` service.
+   - For bare `docker run`, pass `--shm-size=1g`.
+
+   The default `/dev/shm` size (64MB) is too small for Chromium when multiple PDF exports run concurrently.
+
+Note: the published Docker image bakes `/usr/bin/chromium`, Noto fonts, and Liberation fonts. Docker users typically don't hit steps 1-3 -- if you do, check that you didn't override `CHROMIUM_PATH` in `.env` to a non-existent path.
 
 ## Backup
 
 Postgres lives in `docker compose`'s `db` service. Use `pg_dump` for backups and a cron line for automation. We don't ship retention -- rotate manually if you care; disk is cheap.
 
-### Recommended cron line
+### Recommended cron line (docker compose)
 
 Install with `crontab -e` and paste:
-
-```cron
-0 3 * * * pg_dump weltbon | gzip > /backups/weltbon-$(date +\%F).sql.gz
-```
-
-The `\%F` escape is required. Bare `%` in a crontab is interpreted as a newline / stdin separator and your backup file silently ends up named `weltbon-.sql.gz` (every run overwrites the previous one). Adjust `weltbon` to your `POSTGRES_DB` name and `/backups/` to your preferred directory (which must exist and be writable by the user owning the crontab).
-
-If your Postgres runs in `docker compose`, prefix with the container exec:
 
 ```cron
 0 3 * * * docker compose -f /opt/weltbon/docker-compose.yml exec -T db pg_dump -U weltbon weltbon | gzip > /backups/weltbon-$(date +\%F).sql.gz
 ```
 
+The `\%F` escape is required. Bare `%` in a crontab is interpreted as a newline / stdin separator and your backup file silently ends up named `weltbon-.sql.gz` (every run overwrites the previous one). Adjust the `-f` path to your `docker-compose.yml` location and `/backups/` to your preferred directory (which must exist and be writable by the user owning the crontab).
+
+### Host-installed Postgres alternative
+
+If you run Postgres directly on the host (not in docker compose), use the bare form instead:
+
+```cron
+0 3 * * * pg_dump weltbon | gzip > /backups/weltbon-$(date +\%F).sql.gz
+```
+
 After installing, verify with `crontab -l` -- the listed line should contain `\%F` literally (backslash visible). If the backslash is gone, your editor stripped it; reinstall with `crontab -e` and paste again.
+
+### What to back up
+
+- **The `pg_dump` output** -- produced by the cron line above. This is the portable, restorable artifact; you do not also need to back up the `pgdata` Docker volume (the SQL dump captures everything).
+- **`.env`** -- losing `JWT_SECRET` invalidates every active session and refresh token; losing `POSTGRES_PASSWORD` breaks `DATABASE_URL`. Back up `.env` to an encrypted store (a password manager works) -- do NOT commit it.
 
 ### Restore
 
@@ -185,6 +290,14 @@ We deliberately ship no retention logic. Delete files older than N days however 
 find /backups -name 'weltbon-*.sql.gz' -mtime +30 -delete
 ```
 
+### What NOT to commit
+
+Keep these out of git regardless of where you back them up:
+
+- `.env` -- contains `JWT_SECRET` and `POSTGRES_PASSWORD`. The committed template is `.env.example`.
+- The `/backups/` directory (or wherever your cron writes) -- contains user data and Postgres internals.
+- Any TLS certificates or private keys you place in the repo for the reverse proxy (see [docs/reverse-proxy/](docs/reverse-proxy/)).
+
 ## Environment Variables
 
 ### Required
@@ -200,7 +313,7 @@ find /backups -name 'weltbon-*.sql.gz' -mtime +30 -delete
 | Variable         | Purpose                                                            | Default                                      |
 |------------------|--------------------------------------------------------------------|----------------------------------------------|
 | `PORT`           | API listen port                                                    | `3000`                                       |
-| `CHROMIUM_PATH`  | System Chromium binary path for PDF export (`puppeteer-core`)      | unset; PDF export 503s without it. See [Self-Host](#self-host) for per-OS values. |
+| `CHROMIUM_PATH`  | System Chromium binary path for PDF export (`puppeteer-core`)      | unset; PDF export 503s without it. See [Self-Host (Bare Node)](#self-host-bare-node) for per-OS values. |
 
 ### Startup Guard
 
@@ -295,7 +408,7 @@ The target is a personal Linux server, not a cloud PaaS. Two processes: the API 
 
 1. Clone the repo (e.g., under `/opt/weltbon/`).
 2. Install dependencies: `pnpm install`.
-3. Copy `.env.example` to `.env` and fill in a production `JWT_SECRET`, `POSTGRES_PASSWORD`, and `CHROMIUM_PATH` (see [Self-Host](#self-host)).
+3. Copy `.env.example` to `.env` and fill in a production `JWT_SECRET`, `POSTGRES_PASSWORD`, and `CHROMIUM_PATH` (see [Self-Host (Bare Node)](#self-host-bare-node)).
 4. Start the database: `docker compose up -d db`.
 5. Apply migrations: `pnpm --filter api db:migrate`.
 6. Build the API: `pnpm --filter api build` (produces `api/dist/`).
