@@ -7,7 +7,8 @@ A self-hostable worldbuilding web app: create entries, link them with named rela
 ## Contents
 
 - [Quickstart (Development)](#quickstart-development)
-- [Self-Host](#self-host)
+- [Self-Host (Docker)](#self-host-docker)
+- [Self-Host (Bare Node)](#self-host-bare-node)
 - [Backup](#backup)
 - [Environment Variables](#environment-variables)
 - [Admin / Operator Commands](#admin--operator-commands)
@@ -98,6 +99,67 @@ Opens `http://localhost:5173`. All `/api/*` requests are proxied to the API auto
 ### 9. Register
 
 Visit `/register`, enter your email, a password (minimum 12 characters), a display name, and the invite code from step 6. Submit to create your account and land on the universe list.
+
+## Self-Host (Docker)
+
+Pull the published image, configure `.env`, run `docker compose up -d`.
+
+### Prerequisites
+
+- Docker Engine 24+
+- Docker Compose v2 (the `docker compose` plugin, not the legacy `docker-compose` binary)
+- An open host port (3000 by default; change via `PORT`)
+- Optional: a reverse proxy for production — see [docs/reverse-proxy/](docs/reverse-proxy/)
+
+### Environment Variables
+
+Every variable from `.env.example`. Replace `<owner>` with the GitHub user or org publishing the image (e.g., `ghcr.io/<owner>/weltbon:latest`).
+
+| Variable | Required | Purpose | How to generate |
+|----------|----------|---------|-----------------|
+| `JWT_SECRET` | yes | HS256 signing key for access tokens; the API refuses to boot if missing or shorter than 32 characters | `openssl rand -hex 32` |
+| `POSTGRES_PASSWORD` | yes | Password for the `db` service in `docker-compose.yml`; also embedded in `DATABASE_URL` | Any strong secret; `openssl rand -base64 24` works |
+| `DATABASE_URL` | yes | Postgres connection string for the API | Templated as `postgresql://weltbon:${POSTGRES_PASSWORD}@db:5432/weltbon` |
+| `INVITE_CODE` | first boot only | Seeds the `invite_codes` table on cold start if the table is empty; required only for the first registration | Any string; can be removed from `.env` after the first user account exists |
+| `PORT` | no | API listen port inside the container | Default: `3000` |
+| `CHROMIUM_PATH` | no | System Chromium binary for PDF export | Container ships `/usr/bin/chromium` and sets this automatically; only set for bare-Node runs — see [Self-Host (Bare Node)](#self-host-bare-node) |
+| `WELTBON_PUBLIC_ORIGIN` | no | Public origin for CORS allow-list when behind a reverse proxy (e.g., `https://welt.example.com`); absent keeps dev-friendly permissive CORS | The operator's external origin — see [docs/reverse-proxy/](docs/reverse-proxy/) |
+
+### Quickstart
+
+```bash
+mkdir weltbon && cd weltbon
+curl -O https://raw.githubusercontent.com/<owner>/weltbon/v2.1/docker-compose.yml
+curl -O https://raw.githubusercontent.com/<owner>/weltbon/v2.1/.env.example
+mv .env.example .env
+# Edit .env: set JWT_SECRET, POSTGRES_PASSWORD, INVITE_CODE
+# Edit docker-compose.yml: uncomment the `image:` line (ghcr.io/<owner>/weltbon:latest), remove (or comment) `build: .`
+docker compose up -d
+docker compose logs -f app
+```
+
+### Verifying
+
+```bash
+curl http://localhost:3000/health
+# Expected: {"ok":true}
+```
+
+Then open `http://localhost:3000/register` in a browser and register the first account using `INVITE_CODE`.
+
+### Updating
+
+```bash
+docker compose pull
+docker compose up -d
+```
+
+### Where to next
+
+- Production behind a reverse proxy: [docs/reverse-proxy/](docs/reverse-proxy/)
+- Backups: [Backup](#backup)
+- Running without Docker: [Self-Host (Bare Node)](#self-host-bare-node)
+- PDF export still failing after install: [Troubleshooting](#troubleshooting)
 
 ## Self-Host
 
