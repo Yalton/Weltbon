@@ -65,10 +65,14 @@ describe('classifyError — Phase 12 status-code branches', () => {
     );
   });
 
-  it('409 → category-resolve copy', () => {
+  it('409 fallback (body.error does NOT match title-still-collides) → title-collision copy (TD-03)', () => {
+    // The 409 status-code fallback now uses the title-collision copy. The
+    // literal-string text-match branch (test below) covers the typical
+    // TitleCollisionError case; this status-code branch covers any future
+    // 409 whose body.error doesn't include 'title still collides'.
     const err = new ApiError(409, { error: 'category conflict' }, 'category conflict');
     expect(classifyError(err)).toBe(
-      'Could not resolve a category name. Pick existing categories for any new ones.',
+      'One or more entry titles are already in use in this universe. Rename the conflicting entries in your review and re-commit.',
     );
   });
 
@@ -133,6 +137,44 @@ describe('classifyError — Phase 12 status-code branches', () => {
     );
     expect(classifyError(null)).toBe(
       "Couldn't reach the server. Your review is saved locally. Try again.",
+    );
+  });
+});
+
+describe('classifyError — TD-03 ingest-commit text-match branches (Phase 16)', () => {
+  it('matches "title still collides" (case-insensitive) → title-collision copy', () => {
+    const err = new ApiError(
+      409,
+      { error: 'Title still collides: The Sundering' },
+      'Title still collides: The Sundering',
+    );
+    expect(classifyError(err)).toBe(
+      'One or more entry titles are already in use in this universe. Rename the conflicting entries in your review and re-commit.',
+    );
+  });
+
+  it('matches "Invalid category id" (case-insensitive) → category-unresolved copy', () => {
+    const err = new ApiError(
+      400,
+      { error: 'Invalid category id' },
+      'Invalid category id',
+    );
+    expect(classifyError(err)).toBe(
+      'A category you selected was removed or renamed since you opened the review. Refresh the review and re-pick categories.',
+    );
+  });
+
+  it('"Invalid category id" wins over legacy invalid|format|parse branch (regression guard)', () => {
+    // The literal string "Invalid category id" contains the substring "invalid"
+    // which would otherwise be swallowed by the legacy invalid|format|parse
+    // branch. The TD-03 branch-order overhaul places this match FIRST.
+    const err = new ApiError(
+      400,
+      { error: 'Invalid category id' },
+      'Invalid category id',
+    );
+    expect(classifyError(err)).not.toBe(
+      'This file is not a valid Weltbon export. Check the file and try again.',
     );
   });
 });
