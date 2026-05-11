@@ -111,9 +111,9 @@ Pull the published image, configure `.env`, run `docker compose up -d`.
 - An open host port (3000 by default; change via `PORT`)
 - Optional: a reverse proxy for production — see [docs/reverse-proxy/](docs/reverse-proxy/)
 
-### Environment Variables
+### `.env` Reference
 
-Every variable from `.env.example`. Replace `<owner>` with the GitHub user or org publishing the image (e.g., `ghcr.io/<owner>/weltbon:latest`).
+Every variable from `.env.example`. Replace `<owner>` with the GitHub user or org publishing the image (e.g., `ghcr.io/<owner>/weltbon:latest`). For the full per-variable narrative (defaults, deeper rationale), see [Environment Variables](#environment-variables).
 
 | Variable | Required | Purpose | How to generate |
 |----------|----------|---------|-----------------|
@@ -138,6 +138,8 @@ docker compose up -d
 docker compose logs -f app
 ```
 
+> **Tag conventions:** git tags are prefixed `v2.1`; the GHCR image tags drop the `v` (`ghcr.io/<owner>/weltbon:2.1`, `:2`, `:latest`). When pinning the compose image to a specific release, write `image: ghcr.io/<owner>/weltbon:2.1` (no `v`).
+
 ### Verifying
 
 ```bash
@@ -148,6 +150,8 @@ curl http://localhost:3000/health
 Then open `http://localhost:3000/register` in a browser and register the first account using `INVITE_CODE`.
 
 ### Updating
+
+Requires the Quickstart switch to `image:` (above) — `docker compose pull` is a no-op when `build: .` is still active. To rebuild from source instead of pulling, run `docker compose build --pull && docker compose up -d`.
 
 ```bash
 docker compose pull
