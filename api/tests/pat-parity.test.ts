@@ -183,6 +183,45 @@ describe('PAT parity round-trip (API-04)', () => {
     expect(Array.isArray(graphRes.body.nodes), 'graph has nodes array').toBe(true);
     expect(graphRes.body.nodes.length, 'graph has at least 2 nodes').toBeGreaterThanOrEqual(2);
 
+    // Step 9a: graph-positions round-trip
+    // graph-positions: write via POST /bulk, read back via GET /graph-data (positions array)
+    const positionsPayload = [
+      { entryId: entryAId, x: 100, y: 200 },
+      { entryId: entryBId, x: 300, y: 400 },
+    ];
+    const bulkPosRes = await appRequest('POST', `/api/universes/${uid}/graph-positions/bulk`, {
+      body: positionsPayload,
+      headers: patHdr,
+    });
+    expect(bulkPosRes.status, 'graph-positions bulk upsert').toBe(200);
+    expect(bulkPosRes.body.upserted, 'bulk upserted 2').toBe(2);
+
+    // Read back positions via GET /graph-data (graph-positions has no GET route)
+    const graphDataRes = await appRequest('GET', `/api/universes/${uid}/graph-data`, {
+      headers: patHdr,
+    });
+    expect(graphDataRes.status, 'graph-data after positions write').toBe(200);
+    const posA = (graphDataRes.body.positions as Array<{ entryId: string; x: number; y: number }>).find(
+      (p) => p.entryId === entryAId,
+    );
+    const posB = (graphDataRes.body.positions as Array<{ entryId: string; x: number; y: number }>).find(
+      (p) => p.entryId === entryBId,
+    );
+    expect(posA, 'posA found in positions').toBeTruthy();
+    expect(posA!.x, 'posA.x').toBe(100);
+    expect(posA!.y, 'posA.y').toBe(200);
+    expect(posB, 'posB found in positions').toBeTruthy();
+    expect(posB!.x, 'posB.x').toBe(300);
+    expect(posB!.y, 'posB.y').toBe(400);
+
+    // Step 9b: timeline-list round-trip
+    const timelineRes = await appRequest('GET', `/api/universes/${uid}/timeline`, {
+      headers: patHdr,
+    });
+    expect(timelineRes.status, 'timeline list').toBe(200);
+    // The pin from Step 8 used label: 'Year 0 — The Sundering'
+    expect(JSON.stringify(timelineRes.body)).toContain('Year 0 — The Sundering');
+
     // Step 10: Export universe as JSON (PAT)
     const exportRes = await appRequest('GET', `/api/universes/${uid}/export?format=json`, {
       headers: patHdr,
