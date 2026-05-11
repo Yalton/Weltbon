@@ -84,4 +84,18 @@ describe('seedInviteCode (CONT-01 first-boot invite seeder)', () => {
     await expect(seedInviteCode(handle.db)).resolves.not.toThrow();
     expect(await countInvites()).toBe(1);
   });
+
+  it('two parallel seedInviteCode calls against an empty table converge to exactly one row (WR-05)', async () => {
+    const plaintext = 'concurrent-boot-invite-abc123def456';
+    process.env.INVITE_CODE = plaintext;
+    // Race them: both observe empty table, both attempt insert.
+    // UNIQUE(hash) + onConflictDoNothing must converge to 1 row.
+    await Promise.all([
+      seedInviteCode(handle.db),
+      seedInviteCode(handle.db),
+    ]);
+    expect(await countInvites()).toBe(1);
+    const rows = await handle.db.select().from(inviteCodes);
+    expect(rows[0].hash).toBe(hashInviteToken(plaintext));
+  });
 });

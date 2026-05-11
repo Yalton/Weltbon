@@ -23,9 +23,18 @@ export async function seedInviteCode(db: NodePgDatabase<any>): Promise<void> {
   const code = process.env.INVITE_CODE;
   if (!code) return;
 
-  // Empty-table guard — count, not a unique-on-conflict shortcut, because
-  // we want to skip entirely when ANY other invites exist (operator may
-  // have already issued codes via the admin CLI).
+  // Empty-table guard — heuristic, NOT a transactional guarantee. Intent:
+  // skip seeding when ANY other invites exist so operator-issued codes
+  // (via `pnpm invite:new`) aren't joined by an env-seeded duplicate.
+  //
+  // Race semantics (WR-05): two parallel boots can both observe an empty
+  // table and both reach the INSERT below. UNIQUE(hash) + onConflictDoNothing
+  // collapses that to exactly one row — see tests/seedInviteCode.test.ts
+  // "two parallel seedInviteCode calls" for the regression lock.
+  //
+  // A parallel `pnpm invite:new` between this SELECT and the INSERT below
+  // produces a benign extra row on a fresh boot; documented and accepted
+  // per Phase 13 REVIEW WR-05.
   const existing = await db.execute(sql`SELECT 1 FROM ${inviteCodes} LIMIT 1`);
   if (existing.rows.length > 0) return;
 
