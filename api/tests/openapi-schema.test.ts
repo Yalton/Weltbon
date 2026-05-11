@@ -118,6 +118,16 @@ describe('OpenAPI schema and Scalar docs (Phase 10 — DB-independent)', () => {
       doc.paths['/universes/{uid}/ingest/commit'],
       `expected doc.paths['/universes/{uid}/ingest/commit'] to be present; saw keys: ${Object.keys(doc.paths).join(', ')}`,
     ).toBeTruthy();
+
+    // v2.1 audit cross-phase: explicit assertion that /auth/invites is present.
+    // INV-04 is otherwise only covered by api/tests/invites.test.ts (route-level);
+    // a regression that silently dropped inviteRoutes from api/src/index.ts would
+    // pass invites.test.ts independently but evade the schema test. This guards.
+    const authInvitesKeys = Object.keys(doc.paths).filter((p) => p.startsWith('/auth/'));
+    expect(
+      doc.paths['/auth/invites'],
+      `expected doc.paths['/auth/invites'] to be present; available /auth/* keys: ${authInvitesKeys.join(', ') || '(none)'}`,
+    ).toBeTruthy();
   });
 
   // ──────────────────────────────────────────────────────────────────────────
