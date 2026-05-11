@@ -329,6 +329,44 @@ describe('PAT parity round-trip (API-04)', () => {
       );
       expect(match, `round-trip: pin "${p.label}" preserved`).toBeTruthy();
     }
+
+    // Step 13: ingest preview + commit round-trip (PAT)
+    const fixtureMd = '# Ingested Test Entry\n\nA tiny body for parity coverage.\n';
+    const form = new FormData();
+    form.append('files', new Blob([fixtureMd], { type: 'text/markdown' }), 'ingested-test.md');
+    const ingestRes = await app.fetch(
+      new Request(`http://localhost/api/universes/${uid}/ingest`, {
+        method: 'POST',
+        headers: patHdr, // do NOT set Content-Type; fetch will set the multipart boundary
+        body: form,
+      }),
+    );
+    expect(ingestRes.status, 'ingest preview').toBe(200);
+    const preview = await ingestRes.json() as { entries: Array<any> };
+    expect(Array.isArray(preview.entries), 'preview.entries is array').toBe(true);
+    expect(preview.entries.length, 'preview has the fixture entry').toBe(1);
+
+    // Build commit body from preview — each entry needs a decision
+    const commitBody = {
+      entries: preview.entries.map((e: any) => ({
+        ...e,
+        decision: { disposition: 'accept' },
+        category: null,
+      })),
+    };
+    const commitRes = await appRequest('POST', `/api/universes/${uid}/ingest/commit`, {
+      body: commitBody,
+      headers: patHdr,
+    });
+    expect(commitRes.status, 'ingest commit').toBe(200);
+    expect(Array.isArray(commitRes.body.entryIds), 'commit returns entryIds[]').toBe(true);
+    expect(commitRes.body.entryIds.length, 'commit created 1 entry').toBe(1);
+
+    // Verify the ingested entry is queryable via the entries list
+    const entriesRes = await appRequest('GET', `/api/universes/${uid}/entries`, { headers: patHdr });
+    expect(entriesRes.status).toBe(200);
+    const titles = (entriesRes.body as Array<{ title: string }>).map((e) => e.title);
+    expect(titles, 'ingested entry surfaces in entries list').toContain('Ingested Test Entry');
   });
 
   // ─── Test 2: PAT meta-API rejection smoke (D-11 / D-13 regression guard) ─
