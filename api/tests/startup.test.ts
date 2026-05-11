@@ -81,4 +81,33 @@ describe('startup config guard (OPS-04 / AUTH-05a / AUTH-05b)', () => {
       } as NodeJS.ProcessEnv)
     ).toThrow(/WELTBON_PUBLIC_ORIGIN must start with http:\/\/ or https:\/\//);
   });
+
+  it('throws when INVITE_CODE is set but shorter than 16 characters', () => {
+    expect(() =>
+      loadEnv({
+        JWT_SECRET: 'a'.repeat(32),
+        DATABASE_URL: 'postgresql://localhost/x',
+        INVITE_CODE: 'hunter2',
+      } as NodeJS.ProcessEnv)
+    ).toThrow(/INVITE_CODE must be at least 16 characters/);
+  });
+
+  it('accepts INVITE_CODE of exactly 16 characters', () => {
+    expect(() =>
+      loadEnv({
+        JWT_SECRET: 'a'.repeat(32),
+        DATABASE_URL: 'postgresql://localhost/x',
+        INVITE_CODE: 'abcdef1234567890', // 16 chars
+      } as NodeJS.ProcessEnv)
+    ).not.toThrow();
+  });
+
+  it('accepts INVITE_CODE unset (no validation triggered)', () => {
+    expect(() =>
+      loadEnv({
+        JWT_SECRET: 'a'.repeat(32),
+        DATABASE_URL: 'postgresql://localhost/x',
+      } as NodeJS.ProcessEnv)
+    ).not.toThrow();
+  });
 });

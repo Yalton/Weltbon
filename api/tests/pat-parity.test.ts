@@ -18,6 +18,7 @@
  * pattern for DB-dependent integration suites).
  */
 
+import fs from 'node:fs';
 import { describe, it, expect, beforeAll, afterAll, beforeEach } from 'vitest';
 import { createApp } from '../src/index.js';
 import { createTestDb, cleanDb, createTestUser, type TestDbHandle } from './helpers.js';
@@ -250,10 +251,15 @@ describe('PAT parity round-trip (API-04)', () => {
     expect(docxBuf[0]).toBe(0x50);
     expect(docxBuf[1]).toBe(0x4b);
 
-    // Step 10c: pdf export (skip-safe if Chromium unavailable)
-    // PDF rendering requires Chromium. If unavailable, skip the format-pdf assertion gracefully.
+    // Step 10c: pdf export (skip-safe if Chromium unavailable OR binary missing)
+    // PDF rendering requires Chromium. WR-01 (P16): match export-pdf.test.ts pattern —
+    // check fs.existsSync so a stale CHROMIUM_PATH points-to-nowhere doesn't fail-render.
     const chromiumPath = process.env.CHROMIUM_PATH;
-    const skipPdf = !chromiumPath;
+    const skipPdf = !(chromiumPath && fs.existsSync(chromiumPath));
+    if (skipPdf) {
+      console.warn(`[pat-parity] PDF assertion skipped: CHROMIUM_PATH=${chromiumPath ?? 'unset'}; ` +
+        `${chromiumPath ? 'binary not found on disk' : 'env not set'}.`);
+    }
     if (!skipPdf) {
       const pdfRes = await app.fetch(new Request(`http://localhost/api/universes/${uid}/export?format=pdf`, { headers: patHdr }));
       expect(pdfRes.status, 'pdf export status').toBe(200);

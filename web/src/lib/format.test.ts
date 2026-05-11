@@ -168,11 +168,19 @@ describe('classifyError — TD-03 ingest-commit text-match branches (Phase 16)',
     // The literal string "Invalid category id" contains the substring "invalid"
     // which would otherwise be swallowed by the legacy invalid|format|parse
     // branch. The TD-03 branch-order overhaul places this match FIRST.
+    //
+    // WR-02 (P16) fix: assert BOTH positively (locks current copy from drift)
+    // AND negatively (locks against re-introduction of the legacy copy).
     const err = new ApiError(
       400,
       { error: 'Invalid category id' },
       'Invalid category id',
     );
+    // Positive: must dispatch to the category-unresolved copy.
+    expect(classifyError(err)).toBe(
+      'A category you selected was removed or renamed since you opened the review. Refresh the review and re-pick categories.',
+    );
+    // Negative: must NOT be swallowed by the legacy invalid|format|parse branch.
     expect(classifyError(err)).not.toBe(
       'This file is not a valid Weltbon export. Check the file and try again.',
     );

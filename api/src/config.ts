@@ -36,6 +36,15 @@ export function loadEnv(source: NodeJS.ProcessEnv = process.env): Env {
     );
   }
 
+  const inviteCode = source.INVITE_CODE;
+  if (inviteCode !== undefined && inviteCode.length < 16) {
+    throw new Error(
+      `INVITE_CODE must be at least 16 characters when set (got ${inviteCode.length}). ` +
+      `Use \`pnpm --filter api invite:new\` to generate a properly-formed bootstrap code, ` +
+      `or unset INVITE_CODE to disable boot-time seeding.`
+    );
+  }
+
   return {
     jwtSecret: new TextEncoder().encode(jwt),
     databaseUrl: db,
