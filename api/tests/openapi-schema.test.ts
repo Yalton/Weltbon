@@ -105,6 +105,19 @@ describe('OpenAPI schema and Scalar docs (Phase 10 — DB-independent)', () => {
     // export router (/universes/{uid}/export)
     const hasExportPath = pathKeys.some((p) => p.includes('/export'));
     expect(hasExportPath, `expected /universes/{uid}/export path in: ${pathKeys.join(', ')}`).toBe(true);
+
+    // TD-02: explicit assertion that /ingest and /ingest/commit are present.
+    // The prefix-scan above would NOT catch a dropped ingest router because
+    // other routers share the /universes/{uid}/ prefix. These two assertions
+    // fail visibly if api/src/routes/ingest.ts is ever unmounted from index.ts.
+    expect(
+      doc.paths['/universes/{uid}/ingest'],
+      `expected doc.paths['/universes/{uid}/ingest'] to be present; saw keys: ${Object.keys(doc.paths).join(', ')}`,
+    ).toBeTruthy();
+    expect(
+      doc.paths['/universes/{uid}/ingest/commit'],
+      `expected doc.paths['/universes/{uid}/ingest/commit'] to be present; saw keys: ${Object.keys(doc.paths).join(', ')}`,
+    ).toBeTruthy();
   });
 
   // ──────────────────────────────────────────────────────────────────────────
