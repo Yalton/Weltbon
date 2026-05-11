@@ -346,10 +346,12 @@ describe('PAT parity round-trip (API-04)', () => {
     expect(Array.isArray(preview.entries), 'preview.entries is array').toBe(true);
     expect(preview.entries.length, 'preview has the fixture entry').toBe(1);
 
-    // Build commit body from preview — each entry needs a decision
+    // Build commit body from preview — each entry needs a decision.
+    // Preview uses `type`; commitBodySchema (ingest-commit.ts) requires `entryType` — remap explicitly.
     const commitBody = {
-      entries: preview.entries.map((e: any) => ({
+      entries: preview.entries.map(({ type, ...e }: any) => ({
         ...e,
+        entryType: type,
         decision: { disposition: 'accept' },
         category: null,
       })),
