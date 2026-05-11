@@ -453,6 +453,8 @@ pnpm --filter api test -- --run
 pnpm --filter web test -- --run
 ```
 
+> **Optional — full PDF coverage in `pat-parity.test.ts`:** Set `CHROMIUM_PATH=/path/to/chrome` (e.g. `/usr/bin/chromium` on Debian, `/Applications/Google Chrome.app/Contents/MacOS/Google Chrome` on macOS) before running `pnpm --filter api test` to enable the PDF round-trip assertion in `pat-parity.test.ts`. Without it, the sub-assertion skips silently and the rest of the test suite still runs.
+
 ## Verifying the Startup Guard
 
 A deliberate foot-gun check: start the API without `JWT_SECRET`. It must exit non-zero.
