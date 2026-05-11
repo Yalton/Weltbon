@@ -232,6 +232,38 @@ describe('PAT parity round-trip (API-04)', () => {
     expect(exportedJson.entries).toHaveLength(2);
     expect(exportedJson.links).toHaveLength(1);
 
+    // Step 10a: markdown export (binary ZIP response)
+    const mdRes = await app.fetch(new Request(`http://localhost/api/universes/${uid}/export?format=markdown`, { headers: patHdr }));
+    expect(mdRes.status, 'markdown export status').toBe(200);
+    const mdCT = mdRes.headers.get('content-type') ?? '';
+    expect(mdCT.toLowerCase()).toMatch(/(application\/zip|text\/markdown)/);
+    const mdBuf = Buffer.from(await mdRes.arrayBuffer());
+    expect(mdBuf.length, 'markdown export non-empty').toBeGreaterThan(0);
+
+    // Step 10b: docx export
+    const docxRes = await app.fetch(new Request(`http://localhost/api/universes/${uid}/export?format=docx`, { headers: patHdr }));
+    expect(docxRes.status, 'docx export status').toBe(200);
+    expect(docxRes.headers.get('content-type') ?? '').toContain('application/vnd.openxmlformats-officedocument.wordprocessingml.document');
+    const docxBuf = Buffer.from(await docxRes.arrayBuffer());
+    expect(docxBuf.length, 'docx export non-empty').toBeGreaterThan(0);
+    // DOCX files are ZIP archives; magic bytes are 'PK\x03\x04'
+    expect(docxBuf[0]).toBe(0x50);
+    expect(docxBuf[1]).toBe(0x4b);
+
+    // Step 10c: pdf export (skip-safe if Chromium unavailable)
+    // PDF rendering requires Chromium. If unavailable, skip the format-pdf assertion gracefully.
+    const chromiumPath = process.env.CHROMIUM_PATH;
+    const skipPdf = !chromiumPath;
+    if (!skipPdf) {
+      const pdfRes = await app.fetch(new Request(`http://localhost/api/universes/${uid}/export?format=pdf`, { headers: patHdr }));
+      expect(pdfRes.status, 'pdf export status').toBe(200);
+      expect(pdfRes.headers.get('content-type') ?? '').toContain('application/pdf');
+      const pdfBuf = Buffer.from(await pdfRes.arrayBuffer());
+      expect(pdfBuf.length, 'pdf export non-empty').toBeGreaterThan(0);
+      // PDF magic bytes are '%PDF'
+      expect(pdfBuf.subarray(0, 4).toString('ascii')).toBe('%PDF');
+    }
+
     // Step 11: Import into a NEW universe (PAT)
     const importRes = await appRequest('POST', '/api/universes/import', {
       body: exportedJson,
