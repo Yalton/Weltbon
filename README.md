@@ -161,7 +161,7 @@ docker compose up -d
 - Running without Docker: [Self-Host (Bare Node)](#self-host-bare-node)
 - PDF export still failing after install: [Troubleshooting](#troubleshooting)
 
-## Self-Host
+## Self-Host (Bare Node)
 
 PDF export uses `puppeteer-core` against system Chromium. You must install Chromium and point `CHROMIUM_PATH` at the binary. If PDF export returns a 500 with `Failed to launch the browser process` or `ENOENT`, it is almost always a wrong `CHROMIUM_PATH`.
 
@@ -205,9 +205,45 @@ brew install --cask chromium
 CHROMIUM_PATH=/Applications/Chromium.app/Contents/MacOS/Chromium
 ```
 
+### Windows
+
+**Recommended** -- install WSL2 (Ubuntu) and follow the [Ubuntu (22.04+)](#ubuntu-2204) instructions inside your WSL2 distribution. The bare-Node API process and Chromium both run inside WSL2; the Windows-side browser hits `http://localhost:3000`.
+
+**Fallback** -- native Windows Chrome:
+
+```
+# In your .env (literal backslashes -- .env files don't escape):
+CHROMIUM_PATH=C:\Program Files\Google\Chrome\Application\chrome.exe
+```
+
+The native fallback works for occasional PDF exports but has not been smoke-tested for sustained use. WSL2 is the supported path.
+
 ### Verifying
 
 After installing and setting `CHROMIUM_PATH`, restart the API process and trigger a PDF export from the entry list. If you get `Failed to launch the browser process` or `ENOENT`, the path is wrong -- run `which chromium` (Linux) or `ls /Applications/Chromium.app/Contents/MacOS/` (macOS) and update `.env`.
+
+### Troubleshooting
+
+PDF export failures almost always trace to Chromium. Work through this checklist in order:
+
+1. **PDF export returns 500.** Check `CHROMIUM_PATH` is set in `.env` and points to a Chromium binary -- not a Snap wrapper (Ubuntu's `apt install chromium-browser`), not a `.app` bundle directory (macOS), not a symlink that resolves to nothing.
+2. **`CHROMIUM_PATH` looks right.** Verify the path resolves and is executable:
+   ```bash
+   which $CHROMIUM_PATH   # Linux/macOS -- should echo the same path
+   ls -l $CHROMIUM_PATH   # should show executable permission
+   ```
+3. **Binary launches manually but PDF export still fails.** Confirm Noto fonts are visible to the rendering process:
+   ```bash
+   fc-list | grep -i noto
+   ```
+   No output means font lookup fails inside Chromium and you'll see `Failed to launch the browser process` with a font-related stack frame.
+4. **Fonts are present but launch hangs or crashes under load.** Increase Docker shared memory:
+   - In `docker-compose.yml`, add `shm_size: 1gb` under the `app` service.
+   - For bare `docker run`, pass `--shm-size=1g`.
+
+   The default `/dev/shm` size (64MB) is too small for Chromium when multiple PDF exports run concurrently.
+
+Note: the published Docker image bakes `/usr/bin/chromium`, Noto fonts, and Liberation fonts. Docker users typically don't hit steps 1-3 -- if you do, check that you didn't override `CHROMIUM_PATH` in `.env` to a non-existent path.
 
 ## Backup
 
@@ -277,7 +313,7 @@ Keep these out of git regardless of where you back them up:
 | Variable         | Purpose                                                            | Default                                      |
 |------------------|--------------------------------------------------------------------|----------------------------------------------|
 | `PORT`           | API listen port                                                    | `3000`                                       |
-| `CHROMIUM_PATH`  | System Chromium binary path for PDF export (`puppeteer-core`)      | unset; PDF export 503s without it. See [Self-Host](#self-host) for per-OS values. |
+| `CHROMIUM_PATH`  | System Chromium binary path for PDF export (`puppeteer-core`)      | unset; PDF export 503s without it. See [Self-Host (Bare Node)](#self-host-bare-node) for per-OS values. |
 
 ### Startup Guard
 
@@ -372,7 +408,7 @@ The target is a personal Linux server, not a cloud PaaS. Two processes: the API 
 
 1. Clone the repo (e.g., under `/opt/weltbon/`).
 2. Install dependencies: `pnpm install`.
-3. Copy `.env.example` to `.env` and fill in a production `JWT_SECRET`, `POSTGRES_PASSWORD`, and `CHROMIUM_PATH` (see [Self-Host](#self-host)).
+3. Copy `.env.example` to `.env` and fill in a production `JWT_SECRET`, `POSTGRES_PASSWORD`, and `CHROMIUM_PATH` (see [Self-Host (Bare Node)](#self-host-bare-node)).
 4. Start the database: `docker compose up -d db`.
 5. Apply migrations: `pnpm --filter api db:migrate`.
 6. Build the API: `pnpm --filter api build` (produces `api/dist/`).
