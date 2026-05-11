@@ -183,6 +183,45 @@ describe('PAT parity round-trip (API-04)', () => {
     expect(Array.isArray(graphRes.body.nodes), 'graph has nodes array').toBe(true);
     expect(graphRes.body.nodes.length, 'graph has at least 2 nodes').toBeGreaterThanOrEqual(2);
 
+    // Step 9a: graph-positions round-trip
+    // graph-positions: write via POST /bulk, read back via GET /graph-data (positions array)
+    const positionsPayload = [
+      { entryId: entryAId, x: 100, y: 200 },
+      { entryId: entryBId, x: 300, y: 400 },
+    ];
+    const bulkPosRes = await appRequest('POST', `/api/universes/${uid}/graph-positions/bulk`, {
+      body: positionsPayload,
+      headers: patHdr,
+    });
+    expect(bulkPosRes.status, 'graph-positions bulk upsert').toBe(200);
+    expect(bulkPosRes.body.upserted, 'bulk upserted 2').toBe(2);
+
+    // Read back positions via GET /graph-data (graph-positions has no GET route)
+    const graphDataRes = await appRequest('GET', `/api/universes/${uid}/graph-data`, {
+      headers: patHdr,
+    });
+    expect(graphDataRes.status, 'graph-data after positions write').toBe(200);
+    const posA = (graphDataRes.body.positions as Array<{ entryId: string; x: number; y: number }>).find(
+      (p) => p.entryId === entryAId,
+    );
+    const posB = (graphDataRes.body.positions as Array<{ entryId: string; x: number; y: number }>).find(
+      (p) => p.entryId === entryBId,
+    );
+    expect(posA, 'posA found in positions').toBeTruthy();
+    expect(posA!.x, 'posA.x').toBe(100);
+    expect(posA!.y, 'posA.y').toBe(200);
+    expect(posB, 'posB found in positions').toBeTruthy();
+    expect(posB!.x, 'posB.x').toBe(300);
+    expect(posB!.y, 'posB.y').toBe(400);
+
+    // Step 9b: timeline-list round-trip
+    const timelineRes = await appRequest('GET', `/api/universes/${uid}/timeline`, {
+      headers: patHdr,
+    });
+    expect(timelineRes.status, 'timeline list').toBe(200);
+    // The pin from Step 8 used label: 'Year 0 — The Sundering'
+    expect(JSON.stringify(timelineRes.body)).toContain('Year 0 — The Sundering');
+
     // Step 10: Export universe as JSON (PAT)
     const exportRes = await appRequest('GET', `/api/universes/${uid}/export?format=json`, {
       headers: patHdr,
@@ -192,6 +231,38 @@ describe('PAT parity round-trip (API-04)', () => {
     expect(exportedJson.weltbon_version).toBe('1.0.0');
     expect(exportedJson.entries).toHaveLength(2);
     expect(exportedJson.links).toHaveLength(1);
+
+    // Step 10a: markdown export (binary ZIP response)
+    const mdRes = await app.fetch(new Request(`http://localhost/api/universes/${uid}/export?format=markdown`, { headers: patHdr }));
+    expect(mdRes.status, 'markdown export status').toBe(200);
+    const mdCT = mdRes.headers.get('content-type') ?? '';
+    expect(mdCT.toLowerCase()).toMatch(/(application\/zip|text\/markdown)/);
+    const mdBuf = Buffer.from(await mdRes.arrayBuffer());
+    expect(mdBuf.length, 'markdown export non-empty').toBeGreaterThan(0);
+
+    // Step 10b: docx export
+    const docxRes = await app.fetch(new Request(`http://localhost/api/universes/${uid}/export?format=docx`, { headers: patHdr }));
+    expect(docxRes.status, 'docx export status').toBe(200);
+    expect(docxRes.headers.get('content-type') ?? '').toContain('application/vnd.openxmlformats-officedocument.wordprocessingml.document');
+    const docxBuf = Buffer.from(await docxRes.arrayBuffer());
+    expect(docxBuf.length, 'docx export non-empty').toBeGreaterThan(0);
+    // DOCX files are ZIP archives; magic bytes are 'PK\x03\x04'
+    expect(docxBuf[0]).toBe(0x50);
+    expect(docxBuf[1]).toBe(0x4b);
+
+    // Step 10c: pdf export (skip-safe if Chromium unavailable)
+    // PDF rendering requires Chromium. If unavailable, skip the format-pdf assertion gracefully.
+    const chromiumPath = process.env.CHROMIUM_PATH;
+    const skipPdf = !chromiumPath;
+    if (!skipPdf) {
+      const pdfRes = await app.fetch(new Request(`http://localhost/api/universes/${uid}/export?format=pdf`, { headers: patHdr }));
+      expect(pdfRes.status, 'pdf export status').toBe(200);
+      expect(pdfRes.headers.get('content-type') ?? '').toContain('application/pdf');
+      const pdfBuf = Buffer.from(await pdfRes.arrayBuffer());
+      expect(pdfBuf.length, 'pdf export non-empty').toBeGreaterThan(0);
+      // PDF magic bytes are '%PDF'
+      expect(pdfBuf.subarray(0, 4).toString('ascii')).toBe('%PDF');
+    }
 
     // Step 11: Import into a NEW universe (PAT)
     const importRes = await appRequest('POST', '/api/universes/import', {
@@ -258,6 +329,44 @@ describe('PAT parity round-trip (API-04)', () => {
       );
       expect(match, `round-trip: pin "${p.label}" preserved`).toBeTruthy();
     }
+
+    // Step 13: ingest preview + commit round-trip (PAT)
+    const fixtureMd = '# Ingested Test Entry\n\nA tiny body for parity coverage.\n';
+    const form = new FormData();
+    form.append('files', new Blob([fixtureMd], { type: 'text/markdown' }), 'ingested-test.md');
+    const ingestRes = await app.fetch(
+      new Request(`http://localhost/api/universes/${uid}/ingest`, {
+        method: 'POST',
+        headers: patHdr, // do NOT set Content-Type; fetch will set the multipart boundary
+        body: form,
+      }),
+    );
+    expect(ingestRes.status, 'ingest preview').toBe(200);
+    const preview = await ingestRes.json() as { entries: Array<any> };
+    expect(Array.isArray(preview.entries), 'preview.entries is array').toBe(true);
+    expect(preview.entries.length, 'preview has the fixture entry').toBe(1);
+
+    // Build commit body from preview — each entry needs a decision
+    const commitBody = {
+      entries: preview.entries.map((e: any) => ({
+        ...e,
+        decision: { disposition: 'accept' },
+        category: null,
+      })),
+    };
+    const commitRes = await appRequest('POST', `/api/universes/${uid}/ingest/commit`, {
+      body: commitBody,
+      headers: patHdr,
+    });
+    expect(commitRes.status, 'ingest commit').toBe(200);
+    expect(Array.isArray(commitRes.body.entryIds), 'commit returns entryIds[]').toBe(true);
+    expect(commitRes.body.entryIds.length, 'commit created 1 entry').toBe(1);
+
+    // Verify the ingested entry is queryable via the entries list
+    const entriesRes = await appRequest('GET', `/api/universes/${uid}/entries`, { headers: patHdr });
+    expect(entriesRes.status).toBe(200);
+    const titles = (entriesRes.body as Array<{ title: string }>).map((e) => e.title);
+    expect(titles, 'ingested entry surfaces in entries list').toContain('Ingested Test Entry');
   });
 
   // ─── Test 2: PAT meta-API rejection smoke (D-11 / D-13 regression guard) ─
