@@ -98,11 +98,21 @@ const ingestPreviewSchema = z.object({
 // Validation is DOCUMENTARY only; we re-parse via c.req.parseBody({ all: true })
 // inside the handler because the createRoute multipart validator doesn't expose
 // File arrays the way we need them.
+//
+// D-17-01: `z.any()` accepts File parts at the validator level (zod-openapi 1.3.0
+// + zod 4 reject z.string() for File bodies). The `.openapi({ format: 'binary' })`
+// override preserves correct multipart docs at /api/openapi.json. The runtime
+// contract (must be File / array of File) is enforced inside the handler via
+// `instanceof File` checks (see ingest.ts:300-310).
 const multipartBodySchema = z.object({
-  files: z.array(z.string()).optional().openapi({
+  files: z.array(z.any()).optional().openapi({
+    type: 'array',
+    items: { type: 'string', format: 'binary' },
     description: 'One or more .md file parts (use input[type=file] webkitdirectory).',
   }),
-  zip: z.string().optional().openapi({
+  zip: z.any().optional().openapi({
+    type: 'string',
+    format: 'binary',
     description: 'Single ZIP archive containing .md files. PK\\x03\\x04 magic checked.',
   }),
 });
