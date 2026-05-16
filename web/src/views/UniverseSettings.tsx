@@ -88,7 +88,8 @@ export function UniverseSettings() {
         open={confirmOpen}
         onOpenChange={setConfirmOpen}
         title={`Delete "${data.name}"?`}
-        body="This permanently removes the universe and (in future phases) everything inside it. This cannot be undone."
+        body="This permanently removes the universe and everything inside it. This cannot be undone."
+        confirmPhrase={data.name}
         confirmLabel="Delete"
         destructive
         onConfirm={handleDelete}
