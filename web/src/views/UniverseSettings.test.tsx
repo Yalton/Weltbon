@@ -218,3 +218,91 @@ describe('UniverseSettings — EntryTypesSection integration', () => {
     });
   });
 });
+
+describe('UniverseSettings — delete universe typed-confirmation (Phase 18-01)', () => {
+  beforeEach(() => {
+    vi.mocked(api).mockReset();
+  });
+
+  it('clicking "Delete universe" opens a dialog with a typed-confirmation input', async () => {
+    vi.mocked(api).mockResolvedValue(UNIVERSE as never);
+    const user = userEvent.setup();
+    renderSettings();
+
+    const trigger = await screen.findByRole('button', { name: /delete universe/i });
+    await user.click(trigger);
+
+    const input = await screen.findByRole('textbox', {
+      name: /type universe name to confirm deletion/i,
+    });
+    expect(input).toBeInTheDocument();
+  });
+
+  it('the dialog Delete button starts disabled and enables after typing the exact universe name', async () => {
+    vi.mocked(api).mockResolvedValue(UNIVERSE as never);
+    const user = userEvent.setup();
+    renderSettings();
+
+    const trigger = await screen.findByRole('button', { name: /delete universe/i });
+    await user.click(trigger);
+
+    const input = await screen.findByRole('textbox', {
+      name: /type universe name to confirm deletion/i,
+    });
+    const dialogDelete = await screen.findByRole('button', { name: /^delete$/i });
+
+    expect(dialogDelete).toBeDisabled();
+
+    await user.type(input, 'Middle Earth');
+    expect(dialogDelete).not.toBeDisabled();
+  });
+
+  it('clicking the enabled Delete fires DELETE /universes/U1 exactly once', async () => {
+    vi.mocked(api).mockImplementation(async (path: string, init?: RequestInit) => {
+      if (path === '/universes/U1' && (!init || (init.method ?? 'GET') === 'GET')) {
+        return UNIVERSE as never;
+      }
+      if (path === '/universes/U1' && init?.method === 'DELETE') {
+        return undefined as never;
+      }
+      return null as never;
+    });
+    const user = userEvent.setup();
+    renderSettings();
+
+    const trigger = await screen.findByRole('button', { name: /delete universe/i });
+    await user.click(trigger);
+
+    const input = await screen.findByRole('textbox', {
+      name: /type universe name to confirm deletion/i,
+    });
+    await user.type(input, 'Middle Earth');
+
+    const dialogDelete = await screen.findByRole('button', { name: /^delete$/i });
+    await user.click(dialogDelete);
+
+    await waitFor(() => {
+      const deletes = vi.mocked(api).mock.calls.filter(
+        (c) => c[1]?.method === 'DELETE'
+      );
+      expect(deletes).toHaveLength(1);
+      expect(deletes[0][0]).toBe('/universes/U1');
+    });
+  });
+
+  it('dialog body uses the canonical copy without the "(in future phases)" hedge', async () => {
+    vi.mocked(api).mockResolvedValue(UNIVERSE as never);
+    const user = userEvent.setup();
+    renderSettings();
+
+    const trigger = await screen.findByRole('button', { name: /delete universe/i });
+    await user.click(trigger);
+
+    expect(
+      await screen.findByText(
+        /this permanently removes the universe and everything inside it\. this cannot be undone\./i
+      )
+    ).toBeInTheDocument();
+    expect(screen.queryByText(/in future phases/i)).toBeNull();
+  });
+});
