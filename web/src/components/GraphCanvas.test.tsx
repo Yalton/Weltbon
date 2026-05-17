@@ -430,13 +430,19 @@ describe('GraphCanvas', () => {
 
       vi.spyOn(document, 'elementFromPoint').mockReturnValue(circleB as Element);
 
+      const dropX = bRect.left + bRect.width / 2;
+      const dropY = bRect.top + bRect.height / 2;
       dispatchPointerDown(circleA, aRect.left + aRect.width / 2, aRect.top + aRect.height / 2);
-      dispatchPointerMove(bRect.left + bRect.width / 2, bRect.top + bRect.height / 2);
-      dispatchPointerUp(bRect.left + bRect.width / 2, bRect.top + bRect.height / 2);
+      dispatchPointerMove(dropX, dropY);
+      dispatchPointerUp(dropX, dropY);
 
       expect(onLinkDragEnd).toHaveBeenCalledTimes(1);
       expect(onLinkDragEnd.mock.calls[0][0]).toMatchObject({ id: 'A' });
       expect(onLinkDragEnd.mock.calls[0][1]).toMatchObject({ id: 'B' });
+      // Phase 19 plan 19-02 task 1: extended signature carries the drop
+      // screen-space coordinates so GraphView can position the popover.
+      expect(onLinkDragEnd.mock.calls[0][2]).toBeCloseTo(dropX);
+      expect(onLinkDragEnd.mock.calls[0][3]).toBeCloseTo(dropY);
     });
 
     it("Test F: pointerup on the source node calls onLinkDragEnd(from, 'self')", () => {
@@ -462,14 +468,19 @@ describe('GraphCanvas', () => {
 
       vi.spyOn(document, 'elementFromPoint').mockReturnValue(circleA as Element);
 
+      const dropX = aRect.left + aRect.width / 2 + 6;
+      const dropY = aRect.top + aRect.height / 2 + 6;
       dispatchPointerDown(circleA, aRect.left + aRect.width / 2, aRect.top + aRect.height / 2);
       // No move beyond 5px so it counts as click-ish but pointerup still triggers end
-      dispatchPointerMove(aRect.left + aRect.width / 2 + 6, aRect.top + aRect.height / 2 + 6);
-      dispatchPointerUp(aRect.left + aRect.width / 2 + 6, aRect.top + aRect.height / 2 + 6);
+      dispatchPointerMove(dropX, dropY);
+      dispatchPointerUp(dropX, dropY);
 
       expect(onLinkDragEnd).toHaveBeenCalledTimes(1);
       expect(onLinkDragEnd.mock.calls[0][0]).toMatchObject({ id: 'A' });
       expect(onLinkDragEnd.mock.calls[0][1]).toBe('self');
+      // Phase 19 plan 19-02 task 1: drop coordinates surface even on 'self'.
+      expect(onLinkDragEnd.mock.calls[0][2]).toBeCloseTo(dropX);
+      expect(onLinkDragEnd.mock.calls[0][3]).toBeCloseTo(dropY);
     });
 
     it('Test G: pointerup on empty canvas calls onLinkDragEnd(from, null)', () => {
@@ -495,13 +506,18 @@ describe('GraphCanvas', () => {
 
       vi.spyOn(document, 'elementFromPoint').mockReturnValue(null);
 
+      const dropX = aRect.left + 200;
+      const dropY = aRect.top + 200;
       dispatchPointerDown(circleA, aRect.left + aRect.width / 2, aRect.top + aRect.height / 2);
-      dispatchPointerMove(aRect.left + 200, aRect.top + 200);
-      dispatchPointerUp(aRect.left + 200, aRect.top + 200);
+      dispatchPointerMove(dropX, dropY);
+      dispatchPointerUp(dropX, dropY);
 
       expect(onLinkDragEnd).toHaveBeenCalledTimes(1);
       expect(onLinkDragEnd.mock.calls[0][0]).toMatchObject({ id: 'A' });
       expect(onLinkDragEnd.mock.calls[0][1]).toBeNull();
+      // Phase 19 plan 19-02 task 1: drop coordinates still surface on empty.
+      expect(onLinkDragEnd.mock.calls[0][2]).toBeCloseTo(dropX);
+      expect(onLinkDragEnd.mock.calls[0][3]).toBeCloseTo(dropY);
     });
   });
 
