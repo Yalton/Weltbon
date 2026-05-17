@@ -1,5 +1,5 @@
 import { describe, it, expect, beforeEach, vi } from 'vitest';
-import { render, screen, waitFor } from '@testing-library/react';
+import { render, screen, waitFor, fireEvent } from '@testing-library/react';
 import userEvent from '@testing-library/user-event';
 import { QueryClient, QueryClientProvider } from '@tanstack/react-query';
 
@@ -69,7 +69,9 @@ describe('CreateLinkPopover', () => {
   it('renders title, From/To header, and placeholder text (GRAPH-03)', async () => {
     renderPopover();
 
-    expect(await screen.findByText('Create link')).toBeInTheDocument();
+    // Title heading + button both render "Create link" verbatim (UI-SPEC §E)
+    expect(await screen.findByRole('heading', { name: 'Create link' })).toBeInTheDocument();
+    expect(screen.getByRole('button', { name: 'Create link' })).toBeInTheDocument();
     expect(screen.getByText('From')).toBeInTheDocument();
     expect(screen.getByText('To')).toBeInTheDocument();
     expect(screen.getByText('Alpha')).toBeInTheDocument();
@@ -158,11 +160,13 @@ describe('CreateLinkPopover', () => {
   });
 
   it('Esc keydown closes the popover and does NOT POST', async () => {
-    const user = userEvent.setup();
     const { onOpenChange } = renderPopover();
 
-    await screen.findByText('Create link');
-    await user.keyboard('{Escape}');
+    await screen.findByRole('heading', { name: 'Create link' });
+    // Radix DismissableLayer listens on document at capture phase
+    // (react-use-escape-keydown). fireEvent.keyDown on document is the
+    // canonical jsdom path to trigger the outer popover's dismissal.
+    fireEvent.keyDown(document, { key: 'Escape', code: 'Escape' });
 
     await waitFor(() => {
       expect(onOpenChange).toHaveBeenCalledWith(false);
@@ -177,7 +181,7 @@ describe('CreateLinkPopover', () => {
     const user = userEvent.setup();
     const { onOpenChange } = renderPopover();
 
-    await screen.findByText('Create link');
+    await screen.findByRole('heading', { name: 'Create link' });
     await user.click(document.body);
 
     await waitFor(() => {
