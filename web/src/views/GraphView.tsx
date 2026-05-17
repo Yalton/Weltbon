@@ -1,5 +1,6 @@
 import { useEffect, useMemo, useRef, useState } from 'react';
 import { useNavigate, useParams } from 'react-router-dom';
+import { CreateLinkPopover } from '../components/CreateLinkPopover';
 import { EmptyState } from '../components/EmptyState';
 import { GraphCanvas } from '../components/GraphCanvas';
 import { GraphTooltip } from '../components/GraphTooltip';
@@ -20,12 +21,11 @@ const SUBGRAPH_THRESHOLD = 300;
 type ToastState = { message: string; variant: 'success' | 'error' } | null;
 
 /**
- * Phase 19 Plan 19-02: popoverState is captured on drop-on-other but the
- * actual `<CreateLinkPopover>` rendering lands in Plan 19-04. Until then,
- * this view exposes the captured state via a test-only data attribute
- * (`data-testid="popover-anchor"`) so Tests 6-7 in GraphView.test.tsx can
- * lock the orchestration contract (from/to nodes + container-relative
- * coords + existingLabelHint) before the popover UI is built.
+ * Phase 19 Plan 19-04: popoverState drives the conditional <CreateLinkPopover>
+ * render at the bottom of this view. from/to are the dragged GraphNodes;
+ * dropX/Y are container-relative pixel coords for the popover anchor;
+ * existingLabelHint pre-fills the popover's label input when an A→B edge
+ * already exists (CONTEXT.md D-03d).
  */
 type PopoverState = {
   from: GraphNode;
@@ -292,21 +292,31 @@ export function GraphView() {
       )}
 
       {/*
-        Plan 19-04 will mount <CreateLinkPopover> here. Until then, render
-        a test-only anchor div so Tests 6-7 can lock the orchestration
-        contract (popoverState captures + existingLabelHint lookup). The
-        anchor div is `display: none` so it has no visual impact during
-        the 19-02 → 19-04 gap.
+        Phase 19 Plan 19-04: CreateLinkPopover mounted conditionally on
+        popoverState !== null. onOpenChange(false) clears popoverState so
+        Esc / outside-click / Cancel / post-success all route to the same
+        cleanup. onError fires the per-view Toast with the locked
+        belt-and-suspenders error copy (UI-SPEC §H — identical to the
+        popover's inline error).
       */}
       {popoverState && (
-        <div
-          data-testid="popover-anchor"
-          data-from-id={popoverState.from.id}
-          data-to-id={popoverState.to.id}
-          data-drop-x={popoverState.dropX}
-          data-drop-y={popoverState.dropY}
-          data-existing-label-hint={popoverState.existingLabelHint ?? ''}
-          style={{ display: 'none' }}
+        <CreateLinkPopover
+          universeId={universeId}
+          open={true}
+          onOpenChange={(open) => {
+            if (!open) setPopoverState(null);
+          }}
+          from={popoverState.from}
+          to={popoverState.to}
+          dropX={popoverState.dropX}
+          dropY={popoverState.dropY}
+          existingLabelHint={popoverState.existingLabelHint}
+          onError={() =>
+            setToast({
+              message: "Couldn't create link. Try again.",
+              variant: 'error',
+            })
+          }
         />
       )}
 

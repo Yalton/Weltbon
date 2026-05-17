@@ -326,14 +326,25 @@ describe('GraphView', () => {
       expect(container.querySelector('[data-testid="popover-anchor"]')).toBeNull();
     });
 
-    it('Test 6: drop-on-other captures popoverState with container-relative coords (no existing edge → no hint)', async () => {
-      vi.mocked(api).mockResolvedValue({
-        nodes: [makeNode('A'), makeNode('B')],
-        edges: [],
-        positions: [],
-      } as GraphDataResponse);
+    it('Test 6: drop-on-other captures popoverState and renders the real CreateLinkPopover with From/To node titles (no existing edge → empty input)', async () => {
+      // 19-04 swapped the test-only `popover-anchor` placeholder div with the
+      // real <CreateLinkPopover>. The popover renders its own
+      // RelationCombobox which calls `useRelations` (GET /relations) — so
+      // we discriminate on method+path here instead of the blanket
+      // mockResolvedValue used pre-19-04.
+      vi.mocked(api).mockImplementation(async (path: string, init?: RequestInit) => {
+        const method = init?.method ?? 'GET';
+        if (method === 'GET' && path.endsWith('/relations')) {
+          return [] as unknown as never;
+        }
+        return {
+          nodes: [makeNode('A'), makeNode('B')],
+          edges: [],
+          positions: [],
+        } as unknown as never;
+      });
 
-      const { container } = renderGraphView();
+      renderGraphView();
       await enterEditMode();
 
       const nodeA = makeNode('A');
@@ -342,32 +353,32 @@ describe('GraphView', () => {
         captured.onLinkDragEnd?.(nodeA, nodeB, 200, 150);
       });
 
-      // The plan exposes popoverState via a test-only data attribute on the
-      // GraphView root container (rendered when popoverState !== null) so
-      // 19-04 can swap it for the real CreateLinkPopover render.
-      const anchor = await waitFor(() =>
-        container.querySelector('[data-testid="popover-anchor"]') as HTMLElement | null,
-      );
-      expect(anchor).toBeTruthy();
-      expect(anchor?.getAttribute('data-from-id')).toBe('A');
-      expect(anchor?.getAttribute('data-to-id')).toBe('B');
-      // jsdom's getBoundingClientRect returns 0,0 by default, so dropX === dropClientX,
-      // dropY === dropClientY here.
-      expect(Number(anchor?.getAttribute('data-drop-x'))).toBeCloseTo(200);
-      expect(Number(anchor?.getAttribute('data-drop-y'))).toBeCloseTo(150);
-      // No existing edge A→B → no hint attribute (or empty)
-      const hint = anchor?.getAttribute('data-existing-label-hint');
-      expect(hint === null || hint === '').toBe(true);
+      // Real popover is mounted (replaces the 19-02 placeholder).
+      expect(
+        await screen.findByRole('heading', { name: 'Create link' }),
+      ).toBeInTheDocument();
+      // From/To rows show the node titles (makeNode default is "Node {id}")
+      expect(screen.getByText('Node A')).toBeInTheDocument();
+      expect(screen.getByText('Node B')).toBeInTheDocument();
+      // No existing edge A→B → label input starts empty
+      const input = screen.getByRole('combobox') as HTMLInputElement;
+      expect(input.value).toBe('');
     });
 
-    it('Test 7: existing-link prefill — A→B edge with label "knows" populates existingLabelHint', async () => {
-      vi.mocked(api).mockResolvedValue({
-        nodes: [makeNode('A'), makeNode('B')],
-        edges: [makeEdge('e1', 'A', 'B', 'knows')],
-        positions: [],
-      } as GraphDataResponse);
+    it('Test 7: existing-link prefill — A→B edge with label "knows" hydrates the popover input', async () => {
+      vi.mocked(api).mockImplementation(async (path: string, init?: RequestInit) => {
+        const method = init?.method ?? 'GET';
+        if (method === 'GET' && path.endsWith('/relations')) {
+          return [] as unknown as never;
+        }
+        return {
+          nodes: [makeNode('A'), makeNode('B')],
+          edges: [makeEdge('e1', 'A', 'B', 'knows')],
+          positions: [],
+        } as unknown as never;
+      });
 
-      const { container } = renderGraphView();
+      renderGraphView();
       await enterEditMode();
 
       const nodeA = makeNode('A');
@@ -376,11 +387,8 @@ describe('GraphView', () => {
         captured.onLinkDragEnd?.(nodeA, nodeB, 200, 150);
       });
 
-      const anchor = await waitFor(() =>
-        container.querySelector('[data-testid="popover-anchor"]') as HTMLElement | null,
-      );
-      expect(anchor).toBeTruthy();
-      expect(anchor?.getAttribute('data-existing-label-hint')).toBe('knows');
+      const input = (await screen.findByRole('combobox')) as HTMLInputElement;
+      expect(input.value).toBe('knows');
     });
   });
 
@@ -416,12 +424,27 @@ describe('GraphView', () => {
       expect(captured.editMode).toBe(false);
     });
 
-    it('Test 9: editMode=true with popoverState non-null → window Escape does NOT flip editMode', async () => {
-      vi.mocked(api).mockResolvedValue({
-        nodes: [makeNode('A'), makeNode('B')],
-        edges: [],
-        positions: [],
-      } as GraphDataResponse);
+    it('Test 9: editMode=true with popoverState non-null → window-level Escape listener short-circuits (popoverState !== null)', async () => {
+      // After 19-04, with the popover open, BOTH the popover's own
+      // DismissableLayer AND the canvas-level useEffect Esc listener see
+      // the keydown. The contract here is the canvas-level listener does
+      // NOT fire setEditMode(false) while popoverState !== null — i.e., a
+      // single Esc keydown either closes the popover (priority 5) OR
+      // exits edit mode (priority 4), never both. We assert that by
+      // dispatching window-level Esc from a place Radix's
+      // document-capture listener does NOT receive (window vs document),
+      // then asserting captured.editMode remains true.
+      vi.mocked(api).mockImplementation(async (path: string, init?: RequestInit) => {
+        const method = init?.method ?? 'GET';
+        if (method === 'GET' && path.endsWith('/relations')) {
+          return [] as unknown as never;
+        }
+        return {
+          nodes: [makeNode('A'), makeNode('B')],
+          edges: [],
+          positions: [],
+        } as unknown as never;
+      });
 
       renderGraphView();
       await enterEditMode();
@@ -430,12 +453,16 @@ describe('GraphView', () => {
       act(() => {
         captured.onLinkDragEnd?.(makeNode('A'), makeNode('B'), 200, 150);
       });
-      // popover anchor present
-      await screen.findByTestId('popover-anchor');
+      // Real popover is mounted (replaces the 19-02 placeholder anchor div)
+      await screen.findByRole('heading', { name: 'Create link' });
 
+      // Dispatch Esc on `window` only. Radix DismissableLayer subscribes via
+      // useEscapeKeydown(document.ownerDocument) at capture phase — it does
+      // NOT pick up a synthetic `window.dispatchEvent` of `keydown`. This
+      // lets us isolate the canvas-level listener's behaviour: it MUST
+      // short-circuit because popoverState !== null, leaving editMode=true.
       dispatchEscape();
-      // editMode unchanged (still on); the popover Esc is handled by 19-04's
-      // Radix popover, not the canvas-level listener.
+      // editMode unchanged (still on)
       const btnOn = screen.getByRole('button', { name: /exit edit mode/i });
       expect(btnOn).toHaveTextContent('Editing');
       expect(captured.editMode).toBe(true);
