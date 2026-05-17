@@ -37,8 +37,19 @@ export interface GraphCanvasProps {
    *   - to === 'self' → pointerup over the source node itself
    *   - to === null → pointerup over empty canvas
    * The callback is NOT fired when the drag is cancelled mid-flight via Esc.
+   *
+   * Phase 19 plan 19-02 task 1: signature extended with dropClientX/dropClientY
+   * (sourced from evt.sourceEvent.clientX/clientY) so GraphView can convert
+   * those screen-space coordinates into its container-relative anchor for the
+   * future CreateLinkPopover (UI-SPEC §E "Props contract"; RESEARCH §"Pitfall
+   * 3 — coordinate-space mismatch").
    */
-  onLinkDragEnd: (from: GraphNode, to: GraphNode | 'self' | null) => void;
+  onLinkDragEnd: (
+    from: GraphNode,
+    to: GraphNode | 'self' | null,
+    dropClientX: number,
+    dropClientY: number,
+  ) => void;
   /**
    * Optional drag-source lifecycle callback. Surfaces the canvas's internal
    * drag state so the parent (GraphView) can gate its own Esc handler on
@@ -294,13 +305,20 @@ export function GraphCanvas({
           if (cancelledRef.current) {
             return;
           }
+          // Phase 19 plan 19-02 task 1: surface the pointerup screen-space
+          // coordinates so GraphView can subtract its container rect and
+          // anchor the popover. Defensive defaults survive jsdom edge cases
+          // where sourceEvent is undefined or lacks clientX/clientY.
+          const se = evt.sourceEvent as MouseEvent | undefined;
+          const dropClientX = typeof se?.clientX === 'number' ? se.clientX : 0;
+          const dropClientY = typeof se?.clientY === 'number' ? se.clientY : 0;
           const target = hitTestNodeAt(evt.sourceEvent, simNodesRef.current);
           if (target === null) {
-            onLinkDragEndRef.current(d, null);
+            onLinkDragEndRef.current(d, null, dropClientX, dropClientY);
           } else if (target.id === d.id) {
-            onLinkDragEndRef.current(d, 'self');
+            onLinkDragEndRef.current(d, 'self', dropClientX, dropClientY);
           } else {
-            onLinkDragEndRef.current(d, target);
+            onLinkDragEndRef.current(d, target, dropClientX, dropClientY);
           }
           setDragSource(null);
           setPointer(null);
