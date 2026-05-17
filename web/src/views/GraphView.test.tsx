@@ -1,6 +1,6 @@
 import { describe, it, expect, beforeEach, vi } from 'vitest';
 import { act } from 'react';
-import { render, screen, waitFor } from '@testing-library/react';
+import { render, screen, waitFor, fireEvent } from '@testing-library/react';
 import userEvent from '@testing-library/user-event';
 import { MemoryRouter, Routes, Route } from 'react-router-dom';
 import { QueryClient, QueryClientProvider } from '@tanstack/react-query';
@@ -96,7 +96,7 @@ function renderGraphView(universeId = 'UNI') {
   const qc = new QueryClient({
     defaultOptions: { queries: { retry: false }, mutations: { retry: false } },
   });
-  return render(
+  const utils = render(
     <QueryClientProvider client={qc}>
       <MemoryRouter initialEntries={[`/universes/${universeId}/graph`]}>
         <Routes>
@@ -105,6 +105,7 @@ function renderGraphView(universeId = 'UNI') {
       </MemoryRouter>
     </QueryClientProvider>,
   );
+  return { ...utils, qc };
 }
 
 function resetCaptured() {
@@ -472,6 +473,447 @@ describe('GraphView', () => {
       const btnOff = await screen.findByRole('button', { name: /enter edit mode/i });
       expect(btnOff).toHaveTextContent('Edit');
       expect(captured.editMode).toBe(false);
+    });
+  });
+
+  // ---------- Phase 19 Plan 19-04 — CreateLinkPopover integration ----------
+
+  describe('Phase 19 Plan 19-04 — CreateLinkPopover integration', () => {
+    // Shared harness: GraphCanvas is mocked (above), real CreateLinkPopover
+    // renders inside GraphView when popoverState !== null. The api mock
+    // discriminates on method+path: GET /universes/.../graph-data resolves
+    // graph data; GET /universes/.../relations resolves [] (RelationCombobox);
+    // POST /universes/U1/links resolves the linkRecord on success.
+
+    const successLinkRecord = {
+      id: 'NEW',
+      universeId: 'U1',
+      sourceEntryId: 'A',
+      targetEntryId: 'B',
+      label: 'knows',
+      bidirectional: false,
+      createdAt: '2026-05-16T00:00:00Z',
+    };
+
+    function mockApiSuccess(
+      graphData: GraphDataResponse,
+      record = successLinkRecord,
+    ) {
+      vi.mocked(api).mockImplementation(async (path: string, init?: RequestInit) => {
+        const method = init?.method ?? 'GET';
+        if (method === 'GET' && path.endsWith('/relations')) {
+          return [] as unknown as never;
+        }
+        if (method === 'POST' && path.endsWith('/links')) {
+          return record as unknown as never;
+        }
+        // Default GET: graph data
+        return graphData as unknown as never;
+      });
+    }
+
+    function mockApiError(graphData: GraphDataResponse) {
+      vi.mocked(api).mockImplementation(async (path: string, init?: RequestInit) => {
+        const method = init?.method ?? 'GET';
+        if (method === 'GET' && path.endsWith('/relations')) {
+          return [] as unknown as never;
+        }
+        if (method === 'POST' && path.endsWith('/links')) {
+          throw new Error('400 Bad Request');
+        }
+        return graphData as unknown as never;
+      });
+    }
+
+    async function enterEditMode() {
+      const btn = await screen.findByRole('button', { name: /enter edit mode/i });
+      await userEvent.click(btn);
+      await waitFor(() => expect(captured.editMode).toBe(true));
+    }
+
+    it('Test 1 (integration): drop-on-other opens the real CreateLinkPopover with title + From/To rows + combobox', async () => {
+      mockApiSuccess({
+        nodes: [
+          makeNode('A', { title: 'Alpha' }),
+          makeNode('B', { title: 'Beta' }),
+        ],
+        edges: [],
+        positions: [],
+      } as GraphDataResponse);
+
+      renderGraphView('U1');
+      await enterEditMode();
+
+      act(() => {
+        captured.onLinkDragEnd?.(
+          makeNode('A', { title: 'Alpha' }),
+          makeNode('B', { title: 'Beta' }),
+          250,
+          180,
+        );
+      });
+
+      // Real popover renders (not just the data-testid="popover-anchor" stub from 19-02)
+      expect(
+        await screen.findByRole('heading', { name: 'Create link' }),
+      ).toBeInTheDocument();
+      expect(screen.getByText('From')).toBeInTheDocument();
+      expect(screen.getByText('To')).toBeInTheDocument();
+      expect(screen.getByText('Alpha')).toBeInTheDocument();
+      expect(screen.getByText('Beta')).toBeInTheDocument();
+      expect(screen.getByRole('combobox')).toBeInTheDocument();
+      expect(screen.getByRole('button', { name: 'Create link' })).toBeInTheDocument();
+      expect(screen.getByRole('button', { name: 'Cancel' })).toBeInTheDocument();
+    });
+
+    it('Test 2 (integration): confirm POSTs /universes/U1/links with the typed label and closes popover; editMode persists', async () => {
+      mockApiSuccess({
+        nodes: [
+          makeNode('A', { title: 'Alpha' }),
+          makeNode('B', { title: 'Beta' }),
+        ],
+        edges: [],
+        positions: [],
+      } as GraphDataResponse);
+
+      const user = userEvent.setup();
+      renderGraphView('U1');
+      await enterEditMode();
+
+      act(() => {
+        captured.onLinkDragEnd?.(
+          makeNode('A', { title: 'Alpha' }),
+          makeNode('B', { title: 'Beta' }),
+          200,
+          150,
+        );
+      });
+
+      const input = await screen.findByRole('combobox');
+      await user.click(input);
+      await user.type(input, 'knows');
+      await user.click(screen.getByRole('button', { name: 'Create link' }));
+
+      await waitFor(() => {
+        const posted = vi.mocked(api).mock.calls.find(
+          ([p, init]) =>
+            typeof p === 'string' &&
+            p.endsWith('/universes/U1/links') &&
+            (init as RequestInit | undefined)?.method === 'POST',
+        );
+        expect(posted).toBeTruthy();
+        const body = JSON.parse((posted![1] as RequestInit).body as string);
+        expect(body).toMatchObject({
+          sourceEntryId: 'A',
+          targetEntryId: 'B',
+          label: 'knows',
+        });
+      });
+
+      // Popover closes (heading disappears)
+      await waitFor(() => {
+        expect(
+          screen.queryByRole('heading', { name: 'Create link' }),
+        ).not.toBeInTheDocument();
+      });
+
+      // Edit mode persists
+      const editingBtn = screen.getByRole('button', { name: /exit edit mode/i });
+      expect(editingBtn).toHaveTextContent('Editing');
+      expect(captured.editMode).toBe(true);
+    });
+
+    it('Test 3 (integration): success does NOT render a Toast — graph re-render is the only signal', async () => {
+      mockApiSuccess({
+        nodes: [
+          makeNode('A', { title: 'Alpha' }),
+          makeNode('B', { title: 'Beta' }),
+        ],
+        edges: [],
+        positions: [],
+      } as GraphDataResponse);
+
+      const user = userEvent.setup();
+      renderGraphView('U1');
+      await enterEditMode();
+
+      act(() => {
+        captured.onLinkDragEnd?.(
+          makeNode('A', { title: 'Alpha' }),
+          makeNode('B', { title: 'Beta' }),
+          200,
+          150,
+        );
+      });
+
+      const input = await screen.findByRole('combobox');
+      await user.click(input);
+      await user.type(input, 'knows');
+      await user.click(screen.getByRole('button', { name: 'Create link' }));
+
+      await waitFor(() => {
+        expect(
+          screen.queryByRole('heading', { name: 'Create link' }),
+        ).not.toBeInTheDocument();
+      });
+      // No Toast appears post-success (UI-SPEC §"Copywriting Contract" omits success Toast)
+      expect(screen.queryByRole('status')).not.toBeInTheDocument();
+    });
+
+    it('Test 4 (integration): POST error renders BOTH inline error in popover AND error Toast with identical copy', async () => {
+      mockApiError({
+        nodes: [
+          makeNode('A', { title: 'Alpha' }),
+          makeNode('B', { title: 'Beta' }),
+        ],
+        edges: [],
+        positions: [],
+      } as GraphDataResponse);
+
+      const user = userEvent.setup();
+      const { container } = renderGraphView('U1');
+      await enterEditMode();
+
+      act(() => {
+        captured.onLinkDragEnd?.(
+          makeNode('A', { title: 'Alpha' }),
+          makeNode('B', { title: 'Beta' }),
+          200,
+          150,
+        );
+      });
+
+      const input = await screen.findByRole('combobox');
+      await user.click(input);
+      await user.type(input, 'bogus');
+      await user.click(screen.getByRole('button', { name: 'Create link' }));
+
+      // Inline error inside the popover (UI-SPEC §H belt-and-suspenders)
+      await waitFor(() => {
+        const errors = screen.getAllByText("Couldn't create link. Try again.");
+        // Two surfaces: inline <p> in popover + Toast
+        expect(errors.length).toBeGreaterThanOrEqual(2);
+      });
+
+      // Toast renders at view level with role=status + error variant (bg-red-600)
+      const toast = await screen.findByRole('status');
+      expect(toast).toHaveTextContent("Couldn't create link. Try again.");
+      expect(toast.className).toMatch(/bg-red-600/);
+
+      // Popover stays open (heading still visible)
+      expect(
+        screen.getByRole('heading', { name: 'Create link' }),
+      ).toBeInTheDocument();
+      // popoverState is still non-null (popover anchor div may or may not be
+      // present depending on internal change in 19-04 — assert via the visible
+      // popover heading instead).
+      // No regression on canvas stub still present (sanity)
+      expect(container).toBeTruthy();
+    });
+
+    it('Test 5 (integration): Esc inside popover closes popover; no POST fires; editMode persists', async () => {
+      mockApiSuccess({
+        nodes: [
+          makeNode('A', { title: 'Alpha' }),
+          makeNode('B', { title: 'Beta' }),
+        ],
+        edges: [],
+        positions: [],
+      } as GraphDataResponse);
+
+      renderGraphView('U1');
+      await enterEditMode();
+
+      act(() => {
+        captured.onLinkDragEnd?.(
+          makeNode('A', { title: 'Alpha' }),
+          makeNode('B', { title: 'Beta' }),
+          200,
+          150,
+        );
+      });
+
+      await screen.findByRole('heading', { name: 'Create link' });
+
+      // Radix Popover listens on document for Esc (DismissableLayer)
+      fireEvent.keyDown(document, { key: 'Escape', code: 'Escape' });
+
+      await waitFor(() => {
+        expect(
+          screen.queryByRole('heading', { name: 'Create link' }),
+        ).not.toBeInTheDocument();
+      });
+
+      const posts = vi.mocked(api).mock.calls.filter(
+        ([, init]) => (init as RequestInit | undefined)?.method === 'POST',
+      );
+      expect(posts).toHaveLength(0);
+
+      // editMode persists
+      const editingBtn = screen.getByRole('button', { name: /exit edit mode/i });
+      expect(editingBtn).toHaveTextContent('Editing');
+    });
+
+    it('Test 6 (integration): Cancel button closes popover; no POST fires', async () => {
+      mockApiSuccess({
+        nodes: [
+          makeNode('A', { title: 'Alpha' }),
+          makeNode('B', { title: 'Beta' }),
+        ],
+        edges: [],
+        positions: [],
+      } as GraphDataResponse);
+
+      const user = userEvent.setup();
+      renderGraphView('U1');
+      await enterEditMode();
+
+      act(() => {
+        captured.onLinkDragEnd?.(
+          makeNode('A', { title: 'Alpha' }),
+          makeNode('B', { title: 'Beta' }),
+          200,
+          150,
+        );
+      });
+
+      const cancelBtn = await screen.findByRole('button', { name: 'Cancel' });
+      await user.click(cancelBtn);
+
+      await waitFor(() => {
+        expect(
+          screen.queryByRole('heading', { name: 'Create link' }),
+        ).not.toBeInTheDocument();
+      });
+
+      const posts = vi.mocked(api).mock.calls.filter(
+        ([, init]) => (init as RequestInit | undefined)?.method === 'POST',
+      );
+      expect(posts).toHaveLength(0);
+    });
+
+    it('Test 7 (integration): existing-link prefill — input populates with "knows" when A→B edge already exists', async () => {
+      mockApiSuccess({
+        nodes: [
+          makeNode('A', { title: 'Alpha' }),
+          makeNode('B', { title: 'Beta' }),
+        ],
+        edges: [makeEdge('e1', 'A', 'B', 'knows')],
+        positions: [],
+      } as GraphDataResponse);
+
+      renderGraphView('U1');
+      await enterEditMode();
+
+      act(() => {
+        captured.onLinkDragEnd?.(
+          makeNode('A', { title: 'Alpha' }),
+          makeNode('B', { title: 'Beta' }),
+          200,
+          150,
+        );
+      });
+
+      const input = (await screen.findByRole('combobox')) as HTMLInputElement;
+      expect(input.value).toBe('knows');
+    });
+
+    it('Test 8 (integration: D-03 stacking lock-in): with existing A→B label="knows", editing to "enemies with" and confirming POSTs the user-edited label (never the hint)', async () => {
+      mockApiSuccess(
+        {
+          nodes: [
+            makeNode('A', { title: 'Alpha' }),
+            makeNode('B', { title: 'Beta' }),
+          ],
+          edges: [makeEdge('e1', 'A', 'B', 'knows')],
+          positions: [],
+        } as GraphDataResponse,
+        {
+          id: 'NEW',
+          universeId: 'U1',
+          sourceEntryId: 'A',
+          targetEntryId: 'B',
+          label: 'enemies with',
+          bidirectional: false,
+          createdAt: '2026-05-16T00:00:00Z',
+        },
+      );
+
+      const user = userEvent.setup();
+      renderGraphView('U1');
+      await enterEditMode();
+
+      act(() => {
+        captured.onLinkDragEnd?.(
+          makeNode('A', { title: 'Alpha' }),
+          makeNode('B', { title: 'Beta' }),
+          200,
+          150,
+        );
+      });
+
+      const input = (await screen.findByRole('combobox')) as HTMLInputElement;
+      expect(input.value).toBe('knows');
+      // Clear and type new label
+      await user.clear(input);
+      await user.type(input, 'enemies with');
+      await user.click(screen.getByRole('button', { name: 'Create link' }));
+
+      await waitFor(() => {
+        const posted = vi.mocked(api).mock.calls.find(
+          ([p, init]) =>
+            typeof p === 'string' &&
+            p.endsWith('/universes/U1/links') &&
+            (init as RequestInit | undefined)?.method === 'POST',
+        );
+        expect(posted).toBeTruthy();
+        const body = JSON.parse((posted![1] as RequestInit).body as string);
+        // The lock-in: D-03 always POSTs new with the user-edited label, NEVER
+        // replaces the existing edge nor sends the hint.
+        expect(body).toMatchObject({
+          sourceEntryId: 'A',
+          targetEntryId: 'B',
+          label: 'enemies with',
+        });
+      });
+    });
+
+    it('Test 9 (integration regression): successful POST invalidates the ["graph-data", universeId] query key', async () => {
+      mockApiSuccess({
+        nodes: [
+          makeNode('A', { title: 'Alpha' }),
+          makeNode('B', { title: 'Beta' }),
+        ],
+        edges: [],
+        positions: [],
+      } as GraphDataResponse);
+
+      const user = userEvent.setup();
+      const { qc } = renderGraphView('U1');
+      const invalidateSpy = vi.spyOn(qc, 'invalidateQueries');
+
+      await enterEditMode();
+
+      act(() => {
+        captured.onLinkDragEnd?.(
+          makeNode('A', { title: 'Alpha' }),
+          makeNode('B', { title: 'Beta' }),
+          200,
+          150,
+        );
+      });
+
+      const input = await screen.findByRole('combobox');
+      await user.click(input);
+      await user.type(input, 'knows');
+      await user.click(screen.getByRole('button', { name: 'Create link' }));
+
+      await waitFor(() => {
+        const keys = invalidateSpy.mock.calls.map((c) =>
+          JSON.stringify((c[0] as { queryKey?: unknown }).queryKey),
+        );
+        expect(keys).toContain(JSON.stringify(['graph-data', 'U1']));
+      });
     });
   });
 
