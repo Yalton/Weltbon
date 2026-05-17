@@ -147,6 +147,11 @@ export function GraphView() {
           onHoverNode={(node, x, y) =>
             setHovered(node ? { node, x, y } : null)
           }
+          // Phase 19 — required props. Edit-mode wiring lands in Plan 19-02;
+          // this plan only adds the canvas-side primitives. Default stubs
+          // keep the view in pin-mode behavior unchanged.
+          editMode={false}
+          onLinkDragEnd={() => {}}
         />
       )}
 

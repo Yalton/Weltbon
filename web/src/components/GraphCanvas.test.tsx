@@ -1,6 +1,7 @@
-import { describe, it, expect, vi } from 'vitest';
+import { afterEach, describe, it, expect, vi } from 'vitest';
 import { render } from '@testing-library/react';
 import { act } from 'react';
+import { select } from 'd3-selection';
 import { GraphCanvas } from './GraphCanvas';
 import type { GraphNode, GraphEdge, GraphPosition } from '../hooks/useGraphData';
 
@@ -32,16 +33,32 @@ function tinyGraph() {
   return { nodes, edges, positions };
 }
 
+// d3-drag listens for mousedown.drag on the selection, then attaches
+// mousemove.drag / mouseup.drag to event.view (window). Tests must
+// dispatch MouseEvents (not PointerEvents) — see d3-drag/src/drag.js.
+//
+// jsdom rejects MouseEventInit { view: window } as "not of type Window"
+// but accepts the same property defined via Object.defineProperty AFTER
+// construction. d3-drag calls `nodrag(event.view)` which reads
+// `view.document` — so synthetic events without a view crash the
+// handler silently. Override view post-construction.
+function withView<T extends Event>(ev: T): T {
+  Object.defineProperty(ev, 'view', { value: window, writable: false });
+  return ev;
+}
+
 function dispatchPointerDown(circle: Element, clientX: number, clientY: number) {
   act(() => {
     circle.dispatchEvent(
-      new PointerEvent('pointerdown', {
-        bubbles: true,
-        clientX,
-        clientY,
-        pointerType: 'mouse',
-        button: 0,
-      }),
+      withView(
+        new MouseEvent('mousedown', {
+          bubbles: true,
+          cancelable: true,
+          clientX,
+          clientY,
+          button: 0,
+        }),
+      ),
     );
   });
 }
@@ -49,12 +66,14 @@ function dispatchPointerDown(circle: Element, clientX: number, clientY: number) 
 function dispatchPointerMove(clientX: number, clientY: number) {
   act(() => {
     window.dispatchEvent(
-      new PointerEvent('pointermove', {
-        bubbles: true,
-        clientX,
-        clientY,
-        pointerType: 'mouse',
-      }),
+      withView(
+        new MouseEvent('mousemove', {
+          bubbles: true,
+          cancelable: true,
+          clientX,
+          clientY,
+        }),
+      ),
     );
   });
 }
@@ -62,12 +81,14 @@ function dispatchPointerMove(clientX: number, clientY: number) {
 function dispatchPointerUp(clientX: number, clientY: number) {
   act(() => {
     window.dispatchEvent(
-      new PointerEvent('pointerup', {
-        bubbles: true,
-        clientX,
-        clientY,
-        pointerType: 'mouse',
-      }),
+      withView(
+        new MouseEvent('mouseup', {
+          bubbles: true,
+          cancelable: true,
+          clientX,
+          clientY,
+        }),
+      ),
     );
   });
 }
@@ -77,6 +98,20 @@ function dispatchEscape() {
     window.dispatchEvent(new KeyboardEvent('keydown', { key: 'Escape', bubbles: true }));
   });
 }
+
+// d3-drag installs a transient `click.drag` handler on the window selection
+// after a drag of >3px (to swallow the trailing browser click). Its cleanup
+// is queued via setTimeout(0) which doesn't always flush between Vitest
+// tests, leaving the next test's click events silently preventDefault'd
+// (manifests as a passing-in-isolation, failing-in-suite shift+click test).
+// Restore the window selection deterministically between tests.
+afterEach(() => {
+  select(window).on('click.drag', null);
+  select(window).on('mousemove.drag', null);
+  select(window).on('mouseup.drag', null);
+  select(window).on('dragstart.drag', null);
+  select(window).on('selectstart.drag', null);
+});
 
 describe('GraphCanvas', () => {
   it('renders one circle per node and one line per edge', () => {

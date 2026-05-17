@@ -1,4 +1,4 @@
-import { useEffect, useRef } from 'react';
+import { useEffect, useRef, useState } from 'react';
 import {
   forceCenter,
   forceCollide,
@@ -23,6 +23,31 @@ export interface GraphCanvasProps {
   onNodeClick: (node: GraphNode) => void;
   onPinNode: (node: GraphNode, x: number, y: number) => void;
   onHoverNode?: (node: GraphNode | null, x: number, y: number) => void;
+  /**
+   * Phase 19 — edit-mode toggle. When true, the d3-drag handler switches
+   * into "link creation" intent: pointerdown on a node mounts a preview
+   * edge that tracks the pointer; pointerup hit-tests for a drop target
+   * and calls onLinkDragEnd. View-mode pin behavior is preserved when
+   * editMode is false.
+   */
+  editMode: boolean;
+  /**
+   * Fires on the end of an edit-mode drag.
+   *   - to is a different node → drop succeeded
+   *   - to === 'self' → pointerup over the source node itself
+   *   - to === null → pointerup over empty canvas
+   * The callback is NOT fired when the drag is cancelled mid-flight via Esc.
+   */
+  onLinkDragEnd: (from: GraphNode, to: GraphNode | 'self' | null) => void;
+  /**
+   * Optional drag-source lifecycle callback. Surfaces the canvas's internal
+   * drag state so the parent (GraphView) can gate its own Esc handler on
+   * dragSourceId === null (UI-SPEC §G Esc order of priority).
+   *   - Fires once with the source node id on edit-mode drag start.
+   *   - Fires once with null on edit-mode drag end OR mid-drag Esc cancel.
+   * Never both fire for a single drag; never zero. Not invoked in view mode.
+   */
+  onDragSourceChange?: (sourceId: string | null) => void;
 }
 
 // d3 mutates the node objects in-place, adding x/y/vx/vy and fx/fy. We keep
@@ -39,6 +64,7 @@ interface SimEdge {
 }
 
 const NODE_RADIUS = 14;
+const HALO_RADIUS = NODE_RADIUS + 4;
 
 export function GraphCanvas({
   nodes,
@@ -49,6 +75,9 @@ export function GraphCanvas({
   onNodeClick,
   onPinNode,
   onHoverNode,
+  editMode,
+  onLinkDragEnd,
+  onDragSourceChange,
 }: GraphCanvasProps) {
   const svgRef = useRef<SVGSVGElement>(null);
   // Latest callback refs so the useEffect doesn't need to re-run when the
@@ -56,11 +85,33 @@ export function GraphCanvas({
   const onNodeClickRef = useRef(onNodeClick);
   const onPinNodeRef = useRef(onPinNode);
   const onHoverNodeRef = useRef(onHoverNode);
+  const editModeRef = useRef(editMode);
+  const onLinkDragEndRef = useRef(onLinkDragEnd);
+  const onDragSourceChangeRef = useRef(onDragSourceChange);
   useEffect(() => {
     onNodeClickRef.current = onNodeClick;
     onPinNodeRef.current = onPinNode;
     onHoverNodeRef.current = onHoverNode;
+    editModeRef.current = editMode;
+    onLinkDragEndRef.current = onLinkDragEnd;
+    onDragSourceChangeRef.current = onDragSourceChange;
   });
+
+  // Mirrored simNodes ref so the d3 keydown handler (mid-drag Esc) and the
+  // drag-end handler can both look up the live simulation node by id without
+  // re-running the main useEffect on every drag-state tick.
+  const simNodesRef = useRef<SimNode[]>([]);
+  // Tracks whether the in-flight drag was cancelled via Esc, so the d3-drag
+  // `end` handler (which fires unconditionally on pointerup) can skip both
+  // onLinkDragEnd and onDragSourceChange(null) emissions.
+  const cancelledRef = useRef(false);
+
+  // React state for the preview-edge rendering. dragSource changes once per
+  // drag-source state transition (start, end, cancel) — low frequency. pointer
+  // changes on every pointermove — accepted per RESEARCH §Pitfall 5; if jank
+  // is profiled later, the fallback (direct DOM writes via d3) is documented.
+  const [dragSource, setDragSource] = useState<SimNode | null>(null);
+  const [pointer, setPointer] = useState<{ x: number; y: number } | null>(null);
 
   useEffect(() => {
     if (!svgRef.current) return;
@@ -77,6 +128,7 @@ export function GraphCanvas({
       }
       return copy;
     });
+    simNodesRef.current = simNodes;
     const simEdges: SimEdge[] = edges.map((e) => ({
       id: e.id,
       source: e.source,
@@ -126,6 +178,28 @@ export function GraphCanvas({
             .attr('pointer-events', 'none')
             .text((d) => d.label),
         (update) => update.text((d) => d.label),
+        (exit) => exit.remove(),
+      );
+
+    // Halo JOIN — populated only when editMode is true; empty array otherwise
+    // so the <g class="halos"> group renders empty (no structural mount/unmount
+    // on toggle; UI-SPEC §B Lifecycle, Pitfall 4 idempotence).
+    const haloSel = g
+      .select<SVGGElement>('g.halos')
+      .selectAll<SVGCircleElement, SimNode>('circle')
+      .data(editMode ? simNodes : [], (d) => d.id)
+      .join(
+        (enter) =>
+          enter
+            .append('circle')
+            .attr('data-halo-id', (d) => d.id)
+            .attr('r', HALO_RADIUS)
+            .attr('fill', 'none')
+            .attr('stroke', 'var(--color-accent)')
+            .attr('stroke-width', 2)
+            .attr('stroke-opacity', 0.55)
+            .attr('pointer-events', 'none'),
+        (update) => update,
         (exit) => exit.remove(),
       );
 
@@ -180,23 +254,64 @@ export function GraphCanvas({
       .force('center', forceCenter(width / 2, height / 2))
       .force('collide', forceCollide<SimNode>(NODE_RADIUS + 4));
 
-    // Drag — start pins, move updates fx/fy, end releases unless already pinned.
+    // Drag — dual intent gated by editModeRef.current per the mirrored-ref
+    // pattern. View-mode keeps the existing pin-and-position behavior; edit-
+    // mode tracks the pointer for a link-creation preview edge and emits
+    // lifecycle callbacks. Pin state (fx/fy) is NEVER touched in edit mode
+    // so cancel/self-drop "snap-back" is a structural no-op (Pitfall 2).
     const dragBehavior = drag<SVGCircleElement, SimNode>()
       .on('start', (evt, d) => {
-        if (!evt.active) sim.alphaTarget(0.3).restart();
-        d.fx = d.x;
-        d.fy = d.y;
+        if (editModeRef.current) {
+          // Edit-mode drag: do NOT pin. Reset cancel flag, surface drag
+          // source via React state for preview-edge mount, and notify parent.
+          cancelledRef.current = false;
+          setDragSource(d);
+          setPointer({ x: evt.x, y: evt.y });
+          onDragSourceChangeRef.current?.(d.id);
+        } else {
+          if (!evt.active) sim.alphaTarget(0.3).restart();
+          d.fx = d.x;
+          d.fy = d.y;
+        }
       })
       .on('drag', (evt, d) => {
-        d.fx = evt.x;
-        d.fy = evt.y;
+        if (editModeRef.current) {
+          // Edit-mode drag: update the preview-edge endpoint in simulation
+          // space (evt.x/y already account for zoom transform). Do NOT
+          // touch d.fx/fy — the source node must not move during link drag.
+          setPointer({ x: evt.x, y: evt.y });
+        } else {
+          d.fx = evt.x;
+          d.fy = evt.y;
+        }
       })
       .on('end', (evt, d) => {
-        if (!evt.active) sim.alphaTarget(0);
-        // Release only if the node wasn't already pinned before dragging.
-        if (!pinnedIds.has(d.id)) {
-          d.fx = null;
-          d.fy = null;
+        if (editModeRef.current) {
+          // If the mid-drag Esc handler already fired the cancel path, skip
+          // both onLinkDragEnd and onDragSourceChange(null) — those callbacks
+          // ran when cancelledRef was set. The flag is reset on the next
+          // 'start'.
+          if (cancelledRef.current) {
+            return;
+          }
+          const target = hitTestNodeAt(evt.sourceEvent, simNodesRef.current);
+          if (target === null) {
+            onLinkDragEndRef.current(d, null);
+          } else if (target.id === d.id) {
+            onLinkDragEndRef.current(d, 'self');
+          } else {
+            onLinkDragEndRef.current(d, target);
+          }
+          setDragSource(null);
+          setPointer(null);
+          onDragSourceChangeRef.current?.(null);
+        } else {
+          if (!evt.active) sim.alphaTarget(0);
+          // Release only if the node wasn't already pinned before dragging.
+          if (!pinnedIds.has(d.id)) {
+            d.fx = null;
+            d.fy = null;
+          }
         }
       });
     nodeSel.call(dragBehavior);
@@ -233,6 +348,7 @@ export function GraphCanvas({
           return (sy + ty) / 2;
         });
       nodeSel.attr('cx', (d) => d.x ?? 0).attr('cy', (d) => d.y ?? 0);
+      haloSel.attr('cx', (d) => d.x ?? 0).attr('cy', (d) => d.y ?? 0);
     };
 
     sim.on('tick', writePositions);
@@ -247,23 +363,91 @@ export function GraphCanvas({
       // Remove d3 listeners so unmount doesn't leak.
       svg.on('.zoom', null);
       nodeSel.on('click', null).on('mouseenter', null).on('mouseleave', null);
+      nodeSel.on('.drag', null);
     };
     // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [nodes, edges, positions, width, height]);
+  }, [nodes, edges, positions, width, height, editMode]);
+
+  // Mid-drag Esc cancel — window keydown listener installed only while a
+  // drag is in flight. Removes the preview-edge, sets the cancelled flag so
+  // the d3-drag `end` handler skips its emissions, and notifies the parent
+  // exactly once that the drag-source is gone (UI-SPEC §G priority 3).
+  useEffect(() => {
+    if (!dragSource) return;
+    const handler = (e: KeyboardEvent) => {
+      if (e.key !== 'Escape') return;
+      cancelledRef.current = true;
+      setDragSource(null);
+      setPointer(null);
+      onDragSourceChangeRef.current?.(null);
+    };
+    window.addEventListener('keydown', handler);
+    return () => {
+      window.removeEventListener('keydown', handler);
+    };
+  }, [dragSource]);
 
   return (
     <svg
       ref={svgRef}
       width={width}
       height={height}
-      className="block h-full w-full select-none"
+      className={[
+        'block h-full w-full select-none',
+        editMode ? 'cursor-crosshair' : '',
+      ]
+        .filter(Boolean)
+        .join(' ')}
       data-testid="graph-canvas"
     >
       <g className="viewport">
         <g className="links" />
         <g className="edge-labels" />
+        <g className="preview-edge">
+          {dragSource && pointer && (
+            <line
+              data-testid="graph-preview-edge"
+              x1={dragSource.x ?? 0}
+              y1={dragSource.y ?? 0}
+              x2={pointer.x}
+              y2={pointer.y}
+              stroke="var(--color-accent)"
+              strokeWidth={2}
+              strokeDasharray="6 4"
+              strokeOpacity={0.8}
+              pointerEvents="none"
+            />
+          )}
+        </g>
+        <g className="halos" />
         <g className="nodes" />
       </g>
     </svg>
   );
+}
+
+/**
+ * Hit-test the node under the pointer at pointerup. Uses
+ * document.elementFromPoint (O(1), respects rendered z-order — halos and
+ * preview-edge are pointer-events:none so the underlying node circle is the
+ * hit target). Returns the matching SimNode or null if no node circle is
+ * under the pointer.
+ *
+ * Reads `data-node-id` from the closest ancestor circle to future-proof
+ * against wrapping the node in a <g> later.
+ */
+function hitTestNodeAt(
+  sourceEvent: Event | undefined,
+  simNodes: SimNode[],
+): SimNode | null {
+  if (!sourceEvent) return null;
+  const me = sourceEvent as MouseEvent;
+  if (typeof me.clientX !== 'number' || typeof me.clientY !== 'number') return null;
+  const el = document.elementFromPoint(me.clientX, me.clientY);
+  if (!el) return null;
+  const circle = (el as Element).closest('circle[data-node-id]');
+  if (!circle) return null;
+  const id = circle.getAttribute('data-node-id');
+  if (!id) return null;
+  return simNodes.find((n) => n.id === id) ?? null;
 }
