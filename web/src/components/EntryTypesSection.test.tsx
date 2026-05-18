@@ -20,6 +20,7 @@ const UNIVERSE: Universe = {
   name: 'Middle Earth',
   description: '',
   entryTypes: ['concept', 'entity', 'location'],
+  timelineWindow: null,
   createdAt: '',
   updatedAt: '',
 };

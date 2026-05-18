@@ -7,6 +7,7 @@ export interface Universe {
   name: string;
   description: string;
   entryTypes: string[];
+  timelineWindow: { start: number; end: number } | null;
   createdAt: string;
   updatedAt: string;
 }
@@ -38,7 +39,11 @@ export function useCreateUniverse() {
 export function useUpdateUniverse(id: string) {
   const qc = useQueryClient();
   return useMutation({
-    mutationFn: (body: { name?: string; description?: string }) =>
+    mutationFn: (body: {
+      name?: string;
+      description?: string;
+      timelineWindow?: { start: number; end: number } | null;
+    }) =>
       api<Universe>(`/universes/${id}`, { method: 'PATCH', body: JSON.stringify(body) }),
     onSuccess: () => {
       qc.invalidateQueries({ queryKey: ['universes'] });
