@@ -1,14 +1,100 @@
 import { describe, it, expect, beforeEach, vi } from 'vitest';
-import { render, screen, within } from '@testing-library/react';
+import { render, screen } from '@testing-library/react';
+import userEvent from '@testing-library/user-event';
 import { MemoryRouter, Routes, Route } from 'react-router-dom';
 import { QueryClient, QueryClientProvider } from '@tanstack/react-query';
 
-vi.mock('../api/client', () => ({
-  api: vi.fn(),
+/**
+ * Phase 20 Plan 06 — TimelineView orchestrator test suite.
+ *
+ * Strategy (per plan §Q10 + acceptance criteria): mock the heavy children
+ * (TimelineCanvas, TimelineEntryPanel, TimelineRangeDialog, PinPopover) as
+ * identity stubs so each test isolates the orchestrator's wiring decisions:
+ *   - range-dialog-vs-canvas gate (window === null branch)
+ *   - prop flow (pins.length surfacing into both children)
+ *   - Configure-range toolbar button → opens dialog
+ *   - Loading state
+ *
+ * Full @dnd-kit drag → drop → popover wiring is NOT reliably testable in
+ * jsdom (no real pointer events, no real layout). That gesture surface is
+ * covered by manual UAT (Task 3 checkpoint) and by GraphCanvas.test.tsx /
+ * TimelineCanvas.test.tsx for the per-component gesture logic.
+ */
+
+// Mock hooks BEFORE importing TimelineView.
+const windowState: { window: { start: number; end: number } | null } = {
+  window: null,
+};
+const windowLoadingRef = { current: false };
+vi.mock('../hooks/useTimelineWindow', () => ({
+  useTimelineWindow: () => ({
+    window: windowState.window,
+    setWindow: vi.fn(),
+    isLoading: windowLoadingRef.current,
+    isPending: false,
+  }),
 }));
-import { api } from '../api/client';
+
+const pinsState: {
+  data: Array<{
+    id: string;
+    entryId: string;
+    label: string;
+    position: number;
+    precision: 'exact' | 'approximate' | 'era';
+  }>;
+  isLoading: boolean;
+} = {
+  data: [],
+  isLoading: false,
+};
+vi.mock('../hooks/useTimelinePins', () => ({
+  useTimelinePins: () => ({
+    data: pinsState.data,
+    isLoading: pinsState.isLoading,
+  }),
+  useUpsertTimelinePin: () => ({
+    mutateAsync: vi.fn().mockResolvedValue(undefined),
+    isPending: false,
+  }),
+}));
+
+// Stub the heavy children — exposes props as data-* attributes.
+vi.mock('../components/TimelineCanvas', () => ({
+  TimelineCanvas: (props: {
+    pins: Array<{ id: string }>;
+    width: number;
+    height: number;
+  }) => (
+    <div
+      data-testid="timeline-canvas-stub"
+      data-pin-count={props.pins.length}
+      data-width={props.width}
+      data-height={props.height}
+    />
+  ),
+}));
+
+vi.mock('../components/TimelineEntryPanel', () => ({
+  TimelineEntryPanel: (props: { pins: Array<{ id: string }> }) => (
+    <div
+      data-testid="timeline-entry-panel-stub"
+      data-pin-count={props.pins.length}
+    />
+  ),
+}));
+
+vi.mock('../components/TimelineRangeDialog', () => ({
+  TimelineRangeDialog: (props: { open: boolean }) =>
+    props.open ? <div data-testid="range-dialog-stub">Configure timeline range</div> : null,
+}));
+
+vi.mock('../components/PinPopover', () => ({
+  PinPopover: () => null,
+}));
+
+// Toast — keep it real so we can verify toast surfaces appear when set.
 import { TimelineView } from './TimelineView';
-import type { TimelinePin } from '../hooks/useTimelinePins';
 
 function renderAt(path = '/universes/U1/timeline') {
   const qc = new QueryClient({
@@ -25,105 +111,65 @@ function renderAt(path = '/universes/U1/timeline') {
   );
 }
 
-describe('TimelineView', () => {
-  beforeEach(() => vi.mocked(api).mockReset());
-
-  it('renders EmptyState "No pins yet" when timeline is empty', async () => {
-    vi.mocked(api).mockResolvedValue([]);
-    renderAt();
-
-    expect(await screen.findByText(/pin a moment to your timeline/i)).toBeInTheDocument();
-    expect(
-      screen.getByText(/open any entry, then add it to the timeline/i),
-    ).toBeInTheDocument();
+describe('TimelineView orchestrator', () => {
+  beforeEach(() => {
+    windowState.window = null;
+    windowLoadingRef.current = false;
+    pinsState.data = [];
+    pinsState.isLoading = false;
   });
 
-  it('renders era as sticky header with non-era pins underneath', async () => {
-    const pins: TimelinePin[] = [
-      {
-        id: 'p1',
-        entryId: 'E1',
-        label: 'First Age',
-        position: -10000,
-        precision: 'era',
-        entryTitle: 'First Age',
-        entryType: 'era',
-      },
-      {
-        id: 'p2',
-        entryId: 'E2',
-        label: 'Founding',
-        position: 0,
-        precision: 'exact',
-        entryTitle: 'Founding of Gondor',
-        entryType: 'event',
-      },
-      {
-        id: 'p3',
-        entryId: 'E3',
-        label: 'Battle',
-        position: 100,
-        precision: 'approximate',
-        entryTitle: 'Battle of Pelennor',
-        entryType: 'event',
-      },
+  it('shows Loading… while hooks are pending', () => {
+    windowLoadingRef.current = true;
+    pinsState.isLoading = true;
+    renderAt();
+    expect(screen.getByText(/loading/i)).toBeInTheDocument();
+    expect(screen.queryByTestId('timeline-canvas-stub')).not.toBeInTheDocument();
+  });
+
+  it('when window is null → range dialog is rendered, canvas is not', () => {
+    windowState.window = null;
+    renderAt();
+    expect(screen.getByTestId('range-dialog-stub')).toBeInTheDocument();
+    expect(screen.queryByTestId('timeline-canvas-stub')).not.toBeInTheDocument();
+    expect(screen.queryByTestId('timeline-entry-panel-stub')).not.toBeInTheDocument();
+  });
+
+  it('when window is set → canvas + entry panel are rendered, range dialog is not (initially)', () => {
+    windowState.window = { start: -10000, end: 26000 };
+    renderAt();
+    expect(screen.getByTestId('timeline-canvas-stub')).toBeInTheDocument();
+    expect(screen.getByTestId('timeline-entry-panel-stub')).toBeInTheDocument();
+    expect(screen.queryByTestId('range-dialog-stub')).not.toBeInTheDocument();
+  });
+
+  it('pin count flows through to canvas and panel props', () => {
+    windowState.window = { start: 0, end: 1000 };
+    pinsState.data = [
+      { id: 'p1', entryId: 'E1', label: 'A', position: 100, precision: 'exact' },
+      { id: 'p2', entryId: 'E2', label: 'B', position: 200, precision: 'exact' },
+      { id: 'p3', entryId: 'E3', label: 'C', position: 300, precision: 'era' },
     ];
-    vi.mocked(api).mockResolvedValue(pins);
     renderAt();
-
-    expect(await screen.findByText('Founding')).toBeInTheDocument();
-    expect(screen.getByText('Battle')).toBeInTheDocument();
-
-    // Era heading is an h2 with sticky styling
-    const eraHeading = screen.getByRole('heading', { level: 2, name: /first age/i });
-    expect(eraHeading.className).toContain('sticky');
+    const canvas = screen.getByTestId('timeline-canvas-stub');
+    const panel = screen.getByTestId('timeline-entry-panel-stub');
+    expect(canvas).toHaveAttribute('data-pin-count', '3');
+    expect(panel).toHaveAttribute('data-pin-count', '3');
   });
 
-  it('pin rows are clickable Links to /universes/:uid/entries/:entryId', async () => {
-    vi.mocked(api).mockResolvedValue([
-      {
-        id: 'p1',
-        entryId: 'E42',
-        label: 'Founding',
-        position: 100,
-        precision: 'exact',
-        entryTitle: 'Founding of Gondor',
-        entryType: 'event',
-      },
-    ]);
+  it('clicking Configure range opens the dialog', async () => {
+    windowState.window = { start: 0, end: 1000 };
     renderAt();
-
-    const link = await screen.findByRole('link', { name: /founding/i });
-    expect(link).toHaveAttribute('href', '/universes/U1/entries/E42');
+    expect(screen.queryByTestId('range-dialog-stub')).not.toBeInTheDocument();
+    const button = screen.getByRole('button', { name: /configure range/i });
+    await userEvent.click(button);
+    expect(screen.getByTestId('range-dialog-stub')).toBeInTheDocument();
   });
 
-  it('preserves API order in DOM (server returns sorted ASC)', async () => {
-    vi.mocked(api).mockResolvedValue([
-      { id: 'p1', entryId: 'E1', label: 'First', position: 100, precision: 'exact' },
-      { id: 'p2', entryId: 'E2', label: 'Second', position: 200, precision: 'exact' },
-      { id: 'p3', entryId: 'E3', label: 'Third', position: 300, precision: 'exact' },
-    ]);
+  it('toolbar shows the Timeline heading and Configure range button when window is set', () => {
+    windowState.window = { start: -1000, end: 1000 };
     renderAt();
-
-    await screen.findByText('First');
-    const links = screen.getAllByRole('link');
-    const labels = links.map(
-      (l) => within(l).getByText(/(first|second|third)/i).textContent,
-    );
-    expect(labels).toEqual(['First', 'Second', 'Third']);
-  });
-
-  it('shows Loading… while the timeline query is pending', async () => {
-    let resolveFn: (value: unknown) => void = () => {};
-    vi.mocked(api).mockReturnValue(
-      new Promise((res) => {
-        resolveFn = res;
-      }),
-    );
-
-    renderAt();
-
-    expect(await screen.findByText(/loading/i)).toBeInTheDocument();
-    resolveFn([]);
+    expect(screen.getByRole('heading', { name: /timeline/i, level: 1 })).toBeInTheDocument();
+    expect(screen.getByRole('button', { name: /configure range/i })).toBeInTheDocument();
   });
 });
