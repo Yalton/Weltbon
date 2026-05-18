@@ -5,43 +5,16 @@ import {
 } from '../hooks/useTimelinePins';
 import { PinEditor } from './PinEditor';
 import { ConfirmDialog } from './ConfirmDialog';
+import { PrecisionBadge, precisionDotClass } from './PrecisionBadge';
+
+// Re-export for any downstream consumer that still imports these from
+// TimelinePinSection (no in-tree consumers today, but keeping the public
+// surface stable is cheap and avoids surprise breakage during the refactor).
+export { PrecisionBadge, precisionDotClass };
 
 interface Props {
   universeId: string;
   entryId: string;
-}
-
-/**
- * Tailwind classes for the small precision dot on the pin display.
- * Matches research §17 question 3:
- *   era         → accent (violet)
- *   approximate → neutral-400 (mid grey)
- *   exact       → neutral-200 (light grey)
- */
-function precisionDotClass(p: 'exact' | 'approximate' | 'era'): string {
-  const base = 'inline-block w-2 h-2 rounded-full';
-  switch (p) {
-    case 'era':
-      return `${base} bg-[color:var(--color-accent)]`;
-    case 'approximate':
-      return `${base} bg-neutral-400`;
-    case 'exact':
-    default:
-      return `${base} bg-neutral-200 dark:bg-neutral-300`;
-  }
-}
-
-function PrecisionBadge({
-  precision,
-}: {
-  precision: 'exact' | 'approximate' | 'era';
-}) {
-  return (
-    <span className="inline-flex items-center gap-1.5">
-      <span aria-hidden className={precisionDotClass(precision)} />
-      <span className="text-xs text-neutral-500">{precision}</span>
-    </span>
-  );
 }
 
 /**
