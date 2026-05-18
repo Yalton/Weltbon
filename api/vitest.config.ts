@@ -46,6 +46,7 @@ const DB_GATED_TESTS = [
   'tests/seedInviteCode.test.ts',
   'tests/timeline.test.ts',
   'tests/timeline-perf.test.ts',
+  'tests/timeline-window.test.ts',
   'tests/tokens.test.ts',
   'tests/universe-types.test.ts',
   'tests/universes.test.ts',
