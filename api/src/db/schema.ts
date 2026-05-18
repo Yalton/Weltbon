@@ -1,6 +1,16 @@
 import { pgTable, uuid, text, timestamp, jsonb, boolean, integer, doublePrecision, primaryKey } from 'drizzle-orm/pg-core';
 import { relations } from 'drizzle-orm';
 
+/**
+ * Phase 20 D-01: per-universe horizontal timeline window persisted as JSONB
+ * on `universes.timeline_window`. `null` (the default for any pre-Phase-20
+ * row) triggers the first-visit "Configure range" dialog (D-02).
+ */
+export interface TimelineWindow {
+  start: number;
+  end: number;
+}
+
 export const users = pgTable('users', {
   id:           uuid('id').primaryKey().defaultRandom(),
   email:        text('email').notNull().unique(),
@@ -18,6 +28,8 @@ export const universes = pgTable('universes', {
     'concept','entity','location','event','faction',
     'artifact','species','culture','thread'
   ]).notNull(),
+  // Phase 20 D-01: nullable JSONB; `null` = "first visit, configure range".
+  timelineWindow: jsonb('timeline_window').$type<TimelineWindow | null>(),
   createdAt:    timestamp('created_at').defaultNow().notNull(),
   updatedAt:    timestamp('updated_at').defaultNow().notNull(),
 });
