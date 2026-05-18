@@ -90,6 +90,8 @@ export interface ExportPayloadUniverse {
   name: string;
   description: string;
   entryTypes: string[];
+  /** Phase 20 D-01: nullable per-universe horizontal timeline window. */
+  timelineWindow: { start: number; end: number } | null;
 }
 
 export interface ExportPayload {
@@ -216,6 +218,7 @@ export async function loadUniverseExportPayload(universeId: string): Promise<Exp
       name: universe.name,
       description: universe.description,
       entryTypes: universe.entryTypes,
+      timelineWindow: universe.timelineWindow ?? null,
     },
     categories: categoryRows.map((c) => ({
       id: c.id,

@@ -12,6 +12,16 @@ export const importSchema = z.object({
     name: z.string().min(1).max(80),
     description: z.string().max(500).optional().default(''),
     entryTypes: z.array(z.string()).optional(),
+    // Phase 20 D-01: optional + default(null) keeps pre-Phase-20 exports
+    // importable; threat T-20-03 mitigation = z.number().finite() on both keys.
+    timelineWindow: z
+      .object({
+        start: z.number().finite(),
+        end: z.number().finite(),
+      })
+      .nullable()
+      .optional()
+      .default(null),
   }),
   categories: z
     .array(
@@ -96,6 +106,9 @@ export async function importUniverseJson(userId: string, rawData: unknown) {
         name: data.universe.name,
         description: data.universe.description,
         entryTypes: data.universe.entryTypes ?? DEFAULT_ENTRY_TYPES,
+        // Phase 20 D-01: round-trip the per-universe timeline window;
+        // schema default(null) covers pre-Phase-20 exports.
+        timelineWindow: data.universe.timelineWindow,
       })
       .returning();
 

@@ -19,12 +19,27 @@ const createSchema = z.object({
   description: z.string().max(500).optional(),
 });
 
-const patchSchema = z.object({
+// Phase 20 D-01: shared schema for the per-universe timeline window.
+// `null` (literal) is accepted and explicitly clears the window; `Infinity` /
+// `-Infinity` / `NaN` are rejected by `z.number().finite()` per threat T-20-01.
+export const timelineWindowSchema = z
+  .object({
+    start: z.number().finite(),
+    end: z.number().finite(),
+  })
+  .nullable();
+
+export const patchSchema = z.object({
   name: z.string().min(1).max(80).optional(),
   description: z.string().max(500).optional(),
-}).refine((v) => v.name !== undefined || v.description !== undefined, {
-  message: 'At least one of name or description is required',
-});
+  timelineWindow: timelineWindowSchema.optional(),
+}).refine(
+  (v) =>
+    v.name !== undefined ||
+    v.description !== undefined ||
+    v.timelineWindow !== undefined,
+  { message: 'At least one of name, description, or timelineWindow is required' },
+);
 
 // POL-02: discriminated union for entry-type mutations
 const entryTypeActionSchema = z.discriminatedUnion('action', [
@@ -45,6 +60,10 @@ const universeSchema = z.object({
   name: z.string(),
   description: z.string(),
   entryTypes: z.array(z.string()),
+  // Phase 20 D-01: nullable per-universe horizontal-timeline window.
+  timelineWindow: z
+    .object({ start: z.number(), end: z.number() })
+    .nullable(),
   createdAt: z.string(),
   updatedAt: z.string(),
 });

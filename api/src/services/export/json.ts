@@ -22,6 +22,8 @@ export async function exportUniverseJson(universeId: string) {
       name: p.universe.name,
       description: p.universe.description,
       entryTypes: p.universe.entryTypes,
+      // Phase 20 D-01: round-trip the per-universe horizontal timeline window.
+      timelineWindow: p.universe.timelineWindow,
     },
     categories: p.categories.map((c) => ({
       id: c.id,
