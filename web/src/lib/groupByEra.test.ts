@@ -1,5 +1,5 @@
 import { describe, it, expect } from 'vitest';
-import { groupByEra, type TimelinePin } from './groupByEra';
+import { groupByEra, inferEraSpans, type EraSpan, type TimelinePin } from './groupByEra';
 
 const pin = (overrides: Partial<TimelinePin> = {}): TimelinePin => ({
   id: 'p',
@@ -68,5 +68,72 @@ describe('groupByEra', () => {
     const early = pin({ id: 'early', position: 1 });
     const result = groupByEra([out, early]);
     expect(result[0].pins.map((p) => p.id)).toEqual(['late', 'early']);
+  });
+});
+
+describe('inferEraSpans', () => {
+  it('empty input → []', () => {
+    expect(inferEraSpans([], 1000)).toEqual<EraSpan[]>([]);
+  });
+
+  it('all non-era pins → []', () => {
+    const pins = [
+      pin({ id: 'a', position: 10 }),
+      pin({ id: 'b', position: 20 }),
+      pin({ id: 'c', position: 30, precision: 'approximate' }),
+    ];
+    expect(inferEraSpans(pins, 1000)).toEqual<EraSpan[]>([]);
+  });
+
+  it('single era → one span from era.position to windowEnd', () => {
+    const era = pin({ id: 'era', position: 100, precision: 'era' });
+    const result = inferEraSpans([era], 1000);
+    expect(result).toEqual<EraSpan[]>([{ era, startPos: 100, endPos: 1000 }]);
+  });
+
+  it('multiple eras → consecutive endPos chain; last runs to windowEnd', () => {
+    const a = pin({ id: 'a', position: 100, precision: 'era' });
+    const b = pin({ id: 'b', position: 200, precision: 'era' });
+    const c = pin({ id: 'c', position: 500, precision: 'era' });
+    const result = inferEraSpans([a, b, c], 1000);
+    expect(result).toHaveLength(3);
+    expect(result[0]).toEqual({ era: a, startPos: 100, endPos: 200 });
+    expect(result[1]).toEqual({ era: b, startPos: 200, endPos: 500 });
+    expect(result[2]).toEqual({ era: c, startPos: 500, endPos: 1000 });
+  });
+
+  it('mixed era + event pins → non-era pins are filtered out', () => {
+    const era1 = pin({ id: 'era1', position: 100, precision: 'era' });
+    const event = pin({ id: 'event', position: 150 });
+    const era2 = pin({ id: 'era2', position: 200, precision: 'era' });
+    const result = inferEraSpans([era1, event, era2], 1000);
+    expect(result).toEqual<EraSpan[]>([
+      { era: era1, startPos: 100, endPos: 200 },
+      { era: era2, startPos: 200, endPos: 1000 },
+    ]);
+  });
+
+  it('back-to-back eras at same position → produces a zero-width span', () => {
+    const a = pin({ id: 'a', position: 100, precision: 'era' });
+    const b = pin({ id: 'b', position: 100, precision: 'era' });
+    const result = inferEraSpans([a, b], 1000);
+    expect(result).toHaveLength(2);
+    expect(result[0]).toEqual({ era: a, startPos: 100, endPos: 100 });
+    expect(result[1]).toEqual({ era: b, startPos: 100, endPos: 1000 });
+  });
+
+  it('handles negative-window positions correctly', () => {
+    const era = pin({ id: 'era', position: -5000, precision: 'era' });
+    const result = inferEraSpans([era], 26000);
+    expect(result).toEqual<EraSpan[]>([{ era, startPos: -5000, endPos: 26000 }]);
+  });
+
+  it('preserves input ordering (does not re-sort)', () => {
+    // Caller is responsible for sorting (same contract as groupByEra).
+    // Out-of-order input produces out-of-order output — documented behavior.
+    const late = pin({ id: 'late', position: 500, precision: 'era' });
+    const early = pin({ id: 'early', position: 100, precision: 'era' });
+    const result = inferEraSpans([late, early], 1000);
+    expect(result.map((s) => s.era.id)).toEqual(['late', 'early']);
   });
 });
