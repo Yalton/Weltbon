@@ -1,5 +1,5 @@
 import { useCallback, useEffect, useRef, useState } from 'react';
-import { useParams } from 'react-router-dom';
+import { useNavigate, useParams } from 'react-router-dom';
 import {
   DndContext,
   KeyboardSensor,
@@ -67,6 +67,7 @@ const TOAST_ERROR_COPY = "Couldn't save pin. Try again.";
 export function TimelineView() {
   const { uid } = useParams<{ uid: string }>();
   const universeId = uid ?? '';
+  const navigate = useNavigate();
 
   const { window: timelineWindow, isLoading: windowLoading } =
     useTimelineWindow(universeId);
@@ -279,6 +280,9 @@ export function TimelineView() {
               width={size.width}
               height={size.height}
               onPinDragEnd={handlePinDragEnd}
+              onPinClick={(pin) => {
+                navigate(`/universes/${universeId}/entries/${pin.entryId}`);
+              }}
               onTransformChange={(t) => {
                 currentTransformRef.current = t;
               }}

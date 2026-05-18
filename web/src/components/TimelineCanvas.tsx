@@ -1,4 +1,4 @@
-import { useEffect, useRef } from 'react';
+import { useEffect, useRef, useState, type PointerEvent as ReactPointerEvent } from 'react';
 import { drag } from 'd3-drag';
 import { select } from 'd3-selection';
 import { zoom, zoomIdentity, type ZoomBehavior } from 'd3-zoom';
@@ -19,6 +19,13 @@ const PIN_RADIUS = 6;
 
 /** Vertical offset between stacked pins at the same numeric position. */
 const STACK_OFFSET = 40;
+
+/** Screen-space distance at which proximity name labels fully fade in. */
+const HOVER_RADIUS = 14;
+/** Screen-space distance beyond which proximity name labels are hidden. */
+const PROXIMITY_THRESHOLD = 110;
+
+const POSITION_FORMAT = new Intl.NumberFormat('en-US', { maximumFractionDigits: 2 });
 
 export interface TimelineCanvasProps {
   universeId: string;
@@ -119,6 +126,15 @@ export function TimelineCanvas({
   // Latest d3-zoom transform — exposed for orchestrator-side coordinate
   // inversion (Plan 06 drop math) and used by the Esc-to-home reset.
   const zoomBehaviorRef = useRef<ZoomBehavior<SVGSVGElement, unknown> | null>(null);
+  // Local mirror of the d3-zoom transform — used for cursor-to-pin proximity
+  // calc on pointermove. Kept in a ref (not state) so zoom ticks don't trigger
+  // React re-renders (RESEARCH §Pitfall 1).
+  const transformRef = useRef({ x: 0, y: 0, k: 1 });
+
+  // Cursor in SVG-container screen coords + currently-hovered pin id, both for
+  // the proximity name labels and the hover popover.
+  const [cursor, setCursor] = useState<{ x: number; y: number } | null>(null);
+  const [hoveredPinId, setHoveredPinId] = useState<string | null>(null);
 
   // Pre-compute the render data outside the d3 effect so the JSX can also
   // assert structure synchronously on first paint (jsdom needs this — d3
@@ -206,6 +222,7 @@ export function TimelineCanvas({
         // inverse-coord math on @dnd-kit drop events. Imperative-only —
         // parent writes to a ref, never setState per tick.
         onTransformChangeRef.current?.({ x: t.x, y: t.y, k: t.k });
+        transformRef.current = { x: t.x, y: t.y, k: t.k };
       });
     zoomBehaviorRef.current = zoomBehavior;
     svg.call(zoomBehavior);
@@ -287,7 +304,37 @@ export function TimelineCanvas({
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [pins, timelineWindow.start, timelineWindow.end, width, height]);
 
+  const onPointerMove = (e: ReactPointerEvent<SVGSVGElement>) => {
+    if (!svgRef.current) return;
+    const rect = svgRef.current.getBoundingClientRect();
+    const x = e.clientX - rect.left;
+    const y = e.clientY - rect.top;
+    setCursor({ x, y });
+    const t = transformRef.current;
+    let hovered: string | null = null;
+    let bestD = Infinity;
+    for (const rp of renderedPins) {
+      const sx = t.x + t.k * rp.x;
+      const sy = t.y + t.k * rp.cy;
+      const d = Math.hypot(x - sx, y - sy);
+      if (d < HOVER_RADIUS && d < bestD) {
+        bestD = d;
+        hovered = rp.pin.id;
+      }
+    }
+    setHoveredPinId(hovered);
+  };
+
+  const onPointerLeave = () => {
+    setCursor(null);
+    setHoveredPinId(null);
+  };
+
+  const hoveredRenderedPin =
+    hoveredPinId ? renderedPins.find((rp) => rp.pin.id === hoveredPinId) ?? null : null;
+
   return (
+    <div className="relative h-full w-full">
     <svg
       ref={svgRef}
       role="application"
@@ -296,6 +343,8 @@ export function TimelineCanvas({
       height={height}
       className="block h-full w-full select-none"
       data-testid="timeline-canvas"
+      onPointerMove={onPointerMove}
+      onPointerLeave={onPointerLeave}
     >
       <g className="era-layer" data-testid="era-layer">
         {renderedSpans.map(({ span, x, width: w }) => (
@@ -397,5 +446,74 @@ export function TimelineCanvas({
         </g>
       </g>
     </svg>
+      {cursor &&
+        renderedPins.map(({ pin, x, cy }) => {
+          const t = transformRef.current;
+          const sx = t.x + t.k * x;
+          const sy = t.y + t.k * cy;
+          const d = Math.hypot(cursor.x - sx, cursor.y - sy);
+          if (d >= PROXIMITY_THRESHOLD) return null;
+          const opacity = Math.max(
+            0,
+            Math.min(
+              1,
+              (PROXIMITY_THRESHOLD - d) / (PROXIMITY_THRESHOLD - HOVER_RADIUS),
+            ),
+          );
+          if (opacity < 0.05) return null;
+          if (hoveredPinId === pin.id) return null;
+          const displayName = pin.entryTitle || pin.label || 'Pin';
+          return (
+            <div
+              key={`label-${pin.id}`}
+              className="pointer-events-none absolute select-none whitespace-nowrap rounded bg-neutral-900/85 px-1.5 py-0.5 text-xs font-medium text-neutral-100 shadow"
+              style={{
+                left: sx,
+                top: sy - PIN_RADIUS - 6,
+                transform: 'translate(-50%, -100%)',
+                opacity,
+              }}
+            >
+              {displayName}
+            </div>
+          );
+        })}
+      {hoveredRenderedPin &&
+        (() => {
+          const t = transformRef.current;
+          const sx = t.x + t.k * hoveredRenderedPin.x;
+          const sy = t.y + t.k * hoveredRenderedPin.cy;
+          const pin = hoveredRenderedPin.pin;
+          const displayName = pin.entryTitle || pin.label || 'Untitled pin';
+          return (
+            <div
+              data-testid="timeline-pin-popover"
+              className="pointer-events-none absolute z-10"
+              style={{
+                left: sx,
+                top: sy - PIN_RADIUS - 10,
+                transform: 'translate(-50%, -100%)',
+              }}
+            >
+              <div className="min-w-[180px] max-w-[260px] rounded-lg border border-neutral-700 bg-neutral-900/95 px-3 py-2 shadow-xl backdrop-blur-sm">
+                <div className="text-sm font-semibold text-neutral-50">{displayName}</div>
+                <div className="mt-0.5 text-xs text-neutral-400">
+                  {POSITION_FORMAT.format(pin.position)}
+                  <span className="mx-1 text-neutral-600">·</span>
+                  {pin.precision}
+                </div>
+                {pin.label && pin.label !== pin.entryTitle && (
+                  <div className="mt-1 truncate text-xs italic text-neutral-300">
+                    “{pin.label}”
+                  </div>
+                )}
+                <div className="mt-1 text-[10px] uppercase tracking-wide text-neutral-500">
+                  Click to open
+                </div>
+              </div>
+            </div>
+          );
+        })()}
+    </div>
   );
 }
