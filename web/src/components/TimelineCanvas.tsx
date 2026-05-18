@@ -4,6 +4,7 @@ import { select } from 'd3-selection';
 import { zoom, zoomIdentity, type ZoomBehavior } from 'd3-zoom';
 import { posToX, xToPos, clampedPosToX } from '../lib/timelineMath';
 import { inferEraSpans, type EraSpan } from '../lib/groupByEra';
+import { entryTypeHexColor } from '../lib/entryTypeColor';
 import type { TimelinePin } from '../hooks/useTimelinePins';
 
 /**
@@ -335,31 +336,44 @@ export function TimelineCanvas({
           />
         </g>
         <g className="pins">
-          {renderedPins.map(({ pin, x, cy, clamped, clampSide }) => (
-            <circle
-              key={pin.id}
-              data-pin-id={pin.id}
-              data-position={String(pin.position)}
-              data-clamped={clamped ? 'true' : undefined}
-              data-clamp-side={clampSide ?? undefined}
-              aria-label={
-                clamped
-                  ? clampSide === 'before'
-                    ? `${pin.label} is before the visible range`
-                    : `${pin.label} is after the visible range`
-                  : `${pin.label} at position ${pin.position}`
-              }
-              cx={x}
-              cy={cy}
-              r={PIN_RADIUS}
-              fill={pin.precision === 'era' ? 'var(--color-accent)' : 'currentColor'}
-              className={
-                clamped
-                  ? 'opacity-40 cursor-pointer text-neutral-400'
-                  : 'cursor-pointer text-neutral-700 dark:text-neutral-300'
-              }
-            />
-          ))}
+          {renderedPins.map(({ pin, x, cy, clamped, clampSide }) => {
+            const displayName = pin.entryTitle || pin.label || 'Pin';
+            const fillColor =
+              pin.precision === 'era'
+                ? 'var(--color-accent)'
+                : pin.entryType
+                  ? entryTypeHexColor(pin.entryType)
+                  : 'currentColor';
+            return (
+              <circle
+                key={pin.id}
+                data-pin-id={pin.id}
+                data-position={String(pin.position)}
+                data-clamped={clamped ? 'true' : undefined}
+                data-clamp-side={clampSide ?? undefined}
+                aria-label={
+                  clamped
+                    ? clampSide === 'before'
+                      ? `${displayName} is before the visible range`
+                      : `${displayName} is after the visible range`
+                    : `${displayName} at position ${pin.position}`
+                }
+                cx={x}
+                cy={cy}
+                r={PIN_RADIUS}
+                fill={fillColor}
+                className={
+                  clamped
+                    ? 'opacity-40 cursor-pointer'
+                    : 'cursor-pointer'
+                }
+              >
+                <title>
+                  {pin.label ? `${displayName} — ${pin.label}` : displayName}
+                </title>
+              </circle>
+            );
+          })}
         </g>
         <g className="out-of-range" data-testid="out-of-range">
           {renderedPins
