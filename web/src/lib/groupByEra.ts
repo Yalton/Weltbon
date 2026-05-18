@@ -52,3 +52,45 @@ export function groupByEra(sorted: TimelinePin[]): Group[] {
   groups.push(current);
   return groups;
 }
+
+/**
+ * An era's inferred span on the parallax band layer (Phase 20 D-04).
+ *
+ * `startPos` is the era pin's own position; `endPos` is the next era pin's
+ * position, or `windowEnd` for the last era. Renderers translate these to
+ * canvas x-coordinates via `posToX` from `timelineMath.ts`.
+ */
+export interface EraSpan {
+  era: TimelinePin;
+  startPos: number;
+  endPos: number;
+}
+
+/**
+ * Infer era spans for the parallax band layer (Phase 20 D-04).
+ *
+ * Filters `sorted` to era pins (`precision === 'era'`), then maps each era
+ * to a span running from its own position to the next era's position (or
+ * `windowEnd` for the last era). Non-era pins are ignored.
+ *
+ * Input MUST be sorted ASC by position (callers' responsibility, same
+ * contract as `groupByEra`). The function does not re-sort.
+ *
+ * Edge cases:
+ *  - Empty input → []
+ *  - No era pins → []
+ *  - Single era → [{era, startPos: era.position, endPos: windowEnd}]
+ *  - Multiple eras → consecutive endPos chain; last span runs to windowEnd
+ *  - Back-to-back eras at same position → zero-width span produced
+ *    (`startPos === endPos`); callers may filter — the helper does not.
+ *
+ * Pure function: no React, no DOM, no side effects.
+ */
+export function inferEraSpans(sorted: TimelinePin[], windowEnd: number): EraSpan[] {
+  const eras = sorted.filter((p) => p.precision === 'era');
+  return eras.map((era, i) => ({
+    era,
+    startPos: era.position,
+    endPos: i + 1 < eras.length ? eras[i + 1].position : windowEnd,
+  }));
+}
