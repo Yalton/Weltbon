@@ -18,7 +18,7 @@ const uidAndIdParams = z.object({ uid: z.string().uuid(), id: z.string().uuid() 
 const createLinkSchema = z.object({
   sourceEntryId: z.string().uuid(),
   targetEntryId: z.string().uuid(),
-  label: z.string().min(1).max(100),
+  label: z.string().max(100),
   bidirectional: z.boolean().optional().default(false),
 });
 

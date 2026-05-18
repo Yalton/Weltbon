@@ -16,7 +16,7 @@ const uidParams = z.object({ uid: z.string().uuid() });
 // ─── Zod schemas ────────────────────────────────────────────────────────────
 
 const pinSchema = z.object({
-  label: z.string().min(1).max(200),
+  label: z.string().max(200),
   position: z.number().finite(),
   precision: z.enum(['exact', 'approximate', 'era']),
 });

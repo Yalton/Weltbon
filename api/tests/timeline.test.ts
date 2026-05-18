@@ -196,16 +196,18 @@ describe('Timeline API (TIME-01..04)', () => {
     expect(res.status).toBe(400);
   });
 
-  it('Zod rejects empty label', async () => {
-    const { hdrs } = await userWithToken('pin-bad-label@test.com');
+  it('Zod accepts empty label (optional in UI)', async () => {
+    const { hdrs } = await userWithToken('pin-empty-label@test.com');
     const universe = await createUniverse(hdrs);
-    const entry = await createEntry(universe.id, hdrs, { title: 'BadLabel' });
+    const entry = await createEntry(universe.id, hdrs, { title: 'EmptyLabel' });
 
     const res = await req('POST', `/universes/${universe.id}/entries/${entry.id}/pin`, {
       headers: hdrs,
       body: { label: '', position: 1, precision: 'exact' },
     });
-    expect(res.status).toBe(400);
+    expect(res.status).toBe(200);
+    const body = await res.json();
+    expect(body.label).toBe('');
   });
 
   it('POST 404 when entry does not exist in this universe', async () => {
