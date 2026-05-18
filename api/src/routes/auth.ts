@@ -53,11 +53,17 @@ const errorSchema = z.object({
 
 const REFRESH_TTL_SECONDS = Math.floor(REFRESH_TTL_MS / 1000);
 
+// Cookie path must prefix the URL where the cookie is sent back. The auth
+// router is mounted at /api/auth in index.ts, so the cookie path must be
+// /api/auth — not /auth — or the browser will silently drop it on every
+// refresh attempt and the user will appear logged out on every page reload.
+const REFRESH_COOKIE_PATH = '/api/auth';
+
 function setRefreshCookie(c: any, token: string) {
   setCookie(c, REFRESH_COOKIE_NAME, token, {
     httpOnly: true,
     sameSite: 'Strict',
-    path: '/auth',
+    path: REFRESH_COOKIE_PATH,
     maxAge: REFRESH_TTL_SECONDS,
     // secure: true in production; left off so LAN HTTP works (documented in README)
   });
@@ -310,7 +316,7 @@ export const authRoutes = new OpenAPIHono<AppEnv>()
     if (!cookie) return c.json({ error: 'No refresh token' }, 401);
     const rotated = await rotateRefreshToken(cookie);
     if (!rotated) {
-      deleteCookie(c, REFRESH_COOKIE_NAME, { path: '/auth' });
+      deleteCookie(c, REFRESH_COOKIE_NAME, { path: REFRESH_COOKIE_PATH });
       return c.json({ error: 'Invalid refresh token' }, 401);
     }
     const accessToken = await issueAccessToken(rotated.userId);
@@ -323,7 +329,7 @@ export const authRoutes = new OpenAPIHono<AppEnv>()
     if (cookie) {
       await revokeRefreshToken(cookie);
     }
-    deleteCookie(c, REFRESH_COOKIE_NAME, { path: '/auth' });
+    deleteCookie(c, REFRESH_COOKIE_NAME, { path: REFRESH_COOKIE_PATH });
     return c.body(null, 204);
   })
 
