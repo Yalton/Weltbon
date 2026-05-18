@@ -44,6 +44,13 @@ export interface TimelineCanvasProps {
    * §Pattern 3).
    */
   isDndDragActive?: boolean;
+  /**
+   * Live d3-zoom transform surfaced to the parent so the orchestrator (Plan
+   * 06 TimelineView) can invert the transform when translating @dnd-kit drop
+   * coords to canvas-space position math (RESEARCH §Q3). Fires on every zoom
+   * tick — handlers should write to a ref, not setState.
+   */
+  onTransformChange?: (transform: { x: number; y: number; k: number }) => void;
 }
 
 interface RenderedPin {
@@ -80,6 +87,7 @@ export function TimelineCanvas({
   onPinDragEnd,
   onDragSourceChange,
   isDndDragActive,
+  onTransformChange,
 }: TimelineCanvasProps) {
   const svgRef = useRef<SVGSVGElement>(null);
 
@@ -88,10 +96,12 @@ export function TimelineCanvas({
   const onPinClickRef = useRef(onPinClick);
   const onPinDragEndRef = useRef(onPinDragEnd);
   const onDragSourceChangeRef = useRef(onDragSourceChange);
+  const onTransformChangeRef = useRef(onTransformChange);
   useEffect(() => {
     onPinClickRef.current = onPinClick;
     onPinDragEndRef.current = onPinDragEnd;
     onDragSourceChangeRef.current = onDragSourceChange;
+    onTransformChangeRef.current = onTransformChange;
   });
 
   // Esc-cancel mid-drag (D-08a): set by the keydown listener installed at
@@ -191,6 +201,10 @@ export function TimelineCanvas({
           ? t.toString()
           : `translate(${t.x * PARALLAX_RATIO}, 0) scale(${t.k})`;
         eraLayer.attr('transform', eraTransform);
+        // Surface the live transform to the orchestrator (Plan 06) for
+        // inverse-coord math on @dnd-kit drop events. Imperative-only —
+        // parent writes to a ref, never setState per tick.
+        onTransformChangeRef.current?.({ x: t.x, y: t.y, k: t.k });
       });
     zoomBehaviorRef.current = zoomBehavior;
     svg.call(zoomBehavior);

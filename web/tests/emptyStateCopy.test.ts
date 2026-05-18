@@ -8,11 +8,19 @@ import { resolve } from 'node:path';
 const SRC = resolve(__dirname, '..', 'src');
 const read = (rel: string) => readFileSync(resolve(SRC, rel), 'utf8');
 
+// Phase 20 Plan 06 — the prior `views/TimelineView.tsx` empty-state copy
+// ("Pin a moment to your timeline") was removed when the vertical grouped-list
+// rendering path was replaced by the horizontal canvas + configure-range gate
+// (Phase 20 D-02). The Phase 20 timeline's empty-state surface lives in two
+// other places: TimelineRangeDialog (first-visit prompt) and
+// TimelineEntryPanel (right-hand list with locked "No entries" copy). Neither
+// needs a static-literal audit here — TimelineRangeDialog's locked copy is
+// already covered by its own test file, and TimelineEntryPanel's "No entries"
+// copy is asserted in its component test.
 const CASES: Array<{ rel: string; copy: string }> = [
   { rel: 'views/EntryList.tsx', copy: 'Start with one idea' },
   { rel: 'components/Sidebar.tsx', copy: 'Group your entries' },
   { rel: 'views/IssuesView.tsx', copy: 'Nothing flagged yet' },
-  { rel: 'views/TimelineView.tsx', copy: 'Pin a moment to your timeline' },
   { rel: 'views/UniverseList.tsx', copy: 'Start a universe' },
 ];
 

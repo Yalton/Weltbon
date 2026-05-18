@@ -1,94 +1,327 @@
-import { useParams, Link } from 'react-router-dom';
-import { useTimelinePins } from '../hooks/useTimelinePins';
-import { groupByEra } from '../lib/groupByEra';
-import { EmptyState } from '../components/EmptyState';
-import { TypeBadge } from '../components/TypeBadge';
+import { useCallback, useEffect, useRef, useState } from 'react';
+import { useParams } from 'react-router-dom';
+import {
+  DndContext,
+  KeyboardSensor,
+  PointerSensor,
+  useSensor,
+  useSensors,
+  type DragEndEvent,
+} from '@dnd-kit/core';
+import { TimelineCanvas } from '../components/TimelineCanvas';
+import { TimelineEntryPanel } from '../components/TimelineEntryPanel';
+import { TimelineRangeDialog } from '../components/TimelineRangeDialog';
+import { PinPopover } from '../components/PinPopover';
+import { Toast } from '../components/Toast';
+import { useTimelineWindow } from '../hooks/useTimelineWindow';
+import {
+  useTimelinePins,
+  useUpsertTimelinePin,
+  type TimelinePin,
+} from '../hooks/useTimelinePins';
+import { xToPos } from '../lib/timelineMath';
+
+type ToastState = { message: string; variant: 'success' | 'error' } | null;
 
 /**
- * Tailwind class for the small precision dot on each pin row in /timeline.
- * Mirrors the choices in TimelinePinSection's PrecisionBadge:
- *   era → accent (violet), approximate → neutral-400, exact → neutral-200.
+ * Plan 06 popoverState — drives the conditional <PinPopover> render when a
+ * panel-card drop lands on the canvas. dropX/dropY are container-relative
+ * pixel coords for the popover anchor; position is the timeline-space value
+ * computed by inverting the live d3-zoom transform and feeding the result
+ * through `xToPos`.
  */
-function precisionDotClass(p: 'exact' | 'approximate' | 'era'): string {
-  const base = 'inline-block w-2 h-2 shrink-0 rounded-full';
-  switch (p) {
-    case 'era':
-      return `${base} bg-[color:var(--color-accent)]`;
-    case 'approximate':
-      return `${base} bg-neutral-400`;
-    case 'exact':
-    default:
-      return `${base} bg-neutral-200 dark:bg-neutral-300`;
-  }
-}
+type PopoverState = {
+  entryId: string;
+  position: number;
+  dropX: number;
+  dropY: number;
+} | null;
+
+const TOAST_ERROR_COPY = "Couldn't save pin. Try again.";
 
 /**
- * /universes/:uid/timeline — sorted, era-grouped pin list.
+ * /universes/:uid/timeline — horizontal canvas with parallax era layer,
+ * drag-from-panel pin creation, and pin-drag reposition (TIMELINE-01..06).
  *
- * The API returns pins sorted ASC by position; groupByEra preserves that
- * order, emitting era pins as group headers and rolling subsequent non-era
- * pins under the most recent era. Era heading is sticky so it stays visible
- * while scrolling through long lists.
+ * Orchestration seams:
+ *  - useTimelineWindow → gates the canvas behind TimelineRangeDialog on the
+ *    first visit (D-02). When `window === null`, the dialog is mounted open
+ *    and the canvas is not rendered.
+ *  - useTimelinePins → feeds both the canvas (render) and the entry panel
+ *    (Pinned-badge derivation).
+ *  - useUpsertTimelinePin → unifies create (drop-from-panel via PinPopover)
+ *    and reposition (canvas pin drag end). No new endpoint (D-08).
+ *  - DndContext (top-level) → PointerSensor with activationConstraint
+ *    distance=5 + KeyboardSensor. handleDragEnd inverts the live d3-zoom
+ *    transform stored in `currentTransformRef` (mutated by TimelineCanvas
+ *    via the onTransformChange callback — RESEARCH §Q3).
+ *  - cancelledRef + per-drag keydown listener → Esc mid-drag sets a flag so
+ *    handleDragEnd is a no-op (D-08a parity with the d3-drag Esc-cancel).
+ *  - Toast → per-view bridge for popover save failures AND canvas pin-drag
+ *    save failures (belt-and-suspenders parity with GraphView).
  *
- * Each pin row is a Link to /universes/:uid/entries/:entryId so users can
- * jump straight from the timeline into the entry detail (matches Phase 3
- * GRAPH-04 click-to-navigate pattern).
+ * Removed in Plan 06: the vertical grouped-list rendering path (no more
+ * groupByEra-based section headers) and the local precisionDotClass helper
+ * (lifted to PrecisionBadge in Plan 04).
  */
 export function TimelineView() {
   const { uid } = useParams<{ uid: string }>();
-  const { data: pins, isLoading } = useTimelinePins(uid!);
+  const universeId = uid ?? '';
 
-  if (isLoading) {
-    return <p className="text-sm text-neutral-500">Loading…</p>;
+  const { window: timelineWindow, isLoading: windowLoading } =
+    useTimelineWindow(universeId);
+  const { data: pins = [], isLoading: pinsLoading } = useTimelinePins(universeId);
+  const upsert = useUpsertTimelinePin(universeId);
+
+  const [toast, setToast] = useState<ToastState>(null);
+  const [popoverState, setPopoverState] = useState<PopoverState>(null);
+  const [rangeDialogOpen, setRangeDialogOpen] = useState(false);
+  const [isDndDragActive, setIsDndDragActive] = useState(false);
+
+  const containerRef = useRef<HTMLDivElement>(null);
+  const canvasContainerRef = useRef<HTMLDivElement>(null);
+  const cancelledRef = useRef(false);
+  // Live d3-zoom transform mirrored from TimelineCanvas via onTransformChange.
+  // Imperative-only — written per zoom tick from the canvas, read in
+  // handleDragEnd for inverse-transform math. Never setState per tick.
+  const currentTransformRef = useRef<{ x: number; y: number; k: number }>({
+    x: 0,
+    y: 0,
+    k: 1,
+  });
+  // Per-drag keydown listener handle — installed at drag start, removed at
+  // drag end/cancel (T-20-21: avoid listener leaks across rapid drag cycles).
+  const dragKeydownRef = useRef<((e: KeyboardEvent) => void) | null>(null);
+
+  // Responsive canvas sizing — verbatim ResizeObserver-with-jsdom-fallback
+  // from GraphView.tsx so the SVG fills the outlet while keeping unit tests
+  // (jsdom has no ResizeObserver) deterministic.
+  const [size, setSize] = useState({ width: 800, height: 600 });
+  useEffect(() => {
+    if (!canvasContainerRef.current) return;
+    const el = canvasContainerRef.current;
+    if (typeof ResizeObserver === 'undefined') {
+      const rect = el.getBoundingClientRect();
+      setSize({
+        width: Math.max(200, rect.width || 800),
+        height: Math.max(200, rect.height || 600),
+      });
+      return;
+    }
+    const ro = new ResizeObserver(([entry]) => {
+      const r = entry.contentRect;
+      setSize({
+        width: Math.max(200, r.width || 800),
+        height: Math.max(200, r.height || 600),
+      });
+    });
+    ro.observe(el);
+    return () => ro.disconnect();
+  }, [timelineWindow]);
+
+  // Canvas pin-drag reposition — preserves existing label and precision per
+  // RESEARCH §Pitfall 6. On rejection, surfaces an error Toast; TanStack
+  // invalidation handles the post-success re-render.
+  const handlePinDragEnd = useCallback(
+    async (pin: TimelinePin, newPosition: number) => {
+      try {
+        await upsert.mutateAsync({
+          entryId: pin.entryId,
+          position: newPosition,
+          label: pin.label,
+          precision: pin.precision,
+        });
+      } catch {
+        setToast({ message: TOAST_ERROR_COPY, variant: 'error' });
+      }
+    },
+    [upsert],
+  );
+
+  // @dnd-kit sensors (per plan): PointerSensor with activationConstraint
+  // distance=5 (RESEARCH §Q3 — disambiguates click vs drag) + KeyboardSensor
+  // for accessibility.
+  const sensors = useSensors(
+    useSensor(PointerSensor, { activationConstraint: { distance: 5 } }),
+    useSensor(KeyboardSensor),
+  );
+
+  const removeDragKeydown = useCallback(() => {
+    if (dragKeydownRef.current) {
+      window.removeEventListener('keydown', dragKeydownRef.current);
+      dragKeydownRef.current = null;
+    }
+  }, []);
+
+  const handleDragStart = useCallback(() => {
+    cancelledRef.current = false;
+    setIsDndDragActive(true);
+    // Esc mid-@dnd-kit-drag → set the cancel flag so handleDragEnd is a no-op.
+    // Mirrors the Phase 19 cancelledRef pattern (RESEARCH §Q3 §Esc-cancel).
+    removeDragKeydown();
+    const handler = (e: KeyboardEvent) => {
+      if (e.key !== 'Escape') return;
+      cancelledRef.current = true;
+    };
+    dragKeydownRef.current = handler;
+    window.addEventListener('keydown', handler);
+  }, [removeDragKeydown]);
+
+  const handleDragCancel = useCallback(() => {
+    cancelledRef.current = true;
+    setIsDndDragActive(false);
+    removeDragKeydown();
+  }, [removeDragKeydown]);
+
+  const handleDragEnd = useCallback(
+    (event: DragEndEvent) => {
+      setIsDndDragActive(false);
+      removeDragKeydown();
+      const wasCancelled = cancelledRef.current;
+      cancelledRef.current = false;
+      if (wasCancelled) return;
+      if (!timelineWindow) return;
+      if (!event.active) return;
+
+      // Compute drop client coords from @dnd-kit's activatorEvent + delta.
+      // activatorEvent is the original PointerDown event; delta is the
+      // translation from drag start to drag end in client space.
+      const activator = event.activatorEvent as
+        | { clientX?: number; clientY?: number }
+        | undefined;
+      const clientX = (activator?.clientX ?? 0) + event.delta.x;
+      const clientY = (activator?.clientY ?? 0) + event.delta.y;
+
+      const canvasEl = canvasContainerRef.current;
+      if (!canvasEl) return;
+      const rect = canvasEl.getBoundingClientRect();
+      // Canvas-local pixel coords (origin at the canvas's top-left).
+      const canvasX = clientX - rect.left;
+      const canvasY = clientY - rect.top;
+      // Invert the live d3-zoom transform: pinLayer.attr('transform',
+      // `translate(${t.x}, ${t.y}) scale(${t.k})`), so the inverse mapping is
+      // svgX = (canvasX - t.x) / t.k.
+      const t = currentTransformRef.current;
+      const svgX = (canvasX - t.x) / t.k;
+      const position = xToPos(
+        svgX,
+        timelineWindow.start,
+        timelineWindow.end,
+        size.width,
+      );
+      // Container-relative coords for the popover anchor.
+      const containerRect = containerRef.current?.getBoundingClientRect();
+      const dropX = clientX - (containerRect?.left ?? 0);
+      const dropY = clientY - (containerRect?.top ?? 0);
+
+      setPopoverState({
+        entryId: String(event.active.id),
+        position,
+        dropX,
+        dropY,
+      });
+    },
+    [removeDragKeydown, timelineWindow, size.width],
+  );
+
+  // Tear down the per-drag keydown listener if the component unmounts mid-drag.
+  useEffect(() => removeDragKeydown, [removeDragKeydown]);
+
+  if (windowLoading || pinsLoading) {
+    return <p className="p-6 text-sm text-neutral-500">Loading…</p>;
   }
-  if (!pins || pins.length === 0) {
+
+  // First-visit gate (D-02): no window persisted → mount the configure-range
+  // dialog open; the canvas is NOT rendered behind it. Closing without saving
+  // leaves window=null and the dialog re-mounts on the next visit (no nagging
+  // mid-session because onOpenChange is a no-op here).
+  if (!timelineWindow) {
     return (
-      <EmptyState
-        title="Pin a moment to your timeline"
-        body="Open any entry, then add it to the timeline at the position you want."
-      />
+      <div ref={containerRef} className="flex h-full flex-col">
+        <TimelineRangeDialog
+          open
+          onOpenChange={() => {
+            /* first-visit gate: stay open until a window is saved */
+          }}
+          universeId={universeId}
+        />
+      </div>
     );
   }
 
-  const groups = groupByEra(pins);
-
   return (
-    <div className="max-w-3xl mx-auto">
-      <h1 className="text-2xl font-semibold mb-6">Timeline</h1>
-      <div className="space-y-2">
-        {groups.map((g, i) => (
-          <section key={g.era?.id ?? `null-${i}`} className="space-y-1">
-            {g.era && (
-              <h2 className="sticky top-0 bg-white dark:bg-neutral-950 py-1 text-sm uppercase tracking-wide text-[color:var(--color-accent)]">
-                {g.era.label}
-                <span className="ml-2 text-neutral-500 normal-case tabular-nums">
-                  {g.era.position}
-                </span>
-              </h2>
-            )}
-            <ul className="space-y-1">
-              {g.pins.map((p) => (
-                <li key={p.id}>
-                  <Link
-                    to={`/universes/${uid}/entries/${p.entryId}`}
-                    className="flex items-center gap-3 px-3 py-2 rounded-md hover:bg-neutral-100 dark:hover:bg-neutral-900"
-                  >
-                    <span aria-hidden className={precisionDotClass(p.precision)} />
-                    <span className="font-medium">{p.label}</span>
-                    {p.entryTitle && (
-                      <span className="text-neutral-500 truncate">— {p.entryTitle}</span>
-                    )}
-                    {p.entryType && <TypeBadge type={p.entryType} />}
-                    <span className="ml-auto text-sm text-neutral-500 tabular-nums">
-                      {p.position}
-                    </span>
-                  </Link>
-                </li>
-              ))}
-            </ul>
-          </section>
-        ))}
-      </div>
+    <div
+      ref={containerRef}
+      className="relative flex h-[calc(100vh-7rem)] w-full flex-col overflow-hidden"
+    >
+      <DndContext
+        sensors={sensors}
+        onDragStart={handleDragStart}
+        onDragEnd={handleDragEnd}
+        onDragCancel={handleDragCancel}
+      >
+        <header className="flex items-center justify-between px-6 pt-6 pb-3">
+          <h1 className="text-2xl font-semibold">Timeline</h1>
+          <button
+            type="button"
+            onClick={() => setRangeDialogOpen(true)}
+            className="rounded-md border border-neutral-300 bg-white/80 px-3 py-1.5 text-sm shadow-sm hover:bg-white dark:border-neutral-700 dark:bg-neutral-900/80 dark:text-neutral-100 dark:hover:bg-neutral-900"
+          >
+            Configure range
+          </button>
+        </header>
+        <div className="flex min-h-0 flex-1">
+          <div ref={canvasContainerRef} className="relative flex-1">
+            <TimelineCanvas
+              universeId={universeId}
+              pins={pins}
+              window={timelineWindow}
+              width={size.width}
+              height={size.height}
+              onPinDragEnd={handlePinDragEnd}
+              onTransformChange={(t) => {
+                currentTransformRef.current = t;
+              }}
+              isDndDragActive={isDndDragActive}
+            />
+          </div>
+          <TimelineEntryPanel universeId={universeId} pins={pins} />
+        </div>
+      </DndContext>
+
+      {rangeDialogOpen && (
+        <TimelineRangeDialog
+          open={rangeDialogOpen}
+          onOpenChange={setRangeDialogOpen}
+          universeId={universeId}
+        />
+      )}
+
+      {popoverState && (
+        <PinPopover
+          universeId={universeId}
+          open
+          onOpenChange={(open) => {
+            if (!open) setPopoverState(null);
+          }}
+          entryId={popoverState.entryId}
+          dropX={popoverState.dropX}
+          dropY={popoverState.dropY}
+          initialPosition={popoverState.position}
+          onError={() =>
+            setToast({ message: TOAST_ERROR_COPY, variant: 'error' })
+          }
+        />
+      )}
+
+      {toast && (
+        <Toast
+          message={toast.message}
+          variant={toast.variant}
+          onDismiss={() => setToast(null)}
+          durationMs={3000}
+        />
+      )}
     </div>
   );
 }
