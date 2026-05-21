@@ -105,7 +105,13 @@ const ingestPreviewSchema = z.object({
 // contract (must be File / array of File) is enforced inside the handler via
 // `instanceof File` checks (see ingest.ts:300-310).
 const multipartBodySchema = z.object({
-  files: z.array(z.any()).optional().openapi({
+  // D-21-03-UAT-fix: single-file uploads arrive as `File` (not `[File]`) when
+  // only one `files=` part is present (Hono normalises multi-value fields to
+  // arrays only when 2+ parts exist). Accept either shape — the handler at
+  // ingest.ts:310-318 normalises both back to `File[]`. Without this widening,
+  // a single-file ingest preview returns 400 with a Zod array-required error
+  // (surfaced by 21-UAT-CLOSEOUT.md item 16-UAT-1 against the live stack).
+  files: z.union([z.any(), z.array(z.any())]).optional().openapi({
     type: 'array',
     items: { type: 'string', format: 'binary' },
     description: 'One or more .md file parts (use input[type=file] webkitdirectory).',
