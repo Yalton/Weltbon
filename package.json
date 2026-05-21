@@ -4,5 +4,11 @@
   "private": true,
   "packageManager": "pnpm@9.15.0",
   "engines": { "node": ">=22" },
-  "workspaces": ["api", "web"]
+  "scripts": {
+    "postinstall": "sh scripts/apply-patches.sh"
+  },
+  "workspaces": ["api", "web"],
+  "devDependencies": {
+
+  }
 }
