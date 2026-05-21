@@ -84,6 +84,11 @@ describe('auth routes (AUTH-01..06)', () => {
     expect(res.setCookieHeader).toMatch(/^refresh=/);
     expect(res.setCookieHeader).toMatch(/HttpOnly/);
     expect(res.setCookieHeader).toMatch(/SameSite=Strict/);
+    // TIMELINE-07 regression lock: cookie path must be /api/auth (the auth router
+    // mount point) so the browser sends the refresh cookie to /api/auth/refresh.
+    // Path=/ caused a silent-logout regression (fixed in commit 7523216).
+    // See api/src/routes/auth.ts:56-60 for the REFRESH_COOKIE_PATH doc-comment.
+    expect(res.setCookieHeader).toMatch(/Path=\/api\/auth(?:;|$)/);
     const row = await handle.db.query.users.findFirst({ where: eq(users.email, 'a@test.com') });
     expect(row).toBeTruthy();
     expect(row!.passwordHash).toMatch(/^\$2[aby]\$12\$/); // bcrypt cost 12 marker
