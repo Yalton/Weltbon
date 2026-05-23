@@ -379,6 +379,12 @@ export default function LlmKeys() {
             } catch {
               // Silent invalidate on 404 race — useRevokeLlmKey's onError handles it
             }
+            // WR-06 fix: explicitly clear the target so the dialog closes
+            // even when ConfirmDialog doesn't auto-close on confirm. Without
+            // this, a successful revoke could leave the dialog open after
+            // the row vanished from the table, looking like the dialog
+            // forgot the just-deleted target.
+            setRevokeTarget(null);
           }
         }}
       />
