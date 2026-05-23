@@ -38,6 +38,15 @@ const userSchema = z.object({
   displayName: z.string(),
 });
 
+// /auth/me response includes llmConsentedAt so the web client can render
+// the consent gate on /settings/llm without a separate fetch (Phase 22-05).
+const meResponseSchema = z.object({
+  id: z.string(),
+  email: z.string(),
+  displayName: z.string(),
+  llmConsentedAt: z.string().nullable(),
+});
+
 const authResponseSchema = z.object({
   accessToken: z.string(),
   user: userSchema,
@@ -202,10 +211,10 @@ const meRoute = createRoute({
     200: {
       content: {
         'application/json': {
-          schema: userSchema,
+          schema: meResponseSchema,
         },
       },
-      description: 'Current user profile',
+      description: 'Current user profile (includes llmConsentedAt for Phase 22 BYOK)',
     },
     401: {
       content: { 'application/json': { schema: errorSchema } },
@@ -340,10 +349,18 @@ export const authRoutes = new OpenAPIHono<AppEnv>()
     const userId = c.var.userId;
     const user = await getDb().query.users.findFirst({
       where: eq(users.id, userId),
-      columns: { id: true, email: true, displayName: true },
+      columns: { id: true, email: true, displayName: true, llmConsentedAt: true },
     });
     if (!user) {
       return c.json({ error: 'User not found' }, 404);
     }
-    return c.json(user, 200);
+    return c.json(
+      {
+        id: user.id,
+        email: user.email,
+        displayName: user.displayName,
+        llmConsentedAt: user.llmConsentedAt ? user.llmConsentedAt.toISOString() : null,
+      },
+      200,
+    );
   });

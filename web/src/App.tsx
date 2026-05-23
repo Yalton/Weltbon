@@ -17,6 +17,7 @@ import Settings from './views/Settings';
 import { SettingsLayout } from './components/SettingsLayout';
 import Tokens from './views/Tokens';
 import Invites from './views/Invites';
+import LlmKeys from './views/LlmKeys';
 
 export default function App() {
   return (
@@ -34,6 +35,7 @@ export default function App() {
             <Route index element={<Settings />} />
             <Route path="tokens" element={<Tokens />} />
             <Route path="invites" element={<Invites />} />
+            <Route path="llm" element={<LlmKeys />} />
           </Route>
         </Route>
         {/* Sidebar shell for everything scoped inside a single universe. */}
