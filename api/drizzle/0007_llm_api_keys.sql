@@ -13,5 +13,5 @@ CREATE TABLE "llm_api_keys" (
 	CONSTRAINT "llm_api_keys_user_id_provider_unique" UNIQUE("user_id","provider")
 );
 --> statement-breakpoint
-ALTER TABLE "llm_api_keys" ADD CONSTRAINT "llm_api_keys_user_id_users_id_fk" FOREIGN KEY ("user_id") REFERENCES "public"."users"("id") ON DELETE cascade ON UPDATE no action;--> statement-breakpoint
+ALTER TABLE "llm_api_keys" ADD CONSTRAINT "llm_api_keys_user_id_users_id_fk" FOREIGN KEY ("user_id") REFERENCES "users"("id") ON DELETE cascade ON UPDATE no action;--> statement-breakpoint
 ALTER TABLE "users" ADD COLUMN "llm_consented_at" timestamp with time zone;
