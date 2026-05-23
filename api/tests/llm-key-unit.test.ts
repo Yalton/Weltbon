@@ -146,13 +146,13 @@ describe('llm-key service: getDecryptedKey', () => {
     const enc = encryptKey(plaintext, TEST_KEY_HEX);
     mockDbReturning([rowFromEncryption('user-1', 'anthropic', enc)]);
 
-    const got = await getDecryptedKey('user-1', 'anthropic');
+    const got = await getDecryptedKey('user-1', 'anthropic', process.env.LLM_KEY_ENCRYPTION_KEY);
     expect(got).toBe(plaintext);
   });
 
   it('returns null when the DB returns no rows for the (userId, provider) pair', async () => {
     mockDbReturning([]);
-    const got = await getDecryptedKey('user-1', 'anthropic');
+    const got = await getDecryptedKey('user-1', 'anthropic', process.env.LLM_KEY_ENCRYPTION_KEY);
     expect(got).toBeNull();
   });
 
@@ -170,7 +170,7 @@ describe('llm-key service: getDecryptedKey', () => {
     let threw = false;
     let got: string | null = 'sentinel';
     try {
-      got = await getDecryptedKey('user-1', 'anthropic');
+      got = await getDecryptedKey('user-1', 'anthropic', TEST_KEY_HEX);
     } catch {
       threw = true;
     }
@@ -192,7 +192,7 @@ describe('llm-key service: getDecryptedKey', () => {
     let threw = false;
     let got: string | null = 'sentinel';
     try {
-      got = await getDecryptedKey('user-1', 'anthropic');
+      got = await getDecryptedKey('user-1', 'anthropic', TEST_KEY_HEX);
     } catch {
       threw = true;
     }
@@ -200,13 +200,12 @@ describe('llm-key service: getDecryptedKey', () => {
     expect(got).toBeNull();
   });
 
-  it('returns null when LLM_KEY_ENCRYPTION_KEY env var is undefined — does not throw', async () => {
-    delete process.env.LLM_KEY_ENCRYPTION_KEY;
-    // No DB stub needed — the env check should short-circuit before the DB read.
+  it('returns null when encryptionKeyHex param is undefined — does not throw', async () => {
+    // No DB stub needed — the param check short-circuits before the DB read.
     let threw = false;
     let got: string | null = 'sentinel';
     try {
-      got = await getDecryptedKey('user-1', 'anthropic');
+      got = await getDecryptedKey('user-1', 'anthropic', undefined);
     } catch {
       threw = true;
     }
@@ -214,12 +213,11 @@ describe('llm-key service: getDecryptedKey', () => {
     expect(got).toBeNull();
   });
 
-  it('returns null when LLM_KEY_ENCRYPTION_KEY is malformed (63 hex chars) — does not throw', async () => {
-    process.env.LLM_KEY_ENCRYPTION_KEY = 'a'.repeat(63);
+  it('returns null when encryptionKeyHex param is malformed (63 hex chars) — does not throw', async () => {
     let threw = false;
     let got: string | null = 'sentinel';
     try {
-      got = await getDecryptedKey('user-1', 'anthropic');
+      got = await getDecryptedKey('user-1', 'anthropic', 'a'.repeat(63));
     } catch {
       threw = true;
     }
@@ -227,12 +225,11 @@ describe('llm-key service: getDecryptedKey', () => {
     expect(got).toBeNull();
   });
 
-  it('returns null when LLM_KEY_ENCRYPTION_KEY is malformed (non-hex chars) — does not throw', async () => {
-    process.env.LLM_KEY_ENCRYPTION_KEY = 'z'.repeat(64);
+  it('returns null when encryptionKeyHex param is malformed (non-hex chars) — does not throw', async () => {
     let threw = false;
     let got: string | null = 'sentinel';
     try {
-      got = await getDecryptedKey('user-1', 'anthropic');
+      got = await getDecryptedKey('user-1', 'anthropic', 'z'.repeat(64));
     } catch {
       threw = true;
     }
@@ -245,18 +242,32 @@ describe('llm-key service: getDecryptedKey', () => {
     const encryptHex = randomBytes(32).toString('hex');
     const enc = encryptKey(plaintext, encryptHex);
     mockDbReturning([rowFromEncryption('user-1', 'anthropic', enc)]);
-    // Decrypt with the DIFFERENT key set in beforeEach (TEST_KEY_HEX).
-    expect(process.env.LLM_KEY_ENCRYPTION_KEY).toBe(TEST_KEY_HEX);
+    // Decrypt with a DIFFERENT key than the one used to encrypt.
+    expect(TEST_KEY_HEX).not.toBe(encryptHex);
 
     let threw = false;
     let got: string | null = 'sentinel';
     try {
-      got = await getDecryptedKey('user-1', 'anthropic');
+      got = await getDecryptedKey('user-1', 'anthropic', TEST_KEY_HEX);
     } catch {
       threw = true;
     }
     expect(threw).toBe(false);
     expect(got).toBeNull();
+  });
+
+  // CR-01 regression: the function MUST use the passed param, not re-read
+  // process.env. If a future refactor re-reads process.env, this test fails:
+  // we supply a VALID hex string via param but DELETE the env var. The
+  // function must succeed (no env dependency).
+  it('uses the encryptionKeyHex param and does NOT re-read process.env (CR-01 regression)', async () => {
+    const plaintext = 'sk-ant-PARAM-NOT-ENV-7777';
+    const enc = encryptKey(plaintext, TEST_KEY_HEX);
+    mockDbReturning([rowFromEncryption('user-1', 'anthropic', enc)]);
+    // Sabotage process.env so any accidental re-read would null-out the result.
+    delete process.env.LLM_KEY_ENCRYPTION_KEY;
+    const got = await getDecryptedKey('user-1', 'anthropic', TEST_KEY_HEX);
+    expect(got).toBe(plaintext);
   });
 });
 

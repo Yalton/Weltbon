@@ -92,18 +92,26 @@ const HEX_KEY_RE = /^[0-9a-f]{64}$/i;
  * Per-call DB read + AES-256-GCM decrypt. Returns null on any failure.
  *
  * Failure cases collapsed into null (D-11):
- *   (a) LLM_KEY_ENCRYPTION_KEY env var is undefined
- *   (b) LLM_KEY_ENCRYPTION_KEY is malformed (not 64 hex chars)
+ *   (a) encryptionKeyHex param is undefined / empty
+ *   (b) encryptionKeyHex param is malformed (not 64 hex chars)
  *   (c) No row exists for the (userId, provider) pair
  *   (d) Decryption throws (auth tag mismatch — tampered ciphertext/authTag, wrong key, etc.)
+ *   (e) Row's encryptedKeyVersion is not 1 (CR-02 — see version guard below)
+ *
+ * CR-01 fix: The encryption key is passed in by the caller from `cfg.llmKeyEncryptionKey`
+ * — same source of truth as the boot fail-fast (`assertLlmKeyEncryptionKey`) and the
+ * POST/PUT 503 gates. Previously this function re-read `process.env.LLM_KEY_ENCRYPTION_KEY`,
+ * which created a drift hazard: a post-boot env mutation (test fixture or operator) would
+ * leave the boot guard satisfied while silently null-ing every decrypt. With the param,
+ * there is exactly one source of truth (`cfg`) and the LLMKEY-08 boot guard is load-bearing.
  *
  * D-10: every call performs a fresh DB read; no cache, no per-request memo.
  */
 export const getDecryptedKey = async (
   userId: string,
   provider: LlmProvider,
+  encryptionKeyHex: string | undefined,
 ): Promise<string | null> => {
-  const encryptionKeyHex = process.env.LLM_KEY_ENCRYPTION_KEY;
   if (encryptionKeyHex === undefined || !HEX_KEY_RE.test(encryptionKeyHex)) {
     return null;
   }

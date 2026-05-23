@@ -480,6 +480,7 @@ export const llmKeyRoutes = new OpenAPIHono<AppEnv>()
   })
 
   .openapi(revalidateRoute, async (c) => {
+    const cfg = env();
     const userId = c.var.userId;
     const { id } = c.req.valid('param');
 
@@ -495,8 +496,11 @@ export const llmKeyRoutes = new OpenAPIHono<AppEnv>()
     const row = rows[0];
     const provider = row.provider as LlmProvider;
 
-    // Decrypt. null collapses (D-11) no-row / decrypt-fail / missing-env / malformed-env.
-    const plaintext = await getDecryptedKey(userId, provider);
+    // CR-01 fix: pass cfg.llmKeyEncryptionKey explicitly — same source of truth as
+    // the boot fail-fast and the POST/PUT 503 gates. getDecryptedKey no longer
+    // re-reads process.env, eliminating the post-boot env-mutation drift hazard.
+    // null collapses (D-11) no-row / decrypt-fail / missing-env / malformed-env / version-mismatch.
+    const plaintext = await getDecryptedKey(userId, provider, cfg.llmKeyEncryptionKey);
     if (plaintext === null) {
       return c.json(
         {
