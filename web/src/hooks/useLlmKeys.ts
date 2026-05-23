@@ -137,12 +137,16 @@ export function useGrantLlmConsent() {
         method: 'POST',
       }),
     onSuccess: (data) => {
-      // Optimistically set the consent query data so the view can re-render
-      // immediately without a refetch round-trip.
+      // WR-03 fix: optimistically set the consent query data — drop the
+      // redundant invalidate that previously triggered an immediate refetch
+      // overwriting this write. The server's response is authoritative for
+      // this mutation (the POST always returns the persisted consentedAt),
+      // so the refetch was a wasted network round-trip; the view's
+      // "consent reveals paste form" transition was waiting on the
+      // unnecessary GET round-trip rather than the optimistic write.
       qc.setQueryData<LlmConsentState>(LLM_CONSENT_QUERY_KEY, {
         consentedAt: data.consentedAt,
       });
-      qc.invalidateQueries({ queryKey: LLM_CONSENT_QUERY_KEY });
     },
   });
 }
