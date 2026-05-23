@@ -302,6 +302,10 @@ const postConsentRoute = createRoute({
       content: { 'application/json': { schema: errorSchema } },
       description: 'Missing or invalid JWT bearer token (or PAT — LLMKEY-06).',
     },
+    404: {
+      content: { 'application/json': { schema: errorSchema } },
+      description: 'User row not found (deleted between token issuance and consent POST).',
+    },
   },
 });
 
@@ -569,16 +573,23 @@ export const llmKeyRoutes = new OpenAPIHono<AppEnv>()
       return c.json({ consentedAt: existing[0].llmConsentedAt.toISOString() }, 200);
     }
 
+    // BL-01 fix: detect zero-row UPDATE (user deleted between token issuance
+    // and consent POST). Use .returning() and check the row count; never
+    // fabricate a `now` timestamp when nothing was persisted.
     const now = new Date();
-    const [updated] = await getDb()
+    const updatedRows = await getDb()
       .update(users)
       .set({ llmConsentedAt: now })
       .where(eq(users.id, userId))
       .returning({ llmConsentedAt: users.llmConsentedAt });
 
+    if (updatedRows.length === 0) {
+      return c.json({ error: 'User not found' }, 404);
+    }
+
     return c.json(
       {
-        consentedAt: (updated?.llmConsentedAt ?? now).toISOString(),
+        consentedAt: (updatedRows[0].llmConsentedAt ?? now).toISOString(),
       },
       200,
     );
