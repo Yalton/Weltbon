@@ -51,7 +51,7 @@ const PROVIDER_LABELS: Record<string, string> = {
 export default function LlmKeys() {
   const consent = useLlmConsent();
   const grantConsent = useGrantLlmConsent();
-  const { data, isPending } = useLlmKeys();
+  const { data, isPending, error: listError } = useLlmKeys();
   const revoke = useRevokeLlmKey();
   const revalidate = useRevalidateLlmKey();
 
@@ -180,8 +180,22 @@ export default function LlmKeys() {
         </div>
       )}
 
+      {/* WR-02 fix: explicit error state — without this branch, a failed
+          GET /api/llm-keys would leave isPending=false + data=undefined,
+          so every branch below is also false and the user sees only the
+          page header with no error or retry affordance. */}
+      {!isPending && listError && (
+        <div
+          role="alert"
+          data-testid="llm-keys-list-error"
+          className="mt-6 rounded-md border border-red-300 bg-red-50 dark:border-red-800 dark:bg-red-950/30 p-4 text-sm text-red-700 dark:text-red-300"
+        >
+          Could not load your LLM keys. Refresh the page to try again.
+        </div>
+      )}
+
       {/* Empty state */}
-      {!isPending && data && data.length === 0 && (
+      {!isPending && !listError && data && data.length === 0 && (
         <div className="mt-6">
           <EmptyState
             title="No LLM API keys yet"
@@ -203,7 +217,7 @@ export default function LlmKeys() {
       )}
 
       {/* Populated state */}
-      {!isPending && data && data.length > 0 && (
+      {!isPending && !listError && data && data.length > 0 && (
         <div className="mt-6 overflow-x-auto">
           <table data-testid="llm-keys-table" className="w-full text-sm">
             <caption className="sr-only">Your configured LLM API keys</caption>
