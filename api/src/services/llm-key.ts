@@ -126,6 +126,25 @@ export const getDecryptedKey = async (
     if (rows.length === 0) return null;
     const row = rows[0];
 
+    // CR-02 fix: pin the version explicitly. encryptedKeyVersion is persisted
+    // on every INSERT/UPDATE; without this guard a future v2 row would be
+    // decrypted with the current key and produce an auth-tag failure → silent
+    // null with no diagnostic surface to distinguish "wrong key" from "wrong
+    // version" from "tampering". Operators need to know rotation tooling has
+    // not landed yet. The warn line is metadata-only (no plaintext/ciphertext/
+    // key material — T-22-02-01..06).
+    if (row.encryptedKeyVersion !== 1) {
+      console.warn(
+        '[llm-key] unsupported encryptedKeyVersion for user',
+        userId,
+        'provider',
+        provider,
+        'version',
+        row.encryptedKeyVersion,
+      );
+      return null;
+    }
+
     const keyBuf = Buffer.from(encryptionKeyHex, 'hex');
     const ivBuf = Buffer.from(row.iv, 'hex');
     const authTagBuf = Buffer.from(row.authTag, 'hex');

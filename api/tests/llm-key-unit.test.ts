@@ -269,6 +269,38 @@ describe('llm-key service: getDecryptedKey', () => {
     const got = await getDecryptedKey('user-1', 'anthropic', TEST_KEY_HEX);
     expect(got).toBe(plaintext);
   });
+
+  // CR-02 regression: any encryptedKeyVersion ≠ 1 must short-circuit to null
+  // BEFORE the decipher is constructed. This catches a future v2 row that
+  // would otherwise reach createDecipheriv and produce a silent auth-tag
+  // failure indistinguishable from "wrong key" or "tampered ciphertext".
+  it('returns null when row.encryptedKeyVersion is not 1 — does not throw (CR-02)', async () => {
+    const plaintext = 'sk-ant-VERSION-MISMATCH-V2-AAAA';
+    const enc = encryptKey(plaintext, TEST_KEY_HEX);
+    // Fabricate a v2 row — encryption is real (so a missing version guard would
+    // succeed at decrypt and return the plaintext). The guard must reject the
+    // row purely on the version field.
+    const v2Row = { ...rowFromEncryption('user-1', 'anthropic', enc), encryptedKeyVersion: 2 };
+    mockDbReturning([v2Row]);
+    let threw = false;
+    let got: string | null = 'sentinel';
+    try {
+      got = await getDecryptedKey('user-1', 'anthropic', TEST_KEY_HEX);
+    } catch {
+      threw = true;
+    }
+    expect(threw).toBe(false);
+    expect(got).toBeNull();
+  });
+
+  it('returns null when row.encryptedKeyVersion is 0 — does not throw (CR-02 — defensive lower bound)', async () => {
+    const plaintext = 'sk-ant-VERSION-ZERO-BBBB';
+    const enc = encryptKey(plaintext, TEST_KEY_HEX);
+    const v0Row = { ...rowFromEncryption('user-1', 'anthropic', enc), encryptedKeyVersion: 0 };
+    mockDbReturning([v0Row]);
+    const got = await getDecryptedKey('user-1', 'anthropic', TEST_KEY_HEX);
+    expect(got).toBeNull();
+  });
 });
 
 // ---------------------------------------------------------------------------
