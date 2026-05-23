@@ -1,0 +1,249 @@
+/**
+ * CreateLlmKeyDialog — Radix Dialog for entering an LLM provider API key.
+ *
+ * Two modes:
+ *   'create'  — Add a new key (POST /api/llm-keys)
+ *   'replace' — Replace an existing key (PUT /api/llm-keys/:id) — provider locked
+ *
+ * Form fields: provider (anthropic | openai), label (optional), key (plaintext).
+ *
+ * T-22-05-01 mitigation: on 200 success the dialog closes AND the form resets,
+ * unmounting the paste-box DOM node (React removes it; GC reclaims the string).
+ * T-22-05-02 mitigation: the plaintext is NEVER rendered back to the view after
+ * submission — only `bodySuffix` is shown. The dialog never enters a reveal phase.
+ * T-22-05-03 mitigation: `autoComplete='off'` on the key input.
+ *
+ * Error handling per <canonical_error_copy> (22-04 + 22-05 PLAN):
+ *   - 422 rejected / 503 transient / 409 conflict — display server's `error`
+ *     string verbatim inline; the paste box is NOT cleared so the user can fix.
+ *   - 200 success — clear form, close dialog, call onCreated.
+ */
+
+import { useEffect } from 'react';
+import * as Dialog from '@radix-ui/react-dialog';
+import { useForm } from 'react-hook-form';
+import { zodResolver } from '@hookform/resolvers/zod';
+import { z } from 'zod';
+import {
+  useCreateLlmKey,
+  useReplaceLlmKey,
+  type LlmProvider,
+} from '../hooks/useLlmKeys';
+import { ApiError } from '../api/client';
+
+const createSchema = z.object({
+  provider: z.enum(['anthropic', 'openai']),
+  label: z.string().trim().max(100, 'Maximum 100 characters').optional(),
+  key: z.string().trim().min(1, 'Key is required'),
+});
+
+const replaceSchema = z.object({
+  provider: z.enum(['anthropic', 'openai']),
+  label: z.string().trim().max(100, 'Maximum 100 characters').optional(),
+  key: z.string().trim().min(1, 'Key is required'),
+});
+
+type FormValues = z.infer<typeof createSchema>;
+
+export interface CreateLlmKeyDialogProps {
+  open: boolean;
+  onOpenChange: (open: boolean) => void;
+  /** If set, the dialog operates in replace mode for that key id. */
+  replaceTarget?: { id: string; provider: LlmProvider; label: string } | null;
+  /** Called after a successful create/replace. */
+  onCreated?: () => void;
+}
+
+export function CreateLlmKeyDialog({
+  open,
+  onOpenChange,
+  replaceTarget = null,
+  onCreated,
+}: CreateLlmKeyDialogProps) {
+  const isReplace = replaceTarget !== null;
+  const createMutation = useCreateLlmKey();
+  const replaceMutation = useReplaceLlmKey();
+  const activeMutation = isReplace ? replaceMutation : createMutation;
+
+  const {
+    register,
+    handleSubmit,
+    reset,
+    setValue,
+    formState: { errors },
+  } = useForm<FormValues>({
+    resolver: zodResolver(isReplace ? replaceSchema : createSchema),
+    defaultValues: {
+      provider: replaceTarget?.provider ?? 'anthropic',
+      label: replaceTarget?.label ?? '',
+      key: '',
+    },
+  });
+
+  // Re-seed the form whenever the replace target changes.
+  useEffect(() => {
+    if (replaceTarget) {
+      setValue('provider', replaceTarget.provider);
+      setValue('label', replaceTarget.label);
+      setValue('key', '');
+    }
+  }, [replaceTarget, setValue]);
+
+  const handleOpenChange = (nextOpen: boolean) => {
+    if (!nextOpen) {
+      // T-22-05-01: clear the paste box + provider/label on close so the
+      // plaintext does not linger in the DOM after the dialog unmounts.
+      reset({ provider: 'anthropic', label: '', key: '' });
+      createMutation.reset();
+      replaceMutation.reset();
+    }
+    onOpenChange(nextOpen);
+  };
+
+  const onSubmit = async (values: FormValues) => {
+    try {
+      if (isReplace && replaceTarget) {
+        await replaceMutation.mutateAsync({
+          id: replaceTarget.id,
+          key: values.key,
+          label: values.label,
+        });
+      } else {
+        await createMutation.mutateAsync({
+          provider: values.provider,
+          key: values.key,
+          label: values.label,
+        });
+      }
+      // Success — clear the form and close.
+      reset({ provider: 'anthropic', label: '', key: '' });
+      onCreated?.();
+      onOpenChange(false);
+    } catch {
+      // On error, the mutation's `error` is exposed via activeMutation.error
+      // and rendered inline below. The paste box is NOT cleared.
+    }
+  };
+
+  const errMessage =
+    activeMutation.error instanceof ApiError
+      ? activeMutation.error.message
+      : activeMutation.error
+        ? 'Could not reach the server. Check your connection and try again.'
+        : null;
+
+  return (
+    <Dialog.Root open={open} onOpenChange={handleOpenChange}>
+      <Dialog.Portal>
+        <Dialog.Overlay className="fixed inset-0 bg-black/50 data-[state=open]:animate-overlay-in data-[state=closed]:animate-overlay-out" />
+        <Dialog.Content className="fixed left-1/2 top-1/2 -translate-x-1/2 -translate-y-1/2 w-full max-w-md bg-white dark:bg-neutral-900 border border-neutral-200 dark:border-neutral-800 rounded-md p-6 shadow-lg data-[state=open]:animate-dialog-in data-[state=closed]:animate-dialog-out focus:outline-none">
+          <Dialog.Title className="text-lg font-semibold">
+            {isReplace ? 'Replace LLM API key' : 'Add an LLM API key'}
+          </Dialog.Title>
+          <Dialog.Description className="mt-2 text-sm text-neutral-600 dark:text-neutral-400 leading-[1.5]">
+            {isReplace
+              ? 'Paste the new key to replace the existing one. The provider stays the same.'
+              : 'Paste an Anthropic or OpenAI API key. Weltbon validates it against the provider, then stores it encrypted.'}
+          </Dialog.Description>
+
+          <form onSubmit={handleSubmit(onSubmit)} className="mt-4 space-y-3">
+            {/* Provider — locked in replace mode */}
+            <div>
+              <label htmlFor="llmkey-provider" className="block text-sm mb-1">
+                Provider
+              </label>
+              <select
+                id="llmkey-provider"
+                disabled={isReplace}
+                {...register('provider')}
+                className="w-full rounded-md border border-neutral-300 dark:border-neutral-700 bg-transparent px-3 py-2 text-sm disabled:opacity-60"
+              >
+                <option value="anthropic">Anthropic</option>
+                <option value="openai">OpenAI</option>
+              </select>
+              {errors.provider && (
+                <p className="mt-1 text-sm text-red-500" role="alert">
+                  {errors.provider.message}
+                </p>
+              )}
+            </div>
+
+            {/* Label (optional) */}
+            <div>
+              <label htmlFor="llmkey-label" className="block text-sm mb-1">
+                Label (optional)
+              </label>
+              <input
+                id="llmkey-label"
+                type="text"
+                placeholder="e.g. personal Anthropic key"
+                maxLength={100}
+                autoComplete="off"
+                {...register('label')}
+                className="w-full rounded-md border border-neutral-300 dark:border-neutral-700 bg-transparent px-3 py-2 text-sm"
+              />
+              {errors.label && (
+                <p className="mt-1 text-sm text-red-500" role="alert">
+                  {errors.label.message}
+                </p>
+              )}
+            </div>
+
+            {/* Key (plaintext) */}
+            <div>
+              <label htmlFor="llmkey-key" className="block text-sm mb-1">
+                API key
+              </label>
+              <input
+                id="llmkey-key"
+                type="text"
+                placeholder="sk-…"
+                autoComplete="off"
+                autoCorrect="off"
+                autoCapitalize="off"
+                spellCheck={false}
+                {...register('key')}
+                className="w-full rounded-md border border-neutral-300 dark:border-neutral-700 bg-transparent px-3 py-2 text-sm font-mono"
+              />
+              {errors.key && (
+                <p className="mt-1 text-sm text-red-500" role="alert">
+                  {errors.key.message}
+                </p>
+              )}
+            </div>
+
+            {/* Server error — verbatim string from the response */}
+            {errMessage && (
+              <p
+                className="mt-1 text-sm text-red-500 leading-[1.4]"
+                role="alert"
+                data-testid="llmkey-server-error"
+              >
+                {errMessage}
+              </p>
+            )}
+
+            <div className="mt-6 flex justify-end gap-2">
+              <Dialog.Close className="px-3 py-1.5 text-sm rounded-md border border-neutral-300 dark:border-neutral-700">
+                Cancel
+              </Dialog.Close>
+              <button
+                type="submit"
+                disabled={activeMutation.isPending}
+                className="px-3 py-1.5 text-sm rounded-md bg-[color:var(--color-accent)] text-white disabled:opacity-50"
+              >
+                {activeMutation.isPending
+                  ? isReplace
+                    ? 'Replacing…'
+                    : 'Saving…'
+                  : isReplace
+                    ? 'Replace key'
+                    : 'Save key'}
+              </button>
+            </div>
+          </form>
+        </Dialog.Content>
+      </Dialog.Portal>
+    </Dialog.Root>
+  );
+}
