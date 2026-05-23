@@ -26,70 +26,15 @@
  *   - D-04 / D-04a (listModels + pricing derived from PRICING, offline)
  *   - D-05 / D-05a (this file is the boundary surface)
  *
- * Post-Plan 23-03 wiring: `AnthropicProvider` is the real implementation
- * (imported from `./anthropic.js`). `OpenAIProvider` is still the Plan
- * 23-02 throwing placeholder until Plan 23-04 lands. `listModels` and
- * `pricing` on the OpenAI placeholder are real D-04 implementations.
+ * Post-Plan 23-04 wiring: BOTH `AnthropicProvider` (Plan 23-03) AND
+ * `OpenAIProvider` (Plan 23-04) are real implementations imported from their
+ * sibling modules. Zero placeholder classes remain in this file.
  */
 
 import type { LlmProvider } from '../../services/llm-key.js';
-import {
-  type LLMProvider,
-  type ModelListing,
-  type RunAuditOpts,
-  type RunAuditResult,
-} from './interface.js';
-import { PRICING, type OpenAIModelPricing } from './pricing.js';
+import { type LLMProvider } from './interface.js';
 import { AnthropicProvider } from './anthropic.js';
-
-// ---------------------------------------------------------------------------
-// OpenAIProvider — Plan 23-02 placeholder
-// ---------------------------------------------------------------------------
-
-/**
- * Plan 23-02 placeholder — `validate` / `estimate` / `runAudit` method bodies
- * arrive in Plan 23-04. `listModels` and `pricing` are real D-04 implementations.
- *
- * Per RESEARCH §Common Pitfalls #6: NO per-request state on this class.
- */
-class OpenAIProvider implements LLMProvider {
-  async validate(_plaintext: string): Promise<void> {
-    throw new Error('OpenAIProvider.validate is not yet implemented — wired in Plan 23-04');
-  }
-
-  async estimate(_opts: {
-    apiKey: string;
-    messages: RunAuditOpts['messages'];
-    model?: string;
-  }): Promise<number> {
-    throw new Error('OpenAIProvider.estimate is not yet implemented — wired in Plan 23-04');
-  }
-
-  async runAudit(_opts: RunAuditOpts): Promise<RunAuditResult> {
-    throw new Error('OpenAIProvider.runAudit is not yet implemented — wired in Plan 23-04');
-  }
-
-  listModels(): ModelListing[] {
-    return Object.keys(PRICING.openai).map((id) => {
-      const row = PRICING.openai[id as keyof typeof PRICING.openai];
-      return {
-        id,
-        inputUsdPer1M: row.inputUsdPer1M,
-        outputUsdPer1M: row.outputUsdPer1M,
-      };
-    });
-  }
-
-  pricing(model: string): ModelListing | undefined {
-    const row = (PRICING.openai as Record<string, OpenAIModelPricing>)[model];
-    if (!row) return undefined;
-    return {
-      id: model,
-      inputUsdPer1M: row.inputUsdPer1M,
-      outputUsdPer1M: row.outputUsdPer1M,
-    };
-  }
-}
+import { OpenAIProvider } from './openai.js';
 
 // ---------------------------------------------------------------------------
 // Lazy-singleton factory
