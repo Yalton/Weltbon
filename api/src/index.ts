@@ -36,10 +36,17 @@ export function createApp() {
     // - sk-ant- must be replaced BEFORE the broader sk- so the specific prefix wins
     // - logger output only (D-05); HTTP response bodies are NOT scrubbed
     // - silent in all environments (D-06); no warning, no telemetry, no counter
+    //
+    // WR-05 fix: anchor sk- / sk-ant- patterns on a minimum length (32 chars
+    // after the prefix). Real OpenAI keys are 48+ chars; real Anthropic keys
+    // are 100+ chars. The previous \`sk-[A-Za-z0-9_-]+\` would scrub any path
+    // segment starting with sk- (e.g. universe slug \"sk-foo-uid\") and confuse
+    // operator-side telemetry. The {32,} floor still catches every real
+    // provider key while making false positives effectively impossible.
     const scrubbed = msg
       .replace(/(authorization|cookie):\s*[^\n]+/gi, '$1: [redacted]')
-      .replace(/sk-ant-[A-Za-z0-9_-]+/g, '[REDACTED]')
-      .replace(/sk-[A-Za-z0-9_-]+/g, '[REDACTED]')
+      .replace(/sk-ant-[A-Za-z0-9_-]{32,}/g, '[REDACTED]')
+      .replace(/sk-[A-Za-z0-9_-]{32,}/g, '[REDACTED]')
       .replace(/wbn_pat_[A-Za-z0-9_-]+/g, '[REDACTED]')
       .replace(/wbn_inv_[A-Za-z0-9_-]+/g, '[REDACTED]');
     console.log(scrubbed);
