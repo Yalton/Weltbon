@@ -1,16 +1,19 @@
 /**
- * Phase 22 Plan 02 — Unit tests for api/src/services/llm-key.ts.
+ * Phase 22 Plan 02 — Unit tests for api/src/services/llm-key.ts (crypto helpers).
+ *
+ * Phase 23-06 D-03 / D-03b migration: the `validateAtProvider` + `ProviderValidationError`
+ * tests that previously lived here were removed when the SUT was deleted from
+ * services/llm-key.ts. Provider validation behavior is now covered by the
+ * LLMProvider contract test (Plan 23-05) and per-provider unit tests
+ * (Plans 23-03 / 23-04). This file retains the encryptKey + getDecryptedKey
+ * coverage — the kept Phase 22 surface per D-03b.
  *
  * Lives under api/tests/ (NOT api/src/services/) and is NOT in the
  * DB_GATED_TESTS list in api/vitest.config.ts — therefore it auto-joins the
- * `unit` project. No live DB; the drizzle client is mocked. No live HTTP;
- * `global.fetch` is stubbed per test.
+ * `unit` project. No live DB; the drizzle client is mocked.
  *
- * Each behavior bullet from PLAN.md task 1 `<behavior>` is pinned by at least
- * one `it(...)` below. The "tampered authTag → null" + the IV-randomness +
- * the plaintext-leakage tests are load-bearing — they catch the
- * setAuthTag-before-update footgun, IV reuse, and console.* secret-echo bugs
- * respectively.
+ * The "tampered authTag → null" + IV-randomness tests are load-bearing — they
+ * catch the setAuthTag-before-update footgun and IV reuse respectively.
  */
 
 import { describe, it, expect, beforeEach, vi } from 'vitest';
@@ -25,8 +28,6 @@ import { db as getDb } from '../src/db/client.js';
 import {
   encryptKey,
   getDecryptedKey,
-  validateAtProvider,
-  ProviderValidationError,
   type EncryptedKey,
   type LlmProvider,
 } from '../src/services/llm-key.js';
@@ -91,12 +92,6 @@ function rowFromEncryption(
     lastValidatedAt: new Date(),
   };
 }
-
-// A canonical "do not leak" plaintext used across the validate tests. Every
-// thrown error message MUST be asserted not to contain the LEAK_MARKER
-// substring.
-const PLAINTEXT_LEAK = 'sk-ant-test-PLAINTEXT-DO-NOT-LEAK-ABC123';
-const LEAK_MARKER = 'PLAINTEXT-DO-NOT-LEAK';
 
 beforeEach(() => {
   process.env.LLM_KEY_ENCRYPTION_KEY = TEST_KEY_HEX;
@@ -300,247 +295,5 @@ describe('llm-key service: getDecryptedKey', () => {
     mockDbReturning([v0Row]);
     const got = await getDecryptedKey('user-1', 'anthropic', TEST_KEY_HEX);
     expect(got).toBeNull();
-  });
-});
-
-// ---------------------------------------------------------------------------
-// validateAtProvider: success + error mapping
-// ---------------------------------------------------------------------------
-
-/** Stub global.fetch to resolve with a given Response-shape. */
-function stubFetchResolve(status: number, bodyJson: unknown = {}): void {
-  vi.stubGlobal(
-    'fetch',
-    vi.fn().mockResolvedValue({
-      ok: status >= 200 && status < 300,
-      status,
-      json: async () => bodyJson,
-    } as Response),
-  );
-}
-
-/** Stub global.fetch to reject with an error of a given name. */
-function stubFetchReject(name: string): void {
-  const err = new Error(name);
-  err.name = name;
-  vi.stubGlobal('fetch', vi.fn().mockRejectedValue(err));
-}
-
-describe('llm-key service: validateAtProvider — Anthropic', () => {
-  it('resolves void on Anthropic 200 OK', async () => {
-    stubFetchResolve(200);
-    await expect(validateAtProvider(PLAINTEXT_LEAK, 'anthropic')).resolves.toBeUndefined();
-  });
-
-  it("throws ProviderValidationError with kind: 'rejected' on Anthropic 401", async () => {
-    stubFetchResolve(401);
-    let caught: unknown;
-    try {
-      await validateAtProvider(PLAINTEXT_LEAK, 'anthropic');
-    } catch (err) {
-      caught = err;
-    }
-    expect(caught).toBeInstanceOf(ProviderValidationError);
-    expect((caught as ProviderValidationError).kind).toBe('rejected');
-    expect((caught as ProviderValidationError).message).toMatch(/^Anthropic rejected/);
-    expect((caught as ProviderValidationError).message).not.toContain(LEAK_MARKER);
-  });
-
-  it("throws ProviderValidationError with kind: 'rejected' on Anthropic 400 + authentication_error", async () => {
-    stubFetchResolve(400, { error: { type: 'authentication_error', message: 'echo-' + PLAINTEXT_LEAK } });
-    let caught: unknown;
-    try {
-      await validateAtProvider(PLAINTEXT_LEAK, 'anthropic');
-    } catch (err) {
-      caught = err;
-    }
-    expect(caught).toBeInstanceOf(ProviderValidationError);
-    expect((caught as ProviderValidationError).kind).toBe('rejected');
-    expect((caught as ProviderValidationError).message).not.toContain(LEAK_MARKER);
-    expect((caught as ProviderValidationError).message).not.toContain('echo-');
-  });
-
-  it("throws ProviderValidationError with kind: 'transient' on Anthropic 503", async () => {
-    stubFetchResolve(503);
-    let caught: unknown;
-    try {
-      await validateAtProvider(PLAINTEXT_LEAK, 'anthropic');
-    } catch (err) {
-      caught = err;
-    }
-    expect(caught).toBeInstanceOf(ProviderValidationError);
-    expect((caught as ProviderValidationError).kind).toBe('transient');
-    expect((caught as ProviderValidationError).message).toMatch(/^Anthropic returned 503/);
-    expect((caught as ProviderValidationError).message).not.toContain(LEAK_MARKER);
-  });
-
-  it("throws ProviderValidationError with kind: 'transient' on Anthropic 429", async () => {
-    stubFetchResolve(429);
-    let caught: unknown;
-    try {
-      await validateAtProvider(PLAINTEXT_LEAK, 'anthropic');
-    } catch (err) {
-      caught = err;
-    }
-    expect(caught).toBeInstanceOf(ProviderValidationError);
-    expect((caught as ProviderValidationError).kind).toBe('transient');
-    expect((caught as ProviderValidationError).message).not.toContain(LEAK_MARKER);
-  });
-
-  it("throws ProviderValidationError with kind: 'timeout' when fetch rejects with AbortError", async () => {
-    stubFetchReject('AbortError');
-    let caught: unknown;
-    try {
-      await validateAtProvider(PLAINTEXT_LEAK, 'anthropic');
-    } catch (err) {
-      caught = err;
-    }
-    expect(caught).toBeInstanceOf(ProviderValidationError);
-    expect((caught as ProviderValidationError).kind).toBe('timeout');
-    expect((caught as ProviderValidationError).message).toMatch(/within 5 seconds/);
-    expect((caught as ProviderValidationError).message).not.toContain(LEAK_MARKER);
-  });
-
-  it("throws ProviderValidationError with kind: 'timeout' when fetch rejects with TimeoutError", async () => {
-    stubFetchReject('TimeoutError');
-    let caught: unknown;
-    try {
-      await validateAtProvider(PLAINTEXT_LEAK, 'anthropic');
-    } catch (err) {
-      caught = err;
-    }
-    expect(caught).toBeInstanceOf(ProviderValidationError);
-    expect((caught as ProviderValidationError).kind).toBe('timeout');
-  });
-
-  it("throws ProviderValidationError with kind: 'transient' when fetch rejects with a network error", async () => {
-    stubFetchReject('FetchError');
-    let caught: unknown;
-    try {
-      await validateAtProvider(PLAINTEXT_LEAK, 'anthropic');
-    } catch (err) {
-      caught = err;
-    }
-    expect(caught).toBeInstanceOf(ProviderValidationError);
-    expect((caught as ProviderValidationError).kind).toBe('transient');
-    expect((caught as ProviderValidationError).message).not.toContain(LEAK_MARKER);
-  });
-});
-
-describe('llm-key service: validateAtProvider — OpenAI', () => {
-  it('resolves void on OpenAI 200 OK', async () => {
-    stubFetchResolve(200);
-    await expect(validateAtProvider(PLAINTEXT_LEAK, 'openai')).resolves.toBeUndefined();
-  });
-
-  it("throws ProviderValidationError with kind: 'rejected' on OpenAI 401", async () => {
-    stubFetchResolve(401);
-    let caught: unknown;
-    try {
-      await validateAtProvider(PLAINTEXT_LEAK, 'openai');
-    } catch (err) {
-      caught = err;
-    }
-    expect(caught).toBeInstanceOf(ProviderValidationError);
-    expect((caught as ProviderValidationError).kind).toBe('rejected');
-    expect((caught as ProviderValidationError).message).toMatch(/^OpenAI rejected/);
-    expect((caught as ProviderValidationError).message).not.toContain(LEAK_MARKER);
-  });
-
-  it("throws ProviderValidationError with kind: 'rejected' on OpenAI 400 + invalid_api_key code", async () => {
-    stubFetchResolve(400, { error: { code: 'invalid_api_key', message: 'echo-' + PLAINTEXT_LEAK } });
-    let caught: unknown;
-    try {
-      await validateAtProvider(PLAINTEXT_LEAK, 'openai');
-    } catch (err) {
-      caught = err;
-    }
-    expect(caught).toBeInstanceOf(ProviderValidationError);
-    expect((caught as ProviderValidationError).kind).toBe('rejected');
-    expect((caught as ProviderValidationError).message).not.toContain(LEAK_MARKER);
-    expect((caught as ProviderValidationError).message).not.toContain('echo-');
-  });
-
-  it("throws ProviderValidationError with kind: 'transient' on OpenAI 503", async () => {
-    stubFetchResolve(503);
-    let caught: unknown;
-    try {
-      await validateAtProvider(PLAINTEXT_LEAK, 'openai');
-    } catch (err) {
-      caught = err;
-    }
-    expect(caught).toBeInstanceOf(ProviderValidationError);
-    expect((caught as ProviderValidationError).kind).toBe('transient');
-    expect((caught as ProviderValidationError).message).toMatch(/^OpenAI returned 503/);
-    expect((caught as ProviderValidationError).message).not.toContain(LEAK_MARKER);
-  });
-});
-
-// ---------------------------------------------------------------------------
-// Secret-leakage guard: sweep every error branch for plaintext absence
-// ---------------------------------------------------------------------------
-
-describe('llm-key service: secret-leakage guards', () => {
-  it('does not include the plaintext in any thrown ProviderValidationError message', async () => {
-    const branches: Array<{
-      stub: () => void;
-      provider: LlmProvider;
-    }> = [
-      { stub: () => stubFetchResolve(401), provider: 'anthropic' },
-      { stub: () => stubFetchResolve(403), provider: 'anthropic' },
-      { stub: () => stubFetchResolve(429), provider: 'anthropic' },
-      { stub: () => stubFetchResolve(503), provider: 'anthropic' },
-      {
-        stub: () => stubFetchResolve(400, { error: { type: 'authentication_error' } }),
-        provider: 'anthropic',
-      },
-      { stub: () => stubFetchResolve(400, {}), provider: 'anthropic' },
-      { stub: () => stubFetchReject('AbortError'), provider: 'anthropic' },
-      { stub: () => stubFetchReject('FetchError'), provider: 'anthropic' },
-      { stub: () => stubFetchResolve(401), provider: 'openai' },
-      { stub: () => stubFetchResolve(403), provider: 'openai' },
-      { stub: () => stubFetchResolve(429), provider: 'openai' },
-      { stub: () => stubFetchResolve(503), provider: 'openai' },
-      {
-        stub: () => stubFetchResolve(400, { error: { code: 'invalid_api_key' } }),
-        provider: 'openai',
-      },
-    ];
-
-    for (const branch of branches) {
-      vi.unstubAllGlobals();
-      branch.stub();
-      let caught: unknown;
-      try {
-        await validateAtProvider(PLAINTEXT_LEAK, branch.provider);
-      } catch (err) {
-        caught = err;
-      }
-      expect(caught).toBeInstanceOf(ProviderValidationError);
-      expect((caught as ProviderValidationError).message).not.toContain(LEAK_MARKER);
-    }
-  });
-
-  it('does not include the response body in any thrown ProviderValidationError message for 401 / 403', async () => {
-    // Provider returns a body containing key fragments (defensive — D-03 says we
-    // must NOT echo body content). On 401/403 the implementation MUST NOT even
-    // consume body, but we still assert message absence in case of a future bug.
-    const echoedBody = { error: { message: 'invalid: ' + PLAINTEXT_LEAK + '-EXTRA-BODY-SUBSTRING' } };
-
-    for (const status of [401, 403]) {
-      for (const provider of ['anthropic', 'openai'] as const) {
-        vi.unstubAllGlobals();
-        stubFetchResolve(status, echoedBody);
-        let caught: unknown;
-        try {
-          await validateAtProvider(PLAINTEXT_LEAK, provider);
-        } catch (err) {
-          caught = err;
-        }
-        expect(caught).toBeInstanceOf(ProviderValidationError);
-        expect((caught as ProviderValidationError).message).not.toContain(LEAK_MARKER);
-        expect((caught as ProviderValidationError).message).not.toContain('EXTRA-BODY-SUBSTRING');
-      }
-    }
   });
 });

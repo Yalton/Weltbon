@@ -11,9 +11,13 @@
  *   - LLMKEY-08 behavioral coverage — calls the exported assertLlmKeyEncryptionKey directly
  *     with a real test DB + stubbed cfg to pin every quadrant of the (rows × env) truth table
  *
- * Mocking strategy:
- *   - vi.mock('../src/services/llm-key.js') stubs validateAtProvider; other exports
- *     (encryptKey, getDecryptedKey, ProviderValidationError) pass through to the real impl.
+ * Mocking strategy (Phase 23-06 / D-03 migration — Strategy A):
+ *   - vi.mock('../src/providers/llm/index.js') stubs the getProvider factory so
+ *     every test's call to getProvider(name).validate(plaintext) routes through a
+ *     vi.fn(). The other exports of the provider barrel (LLMError, LLMProviderError,
+ *     PRICING, types) pass through to the real impl. The services/llm-key.ts module
+ *     (encryptKey, getDecryptedKey) is NOT mocked — the real AES-256-GCM crypto is
+ *     exercised end-to-end.
  *   - The DB is REAL (createTestDb with an isolated schema) — no DB mocking. Every route
  *     exercises a real drizzle SELECT/INSERT/UPDATE/DELETE against PG.
  */
@@ -38,18 +42,35 @@ import {
 } from './helpers.js';
 import { llmApiKeys, users } from '../src/db/schema.js';
 
-// Mock the llm-key service so the routes never actually hit Anthropic / OpenAI.
+// Mock the provider abstraction so the routes never actually hit Anthropic / OpenAI.
 // Default behavior is "happy path"; individual tests override via mockRejectedValueOnce.
-vi.mock('../src/services/llm-key.js', async (orig) => {
-  const actual = (await orig()) as typeof import('../src/services/llm-key.js');
+//
+// Phase 23-06 D-03 (Strategy A): the mock target shifted from Phase 22's
+// services/llm-key.js helper to '../src/providers/llm/index.js' (getProvider
+// factory). The vi.hoisted block captures a stable mockValidate reference
+// visible inside the factory AND in per-test bodies for
+// mockValidate.mockRejectedValueOnce(...).
+const { mockValidate } = vi.hoisted(() => ({
+  mockValidate: vi.fn(async (_plaintext: string) => undefined as void),
+}));
+vi.mock('../src/providers/llm/index.js', async (orig) => {
+  const actual = (await orig()) as typeof import('../src/providers/llm/index.js');
   return {
     ...actual,
-    validateAtProvider: vi.fn(async (_plaintext: string, _provider: 'anthropic' | 'openai') => undefined),
+    getProvider: vi.fn((_name: 'anthropic' | 'openai') => ({
+      validate: mockValidate,
+      estimate: vi.fn(),
+      runAudit: vi.fn(),
+      listModels: vi.fn().mockReturnValue([]),
+      pricing: vi.fn(),
+    })),
   };
 });
 
-// Import the mocked module so we can reach the vi.fn to override per-test.
-import { validateAtProvider, ProviderValidationError, encryptKey } from '../src/services/llm-key.js';
+// Import the real (un-mocked) services/llm-key.js exports for seed helpers,
+// and the real LLMError + LLMProviderError values (the mock spreads actual).
+import { encryptKey } from '../src/services/llm-key.js';
+import { LLMError, LLMProviderError } from '../src/providers/llm/index.js';
 
 describe('llm-key routes (Phase 22-04: LLMKEY-01/03/04/05/06)', () => {
   let handle: TestDbHandle;
@@ -74,8 +95,8 @@ describe('llm-key routes (Phase 22-04: LLMKEY-01/03/04/05/06)', () => {
   beforeEach(async () => {
     await cleanDb(handle);
     // Reset the mock to the happy-path default before every test.
-    vi.mocked(validateAtProvider).mockReset();
-    vi.mocked(validateAtProvider).mockResolvedValue(undefined);
+    mockValidate.mockReset();
+    mockValidate.mockResolvedValue(undefined);
   });
 
   // ─── Helpers ─────────────────────────────────────────────────────────────
@@ -150,7 +171,7 @@ describe('llm-key routes (Phase 22-04: LLMKEY-01/03/04/05/06)', () => {
   // ─── POST /api/llm-keys ─────────────────────────────────────────────────
 
   describe('POST /api/llm-keys', () => {
-    it('returns 200 + masked row when validateAtProvider succeeds', async () => {
+    it('returns 200 + masked row when provider validate succeeds', async () => {
       const { userId, jwt } = await createUserAndJwt('post-happy@test.com');
       const res = await appRequest('POST', '/api/llm-keys', {
         body: { provider: 'anthropic', key: 'sk-ant-test-key-abcd', label: 'work' },
@@ -193,10 +214,10 @@ describe('llm-key routes (Phase 22-04: LLMKEY-01/03/04/05/06)', () => {
       expect(row!.lastValidatedAt).toBeTruthy();
     });
 
-    it('returns 422 when validateAtProvider throws kind=rejected; DB row count for (userId, anthropic) is 0 (strict-state)', async () => {
+    it('returns 422 when provider validate throws LLMError.InvalidApiKey; DB row count for (userId, anthropic) is 0 (strict-state)', async () => {
       const { userId, jwt } = await createUserAndJwt('post-rejected@test.com');
-      vi.mocked(validateAtProvider).mockRejectedValueOnce(
-        new ProviderValidationError('Anthropic rejected this key as invalid — check the key and try again.', 'rejected')
+      mockValidate.mockRejectedValueOnce(
+        new LLMProviderError(LLMError.InvalidApiKey, 'Anthropic rejected the API key')
       );
       const res = await appRequest('POST', '/api/llm-keys', {
         body: { provider: 'anthropic', key: 'sk-ant-bad', label: '' },
@@ -212,10 +233,10 @@ describe('llm-key routes (Phase 22-04: LLMKEY-01/03/04/05/06)', () => {
       expect(rows).toHaveLength(0);
     });
 
-    it('returns 503 when validateAtProvider throws kind=transient; DB row count is 0', async () => {
+    it('returns 503 when provider validate throws LLMError.NetworkError (transient); DB row count is 0', async () => {
       const { userId, jwt } = await createUserAndJwt('post-transient@test.com');
-      vi.mocked(validateAtProvider).mockRejectedValueOnce(
-        new ProviderValidationError('Anthropic returned 503 — try again in a moment.', 'transient')
+      mockValidate.mockRejectedValueOnce(
+        new LLMProviderError(LLMError.NetworkError, 'Anthropic network error — try again in a moment')
       );
       const res = await appRequest('POST', '/api/llm-keys', {
         body: { provider: 'anthropic', key: 'sk-ant-transient', label: '' },
@@ -229,10 +250,10 @@ describe('llm-key routes (Phase 22-04: LLMKEY-01/03/04/05/06)', () => {
       expect(rows).toHaveLength(0);
     });
 
-    it('returns 503 when validateAtProvider throws kind=timeout; DB row count is 0', async () => {
+    it('returns 503 when provider validate throws LLMError.NetworkError (timeout); DB row count is 0', async () => {
       const { userId, jwt } = await createUserAndJwt('post-timeout@test.com');
-      vi.mocked(validateAtProvider).mockRejectedValueOnce(
-        new ProviderValidationError('Anthropic did not respond within 5 seconds — try again.', 'timeout')
+      mockValidate.mockRejectedValueOnce(
+        new LLMProviderError(LLMError.NetworkError, 'Anthropic request timed out — try again')
       );
       const res = await appRequest('POST', '/api/llm-keys', {
         body: { provider: 'anthropic', key: 'sk-ant-timeout', label: '' },
@@ -452,7 +473,7 @@ describe('llm-key routes (Phase 22-04: LLMKEY-01/03/04/05/06)', () => {
       expect(after!.bodySuffix).toBe('NNNN');
     });
 
-    it('returns 422 when validateAtProvider throws rejected; DB row is unchanged from before PUT', async () => {
+    it('returns 422 when provider validate throws LLMError.InvalidApiKey; DB row is unchanged from before PUT', async () => {
       const { jwt } = await createUserAndJwt('put-rejected@test.com');
       const created = await appRequest('POST', '/api/llm-keys', {
         body: { provider: 'anthropic', key: 'sk-ant-good-YYYY', label: 'g' },
@@ -461,8 +482,8 @@ describe('llm-key routes (Phase 22-04: LLMKEY-01/03/04/05/06)', () => {
       const before = await handle.db.query.llmApiKeys.findFirst({
         where: eq(llmApiKeys.id, created.body.id),
       });
-      vi.mocked(validateAtProvider).mockRejectedValueOnce(
-        new ProviderValidationError('Anthropic rejected this key as invalid — check the key and try again.', 'rejected')
+      mockValidate.mockRejectedValueOnce(
+        new LLMProviderError(LLMError.InvalidApiKey, 'Anthropic rejected the API key')
       );
       const res = await appRequest('PUT', `/api/llm-keys/${created.body.id}`, {
         body: { key: 'sk-ant-revoked-ZZZZ' },
@@ -580,7 +601,7 @@ describe('llm-key routes (Phase 22-04: LLMKEY-01/03/04/05/06)', () => {
   // ─── POST /api/llm-keys/:id/revalidate ──────────────────────────────────
 
   describe('POST /api/llm-keys/:id/revalidate', () => {
-    it('returns 200 + new lastValidatedAt when validateAtProvider succeeds; row.lastValidatedAt advanced', async () => {
+    it('returns 200 + new lastValidatedAt when provider validate succeeds; row.lastValidatedAt advanced', async () => {
       const { jwt } = await createUserAndJwt('reval-happy@test.com');
       const created = await appRequest('POST', '/api/llm-keys', {
         body: { provider: 'anthropic', key: 'sk-ant-reval-AAAA' },
@@ -600,7 +621,7 @@ describe('llm-key routes (Phase 22-04: LLMKEY-01/03/04/05/06)', () => {
       assertMasked(res.body);
     });
 
-    it('returns 422 when validateAtProvider throws rejected; row.lastValidatedAt is UNCHANGED', async () => {
+    it('returns 422 when provider validate throws LLMError.InvalidApiKey; row.lastValidatedAt is UNCHANGED', async () => {
       const { jwt } = await createUserAndJwt('reval-rejected@test.com');
       const created = await appRequest('POST', '/api/llm-keys', {
         body: { provider: 'anthropic', key: 'sk-ant-reval-rej' },
@@ -609,8 +630,8 @@ describe('llm-key routes (Phase 22-04: LLMKEY-01/03/04/05/06)', () => {
       const before = await handle.db.query.llmApiKeys.findFirst({
         where: eq(llmApiKeys.id, created.body.id),
       });
-      vi.mocked(validateAtProvider).mockRejectedValueOnce(
-        new ProviderValidationError('Anthropic rejected this key as invalid — check the key and try again.', 'rejected')
+      mockValidate.mockRejectedValueOnce(
+        new LLMProviderError(LLMError.InvalidApiKey, 'Anthropic rejected the API key')
       );
       const res = await appRequest('POST', `/api/llm-keys/${created.body.id}/revalidate`, {
         headers: { Authorization: `Bearer ${jwt}` },
@@ -624,14 +645,14 @@ describe('llm-key routes (Phase 22-04: LLMKEY-01/03/04/05/06)', () => {
       expect(after).toBeTruthy();
     });
 
-    it('returns 503 when validateAtProvider throws transient', async () => {
+    it('returns 503 when provider validate throws LLMError.NetworkError', async () => {
       const { jwt } = await createUserAndJwt('reval-503@test.com');
       const created = await appRequest('POST', '/api/llm-keys', {
         body: { provider: 'anthropic', key: 'sk-ant-reval-tr' },
         headers: { Authorization: `Bearer ${jwt}` },
       });
-      vi.mocked(validateAtProvider).mockRejectedValueOnce(
-        new ProviderValidationError('Anthropic returned 503 — try again in a moment.', 'transient')
+      mockValidate.mockRejectedValueOnce(
+        new LLMProviderError(LLMError.NetworkError, 'Anthropic network error — try again in a moment')
       );
       const res = await appRequest('POST', `/api/llm-keys/${created.body.id}/revalidate`, {
         headers: { Authorization: `Bearer ${jwt}` },
