@@ -27,7 +27,7 @@
  */
 
 import { OpenAPIHono, createRoute, z } from '@hono/zod-openapi';
-import { and, desc, eq } from 'drizzle-orm';
+import { and, desc, eq, sql } from 'drizzle-orm';
 import { db as getDb } from '../db/client.js';
 import { llmApiKeys, users } from '../db/schema.js';
 import { requireJwtAuth, type AuthVariables } from '../middleware/auth.js';
@@ -306,6 +306,10 @@ const postConsentRoute = createRoute({
       content: { 'application/json': { schema: errorSchema } },
       description: 'User row not found (deleted between token issuance and consent POST).',
     },
+    500: {
+      content: { 'application/json': { schema: errorSchema } },
+      description: 'Consent state could not be recorded (defensive — COALESCE returned null).',
+    },
   },
 });
 
@@ -566,24 +570,21 @@ export const llmKeyRoutes = new OpenAPIHono<AppEnv>()
   .openapi(postConsentRoute, async (c) => {
     const userId = c.var.userId;
 
-    // Idempotent: read first; if already set, return the existing timestamp unchanged
-    // (D-07 — consent persists forever; re-acceptance is a no-op).
-    const existing = await getDb()
-      .select({ llmConsentedAt: users.llmConsentedAt })
-      .from(users)
-      .where(eq(users.id, userId))
-      .limit(1);
-    if (existing.length > 0 && existing[0].llmConsentedAt) {
-      return c.json({ consentedAt: existing[0].llmConsentedAt.toISOString() }, 200);
-    }
-
+    // WR-01 fix: atomic COALESCE UPDATE — set llm_consented_at = NOW() ONLY if
+    // currently NULL. This eliminates the read-then-update race (D-07
+    // idempotency contract held only under serial calls; two concurrent POSTs
+    // could each pass an existing=null read and both UPDATE with slightly
+    // different NOW() values, leaving two distinct response timestamps for the
+    // same user). The COALESCE keeps any already-set value untouched, makes
+    // the route idempotent under arbitrary concurrency, and saves the SELECT
+    // round-trip.
+    //
     // BL-01 fix: detect zero-row UPDATE (user deleted between token issuance
-    // and consent POST). Use .returning() and check the row count; never
-    // fabricate a `now` timestamp when nothing was persisted.
-    const now = new Date();
+    // and consent POST). Use .returning() and check row count; never fabricate
+    // a `now` timestamp when nothing was persisted.
     const updatedRows = await getDb()
       .update(users)
-      .set({ llmConsentedAt: now })
+      .set({ llmConsentedAt: sql`COALESCE(${users.llmConsentedAt}, NOW())` })
       .where(eq(users.id, userId))
       .returning({ llmConsentedAt: users.llmConsentedAt });
 
@@ -591,10 +592,11 @@ export const llmKeyRoutes = new OpenAPIHono<AppEnv>()
       return c.json({ error: 'User not found' }, 404);
     }
 
-    return c.json(
-      {
-        consentedAt: (updatedRows[0].llmConsentedAt ?? now).toISOString(),
-      },
-      200,
-    );
+    const persisted = updatedRows[0].llmConsentedAt;
+    if (!persisted) {
+      // Defensive: COALESCE with NOW() should never return null, but if the DB
+      // ever surprises us, surface a 500 rather than a fabricated timestamp.
+      return c.json({ error: 'Consent state could not be recorded' }, 500);
+    }
+    return c.json({ consentedAt: persisted.toISOString() }, 200);
   });
