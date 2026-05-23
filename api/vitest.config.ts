@@ -40,6 +40,7 @@ const DB_GATED_TESTS = [
   'tests/invites.test.ts',
   'tests/issues.test.ts',
   'tests/links.test.ts',
+  'tests/llm-keys.test.ts',
   'tests/pat-parity.test.ts',
   'tests/pat-service.test.ts',
   'tests/requireAuth-pat.test.ts',
