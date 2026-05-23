@@ -26,87 +26,21 @@
  *   - D-04 / D-04a (listModels + pricing derived from PRICING, offline)
  *   - D-05 / D-05a (this file is the boundary surface)
  *
- * This is the Plan 23-02 wiring file. `validate`, `estimate`, and `runAudit`
- * method bodies on the two placeholder classes throw a clearly-marked
- * "not yet implemented — wired in Plan 23-0X" error so consumers know the
- * factory contract is locked but the wire adapters are pending. `listModels`
- * and `pricing` are real D-04 implementations and ship today.
+ * Post-Plan 23-03 wiring: `AnthropicProvider` is the real implementation
+ * (imported from `./anthropic.js`). `OpenAIProvider` is still the Plan
+ * 23-02 throwing placeholder until Plan 23-04 lands. `listModels` and
+ * `pricing` on the OpenAI placeholder are real D-04 implementations.
  */
 
 import type { LlmProvider } from '../../services/llm-key.js';
 import {
-  LLMError,
-  LLMProviderError,
-  MIN_CACHEABLE_TOKENS,
   type LLMProvider,
   type ModelListing,
-  type NormalizedUsage,
   type RunAuditOpts,
   type RunAuditResult,
 } from './interface.js';
-import {
-  PRICING,
-  PRICING_AS_OF,
-  type AnthropicModelPricing,
-  type OpenAIModelPricing,
-  type ModelPricing,
-} from './pricing.js';
-
-// ---------------------------------------------------------------------------
-// AnthropicProvider — Plan 23-02 placeholder
-// ---------------------------------------------------------------------------
-
-/**
- * Plan 23-02 placeholder — `validate` / `estimate` / `runAudit` method bodies
- * arrive in Plan 23-03. `listModels` and `pricing` are real D-04 implementations.
- *
- * Per RESEARCH §Common Pitfalls #6: NO per-request state on this class. Every
- * method that needs an API key takes it as a per-call argument; the
- * apiKey-accepting placeholder method bodies enforce that signature even
- * though they throw before reaching it.
- */
-class AnthropicProvider implements LLMProvider {
-  async validate(_plaintext: string): Promise<void> {
-    throw new Error('AnthropicProvider.validate is not yet implemented — wired in Plan 23-03');
-  }
-
-  async estimate(_opts: {
-    apiKey: string;
-    messages: RunAuditOpts['messages'];
-    model?: string;
-  }): Promise<number> {
-    throw new Error('AnthropicProvider.estimate is not yet implemented — wired in Plan 23-03');
-  }
-
-  async runAudit(_opts: RunAuditOpts): Promise<RunAuditResult> {
-    throw new Error('AnthropicProvider.runAudit is not yet implemented — wired in Plan 23-03');
-  }
-
-  listModels(): ModelListing[] {
-    return Object.keys(PRICING.anthropic).map((id) => {
-      const row = PRICING.anthropic[id as keyof typeof PRICING.anthropic];
-      return {
-        id,
-        inputUsdPer1M: row.inputUsdPer1M,
-        outputUsdPer1M: row.outputUsdPer1M,
-        cachedInputUsdPer1M: row.cachedInputUsdPer1M,
-        cacheWriteUsdPer1M: row.cacheWriteUsdPer1M,
-      };
-    });
-  }
-
-  pricing(model: string): ModelListing | undefined {
-    const row = (PRICING.anthropic as Record<string, AnthropicModelPricing>)[model];
-    if (!row) return undefined;
-    return {
-      id: model,
-      inputUsdPer1M: row.inputUsdPer1M,
-      outputUsdPer1M: row.outputUsdPer1M,
-      cachedInputUsdPer1M: row.cachedInputUsdPer1M,
-      cacheWriteUsdPer1M: row.cacheWriteUsdPer1M,
-    };
-  }
-}
+import { PRICING, type OpenAIModelPricing } from './pricing.js';
+import { AnthropicProvider } from './anthropic.js';
 
 // ---------------------------------------------------------------------------
 // OpenAIProvider — Plan 23-02 placeholder
