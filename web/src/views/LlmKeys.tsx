@@ -64,6 +64,13 @@ export default function LlmKeys() {
     Record<string, { ok?: string; err?: string }>
   >({});
 
+  // WR-08 fix: surface non-404 revoke failures (5xx / network) with an
+  // inline error. 404 is silently invalidated (the row was already gone —
+  // mirrors useRevokeToken pattern) but other failures previously left
+  // the user with no signal at all (dialog closes, list refetches, row
+  // reappears, no feedback).
+  const [revokeError, setRevokeError] = useState<string | null>(null);
+
   const hasConsented = consent.data?.consentedAt != null;
 
   // ─── Loading consent ──────────────────────────────────────────────────────
@@ -213,6 +220,24 @@ export default function LlmKeys() {
               </button>
             }
           />
+        </div>
+      )}
+
+      {/* WR-08 fix: inline revoke-failure notice (non-404). 404 is silent. */}
+      {revokeError && (
+        <div
+          role="alert"
+          data-testid="llm-keys-revoke-error"
+          className="mt-6 rounded-md border border-red-300 bg-red-50 dark:border-red-800 dark:bg-red-950/30 p-3 text-sm text-red-700 dark:text-red-300 flex items-center justify-between"
+        >
+          <span>{revokeError}</span>
+          <button
+            type="button"
+            onClick={() => setRevokeError(null)}
+            className="ml-3 text-xs underline opacity-80 hover:opacity-100"
+          >
+            Dismiss
+          </button>
         </div>
       )}
 
@@ -374,10 +399,19 @@ export default function LlmKeys() {
         destructive={true}
         onConfirm={async () => {
           if (revokeTarget) {
+            setRevokeError(null);
             try {
               await revoke.mutateAsync({ id: revokeTarget.id });
-            } catch {
-              // Silent invalidate on 404 race — useRevokeLlmKey's onError handles it
+            } catch (err) {
+              // WR-08 fix: 404 races are fine (the row was already gone —
+              // useRevokeLlmKey's onError invalidates the cache so the row
+              // disappears). Non-404 failures (5xx, network) need a visible
+              // signal — surface a generic message and stop the silent swallow.
+              if (err instanceof ApiError && err.status === 404) {
+                // Silent — the cache invalidate will remove the stale row.
+              } else {
+                setRevokeError("Couldn't revoke the key. It may still be active — refresh to confirm.");
+              }
             }
             // WR-06 fix: explicitly clear the target so the dialog closes
             // even when ConfirmDialog doesn't auto-close on confirm. Without
