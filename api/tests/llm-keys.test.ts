@@ -36,7 +36,7 @@ import {
   createTestUser,
   type TestDbHandle,
 } from './helpers.js';
-import { llmApiKeys } from '../src/db/schema.js';
+import { llmApiKeys, users } from '../src/db/schema.js';
 
 // Mock the llm-key service so the routes never actually hit Anthropic / OpenAI.
 // Default behavior is "happy path"; individual tests override via mockRejectedValueOnce.
@@ -778,6 +778,95 @@ describe('llm-key routes (Phase 22-04: LLMKEY-01/03/04/05/06)', () => {
       } catch (err) {
         expect((err as Error).message).toMatch(/See README ## Self-Host/);
       }
+    });
+  });
+
+  // ─── /api/llm-keys/consent (GET + POST) — Phase 22-05 ───────────────────
+  describe('consent endpoints', () => {
+    it('GET /api/llm-keys/consent returns { consentedAt: null } for a freshly created user', async () => {
+      const { jwt } = await createUserAndJwt('consent-fresh@test.com');
+      const res = await appRequest('GET', '/api/llm-keys/consent', {
+        headers: { Authorization: `Bearer ${jwt}` },
+      });
+      expect(res.status).toBe(200);
+      expect(res.body).toEqual({ consentedAt: null });
+    });
+
+    it('POST /api/llm-keys/consent sets users.llm_consented_at and returns the timestamp', async () => {
+      const { userId, jwt } = await createUserAndJwt('consent-post@test.com');
+      const before = await handle.db
+        .select({ llmConsentedAt: users.llmConsentedAt })
+        .from(users)
+        .where(eq(users.id, userId))
+        .limit(1);
+      expect(before[0].llmConsentedAt).toBeNull();
+
+      const res = await appRequest('POST', '/api/llm-keys/consent', {
+        headers: { Authorization: `Bearer ${jwt}` },
+      });
+      expect(res.status).toBe(200);
+      expect(res.body.consentedAt).toBeTypeOf('string');
+      // Should parse as a valid ISO timestamp.
+      expect(Number.isNaN(Date.parse(res.body.consentedAt))).toBe(false);
+
+      const after = await handle.db
+        .select({ llmConsentedAt: users.llmConsentedAt })
+        .from(users)
+        .where(eq(users.id, userId))
+        .limit(1);
+      expect(after[0].llmConsentedAt).toBeTruthy();
+      expect(after[0].llmConsentedAt!.toISOString()).toBe(res.body.consentedAt);
+    });
+
+    it('POST /api/llm-keys/consent is idempotent — second call returns the same timestamp as the first (D-07)', async () => {
+      const { jwt } = await createUserAndJwt('consent-idempotent@test.com');
+      const r1 = await appRequest('POST', '/api/llm-keys/consent', {
+        headers: { Authorization: `Bearer ${jwt}` },
+      });
+      expect(r1.status).toBe(200);
+      const firstTs = r1.body.consentedAt;
+
+      // Tiny delay so a non-idempotent implementation would produce a different timestamp.
+      await new Promise((resolve) => setTimeout(resolve, 10));
+
+      const r2 = await appRequest('POST', '/api/llm-keys/consent', {
+        headers: { Authorization: `Bearer ${jwt}` },
+      });
+      expect(r2.status).toBe(200);
+      expect(r2.body.consentedAt).toBe(firstTs);
+    });
+
+    it('GET /api/llm-keys/consent returns the persisted timestamp after POST', async () => {
+      const { jwt } = await createUserAndJwt('consent-get-after-post@test.com');
+      const post = await appRequest('POST', '/api/llm-keys/consent', {
+        headers: { Authorization: `Bearer ${jwt}` },
+      });
+      expect(post.status).toBe(200);
+      const ts = post.body.consentedAt;
+
+      const get = await appRequest('GET', '/api/llm-keys/consent', {
+        headers: { Authorization: `Bearer ${jwt}` },
+      });
+      expect(get.status).toBe(200);
+      expect(get.body).toEqual({ consentedAt: ts });
+    });
+
+    it('GET /api/llm-keys/consent returns 401 for PAT bearer (LLMKEY-06 / D-13)', async () => {
+      const { jwt } = await createUserAndJwt('consent-get-pat@test.com');
+      const pat = await mintPatForUser(jwt);
+      const res = await appRequest('GET', '/api/llm-keys/consent', {
+        headers: { Authorization: `Bearer ${pat}` },
+      });
+      expect(res.status).toBe(401);
+    });
+
+    it('POST /api/llm-keys/consent returns 401 for PAT bearer (LLMKEY-06 / D-13)', async () => {
+      const { jwt } = await createUserAndJwt('consent-post-pat@test.com');
+      const pat = await mintPatForUser(jwt);
+      const res = await appRequest('POST', '/api/llm-keys/consent', {
+        headers: { Authorization: `Bearer ${pat}` },
+      });
+      expect(res.status).toBe(401);
     });
   });
 });

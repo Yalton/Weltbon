@@ -29,7 +29,7 @@
 import { OpenAPIHono, createRoute, z } from '@hono/zod-openapi';
 import { and, desc, eq } from 'drizzle-orm';
 import { db as getDb } from '../db/client.js';
-import { llmApiKeys } from '../db/schema.js';
+import { llmApiKeys, users } from '../db/schema.js';
 import { requireJwtAuth, type AuthVariables } from '../middleware/auth.js';
 import {
   encryptKey,
@@ -77,6 +77,14 @@ const maskedKeySchema = z.object({
 const revalidateResponseSchema = z.object({
   id: z.string().uuid(),
   lastValidatedAt: z.string(),
+});
+
+const consentGetResponseSchema = z.object({
+  consentedAt: z.string().nullable(),
+});
+
+const consentPostResponseSchema = z.object({
+  consentedAt: z.string(),
 });
 
 // ─── Masked-row helper (LLMKEY-03 masking invariant) ────────────────────────
@@ -249,6 +257,51 @@ const revalidateRoute = createRoute({
     404: { content: { 'application/json': { schema: errorSchema } }, description: 'Row not found / not owned.' },
     422: { content: { 'application/json': { schema: errorSchema } }, description: 'Provider rejected the key.' },
     503: { content: { 'application/json': { schema: errorSchema } }, description: 'Provider transient / decryption unavailable.' },
+  },
+});
+
+const getConsentRoute = createRoute({
+  method: 'get',
+  path: '/consent',
+  tags: ['LLM API Keys'],
+  summary: 'Get the caller\'s LLM consent state',
+  description:
+    'Returns the timestamp the caller accepted the LLM consent block, or null if not yet accepted. ' +
+    'JWT auth required (LLMKEY-06 / D-13 mirror — consent is downstream of key entry).',
+  security: [{ bearerJwtAuth: [] }],
+  middleware: [requireJwtAuth] as const,
+  responses: {
+    200: {
+      content: { 'application/json': { schema: consentGetResponseSchema } },
+      description: 'Consent state for the caller.',
+    },
+    401: {
+      content: { 'application/json': { schema: errorSchema } },
+      description: 'Missing or invalid JWT bearer token (or PAT — LLMKEY-06).',
+    },
+  },
+});
+
+const postConsentRoute = createRoute({
+  method: 'post',
+  path: '/consent',
+  tags: ['LLM API Keys'],
+  summary: 'Record the caller\'s acceptance of the LLM consent block',
+  description:
+    'Sets users.llm_consented_at = NOW() for the caller. Idempotent: if already set, returns the ' +
+    'persisted timestamp unchanged (D-07: consent persists forever; re-acceptance is a no-op). ' +
+    'JWT auth required.',
+  security: [{ bearerJwtAuth: [] }],
+  middleware: [requireJwtAuth] as const,
+  responses: {
+    200: {
+      content: { 'application/json': { schema: consentPostResponseSchema } },
+      description: 'Consent recorded (or already present — idempotent return).',
+    },
+    401: {
+      content: { 'application/json': { schema: errorSchema } },
+      description: 'Missing or invalid JWT bearer token (or PAT — LLMKEY-06).',
+    },
   },
 });
 
@@ -477,6 +530,55 @@ export const llmKeyRoutes = new OpenAPIHono<AppEnv>()
       {
         id: updated.id,
         lastValidatedAt: (updated.lastValidatedAt ?? now).toISOString(),
+      },
+      200,
+    );
+  })
+
+  .openapi(getConsentRoute, async (c) => {
+    const userId = c.var.userId;
+    const rows = await getDb()
+      .select({ llmConsentedAt: users.llmConsentedAt })
+      .from(users)
+      .where(eq(users.id, userId))
+      .limit(1);
+    if (rows.length === 0) {
+      // Row missing for an authenticated userId is a server-side anomaly; surface as null.
+      return c.json({ consentedAt: null }, 200);
+    }
+    const row = rows[0];
+    return c.json(
+      {
+        consentedAt: row.llmConsentedAt ? row.llmConsentedAt.toISOString() : null,
+      },
+      200,
+    );
+  })
+
+  .openapi(postConsentRoute, async (c) => {
+    const userId = c.var.userId;
+
+    // Idempotent: read first; if already set, return the existing timestamp unchanged
+    // (D-07 — consent persists forever; re-acceptance is a no-op).
+    const existing = await getDb()
+      .select({ llmConsentedAt: users.llmConsentedAt })
+      .from(users)
+      .where(eq(users.id, userId))
+      .limit(1);
+    if (existing.length > 0 && existing[0].llmConsentedAt) {
+      return c.json({ consentedAt: existing[0].llmConsentedAt.toISOString() }, 200);
+    }
+
+    const now = new Date();
+    const [updated] = await getDb()
+      .update(users)
+      .set({ llmConsentedAt: now })
+      .where(eq(users.id, userId))
+      .returning({ llmConsentedAt: users.llmConsentedAt });
+
+    return c.json(
+      {
+        consentedAt: (updated?.llmConsentedAt ?? now).toISOString(),
       },
       200,
     );
