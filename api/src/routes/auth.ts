@@ -38,13 +38,15 @@ const userSchema = z.object({
   displayName: z.string(),
 });
 
-// /auth/me response includes llmConsentedAt so the web client can render
-// the consent gate on /settings/llm without a separate fetch (Phase 22-05).
+// BL-02 fix: /auth/me MUST NOT expose llmConsentedAt under requireAuth (which
+// accepts PAT bearers). LLMKEY-06 / D-13 mirror requires that PATs cannot read
+// the consent state — GET /api/llm-keys/consent is JWT-only and is the single
+// source of truth. The web client calls /api/llm-keys/consent (via
+// useLlmConsent) so dropping the field from /me has no client impact.
 const meResponseSchema = z.object({
   id: z.string(),
   email: z.string(),
   displayName: z.string(),
-  llmConsentedAt: z.string().nullable(),
 });
 
 const authResponseSchema = z.object({
@@ -214,7 +216,7 @@ const meRoute = createRoute({
           schema: meResponseSchema,
         },
       },
-      description: 'Current user profile (includes llmConsentedAt for Phase 22 BYOK)',
+      description: 'Current user profile. Consent state lives on GET /api/llm-keys/consent (JWT-only).',
     },
     401: {
       content: { 'application/json': { schema: errorSchema } },
@@ -349,7 +351,7 @@ export const authRoutes = new OpenAPIHono<AppEnv>()
     const userId = c.var.userId;
     const user = await getDb().query.users.findFirst({
       where: eq(users.id, userId),
-      columns: { id: true, email: true, displayName: true, llmConsentedAt: true },
+      columns: { id: true, email: true, displayName: true },
     });
     if (!user) {
       return c.json({ error: 'User not found' }, 404);
@@ -359,7 +361,6 @@ export const authRoutes = new OpenAPIHono<AppEnv>()
         id: user.id,
         email: user.email,
         displayName: user.displayName,
-        llmConsentedAt: user.llmConsentedAt ? user.llmConsentedAt.toISOString() : null,
       },
       200,
     );

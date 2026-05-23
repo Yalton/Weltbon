@@ -246,4 +246,64 @@ describe('auth routes (AUTH-01..06)', () => {
     const res = await appRequest('GET', '/api/auth/me');
     expect(res.status).toBe(401);
   });
+
+  // BL-02 regression: /api/auth/me is reachable with either a JWT or a PAT
+  // (requireAuth accepts both). The response MUST NOT include llmConsentedAt
+  // because GET /api/llm-keys/consent is JWT-only — exposing the consent
+  // timestamp on /me would let a stolen PAT read it via the back door,
+  // defeating the LLMKEY-06 / D-13 mirror as it applies to consent state.
+  it('GET /api/auth/me response body never includes llmConsentedAt (BL-02 — JWT bearer)', async () => {
+    const { issueAccessToken } = await import('../src/services/auth.js');
+    const user = await createTestUser(handle, {
+      email: 'me-no-consent-jwt@test.com',
+      password: 'longenoughpw12',
+      displayName: 'NoConsentJwt',
+    });
+    // Set a non-null llmConsentedAt directly on the row so the field would be
+    // a real value (not undefined) if the handler were to leak it.
+    await handle.db
+      .update(users)
+      .set({ llmConsentedAt: new Date() })
+      .where(eq(users.id, user.id));
+    const token = await issueAccessToken(user.id);
+    const res = await appRequest('GET', '/api/auth/me', {
+      headers: { Authorization: `Bearer ${token}` },
+    });
+    expect(res.status).toBe(200);
+    expect(res.body).toEqual({ id: user.id, email: 'me-no-consent-jwt@test.com', displayName: 'NoConsentJwt' });
+    expect('llmConsentedAt' in res.body).toBe(false);
+  });
+
+  it('GET /api/auth/me response body never includes llmConsentedAt (BL-02 — PAT bearer cannot read consent via back door)', async () => {
+    const { issueAccessToken } = await import('../src/services/auth.js');
+    const user = await createTestUser(handle, {
+      email: 'me-no-consent-pat@test.com',
+      password: 'longenoughpw12',
+      displayName: 'NoConsentPat',
+    });
+    await handle.db
+      .update(users)
+      .set({ llmConsentedAt: new Date() })
+      .where(eq(users.id, user.id));
+    // Mint a real PAT for this user via the auth/tokens flow (JWT-only mint
+    // path; the resulting PAT is what an attacker would steal in the BL-02
+    // threat model).
+    const jwt = await issueAccessToken(user.id);
+    const tokenRes = await appRequest('POST', '/api/auth/tokens', {
+      body: { label: 'me-pat' },
+      headers: { Authorization: `Bearer ${jwt}` },
+    });
+    expect(tokenRes.status).toBe(200);
+    const pat: string = tokenRes.body.plaintext;
+    expect(pat).toBeTypeOf('string');
+
+    const res = await appRequest('GET', '/api/auth/me', {
+      headers: { Authorization: `Bearer ${pat}` },
+    });
+    expect(res.status).toBe(200);
+    expect(res.body).toEqual({ id: user.id, email: 'me-no-consent-pat@test.com', displayName: 'NoConsentPat' });
+    expect('llmConsentedAt' in res.body).toBe(false);
+    // Defensive: a stringified body must not contain the field name either.
+    expect(JSON.stringify(res.body)).not.toContain('llmConsentedAt');
+  });
 });
