@@ -5,6 +5,7 @@ export interface Env {
   chromiumPath: string | undefined;
   publicOrigin: string | undefined;
   port: number;
+  llmKeyEncryptionKey: string | undefined;
 }
 
 export function loadEnv(source: NodeJS.ProcessEnv = process.env): Env {
@@ -45,12 +46,24 @@ export function loadEnv(source: NodeJS.ProcessEnv = process.env): Env {
     );
   }
 
+  // LLMKEY-08: validate format when present, but do NOT require at load time.
+  // The conditional "required when llm_api_keys rows exist" check lives at boot
+  // (api/src/index.ts assertLlmKeyEncryptionKey) where the DB state is known.
+  const llmKeyEncryptionKey = source.LLM_KEY_ENCRYPTION_KEY;
+  if (llmKeyEncryptionKey !== undefined && !/^[0-9a-f]{64}$/i.test(llmKeyEncryptionKey)) {
+    throw new Error(
+      `LLM_KEY_ENCRYPTION_KEY must be a 64-character hex string (32 bytes). ` +
+      `Generate one with: openssl rand -hex 32`
+    );
+  }
+
   return {
     jwtSecret: new TextEncoder().encode(jwt),
     databaseUrl: db,
     chromiumPath: source.CHROMIUM_PATH,
     publicOrigin,
     port: Number(source.PORT ?? 3000),
+    llmKeyEncryptionKey,
   };
 }
 

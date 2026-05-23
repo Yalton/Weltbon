@@ -121,9 +121,22 @@ Every variable from `.env.example`. Replace `<owner>` with the GitHub user or or
 | `POSTGRES_PASSWORD` | yes | Password for the `db` service in `docker-compose.yml`; also embedded in `DATABASE_URL` | Any strong secret; `openssl rand -base64 24` works |
 | `DATABASE_URL` | yes | Postgres connection string for the API | Templated as `postgresql://weltbon:${POSTGRES_PASSWORD}@db:5432/weltbon` |
 | `INVITE_CODE` | first boot only | Seeds the `invite_codes` table on cold start if the table is empty; required only for the first registration | Any string; can be removed from `.env` after the first user account exists |
+| `LLM_KEY_ENCRYPTION_KEY` | when any user has saved an LLM key (conditional) | 32-byte hex AES-256-GCM key used to encrypt per-user LLM API keys at rest. The API refuses to boot if the `llm_api_keys` table has rows but this variable is unset. Format-validated at load (must match `[0-9a-f]{64}`). | `openssl rand -hex 32`. Back up the value separately — see [Backup](#backup). |
 | `PORT` | no | API listen port inside the container | Default: `3000` |
 | `CHROMIUM_PATH` | no | System Chromium binary for PDF export | Container ships `/usr/bin/chromium` and sets this automatically; only set for bare-Node runs — see [Self-Host (Bare Node)](#self-host-bare-node) |
 | `WELTBON_PUBLIC_ORIGIN` | no | Public origin for CORS allow-list when behind a reverse proxy (e.g., `https://welt.example.com`); absent keeps dev-friendly permissive CORS | The operator's external origin — see [docs/reverse-proxy/](docs/reverse-proxy/) |
+
+### Example `.env`
+
+Minimal entries to paste into `.env` (substitute generated values for the placeholders). The `LLM_KEY_ENCRYPTION_KEY` line is commented out — uncomment it only once you intend to enable BYOK LLM keys, and back up the value somewhere other than `.env` (see [Backup](#backup)).
+
+```env
+JWT_SECRET=$(openssl rand -hex 32)
+POSTGRES_PASSWORD=$(openssl rand -base64 24)
+DATABASE_URL=postgresql://weltbon:${POSTGRES_PASSWORD}@db:5432/weltbon
+INVITE_CODE=any-16-or-longer-string-for-first-account
+# LLM_KEY_ENCRYPTION_KEY=$(openssl rand -hex 32)
+```
 
 ### Quickstart
 
@@ -277,6 +290,10 @@ After installing, verify with `crontab -l` -- the listed line should contain `\%
 
 - **The `pg_dump` output** -- produced by the cron line above. This is the portable, restorable artifact; you do not also need to back up the `pgdata` Docker volume (the SQL dump captures everything).
 - **`.env`** -- losing `JWT_SECRET` invalidates every active session and refresh token; losing `POSTGRES_PASSWORD` breaks `DATABASE_URL`. Back up `.env` to an encrypted store (a password manager works) -- do NOT commit it.
+
+### `LLM_KEY_ENCRYPTION_KEY` backup callout
+
+If you have set `LLM_KEY_ENCRYPTION_KEY` to enable BYOK LLM keys, treat the 64-char hex value as a separate secret from `.env`. **If you lose this key, you lose every user's LLM key** -- the encrypted `llm_api_keys.ciphertext` rows in your `pg_dump` become permanently unreadable, and re-running `openssl rand -hex 32` only produces a fresh key that does NOT decrypt the existing ciphertexts. Store the value in a password manager (or another secrets store), not just in the `.env` file -- losing the host that holds `.env` would otherwise take every saved provider key with it. Users would then need to re-enter their LLM keys from scratch.
 
 ### Restore
 
