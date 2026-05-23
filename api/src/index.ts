@@ -8,6 +8,7 @@ import { env, type Env } from './config.js';
 import { authRoutes } from './routes/auth.js';
 import { tokenRoutes } from './routes/tokens.js';
 import { inviteRoutes } from './routes/invites.js';
+import { llmKeyRoutes } from './routes/llm-keys.js';
 import { universeRoutes } from './routes/universes.js';
 import { entryRoutes } from './routes/entries.js';
 import { linkRoutes, relationRoutes } from './routes/links.js';
@@ -58,6 +59,7 @@ export function createApp() {
   app.use('*', forwarded);
   const apiR = createApiRouter();
   apiR.route('/auth/tokens', tokenRoutes);
+  apiR.route('/llm-keys', llmKeyRoutes);
   apiR.route('/auth/invites', inviteRoutes);
   apiR.route('/auth', authRoutes);
   apiR.use('/universes/*', requireAuth);
