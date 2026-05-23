@@ -16,7 +16,9 @@
  *   1. Parse + validate JSON (Zod failure → 400)
  *   2. Look up auth user (middleware set c.var.userId)
  *   3. Pre-check existing row for (userId, provider) → 409 "Use PUT to replace"
- *   4. validateAtProvider(plaintext, provider) — rejected → 422; transient/timeout → 503
+ *   4. Provider validate — InvalidApiKey → 422; other LLMError variants → 503
+ *      (Phase 23 D-03 migration; routed through the provider abstraction at
+ *      api/src/providers/llm/.)
  *   5. encryptKey(plaintext, cfg.llmKeyEncryptionKey) — missing env → 503
  *   6. INSERT — catch PG 23505 UNIQUE collision → 409
  *   7. Map row → masked response shape (toMaskedRow); never echo ciphertext/iv/authTag/plaintext.
@@ -34,10 +36,13 @@ import { requireJwtAuth, type AuthVariables } from '../middleware/auth.js';
 import {
   encryptKey,
   getDecryptedKey,
-  validateAtProvider,
-  ProviderValidationError,
   type LlmProvider,
 } from '../services/llm-key.js';
+import {
+  getProvider,
+  LLMProviderError,
+  LLMError,
+} from '../providers/llm/index.js';
 import { env } from '../config.js';
 
 type AppEnv = { Variables: AuthVariables };
@@ -347,11 +352,13 @@ export const llmKeyRoutes = new OpenAPIHono<AppEnv>()
     }
 
     // Validate at provider BEFORE encrypt BEFORE insert (D-01..D-03 strict-state).
+    // Phase 23 D-03: routed through getProvider(provider).validate() — InvalidApiKey → 422,
+    // every other LLMError variant → 503 (preserves Phase 22 HTTP behavior).
     try {
-      await validateAtProvider(plaintext, provider);
+      await getProvider(provider).validate(plaintext);
     } catch (err) {
-      if (err instanceof ProviderValidationError) {
-        if (err.kind === 'rejected') {
+      if (err instanceof LLMProviderError) {
+        if (err.variant === LLMError.InvalidApiKey) {
           return c.json({ error: err.message }, 422);
         }
         return c.json({ error: err.message }, 503);
@@ -429,11 +436,12 @@ export const llmKeyRoutes = new OpenAPIHono<AppEnv>()
     const provider = existingRow.provider as LlmProvider;
 
     // Validate new plaintext against the EXISTING row's provider (not from request).
+    // Phase 23 D-03: routed through getProvider(provider).validate().
     try {
-      await validateAtProvider(plaintext, provider);
+      await getProvider(provider).validate(plaintext);
     } catch (err) {
-      if (err instanceof ProviderValidationError) {
-        if (err.kind === 'rejected') {
+      if (err instanceof LLMProviderError) {
+        if (err.variant === LLMError.InvalidApiKey) {
           return c.json({ error: err.message }, 422);
         }
         return c.json({ error: err.message }, 503);
@@ -516,12 +524,12 @@ export const llmKeyRoutes = new OpenAPIHono<AppEnv>()
       );
     }
 
-    // Validate at provider.
+    // Validate at provider. Phase 23 D-03: routed through getProvider(provider).validate().
     try {
-      await validateAtProvider(plaintext, provider);
+      await getProvider(provider).validate(plaintext);
     } catch (err) {
-      if (err instanceof ProviderValidationError) {
-        if (err.kind === 'rejected') {
+      if (err instanceof LLMProviderError) {
+        if (err.variant === LLMError.InvalidApiKey) {
           // D-03: do NOT delete the row automatically; the user decides.
           return c.json({ error: err.message }, 422);
         }
