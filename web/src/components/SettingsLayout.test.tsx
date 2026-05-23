@@ -24,6 +24,7 @@ function renderAt(path: string) {
           <Route index element={<div data-testid="index-child">INDEX_CHILD</div>} />
           <Route path="tokens" element={<div data-testid="tokens-child">TOKENS_CHILD</div>} />
           <Route path="invites" element={<div data-testid="invites-child">INVITES_CHILD</div>} />
+          <Route path="llm" element={<div data-testid="llm-child">LLM_CHILD</div>} />
         </Route>
       </Routes>
     </MemoryRouter>,
@@ -38,18 +39,20 @@ describe('SettingsLayout', () => {
     expect(nav.tagName).toBe('NAV');
   });
 
-  it('renders three NavLinks: "Visual", "API tokens", "Invite codes"', () => {
+  it('renders four NavLinks: "Visual", "API tokens", "Invite codes", "LLM keys"', () => {
     renderAt('/settings');
     const visual = screen.getByRole('link', { name: 'Visual' });
     const apiTokens = screen.getByRole('link', { name: 'API tokens' });
     const inviteCodes = screen.getByRole('link', { name: 'Invite codes' });
+    const llmKeys = screen.getByRole('link', { name: 'LLM keys' });
 
     expect(visual.getAttribute('href')).toBe('/settings');
     expect(apiTokens.getAttribute('href')).toBe('/settings/tokens');
     expect(inviteCodes.getAttribute('href')).toBe('/settings/invites');
+    expect(llmKeys.getAttribute('href')).toBe('/settings/llm');
 
     const nav = screen.getByRole('navigation', { name: 'Settings sections' });
-    expect(nav.querySelectorAll('a').length).toBe(3);
+    expect(nav.querySelectorAll('a').length).toBe(4);
   });
 
   it('applies active classes to the "Visual" link when route is /settings', () => {
@@ -135,5 +138,29 @@ describe('SettingsLayout', () => {
     expect(screen.getByTestId('invites-child')).toBeInTheDocument();
     expect(screen.queryByTestId('index-child')).not.toBeInTheDocument();
     expect(screen.queryByTestId('tokens-child')).not.toBeInTheDocument();
+  });
+
+  it('applies active classes to "LLM keys" link when route is /settings/llm', () => {
+    renderAt('/settings/llm');
+    const llmKeys = screen.getByRole('link', { name: 'LLM keys' });
+    const cls = llmKeys.getAttribute('class') ?? '';
+    expect(cls).toContain('bg-[color:var(--color-accent)]/10');
+    expect(cls).toContain('text-[color:var(--color-accent)]');
+    expect(cls).toContain('font-medium');
+    // The other three links must NOT carry the active classes.
+    const visual = screen.getByRole('link', { name: 'Visual' });
+    expect(visual.getAttribute('class') ?? '').not.toContain('bg-[color:var(--color-accent)]/10');
+    const apiTokens = screen.getByRole('link', { name: 'API tokens' });
+    expect(apiTokens.getAttribute('class') ?? '').not.toContain('bg-[color:var(--color-accent)]/10');
+    const inviteCodes = screen.getByRole('link', { name: 'Invite codes' });
+    expect(inviteCodes.getAttribute('class') ?? '').not.toContain('bg-[color:var(--color-accent)]/10');
+  });
+
+  it('renders Outlet with the nested /llm route child', () => {
+    renderAt('/settings/llm');
+    expect(screen.getByTestId('llm-child')).toBeInTheDocument();
+    expect(screen.queryByTestId('index-child')).not.toBeInTheDocument();
+    expect(screen.queryByTestId('tokens-child')).not.toBeInTheDocument();
+    expect(screen.queryByTestId('invites-child')).not.toBeInTheDocument();
   });
 });
