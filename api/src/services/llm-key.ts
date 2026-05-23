@@ -1,28 +1,31 @@
 /**
- * Phase 22 BYOK — LLM API key encryption + provider validation.
+ * Phase 22 BYOK — LLM API key encryption + decryption.
  *
- * Three exports consumed by Plan 22-04 (routes) and Phase 23 (provider abstraction):
+ * Two exports consumed by Plan 22-04 (routes) and Phase 23+ (provider abstraction):
  *
  *   - encryptKey(plaintext, encryptionKeyHex):
  *       AES-256-GCM with per-call random 12-byte IV + 16-byte auth tag.
  *       Pure function. Returns hex-encoded { ciphertext, iv, authTag, bodySuffix, version: 1 }.
  *
- *   - getDecryptedKey(userId, provider):
+ *   - getDecryptedKey(userId, provider, encryptionKeyHex):
  *       Per-call DB read + decrypt. Returns string | null where null covers FOUR cases
  *       (D-11): no row, decryption failure, missing LLM_KEY_ENCRYPTION_KEY env var, or
  *       malformed (non-64-hex) env var. Caller cannot distinguish — treat null as
  *       "no usable key". No cache anywhere (D-10).
  *
- *   - validateAtProvider(plaintext, provider):
- *       Single 5s-timeout HTTP ping to Anthropic count_tokens or OpenAI models.list.
- *       Throws ProviderValidationError with kind ∈ { rejected | transient | timeout }.
+ * Phase 23 D-03 (D-03b) — provider-ping helpers moved out:
+ *   The Phase 22 provider-validation function and its typed-error class that
+ *   previously lived here have been removed. They are now provided by the
+ *   provider abstraction in `api/src/providers/llm/` via
+ *   `getProvider(provider).validate(plaintext)` which throws `LLMProviderError`
+ *   (variant: `LLMError.InvalidApiKey` for rejected keys, `LLMError.NetworkError`
+ *   for transient/timeout, etc.). This module retains only the AES-256-GCM key
+ *   crypto + the `LlmProvider` / `EncryptedKey` types.
  *
  * Trust boundary discipline (T-22-02-01, T-22-02-02, T-22-02-06):
  *   - No console.log / console.info / console.error in this module.
  *   - The single permitted console.warn line is metadata-only — never references
  *     plaintext, ciphertext, iv, authTag, encryptionKeyHex, keyBuf, or err.message.
- *   - Thrown ProviderValidationError messages never echo the plaintext or the
- *     provider's response body (D-03).
  */
 
 import { randomBytes, createCipheriv, createDecipheriv } from 'node:crypto';
@@ -43,15 +46,6 @@ export interface EncryptedKey {
 }
 
 export type LlmProvider = 'anthropic' | 'openai';
-
-export class ProviderValidationError extends Error {
-  public readonly kind: 'rejected' | 'transient' | 'timeout';
-  constructor(message: string, kind: 'rejected' | 'transient' | 'timeout') {
-    super(message);
-    this.name = 'ProviderValidationError';
-    this.kind = kind;
-  }
-}
 
 // ---------------------------------------------------------------------------
 // encryptKey
@@ -165,150 +159,4 @@ export const getDecryptedKey = async (
     console.warn('[llm-key] decryption failed for user', userId, 'provider', provider);
     return null;
   }
-};
-
-// ---------------------------------------------------------------------------
-// validateAtProvider
-// ---------------------------------------------------------------------------
-
-const ANTHROPIC_PING_URL = 'https://api.anthropic.com/v1/messages/count_tokens';
-const ANTHROPIC_PING_MODEL = 'claude-haiku-4-5';
-const OPENAI_PING_URL = 'https://api.openai.com/v1/models';
-
-const PROVIDER_DISPLAY: Record<LlmProvider, string> = {
-  anthropic: 'Anthropic',
-  openai: 'OpenAI',
-};
-
-/**
- * Issue a single 5s-timeout ping to the provider with the given plaintext key.
- *
- * D-02: no retry — exactly one fetch. Strict-state save model (D-01) makes
- * manual retry the user's responsibility on transient failures.
- *
- * Status mapping (per <validate_contract>):
- *   2xx              → void (success)
- *   401 / 403        → throw rejected (provider unambiguously says "bad key")
- *   400 + provider-flagged auth error in JSON body → rejected
- *   400 (other)      → transient (likely malformed request — caller bug worth retry)
- *   429 / 5xx        → transient
- *   AbortError / TimeoutError → timeout
- *   Network error    → transient
- *   Other            → transient (defensive default)
- *
- * The plaintext never appears in the thrown message. The provider's response
- * body is consumed ONLY on the 400 branch (needed for the error-type/code
- * check); for 401/403 we never read the body (D-03 — could contain echoed
- * key fragments in a misformatted provider response).
- */
-export const validateAtProvider = async (
-  plaintext: string,
-  provider: LlmProvider,
-): Promise<void> => {
-  const display = PROVIDER_DISPLAY[provider];
-
-  // D-02: exactly one timer per validate call, no retry.
-  const signal = AbortSignal.timeout(5000);
-
-  let url: string;
-  let init: RequestInit;
-  if (provider === 'anthropic') {
-    url = ANTHROPIC_PING_URL;
-    init = {
-      method: 'POST',
-      headers: {
-        'x-api-key': plaintext,
-        'anthropic-version': '2023-06-01',
-        'Content-Type': 'application/json',
-      },
-      body: JSON.stringify({
-        model: ANTHROPIC_PING_MODEL,
-        messages: [{ role: 'user', content: 'hi' }],
-      }),
-      signal,
-    };
-  } else {
-    url = OPENAI_PING_URL;
-    init = {
-      method: 'GET',
-      headers: {
-        Authorization: `Bearer ${plaintext}`,
-      },
-      signal,
-    };
-  }
-
-  let res: Response;
-  try {
-    res = await fetch(url, init);
-  } catch (err: unknown) {
-    const name = (err as { name?: string } | null)?.name;
-    if (name === 'AbortError' || name === 'TimeoutError') {
-      throw new ProviderValidationError(
-        `${display} did not respond within 5 seconds — try again.`,
-        'timeout',
-      );
-    }
-    throw new ProviderValidationError(
-      `${display} returned a network error — try again in a moment.`,
-      'transient',
-    );
-  }
-
-  if (res.ok) {
-    return;
-  }
-
-  if (res.status === 401 || res.status === 403) {
-    throw new ProviderValidationError(
-      `${display} rejected this key as invalid — check the key and try again.`,
-      'rejected',
-    );
-  }
-
-  if (res.status === 400) {
-    // The ONLY branch that reads the body — needed to distinguish "bad key shape"
-    // from "malformed request". We never include the body content in the thrown
-    // message; only inspect the well-known error-type / error-code fields.
-    let body: unknown = null;
-    try {
-      body = await res.json();
-    } catch {
-      // Provider returned 400 without JSON — treat as transient (malformed body).
-    }
-    if (provider === 'anthropic') {
-      const errType = (body as { error?: { type?: string } } | null)?.error?.type;
-      if (errType === 'authentication_error') {
-        throw new ProviderValidationError(
-          `${display} rejected this key as invalid — check the key and try again.`,
-          'rejected',
-        );
-      }
-    } else {
-      const errCode = (body as { error?: { code?: string } } | null)?.error?.code;
-      if (errCode === 'invalid_api_key') {
-        throw new ProviderValidationError(
-          `${display} rejected this key as invalid — check the key and try again.`,
-          'rejected',
-        );
-      }
-    }
-    throw new ProviderValidationError(
-      `${display} returned ${res.status} — try again in a moment.`,
-      'transient',
-    );
-  }
-
-  if (res.status === 429 || res.status >= 500) {
-    throw new ProviderValidationError(
-      `${display} returned ${res.status} — try again in a moment.`,
-      'transient',
-    );
-  }
-
-  // Defensive default — unexpected status, treat as transient.
-  throw new ProviderValidationError(
-    `${display} returned ${res.status} — try again in a moment.`,
-    'transient',
-  );
 };
