@@ -146,7 +146,14 @@ export function CreateLlmKeyDialog({
               : 'Paste an Anthropic or OpenAI API key. Weltbon validates it against the provider, then stores it encrypted.'}
           </Dialog.Description>
 
-          <form onSubmit={handleSubmit(onSubmit)} className="mt-4 space-y-3">
+          {/* WR-04 fix: force-remount the form whenever the replace target
+              changes so React Hook Form's defaultValues are re-captured fresh
+              instead of relying on the post-mount useEffect re-seed. Without
+              this, a brief paint cycle would show provider='anthropic' / label=''
+              before the effect rewrote the values (visible under Strict Mode
+              double-render). The 'create' literal keeps the form mounted as a
+              single instance when no replaceTarget is set. */}
+          <form key={replaceTarget?.id ?? 'create'} onSubmit={handleSubmit(onSubmit)} className="mt-4 space-y-3">
             {/* Provider — locked in replace mode */}
             <div>
               <label htmlFor="llmkey-provider" className="block text-sm mb-1">
