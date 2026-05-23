@@ -29,6 +29,27 @@ import { scalarHtml } from './openapi/scalar.js';
 
 const cfg = env();
 
+/**
+ * Single source of truth for log-line redaction. Used by both the Hono logger
+ * middleware (request lines) and app.onError (unhandled errors). Centralising
+ * the regex set means a future leak class (new key prefix, new auth header)
+ * can be added in one place and applied to every log surface — WR-07 fix.
+ *
+ * Patterns:
+ *   - Authorization / Cookie header values — full value replaced
+ *   - sk-ant-* and sk-* keys, anchored on {32,} (WR-05) so universe slugs
+ *     like "sk-foo-uid" are not false-positive scrubbed
+ *   - wbn_pat_* and wbn_inv_* tokens
+ */
+function scrubLogLine(msg: string): string {
+  return msg
+    .replace(/(authorization|cookie):\s*[^\n]+/gi, '$1: [redacted]')
+    .replace(/sk-ant-[A-Za-z0-9_-]{32,}/g, '[REDACTED]')
+    .replace(/sk-[A-Za-z0-9_-]{32,}/g, '[REDACTED]')
+    .replace(/wbn_pat_[A-Za-z0-9_-]+/g, '[REDACTED]')
+    .replace(/wbn_inv_[A-Za-z0-9_-]+/g, '[REDACTED]');
+}
+
 export function createApp() {
   const app = new Hono();
   app.use('*', logger((msg) => {
@@ -36,20 +57,7 @@ export function createApp() {
     // - sk-ant- must be replaced BEFORE the broader sk- so the specific prefix wins
     // - logger output only (D-05); HTTP response bodies are NOT scrubbed
     // - silent in all environments (D-06); no warning, no telemetry, no counter
-    //
-    // WR-05 fix: anchor sk- / sk-ant- patterns on a minimum length (32 chars
-    // after the prefix). Real OpenAI keys are 48+ chars; real Anthropic keys
-    // are 100+ chars. The previous \`sk-[A-Za-z0-9_-]+\` would scrub any path
-    // segment starting with sk- (e.g. universe slug \"sk-foo-uid\") and confuse
-    // operator-side telemetry. The {32,} floor still catches every real
-    // provider key while making false positives effectively impossible.
-    const scrubbed = msg
-      .replace(/(authorization|cookie):\s*[^\n]+/gi, '$1: [redacted]')
-      .replace(/sk-ant-[A-Za-z0-9_-]{32,}/g, '[REDACTED]')
-      .replace(/sk-[A-Za-z0-9_-]{32,}/g, '[REDACTED]')
-      .replace(/wbn_pat_[A-Za-z0-9_-]+/g, '[REDACTED]')
-      .replace(/wbn_inv_[A-Za-z0-9_-]+/g, '[REDACTED]');
-    console.log(scrubbed);
+    console.log(scrubLogLine(msg));
   }));
   app.use('*', cors({
     origin: (origin) => {
@@ -116,7 +124,12 @@ export function createApp() {
     if (err instanceof HTTPException) {
       return c.json({ error: err.message }, err.status);
     }
-    console.error(err);
+    // WR-07 fix: scrub the error stack/message through the same redaction
+    // function the request logger uses. If a future regression ever lets
+    // plaintext (key, PAT, invite token) reach an Error message or stack,
+    // this prevents it from being logged raw to stderr.
+    const errText = err instanceof Error ? (err.stack ?? err.message) : String(err);
+    console.error(scrubLogLine(errText));
     return c.json({ error: 'Internal error' }, 500);
   });
 
