@@ -1,4 +1,4 @@
-import { pgTable, uuid, text, timestamp, jsonb, boolean, integer, doublePrecision, primaryKey } from 'drizzle-orm/pg-core';
+import { pgTable, uuid, text, timestamp, jsonb, boolean, integer, doublePrecision, primaryKey, unique } from 'drizzle-orm/pg-core';
 import { relations } from 'drizzle-orm';
 
 /**
@@ -12,11 +12,14 @@ export interface TimelineWindow {
 }
 
 export const users = pgTable('users', {
-  id:           uuid('id').primaryKey().defaultRandom(),
-  email:        text('email').notNull().unique(),
-  displayName:  text('display_name').notNull(),
-  passwordHash: text('password_hash').notNull(),
-  createdAt:    timestamp('created_at').defaultNow().notNull(),
+  id:               uuid('id').primaryKey().defaultRandom(),
+  email:            text('email').notNull().unique(),
+  displayName:      text('display_name').notNull(),
+  passwordHash:     text('password_hash').notNull(),
+  createdAt:        timestamp('created_at').defaultNow().notNull(),
+  // Phase 22 D-07: nullable timestamptz; set to NOW() on first "I accept" click
+  // in /settings/llm consent block. Persists forever (revoking keys does NOT clear).
+  llmConsentedAt:   timestamp('llm_consented_at', { withTimezone: true }),
 });
 
 export const universes = pgTable('universes', {
@@ -52,6 +55,35 @@ export const personalAccessTokens = pgTable('personal_access_tokens', {
   createdAt:  timestamp('created_at', { withTimezone: true }).defaultNow().notNull(),
   lastUsedAt: timestamp('last_used_at', { withTimezone: true }),
 });
+
+/**
+ * Phase 22 BYOK: per-user, per-provider LLM API key storage with AES-256-GCM at-rest.
+ *
+ * - `ciphertext`, `iv` (12 bytes → 24 hex chars), `auth_tag` (16 bytes → 32 hex chars) are
+ *   the AES-256-GCM outputs stored as hex strings.
+ * - `encrypted_key_version` defaults to 1 (D-12); rotation tooling is NOT shipped in v3.0,
+ *   but the column ships from day one so future rotation needs no schema migration.
+ * - `body_suffix` (last 4 chars of plaintext) is computed at INSERT time (D-14) — same
+ *   pattern as personalAccessTokens.bodySuffix. Never derived from ciphertext at read time.
+ * - `label` is optional (D-13): UI falls back to provider name when empty.
+ * - UNIQUE(user_id, provider) enforces one row per (user, provider) pair (D-14). Replace
+ *   semantics handled at the route layer via UPDATE or INSERT ON CONFLICT.
+ */
+export const llmApiKeys = pgTable('llm_api_keys', {
+  id:                   uuid('id').primaryKey().defaultRandom(),
+  userId:               uuid('user_id').references(() => users.id, { onDelete: 'cascade' }).notNull(),
+  provider:             text('provider').notNull(),
+  ciphertext:           text('ciphertext').notNull(),
+  iv:                   text('iv').notNull(),
+  authTag:              text('auth_tag').notNull(),
+  encryptedKeyVersion:  integer('encrypted_key_version').default(1).notNull(),
+  bodySuffix:           text('body_suffix').notNull(),
+  label:                text('label').default('').notNull(),
+  createdAt:            timestamp('created_at', { withTimezone: true }).defaultNow().notNull(),
+  lastValidatedAt:      timestamp('last_validated_at', { withTimezone: true }),
+}, (t) => ({
+  userProviderUnique: unique('llm_api_keys_user_id_provider_unique').on(t.userId, t.provider),
+}));
 
 export const inviteCodes = pgTable('invite_codes', {
   id:                uuid('id').primaryKey().defaultRandom(),
