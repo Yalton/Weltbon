@@ -4,7 +4,7 @@ import { Hono } from 'hono';
 import { cors } from 'hono/cors';
 import { logger } from 'hono/logger';
 import { HTTPException } from 'hono/http-exception';
-import { env } from './config.js';
+import { env, type Env } from './config.js';
 import { authRoutes } from './routes/auth.js';
 import { tokenRoutes } from './routes/tokens.js';
 import { inviteRoutes } from './routes/invites.js';
@@ -21,6 +21,7 @@ import { timelinePinRoutes, timelineListRoutes } from './routes/timeline.js';
 import { requireAuth } from './middleware/auth.js';
 import { forwarded } from './middleware/forwarded.js';
 import { db } from './db/client.js';
+import { llmApiKeys } from './db/schema.js';
 import { seedInviteCode } from './db/seedInviteCode.js';
 import { createApiRouter } from './openapi/app.js';
 import { scalarHtml } from './openapi/scalar.js';
@@ -30,7 +31,17 @@ const cfg = env();
 export function createApp() {
   const app = new Hono();
   app.use('*', logger((msg) => {
-    console.log(msg.replace(/(authorization|cookie):\s*[^\n]+/gi, '$1: [redacted]'));
+    // LLMKEY-08 supporting safety control (D-04/D-05/D-06):
+    // - sk-ant- must be replaced BEFORE the broader sk- so the specific prefix wins
+    // - logger output only (D-05); HTTP response bodies are NOT scrubbed
+    // - silent in all environments (D-06); no warning, no telemetry, no counter
+    const scrubbed = msg
+      .replace(/(authorization|cookie):\s*[^\n]+/gi, '$1: [redacted]')
+      .replace(/sk-ant-[A-Za-z0-9_-]+/g, '[REDACTED]')
+      .replace(/sk-[A-Za-z0-9_-]+/g, '[REDACTED]')
+      .replace(/wbn_pat_[A-Za-z0-9_-]+/g, '[REDACTED]')
+      .replace(/wbn_inv_[A-Za-z0-9_-]+/g, '[REDACTED]');
+    console.log(scrubbed);
   }));
   app.use('*', cors({
     origin: (origin) => {
@@ -105,6 +116,34 @@ export function createApp() {
 
 export const app = createApp();
 
+/**
+ * LLMKEY-08 boot-time conditional fail-fast.
+ *
+ * Aborts startup if the llm_api_keys table has any rows but
+ * `LLM_KEY_ENCRYPTION_KEY` is unset. Exported as a callable function so
+ * Plan 22-04's behavioral test can exercise the throw path directly with a
+ * stubbed db + empty cfg, instead of relying on a grep gate.
+ *
+ * Semantics:
+ *   - rows=0 + key unset → no-op (operator hasn't enabled BYOK yet)
+ *   - rows=0 + key set → no-op (key present, no rows yet — fine)
+ *   - rows>0 + key set → no-op (normal operation)
+ *   - rows>0 + key unset → throw (would silently 503 every audit; LLMKEY-08 violation)
+ */
+export async function assertLlmKeyEncryptionKey(deps: {
+  db: ReturnType<typeof db>;
+  cfg: Env;
+}): Promise<void> {
+  const hasKeys = await deps.db.select({ id: llmApiKeys.id }).from(llmApiKeys).limit(1);
+  if (hasKeys.length > 0 && !deps.cfg.llmKeyEncryptionKey) {
+    throw new Error(
+      'LLM_KEY_ENCRYPTION_KEY must be set when llm_api_keys rows exist. ' +
+      'See README ## Self-Host for the backup callout (the key is unrecoverable if lost). ' +
+      'Generate one with: openssl rand -hex 32'
+    );
+  }
+}
+
 if (import.meta.url === `file://${process.argv[1]}`) {
   // PROXY-01 operator warning: when WELTBON_PUBLIC_ORIGIN is unset the CORS
   // middleware reflects any Origin back with credentials: true — fine for
@@ -117,6 +156,7 @@ if (import.meta.url === `file://${process.argv[1]}`) {
     );
   }
   await seedInviteCode(db());
+  await assertLlmKeyEncryptionKey({ db: db(), cfg });
   serve({ fetch: app.fetch, port: cfg.port });
   console.log(`Weltbon API listening on :${cfg.port}`);
 }
