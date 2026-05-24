@@ -29,17 +29,33 @@ export const timelineWindowSchema = z
   })
   .nullable();
 
-export const patchSchema = z.object({
-  name: z.string().min(1).max(80).optional(),
-  description: z.string().max(500).optional(),
-  timelineWindow: timelineWindowSchema.optional(),
-}).refine(
-  (v) =>
-    v.name !== undefined ||
-    v.description !== undefined ||
-    v.timelineWindow !== undefined,
-  { message: 'At least one of name, description, or timelineWindow is required' },
-);
+export const patchSchema = z
+  .object({
+    name: z.string().min(1).max(80).optional(),
+    description: z.string().max(500).optional(),
+    timelineWindow: timelineWindowSchema.optional(),
+    // Phase 24 AUDIT-03: per-universe audit opt-in fields (additive).
+    // auditEnabled=true requires auditProvider and auditModel to be non-null.
+    auditEnabled: z.boolean().optional(),
+    auditProvider: z.enum(['anthropic', 'openai']).nullable().optional(),
+    auditModel: z.string().nullable().optional(),
+  })
+  .refine(
+    (v) =>
+      v.name !== undefined ||
+      v.description !== undefined ||
+      v.timelineWindow !== undefined ||
+      v.auditEnabled !== undefined ||
+      v.auditProvider !== undefined ||
+      v.auditModel !== undefined,
+    { message: 'At least one of name, description, or timelineWindow is required' },
+  )
+  .refine(
+    (v) => !(v.auditEnabled === true && (v.auditProvider == null || v.auditModel == null)),
+    {
+      message: 'auditProvider and auditModel are required when auditEnabled is true',
+    },
+  );
 
 // POL-02: discriminated union for entry-type mutations
 const entryTypeActionSchema = z.discriminatedUnion('action', [
