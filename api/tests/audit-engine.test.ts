@@ -536,6 +536,69 @@ describe('audit-engine runAudit (Phase 24-04)', () => {
   });
 
   // =========================================================================
+  // BL-02: Strict-parse defense against LLM-smuggled gap_key
+  // =========================================================================
+  it(
+    "BL-02: smuggled gap_key in LLM suggestion → status=failed, error=invalid_output (strict-parse defense)",
+    async () => {
+      // Stage a structurally-valid final-answer turn whose single suggestion
+      // carries an extra `gap_key` field (the LLM-smuggling attack pattern
+      // documented in audit-schema.ts JSDoc and AUDIT-08).
+      //
+      // With the relaxed AuditOutputSchema (pre-BL-02), Zod silently dropped
+      // the extra field and the run continued — gap_key smuggling was
+      // structurally undetectable. With AuditOutputStrictSchema (BL-02), the
+      // strict envelope + strict suggestion rejects the whole payload,
+      // triggering the engine's INVALID_OUTPUT fall-through.
+      mockRunAudit.mockResolvedValue({
+        text: JSON.stringify({
+          suggestions: [
+            {
+              category: 'underdeveloped',
+              title: 'A perfectly normal title',
+              body: 'A perfectly normal body — the only thing wrong here is the extra gap_key field below.',
+              referenced_entry_ids: [VALID_ENTRY_ID],
+              confidence: 'low',
+              // The smuggled field — must cause strict-parse rejection.
+              gap_key: 'v1:smuggled-from-llm',
+            },
+          ],
+        }),
+        toolUse: [],
+        usage: {
+          inputTokens: 100,
+          outputTokens: 50,
+          cacheCreationInputTokens: 0,
+          cacheReadInputTokens: 0,
+        },
+        costUsd: 0.001,
+      });
+
+      const updateCalls: DbUpdateCall[] = [];
+      const { dbStub } = makeDbStub({ updateCalls });
+
+      await runAudit(RUN_ID, {
+        db: dbStub as unknown as typeof import('../src/db/client.js').db,
+        getDecryptedKey: mockGetDecryptedKey,
+        runCheapFinds: mockRunCheapFinds,
+        buildStructuralDigest: mockBuildStructuralDigest,
+        validateReferencedEntryIds: mockValidateReferencedEntryIds,
+        computeGapKey: mockComputeGapKey,
+        getEntryBody: mockGetEntryBody,
+      });
+
+      // Engine should have called the provider exactly once and then failed
+      // on parse — no second turn, no persistence.
+      expect(mockRunAudit.mock.calls.length).toBe(1);
+
+      const failUpdate = updateCalls.find(
+        (c) => c.set.status === 'failed' && c.set.error === ENGINE_ERROR.INVALID_OUTPUT,
+      );
+      expect(failUpdate).toBeDefined();
+    },
+  );
+
+  // =========================================================================
   // Test 6: Hallucinated referenced_entry_id + counter increment (MANDATORY)
   // =========================================================================
   it(
