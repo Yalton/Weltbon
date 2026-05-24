@@ -519,6 +519,43 @@ describe('AnthropicProvider (PROVIDER-02 + PROVIDER-05 + PROVIDER-07)', () => {
     }
   });
 
+  it("runAudit throws UnknownProviderError when response.stop_reason === 'max_tokens' (truncation guard — Test E)", async () => {
+    // Below MIN_CACHEABLE_TOKENS to skip the cache branch — keeps the test focused
+    // on the truncation guard, not on cache_control logic.
+    mockCountTokens.mockResolvedValueOnce({ input_tokens: 50 });
+    mockCreate.mockResolvedValueOnce({
+      id: 'msg_trunc',
+      role: 'assistant',
+      content: [],
+      stop_reason: 'max_tokens',
+      usage: {
+        input_tokens: 50,
+        output_tokens: 4096,
+        cache_creation_input_tokens: 0,
+        cache_read_input_tokens: 0,
+      },
+    });
+    const { getProvider, LLMProviderError, LLMError } = await import(
+      '../src/providers/llm/index.js'
+    );
+    try {
+      await getProvider('anthropic').runAudit({
+        apiKey: 'k',
+        messages: [{ role: 'user', content: 'q' }],
+        model: 'claude-haiku-4-5',
+      });
+      expect.fail('should have thrown — truncated response must not return as success');
+    } catch (err) {
+      expect(err).toBeInstanceOf(LLMProviderError);
+      expect((err as InstanceType<typeof LLMProviderError>).variant).toBe(
+        LLMError.UnknownProviderError,
+      );
+      expect((err as InstanceType<typeof LLMProviderError>).message).toMatch(
+        /truncated|max_tokens/i,
+      );
+    }
+  });
+
   // -----------------------------------------------------------------------
   // listModels() + pricing()
   // -----------------------------------------------------------------------
