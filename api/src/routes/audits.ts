@@ -266,7 +266,11 @@ export const auditRoutes = new OpenAPIHono<AppEnv>()
         .returning({ id: auditRuns.id });
       runId = id;
     } catch (e: unknown) {
-      // Race condition: PG 23505 partial-unique-index fallback (T-24-05-07)
+      // BL-01 (Phase 24-07): Race-condition fallback. PG 23505 unique_violation fires when two
+      // concurrent POSTs both pass the pre-check SELECT and both attempt INSERT. The partial
+      // unique index audit_runs_universe_active_unique (drizzle/0009_phase24_audit_runs_concurrent_unique.sql)
+      // is what makes this branch live: without it, both INSERTs would succeed and AUDIT-10's
+      // "a parallel-audit attempt returns HTTP 409" guarantee would be violated.
       const code = (e as { code?: string } | null)?.code;
       if (code === '23505') {
         return c.json({ error: 'An audit is already in progress for this universe' }, 409);

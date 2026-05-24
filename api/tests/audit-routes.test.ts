@@ -76,7 +76,7 @@ vi.mock('../src/services/llm-key.js', async (orig) => {
   };
 });
 
-import { eq } from 'drizzle-orm';
+import { eq, and, inArray } from 'drizzle-orm';
 import { createTestDb, cleanDb, createTestUser, authHeader, type TestDbHandle } from './helpers.js';
 import { issueAccessToken } from '../src/services/auth.js';
 import { setTestDb } from '../src/db/client.js';
@@ -202,7 +202,7 @@ describe('audit routes (AUDIT-10, AUDIT-11, AUDIT-03)', () => {
 
   // --- POST /audit: 409 concurrent attempt ----------------------------------
 
-  it('POST /audit returns 409 on concurrent attempt (T-24-05-07)', async () => {
+  it('POST /audit returns 409 on sequential second attempt (pre-check SELECT branch)', async () => {
     const { hdrs } = await userWithToken('audit-409@test.com');
     const universe = await createUniverse(hdrs);
     await enableAudit(universe.id, hdrs);
@@ -222,6 +222,50 @@ describe('audit routes (AUDIT-10, AUDIT-11, AUDIT-03)', () => {
     expect(second.status).toBe(409);
     const body = await json(second);
     expect(body.error).toMatch(/in progress/i);
+  });
+
+  it('POST /audit returns 409 when two requests race past the pre-check SELECT (partial-unique-index branch, BL-01)', async () => {
+    const { hdrs } = await userWithToken('audit-409-race@test.com');
+    const universe = await createUniverse(hdrs);
+    await enableAudit(universe.id, hdrs);
+
+    // Issue two POSTs truly concurrently (no await between them) so the JS event
+    // loop cannot serialize them — at least sometimes both will begin before
+    // either's pre-check SELECT can observe the other's INSERT, forcing the
+    // partial-unique-index (audit_runs_universe_active_unique) to raise 23505
+    // on the second INSERT, which the route's catch block converts to HTTP 409.
+    const [resA, resB] = await Promise.all([
+      req('POST', `/api/universes/${universe.id}/audit`, {
+        headers: hdrs,
+        body: { scope: 'universe' },
+      }),
+      req('POST', `/api/universes/${universe.id}/audit`, {
+        headers: hdrs,
+        body: { scope: 'universe' },
+      }),
+    ]);
+
+    const statuses = [resA.status, resB.status].sort();
+    expect(statuses).toEqual([202, 409]);
+
+    const errResponse = resA.status === 409 ? resA : resB;
+    const errBody = await json(errResponse);
+    expect(errBody.error).toMatch(/in progress/i);
+
+    // The DB-level invariant: exactly ONE active run was created. If the
+    // partial unique index is missing OR not applied to the live DB, the
+    // race window opens and TWO rows can be created — this assertion fails
+    // loudly in that case.
+    const activeRuns = await handle.db
+      .select({ id: auditRuns.id })
+      .from(auditRuns)
+      .where(
+        and(
+          eq(auditRuns.universeId, universe.id),
+          inArray(auditRuns.status, ['pending', 'running']),
+        ),
+      );
+    expect(activeRuns.length).toBe(1);
   });
 
   // --- POST /audit: 403 opt-in OFF (T-24-05-01) ----------------------------

@@ -1,4 +1,4 @@
-import { pgTable, uuid, text, timestamp, jsonb, boolean, integer, doublePrecision, primaryKey, unique, numeric } from 'drizzle-orm/pg-core';
+import { pgTable, uuid, text, timestamp, jsonb, boolean, integer, doublePrecision, primaryKey, unique, numeric, uniqueIndex } from 'drizzle-orm/pg-core';
 import { relations, sql } from 'drizzle-orm';
 
 /**
@@ -186,7 +186,16 @@ export const auditRuns = pgTable('audit_runs', {
   // AUDIT-09: engine increments on each suggestion dropped due to unknown referenced_entry_id.
   // Load-bearing observability column; Plan 04 atomically increments this on every drop.
   hallucinatedEntryReferenceCount: integer('hallucinated_entry_reference_count').default(0).notNull(),
-});
+}, (t) => ({
+  // BL-01: partial unique index closing the TOCTOU race window in routes/audits.ts
+  // between the pre-check SELECT and INSERT. Without this index, two concurrent POSTs
+  // for the same universe can both create pending rows. The 23505 catch at audits.ts:269
+  // depends on this index firing on race. The raw migration is the source of truth;
+  // this declaration keeps schema↔migration parity for future drizzle-kit generate runs.
+  universeActiveUnique: uniqueIndex('audit_runs_universe_active_unique')
+    .on(t.universeId)
+    .where(sql`status IN ('pending', 'running')`),
+}));
 
 export const issues = pgTable('issues', {
   id:          uuid('id').primaryKey().defaultRandom(),
