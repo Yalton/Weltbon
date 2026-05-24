@@ -291,17 +291,51 @@ export class AnthropicProvider implements LLMProvider {
   /**
    * Pre-call token estimate via the SDK's free `messages.countTokens` endpoint.
    * Returns the integer `input_tokens` count from the SDK response.
+   *
+   * System-extraction (T-23-07-01 / T-23-07-02 defense-in-depth):
+   *   - If `opts.system` is provided, it is forwarded to `countTokens` as the
+   *     top-level `system` parameter so the count INCLUDES the system text.
+   *   - As a defensive measure, any leading role:'system' message in
+   *     `opts.messages` is also stripped before the SDK call — this prevents
+   *     SDK 400s even if a caller incorrectly passes a system message inside
+   *     the messages array. When both are provided, `opts.system` takes
+   *     precedence (T-23-07-02: prefer opts.system, strip the inline system).
+   * The cast `as MessageParam[]` that was previously here is removed: after
+   * stripping role:'system', the remaining messages carry only roles in the
+   * MessageParam union ('user' | 'assistant' | 'tool'), so no cast is needed.
    */
   async estimate(opts: {
     apiKey: string;
     messages: RunAuditOpts['messages'];
     model?: string;
+    system?: string;
   }): Promise<number> {
     const client = new Anthropic({ apiKey: opts.apiKey });
+
+    // Strip any leading role:'system' entry from opts.messages so the messages[]
+    // array passed to countTokens never contains system-role entries.
+    const firstMsg = opts.messages[0];
+    const hasLeadingSystem = firstMsg?.role === 'system';
+    // Build a properly-typed MessageParam[] without casting — roles 'user',
+    // 'assistant', and 'tool' are all assignable to MessageParam; we simply
+    // exclude the 'system' role via the type guard in the filter predicate.
+    const nonSystemMessages = (hasLeadingSystem ? opts.messages.slice(1) : opts.messages)
+      .filter((m): m is Exclude<typeof m, { role: 'system' }> => m.role !== 'system');
+    const conversationMessages: MessageParam[] = nonSystemMessages.map((m) => ({
+      role: m.role as MessageParam['role'],
+      content: m.content,
+    }));
+
+    // Prefer opts.system when provided; fall back to the extracted leading-
+    // system content; undefined when neither is present.
+    const effectiveSystem: string | undefined =
+      opts.system ?? (hasLeadingSystem ? firstMsg!.content : undefined);
+
     try {
       const res = await client.messages.countTokens({
         model: opts.model ?? defaultModel,
-        messages: opts.messages as MessageParam[],
+        messages: conversationMessages,
+        ...(effectiveSystem !== undefined ? { system: effectiveSystem } : {}),
       });
       return res.input_tokens;
     } catch (err) {
@@ -339,38 +373,50 @@ export class AnthropicProvider implements LLMProvider {
       );
     }
 
-    // Determine cache eligibility based on the full prompt token count. The
-    // estimate() call is itself free (countTokens). Pitfall #3: applying
-    // cache_control below the threshold is silently no-op'd by Anthropic.
-    const promptTokens = await this.estimate({
-      apiKey: opts.apiKey,
-      messages: opts.messages,
-      model,
-    });
-    const useCache = promptTokens >= MIN_CACHEABLE_TOKENS;
-
-    // Wire-adapter discipline (D-01): the engine drives system content. We
-    // only relocate `messages[0]` into `system` when its role IS 'system';
-    // otherwise we pass messages unchanged with no system field. The
-    // cache_control breakpoint is applied only when both conditions hold:
-    // (1) a system block is present AND (2) the prompt is cache-eligible.
+    // Wire-adapter discipline (D-01): extract system BEFORE calling estimate so
+    // both the token count and the messages.create call receive the correct shapes.
+    // The engine drives system content; we only relocate `messages[0]` into the
+    // dedicated `system` parameter when its role IS 'system'; otherwise we pass
+    // messages unchanged with no system field.
     const first = opts.messages[0];
     const hasLeadingSystem = first?.role === 'system';
 
     type SystemBlock = { type: 'text'; text: string; cache_control?: { type: 'ephemeral' } };
-    let systemParam: SystemBlock[] | undefined;
     let conversationMessages: RunAuditOpts['messages'];
+    let extractedSystemText: string | undefined;
 
     if (hasLeadingSystem) {
-      const block: SystemBlock = { type: 'text', text: first.content };
+      extractedSystemText = first.content;
+      conversationMessages = opts.messages.slice(1);
+    } else {
+      extractedSystemText = undefined;
+      conversationMessages = opts.messages;
+    }
+
+    // Determine cache eligibility based on the full prompt token count (including
+    // system text). The estimate() call is itself free (countTokens).
+    // Pitfall #3: applying cache_control below the threshold is silently no-op'd
+    // by Anthropic. System is now passed via the new system-aware estimate shape
+    // so countTokens includes the system contribution in the count.
+    const promptTokens = await this.estimate({
+      apiKey: opts.apiKey,
+      messages: conversationMessages,
+      model,
+      ...(extractedSystemText !== undefined ? { system: extractedSystemText } : {}),
+    });
+    const useCache = promptTokens >= MIN_CACHEABLE_TOKENS;
+
+    // Build the systemParam for messages.create — cache_control applied only
+    // when the cache-eligibility gate passes.
+    let systemParam: SystemBlock[] | undefined;
+    if (hasLeadingSystem && extractedSystemText !== undefined) {
+      const block: SystemBlock = { type: 'text', text: extractedSystemText };
       if (useCache) {
         block.cache_control = { type: 'ephemeral' };
       }
       systemParam = [block];
-      conversationMessages = opts.messages.slice(1);
     } else {
       systemParam = undefined;
-      conversationMessages = opts.messages;
     }
 
     const client = new Anthropic({ apiKey: opts.apiKey });
