@@ -147,17 +147,6 @@ function recordCacheHitRatio(runId: string, ratio: number): void {
 }
 
 // ---------------------------------------------------------------------------
-// Helper: mark run as failed with a taxonomy error tag
-// ---------------------------------------------------------------------------
-
-async function markFailed(runId: string, errorTag: EngineErrorTag): Promise<void> {
-  await db()
-    .update(auditRuns)
-    .set({ status: 'failed', error: errorTag, finishedAt: new Date() })
-    .where(eq(auditRuns.id, runId));
-}
-
-// ---------------------------------------------------------------------------
 // Dependency injection interface (for unit testing)
 // ---------------------------------------------------------------------------
 
@@ -209,6 +198,14 @@ export async function runAudit(runId: string, deps?: AuditEngineDeps): Promise<v
   const _getEntryBody = deps?.getEntryBody ?? getEntryBody;
   const _validateReferencedEntryIds = deps?.validateReferencedEntryIds ?? validateReferencedEntryIds;
   const _computeGapKey = deps?.computeGapKey ?? computeGapKey;
+
+  // Local helper that uses the injected _db (important for unit test isolation)
+  async function markFailed(failRunId: string, errorTag: EngineErrorTag): Promise<void> {
+    await _db()
+      .update(auditRuns)
+      .set({ status: 'failed', error: errorTag, finishedAt: new Date() })
+      .where(eq(auditRuns.id, failRunId));
+  }
 
   // Load config (merge injected overrides for test cap tuning)
   const cfg = env();
