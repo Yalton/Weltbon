@@ -402,14 +402,29 @@ export class OpenAIProvider implements LLMProvider {
    * estimation is fully local with zero network I/O (PROVIDER-07). We still
    * accept the argument to satisfy the `LLMProvider` interface signature so
    * callers can pass the same opts they pass to `runAudit`.
+   *
+   * When `opts.system` is provided, it is counted as one additional message
+   * with the standard per-message overhead (4 tokens for role + delimiters) —
+   * keeps the local count comparable to what Anthropic's countTokens would
+   * return for the same logical input. The `apiKey` argument remains unused;
+   * the estimation stays fully local with zero network I/O (PROVIDER-07).
+   *
+   * Approach: prepend a synthetic { role: 'system', content: opts.system }
+   * message to the array passed to estimateTokensLocal. This applies the same
+   * 4-token per-message overhead automatically without modifying the helper.
    */
   async estimate(opts: {
     apiKey: string;
     messages: RunAuditOpts['messages'];
     model?: string;
+    system?: string;
   }): Promise<number> {
     // Local computation — no network calls, no SDK client construction.
-    return Promise.resolve(estimateTokensLocal(opts.messages));
+    const messages: Array<{ role: string; content: string }> =
+      opts.system !== undefined
+        ? [{ role: 'system', content: opts.system }, ...opts.messages]
+        : [...opts.messages];
+    return Promise.resolve(estimateTokensLocal(messages));
   }
 
   /**

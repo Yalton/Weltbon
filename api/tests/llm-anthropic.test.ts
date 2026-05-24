@@ -331,6 +331,22 @@ describe('AnthropicProvider (PROVIDER-02 + PROVIDER-05 + PROVIDER-07)', () => {
     expect(result).toBe(1234);
   });
 
+  it('estimate with new system-aware shape forwards system to countTokens top-level param (Test B)', async () => {
+    mockCountTokens.mockResolvedValueOnce({ input_tokens: 200 });
+    const { getProvider } = await import('../src/providers/llm/index.js');
+    const result = await getProvider('anthropic').estimate({
+      apiKey: 'k',
+      messages: [{ role: 'user', content: 'q' }],
+      system: 'top-level system text',
+    });
+    // system must be forwarded as top-level parameter to countTokens
+    expect(mockCountTokens.mock.calls[0]?.[0]?.system).toBe('top-level system text');
+    // role:'system' must NOT appear inside the messages[] array
+    const msgsArg = mockCountTokens.mock.calls[0]?.[0]?.messages as Array<{ role: string }>;
+    expect(msgsArg.every((m) => m.role !== 'system')).toBe(true);
+    expect(result).toBe(200);
+  });
+
   // -----------------------------------------------------------------------
   // runAudit() — wire-shape, cache gating (positive + negative), refusal
   // -----------------------------------------------------------------------
@@ -361,6 +377,32 @@ describe('AnthropicProvider (PROVIDER-02 + PROVIDER-05 + PROVIDER-07)', () => {
     expect(result.costUsd).toBeCloseTo((100 * 1.0 + 50 * 5.0) / 1_000_000, 10);
   });
 
+  it('runAudit with leading system message extracts system before countTokens (Test A — cache-ineligible)', async () => {
+    // 100 tokens < MIN_CACHEABLE_TOKENS (4096) — cache branch does not apply.
+    mockCountTokens.mockResolvedValueOnce({ input_tokens: 100 });
+    mockCreate.mockResolvedValueOnce(HAPPY_PATH_RESPONSE);
+
+    const { getProvider } = await import('../src/providers/llm/index.js');
+    const result = await getProvider('anthropic').runAudit({
+      apiKey: 'k',
+      messages: [
+        { role: 'system', content: 'SYSTEM_TEXT' },
+        { role: 'user', content: 'q' },
+      ],
+      model: 'claude-haiku-4-5',
+    });
+
+    // countTokens must receive system as top-level parameter
+    expect(mockCountTokens.mock.calls[0]?.[0]?.system).toBe('SYSTEM_TEXT');
+    // role:'system' must NOT appear inside the messages[] array to countTokens
+    const countTokensMsgs = mockCountTokens.mock.calls[0]?.[0]?.messages as Array<{ role: string }>;
+    expect(countTokensMsgs.every((m) => m.role !== 'system')).toBe(true);
+    expect(countTokensMsgs).toEqual([{ role: 'user', content: 'q' }]);
+    // runAudit must complete and return canonical RunAuditResult
+    expect(result.toolUse).toHaveLength(1);
+    expect(result.toolUse[0]?.name).toBe('emit_findings');
+  });
+
   it('runAudit applies cache_control when estimate >= MIN_CACHEABLE_TOKENS AND first message is system', async () => {
     // 5000 tokens >= MIN_CACHEABLE_TOKENS (4096) — cache breakpoint should apply.
     mockCountTokens.mockResolvedValueOnce({ input_tokens: 5000 });
@@ -387,6 +429,36 @@ describe('AnthropicProvider (PROVIDER-02 + PROVIDER-05 + PROVIDER-07)', () => {
     ]);
     // System message stripped from the messages array.
     expect(createArgs.messages).toEqual([{ role: 'user', content: 'q' }]);
+  });
+
+  it('runAudit with leading system message: countTokens receives system top-level AND cache_control applied (Test C — cache-eligible)', async () => {
+    // 5000 tokens >= MIN_CACHEABLE_TOKENS — cache branch applies + system-extraction
+    mockCountTokens.mockResolvedValueOnce({ input_tokens: 5000 });
+    mockCreate.mockResolvedValueOnce(HAPPY_PATH_RESPONSE);
+
+    const { getProvider } = await import('../src/providers/llm/index.js');
+    const result = await getProvider('anthropic').runAudit({
+      apiKey: 'k',
+      messages: [
+        { role: 'system', content: 'long system' },
+        { role: 'user', content: 'q' },
+      ],
+      model: 'claude-haiku-4-5',
+    });
+
+    // countTokens must also receive system as top-level (not just messages.create)
+    expect(mockCountTokens.mock.calls[0]?.[0]?.system).toBe('long system');
+    // messages.create must receive system with cache_control (existing invariant)
+    const createArgs = mockCreate.mock.calls[0]?.[0];
+    expect(createArgs.system).toEqual([
+      expect.objectContaining({
+        type: 'text',
+        text: 'long system',
+        cache_control: { type: 'ephemeral' },
+      }),
+    ]);
+    // runAudit completes and returns canonical result
+    expect(result.toolUse).toHaveLength(1);
   });
 
   it('runAudit does NOT apply cache_control when estimate < MIN_CACHEABLE_TOKENS', async () => {
