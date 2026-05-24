@@ -23,6 +23,8 @@ import { defineConfig } from 'vitest/config';
 
 // Single source of truth for the DB-gated file list.
 const DB_GATED_TESTS = [
+  'tests/audit-recovery.test.ts',
+  'tests/audit-routes.test.ts',
   'tests/auth.test.ts',
   'tests/categories.test.ts',
   'tests/entries.test.ts',

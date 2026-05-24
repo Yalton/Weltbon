@@ -1,5 +1,5 @@
-import { pgTable, uuid, text, timestamp, jsonb, boolean, integer, doublePrecision, primaryKey, unique } from 'drizzle-orm/pg-core';
-import { relations } from 'drizzle-orm';
+import { pgTable, uuid, text, timestamp, jsonb, boolean, integer, doublePrecision, primaryKey, unique, numeric } from 'drizzle-orm/pg-core';
+import { relations, sql } from 'drizzle-orm';
 
 /**
  * Phase 20 D-01: per-universe horizontal timeline window persisted as JSONB
@@ -35,6 +35,11 @@ export const universes = pgTable('universes', {
   timelineWindow: jsonb('timeline_window').$type<TimelineWindow | null>(),
   createdAt:    timestamp('created_at').defaultNow().notNull(),
   updatedAt:    timestamp('updated_at').defaultNow().notNull(),
+  // Phase 24 AUDIT-03: per-universe LLM audit opt-in (default OFF).
+  // audit_provider and audit_model are nullable until the user enables auditing.
+  auditEnabled: boolean('audit_enabled').default(false).notNull(),
+  auditProvider: text('audit_provider'),
+  auditModel: text('audit_model'),
 });
 
 export const refreshTokens = pgTable('refresh_tokens', {
@@ -137,6 +142,52 @@ export const links = pgTable('links', {
   createdAt:     timestamp('created_at').defaultNow().notNull(),
 });
 
+/**
+ * Phase 24 AUDIT-01: Per-run audit telemetry table.
+ *
+ * Tracks every audit run to completion. Includes AUDIT-01 columns for
+ * observability (user_id, trigger_source, started_at, finished_at) plus
+ * engine-owned columns from CONTEXT D-11 (gap_key_collision_count),
+ * D-15 (consulted_entry_ids), and D-01 (partial_suggestions_persisted_at),
+ * and AUDIT-09 (hallucinated_entry_reference_count).
+ *
+ * Note: The (universe_id, gap_key) UNIQUE NULLS NOT DISTINCT constraint on
+ * the `issues` table lives in the raw SQL migration only — Drizzle TS has no
+ * nullsNotDistinct support on unique(). The DB enforces the constraint.
+ */
+export const auditRuns = pgTable('audit_runs', {
+  id: uuid('id').primaryKey().defaultRandom(),
+  universeId: uuid('universe_id').references(() => universes.id, { onDelete: 'cascade' }).notNull(),
+  userId: uuid('user_id').references(() => users.id, { onDelete: 'cascade' }).notNull(),
+  scope: text('scope').notNull(), // 'universe' | 'entry'
+  scopeEntryId: uuid('scope_entry_id').references(() => entries.id, { onDelete: 'set null' }),
+  provider: text('provider').notNull(),
+  model: text('model').notNull(),
+  status: text('status').default('pending').notNull(), // 'pending' | 'running' | 'succeeded' | 'failed'
+  promptTokens: integer('prompt_tokens').default(0).notNull(),
+  completionTokens: integer('completion_tokens').default(0).notNull(),
+  cachedTokens: integer('cached_tokens').default(0).notNull(),
+  toolCallCount: integer('tool_call_count').default(0).notNull(),
+  // AUDIT-01 day-one for SWEEP-04: cost_usd as NUMERIC(10,4) to support future per-user cap aggregation.
+  costUsd: numeric('cost_usd', { precision: 10, scale: 4 }).default('0').notNull(),
+  // AUDIT-01 day-one for SWEEP-01: trigger_source enables future background-sweep runs.
+  triggerSource: text('trigger_source').default('manual').notNull(),
+  // Engine taxonomy string only — never raw err.message (T-24-01-04 accepted risk).
+  error: text('error'),
+  startedAt: timestamp('started_at', { withTimezone: true }).defaultNow().notNull(),
+  finishedAt: timestamp('finished_at', { withTimezone: true }),
+  // CONTEXT D-11: observability counter for ON CONFLICT DO NOTHING collisions on (universe_id, gap_key).
+  gapKeyCollisionCount: integer('gap_key_collision_count').default(0).notNull(),
+  // CONTEXT D-15: all entry IDs the engine called getEntryBody on during this run.
+  // Per-run granularity (not per-suggestion); cheap-finds runs get an empty array (correct).
+  consultedEntryIds: uuid('consulted_entry_ids').array().default(sql`'{}'::uuid[]`).notNull(),
+  // CONTEXT D-01: set on first stream-persist within a run; null until then.
+  partialSuggestionsPersistedAt: timestamp('partial_suggestions_persisted_at', { withTimezone: true }),
+  // AUDIT-09: engine increments on each suggestion dropped due to unknown referenced_entry_id.
+  // Load-bearing observability column; Plan 04 atomically increments this on every drop.
+  hallucinatedEntryReferenceCount: integer('hallucinated_entry_reference_count').default(0).notNull(),
+});
+
 export const issues = pgTable('issues', {
   id:          uuid('id').primaryKey().defaultRandom(),
   universeId:  uuid('universe_id').references(() => universes.id, { onDelete: 'cascade' }).notNull(),
@@ -146,6 +197,18 @@ export const issues = pgTable('issues', {
   resolved:    boolean('resolved').default(false).notNull(),
   createdAt:   timestamp('created_at').defaultNow().notNull(),
   updatedAt:   timestamp('updated_at').defaultNow().notNull(),
+  // Phase 24 AUDIT-02: additive columns for AI-sourced issues.
+  // Existing creation paths remain byte-identical: source defaults to 'human',
+  // all other new columns are nullable, preserving the existing row shape for human inserts.
+  source: text('source').default('human').notNull(),
+  dismissedAt: timestamp('dismissed_at', { withTimezone: true }),
+  gapKey: text('gap_key'),
+  model: text('model'),
+  auditRunId: uuid('audit_run_id').references(() => auditRuns.id, { onDelete: 'set null' }),
+  dismissalSnapshot: jsonb('dismissal_snapshot'),
+  // Note: The (universe_id, gap_key) UNIQUE NULLS NOT DISTINCT index lives in
+  // the migration SQL only — Drizzle has no nullsNotDistinct on unique().
+  // That constraint is the load-bearing dedup mechanism for AUDIT-02.
 });
 
 export const issueEntries = pgTable('issue_entries', {

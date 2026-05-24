@@ -50,3 +50,36 @@ export interface AuditSuggestion {
   rationale: string;
   evidence: string;
 }
+
+/**
+ * Phase 24 D-02 lock-in + D-16 dismissal_snapshot shape.
+ *
+ * Engine-set fields populated during persistence. Phase 24 adds these fields
+ * on top of the Phase 23 `AuditSuggestion` stub when writing suggestions to
+ * the `issues` table. Phase 25 reads `dismissalSnapshot` to implement the
+ * re-surface rule (AISSUE-04).
+ *
+ * DO NOT modify `AuditSuggestion` above — the Phase 23 contract test depends
+ * on its exact shape.
+ */
+export interface PersistedAuditSuggestion extends AuditSuggestion {
+  /** Database row id from the `issues` table. */
+  id: string;
+  /** Stable dedup key. Format: 'v1:<hex16>' per CONTEXT D-12. Engine-computed, never LLM-emitted. */
+  gapKey: string;
+  /** Discriminant: always 'ai' for engine-persisted suggestions (vs 'human' for user-authored issues). */
+  source: 'ai';
+  /** Provider model id (e.g. 'claude-haiku-4-5') or 'heuristic' for cheap-finds (CONTEXT D-05). */
+  model: string;
+  /** FK to `audit_runs.id` — the run that produced this suggestion. */
+  auditRunId: string;
+  /**
+   * D-16: Written by Phase 25 at dismissal click time (NOT by the engine).
+   * null until the user dismisses; thereafter { snapshotAt, entries[] } for AISSUE-04.
+   * Shape: { snapshotAt: iso8601, entries: [{ id: uuid, updatedAt: iso8601 }, ...] }
+   */
+  dismissalSnapshot: null | {
+    snapshotAt: string;
+    entries: Array<{ id: string; updatedAt: string }>;
+  };
+}
