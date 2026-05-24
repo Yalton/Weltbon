@@ -350,6 +350,30 @@ describe('OpenAIProvider (PROVIDER-03 + PROVIDER-05 + PROVIDER-07)', () => {
     expect(mockChatCompletionsParse).not.toHaveBeenCalled();
   });
 
+  it('estimate with system-aware shape includes system contribution in count (Test D — PROVIDER-07 preserved)', async () => {
+    const { getProvider } = await import('../src/providers/llm/index.js');
+    const messages = [{ role: 'user' as const, content: 'short' }];
+    const systemText = 'a much longer system prompt that adds many tokens to the local count';
+
+    // Baseline: estimate without system
+    const baseCount = await getProvider('openai').estimate({
+      apiKey: 'k',
+      messages,
+    });
+
+    // System-aware: estimate with system should be strictly greater
+    const systemCount = await getProvider('openai').estimate({
+      apiKey: 'k',
+      messages,
+      system: systemText,
+    });
+
+    expect(systemCount).toBeGreaterThan(baseCount);
+    // Zero-network-call invariant preserved (PROVIDER-07)
+    expect(mockModelsList).not.toHaveBeenCalled();
+    expect(mockChatCompletionsParse).not.toHaveBeenCalled();
+  });
+
   // -----------------------------------------------------------------------
   // ZOD V4 COMPATIBILITY SMOKE CHECK (Pitfall #5)
   // -----------------------------------------------------------------------
