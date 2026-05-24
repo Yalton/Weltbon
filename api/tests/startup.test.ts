@@ -110,4 +110,49 @@ describe('startup config guard (OPS-04 / AUTH-05a / AUTH-05b)', () => {
       } as NodeJS.ProcessEnv)
     ).not.toThrow();
   });
+
+  // Phase 24 AUDIT hard cap env var validation (T-24-01-03)
+  const validEnv = {
+    JWT_SECRET: 'a'.repeat(32),
+    DATABASE_URL: 'postgresql://localhost/x',
+  } as NodeJS.ProcessEnv;
+
+  it('throws when AUDIT_MAX_TOOL_CALLS is NaN (T-24-01-03)', () => {
+    expect(() =>
+      loadEnv({ ...validEnv, AUDIT_MAX_TOOL_CALLS: 'NaN' } as NodeJS.ProcessEnv)
+    ).toThrow(/AUDIT_MAX_TOOL_CALLS must be a positive number/);
+  });
+
+  it('throws when AUDIT_MAX_WALL_CLOCK_MS is NaN (T-24-01-03)', () => {
+    expect(() =>
+      loadEnv({ ...validEnv, AUDIT_MAX_WALL_CLOCK_MS: 'NaN' } as NodeJS.ProcessEnv)
+    ).toThrow(/AUDIT_MAX_WALL_CLOCK_MS must be a positive number/);
+  });
+
+  it('throws when AUDIT_MAX_COST_USD is NaN (T-24-01-03)', () => {
+    expect(() =>
+      loadEnv({ ...validEnv, AUDIT_MAX_COST_USD: 'NaN' } as NodeJS.ProcessEnv)
+    ).toThrow(/AUDIT_MAX_COST_USD must be a positive number/);
+  });
+
+  it('throws when AUDIT_MAX_TOKENS_TOTAL is NaN (T-24-01-03)', () => {
+    expect(() =>
+      loadEnv({ ...validEnv, AUDIT_MAX_TOKENS_TOTAL: 'NaN' } as NodeJS.ProcessEnv)
+    ).toThrow(/AUDIT_MAX_TOKENS_TOTAL must be a positive number/);
+  });
+
+  it('throws when AUDIT_SHUTDOWN_GRACE_MS is NaN (T-24-01-03)', () => {
+    expect(() =>
+      loadEnv({ ...validEnv, AUDIT_SHUTDOWN_GRACE_MS: 'NaN' } as NodeJS.ProcessEnv)
+    ).toThrow(/AUDIT_SHUTDOWN_GRACE_MS must be a positive number/);
+  });
+
+  it('returns documented AUDIT_* defaults when env vars are unset (T-24-01-03)', () => {
+    const result = loadEnv(validEnv);
+    expect(result.auditMaxToolCalls).toBe(20);
+    expect(result.auditMaxWallClockMs).toBe(120_000);
+    expect(result.auditMaxCostUsd).toBe(1.00);
+    expect(result.auditMaxTokensTotal).toBe(200_000);
+    expect(result.auditShutdownGraceMs).toBe(15_000);
+  });
 });

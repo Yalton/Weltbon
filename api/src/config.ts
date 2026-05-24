@@ -6,6 +6,12 @@ export interface Env {
   publicOrigin: string | undefined;
   port: number;
   llmKeyEncryptionKey: string | undefined;
+  // Phase 24 AUDIT hard caps (T-24-01-03: validated at boot, defaults applied when unset).
+  auditMaxToolCalls: number;     // AUDIT_MAX_TOOL_CALLS, default 20
+  auditMaxWallClockMs: number;   // AUDIT_MAX_WALL_CLOCK_MS, default 120_000
+  auditMaxCostUsd: number;       // AUDIT_MAX_COST_USD, default 1.00
+  auditMaxTokensTotal: number;   // AUDIT_MAX_TOKENS_TOTAL, default 200_000
+  auditShutdownGraceMs: number;  // AUDIT_SHUTDOWN_GRACE_MS, default 15_000
 }
 
 export function loadEnv(source: NodeJS.ProcessEnv = process.env): Env {
@@ -57,6 +63,29 @@ export function loadEnv(source: NodeJS.ProcessEnv = process.env): Env {
     );
   }
 
+  // Phase 24 AUDIT hard caps (T-24-01-03: validate at boot; defaults supplied for safe fallback).
+  // Mirror the `port: Number(source.PORT ?? 3000)` pattern: Number() coercion + NaN/non-positive guard.
+  const auditMaxToolCalls = Number(source.AUDIT_MAX_TOOL_CALLS ?? 20);
+  if (Number.isNaN(auditMaxToolCalls) || auditMaxToolCalls <= 0) {
+    throw new Error('AUDIT_MAX_TOOL_CALLS must be a positive number');
+  }
+  const auditMaxWallClockMs = Number(source.AUDIT_MAX_WALL_CLOCK_MS ?? 120_000);
+  if (Number.isNaN(auditMaxWallClockMs) || auditMaxWallClockMs <= 0) {
+    throw new Error('AUDIT_MAX_WALL_CLOCK_MS must be a positive number');
+  }
+  const auditMaxCostUsd = Number(source.AUDIT_MAX_COST_USD ?? 1.00);
+  if (Number.isNaN(auditMaxCostUsd) || auditMaxCostUsd <= 0) {
+    throw new Error('AUDIT_MAX_COST_USD must be a positive number');
+  }
+  const auditMaxTokensTotal = Number(source.AUDIT_MAX_TOKENS_TOTAL ?? 200_000);
+  if (Number.isNaN(auditMaxTokensTotal) || auditMaxTokensTotal <= 0) {
+    throw new Error('AUDIT_MAX_TOKENS_TOTAL must be a positive number');
+  }
+  const auditShutdownGraceMs = Number(source.AUDIT_SHUTDOWN_GRACE_MS ?? 15_000);
+  if (Number.isNaN(auditShutdownGraceMs) || auditShutdownGraceMs <= 0) {
+    throw new Error('AUDIT_SHUTDOWN_GRACE_MS must be a positive number');
+  }
+
   return {
     jwtSecret: new TextEncoder().encode(jwt),
     databaseUrl: db,
@@ -64,6 +93,11 @@ export function loadEnv(source: NodeJS.ProcessEnv = process.env): Env {
     publicOrigin,
     port: Number(source.PORT ?? 3000),
     llmKeyEncryptionKey,
+    auditMaxToolCalls,
+    auditMaxWallClockMs,
+    auditMaxCostUsd,
+    auditMaxTokensTotal,
+    auditShutdownGraceMs,
   };
 }
 
