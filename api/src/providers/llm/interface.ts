@@ -246,11 +246,18 @@ export interface LLMProvider {
    * Returns an integer estimate of the input token count. Phase 24 / Phase 26
    * multiply this by `PRICING[provider][model].inputUsdPer1M / 1_000_000` for
    * the pre-run cost-range UI.
+   *
+   * When the caller has a system prompt, it MUST be passed via the optional
+   * `system` field rather than as a role:'system' entry inside `messages` —
+   * providers requiring a top-level system parameter (Anthropic) rely on this
+   * separation to avoid SDK 400s, and providers that accept inline system
+   * (OpenAI) treat it as additive to the token count.
    */
   estimate(opts: {
     apiKey: string;
     messages: RunAuditOpts['messages'];
     model?: string;
+    system?: string;
   }): Promise<number>;
 
   /**
