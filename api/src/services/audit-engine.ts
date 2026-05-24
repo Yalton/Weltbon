@@ -72,6 +72,7 @@ import { getEntryBody, validateReferencedEntryIds } from './audit-tools.js';
 import { computeGapKey } from './gap-key.js';
 import { AuditOutputSchema, AuditSuggestionStrictSchema } from './audit-schema.js';
 import { env } from '../config.js';
+import { trackRun, releaseRun } from './audit-shutdown.js';
 
 // ---------------------------------------------------------------------------
 // Engine error taxonomy (T-24-04-09: only these strings write to audit_runs.error)
@@ -226,6 +227,12 @@ export async function runAudit(runId: string, deps?: AuditEngineDeps): Promise<v
     .update(auditRuns)
     .set({ status: 'running' })
     .where(eq(auditRuns.id, runId));
+
+  // Register this run in the in-flight Set immediately after status='running'.
+  // releaseRun is called in the finally block below at every terminal exit path.
+  trackRun(runId);
+
+  try {
 
   const runRows = await _db()
     .select({
@@ -646,5 +653,13 @@ When done, return your findings as JSON: { "suggestions": [...] }`;
       .where(eq(auditRuns.id, runId));
 
     return;
+  }
+
+  } finally {
+    // Release the in-flight Set entry at every terminal exit path:
+    // succeeded, budget_exhausted, provider_error, invalid_output, unknown, or re-throw.
+    // Any run still in-flight at SIGTERM expiry becomes a process_restarted orphan
+    // on next boot via recoverOrphanAuditRuns (AUDIT-12).
+    releaseRun(runId);
   }
 }

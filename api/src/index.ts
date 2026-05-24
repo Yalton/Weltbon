@@ -20,6 +20,8 @@ import { importRoutes } from './routes/import.js';
 import { ingestRoutes } from './routes/ingest.js';
 import { timelinePinRoutes, timelineListRoutes } from './routes/timeline.js';
 import { auditRoutes } from './routes/audits.js';
+import { recoverOrphanAuditRuns } from './services/audit-recovery.js';
+import { wireSigtermDrain } from './services/audit-shutdown.js';
 import { requireAuth } from './middleware/auth.js';
 import { forwarded } from './middleware/forwarded.js';
 import { db } from './db/client.js';
@@ -181,6 +183,16 @@ if (import.meta.url === `file://${process.argv[1]}`) {
   }
   await seedInviteCode(db());
   await assertLlmKeyEncryptionKey({ db: db(), cfg });
-  serve({ fetch: app.fetch, port: cfg.port });
+  // AUDIT-12: force-fail any pending|running orphan runs from a previous process.
+  // Runs BEFORE serve() so no inbound HTTP can race the UPDATE (T-24-06-04).
+  // Failure logs a warning but does NOT crash the API (T-24-06-05).
+  try {
+    await recoverOrphanAuditRuns(db());
+  } catch (err) {
+    console.warn('[audit-recovery] failed at boot; orphan rows may persist:', err);
+  }
+  const server = serve({ fetch: app.fetch, port: cfg.port });
+  // D-04: register SIGTERM handler after serve() so the handler has the server reference.
+  wireSigtermDrain(server, cfg.auditShutdownGraceMs);
   console.log(`Weltbon API listening on :${cfg.port}`);
 }
