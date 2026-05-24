@@ -12,14 +12,22 @@
  *     controlled Drizzle-shaped query builder per test.
  *   - No real DB required — this is the unit lane.
  *
+ * DB call order in runCheapFinds for a 1-orphan scenario:
+ *   Call #1: db().select(...) → findOrphanEntries          → returns [orphan]
+ *   Call #2: db().insert(...) → persistFinding: INSERT issues → returns [{ id }]
+ *   Call #3: db().insert(...) → persistFinding: INSERT issueEntries → returns []
+ *   Call #4: db().select(...) → findEmptySummaryEntries    → returns []
+ *   Call #5: db().select(...) → findEmptyMetaValueEntries  → returns []
+ *   Call #6: db().select(...) → findClusterEligibleEntries: untagged → returns []
+ *   Call #7: db().select(...) → findClusterEligibleEntries: tagged   → returns []
+ *
  * Zero-token-cost invariant:
  *   - Negative grep asserts cheap-finds.ts imports NO LLM SDKs.
  *
  * D-08 enforcement:
- *   - Negative grep asserts cheap-finds.ts has NO dismissed_at / dismissedAt /
- *     UPDATE issues SET patterns.
- *   - Behavioral test asserts that a previously-orphan-flagged entry whose link
- *     was since added does NOT have its dismissed_at mutated by a re-run.
+ *   - Negative grep asserts cheap-finds.ts has NO auto-close patterns.
+ *   - Behavioral test asserts that a formerly-orphan entry now having a link
+ *     does NOT cause dismissed_at to be mutated on a re-run.
  */
 
 import { describe, it, expect, vi, beforeEach } from 'vitest';
@@ -39,11 +47,12 @@ vi.hoisted(() => {
 // ---------------------------------------------------------------------------
 //
 // We need to intercept calls like:
-//   db().select(...).from(...).where(...)
-//   db().insert(...).values(...).onConflictDoNothing().returning(...)
-//   db().update(...).set(...).where(...)
+//   db().select(...).from(...).where(...)                                → SELECT
+//   db().insert(...).values(...).onConflictDoNothing().returning(...)   → INSERT
+//   db().update(...).set(...).where(...)                                → UPDATE
 //
-// Strategy: capture a `mockDbFn` that we re-implement per test scenario.
+// Each call to db() must return the right type of chain based on order.
+// Use mockReturnValueOnce sequenced in the order the implementation calls db().
 
 const { mockDbFn } = vi.hoisted(() => {
   const mockDbFn = vi.fn();
@@ -55,35 +64,63 @@ vi.mock('../src/db/client.js', () => ({
 }));
 
 // ---------------------------------------------------------------------------
-// Helpers: build a chainable query mock that resolves to `rows`
+// Chain builders
 // ---------------------------------------------------------------------------
 
-function buildSelectMock(rows: unknown[]) {
-  const chain: Record<string, unknown> = {};
-  const methods = ['select', 'from', 'where', 'leftJoin', 'innerJoin', 'limit', 'groupBy', 'orderBy'];
-  for (const m of methods) {
-    chain[m] = vi.fn(() => chain);
+/**
+ * A SELECT chain: db().select(...).from(...).where(...) → resolves to rows.
+ * The chain makes every method return itself (chainable), and `then` is
+ * defined so `await chain` resolves to `rows`.
+ */
+function selectChain(rows: unknown[]) {
+  const c: Record<string, unknown> = {};
+  for (const m of ['select', 'from', 'where', 'leftJoin', 'innerJoin', 'limit', 'groupBy', 'orderBy']) {
+    c[m] = vi.fn(() => c);
   }
-  // Make it thenable — resolves when awaited
-  chain.then = (resolve: (v: unknown) => unknown) => Promise.resolve(rows).then(resolve);
-  return chain;
+  // Thenable — resolves the awaited chain
+  c.then = (onFulfilled: (v: unknown) => unknown) => Promise.resolve(rows).then(onFulfilled);
+  return c;
 }
 
-function buildInsertMock(returningRows: unknown[]) {
-  const chain: Record<string, unknown> = {};
-  chain.insert = vi.fn(() => chain);
-  chain.values = vi.fn(() => chain);
-  chain.onConflictDoNothing = vi.fn(() => chain);
-  chain.returning = vi.fn(() => Promise.resolve(returningRows));
-  return chain;
+/**
+ * An INSERT chain: db().insert(...).values(...).onConflictDoNothing().returning(...) → resolves to returningRows.
+ * The outer object has `insert` which returns the inner chain.
+ */
+function insertChain(returningRows: unknown[]) {
+  const inner: Record<string, unknown> = {};
+  inner.values = vi.fn(() => inner);
+  inner.onConflictDoNothing = vi.fn(() => inner);
+  inner.returning = vi.fn(() => Promise.resolve(returningRows));
+  return { insert: vi.fn(() => inner) };
 }
 
-function buildUpdateMock() {
-  const chain: Record<string, unknown> = {};
-  chain.update = vi.fn(() => chain);
-  chain.set = vi.fn(() => chain);
-  chain.where = vi.fn(() => Promise.resolve([]));
-  return chain;
+/**
+ * An INSERT chain that captures the values passed to .values() for assertion.
+ */
+function insertChainCapture(returningRows: unknown[]): {
+  outer: Record<string, unknown>;
+  getCapturedValues: () => Record<string, unknown> | undefined;
+} {
+  let capturedValues: Record<string, unknown> | undefined;
+  const inner: Record<string, unknown> = {};
+  inner.values = vi.fn((vals: Record<string, unknown>) => {
+    capturedValues = vals;
+    return inner;
+  });
+  inner.onConflictDoNothing = vi.fn(() => inner);
+  inner.returning = vi.fn(() => Promise.resolve(returningRows));
+  const outer = { insert: vi.fn(() => inner) };
+  return { outer, getCapturedValues: () => capturedValues };
+}
+
+/**
+ * An UPDATE chain: db().update(...).set(...).where(...) → resolves to [].
+ */
+function updateChain() {
+  const inner: Record<string, unknown> = {};
+  inner.set = vi.fn(() => inner);
+  inner.where = vi.fn(() => Promise.resolve([]));
+  return { update: vi.fn(() => inner) };
 }
 
 // ---------------------------------------------------------------------------
@@ -98,7 +135,6 @@ const E1 = '00000000-0000-0000-0000-000000000001';
 const E2 = '00000000-0000-0000-0000-000000000002';
 const E3 = '00000000-0000-0000-0000-000000000003';
 const E4 = '00000000-0000-0000-0000-000000000004';
-const E5 = '00000000-0000-0000-0000-000000000005';
 
 const OPTS = {
   universeId: UNIVERSE_ID,
@@ -115,22 +151,48 @@ const OPTS = {
 import { runCheapFinds, CATEGORY_SEVERITY } from '../src/services/cheap-finds.js';
 
 // ---------------------------------------------------------------------------
-// Helper: build a db() mock for a typical scenario
+// Setup helper
 // ---------------------------------------------------------------------------
-//
-// cheap-finds calls db() many times in sequence (once per heuristic SELECT +
-// once per INSERT + once per collision UPDATE). We use mockReturnValueOnce to
-// control each call in order.
 
-function setupDbForScenario(calls: unknown[]) {
-  // Reset mock
+beforeEach(() => {
+  mockDbFn.mockReset();
+});
+
+function setupDbCalls(calls: unknown[]) {
   mockDbFn.mockReset();
   for (const call of calls) {
     mockDbFn.mockReturnValueOnce(call);
   }
-  // Fallback: any extra calls return an empty select mock
-  mockDbFn.mockReturnValue(buildSelectMock([]));
+  // Fallback: any unexpected extra calls return empty select chain
+  mockDbFn.mockReturnValue(selectChain([]));
 }
+
+// ---------------------------------------------------------------------------
+// DB call order reference
+// ---------------------------------------------------------------------------
+//
+// For a scenario with N heuristic findings, the calls are INTERLEAVED:
+//
+// Orphan heuristic:
+//   [SELECT orphan entries]
+//   for each orphan:
+//     [INSERT issues] [INSERT issueEntries]
+//
+// Empty-summary heuristic:
+//   [SELECT empty-summary entries]
+//   for each entry:
+//     [INSERT issues] [INSERT issueEntries]
+//
+// Empty-meta-value heuristic:
+//   [SELECT all entries for meta check]
+//   for each entry with empty meta:
+//     [INSERT issues] [INSERT issueEntries]
+//
+// Cluster heuristic:
+//   [SELECT untagged entries]
+//   [SELECT tagged entries]
+//   for each cluster finding:
+//     [INSERT issues] [INSERT issueEntries]
 
 // ---------------------------------------------------------------------------
 // Tests
@@ -173,20 +235,20 @@ describe('runCheapFinds — D-08 no-auto-close enforcement', () => {
 
 describe('runCheapFinds — D-05 category safety', () => {
   it('never emits "contradiction" or "timeline-inconsistency" issues from heuristics', async () => {
-    // All four heuristics return empty results → no findings
-    setupDbForScenario([
-      buildSelectMock([]),  // orphan query
-      buildSelectMock([]),  // empty-summary query
-      buildSelectMock([]),  // empty-meta-value query
-      buildSelectMock([]),  // untagged entries for cluster
-      buildSelectMock([]),  // tagged entries for cluster
+    // All heuristics return empty → no findings
+    // Call order: SELECT orphan, SELECT empty-summary, SELECT empty-meta-value,
+    //             SELECT untagged, SELECT tagged
+    setupDbCalls([
+      selectChain([]),  // orphan
+      selectChain([]),  // empty-summary
+      selectChain([]),  // empty-meta-value (all entries)
+      selectChain([]),  // untagged (cluster)
+      selectChain([]),  // tagged (cluster)
     ]);
 
     const result = await runCheapFinds(OPTS);
-    const badCategories = ['contradiction', 'timeline-inconsistency'];
-    for (const cat of badCategories) {
-      expect(result.categoryCounts[cat as keyof typeof result.categoryCounts] ?? 0).toBe(0);
-    }
+    expect(result.categoryCounts['contradiction'] ?? 0).toBe(0);
+    expect(result.categoryCounts['timeline-inconsistency'] ?? 0).toBe(0);
   });
 });
 
@@ -194,25 +256,22 @@ describe('runCheapFinds — orphan heuristic', () => {
   it('creates 1 missing-link Issue for an orphan entry (no inbound OR outbound links)', async () => {
     const orphanEntry = { id: E1, title: 'Orphan Entry' };
 
-    // DB call sequence:
-    // 1. orphan SELECT → returns [orphanEntry]
-    // 2. empty-summary SELECT → []
-    // 3. empty-meta-value SELECT → []
-    // 4. untagged entries SELECT → [] (for cluster)
-    // 5. tagged entries SELECT → [] (for cluster)
-    // 6. INSERT issues for orphan → returns [{ id: 'new-issue-id' }]
-    // 7. INSERT issueEntries → returns []
-    const insertMock = buildInsertMock([{ id: 'issue-orphan-1' }]);
-    const insertEntryMock = buildInsertMock([]);
-
-    setupDbForScenario([
-      buildSelectMock([orphanEntry]),   // orphan query
-      buildSelectMock([]),              // empty-summary
-      buildSelectMock([]),              // empty-meta-value
-      buildSelectMock([]),              // untagged entries (cluster)
-      buildSelectMock([]),              // tagged entries (cluster)
-      insertMock,                       // INSERT issues
-      insertEntryMock,                  // INSERT issueEntries
+    // DB call order:
+    // 1. SELECT orphan → [orphanEntry]
+    // 2. INSERT issues → [{ id: 'issue-orphan-1' }]   (orphan finding)
+    // 3. INSERT issueEntries → []
+    // 4. SELECT empty-summary → []
+    // 5. SELECT empty-meta-value → []
+    // 6. SELECT untagged (cluster) → []
+    // 7. SELECT tagged (cluster) → []
+    setupDbCalls([
+      selectChain([orphanEntry]),        // #1: orphan SELECT
+      insertChain([{ id: 'issue-1' }]), // #2: INSERT issues
+      insertChain([]),                   // #3: INSERT issueEntries
+      selectChain([]),                   // #4: empty-summary SELECT
+      selectChain([]),                   // #5: empty-meta-value SELECT
+      selectChain([]),                   // #6: untagged SELECT
+      selectChain([]),                   // #7: tagged SELECT
     ]);
 
     const result = await runCheapFinds(OPTS);
@@ -228,19 +287,24 @@ describe('runCheapFinds — orphan heuristic', () => {
 
 describe('runCheapFinds — empty-summary heuristic', () => {
   it('creates 1 underdeveloped Issue for entry with empty summary', async () => {
-    const entrySummary = { id: E2, title: 'Underdeveloped Entry', summary: '', meta: {} };
+    const entry = { id: E2, title: 'Underdeveloped Entry', summary: '', meta: {} };
 
-    const insertMock = buildInsertMock([{ id: 'issue-summary-1' }]);
-    const insertEntryMock = buildInsertMock([]);
-
-    setupDbForScenario([
-      buildSelectMock([]),               // orphan query (no orphans)
-      buildSelectMock([entrySummary]),   // empty-summary
-      buildSelectMock([]),               // empty-meta-value
-      buildSelectMock([]),               // untagged entries (cluster)
-      buildSelectMock([]),               // tagged entries (cluster)
-      insertMock,
-      insertEntryMock,
+    // DB call order:
+    // 1. SELECT orphan → []
+    // 2. SELECT empty-summary → [entry]
+    // 3. INSERT issues → [{ id: 'issue-1' }]
+    // 4. INSERT issueEntries → []
+    // 5. SELECT empty-meta-value → []
+    // 6. SELECT untagged → []
+    // 7. SELECT tagged → []
+    setupDbCalls([
+      selectChain([]),                   // #1: orphan SELECT
+      selectChain([entry]),             // #2: empty-summary SELECT
+      insertChain([{ id: 'issue-1' }]), // #3: INSERT issues
+      insertChain([]),                   // #4: INSERT issueEntries
+      selectChain([]),                   // #5: empty-meta SELECT
+      selectChain([]),                   // #6: untagged SELECT
+      selectChain([]),                   // #7: tagged SELECT
     ]);
 
     const result = await runCheapFinds(OPTS);
@@ -253,25 +317,29 @@ describe('runCheapFinds — empty-summary heuristic', () => {
 
 describe('runCheapFinds — empty-meta-value heuristic', () => {
   it('creates 1 underdeveloped Issue for entry with an empty meta value', async () => {
-    const entryMeta = { id: E3, title: 'Meta Entry', meta: { Birthplace: '' } };
-    const entryMetaGood = { id: E4, title: 'Good Meta Entry', meta: { Name: 'Alice' } };
+    const entryWithEmptyMeta = { id: E3, title: 'Meta Entry', meta: { Birthplace: '' } };
+    const entryWithGoodMeta = { id: E4, title: 'Good Meta Entry', meta: { Name: 'Alice' } };
 
-    const insertMock = buildInsertMock([{ id: 'issue-meta-1' }]);
-    const insertEntryMock = buildInsertMock([]);
-
-    setupDbForScenario([
-      buildSelectMock([]),                        // orphan query
-      buildSelectMock([]),                        // empty-summary
-      buildSelectMock([entryMeta, entryMetaGood]), // meta query (both entries returned)
-      buildSelectMock([]),                        // untagged (cluster)
-      buildSelectMock([]),                        // tagged (cluster)
-      insertMock,
-      insertEntryMock,
+    // DB call order:
+    // 1. SELECT orphan → []
+    // 2. SELECT empty-summary → []
+    // 3. SELECT all entries (meta check) → [entryWithEmptyMeta, entryWithGoodMeta]
+    // 4. INSERT issues for E3 → [{ id: 'issue-1' }]
+    // 5. INSERT issueEntries → []
+    // 6. SELECT untagged → []
+    // 7. SELECT tagged → []
+    setupDbCalls([
+      selectChain([]),                                    // #1: orphan
+      selectChain([]),                                    // #2: empty-summary
+      selectChain([entryWithEmptyMeta, entryWithGoodMeta]), // #3: meta check
+      insertChain([{ id: 'issue-1' }]),                  // #4: INSERT issues
+      insertChain([]),                                    // #5: INSERT issueEntries
+      selectChain([]),                                    // #6: untagged
+      selectChain([]),                                    // #7: tagged
     ]);
 
     const result = await runCheapFinds(OPTS);
 
-    // Only E3 has an empty meta value; E4 has all non-empty
     expect(result.findings).toBe(1);
     expect(result.categoryCounts['underdeveloped']).toBe(1);
     expect(result.createdIssueEntryIds).toContain(E3);
@@ -280,12 +348,12 @@ describe('runCheapFinds — empty-meta-value heuristic', () => {
   it('creates no Issue when all meta values are non-empty', async () => {
     const entryGood = { id: E4, title: 'Good Entry', meta: { Name: 'Alice', Age: '30' } };
 
-    setupDbForScenario([
-      buildSelectMock([]),          // orphan
-      buildSelectMock([]),          // empty-summary
-      buildSelectMock([entryGood]), // meta query — no empty values
-      buildSelectMock([]),          // untagged
-      buildSelectMock([]),          // tagged
+    setupDbCalls([
+      selectChain([]),          // orphan
+      selectChain([]),          // empty-summary
+      selectChain([entryGood]), // meta check — no empty values
+      selectChain([]),          // untagged
+      selectChain([]),          // tagged
     ]);
 
     const result = await runCheapFinds(OPTS);
@@ -297,18 +365,24 @@ describe('runCheapFinds — idempotency (re-run collision)', () => {
   it('produces 0 new findings and increments collisions when gap_key already exists', async () => {
     const orphanEntry = { id: E1, title: 'Orphan Entry' };
 
-    // INSERT returns [] (ON CONFLICT DO NOTHING blocked it)
-    const insertMock = buildInsertMock([]);
-    const updateMock = buildUpdateMock();
-
-    setupDbForScenario([
-      buildSelectMock([orphanEntry]),  // orphan query
-      buildSelectMock([]),             // empty-summary
-      buildSelectMock([]),             // empty-meta-value
-      buildSelectMock([]),             // untagged (cluster)
-      buildSelectMock([]),             // tagged (cluster)
-      insertMock,                      // INSERT → [] means collision
-      updateMock,                      // UPDATE gap_key_collision_count
+    // INSERT returns [] → ON CONFLICT DO NOTHING blocked it → collision
+    // After collision: UPDATE gap_key_collision_count
+    // DB call order:
+    // 1. SELECT orphan → [orphanEntry]
+    // 2. INSERT issues → [] (collision)
+    // 3. UPDATE gap_key_collision_count
+    // 4. SELECT empty-summary → []
+    // 5. SELECT empty-meta-value → []
+    // 6. SELECT untagged → []
+    // 7. SELECT tagged → []
+    setupDbCalls([
+      selectChain([orphanEntry]),  // #1: orphan
+      insertChain([]),             // #2: INSERT → collision
+      updateChain(),               // #3: UPDATE collision counter
+      selectChain([]),             // #4: empty-summary
+      selectChain([]),             // #5: empty-meta-value
+      selectChain([]),             // #6: untagged
+      selectChain([]),             // #7: tagged
     ]);
 
     const result = await runCheapFinds(OPTS);
@@ -321,62 +395,56 @@ describe('runCheapFinds — idempotency (re-run collision)', () => {
 });
 
 describe('runCheapFinds — audit_run_id on every INSERT', () => {
-  it('passes auditRunId to every issue INSERT', async () => {
+  it('passes auditRunId, source=ai, model=heuristic to every issue INSERT', async () => {
     const orphanEntry = { id: E1, title: 'Orphan Entry' };
 
-    const insertMock = {
-      insert: vi.fn(() => insertMock),
-      values: vi.fn((vals: Record<string, unknown>) => {
-        // Capture the values to assert on them
-        (insertMock as Record<string, unknown>)._lastValues = vals;
-        return insertMock;
-      }),
-      onConflictDoNothing: vi.fn(() => insertMock),
-      returning: vi.fn(() => Promise.resolve([{ id: 'issue-1' }])),
-    };
-    const insertEntryMock = buildInsertMock([]);
+    const { outer: insertCapture, getCapturedValues } = insertChainCapture([{ id: 'issue-1' }]);
 
-    setupDbForScenario([
-      buildSelectMock([orphanEntry]),
-      buildSelectMock([]),
-      buildSelectMock([]),
-      buildSelectMock([]),
-      buildSelectMock([]),
-      insertMock,
-      insertEntryMock,
+    setupDbCalls([
+      selectChain([orphanEntry]),  // #1: orphan SELECT
+      insertCapture,               // #2: INSERT issues (captured)
+      insertChain([]),             // #3: INSERT issueEntries
+      selectChain([]),             // #4: empty-summary
+      selectChain([]),             // #5: empty-meta-value
+      selectChain([]),             // #6: untagged
+      selectChain([]),             // #7: tagged
     ]);
 
     await runCheapFinds(OPTS);
 
-    // The values passed to INSERT should contain auditRunId
-    const vals = (insertMock as Record<string, unknown>)._lastValues as Record<string, unknown>;
+    const vals = getCapturedValues();
     expect(vals).toBeDefined();
-    expect(vals.auditRunId).toBe(AUDIT_RUN_ID);
-    expect(vals.source).toBe('ai');
-    expect(vals.model).toBe('heuristic');
+    expect(vals!.auditRunId).toBe(AUDIT_RUN_ID);
+    expect(vals!.source).toBe('ai');
+    expect(vals!.model).toBe('heuristic');
   });
 });
 
 describe('runCheapFinds — cluster-eligibility (LOCKED algorithm: Jaccard ≥ 0.5, min cluster 3)', () => {
   it('emits exactly 1 dangling-thread Issue for an untagged entry mentioning a cluster tag', async () => {
-    // 3-entry cluster sharing tags [fantasy, magic, ritual] — pairwise Jaccard ≥ 0.5
-    // Plus 1 untagged entry whose summary mentions "ritual"
-    const clusterE1 = { id: E1, title: 'Chapter One', tags: ['fantasy', 'magic', 'ritual'], summary: '' };
-    const clusterE2 = { id: E2, title: 'Chapter Two', tags: ['fantasy', 'magic', 'ritual'], summary: '' };
-    const clusterE3 = { id: E3, title: 'Chapter Three', tags: ['fantasy', 'magic', 'ritual'], summary: '' };
-    const untaggedEntry = { id: E4, title: 'Untagged Entry', tags: [], summary: 'The ritual was performed at midnight' };
+    // 3-entry cluster sharing tags [fantasy, magic, ritual] — pairwise Jaccard = 1.0
+    // Untagged entry whose summary mentions "ritual" → cluster-eligible
+    const c1 = { id: E1, title: 'Chapter One', tags: ['fantasy', 'magic', 'ritual'], summary: '' };
+    const c2 = { id: E2, title: 'Chapter Two', tags: ['fantasy', 'magic', 'ritual'], summary: '' };
+    const c3 = { id: E3, title: 'Chapter Three', tags: ['fantasy', 'magic', 'ritual'], summary: '' };
+    const untagged = { id: E4, title: 'Untagged Entry', tags: [], summary: 'The ritual was performed at midnight' };
 
-    const insertMock = buildInsertMock([{ id: 'issue-cluster-1' }]);
-    const insertEntryMock = buildInsertMock([]);
-
-    setupDbForScenario([
-      buildSelectMock([]),                        // orphan
-      buildSelectMock([]),                        // empty-summary
-      buildSelectMock([]),                        // empty-meta-value
-      buildSelectMock([untaggedEntry]),           // untagged entries
-      buildSelectMock([clusterE1, clusterE2, clusterE3]), // tagged entries
-      insertMock,
-      insertEntryMock,
+    // DB call order:
+    // 1. SELECT orphan → []
+    // 2. SELECT empty-summary → []
+    // 3. SELECT empty-meta-value → []
+    // 4. SELECT untagged → [untagged]
+    // 5. SELECT tagged → [c1, c2, c3]
+    // 6. INSERT issues → [{ id: 'issue-cluster-1' }]
+    // 7. INSERT issueEntries → []
+    setupDbCalls([
+      selectChain([]),                   // #1: orphan
+      selectChain([]),                   // #2: empty-summary
+      selectChain([]),                   // #3: empty-meta-value
+      selectChain([untagged]),           // #4: untagged entries
+      selectChain([c1, c2, c3]),         // #5: tagged entries
+      insertChain([{ id: 'issue-1' }]), // #6: INSERT issues
+      insertChain([]),                   // #7: INSERT issueEntries
     ]);
 
     const result = await runCheapFinds(OPTS);
@@ -387,17 +455,17 @@ describe('runCheapFinds — cluster-eligibility (LOCKED algorithm: Jaccard ≥ 0
   });
 
   it('does NOT emit dangling-thread when only 2 tagged entries exist (min cluster size 3)', async () => {
-    // Only 2 tagged entries — not enough for a cluster
-    const taggedE1 = { id: E1, title: 'Tagged One', tags: ['fantasy', 'magic'], summary: '' };
-    const taggedE2 = { id: E2, title: 'Tagged Two', tags: ['fantasy', 'magic'], summary: '' };
-    const untaggedEntry = { id: E3, title: 'Untagged', tags: [], summary: 'fantasy and magic' };
+    const tagged1 = { id: E1, title: 'Tagged One', tags: ['fantasy', 'magic'], summary: '' };
+    const tagged2 = { id: E2, title: 'Tagged Two', tags: ['fantasy', 'magic'], summary: '' };
+    const untagged = { id: E3, title: 'Untagged', tags: [], summary: 'fantasy and magic world' };
 
-    setupDbForScenario([
-      buildSelectMock([]),                     // orphan
-      buildSelectMock([]),                     // empty-summary
-      buildSelectMock([]),                     // empty-meta-value
-      buildSelectMock([untaggedEntry]),        // untagged entries
-      buildSelectMock([taggedE1, taggedE2]),   // tagged entries — only 2
+    // Only 2 tagged entries — cluster size < 3 → no cluster → no dangling-thread
+    setupDbCalls([
+      selectChain([]),                     // #1: orphan
+      selectChain([]),                     // #2: empty-summary
+      selectChain([]),                     // #3: empty-meta-value
+      selectChain([untagged]),             // #4: untagged entries
+      selectChain([tagged1, tagged2]),     // #5: tagged entries (only 2)
     ]);
 
     const result = await runCheapFinds(OPTS);
@@ -409,59 +477,61 @@ describe('runCheapFinds — cluster-eligibility (LOCKED algorithm: Jaccard ≥ 0
 
 describe('runCheapFinds — D-08 behavioral no-auto-close', () => {
   it('does not set dismissed_at on a prior issue when a formerly-orphan entry now has a link', async () => {
-    // Scenario: E1 was previously an orphan and has an issues row with gap_key set.
-    // Now E1 has an inbound link, so the orphan query returns EMPTY (it's no longer orphan).
-    // Running cheap-finds again must NOT mutate dismissed_at on the prior issue row.
+    // Scenario: E1 previously flagged as orphan (issues row exists with gap_key).
+    // E1 now has a link → orphan query returns [] (it's no longer orphan).
+    // Running cheap-finds must NOT touch the prior issue's dismissed_at field.
+    //
+    // Verification: no INSERT with collision → no UPDATE on issues table (only
+    // UPDATE on audit_runs.gap_key_collision_count is allowed, and only on collision).
+    // Since E1 is no longer orphan, no INSERT is attempted at all.
 
-    // Track all db() calls
-    const dbCalls: string[] = [];
-    mockDbFn.mockReset();
-    mockDbFn.mockImplementation(() => {
-      const selectChain = buildSelectMock([]);
-      // Wrap select to track calls
-      const origSelect = selectChain.select as ReturnType<typeof vi.fn>;
-      (selectChain as Record<string, unknown>).select = vi.fn((...args: unknown[]) => {
-        dbCalls.push('select');
-        return origSelect(...args);
-      });
-      return selectChain;
-    });
+    // No findings: all heuristics return empty
+    setupDbCalls([
+      selectChain([]),  // orphan (E1 now has links → not returned)
+      selectChain([]),  // empty-summary
+      selectChain([]),  // empty-meta-value
+      selectChain([]),  // untagged (cluster)
+      selectChain([]),  // tagged (cluster)
+    ]);
 
-    // All heuristics return empty (E1 is no longer orphan), so no INSERTs happen
     const result = await runCheapFinds(OPTS);
 
-    // No new findings
+    // No new findings and no collisions → no db() calls with dismissed_at mutations
     expect(result.findings).toBe(0);
     expect(result.collisions).toBe(0);
-
-    // Assert that NO db() call ever invokes update with dismissed_at
-    // (We can verify this via the D-08 grep test above, and here we confirm
-    // the runtime result has zero dismissed_at mutations: the code path simply
-    // never reaches an UPDATE because the heuristic returned no results.)
     expect(result.createdIssueEntryIds).toHaveLength(0);
+
+    // The mock was only called 5 times (5 SELECTs) — no INSERT or UPDATE touching dismissed_at
+    // (The code path for dismissed_at simply doesn't exist per D-08)
+    expect(mockDbFn).toHaveBeenCalledTimes(5);
   });
 });
 
 describe('runCheapFinds — return shape', () => {
   it('returns createdIssueEntryIds with 2 unique entry IDs for 2 findings', async () => {
     const orphan = { id: E1, title: 'Orphan' };
-    const emptySummary = { id: E2, title: 'No Summary', summary: '' };
+    const emptySum = { id: E2, title: 'No Summary', summary: '' };
 
-    const insertOrphanMock = buildInsertMock([{ id: 'issue-1' }]);
-    const insertOrphanEntryMock = buildInsertMock([]);
-    const insertSummaryMock = buildInsertMock([{ id: 'issue-2' }]);
-    const insertSummaryEntryMock = buildInsertMock([]);
-
-    setupDbForScenario([
-      buildSelectMock([orphan]),         // orphan query
-      buildSelectMock([emptySummary]),   // empty-summary query
-      buildSelectMock([]),               // empty-meta-value
-      buildSelectMock([]),               // untagged (cluster)
-      buildSelectMock([]),               // tagged (cluster)
-      insertOrphanMock,                  // INSERT issue for orphan
-      insertOrphanEntryMock,             // INSERT issueEntries for orphan
-      insertSummaryMock,                 // INSERT issue for empty-summary
-      insertSummaryEntryMock,            // INSERT issueEntries for empty-summary
+    // DB call order for 2 findings (orphan + empty-summary):
+    // 1. SELECT orphan → [orphan]
+    // 2. INSERT issues (orphan) → [{ id: 'issue-1' }]
+    // 3. INSERT issueEntries (orphan) → []
+    // 4. SELECT empty-summary → [emptySum]
+    // 5. INSERT issues (empty-summary) → [{ id: 'issue-2' }]
+    // 6. INSERT issueEntries (empty-summary) → []
+    // 7. SELECT empty-meta-value → []
+    // 8. SELECT untagged → []
+    // 9. SELECT tagged → []
+    setupDbCalls([
+      selectChain([orphan]),             // #1: orphan SELECT
+      insertChain([{ id: 'issue-1' }]), // #2: INSERT issues (orphan)
+      insertChain([]),                   // #3: INSERT issueEntries (orphan)
+      selectChain([emptySum]),           // #4: empty-summary SELECT
+      insertChain([{ id: 'issue-2' }]), // #5: INSERT issues (empty-summary)
+      insertChain([]),                   // #6: INSERT issueEntries (empty-summary)
+      selectChain([]),                   // #7: empty-meta-value SELECT
+      selectChain([]),                   // #8: untagged SELECT
+      selectChain([]),                   // #9: tagged SELECT
     ]);
 
     const result = await runCheapFinds(OPTS);
