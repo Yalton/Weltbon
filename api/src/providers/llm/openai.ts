@@ -440,13 +440,19 @@ export class OpenAIProvider implements LLMProvider {
    * (Plan 23-05) can assert identical shape across both providers without
    * per-provider branching.
    *
-   * Dual safety-filter check (T-23-04-03 / RESEARCH Pattern 5):
+   * Post-call response checks (T-23-04-03 / RESEARCH Pattern 5):
    *   (a) `choices[0].finish_reason === 'content_filter'` — OpenAI content-
-   *       moderation block.
+   *       moderation block. Throws ContentBlockedBySafetyFilter.
    *   (b) `choices[0].message.refusal != null` — GPT-5 refusal pattern.
-   * Either branch throws `ContentBlockedBySafetyFilter` BEFORE the parsed
-   * output flows to the caller. Tests (p) and (q) in `llm-openai.test.ts`
-   * lock both branches.
+   *       Throws ContentBlockedBySafetyFilter.
+   *   (c) finish_reason `'length'` — token-limit truncation.
+   *       The structured output is incomplete; `message.parsed` is typically
+   *       null. The `parsed ?? { suggestions: [] }` fallback would silently
+   *       return an empty suggestions array as a "successful" audit — the
+   *       exact spoofing failure mode SC-3 targets. This guard throws
+   *       UnknownProviderError BEFORE the fallback so incomplete audits can
+   *       never masquerade as successes. (T-23-08-02 / CR-02 closure.)
+   * All three checks happen BEFORE parsed content flows to the caller.
    */
   async runAudit(opts: RunAuditOpts): Promise<RunAuditResult> {
     const model = opts.model ?? defaultModel;
@@ -480,9 +486,9 @@ export class OpenAIProvider implements LLMProvider {
       );
     }
 
-    // T-23-04-03 / RESEARCH Pattern 5: dual safety check BEFORE content
-    // extraction. Either path masquerading as success would silently produce
-    // empty suggestions.
+    // T-23-04-03 / RESEARCH Pattern 5: post-call response checks BEFORE content
+    // extraction. Any of these paths masquerading as success would silently
+    // produce empty or incomplete suggestions.
     if (choice.finish_reason === 'content_filter') {
       throw new LLMProviderError(
         LLMError.ContentBlockedBySafetyFilter,
@@ -493,6 +499,18 @@ export class OpenAIProvider implements LLMProvider {
       throw new LLMProviderError(
         LLMError.ContentBlockedBySafetyFilter,
         'OpenAI refused to generate content',
+      );
+    }
+    // T-23-08-02 / CR-02 truncation guard: finish_reason 'length' means the
+    // response was cut off at the token limit. message.parsed is typically
+    // null on truncation; the fallback `parsed ?? { suggestions: [] }` would
+    // return an empty suggestions array as a "successful" audit — the exact
+    // spoofing failure mode SC-3 targets. This guard MUST sit BEFORE the
+    // fallback so a truncated null-parsed response never reaches callers.
+    if (choice.finish_reason === 'length') {
+      throw new LLMProviderError(
+        LLMError.UnknownProviderError,
+        'OpenAI response truncated by token limit — output is incomplete',
       );
     }
 
