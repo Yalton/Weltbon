@@ -70,7 +70,7 @@ import { runCheapFinds, CATEGORY_SEVERITY } from './cheap-finds.js';
 import { buildStructuralDigest } from './structural-digest.js';
 import { getEntryBody, validateReferencedEntryIds } from './audit-tools.js';
 import { computeGapKey } from './gap-key.js';
-import { AuditOutputSchema, AuditSuggestionStrictSchema } from './audit-schema.js';
+import { AuditOutputStrictSchema } from './audit-schema.js';
 import { env } from '../config.js';
 import { trackRun, releaseRun } from './audit-shutdown.js';
 
@@ -530,9 +530,11 @@ When done, return your findings as JSON: { "suggestions": [...] }`;
     }> } | null = null;
 
     try {
-      // Try strict parse first (defense in depth against gap_key smuggling T-24-04-03)
+      // BL-02 / T-24-04-03: strict-mode parse is the ONLY parse — rejects LLM-smuggled
+      // extra fields (e.g., gap_key) at both the envelope and suggestion levels.
+      // A Zod throw here is caught immediately below and mapped to INVALID_OUTPUT.
       const raw = JSON.parse(result.text || '{}');
-      parsed = AuditOutputSchema.parse(raw);
+      parsed = AuditOutputStrictSchema.parse(raw);
     } catch {
       // Zod parse failure or JSON parse failure
       if (!anyValidSuggestions) {

@@ -96,6 +96,28 @@ export const AuditOutputSchema = z.object({
   suggestions: z.array(AuditSuggestionSchema),
 });
 
+/**
+ * Strict-mode top-level envelope (Phase 24-08 / BL-02).
+ *
+ * Wraps AuditSuggestionStrictSchema in a strict outer object so that:
+ *   - Suggestion-level extras (e.g., LLM-smuggled `gap_key`) are rejected by
+ *     the inner AuditSuggestionStrictSchema.
+ *   - Envelope-level extras (e.g., a smuggled top-level field) are rejected by
+ *     the outer .strict().
+ *
+ * This is the schema the engine calls (see audit-engine.ts final-answer branch).
+ * A Zod parse failure here triggers the engine's existing INVALID_OUTPUT
+ * fall-through — no new engine error code needed.
+ *
+ * AuditOutputSchema (relaxed) is retained as a non-engine export in case any
+ * future caller needs default-mode behavior; it has no callers in production
+ * code after this plan.
+ */
+export const AuditOutputStrictSchema = z.object({
+  suggestions: z.array(AuditSuggestionStrictSchema),
+}).strict();
+
 // Inferred types for downstream consumers
 export type AuditSuggestionInput = z.infer<typeof AuditSuggestionSchema>;
 export type AuditOutputInput = z.infer<typeof AuditOutputSchema>;
+export type AuditOutputStrictInput = z.infer<typeof AuditOutputStrictSchema>;
