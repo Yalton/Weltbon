@@ -530,6 +530,41 @@ describe('OpenAIProvider (PROVIDER-03 + PROVIDER-05 + PROVIDER-07)', () => {
     }
   });
 
+  it("runAudit throws UnknownProviderError when finish_reason === 'length' (truncation guard — Test F)", async () => {
+    // finish_reason 'length' signals the response was cut off at the token
+    // limit. parsed is null (the structured output is incomplete).
+    // The `parsed ?? { suggestions: [] }` fallback must NOT be reached —
+    // the truncation guard must throw BEFORE the fallback path.
+    mockChatCompletionsParse.mockResolvedValueOnce({
+      choices: [
+        {
+          message: { parsed: null, refusal: null, content: '' },
+          finish_reason: 'length' as const,
+        },
+      ],
+      usage: { prompt_tokens: 4000, completion_tokens: 4096 },
+    });
+    const { getProvider, LLMProviderError, LLMError } = await import(
+      '../src/providers/llm/index.js'
+    );
+    try {
+      await getProvider('openai').runAudit({
+        apiKey: 'k',
+        messages: [{ role: 'user', content: 'q' }],
+        model: 'gpt-5-mini',
+      });
+      expect.fail('should have thrown — truncated response must not return as success');
+    } catch (err) {
+      expect(err).toBeInstanceOf(LLMProviderError);
+      expect((err as InstanceType<typeof LLMProviderError>).variant).toBe(
+        LLMError.UnknownProviderError,
+      );
+      expect((err as InstanceType<typeof LLMProviderError>).message).toMatch(
+        /truncated|token limit|length/i,
+      );
+    }
+  });
+
   // -----------------------------------------------------------------------
   // listModels() + pricing()
   // -----------------------------------------------------------------------

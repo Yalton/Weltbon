@@ -115,6 +115,29 @@ import { PRICING, type AnthropicModelPricing } from './pricing.js';
  */
 const defaultModel = 'claude-haiku-4-5';
 
+/**
+ * Maximum response token budget passed as `max_tokens` to
+ * `client.messages.create` in `runAudit`.
+ *
+ * NOTE (IN-01 disambiguation — Phase 23 gap-closure plan 23-08): this
+ * constant is numerically equal to `MIN_CACHEABLE_TOKENS` (imported from
+ * `./interface.ts` and also 4096), but the two values have completely
+ * unrelated semantics:
+ *
+ *   - `ANTHROPIC_MAX_TOKENS` (this constant): caps the number of completion
+ *     tokens the Anthropic messages.create API will return in a single turn.
+ *     It is a *response output limit* passed in the API request body.
+ *
+ *   - `MIN_CACHEABLE_TOKENS` (interface.ts): the minimum *input prefix* size
+ *     required for Anthropic's prompt cache to honor a `cache_control`
+ *     breakpoint. It is a *cache eligibility threshold* on the prompt side.
+ *
+ * Using the same numeric literal 4096 for both roles was the source of the
+ * IN-01 confusion flagged in 23-REVIEW. Promoting this side to a named
+ * constant eliminates the ambiguity at a glance.
+ */
+const ANTHROPIC_MAX_TOKENS = 4096;
+
 // ---------------------------------------------------------------------------
 // Error mapping (PROVIDER-05 — Anthropic side)
 // ---------------------------------------------------------------------------
@@ -424,7 +447,7 @@ export class AnthropicProvider implements LLMProvider {
     try {
       const createParams: MessageCreateParams = {
         model,
-        max_tokens: 4096,
+        max_tokens: ANTHROPIC_MAX_TOKENS,
         messages: conversationMessages as MessageParam[],
         ...(systemParam ? { system: systemParam } : {}),
         ...(opts.tools ? { tools: opts.tools as Tool[] } : {}),
@@ -452,6 +475,18 @@ export class AnthropicProvider implements LLMProvider {
       throw new LLMProviderError(
         LLMError.ContentBlockedBySafetyFilter,
         'Anthropic refused to generate content',
+      );
+    }
+    // T-23-08-01 / CR-02 truncation guard: stop_reason 'max_tokens' means the
+    // response was cut off at ANTHROPIC_MAX_TOKENS. A truncated tool_use block
+    // is incomplete JSON; extracting it as a "successful" audit result would
+    // silently mask the gap (the exact spoofing failure mode SC-3 targets).
+    // This guard MUST sit BEFORE content extraction so no partial toolUse
+    // array ever reaches callers as a success.
+    if (response.stop_reason === 'max_tokens') {
+      throw new LLMProviderError(
+        LLMError.UnknownProviderError,
+        'Anthropic response truncated by max_tokens — output is incomplete',
       );
     }
 
