@@ -19,6 +19,7 @@ import { exportRoutes } from './routes/export.js';
 import { importRoutes } from './routes/import.js';
 import { ingestRoutes } from './routes/ingest.js';
 import { timelinePinRoutes, timelineListRoutes } from './routes/timeline.js';
+import { auditRoutes } from './routes/audits.js';
 import { requireAuth } from './middleware/auth.js';
 import { forwarded } from './middleware/forwarded.js';
 import { db } from './db/client.js';
@@ -89,6 +90,7 @@ export function createApp() {
   apiR.route('/universes/:uid/relations', relationRoutes);
   apiR.route('/universes/:uid/categories', categoryRoutes);
   apiR.route('/universes/:uid/issues', issueRoutes);
+  apiR.route('/universes/:uid', auditRoutes);
   apiR.route('/universes/:uid/graph-data', graphRoutes);
   apiR.route('/universes/:uid/graph-positions', graphPositionRoutes);
   apiR.route('/universes/:uid/export', exportRoutes);
