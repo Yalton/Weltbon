@@ -106,7 +106,6 @@
 
 import OpenAI from 'openai';
 import { zodResponseFormat } from 'openai/helpers/zod';
-import { z } from 'zod';
 import { getEncoding } from 'js-tiktoken';
 import type { ChatCompletionMessageParam } from 'openai/resources/chat/completions';
 
@@ -120,7 +119,10 @@ import {
   type RunAuditResult,
 } from './interface.js';
 import { PRICING, type OpenAIModelPricing } from './pricing.js';
-import type { AuditCategory } from '../../types/audit-suggestion.js';
+// Phase 24: shared Zod schema extracted to audit-schema.ts (non-functional refactor).
+// Both the OpenAI provider (zodResponseFormat call site) and the audit engine
+// (Plan 04 — AuditSuggestionStrictSchema for Zod validation) import from here.
+import { AuditOutputSchema } from '../../services/audit-schema.js';
 
 // ---------------------------------------------------------------------------
 // Module-scope defaults
@@ -131,50 +133,6 @@ import type { AuditCategory } from '../../types/audit-suggestion.js';
  * class field) keeps the class stateless per Pitfall #6 / T-23-04-07.
  */
 const defaultModel = 'gpt-5-mini';
-
-// ---------------------------------------------------------------------------
-// AuditOutputSchema — Zod schema for structured-output parsing
-// ---------------------------------------------------------------------------
-
-/**
- * Canonical list of audit categories — extracted as a `const` tuple so we
- * can both feed it to `z.enum()` AND give it a compile-time drift check
- * against the `AuditCategory` union in `../../types/audit-suggestion.ts`.
- *
- * The `satisfies readonly AuditCategory[]` clause fails to compile if any
- * literal here drifts from the canonical union — the test suite's category
- * assertions then catch the failure at landing, not later.
- */
-const AUDIT_CATEGORIES = [
-  'underdeveloped',
-  'missing-link',
-  'contradiction',
-  'timeline-inconsistency',
-  'dangling-thread',
-] as const satisfies readonly AuditCategory[];
-
-/**
- * Zod schema for the structured output emitted by `chat.completions.parse`
- * with `zodResponseFormat(AuditOutputSchema, 'audit_output')`. Mirrors the
- * shape of `AuditSuggestion` (`../../types/audit-suggestion.ts`) plus the
- * `suggestions[]` envelope that wraps it.
- *
- * Symmetry note: the Anthropic provider returns `tool_use[0].input` with the
- * SAME nested `{ suggestions: AuditSuggestion[] }` shape; this lets the
- * contract test (Plan 23-05) assert identical parsed-shape across providers
- * without per-provider branching.
- */
-const AuditOutputSchema = z.object({
-  suggestions: z.array(
-    z.object({
-      category: z.enum(AUDIT_CATEGORIES),
-      entryId: z.string().optional(),
-      referencedEntryIds: z.array(z.string()),
-      rationale: z.string(),
-      evidence: z.string(),
-    }),
-  ),
-});
 
 // ---------------------------------------------------------------------------
 // estimateTokensLocal — js-tiktoken WASM-style accounting (Pitfall #2)
