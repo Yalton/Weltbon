@@ -96,7 +96,10 @@ export function IssuesView() {
       if (sourceFilter === 'ai' && i.source !== 'ai') return false;
       if (resolutionFilter === 'open' && i.dismissedAt) return false;
       if (resolutionFilter === 'dismissed' && (!i.dismissedAt || i.source !== 'ai')) return false;
-      if (resolutionFilter === 'resolved' && (i.source === 'ai' || !i.resolved)) return false;
+      // CR-04: was `(i.source === 'ai' || !i.resolved)` which unconditionally hid all AI
+      // rows from the Resolved tab even when resolved=true. Fix: let resolved boolean alone
+      // determine eligibility for both human and AI sources (D-09: Resolved = resolved===true).
+      if (resolutionFilter === 'resolved' && !i.resolved) return false;
       if (
         categoryFilter.size > 0 &&
         (!i.category || !categoryFilter.has(i.category as AuditCategory))
