@@ -491,11 +491,18 @@ async function findClusterEligibleEntries(universeId: string): Promise<Array<{
  *       no UPDATE on the issues table for resolved conditions. Stale findings
  *       stay visible; the user resolves through Phase 25's UI.
  *
- * @param opts.universeId  Universe to scan.
- * @param opts.auditRunId  The audit run that triggered this scan.
- * @param opts.userId      Calling user (unused by heuristics; reserved for future).
- * @param opts.provider    Provider (unused; reserved for parity with engine signature).
- * @param opts.model       Model (unused; heuristics are model-free).
+ * Phase 24 D-06 / Phase 25 AISSUE-05: when `dismissedGapKeys` is provided, any
+ * finding whose gap_key is in the set is skipped (not persisted, not counted as
+ * a finding). This prevents dismissed AI gaps from being re-inserted at zero
+ * token cost before the LLM even runs.
+ *
+ * @param opts.universeId       Universe to scan.
+ * @param opts.auditRunId       The audit run that triggered this scan.
+ * @param opts.userId           Calling user (unused by heuristics; reserved for future).
+ * @param opts.provider         Provider (unused; reserved for parity with engine signature).
+ * @param opts.model            Model (unused; heuristics are model-free).
+ * @param opts.dismissedGapKeys Active-dismissed gap keys; findings whose computed
+ *                              gap_key is in this set are silently skipped (Phase 25).
  */
 export async function runCheapFinds(opts: {
   universeId: string;
@@ -503,8 +510,9 @@ export async function runCheapFinds(opts: {
   userId: string;
   provider: string;
   model: string;
+  dismissedGapKeys?: Set<string>;
 }): Promise<CheapFindsResult> {
-  const { universeId, auditRunId } = opts;
+  const { universeId, auditRunId, dismissedGapKeys } = opts;
 
   let findings = 0;
   let collisions = 0;
@@ -526,6 +534,9 @@ export async function runCheapFinds(opts: {
     const title = `Orphan entry: ${entry.title}`;
     const body = `Entry "${entry.title}" has no inbound or outbound links. It may be disconnected from the rest of the universe.`;
     const gapKey = computeGapKey(universeId, category, referencedEntryIds, title);
+
+    // Phase 25 AISSUE-05: skip dismissed gaps (D-06)
+    if (dismissedGapKeys?.has(gapKey)) continue;
 
     const { inserted } = await persistFinding(
       { category, title, body, primaryEntryId: entry.id, referencedEntryIds },
@@ -555,6 +566,9 @@ export async function runCheapFinds(opts: {
     const body = `Entry "${entry.title}" has no summary. Adding a summary helps readers understand the entry's role in the universe.`;
     const gapKey = computeGapKey(universeId, category, referencedEntryIds, title);
 
+    // Phase 25 AISSUE-05: skip dismissed gaps (D-06)
+    if (dismissedGapKeys?.has(gapKey)) continue;
+
     const { inserted } = await persistFinding(
       { category, title, body, primaryEntryId: entry.id, referencedEntryIds },
       universeId,
@@ -583,6 +597,9 @@ export async function runCheapFinds(opts: {
     const body = `Entry "${entry.title}" has a meta field "${entry.emptyKey}" with an empty value. Consider filling it in or removing the field.`;
     const gapKey = computeGapKey(universeId, category, referencedEntryIds, title);
 
+    // Phase 25 AISSUE-05: skip dismissed gaps (D-06)
+    if (dismissedGapKeys?.has(gapKey)) continue;
+
     const { inserted } = await persistFinding(
       { category, title, body, primaryEntryId: entry.id, referencedEntryIds },
       universeId,
@@ -610,6 +627,9 @@ export async function runCheapFinds(opts: {
     const title = `Untagged entry near cluster: ${cf.untaggedEntry.title}`;
     const body = `Entry "${cf.untaggedEntry.title}" has no tags but appears related to a cluster of entries. Consider tagging it to make the connection explicit.`;
     const gapKey = computeGapKey(universeId, category, referencedEntryIds, title);
+
+    // Phase 25 AISSUE-05: skip dismissed gaps (D-06)
+    if (dismissedGapKeys?.has(gapKey)) continue;
 
     const { inserted } = await persistFinding(
       { category, title, body, primaryEntryId: cf.untaggedEntry.id, referencedEntryIds },

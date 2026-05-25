@@ -281,6 +281,56 @@ export async function runAudit(runId: string, deps?: AuditEngineDeps): Promise<v
   }
 
   // ---------------------------------------------------------------------------
+  // Step 2.5: Dismissed-set query (Phase 25 D-11, AISSUE-05) — MUST run before
+  // cheap-finds AND before structural-digest build so the gap_key set is
+  // available to both the cheap-finds pre-pass and the LLM-output validation
+  // step. The auto-stale predicate is applied here so resurfaced gaps return
+  // to the active pool automatically.
+  // ---------------------------------------------------------------------------
+  const dismissedRows = await _db().execute<{ gap_key: string }>(sql`
+    SELECT gap_key
+    FROM issues
+    WHERE universe_id = ${universeId}
+      AND source = 'ai'
+      AND dismissed_at IS NOT NULL
+      AND gap_key IS NOT NULL
+      AND (
+        dismissal_reason IN ('intentional', 'duplicate_of_human_issue')
+        OR (dismissal_reason = 'not_now' AND COALESCE(dismissal_snooze_remaining, 0) > 0)
+        OR (
+          dismissal_reason = 'inaccurate'
+          AND dismissal_snapshot IS NOT NULL
+          AND NOT EXISTS (
+            SELECT 1
+            FROM jsonb_array_elements(dismissal_snapshot->'entries') AS snap(entry)
+            JOIN entries e ON e.id = (snap.entry->>'id')::uuid
+            WHERE e.updated_at > (snap.entry->>'updatedAt')::timestamptz
+          )
+        )
+      )
+  `);
+  // dismissedGapKeys: Set<string> — materialized from the SELECT above.
+  // Consumed at Step 3 (cheap-finds arg) and Step 6 (LLM-output validation guard).
+  const dismissedGapKeys = new Set<string>(
+    // pg returns .rows on QueryResult; drizzle execute returns .rows for raw sql
+    (dismissedRows.rows ?? []).map((r) => r.gap_key),
+  );
+
+  // Decrement snooze counters for active 'not_now' dismissals at the start
+  // of this run (D-02). Separate statement so a failed decrement doesn't
+  // corrupt the in-memory Set already used for filtering.
+  await _db().execute(sql`
+    UPDATE issues
+    SET dismissal_snooze_remaining = dismissal_snooze_remaining - 1,
+        updated_at = NOW()
+    WHERE universe_id = ${universeId}
+      AND source = 'ai'
+      AND dismissed_at IS NOT NULL
+      AND dismissal_reason = 'not_now'
+      AND COALESCE(dismissal_snooze_remaining, 0) > 0
+  `);
+
+  // ---------------------------------------------------------------------------
   // Step 3: Cheap-finds pre-pass (D-06) — runs BEFORE building the digest
   // ---------------------------------------------------------------------------
 
@@ -290,6 +340,7 @@ export async function runAudit(runId: string, deps?: AuditEngineDeps): Promise<v
     userId,
     provider,
     model,
+    dismissedGapKeys,
   });
 
   // ---------------------------------------------------------------------------
@@ -641,6 +692,14 @@ When done, return your findings as JSON: { "suggestions": [...] }`;
         validSugg.referencedEntryIds,
         rawSugg.title,
       );
+
+      // AISSUE-05: dismissed gap_key — skip persistence (NOT a hallucination).
+      // The gap was already dismissed by the user; the LLM re-suggested it but
+      // the engine suppresses it here before any DB write. This guard fires
+      // BEFORE the AUDIT-09 collision counter and BEFORE the ON CONFLICT insert.
+      if (dismissedGapKeys.has(gapKey)) {
+        continue;
+      }
 
       const severity = CATEGORY_SEVERITY[validSugg.category] ?? 'minor';
 
