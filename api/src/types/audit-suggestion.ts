@@ -83,3 +83,45 @@ export interface PersistedAuditSuggestion extends AuditSuggestion {
     entries: Array<{ id: string; updatedAt: string }>;
   };
 }
+
+/**
+ * Phase 25 AISSUE-02/03/04 — API response wire shape for all issues (AI and human).
+ *
+ * This is the shape returned by GET /api/universes/:uid/issues (list) and the
+ * dismiss/undismiss mutation responses. The frontend `Issue` type in Plan 25-04
+ * extends this contract for UI consumption.
+ *
+ * Key design points:
+ *   - AI-source rows (`source='ai'`) populate all AI/dismissal fields.
+ *   - Human-source rows (`source='human'`) omit AI/dismissal fields (undefined)
+ *     and carry `linkedByAiIssueIds` when AI issues are dismissed as duplicates
+ *     of this human row (D-03 bidirectional reverse direction).
+ *   - `costUsd` is typed as string because Drizzle returns NUMERIC columns as
+ *     strings (preserves decimal precision); the existing audit-runs handler
+ *     follows the same pattern.
+ *   - `dismissalSnapshot` is server-computed at dismiss time and NEVER accepted
+ *     from the client (T-25-02-03 mitigation).
+ */
+export type DismissalReason =
+  | 'intentional'
+  | 'inaccurate'
+  | 'not_now'
+  | 'duplicate_of_human_issue';
+
+export interface IssueApiResponse extends PersistedAuditSuggestion {
+  // Phase 25 dismissal UX fields (all optional/nullable — pre-25 AI issues + un-dismissed rows have nulls)
+  dismissedAt: string | null;
+  dismissalReason: DismissalReason | null;
+  dismissalNotes: string | null;
+  dismissalSnoozeRemaining: number | null;
+  linkedIssueId: string | null;
+  category: AuditCategory | null;
+  // Response projection (resolved server-side from joined tables)
+  rationale: string;           // from issues.description
+  costUsd: string;             // numeric serializes as string
+  consultedEntries: Array<{ id: string; title: string; icon: string; updatedAt: string }>;
+  // D-03 bidirectional reverse direction — populated only on HUMAN-source rows
+  // when one or more AI issues are dismissed as duplicate_of_human_issue and
+  // their linked_issue_id points at this human row. Empty/undefined otherwise.
+  linkedByAiIssueIds?: string[];
+}

@@ -1,8 +1,8 @@
 import { OpenAPIHono, createRoute, z } from '@hono/zod-openapi';
-import { and, eq, desc, inArray, type SQL } from 'drizzle-orm';
+import { and, eq, desc, inArray, isNotNull, sql, type SQL } from 'drizzle-orm';
 import { HTTPException } from 'hono/http-exception';
 import { db } from '../db/client.js';
-import { issues, issueEntries, entries } from '../db/schema.js';
+import { issues, issueEntries, entries, auditRuns } from '../db/schema.js';
 import { requireUniverse } from '../utils/ownership.js';
 import type { AuthVariables } from '../middleware/auth.js';
 
@@ -56,6 +56,48 @@ const issueSchema = z.object({
 
 const errorSchema = z.object({ error: z.string() });
 
+// ─── Phase 25 dismiss body schema (D-01 two-step discriminated union) ────────
+
+/**
+ * T-25-02-03: z.discriminatedUnion() rejects unknown `reason` values AND any
+ * extra fields (including `dismissalSnapshot`) — the snapshot is server-side only.
+ */
+const dismissBodySchema = z.discriminatedUnion('reason', [
+  z.object({ reason: z.literal('intentional') }),
+  z.object({ reason: z.literal('inaccurate'), notes: z.string().max(2000).optional() }),
+  z.object({
+    reason: z.literal('not_now'),
+    snoozeRuns: z.union([z.literal(3), z.literal(5), z.literal(10), z.literal(25)]),
+  }),
+  z.object({ reason: z.literal('duplicate_of_human_issue'), linkedIssueId: z.string().uuid() }),
+]);
+
+// Loose Zod shape for OpenAPI doc generation on the AI issue response.
+// Runtime returns `as any` (mirrors existing handlers); this schema drives the
+// OpenAPI spec only.
+const aiIssueResponseSchema = issueSchema.extend({
+  source: z.string().optional(),
+  model: z.string().optional(),
+  gapKey: z.string().optional(),
+  auditRunId: z.string().optional(),
+  category: z.string().nullable().optional(),
+  dismissedAt: z.string().nullable().optional(),
+  dismissalReason: z.string().nullable().optional(),
+  dismissalNotes: z.string().nullable().optional(),
+  dismissalSnoozeRemaining: z.number().nullable().optional(),
+  linkedIssueId: z.string().nullable().optional(),
+  dismissalSnapshot: z.unknown().optional(),
+  rationale: z.string().optional(),
+  costUsd: z.string().optional(),
+  consultedEntries: z.array(z.object({
+    id: z.string(),
+    title: z.string(),
+    icon: z.string(),
+    updatedAt: z.string(),
+  })).optional(),
+  linkedByAiIssueIds: z.array(z.string()).optional(),
+});
+
 // ─── Helpers ─────────────────────────────────────────────────────────────────
 
 /**
@@ -98,6 +140,128 @@ async function fetchAssociationsByIssue(issueIds: string[]): Promise<Map<string,
     else grouped.set(r.issueId, [entry]);
   }
   return grouped;
+}
+
+/**
+ * Phase 25 AISSUE-02: Batch-fetch AI projection data for a set of issues.
+ *
+ * Returns a Map<issueId, { model, costUsd, consultedEntries[] }> for
+ * all AI-sourced rows that have an auditRunId. Uses two batched queries
+ * (one on audit_runs, one on entries) to avoid N+1.
+ */
+async function projectAiFields(
+  issueRows: Array<{ id: string; source: string | null; auditRunId: string | null }>
+): Promise<Map<string, { model: string; costUsd: string; consultedEntries: Array<{ id: string; title: string; icon: string; updatedAt: string }> }>> {
+  const result = new Map<string, { model: string; costUsd: string; consultedEntries: Array<{ id: string; title: string; icon: string; updatedAt: string }> }>();
+
+  // Collect the distinct auditRunIds for AI rows
+  const aiRunIds = Array.from(
+    new Set(
+      issueRows
+        .filter((r) => r.source === 'ai' && r.auditRunId != null)
+        .map((r) => r.auditRunId as string)
+    )
+  );
+
+  if (aiRunIds.length === 0) return result;
+
+  // Batch-fetch audit_runs (model, costUsd, consultedEntryIds)
+  const runRows = await db()
+    .select({
+      id: auditRuns.id,
+      model: auditRuns.model,
+      costUsd: auditRuns.costUsd,
+      consultedEntryIds: auditRuns.consultedEntryIds,
+    })
+    .from(auditRuns)
+    .where(inArray(auditRuns.id, aiRunIds));
+
+  // Collect all consulted entry IDs across all runs
+  const allConsultedIds = Array.from(
+    new Set(runRows.flatMap((r) => r.consultedEntryIds ?? []))
+  );
+
+  // Batch-fetch entry metadata for all consulted IDs
+  const entryMap = new Map<string, { id: string; title: string; icon: string; updatedAt: Date }>();
+  if (allConsultedIds.length > 0) {
+    const entryRows = await db()
+      .select({ id: entries.id, title: entries.title, icon: entries.icon, updatedAt: entries.updatedAt })
+      .from(entries)
+      .where(inArray(entries.id, allConsultedIds));
+    for (const e of entryRows) {
+      entryMap.set(e.id, e);
+    }
+  }
+
+  // Build runId → projection map
+  const runProjectionMap = new Map<string, { model: string; costUsd: string; consultedEntries: Array<{ id: string; title: string; icon: string; updatedAt: string }> }>();
+  for (const run of runRows) {
+    const consultedEntries = (run.consultedEntryIds ?? [])
+      .map((eid) => {
+        const e = entryMap.get(eid);
+        if (!e) return null;
+        return { id: e.id, title: e.title, icon: e.icon, updatedAt: e.updatedAt instanceof Date ? e.updatedAt.toISOString() : String(e.updatedAt) };
+      })
+      .filter((x): x is NonNullable<typeof x> => x !== null);
+    runProjectionMap.set(run.id, {
+      model: run.model,
+      costUsd: run.costUsd ?? '0',
+      consultedEntries,
+    });
+  }
+
+  // Map issueId → projection
+  for (const issue of issueRows) {
+    if (issue.source === 'ai' && issue.auditRunId != null) {
+      const proj = runProjectionMap.get(issue.auditRunId);
+      if (proj) {
+        result.set(issue.id, proj);
+      }
+    }
+  }
+
+  return result;
+}
+
+/**
+ * Phase 25 D-03 bidirectional: compute linkedByAiIssueIds for human rows.
+ *
+ * Returns a Map<humanIssueId, string[]> where each value is the list of AI
+ * issue IDs that are dismissed as duplicate_of_human_issue and point to that
+ * human row. Used only for human-source rows.
+ */
+async function computeLinkedByAiIssueIds(
+  humanIssueIds: string[]
+): Promise<Map<string, string[]>> {
+  const result = new Map<string, string[]>();
+  if (humanIssueIds.length === 0) return result;
+
+  const rows = await db()
+    .select({
+      linkedIssueId: issues.linkedIssueId,
+      id: issues.id,
+    })
+    .from(issues)
+    .where(
+      and(
+        eq(issues.source, 'ai'),
+        eq(issues.dismissalReason, 'duplicate_of_human_issue'),
+        isNotNull(issues.linkedIssueId),
+        inArray(issues.linkedIssueId as any, humanIssueIds)
+      )
+    );
+
+  for (const row of rows) {
+    if (!row.linkedIssueId) continue;
+    const existing = result.get(row.linkedIssueId);
+    if (existing) {
+      existing.push(row.id);
+    } else {
+      result.set(row.linkedIssueId, [row.id]);
+    }
+  }
+
+  return result;
 }
 
 // ─── Route definitions ───────────────────────────────────────────────────────
@@ -281,6 +445,104 @@ const deleteIssueRoute = createRoute({
   },
 });
 
+// ─── Phase 25 dismiss / undismiss route definitions ──────────────────────────
+
+/**
+ * POST /{id}/dismiss
+ *
+ * Dismisses an AI-sourced issue with a structured reason (D-01 two-step modal).
+ * Security: T-25-02-01 (requireUniverse), T-25-02-02 (linkedIssueId cross-universe),
+ *           T-25-02-03 (snapshot server-computed), T-25-02-04 (source='ai' required).
+ */
+const dismissRoute = createRoute({
+  method: 'post',
+  path: '/{id}/dismiss',
+  tags: ['Issues'],
+  summary: 'Dismiss an AI-sourced issue with structured reason',
+  description:
+    'Writes dismissal_reason, dismissal_notes, dismissal_snooze_remaining, linked_issue_id, ' +
+    'dismissed_at, and a server-computed dismissal_snapshot (D-12). Returns 422 if issue ' +
+    'is not AI-sourced or already dismissed. Returns 400 if linkedIssueId references a ' +
+    'non-human or cross-universe issue.',
+  security: [{ bearerAuth: [] }],
+  request: {
+    params: uidAndIdParams,
+    body: {
+      content: { 'application/json': { schema: dismissBodySchema } },
+      required: true,
+    },
+  },
+  responses: {
+    200: {
+      content: { 'application/json': { schema: aiIssueResponseSchema } },
+      description: 'Dismissed issue with full projection',
+    },
+    400: {
+      content: { 'application/json': { schema: errorSchema } },
+      description: 'Validation error or invalid linkedIssueId',
+    },
+    401: {
+      content: { 'application/json': { schema: errorSchema } },
+      description: 'Unauthorized',
+    },
+    404: {
+      content: { 'application/json': { schema: errorSchema } },
+      description: 'Issue not found',
+    },
+    422: {
+      content: { 'application/json': { schema: errorSchema } },
+      description: 'Issue is not AI-sourced or already dismissed',
+    },
+    500: {
+      content: { 'application/json': { schema: errorSchema } },
+      description: 'Internal error',
+    },
+  },
+});
+
+/**
+ * POST /{id}/undismiss
+ *
+ * Clears all dismissal columns, restoring the issue to the active pool (D-13).
+ * Returns 422 if issue is not AI-sourced or not currently dismissed.
+ */
+const undismissRoute = createRoute({
+  method: 'post',
+  path: '/{id}/undismiss',
+  tags: ['Issues'],
+  summary: 'Restore a dismissed AI issue',
+  description:
+    'Clears all dismissal columns (dismissedAt, dismissalReason, dismissalNotes, ' +
+    'dismissalSnoozeRemaining, linkedIssueId, dismissalSnapshot). Returns 422 if ' +
+    'issue is not AI-sourced or not currently dismissed.',
+  security: [{ bearerAuth: [] }],
+  request: {
+    params: uidAndIdParams,
+  },
+  responses: {
+    200: {
+      content: { 'application/json': { schema: aiIssueResponseSchema } },
+      description: 'Restored issue with full projection',
+    },
+    401: {
+      content: { 'application/json': { schema: errorSchema } },
+      description: 'Unauthorized',
+    },
+    404: {
+      content: { 'application/json': { schema: errorSchema } },
+      description: 'Issue not found',
+    },
+    422: {
+      content: { 'application/json': { schema: errorSchema } },
+      description: 'Issue is not AI-sourced or not currently dismissed',
+    },
+    500: {
+      content: { 'application/json': { schema: errorSchema } },
+      description: 'Internal error',
+    },
+  },
+});
+
 // ─── Router ──────────────────────────────────────────────────────────────────
 
 export const issueRoutes = new OpenAPIHono<AppEnv>()
@@ -316,11 +578,29 @@ export const issueRoutes = new OpenAPIHono<AppEnv>()
 
     const grouped = await fetchAssociationsByIssue(issueRows.map((i) => i.id));
 
+    // Phase 25 AISSUE-02: batch-fetch AI projection fields
+    const aiProjectionMap = await projectAiFields(issueRows);
+
+    // Phase 25 D-03: compute linkedByAiIssueIds for human rows
+    const humanIssueIds = issueRows.filter((r) => r.source === 'human').map((r) => r.id);
+    const linkedByAiMap = await computeLinkedByAiIssueIds(humanIssueIds);
+
     return c.json(
-      issueRows.map((i) => ({
-        ...i,
-        entries: grouped.get(i.id) ?? [],
-      })) as any,
+      issueRows.map((i) => {
+        const base = { ...i, entries: grouped.get(i.id) ?? [] };
+        if (i.source === 'ai') {
+          const aiProj = aiProjectionMap.get(i.id);
+          return {
+            ...base,
+            rationale: i.description,
+            costUsd: aiProj?.costUsd ?? '0',
+            consultedEntries: aiProj?.consultedEntries ?? [],
+          };
+        }
+        // Human row: byte-identical base projection + D-03 reverse-direction field
+        const linkedByAiIssueIds = linkedByAiMap.get(i.id);
+        return linkedByAiIssueIds ? { ...base, linkedByAiIssueIds } : base;
+      }) as any,
       200
     );
   })
@@ -370,7 +650,28 @@ export const issueRoutes = new OpenAPIHono<AppEnv>()
     }
 
     const grouped = await fetchAssociationsByIssue([row.id]);
-    return c.json({ ...row, entries: grouped.get(row.id) ?? [] } as any, 200);
+
+    // Phase 25 AISSUE-02: AI projection for single issue
+    const aiProjectionMap = await projectAiFields([row]);
+    const base = { ...row, entries: grouped.get(row.id) ?? [] };
+
+    if (row.source === 'ai') {
+      const aiProj = aiProjectionMap.get(row.id);
+      return c.json({
+        ...base,
+        rationale: row.description,
+        costUsd: aiProj?.costUsd ?? '0',
+        consultedEntries: aiProj?.consultedEntries ?? [],
+      } as any, 200);
+    }
+
+    // Human row: D-03 reverse-direction
+    const linkedByAiMap = await computeLinkedByAiIssueIds([row.id]);
+    const linkedByAiIssueIds = linkedByAiMap.get(row.id);
+    return c.json(
+      linkedByAiIssueIds ? { ...base, linkedByAiIssueIds } : base as any,
+      200
+    );
   })
 
   // PATCH /:id -- update fields; when entryIds supplied (incl. []) replace associations
@@ -435,4 +736,180 @@ export const issueRoutes = new OpenAPIHono<AppEnv>()
     }
 
     return c.body(null, 204);
+  })
+
+  // POST /:id/dismiss — Phase 25 AISSUE-03/04 structured dismissal
+  .openapi(dismissRoute, async (c) => {
+    const { uid, id: issueId } = c.req.valid('param');
+    const userId = c.var.userId;
+    // T-25-02-01: ownership check first
+    await requireUniverse(uid, userId);
+    const payload = c.req.valid('json');
+
+    const now = new Date();
+
+    const row = await db().transaction(async (tx) => {
+      // Fetch the issue with all columns needed for validation
+      const [issue] = await tx
+        .select()
+        .from(issues)
+        .where(and(eq(issues.id, issueId), eq(issues.universeId, uid)));
+
+      if (!issue) {
+        throw new HTTPException(404, { message: 'Issue not found' });
+      }
+      // T-25-02-04: AI-only enforcement
+      if (issue.source !== 'ai') {
+        throw new HTTPException(422, { message: 'Only AI-sourced issues can be dismissed with a reason' });
+      }
+      // Idempotency guard
+      if (issue.dismissedAt != null) {
+        throw new HTTPException(422, { message: 'Issue is already dismissed; un-dismiss first' });
+      }
+
+      // T-25-02-02: validate linkedIssueId when reason=duplicate_of_human_issue
+      if (payload.reason === 'duplicate_of_human_issue') {
+        const [linked] = await tx
+          .select({ source: issues.source, universeId: issues.universeId })
+          .from(issues)
+          .where(eq(issues.id, payload.linkedIssueId));
+        if (!linked || linked.source !== 'human' || linked.universeId !== uid) {
+          throw new HTTPException(400, {
+            message: 'linkedIssueId must reference a human issue in the same universe',
+          });
+        }
+      }
+
+      // D-12: Compute dismissal_snapshot server-side from audit_runs.consulted_entry_ids
+      // T-25-02-03: snapshot is NEVER read from client payload
+      let snapshot: { snapshotAt: string; entries: Array<{ id: string; updatedAt: string }> } = {
+        snapshotAt: now.toISOString(),
+        entries: [],
+      };
+
+      if (issue.auditRunId) {
+        const [run] = await tx
+          .select({ consultedEntryIds: auditRuns.consultedEntryIds })
+          .from(auditRuns)
+          .where(eq(auditRuns.id, issue.auditRunId));
+
+        if (run && run.consultedEntryIds && run.consultedEntryIds.length > 0) {
+          const entryRows = await tx
+            .select({ id: entries.id, updatedAt: entries.updatedAt })
+            .from(entries)
+            .where(
+              and(
+                inArray(entries.id, run.consultedEntryIds),
+                eq(entries.universeId, uid)
+              )
+            );
+
+          snapshot = {
+            snapshotAt: now.toISOString(),
+            entries: entryRows.map((e) => ({
+              id: e.id,
+              updatedAt: e.updatedAt instanceof Date ? e.updatedAt.toISOString() : String(e.updatedAt),
+            })),
+          };
+        }
+      }
+
+      // Build update payload based on reason
+      const setPayload: Record<string, unknown> = {
+        dismissedAt: now,
+        dismissalReason: payload.reason,
+        dismissalSnapshot: snapshot,
+        updatedAt: now,
+      };
+
+      if (payload.reason === 'inaccurate' && 'notes' in payload && payload.notes) {
+        setPayload.dismissalNotes = payload.notes;
+      }
+      if (payload.reason === 'not_now') {
+        setPayload.dismissalSnoozeRemaining = payload.snoozeRuns;
+      }
+      if (payload.reason === 'duplicate_of_human_issue') {
+        setPayload.linkedIssueId = payload.linkedIssueId;
+      }
+
+      const [updated] = await tx
+        .update(issues)
+        .set(setPayload)
+        .where(and(eq(issues.id, issueId), eq(issues.universeId, uid)))
+        .returning();
+
+      return updated;
+    });
+
+    // Project AI fields for the response
+    const grouped = await fetchAssociationsByIssue([row.id]);
+    const aiProjectionMap = await projectAiFields([row]);
+    const aiProj = aiProjectionMap.get(row.id);
+
+    return c.json({
+      ...row,
+      entries: grouped.get(row.id) ?? [],
+      rationale: row.description,
+      costUsd: aiProj?.costUsd ?? '0',
+      consultedEntries: aiProj?.consultedEntries ?? [],
+    } as any, 200);
+  })
+
+  // POST /:id/undismiss — Phase 25 AISSUE-06 restore dismissed AI issue
+  .openapi(undismissRoute, async (c) => {
+    const { uid, id: issueId } = c.req.valid('param');
+    const userId = c.var.userId;
+    // T-25-02-01: ownership check first
+    await requireUniverse(uid, userId);
+
+    const now = new Date();
+
+    const row = await db().transaction(async (tx) => {
+      const [issue] = await tx
+        .select()
+        .from(issues)
+        .where(and(eq(issues.id, issueId), eq(issues.universeId, uid)));
+
+      if (!issue) {
+        throw new HTTPException(404, { message: 'Issue not found' });
+      }
+      // T-25-02-04: AI-only enforcement
+      if (issue.source !== 'ai') {
+        throw new HTTPException(422, { message: 'Only AI-sourced issues can be un-dismissed' });
+      }
+      // Idempotency guard
+      if (issue.dismissedAt == null) {
+        throw new HTTPException(422, { message: 'Issue is not dismissed' });
+      }
+
+      // Clear all dismissal columns
+      const [updated] = await tx
+        .update(issues)
+        .set({
+          dismissedAt: null,
+          dismissalReason: null,
+          dismissalNotes: null,
+          dismissalSnoozeRemaining: null,
+          linkedIssueId: null,
+          dismissalSnapshot: null,
+          updatedAt: now,
+        })
+        .where(and(eq(issues.id, issueId), eq(issues.universeId, uid)))
+        .returning();
+
+      return updated;
+    });
+
+    // Project AI fields for the response
+    const grouped = await fetchAssociationsByIssue([row.id]);
+    const aiProjectionMap = await projectAiFields([row]);
+    const aiProj = aiProjectionMap.get(row.id);
+
+    return c.json({
+      ...row,
+      entries: grouped.get(row.id) ?? [],
+      rationale: row.description,
+      costUsd: aiProj?.costUsd ?? '0',
+      consultedEntries: aiProj?.consultedEntries ?? [],
+    } as any, 200);
   });
