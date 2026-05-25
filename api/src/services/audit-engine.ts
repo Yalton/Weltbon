@@ -716,6 +716,7 @@ When done, return your findings as JSON: { "suggestions": [...] }`;
           model,
           auditRunId: runId,
           dismissalSnapshot: null,
+          category: validSugg.category,  // CR-01: AuditCategory column — was missing, causing category=NULL
         })
         .onConflictDoNothing()
         .returning({ id: issues.id });

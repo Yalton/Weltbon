@@ -266,6 +266,7 @@ async function persistFinding(
       model: 'heuristic',
       auditRunId,
       dismissalSnapshot: null,
+      category: finding.category,   // CR-01: AuditCategory column — was missing, causing category=NULL
     })
     .onConflictDoNothing()
     .returning({ id: issues.id });

@@ -881,6 +881,11 @@ describe('audit-engine runAudit (Phase 24-04)', () => {
       });
       expect(issueInsert).toBeDefined();
 
+      // CR-01 regression guard: category must be set on INSERT (not NULL)
+      // VALID_SUGGESTION_OUTPUT has category='missing-link'
+      const insertedVals = issueInsert!.values as Record<string, unknown>;
+      expect(insertedVals.category).toBe('missing-link');
+
       // Assert succeeded
       const succeededUpdate = updateCalls.find((c) => c.set.status === 'succeeded');
       expect(succeededUpdate).toBeDefined();
