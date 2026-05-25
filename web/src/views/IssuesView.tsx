@@ -1,20 +1,28 @@
 import { useMemo, useState } from 'react';
 import { Link, useParams } from 'react-router-dom';
 import {
+  AUDIT_CATEGORIES,
   SEVERITIES,
   useIssues,
   useUpdateIssue,
   useDeleteIssue,
+  useUndismissIssue,
+  type AuditCategory,
   type Issue,
   type IssueFilters,
   type Severity,
 } from '../hooks/useIssues';
 import { SeverityPill } from '../components/SeverityPill';
+import { AIBadge } from '../components/AIBadge';
+import { CategoryIcon, CATEGORY_STRIPE } from '../components/CategoryIcon';
+import { ReasoningPanel } from '../components/ReasoningPanel';
+import { DismissAIIssueDialog } from '../components/DismissAIIssueDialog';
 import { IssueEditor } from '../components/IssueEditor';
 import { ConfirmDialog } from '../components/ConfirmDialog';
 import { EmptyState } from '../components/EmptyState';
+import { Toast } from '../components/Toast';
 
-type ResolutionFilter = 'open' | 'resolved' | 'all';
+type ResolutionFilter = 'open' | 'resolved' | 'dismissed' | 'all';
 
 /**
  * Global issue triage route. Lists all issues across the universe with
@@ -25,39 +33,88 @@ type ResolutionFilter = 'open' | 'resolved' | 'all';
  * but the ISS-05 contract only requires the filter surface itself. Keeping
  * state local keeps this plan tight; wire to useFilterParams in a follow-up
  * if operators ask to bookmark filtered triage views.
+ *
+ * Phase 25 additions (AISSUE-01..03, AISSUE-06):
+ * - AI rows render with badge + category emoji + category-derived left-edge stripe (D-06/D-07/D-08)
+ * - Source filter (Human/AI/Both), Category multi-select (5 AI categories, D-10),
+ *   Status extended with Dismissed + All (D-09)
+ * - "Why?" toggle expands ReasoningPanel inline per row (D-04); multiple simultaneously
+ * - Dismiss button opens DismissAIIssueDialog (D-01); Restore button calls useUndismissIssue (D-13)
+ * - Human rows with linkedByAiIssueIds > 0 show "AI flagged this too" chip (D-03 bidirectional)
  */
 export function IssuesView() {
   const { uid } = useParams<{ uid: string }>();
 
+  // ── Filter state ──────────────────────────────────────────────────────────
   const [severity, setSeverity] = useState<Severity | ''>('');
   const [resolutionFilter, setResolutionFilter] = useState<ResolutionFilter>('open');
+  const [sourceFilter, setSourceFilter] = useState<'both' | 'human' | 'ai'>('both');
+  const [categoryFilter, setCategoryFilter] = useState<Set<AuditCategory>>(new Set());
 
-  const filters: IssueFilters = useMemo(() => {
+  // ── AI accordion + dismissal state ───────────────────────────────────────
+  const [expandedReasoning, setExpandedReasoning] = useState<Map<string, boolean>>(new Map());
+  const [dismissingIssue, setDismissingIssue] = useState<Issue | null>(null);
+  const [toast, setToast] = useState<{ message: string; variant: 'success' | 'error' } | null>(null);
+
+  // ── Server-side filter construction ──────────────────────────────────────
+  const serverFilters: IssueFilters = useMemo(() => {
     const f: IssueFilters = {};
     if (severity) f.severity = severity;
-    if (resolutionFilter === 'open') f.resolved = false;
-    else if (resolutionFilter === 'resolved') f.resolved = true;
+    if (sourceFilter !== 'both') f.source = sourceFilter;
+    if (resolutionFilter === 'open') {
+      f.resolved = false;
+      f.includeDismissed = false;
+    } else if (resolutionFilter === 'resolved') {
+      f.resolved = true;
+    }
+    // 'dismissed' and 'all': omit resolved so server returns both; client filters below
+    if (categoryFilter.size > 0) {
+      f.category = Array.from(categoryFilter);
+    }
     return f;
-  }, [severity, resolutionFilter]);
+  }, [severity, resolutionFilter, sourceFilter, categoryFilter]);
 
-  const { data: issues, isLoading } = useIssues(uid!, filters);
+  const { data: issues, isLoading } = useIssues(uid!, serverFilters);
 
+  // ── Mutations ─────────────────────────────────────────────────────────────
   const updateIssue = useUpdateIssue(uid!);
   const deleteIssue = useDeleteIssue(uid!);
+  const undismissIssue = useUndismissIssue(uid!);
 
+  // ── Editor / delete dialog state ──────────────────────────────────────────
   const [editor, setEditor] = useState<{ open: boolean; initial: Issue | null }>({
     open: false,
     initial: null,
   });
   const [deletingId, setDeletingId] = useState<string | null>(null);
 
-  const hasActiveFilters = severity !== '' || resolutionFilter !== 'open';
-
-  const handleToggleResolved = (issue: Issue) => {
-    updateIssue.mutate({
-      id: issue.id,
-      patch: { resolved: !issue.resolved },
+  // ── Client-side filter pass ───────────────────────────────────────────────
+  const displayedIssues = useMemo(() => {
+    if (!issues) return [];
+    return issues.filter((i) => {
+      if (sourceFilter === 'human' && i.source === 'ai') return false;
+      if (sourceFilter === 'ai' && i.source !== 'ai') return false;
+      if (resolutionFilter === 'open' && i.dismissedAt) return false;
+      if (resolutionFilter === 'dismissed' && (!i.dismissedAt || i.source !== 'ai')) return false;
+      if (resolutionFilter === 'resolved' && (i.source === 'ai' || !i.resolved)) return false;
+      if (
+        categoryFilter.size > 0 &&
+        (!i.category || !categoryFilter.has(i.category as AuditCategory))
+      )
+        return false;
+      return true;
     });
+  }, [issues, sourceFilter, resolutionFilter, categoryFilter]);
+
+  const hasActiveFilters =
+    severity !== '' ||
+    resolutionFilter !== 'open' ||
+    sourceFilter !== 'both' ||
+    categoryFilter.size > 0;
+
+  // ── Helpers ───────────────────────────────────────────────────────────────
+  const handleToggleResolved = (issue: Issue) => {
+    updateIssue.mutate({ id: issue.id, patch: { resolved: !issue.resolved } });
   };
 
   const handleDelete = async () => {
@@ -66,6 +123,32 @@ export function IssuesView() {
     setDeletingId(null);
   };
 
+  const toggleReasoning = (id: string) => {
+    setExpandedReasoning((prev) => {
+      const next = new Map(prev);
+      next.set(id, !(next.get(id) ?? false));
+      return next;
+    });
+  };
+
+  const toggleCategory = (cat: AuditCategory) => {
+    setCategoryFilter((prev) => {
+      const next = new Set(prev);
+      if (next.has(cat)) next.delete(cat);
+      else next.add(cat);
+      return next;
+    });
+  };
+
+  const handleRestore = (issue: Issue) => {
+    undismissIssue.mutate(issue.id, {
+      onSuccess: () => setToast({ message: 'Suggestion restored.', variant: 'success' }),
+      onError: () =>
+        setToast({ message: 'Failed to restore suggestion.', variant: 'error' }),
+    });
+  };
+
+  // ── Render ────────────────────────────────────────────────────────────────
   return (
     <div className="max-w-3xl mx-auto">
       {/* Header */}
@@ -80,8 +163,9 @@ export function IssuesView() {
         </button>
       </div>
 
-      {/* Filters */}
+      {/* Filters — left-to-right: Severity → Source → Category → Status (D-10) */}
       <div className="mt-4 flex flex-wrap items-end gap-3">
+        {/* Severity */}
         <div>
           <label htmlFor="issues-severity" className="block text-xs text-neutral-500 mb-1">
             Severity
@@ -100,6 +184,49 @@ export function IssuesView() {
             ))}
           </select>
         </div>
+
+        {/* Source (D-10) */}
+        <div>
+          <label htmlFor="issues-source" className="block text-xs text-neutral-500 mb-1">
+            Source
+          </label>
+          <select
+            id="issues-source"
+            value={sourceFilter}
+            onChange={(e) => setSourceFilter(e.target.value as 'both' | 'human' | 'ai')}
+            className="rounded-md border border-neutral-300 dark:border-neutral-700 bg-transparent px-3 py-1.5 text-sm"
+          >
+            <option value="both">Both</option>
+            <option value="human">Human</option>
+            <option value="ai">AI</option>
+          </select>
+        </div>
+
+        {/* Category multi-select (D-10) — greyed out when Source=Human */}
+        <div className={sourceFilter === 'human' ? 'opacity-50 pointer-events-none' : ''}>
+          <span className="block text-xs text-neutral-500 mb-1">Category</span>
+          <div className="flex flex-wrap gap-2">
+            {AUDIT_CATEGORIES.map((cat) => (
+              <label
+                key={cat}
+                className="inline-flex items-center gap-1.5 text-xs cursor-pointer"
+              >
+                <input
+                  type="checkbox"
+                  checked={categoryFilter.has(cat)}
+                  onChange={() => toggleCategory(cat)}
+                  disabled={sourceFilter === 'human'}
+                  className="accent-[color:var(--color-accent)]"
+                />
+                <span>
+                  <CategoryIcon category={cat} /> {cat}
+                </span>
+              </label>
+            ))}
+          </div>
+        </div>
+
+        {/* Status (D-09) */}
         <div>
           <label htmlFor="issues-status" className="block text-xs text-neutral-500 mb-1">
             Status
@@ -112,6 +239,7 @@ export function IssuesView() {
           >
             <option value="open">Open</option>
             <option value="resolved">Resolved</option>
+            <option value="dismissed">Dismissed</option>
             <option value="all">All</option>
           </select>
         </div>
@@ -121,15 +249,25 @@ export function IssuesView() {
       <div className="mt-6">
         {isLoading ? (
           <p className="text-sm text-neutral-500">Loading…</p>
-        ) : !issues || issues.length === 0 ? (
-          hasActiveFilters ? (
+        ) : !displayedIssues || displayedIssues.length === 0 ? (
+          resolutionFilter === 'dismissed' ? (
+            <EmptyState
+              title="No dismissed AI suggestions"
+              body="No dismissed AI suggestions. They're filtered out of audit runs and won't burn tokens."
+            />
+          ) : hasActiveFilters ? (
             <EmptyState
               title="Nothing matches these filters"
               body="Try broadening your severity or status filter."
               action={
                 <button
                   type="button"
-                  onClick={() => { setSeverity(''); setResolutionFilter('open'); }}
+                  onClick={() => {
+                    setSeverity('');
+                    setResolutionFilter('open');
+                    setSourceFilter('both');
+                    setCategoryFilter(new Set());
+                  }}
                   className="bg-[color:var(--color-accent)] text-white text-sm font-medium px-4 py-2 rounded-md hover:opacity-90 focus:outline-none focus:ring-2 focus:ring-[color:var(--color-accent)] focus:ring-offset-2"
                 >
                   Reset filters
@@ -144,63 +282,144 @@ export function IssuesView() {
           )
         ) : (
           <ul className="space-y-2">
-            {issues.map((issue) => (
-              <li
-                key={issue.id}
-                className="flex items-start gap-3 rounded-md border border-neutral-200 dark:border-neutral-800 p-3"
-              >
-                <div className="mt-1">
-                  <SeverityPill severity={issue.severity} />
-                </div>
+            {displayedIssues.map((issue) => {
+              const isAI = issue.source === 'ai';
+              const stripeClass = isAI
+                ? issue.category
+                  ? CATEGORY_STRIPE[issue.category as AuditCategory]
+                  : 'border-l-neutral-300 dark:border-l-neutral-700'
+                : '';
+              const isExpanded = expandedReasoning.get(issue.id) ?? false;
 
-                <div className="flex-1 min-w-0">
-                  <p className={issue.resolved ? 'font-medium line-through text-neutral-500' : 'font-medium'}>
-                    {issue.title}
-                  </p>
-                  {issue.description && (
-                    <p className="text-sm text-neutral-500 truncate">{issue.description}</p>
-                  )}
-                  {issue.entries.length > 0 && (
-                    <div className="mt-1 flex flex-wrap gap-1">
-                      {issue.entries.map((e) => (
-                        <Link
-                          key={e.id}
-                          to={`/universes/${uid}/entries/${e.id}`}
-                          className="inline-flex items-center rounded-full bg-neutral-200 dark:bg-neutral-800 px-2 py-0.5 text-xs hover:bg-neutral-300 dark:hover:bg-neutral-700"
-                        >
-                          {e.icon && <span className="mr-1">{e.icon}</span>}
-                          {e.title}
-                        </Link>
-                      ))}
+              return (
+                <li
+                  key={issue.id}
+                  className={`rounded-md border border-neutral-200 dark:border-neutral-800 p-3 ${isAI ? `border-l-2 ${stripeClass}` : ''}`}
+                >
+                  {/* Row content */}
+                  <div className="flex items-start gap-3">
+                    {/* Severity pill + optional AI badge */}
+                    <div className="mt-1 flex items-center gap-1.5 shrink-0">
+                      <SeverityPill severity={issue.severity} />
+                      {isAI && <AIBadge />}
                     </div>
-                  )}
-                </div>
 
-                <div className="flex items-center gap-2 text-xs">
-                  <button
-                    type="button"
-                    onClick={() => handleToggleResolved(issue)}
-                    className="text-neutral-400 hover:text-neutral-200"
-                  >
-                    {issue.resolved ? 'Reopen' : 'Resolve'}
-                  </button>
-                  <button
-                    type="button"
-                    onClick={() => setEditor({ open: true, initial: issue })}
-                    className="text-neutral-400 hover:text-neutral-200"
-                  >
-                    Edit
-                  </button>
-                  <button
-                    type="button"
-                    onClick={() => setDeletingId(issue.id)}
-                    className="text-neutral-400 hover:text-red-500"
-                  >
-                    Delete
-                  </button>
-                </div>
-              </li>
-            ))}
+                    {/* Title + description + entry chips */}
+                    <div className="flex-1 min-w-0">
+                      <p
+                        className={
+                          issue.resolved
+                            ? 'font-medium line-through text-neutral-500'
+                            : 'font-medium'
+                        }
+                      >
+                        {isAI && issue.category && (
+                          <>
+                            <CategoryIcon category={issue.category} />{' '}
+                          </>
+                        )}
+                        {issue.title}
+                        {/* D-03: "AI flagged this too" chip on human rows */}
+                        {!isAI && (issue.linkedByAiIssueIds?.length ?? 0) > 0 && (
+                          <Link
+                            to={`/universes/${uid}/issues`}
+                            className="ml-2 inline-flex items-center rounded-full bg-neutral-200 dark:bg-neutral-700 px-1.5 py-0.5 text-xs text-neutral-600 dark:text-neutral-300 hover:bg-neutral-300 dark:hover:bg-neutral-600"
+                            title="An AI suggestion was dismissed as a duplicate of this issue"
+                          >
+                            AI flagged this too
+                          </Link>
+                        )}
+                      </p>
+                      {issue.description && (
+                        <p className="text-sm text-neutral-500 truncate">{issue.description}</p>
+                      )}
+                      {issue.entries.length > 0 && (
+                        <div className="mt-1 flex flex-wrap gap-1">
+                          {issue.entries.map((e) => (
+                            <Link
+                              key={e.id}
+                              to={`/universes/${uid}/entries/${e.id}`}
+                              className="inline-flex items-center rounded-full bg-neutral-200 dark:bg-neutral-800 px-2 py-0.5 text-xs hover:bg-neutral-300 dark:hover:bg-neutral-700"
+                            >
+                              {e.icon && <span className="mr-1">{e.icon}</span>}
+                              {e.title}
+                            </Link>
+                          ))}
+                        </div>
+                      )}
+                    </div>
+
+                    {/* Action group */}
+                    <div className="flex items-center gap-2 text-xs shrink-0">
+                      {isAI ? (
+                        /* AI row actions: Why? | Dismiss | Restore */
+                        <>
+                          <button
+                            type="button"
+                            onClick={() => toggleReasoning(issue.id)}
+                            className="text-neutral-400 hover:text-neutral-200"
+                          >
+                            {isExpanded ? 'Hide' : 'Why?'}
+                          </button>
+                          {!issue.dismissedAt && (
+                            <button
+                              type="button"
+                              onClick={() => setDismissingIssue(issue)}
+                              className="text-neutral-400 hover:text-neutral-200"
+                            >
+                              Dismiss
+                            </button>
+                          )}
+                          {issue.dismissedAt && (
+                            <button
+                              type="button"
+                              onClick={() => handleRestore(issue)}
+                              className="text-neutral-400 hover:text-neutral-200"
+                            >
+                              Restore
+                            </button>
+                          )}
+                        </>
+                      ) : (
+                        /* Human row actions: Reopen/Resolve | Edit | Delete */
+                        <>
+                          <button
+                            type="button"
+                            onClick={() => handleToggleResolved(issue)}
+                            className="text-neutral-400 hover:text-neutral-200"
+                          >
+                            {issue.resolved ? 'Reopen' : 'Resolve'}
+                          </button>
+                          <button
+                            type="button"
+                            onClick={() => setEditor({ open: true, initial: issue })}
+                            className="text-neutral-400 hover:text-neutral-200"
+                          >
+                            Edit
+                          </button>
+                          <button
+                            type="button"
+                            onClick={() => setDeletingId(issue.id)}
+                            className="text-neutral-400 hover:text-red-500"
+                          >
+                            Delete
+                          </button>
+                        </>
+                      )}
+                    </div>
+                  </div>
+
+                  {/* ReasoningPanel — outside the flex container but inside <li> so stripe wraps it */}
+                  {isAI && (
+                    <ReasoningPanel
+                      issue={issue}
+                      expanded={isExpanded}
+                      uid={uid!}
+                    />
+                  )}
+                </li>
+              );
+            })}
           </ul>
         )}
       </div>
@@ -225,6 +444,22 @@ export function IssuesView() {
         destructive
         onConfirm={handleDelete}
       />
+
+      {/* Dismiss AI suggestion dialog */}
+      <DismissAIIssueDialog
+        universeId={uid!}
+        issue={dismissingIssue}
+        open={dismissingIssue !== null}
+        onOpenChange={(o) => {
+          if (!o) setDismissingIssue(null);
+        }}
+        onDismissed={() => setToast({ message: 'Suggestion dismissed.', variant: 'success' })}
+      />
+
+      {/* Toast notifications */}
+      {toast && (
+        <Toast message={toast.message} variant={toast.variant} onDismiss={() => setToast(null)} />
+      )}
     </div>
   );
 }
