@@ -794,8 +794,16 @@ export const issueRoutes = new OpenAPIHono<AppEnv>()
           .where(eq(auditRuns.id, issue.auditRunId));
 
         if (run && run.consultedEntryIds && run.consultedEntryIds.length > 0) {
+          // Phase 25 D-12 / Rule 1 fix: fetch updatedAt as a microsecond-precision
+          // ISO string directly from Postgres using to_char(). JS Date truncates to
+          // milliseconds (3 decimal places), so Drizzle column mapping loses sub-ms
+          // precision. Without this, the auto-stale predicate falsely fires right after
+          // dismissal because the DB's microsecond value > the snapshot's ms value.
           const entryRows = await tx
-            .select({ id: entries.id, updatedAt: entries.updatedAt })
+            .select({
+              id: entries.id,
+              updatedAtStr: sql<string>`to_char(${entries.updatedAt} AT TIME ZONE 'UTC', 'YYYY-MM-DD"T"HH24:MI:SS.US"Z"')`,
+            })
             .from(entries)
             .where(
               and(
@@ -808,7 +816,7 @@ export const issueRoutes = new OpenAPIHono<AppEnv>()
             snapshotAt: now.toISOString(),
             entries: entryRows.map((e) => ({
               id: e.id,
-              updatedAt: e.updatedAt instanceof Date ? e.updatedAt.toISOString() : String(e.updatedAt),
+              updatedAt: e.updatedAtStr,
             })),
           };
         }
