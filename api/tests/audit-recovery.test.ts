@@ -107,9 +107,15 @@ describe('recoverOrphanAuditRuns (AUDIT-12 + CONTEXT D-03)', () => {
 
   it('force-fails pending and running rows → status=failed, error=process_restarted, finishedAt set', async () => {
     const user = await seedUser('recovery1@example.com');
-    const uid = await seedUniverse(user.id);
-    const pendingRunId = await seedAuditRun(uid, user.id, 'pending');
-    const runningRunId = await seedAuditRun(uid, user.id, 'running');
+    // Use distinct universes per orphan row: the partial unique index
+    // audit_runs_universe_active_unique (added in migration 0009) enforces
+    // at most one pending/running row per universe, so the realistic
+    // production scenario for boot recovery is two different universes
+    // each carrying one orphan from a crashed worker.
+    const uidPending = await seedUniverse(user.id);
+    const uidRunning = await seedUniverse(user.id);
+    const pendingRunId = await seedAuditRun(uidPending, user.id, 'pending');
+    const runningRunId = await seedAuditRun(uidRunning, user.id, 'running');
 
     const count = await recoverOrphanAuditRuns(handle.db as any);
     expect(count).toBe(2);
