@@ -495,6 +495,124 @@ describe('audit-engine runAudit (Phase 24-04)', () => {
   });
 
   // =========================================================================
+  // BL-04: Single-turn overspend (post-call cap recheck)
+  // =========================================================================
+  it(
+    'BL-04: single-turn cost overspend (one turn returns 10x the cap) terminates with budget_exhausted (post-call recheck)',
+    async () => {
+      // Stage a SINGLE happy-path final-answer turn whose costUsd is 10x the cap.
+      // PRE-fix: pre-call gate sees totalCost=0 < $1.00 and lets the call through;
+      //          telemetry accumulates totalCost = $10; no second gate; engine
+      //          persists the suggestion and marks the run SUCCEEDED with $10 spent
+      //          against a $1.00 cap — BL-04 failure mode.
+      // POST-fix: post-call recheck sees totalCost=$10 >= $1.00 and fires
+      //          BUDGET_EXHAUSTED before persistence.
+      mockRunAudit.mockResolvedValueOnce({
+        ...VALID_SUGGESTION_OUTPUT,
+        costUsd: 10.0,
+      });
+
+      const updateCalls: DbUpdateCall[] = [];
+      const { dbStub } = makeDbStub({ updateCalls });
+
+      await runAudit(RUN_ID, {
+        db: dbStub as unknown as typeof import('../src/db/client.js').db,
+        getDecryptedKey: mockGetDecryptedKey,
+        runCheapFinds: mockRunCheapFinds,
+        buildStructuralDigest: mockBuildStructuralDigest,
+        validateReferencedEntryIds: mockValidateReferencedEntryIds,
+        computeGapKey: mockComputeGapKey,
+        getEntryBody: mockGetEntryBody,
+        cfg: { auditMaxCostUsd: 1.0, auditMaxToolCalls: 100, auditMaxTokensTotal: 10_000_000, auditMaxWallClockMs: 120_000 },
+      });
+
+      expect(mockRunAudit.mock.calls.length).toBe(1);
+      const failUpdate = updateCalls.find(
+        (c) => c.set.status === 'failed' && c.set.error === ENGINE_ERROR.BUDGET_EXHAUSTED,
+      );
+      expect(failUpdate).toBeDefined();
+      // CRITICAL: pre-fix, this would be a 'succeeded' update — the test fails loudly
+      // if BL-04 regresses.
+      const succeedUpdate = updateCalls.find((c) => c.set.status === 'succeeded');
+      expect(succeedUpdate).toBeUndefined();
+    },
+  );
+
+  it(
+    'BL-04: single-turn token overspend terminates with budget_exhausted (post-call recheck)',
+    async () => {
+      // Single final-answer turn with usage 2x the token cap.
+      mockRunAudit.mockResolvedValueOnce({
+        ...VALID_SUGGESTION_OUTPUT,
+        usage: {
+          inputTokens: 200_000,
+          outputTokens: 50,
+          cacheCreationInputTokens: 0,
+          cacheReadInputTokens: 0,
+        },
+        costUsd: 0.001,
+      });
+
+      const updateCalls: DbUpdateCall[] = [];
+      const { dbStub } = makeDbStub({ updateCalls });
+
+      await runAudit(RUN_ID, {
+        db: dbStub as unknown as typeof import('../src/db/client.js').db,
+        getDecryptedKey: mockGetDecryptedKey,
+        runCheapFinds: mockRunCheapFinds,
+        buildStructuralDigest: mockBuildStructuralDigest,
+        validateReferencedEntryIds: mockValidateReferencedEntryIds,
+        computeGapKey: mockComputeGapKey,
+        getEntryBody: mockGetEntryBody,
+        cfg: { auditMaxTokensTotal: 100_000, auditMaxCostUsd: 100, auditMaxToolCalls: 100, auditMaxWallClockMs: 120_000 },
+      });
+
+      expect(mockRunAudit.mock.calls.length).toBe(1);
+      const failUpdate = updateCalls.find(
+        (c) => c.set.status === 'failed' && c.set.error === ENGINE_ERROR.BUDGET_EXHAUSTED,
+      );
+      expect(failUpdate).toBeDefined();
+      const succeedUpdate = updateCalls.find((c) => c.set.status === 'succeeded');
+      expect(succeedUpdate).toBeUndefined();
+    },
+  );
+
+  it(
+    'BL-04: hung provider call exceeds wall-clock cap — Promise.race fires; status=failed, error=budget_exhausted',
+    async () => {
+      // Provider call hangs forever — Promise.race must resolve via the per-turn
+      // wall-clock timeout. With auditMaxWallClockMs=50, the race fires at ~50ms.
+      mockRunAudit.mockImplementationOnce(() => new Promise(() => {}));
+
+      const updateCalls: DbUpdateCall[] = [];
+      const { dbStub } = makeDbStub({ updateCalls });
+
+      const t0 = Date.now();
+      await runAudit(RUN_ID, {
+        db: dbStub as unknown as typeof import('../src/db/client.js').db,
+        getDecryptedKey: mockGetDecryptedKey,
+        runCheapFinds: mockRunCheapFinds,
+        buildStructuralDigest: mockBuildStructuralDigest,
+        validateReferencedEntryIds: mockValidateReferencedEntryIds,
+        computeGapKey: mockComputeGapKey,
+        getEntryBody: mockGetEntryBody,
+        cfg: { auditMaxWallClockMs: 50, auditMaxCostUsd: 100, auditMaxToolCalls: 100, auditMaxTokensTotal: 10_000_000 },
+      });
+      const elapsed = Date.now() - t0;
+
+      // Engine should have terminated within a reasonable budget — well under
+      // Vitest's default test timeout. If Promise.race is missing, this test
+      // hangs until the suite timeout fires.
+      expect(elapsed).toBeLessThan(5000);
+      const failUpdate = updateCalls.find(
+        (c) => c.set.status === 'failed' && c.set.error === ENGINE_ERROR.BUDGET_EXHAUSTED,
+      );
+      expect(failUpdate).toBeDefined();
+    },
+    10_000, // explicit per-test timeout — never exceed 10s even on slow CI
+  );
+
+  // =========================================================================
   // Test 5: Invalid output — legacy category 'influence-gap'
   // =========================================================================
   it("invalid output: category='influence-gap' fails Zod parse → status=failed, error=invalid_output", async () => {
