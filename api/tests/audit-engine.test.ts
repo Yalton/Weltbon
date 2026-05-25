@@ -868,11 +868,12 @@ describe('audit-engine runAudit (Phase 24-04)', () => {
       });
 
       // Assert buildStructuralDigest was called exactly once with the
-      // D-06 excludeEntryIds deep-equal to createdIssueEntryIds
+      // D-06 excludeEntryIds deep-equal to createdIssueEntryIds AND
+      // BL-03 scope opts forwarded from the run row (scope='universe', scopeEntryId=null by default).
       expect(mockBuildStructuralDigest).toHaveBeenCalledOnce();
       expect(mockBuildStructuralDigest).toHaveBeenCalledWith(
         UNIVERSE_ID,
-        { excludeEntryIds: ['entry-A', 'entry-B'] },
+        { excludeEntryIds: ['entry-A', 'entry-B'], scope: 'universe', scopeEntryId: null },
       );
     },
   );
