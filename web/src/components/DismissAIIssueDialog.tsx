@@ -91,21 +91,18 @@ export function DismissAIIssueDialog({ universeId, issue, open, onOpenChange, on
 
   const handleConfirm = () => {
     if (!issue || !reason) return;
-    const payload: Parameters<ReturnType<typeof useDismissIssue>['mutate']>[0] = {
-      id: issue.id,
-      reason,
-    };
+    const payload: Record<string, unknown> = { id: issue.id, reason };
     if (reason === 'inaccurate' && notes.trim()) {
-      (payload as Record<string, unknown>).notes = notes.trim();
+      payload.notes = notes.trim();
     }
     if (reason === 'not_now' && snoozeRuns) {
-      (payload as Record<string, unknown>).snoozeRuns = snoozeRuns;
+      payload.snoozeRuns = snoozeRuns;
     }
     if (reason === 'duplicate_of_human_issue' && linkedIssueId) {
-      (payload as Record<string, unknown>).linkedIssueId = linkedIssueId;
+      payload.linkedIssueId = linkedIssueId;
     }
 
-    dismiss.mutate(payload, {
+    dismiss.mutate(payload as unknown as Parameters<ReturnType<typeof useDismissIssue>['mutate']>[0], {
       onSuccess: () => {
         onOpenChange(false);
         onDismissed?.();
@@ -127,7 +124,7 @@ export function DismissAIIssueDialog({ universeId, issue, open, onOpenChange, on
               : reason === 'intentional'
               ? 'Confirm you want to permanently dismiss this suggestion.'
               : reason === 'inaccurate'
-              ? 'Optionally tell us what's wrong — this helps improve future suggestions.'
+              ? "Optionally tell us what's wrong — this helps improve future suggestions."
               : reason === 'not_now'
               ? 'How many audit runs should we wait before resurfacing this?'
               : 'Which existing issue is this a duplicate of?'}
