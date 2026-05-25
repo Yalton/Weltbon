@@ -195,3 +195,123 @@ describe('buildStructuralDigest', () => {
     });
   });
 });
+
+// ---------------------------------------------------------------------------
+// BL-03 / scope='entry' narrowing tests (Phase 24-09)
+// ---------------------------------------------------------------------------
+
+describe("BL-03 / scope='entry' narrowing (Phase 24-09)", () => {
+  beforeEach(() => {
+    vi.clearAllMocks();
+  });
+
+  it("narrows digest to scope entry + 1-hop link neighbourhood", async () => {
+    // Fixture: 4 entries (A, B, C, D), 3 links (A→B, A→C, B→D); 1 pin on B, 1 pin on D.
+    // Neighbourhood for scopeEntryId=A is {A, B, C} — D is 2-hop and excluded.
+    const ENTRY_D = {
+      id: 'dddddddd-dddd-dddd-dddd-dddddddddddd',
+      title: 'Entry Delta',
+      entryType: 'character',
+      summary: 'Summary of Delta',
+      tags: [],
+    };
+    const LINK_AB_SCOPE = { sourceEntryId: ENTRY_A.id, label: 'knows', targetEntryId: ENTRY_B.id };
+    const LINK_AC = { sourceEntryId: ENTRY_A.id, label: 'lives-in', targetEntryId: ENTRY_C.id };
+    const LINK_BD = { sourceEntryId: ENTRY_B.id, label: 'visits', targetEntryId: ENTRY_D.id };
+    const PIN_B = { entryId: ENTRY_B.id, position: 100 };
+    // PIN_D would be filtered out because D is not in neighbourhood.
+    // The pins query is called with the neighbourhood set, so it only returns B's pin.
+
+    // Stage: entries (A, B, C, D), links (A→B, A→C, B→D), pins (B only — mock returns
+    // what the inArray-filtered DB query would return for the neighbourhood {A, B, C}).
+    buildMockDb([ENTRY_A, ENTRY_B, ENTRY_C, ENTRY_D], [LINK_AB_SCOPE, LINK_AC, LINK_BD], [PIN_B]);
+
+    const result = await buildStructuralDigest(UNIVERSE_ID, {
+      scope: 'entry',
+      scopeEntryId: ENTRY_A.id,
+    });
+
+    const parsed = JSON.parse(result.digest);
+
+    // Entries: A, B, C present; D absent (2-hop)
+    expect(parsed.entries.map((e: { id: string }) => e.id).sort()).toEqual(
+      [ENTRY_A.id, ENTRY_B.id, ENTRY_C.id].sort(),
+    );
+
+    // Links: A→B and A→C present; B→D absent (D not in neighbourhood)
+    expect(parsed.links).toHaveLength(2);
+    expect(parsed.links).toContainEqual([ENTRY_A.id, 'knows', ENTRY_B.id]);
+    expect(parsed.links).toContainEqual([ENTRY_A.id, 'lives-in', ENTRY_C.id]);
+    expect(parsed.links).not.toContainEqual([ENTRY_B.id, 'visits', ENTRY_D.id]);
+
+    // Pins: B is in neighbourhood and its pin is returned by the mock
+    expect(parsed.timelinePins).toContainEqual([ENTRY_B.id, 100]);
+
+    // validEntryIds is narrowed to the neighbourhood {A, B, C}
+    expect(result.validEntryIds.sort()).toEqual([ENTRY_A.id, ENTRY_B.id, ENTRY_C.id].sort());
+  });
+
+  it("returns empty digest when scopeEntryId is not in the universe (cross-universe leak prevention)", async () => {
+    const warnSpy = vi.spyOn(console, 'warn').mockImplementation(() => {});
+
+    // Stage: 3-entry universe; rogue UUID is not among them
+    const ROGUE_ID = '99999999-9999-9999-9999-999999999999';
+    // When neighbourhood is empty, the pins query is skipped (scopedValidEntryIds.length === 0)
+    // so the mock only needs entries and links (calls 1 and 2). Pins never called.
+    buildMockDb(ALL_ENTRIES, [LINK_AB], []);
+
+    const result = await buildStructuralDigest(UNIVERSE_ID, {
+      scope: 'entry',
+      scopeEntryId: ROGUE_ID,
+    });
+
+    const parsed = JSON.parse(result.digest);
+    expect(parsed.entries).toHaveLength(0);
+    expect(parsed.links).toHaveLength(0);
+    expect(parsed.timelinePins).toHaveLength(0);
+    expect(result.validEntryIds).toHaveLength(0);
+
+    expect(warnSpy).toHaveBeenCalledWith(
+      expect.stringMatching(/scopeEntryId.*not in universe/),
+    );
+
+    warnSpy.mockRestore();
+  });
+});
+
+// ---------------------------------------------------------------------------
+// BL-03 regression / scope='universe' default unchanged (Phase 24-09)
+// ---------------------------------------------------------------------------
+
+describe("BL-03 regression / scope='universe' default unchanged", () => {
+  beforeEach(() => {
+    vi.clearAllMocks();
+  });
+
+  it("returns the full-universe digest byte-identical for no-opts and { scope: 'universe' } calls", async () => {
+    // First call: no opts (universe-default path)
+    buildMockDb(ALL_ENTRIES, [LINK_AB], [PIN_C]);
+    const r1 = await buildStructuralDigest(UNIVERSE_ID);
+
+    // Second call: explicit scope='universe'
+    buildMockDb(ALL_ENTRIES, [LINK_AB], [PIN_C]);
+    const r2 = await buildStructuralDigest(UNIVERSE_ID, { scope: 'universe' });
+
+    // Both digests must be byte-identical (regression guarantee)
+    expect(r1.digest).toBe(r2.digest);
+    expect(r1.validEntryIds).toEqual(r2.validEntryIds);
+
+    // Spot-check universe-scope shape
+    const parsed = JSON.parse(r1.digest);
+    expect(parsed.entries).toHaveLength(3);
+    expect(parsed.validEntryIds).toHaveLength(3);
+  });
+});
+
+// ---------------------------------------------------------------------------
+// BL-03 regression: getEntryBody cross-universe guard
+// Cross-universe getEntryBody guard regression is covered by
+// api/tests/audit-tools.test.ts (test name: 'returns null when the entryId
+// belongs to a different universe (cross-universe scope)'). Not duplicated here
+// per Nyquist economy — the canonical guard lives with the function under test.
+// ---------------------------------------------------------------------------
