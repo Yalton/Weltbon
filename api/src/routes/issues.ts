@@ -1,5 +1,5 @@
 import { OpenAPIHono, createRoute, z } from '@hono/zod-openapi';
-import { and, eq, desc, inArray, isNotNull, sql, type SQL } from 'drizzle-orm';
+import { and, eq, desc, inArray, isNotNull, isNull, sql, type SQL } from 'drizzle-orm';
 import { HTTPException } from 'hono/http-exception';
 import { db } from '../db/client.js';
 import { issues, issueEntries, entries, auditRuns } from '../db/schema.js';
@@ -16,6 +16,15 @@ const uidAndIdParams = z.object({ uid: z.string().uuid(), id: z.string().uuid() 
 // ─── Zod schemas ─────────────────────────────────────────────────────────────
 
 const SEVERITIES = ['critical', 'major', 'moderate', 'minor'] as const;
+
+// CR-02: AuditCategory values for server-side filtering (mirrors AuditCategory in types/)
+const AUDIT_CATEGORIES = [
+  'underdeveloped',
+  'missing-link',
+  'contradiction',
+  'timeline-inconsistency',
+  'dangling-thread',
+] as const;
 
 const createSchema = z.object({
   title: z.string().min(1).max(200),
@@ -271,13 +280,22 @@ const listIssuesRoute = createRoute({
   path: '/',
   tags: ['Issues'],
   summary: 'List issues in a universe',
-  description: 'Returns all issues with per-issue entries[]. Supports optional ?severity= and ?resolved= filters.',
+  description: 'Returns all issues with per-issue entries[]. Supports optional ?severity=, ?resolved=, ?source=, ?category= (repeatable), and ?includeDismissed= filters.',
   security: [{ bearerAuth: [] }],
   request: {
     params: uidParams,
+    // CR-02: extended query schema to accept source, category[], and includeDismissed
+    // OpenAPIHono coerces single ?category=X to string, repeated ?category=X&category=Y to array —
+    // z.union([z.array(...), z.enum(...)]) handles both coercion forms.
     query: z.object({
       severity: z.enum(SEVERITIES).optional(),
       resolved: z.enum(['true', 'false']).optional(),
+      source: z.enum(['human', 'ai']).optional(),
+      category: z.union([
+        z.array(z.enum(AUDIT_CATEGORIES)),
+        z.enum(AUDIT_CATEGORIES),
+      ]).optional(),
+      includeDismissed: z.enum(['true', 'false']).optional(),
     }),
   },
   responses: {
@@ -547,7 +565,7 @@ const undismissRoute = createRoute({
 
 export const issueRoutes = new OpenAPIHono<AppEnv>()
 
-  // GET / -- list issues, with per-issue entries[]; optional ?severity= + ?resolved=
+  // GET / -- list issues, with per-issue entries[]; optional ?severity= + ?resolved= + ?source= + ?category= + ?includeDismissed=
   .openapi(listIssuesRoute, async (c) => {
     const { uid } = c.req.valid('param');
     const userId = c.var.userId;
@@ -555,6 +573,10 @@ export const issueRoutes = new OpenAPIHono<AppEnv>()
 
     const severity = c.req.query('severity')?.trim();
     const resolvedParam = c.req.query('resolved')?.trim();
+    // CR-02: new filter params — read from validated query (Zod already parsed them)
+    const sourceParam = c.req.query('source')?.trim();
+    const categoryParam = c.req.queries('category'); // repeatable param → string[]
+    const includeDismissedParam = c.req.query('includeDismissed')?.trim();
 
     const conditions: SQL[] = [eq(issues.universeId, uid)];
     if (severity) {
@@ -568,6 +590,19 @@ export const issueRoutes = new OpenAPIHono<AppEnv>()
         return c.json({ error: 'resolved must be true or false' }, 400);
       }
       conditions.push(eq(issues.resolved, resolvedParam === 'true'));
+    }
+    // CR-02: source filter — WHERE source = :source
+    if (sourceParam === 'human' || sourceParam === 'ai') {
+      conditions.push(eq(issues.source, sourceParam));
+    }
+    // CR-02: category filter — WHERE category = ANY(:categories)
+    if (categoryParam && categoryParam.length > 0) {
+      conditions.push(inArray(issues.category as any, categoryParam));
+    }
+    // CR-02: dismissal filter — default hides dismissed rows (includeDismissed=false)
+    // When includeDismissed is NOT 'true', filter out dismissed AI rows server-side.
+    if (includeDismissedParam !== 'true') {
+      conditions.push(isNull(issues.dismissedAt));
     }
 
     const issueRows = await db()
