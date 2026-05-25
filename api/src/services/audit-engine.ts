@@ -407,6 +407,16 @@ When done, return your findings as JSON: { "suggestions": [...] }`;
       return;
     }
 
+    // BL-04 (Phase 24-10): compute the per-turn wall-clock budget. If <= 0 here,
+    // the pre-call gate above should have caught it, but this defensive check
+    // ensures the per-turn race below is never armed with a non-positive timeout
+    // (setTimeout(0) racing a microtask is undefined behavior in practice).
+    const remainingMs = maxWallClockMs - (Date.now() - startedAt);
+    if (remainingMs <= 0) {
+      await markFailed(runId, ENGINE_ERROR.BUDGET_EXHAUSTED);
+      return;
+    }
+
     // -------------------------------------------------------------------------
     // Provider call — single turn
     // -------------------------------------------------------------------------
@@ -422,14 +432,30 @@ When done, return your findings as JSON: { "suggestions": [...] }`;
       costUsd: number;
     };
 
+    // BL-04 (Phase 24-10): race the provider call against the remaining wall-clock budget.
+    // A single hung provider call (e.g., network stall, model server timeout) cannot
+    // exceed the wall-clock cap — the timeout sentinel resolves the race first and
+    // we fail with budget_exhausted. The pre-call gate alone is insufficient because
+    // it only fires on the NEXT loop iteration, which never comes if the call hangs.
+    const PER_TURN_TIMEOUT = Symbol('BL-04 per-turn wall-clock timeout');
+    let timeoutHandle: ReturnType<typeof setTimeout> | undefined;
     try {
-      result = await _getProvider(provider as LlmProvider).runAudit({
+      const providerCall = _getProvider(provider as LlmProvider).runAudit({
         apiKey,
         messages,
         model,
         tools: [getEntryBodyTool],
       });
+      const timeoutPromise = new Promise<never>((_, reject) => {
+        timeoutHandle = setTimeout(() => reject(PER_TURN_TIMEOUT), remainingMs);
+      });
+      result = await Promise.race([providerCall, timeoutPromise]);
     } catch (err) {
+      if (err === PER_TURN_TIMEOUT) {
+        // Per-turn wall-clock breach — treat identically to a post-call wall-clock cap hit.
+        await markFailed(runId, ENGINE_ERROR.BUDGET_EXHAUSTED);
+        return;
+      }
       if (err instanceof LLMProviderError) {
         // T-24-04-09: only taxonomy string written; raw provider error text is never persisted
         await markFailed(runId, ENGINE_ERROR.PROVIDER_ERROR);
@@ -437,6 +463,8 @@ When done, return your findings as JSON: { "suggestions": [...] }`;
       }
       // Non-provider errors (programming errors, network timeouts not wrapped) — re-throw
       throw err;
+    } finally {
+      if (timeoutHandle !== undefined) clearTimeout(timeoutHandle);
     }
 
     // -------------------------------------------------------------------------
@@ -466,6 +494,23 @@ When done, return your findings as JSON: { "suggestions": [...] }`;
     totalCost += result.costUsd;
     totalTokens += turnTotalTokens;
     toolCalls += turnToolCalls;
+
+    // BL-04 (Phase 24-10): post-call cap recheck. The pre-call gate alone allows a
+    // single oversized turn to slip through (e.g., a turn returning costUsd=$10 with
+    // a $1 cap — the pre-call gate saw $0.30 and let it through; the post-call gate
+    // now sees $10.30 and fires). This check fires on EVERY turn (tool-use and
+    // final-answer alike), so a single-turn overspend cannot reach the
+    // success-transition branch at the bottom of the loop. Mirrors the predicates of
+    // the pre-call gate above to preserve a single source of truth for cap semantics.
+    if (
+      toolCalls >= maxToolCalls ||
+      totalCost >= maxCostUsd ||
+      totalTokens >= maxTokensTotal ||
+      Date.now() - startedAt >= maxWallClockMs
+    ) {
+      await markFailed(runId, ENGINE_ERROR.BUDGET_EXHAUSTED);
+      return;
+    }
 
     // Track cache-hit ratio (AUDIT-13)
     if (turnPromptTokens > 0) {
