@@ -1333,7 +1333,7 @@ describe('Phase 25 dismissed-set filter (AISSUE-04, AISSUE-05)', () => {
       });
 
       // Two .execute() calls were made: the SELECT (Step 2.5 query) and the
-      // UPDATE (snooze decrement). The UPDATE must be the second call.
+      // UPDATE (snooze decrement at terminal success). The UPDATE must be the second call.
       expect(executeCalls.length).toBe(2);
 
       // The second call's SQL object should reference dismissal_snooze_remaining
@@ -1342,6 +1342,131 @@ describe('Phase 25 dismissed-set filter (AISSUE-04, AISSUE-05)', () => {
       const secondCallSql = executeCalls[1];
       const sqlStr = JSON.stringify(secondCallSql);
       expect(sqlStr).toContain('dismissal_snooze_remaining');
+    },
+  );
+
+  // =========================================================================
+  // CR-03 regression: snooze decrement does NOT fire on audit-disabled early exit
+  // =========================================================================
+  it(
+    'CR-03: audit-disabled universe → engine early-exits before Step 2.5 → snooze decrement does NOT fire',
+    async () => {
+      // Universe has auditEnabled=false — engine should abort after the universe
+      // check (before Step 2.5) and the snooze decrement should never run.
+      const executeCalls: unknown[] = [];
+
+      const runRow = {
+        id: RUN_ID,
+        universeId: UNIVERSE_ID,
+        userId: 'user-1',
+        provider: 'anthropic',
+        model: 'claude-haiku-4-5',
+        scope: 'universe',
+        scopeEntryId: null,
+      };
+      // auditEnabled=false → engine aborts before dismissed-set SELECT
+      const universeRow = { auditEnabled: false };
+
+      const { dbStub } = makeDbStubWithExecute({
+        runRow,
+        universeRow,
+        executeCalls,
+        // No execute responses needed — should never be called
+        executeResponses: [],
+      });
+
+      await runAudit(RUN_ID, {
+        db: dbStub as unknown as typeof import('../src/db/client.js').db,
+        getDecryptedKey: mockGetDecryptedKey,
+        runCheapFinds: mockRunCheapFinds,
+        buildStructuralDigest: mockBuildStructuralDigest,
+        validateReferencedEntryIds: mockValidateReferencedEntryIds,
+        computeGapKey: mockComputeGapKey,
+        getEntryBody: mockGetEntryBody,
+        cfg: { auditMaxToolCalls: 20, auditMaxCostUsd: 100, auditMaxTokensTotal: 10_000_000, auditMaxWallClockMs: 120_000 },
+      });
+
+      // No execute() calls should have been made — dismissed-set SELECT and
+      // snooze decrement UPDATE are both skipped on universe early-exit.
+      expect(executeCalls.length).toBe(0);
+      // Provider was never called
+      expect(mockRunAudit).not.toHaveBeenCalled();
+    },
+  );
+
+  // =========================================================================
+  // CR-03 regression: snooze decrement does NOT fire on BYOK null early exit
+  // =========================================================================
+  it(
+    'CR-03: BYOK null → engine early-exits before Step 2.5 → snooze decrement does NOT fire',
+    async () => {
+      // getDecryptedKey returns null → engine aborts BEFORE the dismissed-set
+      // SELECT and before the snooze decrement at terminal success.
+      // eslint-disable-next-line @typescript-eslint/no-explicit-any
+      mockGetDecryptedKey.mockResolvedValueOnce(null as any);
+
+      const executeCalls: unknown[] = [];
+      const { dbStub } = makeDbStubWithExecute({
+        executeCalls,
+        executeResponses: [],
+      });
+
+      await runAudit(RUN_ID, {
+        db: dbStub as unknown as typeof import('../src/db/client.js').db,
+        getDecryptedKey: mockGetDecryptedKey,
+        runCheapFinds: mockRunCheapFinds,
+        buildStructuralDigest: mockBuildStructuralDigest,
+        validateReferencedEntryIds: mockValidateReferencedEntryIds,
+        computeGapKey: mockComputeGapKey,
+        getEntryBody: mockGetEntryBody,
+        cfg: { auditMaxToolCalls: 20, auditMaxCostUsd: 100, auditMaxTokensTotal: 10_000_000, auditMaxWallClockMs: 120_000 },
+      });
+
+      // BYOK null causes early exit before Step 2.5 — no execute() calls.
+      expect(executeCalls.length).toBe(0);
+      // Provider was never called
+      expect(mockRunAudit).not.toHaveBeenCalled();
+    },
+  );
+
+  // =========================================================================
+  // CR-03 regression: snooze decrement does NOT fire on provider error
+  // =========================================================================
+  it(
+    'CR-03: provider error during loop → run fails → snooze decrement does NOT fire (only fires on terminal success)',
+    async () => {
+      // Provider throws LLMProviderError → engine marks run as failed →
+      // terminal-success branch never reached → snooze decrement UPDATE skipped.
+      mockRunAudit.mockRejectedValueOnce(
+        new LLMProviderError(LLMError.InvalidApiKey, 'bad key'),
+      );
+
+      const executeCalls: unknown[] = [];
+      const { dbStub } = makeDbStubWithExecute({
+        executeCalls,
+        executeResponses: [
+          { rows: [{ gap_key: DISMISSED_GAP_KEY }] }, // Step 2.5 SELECT (does run — after BYOK)
+          // Note: no UPDATE response here — the decrement must NOT be called
+        ],
+      });
+
+      await runAudit(RUN_ID, {
+        db: dbStub as unknown as typeof import('../src/db/client.js').db,
+        getDecryptedKey: mockGetDecryptedKey,
+        runCheapFinds: mockRunCheapFinds,
+        buildStructuralDigest: mockBuildStructuralDigest,
+        validateReferencedEntryIds: mockValidateReferencedEntryIds,
+        computeGapKey: mockComputeGapKey,
+        getEntryBody: mockGetEntryBody,
+        cfg: { auditMaxToolCalls: 20, auditMaxCostUsd: 100, auditMaxTokensTotal: 10_000_000, auditMaxWallClockMs: 120_000 },
+      });
+
+      // Exactly 1 execute() call: the Step 2.5 SELECT.
+      // The decrement UPDATE at terminal success must NOT have fired.
+      expect(executeCalls.length).toBe(1);
+      const sqlStr = JSON.stringify(executeCalls[0]);
+      // The one call is the SELECT (not the UPDATE)
+      expect(sqlStr).not.toContain('dismissal_snooze_remaining = dismissal_snooze_remaining - 1');
     },
   );
 });

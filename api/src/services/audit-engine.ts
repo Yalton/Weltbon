@@ -316,19 +316,11 @@ export async function runAudit(runId: string, deps?: AuditEngineDeps): Promise<v
     (dismissedRows.rows ?? []).map((r) => r.gap_key),
   );
 
-  // Decrement snooze counters for active 'not_now' dismissals at the start
-  // of this run (D-02). Separate statement so a failed decrement doesn't
-  // corrupt the in-memory Set already used for filtering.
-  await _db().execute(sql`
-    UPDATE issues
-    SET dismissal_snooze_remaining = dismissal_snooze_remaining - 1,
-        updated_at = NOW()
-    WHERE universe_id = ${universeId}
-      AND source = 'ai'
-      AND dismissed_at IS NOT NULL
-      AND dismissal_reason = 'not_now'
-      AND COALESCE(dismissal_snooze_remaining, 0) > 0
-  `);
+  // CR-03 NOTE: The snooze decrement (D-02) was moved to the terminal-success
+  // path (right before status='succeeded'). Running it here would fire even for
+  // runs that abort on provider errors or budget breaches after cheap-finds —
+  // the user would lose a snooze run even though no real LLM work was done.
+  // The decrement now only fires when the run completes to terminal success.
 
   // ---------------------------------------------------------------------------
   // Step 3: Cheap-finds pre-pass (D-06) — runs BEFORE building the digest
@@ -758,6 +750,22 @@ When done, return your findings as JSON: { "suggestions": [...] }`;
         }
       }
     }
+
+    // CR-03: Decrement snooze counters for active 'not_now' dismissals here at
+    // terminal success (D-02). Moving from engine entry ensures the decrement only
+    // fires on runs that actually completed LLM work — BYOK failures, universe-
+    // disabled early exits, or provider errors during the loop do NOT consume a
+    // snooze step. Separate statement so a failed decrement doesn't affect run status.
+    await _db().execute(sql`
+      UPDATE issues
+      SET dismissal_snooze_remaining = dismissal_snooze_remaining - 1,
+          updated_at = NOW()
+      WHERE universe_id = ${universeId}
+        AND source = 'ai'
+        AND dismissed_at IS NOT NULL
+        AND dismissal_reason = 'not_now'
+        AND COALESCE(dismissal_snooze_remaining, 0) > 0
+    `);
 
     // Terminal success
     await _db()
