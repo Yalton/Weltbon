@@ -218,6 +218,13 @@ export const issues = pgTable('issues', {
   // Note: The (universe_id, gap_key) UNIQUE NULLS NOT DISTINCT index lives in
   // the migration SQL only — Drizzle has no nullsNotDistinct on unique().
   // That constraint is the load-bearing dedup mechanism for AUDIT-02.
+  // Phase 25 AISSUE-03/04: dismissal reason + conditional follow-up state.
+  // All nullable — human issues and pre-25 AI issues have no dismissal data.
+  dismissalReason: text('dismissal_reason'),        // 'intentional'|'inaccurate'|'not_now'|'duplicate_of_human_issue'
+  dismissalNotes: text('dismissal_notes'),
+  dismissalSnoozeRemaining: integer('dismissal_snooze_remaining'),
+  linkedIssueId: uuid('linked_issue_id').references(() => issues.id, { onDelete: 'set null' }),
+  category: text('category'),                        // AuditCategory value; null for human issues
 });
 
 export const issueEntries = pgTable('issue_entries', {
