@@ -298,8 +298,14 @@ export async function runAudit(runId: string, deps?: AuditEngineDeps): Promise<v
 
   // This is the ONLY path — no post-hoc filtering.
   // The digest API enforces exclusion at serialization time (buildStructuralDigest).
+  // BL-03 (Phase 24-09): forward the run's scope contract to the digest builder.
+  // When run.scope === 'entry', the digest is narrowed to scope_entry_id + 1-hop
+  // link neighbourhood + their timeline pins. When run.scope === 'universe' (or
+  // null/legacy), behavior is byte-identical to the pre-fix universe-wide digest.
   const { digest, validEntryIds } = await _buildStructuralDigest(universeId, {
     excludeEntryIds: cheapFindsResult.createdIssueEntryIds,
+    scope: run.scope === 'entry' ? 'entry' : 'universe',
+    scopeEntryId: run.scopeEntryId,
   });
 
   // ---------------------------------------------------------------------------
