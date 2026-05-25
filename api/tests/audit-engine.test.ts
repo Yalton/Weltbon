@@ -212,6 +212,10 @@ function makeDbStub(opts: {
   const dbStub = () => {
     const chain: Record<string, unknown> = {};
 
+    // Phase 25 Step 2.5: raw SQL execute calls (SELECT dismissed-set + UPDATE snooze).
+    // Default: SELECT returns empty rows (no dismissals), UPDATE is a no-op.
+    chain.execute = vi.fn(() => Promise.resolve({ rows: [] }));
+
     chain.update = vi.fn((_table: unknown) => {
       return {
         set: vi.fn((setObj: Record<string, unknown>) => {
@@ -993,6 +997,346 @@ describe('audit-engine runAudit (Phase 24-04)', () => {
         UNIVERSE_ID,
         { excludeEntryIds: ['entry-A', 'entry-B'], scope: 'universe', scopeEntryId: null },
       );
+    },
+  );
+});
+
+// ---------------------------------------------------------------------------
+// Phase 25 dismissed-set filter tests
+// Helper: makeDbStubWithExecute — extends makeDbStub with .execute() support
+// so Step 2.5 (SELECT dismissed gap_keys + UPDATE snooze decrement) can be
+// mocked per-test without touching the existing Phase 24 tests.
+// ---------------------------------------------------------------------------
+
+/**
+ * Build a DB stub that supports both the Drizzle query-builder API (used by
+ * Steps 1, 3, 4, 5, 6, 7) and the raw `.execute(sql\`...\`)` API (used by
+ * Step 2.5's SELECT and UPDATE).
+ *
+ * @param opts.executeResponses - Array of resolved values for successive
+ *   `_db().execute()` calls.  The first call is the Step 2.5 SELECT; the
+ *   second is the Step 2.5 UPDATE.  Pass `[{ rows: [...] }, {}]` to simulate
+ *   a non-empty dismissed set followed by a successful decrement.
+ */
+function makeDbStubWithExecute(opts: {
+  runRow?: Record<string, unknown>;
+  universeRow?: Record<string, unknown>;
+  insertIssueResult?: Array<{ id: string }>;
+  updateCalls?: Array<{ table: string; set: Record<string, unknown> }>;
+  insertCalls?: Array<{ table: string; values: Record<string, unknown> }>;
+  executeCalls?: unknown[];
+  /** Ordered resolved values for successive .execute() invocations. */
+  executeResponses?: unknown[];
+}) {
+  const updateCalls = opts.updateCalls ?? [];
+  const insertCalls = opts.insertCalls ?? [];
+  const executeCalls = opts.executeCalls ?? [];
+  const executeResponses = opts.executeResponses ?? [
+    { rows: [] }, // Step 2.5 SELECT: no dismissed rows by default
+    {},            // Step 2.5 UPDATE: snooze decrement (no-op)
+  ];
+
+  const runRow = opts.runRow ?? {
+    id: RUN_ID,
+    universeId: UNIVERSE_ID,
+    userId: 'user-1',
+    provider: 'anthropic',
+    model: 'claude-haiku-4-5',
+    scope: 'universe',
+    scopeEntryId: null,
+  };
+  const universeRow = opts.universeRow ?? { auditEnabled: true };
+  const insertIssueResult = opts.insertIssueResult ?? [{ id: 'issue-1' }];
+
+  let selectCallCount = 0;
+  let executeCallCount = 0;
+  const selectResults = [
+    [runRow],
+    [universeRow],
+  ];
+
+  const dbStub = () => {
+    const chain: Record<string, unknown> = {};
+
+    chain.execute = vi.fn((...args: unknown[]) => {
+      const idx = executeCallCount++;
+      executeCalls.push(args[0]); // capture the sql template arg
+      return Promise.resolve(executeResponses[idx] ?? {});
+    });
+
+    chain.update = vi.fn((_table: unknown) => ({
+      set: vi.fn((setObj: Record<string, unknown>) => {
+        updateCalls.push({ table: 'auditRuns', set: setObj });
+        return {
+          where: vi.fn(() => Promise.resolve({ rowCount: 1 })),
+        };
+      }),
+    }));
+
+    chain.select = vi.fn((_projection?: unknown) => {
+      const idx = selectCallCount++;
+      const result = selectResults[idx] ?? [];
+      return {
+        from: vi.fn(() => ({
+          where: vi.fn(() => ({
+            limit: vi.fn(() => Promise.resolve(result)),
+          })),
+        })),
+      };
+    });
+
+    chain.insert = vi.fn((_table: unknown) => ({
+      values: vi.fn((vals: Record<string, unknown>) => {
+        insertCalls.push({ table: 'issues', values: vals });
+        return {
+          onConflictDoNothing: vi.fn(() => ({
+            returning: vi.fn(() => Promise.resolve(insertIssueResult)),
+          })),
+        };
+      }),
+    }));
+
+    return chain;
+  };
+
+  return { dbStub, updateCalls, insertCalls, executeCalls };
+}
+
+// The dismissed gap_key used across these tests.
+const DISMISSED_GAP_KEY = 'v1:abc123deadbeef12';
+
+describe('Phase 25 dismissed-set filter (AISSUE-04, AISSUE-05)', () => {
+  // =========================================================================
+  // Test 1: empty dismissed set → engine behaves identically to baseline
+  // =========================================================================
+  it(
+    'empty dismissedGapKeys: engine still calls cheap-finds with an empty Set (regression guard)',
+    async () => {
+      // Step 2.5 SELECT returns no rows → dismissedGapKeys = empty Set
+      mockRunAudit.mockResolvedValue(VALID_SUGGESTION_OUTPUT);
+
+      const { dbStub } = makeDbStubWithExecute({
+        executeResponses: [
+          { rows: [] }, // SELECT: no dismissed rows
+          {},            // UPDATE: snooze decrement (no-op)
+        ],
+      });
+
+      await runAudit(RUN_ID, {
+        db: dbStub as unknown as typeof import('../src/db/client.js').db,
+        getDecryptedKey: mockGetDecryptedKey,
+        runCheapFinds: mockRunCheapFinds,
+        buildStructuralDigest: mockBuildStructuralDigest,
+        validateReferencedEntryIds: mockValidateReferencedEntryIds,
+        computeGapKey: mockComputeGapKey,
+        getEntryBody: mockGetEntryBody,
+        cfg: { auditMaxToolCalls: 20, auditMaxCostUsd: 100, auditMaxTokensTotal: 10_000_000, auditMaxWallClockMs: 120_000 },
+      });
+
+      // cheap-finds was called with a dismissedGapKeys Set (not undefined)
+      expect(mockRunCheapFinds).toHaveBeenCalledOnce();
+      const cheapFindsArg = mockRunCheapFinds.mock.calls[0][0] as Record<string, unknown>;
+      expect(cheapFindsArg.dismissedGapKeys).toBeInstanceOf(Set);
+      // The Set is empty (no dismissed rows from SELECT)
+      expect((cheapFindsArg.dismissedGapKeys as Set<string>).size).toBe(0);
+    },
+  );
+
+  // =========================================================================
+  // Test 2: gap_key in dismissedGapKeys → suggestion dropped from LLM output
+  // =========================================================================
+  it(
+    'dismissed gap_key: LLM suggestion with matching gap_key is dropped before INSERT (AISSUE-05)',
+    async () => {
+      // The LLM emits two suggestions; computeGapKey returns DISMISSED_GAP_KEY for
+      // the first and a fresh key for the second. Step 2.5 SELECT returns the
+      // dismissed key — so only the second suggestion should be inserted.
+      const FRESH_KEY = 'v1:ffffffffffffffff';
+
+      // computeGapKey returns different keys on successive calls
+      mockComputeGapKey
+        .mockReturnValueOnce(DISMISSED_GAP_KEY)
+        .mockReturnValueOnce(FRESH_KEY);
+
+      mockRunAudit.mockResolvedValue({
+        text: JSON.stringify({
+          suggestions: [
+            {
+              category: 'missing-link',
+              title: 'Dismissed suggestion',
+              body: 'Should be dropped.',
+              referenced_entry_ids: [VALID_ENTRY_ID],
+              confidence: 'high',
+            },
+            {
+              category: 'underdeveloped',
+              title: 'Fresh suggestion',
+              body: 'Should be inserted.',
+              referenced_entry_ids: [VALID_ENTRY_ID],
+              confidence: 'medium',
+            },
+          ],
+        }),
+        toolUse: [],
+        usage: { inputTokens: 100, outputTokens: 50, cacheCreationInputTokens: 0, cacheReadInputTokens: 0 },
+        costUsd: 0.001,
+      });
+
+      // validateReferencedEntryIds: both suggestions pass (no hallucinations)
+      mockValidateReferencedEntryIds.mockImplementation(async (_, suggestions) => ({
+        valid: suggestions,
+        droppedCount: 0,
+        droppedIds: [],
+      }));
+
+      const insertCalls: Array<{ table: string; values: Record<string, unknown> }> = [];
+      const { dbStub } = makeDbStubWithExecute({
+        insertCalls,
+        executeResponses: [
+          { rows: [{ gap_key: DISMISSED_GAP_KEY }] }, // SELECT: one dismissed row
+          {},                                           // UPDATE: snooze decrement
+        ],
+      });
+
+      await runAudit(RUN_ID, {
+        db: dbStub as unknown as typeof import('../src/db/client.js').db,
+        getDecryptedKey: mockGetDecryptedKey,
+        runCheapFinds: mockRunCheapFinds,
+        buildStructuralDigest: mockBuildStructuralDigest,
+        validateReferencedEntryIds: mockValidateReferencedEntryIds,
+        computeGapKey: mockComputeGapKey,
+        getEntryBody: mockGetEntryBody,
+        cfg: { auditMaxToolCalls: 20, auditMaxCostUsd: 100, auditMaxTokensTotal: 10_000_000, auditMaxWallClockMs: 120_000 },
+      });
+
+      // Only 1 issues INSERT (for the fresh suggestion) — the dismissed one was skipped.
+      // Filter by `source === 'ai'` to distinguish the issues-table insert from the
+      // issueEntries join-table insert (both come through chain.insert; the issues row
+      // always has source='ai' whereas the issueEntries row has entryId/issueId fields).
+      const issueInserts = insertCalls.filter(
+        (c) => (c.values as Record<string, unknown>).source === 'ai',
+      );
+      expect(issueInserts.length).toBe(1);
+      // The inserted suggestion is the fresh one (not the dismissed one)
+      expect((issueInserts[0]!.values as Record<string, unknown>).gapKey).toBe(FRESH_KEY);
+    },
+  );
+
+  // =========================================================================
+  // Test 3: dismissedGapKeys is passed into runCheapFinds
+  // =========================================================================
+  it(
+    'dismissedGapKeys Set is passed into runCheapFinds() arg (Step 3 threading, D-06)',
+    async () => {
+      mockRunAudit.mockResolvedValue(VALID_SUGGESTION_OUTPUT);
+
+      const { dbStub } = makeDbStubWithExecute({
+        executeResponses: [
+          { rows: [{ gap_key: DISMISSED_GAP_KEY }] }, // SELECT: one dismissed key
+          {},                                           // UPDATE: snooze decrement
+        ],
+      });
+
+      await runAudit(RUN_ID, {
+        db: dbStub as unknown as typeof import('../src/db/client.js').db,
+        getDecryptedKey: mockGetDecryptedKey,
+        runCheapFinds: mockRunCheapFinds,
+        buildStructuralDigest: mockBuildStructuralDigest,
+        validateReferencedEntryIds: mockValidateReferencedEntryIds,
+        computeGapKey: mockComputeGapKey,
+        getEntryBody: mockGetEntryBody,
+        cfg: { auditMaxToolCalls: 20, auditMaxCostUsd: 100, auditMaxTokensTotal: 10_000_000, auditMaxWallClockMs: 120_000 },
+      });
+
+      // Assert cheap-finds received the dismissedGapKeys Set
+      expect(mockRunCheapFinds).toHaveBeenCalledOnce();
+      const cheapFindsArg = mockRunCheapFinds.mock.calls[0][0] as Record<string, unknown>;
+      expect(cheapFindsArg.dismissedGapKeys).toBeInstanceOf(Set);
+      // And that Set contains the dismissed key from the SELECT response
+      expect((cheapFindsArg.dismissedGapKeys as Set<string>).has(DISMISSED_GAP_KEY)).toBe(true);
+    },
+  );
+
+  // =========================================================================
+  // Test 4: 'inaccurate' with stale snapshot → gap_key NOT in Set → suggestion inserted
+  // =========================================================================
+  it(
+    "inaccurate branch: stale snapshot → SELECT returns empty (gap_key not in dismissedGapKeys) → suggestion IS inserted",
+    async () => {
+      // The auto-stale predicate rejects the 'inaccurate' row (stale snapshot)
+      // → SELECT returns [] → dismissedGapKeys is empty → suggestion is NOT dropped.
+      mockComputeGapKey.mockReturnValue(DISMISSED_GAP_KEY);
+      mockRunAudit.mockResolvedValue(VALID_SUGGESTION_OUTPUT);
+
+      const insertCalls: Array<{ table: string; values: Record<string, unknown> }> = [];
+      const { dbStub } = makeDbStubWithExecute({
+        insertCalls,
+        executeResponses: [
+          { rows: [] }, // SELECT: stale snapshot → predicate excluded the row → empty result
+          {},            // UPDATE: snooze decrement (no-op)
+        ],
+      });
+
+      await runAudit(RUN_ID, {
+        db: dbStub as unknown as typeof import('../src/db/client.js').db,
+        getDecryptedKey: mockGetDecryptedKey,
+        runCheapFinds: mockRunCheapFinds,
+        buildStructuralDigest: mockBuildStructuralDigest,
+        validateReferencedEntryIds: mockValidateReferencedEntryIds,
+        computeGapKey: mockComputeGapKey,
+        getEntryBody: mockGetEntryBody,
+        cfg: { auditMaxToolCalls: 20, auditMaxCostUsd: 100, auditMaxTokensTotal: 10_000_000, auditMaxWallClockMs: 120_000 },
+      });
+
+      // dismissedGapKeys was empty → suggestion IS inserted (not dropped).
+      // Filter by source='ai' to exclude the issueEntries join-table row (which
+      // also flows through chain.insert in the stub but has no source field).
+      const issueInserts = insertCalls.filter(
+        (c) => (c.values as Record<string, unknown>).source === 'ai',
+      );
+      expect(issueInserts.length).toBe(1);
+      expect((issueInserts[0]!.values as Record<string, unknown>).source).toBe('ai');
+    },
+  );
+
+  // =========================================================================
+  // Test 5: 'not_now' branch — snooze decrement UPDATE is called
+  // =========================================================================
+  it(
+    "'not_now' snooze decrement: _db().execute() called twice — SELECT then UPDATE with dismissal_snooze_remaining",
+    async () => {
+      mockRunAudit.mockResolvedValue(VALID_SUGGESTION_OUTPUT);
+
+      const executeCalls: unknown[] = [];
+      const { dbStub } = makeDbStubWithExecute({
+        executeCalls,
+        executeResponses: [
+          { rows: [{ gap_key: DISMISSED_GAP_KEY }] }, // SELECT: one dismissed not_now row
+          {},                                           // UPDATE: snooze decrement
+        ],
+      });
+
+      await runAudit(RUN_ID, {
+        db: dbStub as unknown as typeof import('../src/db/client.js').db,
+        getDecryptedKey: mockGetDecryptedKey,
+        runCheapFinds: mockRunCheapFinds,
+        buildStructuralDigest: mockBuildStructuralDigest,
+        validateReferencedEntryIds: mockValidateReferencedEntryIds,
+        computeGapKey: mockComputeGapKey,
+        getEntryBody: mockGetEntryBody,
+        cfg: { auditMaxToolCalls: 20, auditMaxCostUsd: 100, auditMaxTokensTotal: 10_000_000, auditMaxWallClockMs: 120_000 },
+      });
+
+      // Two .execute() calls were made: the SELECT (Step 2.5 query) and the
+      // UPDATE (snooze decrement). The UPDATE must be the second call.
+      expect(executeCalls.length).toBe(2);
+
+      // The second call's SQL object should reference dismissal_snooze_remaining
+      // (the Drizzle sql`` template tag produces an object with a queryChunks
+      // or strings array; check via JSON serialization for the column name).
+      const secondCallSql = executeCalls[1];
+      const sqlStr = JSON.stringify(secondCallSql);
+      expect(sqlStr).toContain('dismissal_snooze_remaining');
     },
   );
 });
