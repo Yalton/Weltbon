@@ -358,6 +358,37 @@ export async function runAudit(runId: string, deps?: AuditEngineDeps): Promise<v
   }
 
   // ---------------------------------------------------------------------------
+  // Phase 27 D-06: cost_unknown determination.
+  //
+  // Consult the provider's PRICING table once before the multi-turn loop. When
+  // `pricing(model)` returns undefined, the engine flags `cost_unknown=true` on
+  // every UPDATE that touches `cost_usd` (the per-turn telemetry UPDATE, the
+  // terminal-success UPDATE, and the partial-INVALID_OUTPUT-success UPDATE).
+  //
+  // Why a single pre-loop lookup (not per-turn): the (provider, model) pair is
+  // fixed for the entire run row. The PRICING table is in-process data — there
+  // is no I/O cost. A single read keeps the per-turn UPDATE shape minimal and
+  // avoids re-reading the same constant N times.
+  //
+  // SUM-math safety (D-06): when cost_unknown=true, the per-turn provider call
+  // already returns costUsd=0 (post-Phase-27 provider behavior); the engine
+  // explicitly writes `cost_usd: '0.0000'` on the terminal UPDATE so the
+  // llm-keys totalSpentUsd SUM excluding cost_unknown=true rows is consistent
+  // with arithmetic-equivalence on the kept rows.
+  //
+  // Diagnostic stderr (T-24-04-09 / Phase 27 threat T-27-03-03): when the flag
+  // flips on, emit ONE safe-metadata-only log so operators know the unpriced
+  // path was exercised. The log is gated by `costUnknownLogged` so a multi-turn
+  // run never spams. No apiKey, no err.message — only { runId, model, provider }.
+  const priced = _getProvider(provider as LlmProvider).pricing(model);
+  const costUnknown: boolean = priced === undefined;
+  let costUnknownLogged = false;
+  if (costUnknown && !costUnknownLogged) {
+    console.error('[audit-engine] cost_unknown set for model:', { runId, model, provider });
+    costUnknownLogged = true;
+  }
+
+  // ---------------------------------------------------------------------------
   // Step 2.5: Dismissed-set query (Phase 25 D-11, AISSUE-05) — MUST run before
   // cheap-finds AND before structural-digest build so the gap_key set is
   // available to both the cheap-finds pre-pass and the LLM-output validation
@@ -601,6 +632,13 @@ When done, return your findings as JSON: { "suggestions": [...] }`;
       result.usage.cacheCreationInputTokens +
       result.usage.cacheReadInputTokens;
 
+    // Phase 27 D-06: when costUnknown is true, pin cost_usd at '0.0000' (the
+    // provider already returns 0 in this branch; the explicit overwrite is
+    // belt-and-suspenders against any future drift in the provider's
+    // unpriced-cost contract). When false, the per-turn cost accumulates as
+    // before. costUnknown is set unconditionally on every UPDATE so the
+    // boolean column reflects the run's final flag value even if the loop
+    // bails out before the terminal UPDATE.
     await _db()
       .update(auditRuns)
       .set({
@@ -608,7 +646,10 @@ When done, return your findings as JSON: { "suggestions": [...] }`;
         completionTokens: sql`${auditRuns.completionTokens} + ${turnCompletionTokens}`,
         cachedTokens: sql`${auditRuns.cachedTokens} + ${turnCachedTokens}`,
         toolCallCount: sql`${auditRuns.toolCallCount} + ${turnToolCalls}`,
-        costUsd: sql`${auditRuns.costUsd} + ${result.costUsd}`,
+        costUsd: costUnknown
+          ? sql`'0.0000'::numeric(10,4)`
+          : sql`${auditRuns.costUsd} + ${result.costUsd}`,
+        costUnknown,
       })
       .where(eq(auditRuns.id, runId));
 

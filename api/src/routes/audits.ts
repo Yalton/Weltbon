@@ -136,6 +136,10 @@ const auditHistoryRowSchema = z.object({
   status: z.enum(['pending', 'running', 'succeeded', 'failed']),
   // NUMERIC(10,4) → string (string preserves decimal precision)
   costUsd: z.string(),
+  // Phase 27 D-06: true when the run used a model absent from PRICING; the
+  // engine pins costUsd to '0.0000' in that branch and the UI renders a
+  // "cost unknown" chip in place of the dollar amount.
+  costUnknown: z.boolean(),
   startedAt: z.string().or(z.date()),
   finishedAt: z.string().or(z.date()).nullable(),
   // Categories with zero counts are omitted; null-category issues are excluded.
@@ -491,6 +495,9 @@ export const auditRoutes = new OpenAPIHono<AppEnv>()
         model: auditRuns.model,
         status: auditRuns.status,
         costUsd: auditRuns.costUsd,
+        // Phase 27 D-06: surface cost_unknown so the UI can render a chip
+        // instead of a $0.0000 dollar amount.
+        costUnknown: auditRuns.costUnknown,
         startedAt: auditRuns.startedAt,
         finishedAt: auditRuns.finishedAt,
         analyzedEntries: auditRuns.analyzedEntries,
@@ -563,6 +570,7 @@ export const auditRoutes = new OpenAPIHono<AppEnv>()
       model: r.model,
       status: r.status as 'pending' | 'running' | 'succeeded' | 'failed',
       costUsd: r.costUsd, // string from NUMERIC(10,4)
+      costUnknown: r.costUnknown, // Phase 27 D-06
       startedAt: r.startedAt,
       finishedAt: r.finishedAt,
       suggestionsByCategory: byRunCategory.get(r.id) ?? {},
