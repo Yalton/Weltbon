@@ -45,7 +45,11 @@ export function UniverseSettings() {
   const { data, isLoading } = useUniverse(id);
   const update = useUpdateUniverse(id ?? '');
   const del = useDeleteUniverse();
-  const { data: llmKeys = [] } = useLlmKeys();
+  // useLlmKeys may return `data: undefined` (loading) or, in tests, a non-array
+  // mock value (e.g. a Universe object from `mockResolvedValue`). Coerce to an
+  // empty array defensively so `.some(...)` never throws on a non-array value.
+  const { data: llmKeysRaw } = useLlmKeys();
+  const llmKeys = Array.isArray(llmKeysRaw) ? llmKeysRaw : [];
   const [name, setName] = useState('');
   const [description, setDescription] = useState('');
   const [confirmOpen, setConfirmOpen] = useState(false);

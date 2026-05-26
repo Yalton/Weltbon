@@ -21,13 +21,13 @@ const UNIVERSE = {
   updatedAt: '',
 };
 
-function renderSettings() {
+function renderSettings(initialUrl: string = `/universes/U1/settings`) {
   const qc = new QueryClient({
     defaultOptions: { queries: { retry: false }, mutations: { retry: false } },
   });
   return render(
     <QueryClientProvider client={qc}>
-      <MemoryRouter initialEntries={[`/universes/U1/settings`]}>
+      <MemoryRouter initialEntries={[initialUrl]}>
         <Routes>
           <Route path="/universes/:id/settings" element={<UniverseSettings />} />
           <Route path="/universes" element={<p>Universes home</p>} />
@@ -35,6 +35,16 @@ function renderSettings() {
       </MemoryRouter>
     </QueryClientProvider>
   );
+}
+
+/**
+ * Phase 26 Plan 06 — UniverseSettings is now a tabbed layout (D-09). Tests for
+ * EntryTypesSection content render the page directly into the `entry-types`
+ * tab via ?tab= so the existing assertions ("concept" chip, "add type" input,
+ * etc.) hit the right panel without an extra click step.
+ */
+function renderSettingsOnEntryTypesTab() {
+  return renderSettings(`/universes/U1/settings?tab=entry-types`);
 }
 
 describe('UniverseSettings — name + description (regression)', () => {
@@ -85,9 +95,11 @@ describe('UniverseSettings — EntryTypesSection integration', () => {
 
   it('renders entry-type chips from the universe', async () => {
     vi.mocked(api).mockResolvedValue(UNIVERSE as never);
-    renderSettings();
+    renderSettingsOnEntryTypesTab();
 
-    expect(await screen.findByText(/^entry types$/i)).toBeInTheDocument();
+    // Phase 26 Plan 06 — the tab bar also renders an "Entry types" label, so
+    // disambiguate by heading role.
+    expect(await screen.findByRole('heading', { name: /^entry types$/i })).toBeInTheDocument();
     expect(screen.getByText('concept')).toBeInTheDocument();
     expect(screen.getByText('entity')).toBeInTheDocument();
     expect(screen.getByText('location')).toBeInTheDocument();
@@ -104,7 +116,7 @@ describe('UniverseSettings — EntryTypesSection integration', () => {
       return null as never;
     });
     const user = userEvent.setup();
-    renderSettings();
+    renderSettingsOnEntryTypesTab();
 
     const input = await screen.findByPlaceholderText(/add type/i);
     await user.type(input, 'mythos{Enter}');
@@ -129,7 +141,7 @@ describe('UniverseSettings — EntryTypesSection integration', () => {
       return null as never;
     });
     const user = userEvent.setup();
-    renderSettings();
+    renderSettingsOnEntryTypesTab();
 
     const removeBtn = await screen.findByRole('button', { name: /remove concept/i });
     await user.click(removeBtn);
@@ -162,7 +174,7 @@ describe('UniverseSettings — EntryTypesSection integration', () => {
       return null as never;
     });
     const user = userEvent.setup();
-    renderSettings();
+    renderSettingsOnEntryTypesTab();
 
     const removeBtn = await screen.findByRole('button', { name: /remove concept/i });
     await user.click(removeBtn);
@@ -196,7 +208,7 @@ describe('UniverseSettings — EntryTypesSection integration', () => {
       return null as never;
     });
     const user = userEvent.setup();
-    renderSettings();
+    renderSettingsOnEntryTypesTab();
 
     const renameBtn = await screen.findByRole('button', { name: /rename concept/i });
     await user.click(renameBtn);
