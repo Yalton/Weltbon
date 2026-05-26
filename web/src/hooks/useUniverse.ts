@@ -10,6 +10,11 @@ export interface Universe {
   timelineWindow: { start: number; end: number } | null;
   createdAt: string;
   updatedAt: string;
+  // Phase 24 AUDIT-03 / Phase 26 LLMUI-08: per-universe AI Gap Auditor opt-in.
+  // auditEnabled=true requires both provider+model to be non-null (server-enforced).
+  auditEnabled: boolean;
+  auditProvider: 'anthropic' | 'openai' | null;
+  auditModel: string | null;
 }
 
 export function useUniverses() {
@@ -43,6 +48,11 @@ export function useUpdateUniverse(id: string) {
       name?: string;
       description?: string;
       timelineWindow?: { start: number; end: number } | null;
+      // Phase 26 LLMUI-08: audit opt-in patch fields (server enforces invariant
+      // that auditEnabled=true → provider+model non-null).
+      auditEnabled?: boolean;
+      auditProvider?: 'anthropic' | 'openai' | null;
+      auditModel?: string | null;
     }) =>
       api<Universe>(`/universes/${id}`, { method: 'PATCH', body: JSON.stringify(body) }),
     onSuccess: () => {
