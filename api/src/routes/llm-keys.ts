@@ -95,8 +95,19 @@ const maskedKeyWithSpentSchema = maskedKeySchema.extend({
    * Sum of audit_runs.cost_usd matched by (provider, user_id). Approximation:
    * not joined by byok_key_id — if the user has multiple keys for the same
    * provider, all rows show the same total. Per D-14.
+   *
+   * Phase 27 D-06: the SUM now excludes rows with `cost_unknown=true` so a
+   * stale-PRICING run does not contribute a guessed $0.00 to the displayed
+   * total. The count of excluded rows surfaces in `costUnknownCount` below.
    */
   totalSpentUsd: z.string(),
+  /**
+   * Phase 27 D-06: count of audit_runs rows for this (provider, user) where
+   * `cost_unknown = true`. The UI renders this as a footnote — e.g.
+   * "$0.0042 (plus 3 runs with unknown pricing)" — when > 0. Always an int
+   * ≥ 0; '0' (not omitted) when no unpriced runs exist.
+   */
+  costUnknownCount: z.number().int().nonnegative(),
 });
 
 const revalidateResponseSchema = z.object({
@@ -429,6 +440,13 @@ export const llmKeyRoutes = new OpenAPIHono<AppEnv>()
     // Approximation: joined by (provider, user_id), not byok_key_id — if user
     // has multiple keys per provider, they all show the same total.
     // NUMERIC(10,4) is preserved as a string (cost-as-string convention).
+    //
+    // Phase 27 D-06: the SUM excludes rows with cost_unknown=true. A second
+    // parallel COUNT query computes costUnknownCount per provider so the UI
+    // can render the "(plus N runs with unknown pricing)" footnote. Two
+    // separate queries (rather than a CASE-aggregation in one query) keep the
+    // SQL simple and the row-level filtering legible — both queries scan the
+    // same predicate index (user_id, provider) so the duplication is cheap.
     const spentRows = await getDb()
       .select({
         provider: auditRuns.provider,
@@ -437,7 +455,7 @@ export const llmKeyRoutes = new OpenAPIHono<AppEnv>()
         total: sql<string>`COALESCE(SUM(${auditRuns.costUsd}), 0)::text`,
       })
       .from(auditRuns)
-      .where(eq(auditRuns.userId, userId))
+      .where(and(eq(auditRuns.userId, userId), eq(auditRuns.costUnknown, false)))
       .groupBy(auditRuns.provider);
 
     const spentByProvider = new Map<string, string>();
@@ -448,10 +466,31 @@ export const llmKeyRoutes = new OpenAPIHono<AppEnv>()
       spentByProvider.set(r.provider, Number(r.total).toFixed(4));
     }
 
+    // Phase 27 D-06: parallel count of cost_unknown=true rows per provider for
+    // this user. Surfaced as `costUnknownCount` in the response; defaults to 0
+    // when the provider has no unpriced runs.
+    const unknownCountRows = await getDb()
+      .select({
+        provider: auditRuns.provider,
+        n: sql<number>`COUNT(*)::int`,
+      })
+      .from(auditRuns)
+      .where(and(eq(auditRuns.userId, userId), eq(auditRuns.costUnknown, true)))
+      .groupBy(auditRuns.provider);
+
+    const unknownByProvider = new Map<string, number>();
+    for (const r of unknownCountRows) {
+      // sql returns the COUNT cast to int but Drizzle types it as `number`
+      // (the `::int` cast guarantees a JS-safe value). Defensive Number()
+      // mirrors the spentByProvider normalization.
+      unknownByProvider.set(r.provider, Number(r.n));
+    }
+
     return c.json(
       rows.map((r) => ({
         ...toMaskedRow(r),
         totalSpentUsd: spentByProvider.get(r.provider) ?? '0.0000',
+        costUnknownCount: unknownByProvider.get(r.provider) ?? 0,
       })),
       200,
     );

@@ -415,14 +415,10 @@ export class OpenAIProvider implements LLMProvider {
   async runAudit(opts: RunAuditOpts): Promise<RunAuditResult> {
     const model = opts.model ?? defaultModel;
     const pricing = (PRICING.openai as Record<string, OpenAIModelPricing>)[model];
-    if (!pricing) {
-      // T-23-04-05: unknown-model guard. Without this, costUsd would be NaN
-      // and propagate to Phase 24's audit_runs.cost_usd rollup.
-      throw new LLMProviderError(
-        LLMError.ModelNotAvailable,
-        `OpenAI model not available: ${model}`,
-      );
-    }
+    // Phase 27 D-05/D-06: unpriced models are now first-class. The engine writes
+    // cost_unknown=true + cost_usd=0.0000 when the model is absent from PRICING.
+    // The provider must not throw — that would block the engine's cost_unknown
+    // path. costUsd is reported as 0 when pricing is unavailable.
 
     const client = new OpenAI({ apiKey: opts.apiKey });
     let completion;
@@ -495,7 +491,8 @@ export class OpenAIProvider implements LLMProvider {
       );
     }
 
-    const costUsd = computeOpenAICost(completion.usage, pricing);
+    // Phase 27 D-06: when pricing is undefined, return 0; engine flags cost_unknown.
+    const costUsd = pricing !== undefined ? computeOpenAICost(completion.usage, pricing) : 0;
 
     return {
       text,

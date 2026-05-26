@@ -520,14 +520,13 @@ export class AnthropicProvider implements LLMProvider {
   async runAudit(opts: RunAuditOpts): Promise<RunAuditResult> {
     const model = opts.model ?? defaultModel;
     const pricing = (PRICING.anthropic as Record<string, AnthropicModelPricing>)[model];
-    if (!pricing) {
-      // T-23-03-05: unknown-model guard. Without this, costUsd would be NaN
-      // and propagate to Phase 24's audit_runs.cost_usd.
-      throw new LLMProviderError(
-        LLMError.ModelNotAvailable,
-        `Anthropic model not available: ${model}`,
-      );
-    }
+    // Phase 27 D-05/D-06: unpriced models are now first-class. The engine writes
+    // cost_unknown=true + cost_usd=0.0000 when the model is absent from PRICING
+    // (it consults provider.pricing(model) once on entry and propagates the
+    // flag on every UPDATE site). The provider must no longer throw — that
+    // would prevent the run from ever reaching the engine's cost_unknown path.
+    // costUsd is reported as 0 when pricing is unavailable; this matches the
+    // engine's D-06 invariant ("SUM math safe; flag carries the truth").
 
     // Wire-adapter discipline (D-01): extract system BEFORE calling estimate so
     // both the token count and the messages.create call receive the correct shapes.
@@ -652,7 +651,11 @@ export class AnthropicProvider implements LLMProvider {
       .map((b) => b.text)
       .join('');
 
-    const costUsd = computeAnthropicCost(response.usage, pricing);
+    // Phase 27 D-06: when pricing is undefined (unpriced new release), report
+    // costUsd=0 and let the engine flag cost_unknown=true on the audit_runs
+    // row. The numeric math returns 0 by construction; the engine's parallel
+    // pricing() lookup is the source of truth for the boolean flag.
+    const costUsd = pricing !== undefined ? computeAnthropicCost(response.usage, pricing) : 0;
 
     return {
       text,
