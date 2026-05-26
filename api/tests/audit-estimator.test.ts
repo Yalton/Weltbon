@@ -151,7 +151,7 @@ describe('estimateAudit (Phase 26-02 Task 1, LLMUI-04 formula)', () => {
       model: 'claude-haiku-4-5',
       apiKey: API_KEY,
       userId: USER_ID,
-      _db: makeDbStub({ entryCount: 47, tracker }),
+      _db: makeDbStub({ entryCount: 47, tracker }) as unknown as typeof import('../src/db/client.js').db,
     });
 
     expect(result.lower).toBeGreaterThan(0);
@@ -172,7 +172,7 @@ describe('estimateAudit (Phase 26-02 Task 1, LLMUI-04 formula)', () => {
       model: 'gpt-5-mini',
       apiKey: API_KEY,
       userId: USER_ID,
-      _db: makeDbStub({ entryCount: 47, tracker }),
+      _db: makeDbStub({ entryCount: 47, tracker }) as unknown as typeof import('../src/db/client.js').db,
     });
 
     expect(result.lower).toBeGreaterThan(0);
@@ -196,7 +196,7 @@ describe('estimateAudit (Phase 26-02 Task 1, LLMUI-04 formula)', () => {
       model: 'claude-haiku-4-5',
       apiKey: API_KEY,
       userId: USER_ID,
-      _db: makeDbStub({ entryCount: 10, tracker }),
+      _db: makeDbStub({ entryCount: 10, tracker }) as unknown as typeof import('../src/db/client.js').db,
     });
 
     const pricing = PRICING.anthropic['claude-haiku-4-5'];
@@ -229,7 +229,7 @@ describe('estimateAudit (Phase 26-02 Task 1, LLMUI-04 formula)', () => {
       model: 'claude-haiku-4-5',
       apiKey: API_KEY,
       userId: USER_ID,
-      _db: makeDbStub({ entryCount: 10, tracker }),
+      _db: makeDbStub({ entryCount: 10, tracker }) as unknown as typeof import('../src/db/client.js').db,
     });
 
     const pricing = PRICING.anthropic['claude-haiku-4-5'];
@@ -260,7 +260,7 @@ describe('estimateAudit (Phase 26-02 Task 1, LLMUI-04 formula)', () => {
       model: 'claude-haiku-4-5',
       apiKey: API_KEY,
       userId: USER_ID,
-      _db: makeDbStub({ entryCount: 1, tracker }),
+      _db: makeDbStub({ entryCount: 1, tracker }) as unknown as typeof import('../src/db/client.js').db,
     });
     expect(result.breakdown.maxToolCalls).toBe(DEFAULT_MAX_TOOL_CALLS);
   });
@@ -277,7 +277,7 @@ describe('estimateAudit (Phase 26-02 Task 1, LLMUI-04 formula)', () => {
       model: 'claude-haiku-4-5',
       apiKey: API_KEY,
       userId: USER_ID,
-      _db: makeDbStub({ entryCount: 47, tracker }),
+      _db: makeDbStub({ entryCount: 47, tracker }) as unknown as typeof import('../src/db/client.js').db,
     });
     expect(result.breakdown.scopeEntryCount).toBe(47);
   });
@@ -294,7 +294,7 @@ describe('estimateAudit (Phase 26-02 Task 1, LLMUI-04 formula)', () => {
       model: 'some-fictional-model-id-not-in-PRICING',
       apiKey: API_KEY,
       userId: USER_ID,
-      _db: makeDbStub({ entryCount: 5, tracker }),
+      _db: makeDbStub({ entryCount: 5, tracker }) as unknown as typeof import('../src/db/client.js').db,
     });
     expect(result.lower).toBe(0);
     expect(result.upper).toBe(0);
@@ -316,7 +316,7 @@ describe('estimateAudit (Phase 26-02 Task 1, LLMUI-04 formula)', () => {
       model: 'claude-haiku-4-5',
       apiKey: API_KEY,
       userId: USER_ID,
-      _db: makeDbStub({ entryCount: 47, tracker }),
+      _db: makeDbStub({ entryCount: 47, tracker }) as unknown as typeof import('../src/db/client.js').db,
     });
     expect(tracker.updateCalls).toBe(0);
     expect(tracker.insertCalls).toBe(0);
@@ -341,7 +341,7 @@ describe('estimateAudit (Phase 26-02 Task 1, LLMUI-04 formula)', () => {
         model: 'gpt-5-mini',
         apiKey: API_KEY,
         userId: USER_ID,
-        _db: makeDbStub({ entryCount: 3, tracker }),
+        _db: makeDbStub({ entryCount: 3, tracker }) as unknown as typeof import('../src/db/client.js').db,
       });
 
       const allCalls = [
