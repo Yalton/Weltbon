@@ -1,72 +1,93 @@
 /**
- * Phase 27 D-01/D-02/D-03 — Live model-catalog cache unit tests.
+ * Phase 27 Plan 03 Task 3 — DB-gated integration test for /api/llm/models.
  *
- * Unit lane (no DB, no createTestDb). Both SDK packages are mocked via
- * vi.mock('@anthropic-ai/sdk') + vi.mock('openai') with module-scope vi.fn()
- * handles each test reprograms. Pattern mirrors api/tests/llm-anthropic.test.ts
- * + api/tests/llm-openai.test.ts; this is the unit-only suite for the cache
- * surface (DB-gated integration of the cache lives in Plan 03's scope).
+ * Exercises the FULL stack: route → DB-lookup-of-key → decrypt → mocked SDK
+ * → cache module → response. The unit-lane assertions on cache mechanics
+ * (hit/TTL/isolation/stale/PRICING-fallback/unpriced-presence/apiKey-not-
+ * leaked) live in `llm-models-cache.unit.test.ts`; this file rounds out the
+ * coverage by hitting the wire shape and the route's auth/no-key envelopes.
  *
- * Tests (PROV-FOLLOWUP-01):
- *   1. Cache hit per D-01: two sequential calls within 30 min → one SDK call.
- *   2. Cache TTL bust per D-01: 31 min later → second SDK call.
- *   3. Cache-key isolation per D-03: two different keyIds → two cache entries,
- *      one SDK call each.
- *   4. Stale fallback per D-02: SDK throws after cached entry exists → returns
- *      cached with source: 'cache_stale' regardless of TTL.
- *   5. PRICING fallback per D-02: SDK throws AND no cached entry → returns
- *      Object.keys(PRICING[provider]) with source: 'pricing_fallback'.
- *   6. Unpriced-live presence per D-05: live id NOT in PRICING is included
- *      with hasPricing: false; never filtered out.
- *   8. apiKey not in cache state: peek the Map; assert no apiKey substring
- *      leaks into key or value. Sanity check for the LLMKEY-03 invariant
- *      (cache key uses keyId UUID, not bodySuffix, not plaintext).
+ * Coverage (Plan 27-03 Task 3 — Tests 1-5 from <behavior>):
+ *   1. Cache hit through endpoint: two sequential authenticated calls within
+ *      30 min return identical `fetchedAt` (only ONE underlying SDK call).
+ *   2. Cache key isolation: User A's call and User B's call (each with their
+ *      own llm_api_keys row) produce two distinct SDK calls; cache entries
+ *      reflect each user's keyId.
+ *   3. Stale fallback: After populating cache, force SDK throw; next call
+ *      returns cached entries with source='cache_stale'.
+ *   4. PRICING fallback: With cache empty, force SDK throw immediately; call
+ *      returns Object.keys(PRICING.anthropic) shape with source='pricing_fallback'.
+ *   5. 404 on no key: Authenticated user with no anthropic key → 404
+ *      { error: 'no_key_for_provider' }.
  *
- * (Test 7 in the plan's <behavior> block is the PRICING invariant subset
- * revision — it lives in llm-pricing.test.ts where the assertion is patched.)
+ * Marker: imports `createTestDb` / `setTestDb` — the canonical DB-gated test
+ * tag per Phase 17 D-17-02; auto-routed to the integration lane via
+ * api/vitest.config.ts DB_GATED_TESTS.
  */
 
-import { describe, it, expect, vi, beforeEach } from 'vitest';
+import { describe, it, expect, beforeAll, afterAll, beforeEach, vi } from 'vitest';
 
-// Defensive: matches the convention in llm-anthropic.test.ts:42-44. The cache
-// module does not currently transit through config.ts/env(), but a future
-// re-import could.
+// vi.hoisted runs BEFORE the imports below so env() reads the test key.
 vi.hoisted(() => {
   process.env.LLM_KEY_ENCRYPTION_KEY = '0'.repeat(64);
 });
 
-// ---------------------------------------------------------------------------
-// SDK mocks — module-scope vi.fn() handles each test re-programs.
-// ---------------------------------------------------------------------------
-
-const { mockAnthropicList, mockOpenAIList } = vi.hoisted(() => {
-  return {
-    mockAnthropicList: vi.fn(),
-    mockOpenAIList: vi.fn(),
-  };
-});
+// SDK mocks — module-scope vi.fn() handles each test reprograms. The mocked
+// Anthropic + OpenAI constructors each return an object whose models.list()
+// is the controllable vi.fn — we stage success / failure / payload per test.
+const { mockAnthropicList, mockOpenAIList } = vi.hoisted(() => ({
+  mockAnthropicList: vi.fn(),
+  mockOpenAIList: vi.fn(),
+}));
 
 vi.mock('@anthropic-ai/sdk', () => {
   const AnthropicMock = vi.fn().mockImplementation(() => ({
-    models: {
-      list: mockAnthropicList,
-    },
+    models: { list: mockAnthropicList },
   }));
   return { default: AnthropicMock };
 });
 
 vi.mock('openai', () => {
   const OpenAIMock = vi.fn().mockImplementation(() => ({
-    models: {
-      list: mockOpenAIList,
-    },
+    models: { list: mockOpenAIList },
   }));
   return { default: OpenAIMock };
 });
 
+// Bypass provider.validate() so POST /api/llm-keys persists without hitting
+// the real SDK. The cache module uses the SDK we mocked above, so the
+// validate path can stay an unconditional success.
+vi.mock('../src/providers/llm/index.js', async (orig) => {
+  const actual = (await orig()) as typeof import('../src/providers/llm/index.js');
+  return {
+    ...actual,
+    getProvider: vi.fn(() => ({
+      validate: vi.fn().mockResolvedValue(undefined),
+      estimate: vi.fn(),
+      runAudit: vi.fn(),
+      listModels: vi.fn().mockReturnValue([]),
+      pricing: vi.fn(),
+    })),
+  };
+});
+
+import {
+  createTestDb,
+  cleanDb,
+  createTestUser,
+  authHeader,
+  type TestDbHandle,
+} from './helpers.js';
+import { issueAccessToken } from '../src/services/auth.js';
+import { setTestDb } from '../src/db/client.js';
+import { createApp } from '../src/index.js';
+import { _resetModelCacheForTests } from '../src/providers/llm/model-catalog.js';
+import { PRICING } from '../src/providers/llm/pricing.js';
+
 /**
- * The provider SDKs return an async iterable from `models.list()`. We
- * synthesize one from a plain array of `{ id }` objects.
+ * Wrap a plain array as an async iterable so the production code's
+ * `for await (const m of client.models.list(...))` consumes the test data.
+ * Mirrors the helper used in llm-models-cache.unit.test.ts.
  */
 function asAsyncIterable<T>(items: T[]): AsyncIterable<T> {
   return {
@@ -76,207 +97,209 @@ function asAsyncIterable<T>(items: T[]): AsyncIterable<T> {
   };
 }
 
-beforeEach(() => {
-  mockAnthropicList.mockReset();
-  mockOpenAIList.mockReset();
-  // Reset fake timers between tests (each test that needs them enables them).
-  vi.useRealTimers();
-});
+describe('GET /api/llm/models (Phase 27 Plan 03 Task 2 — endpoint integration)', () => {
+  let handle: TestDbHandle;
+  let app: ReturnType<typeof createApp>;
 
-describe('model-catalog cache (Phase 27 D-01/D-02/D-03 PROV-FOLLOWUP-01)', () => {
-  // -----------------------------------------------------------------------
-  // Test 1 — cache hit per D-01
-  // -----------------------------------------------------------------------
-  it('cache hit: two sequential calls within 30 min issue one SDK call', async () => {
-    mockAnthropicList.mockReturnValueOnce(
+  beforeAll(async () => {
+    handle = await createTestDb();
+    setTestDb(handle.db as any, handle.pool);
+    app = createApp();
+  });
+
+  afterAll(async () => {
+    await handle.cleanup();
+  });
+
+  beforeEach(async () => {
+    await cleanDb(handle);
+    _resetModelCacheForTests();
+    mockAnthropicList.mockReset();
+    mockOpenAIList.mockReset();
+    // Default: live SDK call returns two anthropic ids — one priced, one not.
+    // Tests override per-case as needed.
+    mockAnthropicList.mockReturnValue(
       asAsyncIterable([
-        { id: 'claude-haiku-4-5-20251001' },
-        { id: 'claude-sonnet-4-6' },
-        { id: 'claude-opus-4-7' },
+        { id: 'claude-haiku-4-5-20251001' }, // in PRICING.anthropic
+        { id: 'claude-future-snapshot-9' },  // not in PRICING
       ]),
     );
-    const { getModels, _resetModelCacheForTests } = await import(
-      '../src/providers/llm/model-catalog.js'
-    );
-    _resetModelCacheForTests();
-
-    const r1 = await getModels('anthropic', 'key-abc', 'sk-ant-test');
-    const r2 = await getModels('anthropic', 'key-abc', 'sk-ant-test');
-
-    expect(mockAnthropicList).toHaveBeenCalledTimes(1);
-    expect(r1.source).toBe('live');
-    expect(r2.source).toBe('live');
-    expect(r2.models).toEqual(r1.models);
+    vi.useRealTimers();
   });
 
-  // -----------------------------------------------------------------------
-  // Test 2 — TTL bust per D-01 (fake timers advance >30 min)
-  // -----------------------------------------------------------------------
-  it('cache TTL bust: 31 min later re-issues SDK call and refreshes', async () => {
+  // --- Helpers ---------------------------------------------------------------
+
+  async function req(
+    method: string,
+    path: string,
+    opts?: { headers?: Record<string, string>; body?: unknown },
+  ): Promise<Response> {
+    const url = `http://localhost${path}`;
+    const init: RequestInit = { method, headers: { ...opts?.headers } };
+    if (opts?.body !== undefined) {
+      (init.headers as Record<string, string>)['Content-Type'] = 'application/json';
+      init.body = JSON.stringify(opts.body);
+    }
+    return app.request(url, init);
+  }
+
+  // eslint-disable-next-line @typescript-eslint/no-explicit-any
+  async function json(res: Response): Promise<any> {
+    return res.json();
+  }
+
+  async function userWithToken(email: string) {
+    const user = await createTestUser(handle, { email, password: 'longenoughpw12' });
+    const token = await issueAccessToken(user.id);
+    return { user, token, hdrs: authHeader(token) };
+  }
+
+  async function postKey(
+    hdrs: Record<string, string>,
+    provider: 'anthropic' | 'openai',
+    keyBody = `sk-test-${provider}-${Math.random().toString(36).slice(2, 8)}`,
+  ) {
+    const res = await req('POST', '/api/llm-keys', {
+      headers: hdrs,
+      body: { provider, key: keyBody, label: `${provider} key` },
+    });
+    expect(res.status).toBe(200);
+    return json(res);
+  }
+
+  // --- Test 1: Cache hit through endpoint -----------------------------------
+
+  it('returns identical fetchedAt on two sequential authenticated calls within 30 min (cache hit)', async () => {
+    const userA = await userWithToken('cache-hit-A@test.com');
+    await postKey(userA.hdrs, 'anthropic');
+
+    const res1 = await req('GET', '/api/llm/models?provider=anthropic', { headers: userA.hdrs });
+    expect(res1.status).toBe(200);
+    const body1 = await json(res1);
+
+    // Re-program the mock to return DIFFERENT ids — if the cache didn't fire
+    // on the second call, we'd see the new ids in the body.
+    mockAnthropicList.mockReturnValue(
+      asAsyncIterable([{ id: 'this-should-not-appear' }]),
+    );
+
+    const res2 = await req('GET', '/api/llm/models?provider=anthropic', { headers: userA.hdrs });
+    expect(res2.status).toBe(200);
+    const body2 = await json(res2);
+
+    // Cache-hit invariants: same fetchedAt, same models, source='live' (cache
+    // hit reports 'live' per D-01 — the cached entry is still considered the
+    // canonical live answer until TTL bust).
+    expect(body2.fetchedAt).toBe(body1.fetchedAt);
+    expect(body2.models).toEqual(body1.models);
+    expect(body2.source).toBe('live');
+    // Only ONE SDK call was made (mockAnthropicList.mock.calls accumulates).
+    expect(mockAnthropicList.mock.calls.length).toBe(1);
+  });
+
+  // --- Test 2: Cache key isolation per (userId via keyId) -------------------
+
+  it('produces distinct SDK calls for two different users (cache key isolation per D-03)', async () => {
+    const userA = await userWithToken('cache-iso-A@test.com');
+    const userB = await userWithToken('cache-iso-B@test.com');
+    await postKey(userA.hdrs, 'anthropic');
+    await postKey(userB.hdrs, 'anthropic');
+
+    const resA = await req('GET', '/api/llm/models?provider=anthropic', { headers: userA.hdrs });
+    const resB = await req('GET', '/api/llm/models?provider=anthropic', { headers: userB.hdrs });
+    expect(resA.status).toBe(200);
+    expect(resB.status).toBe(200);
+
+    // D-03 invariant: each user has their own llm_api_keys.id, so the cache
+    // key (`anthropic:<keyId>`) differs — two SDK calls, not one.
+    expect(mockAnthropicList.mock.calls.length).toBe(2);
+  });
+
+  // --- Test 3: Stale fallback (D-02) ----------------------------------------
+
+  it("returns source='cache_stale' when SDK throws after a cached entry exists", async () => {
+    const userA = await userWithToken('cache-stale-A@test.com');
+    await postKey(userA.hdrs, 'anthropic');
+
+    // Populate cache via first call (succeeds).
+    const res1 = await req('GET', '/api/llm/models?provider=anthropic', { headers: userA.hdrs });
+    expect(res1.status).toBe(200);
+    const body1 = await json(res1);
+
+    // Force TTL bust so the next call goes through the SDK path (we want to
+    // exercise the throw, not return the cache hit). Fake timers advance 31m
+    // — the cache module's TTL_MS is 30 * 60 * 1000.
     vi.useFakeTimers();
-    mockAnthropicList
-      .mockReturnValueOnce(asAsyncIterable([{ id: 'claude-haiku-4-5-20251001' }]))
-      .mockReturnValueOnce(asAsyncIterable([{ id: 'claude-haiku-4-5-20251001' }]));
+    vi.setSystemTime(new Date(Date.now() + 31 * 60 * 1000));
 
-    const { getModels, _resetModelCacheForTests } = await import(
-      '../src/providers/llm/model-catalog.js'
-    );
-    _resetModelCacheForTests();
-
-    await getModels('anthropic', 'key-ttl', 'sk-ant-test');
-    expect(mockAnthropicList).toHaveBeenCalledTimes(1);
-
-    // Advance 31 minutes — past the 30-min TTL.
-    vi.advanceTimersByTime(31 * 60 * 1000);
-
-    await getModels('anthropic', 'key-ttl', 'sk-ant-test');
-    expect(mockAnthropicList).toHaveBeenCalledTimes(2);
-  });
-
-  // -----------------------------------------------------------------------
-  // Test 3 — cache-key isolation per D-03
-  // -----------------------------------------------------------------------
-  it('cache-key isolation: different keyIds produce distinct cache entries', async () => {
-    mockAnthropicList
-      .mockReturnValueOnce(asAsyncIterable([{ id: 'claude-haiku-4-5-20251001' }]))
-      .mockReturnValueOnce(asAsyncIterable([{ id: 'claude-haiku-4-5-20251001' }]));
-
-    const { getModels, _resetModelCacheForTests, _peekModelCacheForTests } = await import(
-      '../src/providers/llm/model-catalog.js'
-    );
-    _resetModelCacheForTests();
-
-    await getModels('anthropic', 'key-A', 'sk-ant-A');
-    await getModels('anthropic', 'key-B', 'sk-ant-B');
-
-    expect(mockAnthropicList).toHaveBeenCalledTimes(2);
-    const entries = _peekModelCacheForTests();
-    const keys = entries.map(([k]) => k).sort();
-    expect(keys).toEqual(['anthropic:key-A', 'anthropic:key-B']);
-  });
-
-  // -----------------------------------------------------------------------
-  // Test 4 — stale fallback per D-02
-  // -----------------------------------------------------------------------
-  it('stale fallback: SDK throws after cached entry → returns cached with cache_stale', async () => {
-    vi.useFakeTimers();
-    mockAnthropicList.mockReturnValueOnce(
-      asAsyncIterable([{ id: 'claude-haiku-4-5-20251001' }]),
-    );
-
-    const { getModels, _resetModelCacheForTests } = await import(
-      '../src/providers/llm/model-catalog.js'
-    );
-    _resetModelCacheForTests();
-
-    const fresh = await getModels('anthropic', 'key-stale', 'sk-ant-test');
-    expect(fresh.source).toBe('live');
-
-    // Now bust the TTL AND make the next SDK call throw.
-    vi.advanceTimersByTime(31 * 60 * 1000);
+    // Re-program the mock to throw on the next call.
     mockAnthropicList.mockImplementationOnce(() => {
-      throw new Error('network down');
+      throw new Error('simulated SDK 5xx');
     });
 
-    // console.error is emitted on the error path — silence it for the test.
+    // Silence the expected diagnostic stderr to keep test output clean.
     const errSpy = vi.spyOn(console, 'error').mockImplementation(() => {});
 
-    const stale = await getModels('anthropic', 'key-stale', 'sk-ant-test');
-    expect(stale.source).toBe('cache_stale');
-    expect(stale.models).toEqual(fresh.models);
-    expect(errSpy).toHaveBeenCalled();
-    // Verify the diagnostic log is metadata-only (no apiKey leak).
-    const logCall = errSpy.mock.calls[0];
-    expect(String(logCall[0])).not.toContain('sk-ant-test');
-    if (logCall.length > 1) {
-      expect(JSON.stringify(logCall[1])).not.toContain('sk-ant-test');
-    }
+    const res2 = await req('GET', '/api/llm/models?provider=anthropic', { headers: userA.hdrs });
+    expect(res2.status).toBe(200);
+    const body2 = await json(res2);
+
+    expect(body2.source).toBe('cache_stale');
+    // Listing identical to the prior cached entry.
+    expect(body2.models).toEqual(body1.models);
 
     errSpy.mockRestore();
+    vi.useRealTimers();
   });
 
-  // -----------------------------------------------------------------------
-  // Test 5 — PRICING fallback per D-02
-  // -----------------------------------------------------------------------
-  it('PRICING fallback: SDK throws AND no cached entry → pricing_fallback shape', async () => {
-    mockOpenAIList.mockImplementationOnce(() => {
-      throw new Error('network down');
+  // --- Test 4: PRICING fallback (D-02) --------------------------------------
+
+  it("returns source='pricing_fallback' when SDK throws AND no cached entry exists", async () => {
+    const userA = await userWithToken('pricing-fallback-A@test.com');
+    await postKey(userA.hdrs, 'anthropic');
+
+    // Cache was just reset in beforeEach; the very first call goes to the SDK.
+    mockAnthropicList.mockImplementationOnce(() => {
+      throw new Error('simulated SDK rate limit');
     });
+
     const errSpy = vi.spyOn(console, 'error').mockImplementation(() => {});
 
-    const { getModels, _resetModelCacheForTests } = await import(
-      '../src/providers/llm/model-catalog.js'
-    );
-    const { PRICING } = await import('../src/providers/llm/pricing.js');
-    _resetModelCacheForTests();
+    const res = await req('GET', '/api/llm/models?provider=anthropic', { headers: userA.hdrs });
+    expect(res.status).toBe(200);
+    const body = await json(res);
 
-    const result = await getModels('openai', 'key-no-cache', 'sk-oai-test');
-
-    expect(result.source).toBe('pricing_fallback');
-    const ids = result.models.map((m) => m.id).sort();
-    expect(ids).toEqual(Object.keys(PRICING.openai).sort());
-    // Every entry in pricing_fallback shape has hasPricing: true (D-02 path b).
-    for (const m of result.models) {
+    expect(body.source).toBe('pricing_fallback');
+    // The synthesized listing matches Object.keys(PRICING.anthropic).
+    const expectedIds = Object.keys(PRICING.anthropic).sort();
+    const actualIds = body.models.map((m: { id: string }) => m.id).sort();
+    expect(actualIds).toEqual(expectedIds);
+    // Every entry in pricing_fallback has hasPricing=true by construction.
+    for (const m of body.models) {
       expect(m.hasPricing).toBe(true);
-      expect(m.pricing).toBeDefined();
     }
 
     errSpy.mockRestore();
   });
 
-  // -----------------------------------------------------------------------
-  // Test 6 — unpriced-live presence per D-05
-  // -----------------------------------------------------------------------
-  it('unpriced live id is included with hasPricing: false (D-05 — not filtered)', async () => {
-    mockAnthropicList.mockReturnValueOnce(
-      asAsyncIterable([
-        { id: 'claude-haiku-4-5-20251001' }, // priced
-        { id: 'claude-future-2030-snapshot' }, // unpriced — must still appear
-      ]),
-    );
+  // --- Test 5: 404 on no key for provider -----------------------------------
 
-    const { getModels, _resetModelCacheForTests } = await import(
-      '../src/providers/llm/model-catalog.js'
-    );
-    _resetModelCacheForTests();
+  it("returns 404 { error: 'no_key_for_provider' } when the user has no key for the requested provider", async () => {
+    const userA = await userWithToken('no-key-A@test.com');
+    // Note: no postKey() — user has no llm_api_keys row.
 
-    const result = await getModels('anthropic', 'key-unpriced', 'sk-ant-test');
-    expect(result.source).toBe('live');
-
-    const future = result.models.find((m) => m.id === 'claude-future-2030-snapshot');
-    expect(future).toBeDefined();
-    expect(future!.hasPricing).toBe(false);
-    expect(future!.pricing).toBeUndefined();
-
-    const priced = result.models.find((m) => m.id === 'claude-haiku-4-5-20251001');
-    expect(priced).toBeDefined();
-    expect(priced!.hasPricing).toBe(true);
-    expect(priced!.pricing).toBeDefined();
-    expect(priced!.pricing!.inputUsdPer1M).toBe(1.0);
+    const res = await req('GET', '/api/llm/models?provider=anthropic', { headers: userA.hdrs });
+    expect(res.status).toBe(404);
+    const body = await json(res);
+    expect(body).toEqual({ error: 'no_key_for_provider' });
+    // SDK was never called — the handler returned 404 before reaching getModels.
+    expect(mockAnthropicList.mock.calls.length).toBe(0);
   });
 
-  // -----------------------------------------------------------------------
-  // Test 8 — apiKey never appears in cache Map state (LLMKEY-03 invariant)
-  // -----------------------------------------------------------------------
-  it('apiKey is not held in cache state (LLMKEY-03 / T-23-03-04 invariant)', async () => {
-    mockAnthropicList.mockReturnValueOnce(
-      asAsyncIterable([{ id: 'claude-haiku-4-5-20251001' }]),
-    );
+  // --- 401 sanity: unauthenticated request ----------------------------------
 
-    const { getModels, _resetModelCacheForTests, _peekModelCacheForTests } = await import(
-      '../src/providers/llm/model-catalog.js'
-    );
-    _resetModelCacheForTests();
-
-    const SECRET = 'sk-ant-LEAK-canary-99';
-    await getModels('anthropic', 'key-secret', SECRET);
-
-    const entries = _peekModelCacheForTests();
-    // The Map should have exactly one entry; assert SECRET appears nowhere
-    // in the serialized state.
-    const serialized = JSON.stringify(entries);
-    expect(serialized).not.toContain(SECRET);
-    // Defensive: also check the cache key itself is the keyId form.
-    expect(entries[0][0]).toBe('anthropic:key-secret');
+  it('returns 401 without a bearer token', async () => {
+    const res = await req('GET', '/api/llm/models?provider=anthropic');
+    expect(res.status).toBe(401);
   });
 });
