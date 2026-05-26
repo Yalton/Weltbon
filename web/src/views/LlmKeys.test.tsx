@@ -17,7 +17,7 @@
  */
 
 import { describe, it, expect, beforeEach, vi } from 'vitest';
-import { render, screen, waitFor } from '@testing-library/react';
+import { render, screen, waitFor, within } from '@testing-library/react';
 import userEvent from '@testing-library/user-event';
 import { MemoryRouter, Routes, Route } from 'react-router-dom';
 import { QueryClient, QueryClientProvider } from '@tanstack/react-query';
@@ -103,6 +103,8 @@ const mockLlmKey = {
   label: 'work',
   createdAt: new Date(Date.now() - 2 * 24 * 60 * 60 * 1000).toISOString(),
   lastValidatedAt: new Date(Date.now() - 1 * 60 * 60 * 1000).toISOString(),
+  // Phase 26 D-14: server emits 4-decimal-formatted USD cumulative spend.
+  totalSpentUsd: '0.0000',
 };
 
 describe('LlmKeys view', () => {
@@ -254,8 +256,11 @@ describe('LlmKeys view', () => {
       expect(screen.getByTestId('llm-keys-table')).toBeInTheDocument();
     });
     expect(screen.getByText('••••••••XYZ4')).toBeInTheDocument();
-    // Provider label
-    expect(screen.getByText('Anthropic')).toBeInTheDocument();
+    // Provider label — scoped to the keys table because the Phase 26 D-14
+    // PricingTable (mounted above the keys table) also renders an "Anthropic"
+    // group-header label, which would otherwise make this lookup ambiguous.
+    const keysTable = screen.getByTestId('llm-keys-table');
+    expect(within(keysTable).getByText('Anthropic')).toBeInTheDocument();
     // Label
     expect(screen.getByText('work')).toBeInTheDocument();
   });
