@@ -25,6 +25,7 @@ import { defineConfig } from 'vitest/config';
 const DB_GATED_TESTS = [
   'tests/audit-recovery.test.ts',
   'tests/audit-routes.test.ts',
+  'tests/audits-estimate.test.ts',
   'tests/audits-history.test.ts',
   'tests/audits-in-flight.test.ts',
   'tests/auth.test.ts',
