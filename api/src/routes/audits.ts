@@ -21,10 +21,9 @@ import { HTTPException } from 'hono/http-exception';
 import { db } from '../db/client.js';
 import { auditRuns, issues, entries, universes } from '../db/schema.js';
 import { requireUniverse } from '../utils/ownership.js';
-import { getProvider } from '../providers/llm/index.js';
-import { PRICING } from '../providers/llm/pricing.js';
 import { runAudit } from '../services/audit-engine.js';
 import { getDecryptedKey } from '../services/llm-key.js';
+import { estimateAudit } from '../services/audit-estimator.js';
 import { env } from '../config.js';
 import type { AuthVariables } from '../middleware/auth.js';
 
@@ -60,6 +59,45 @@ const auditTriggerResponseSchema = z.object({
   runId: z.string().uuid(),
   estimate: auditEstimateSchema,
 });
+
+// Phase 26 Plan 08 Task 1 — AuditEstimate wire shape for GET /audits/estimate.
+// Mirrors api/src/types/audit-suggestion.ts AuditEstimate. Independent of any
+// existing run (dialog opens BEFORE a run exists; W-1 deviation from CONTEXT
+// D-16's runId-in-path hint — see plan body <interfaces> resolution).
+const auditEstimateBreakdownSchema = z.object({
+  basePromptTokens: z.number().int().nonnegative(),
+  ratePerMTokIn: z.number().nonnegative(),
+  ratePerMTokOut: z.number().nonnegative(),
+  ratePerMTokCachedRead: z.number().nonnegative(),
+  maxToolCalls: z.number().int().nonnegative(),
+  maxOutputTokens: z.number().int().nonnegative(),
+  perCallInputTokens: z.number().int().nonnegative(),
+  perCallOutputTokens: z.number().int().nonnegative(),
+  minOutputTokens: z.number().int().nonnegative(),
+  scopeEntryCount: z.number().int().nonnegative(),
+});
+
+const auditEstimateResponseSchema = z.object({
+  lower: z.number().nonnegative(),
+  upper: z.number().nonnegative(),
+  breakdown: auditEstimateBreakdownSchema,
+  model: z.object({
+    provider: z.enum(['anthropic', 'openai']),
+    name: z.string(),
+  }),
+});
+
+const auditEstimateQuerySchema = z
+  .object({
+    scope: z.enum(['universe', 'entry']),
+    entryId: z.string().uuid().optional(),
+    provider: z.enum(['anthropic', 'openai']).optional(),
+    model: z.string().optional(),
+  })
+  .strict()
+  .refine((v) => v.scope !== 'entry' || v.entryId !== undefined, {
+    message: 'entryId is required when scope=entry',
+  });
 
 const auditRunStateSchema = z.object({
   id: z.string().uuid(),
@@ -225,6 +263,60 @@ const listAuditHistoryRoute = createRoute({
   },
 });
 
+// Phase 26 Plan 08 Task 1 — pre-run estimate endpoint (D-15/D-16).
+// Mount path resolves to /api/universes/:uid/audits/estimate. MUST be defined
+// (and registered .openapi'd) BEFORE the /audits/{runId} route — otherwise the
+// dynamic {runId} matcher swallows /estimate. The route is INDEPENDENT of any
+// existing run (dialog opens BEFORE a run exists; W-1 deviation from CONTEXT
+// D-16's :runId path hint — see plan body <interfaces> resolution).
+const getAuditEstimateRoute = createRoute({
+  method: 'get',
+  path: '/audits/estimate',
+  tags: ['Audits'],
+  summary: 'Pre-run cost-range estimate for a planned audit',
+  description:
+    'LLMUI-04 cost-range estimate computed by services/audit-estimator.ts. ' +
+    'requireUniverse fires inline (T-24-05-02). audit_enabled=false → 403 ' +
+    '(T-26-08-01: every audit-trigger surface honors Phase 24 SC-1 opt-in, ' +
+    'even though estimate is purely informational). On estimator failure ' +
+    'returns 502 with generic copy (T-26-08-02 — never leak provider stack).',
+  security: [{ bearerAuth: [] }],
+  request: {
+    params: uidParams,
+    query: auditEstimateQuerySchema,
+  },
+  responses: {
+    200: {
+      content: { 'application/json': { schema: auditEstimateResponseSchema } },
+      description: 'AuditEstimate (lower/upper USD + breakdown + model)',
+    },
+    400: {
+      content: { 'application/json': { schema: errorSchema } },
+      description: 'Validation error or no API key configured for provider',
+    },
+    401: {
+      content: { 'application/json': { schema: errorSchema } },
+      description: 'Unauthorized',
+    },
+    403: {
+      content: { 'application/json': { schema: errorSchema } },
+      description: 'Audit not enabled for this universe or cross-tenant access',
+    },
+    404: {
+      content: { 'application/json': { schema: errorSchema } },
+      description: 'Universe not found',
+    },
+    500: {
+      content: { 'application/json': { schema: errorSchema } },
+      description: 'Internal error',
+    },
+    502: {
+      content: { 'application/json': { schema: errorSchema } },
+      description: 'Estimator failed to compute cost (provider outage / token-count failure)',
+    },
+  },
+});
+
 const getAuditRoute = createRoute({
   method: 'get',
   path: '/audits/{runId}',
@@ -306,7 +398,12 @@ export const auditRoutes = new OpenAPIHono<AppEnv>()
       return c.json({ error: 'An audit is already in progress for this universe' }, 409);
     }
 
-    // Pre-run cost estimate — best-effort; catch failure and return placeholder
+    // Pre-run cost estimate — best-effort; catch failure and return placeholder.
+    // Phase 26 Plan 08 Task 1: inline single-point math REPLACED with a call
+    // to estimateAudit() (services/audit-estimator.ts) — DRY single source of
+    // truth shared with the GET /audits/estimate dialog route. Maps the
+    // AuditEstimate to the existing wire shape (promptTokens, estCostUsd) so
+    // callers see no contract change.
     let estimate: { promptTokens: number; estCostUsd: number } = { promptTokens: 0, estCostUsd: 0 };
     try {
       const provider = universe.auditProvider as 'anthropic' | 'openai';
@@ -314,19 +411,22 @@ export const auditRoutes = new OpenAPIHono<AppEnv>()
       const cfg = env();
       const apiKey = await getDecryptedKey(userId, provider, cfg.llmKeyEncryptionKey);
       if (apiKey) {
-        const tokenCount = await getProvider(provider).estimate({
-          apiKey,
-          messages: [
-            { role: 'user', content: 'Audit estimate placeholder — structural digest not yet built.' },
-          ],
+        const result = await estimateAudit({
+          universeId: uid,
+          scope: body.scope,
+          entryId: body.entryId,
+          provider,
           model,
+          apiKey,
+          userId,
         });
-        // estCostUsd = input tokens × input rate per 1M tokens (lower bound — output not yet known)
-        const pricing = (PRICING[provider] as Record<string, { inputUsdPer1M: number }>)[model];
-        const estCostUsd = pricing
-          ? (tokenCount / 1_000_000) * pricing.inputUsdPer1M
-          : 0;
-        estimate = { promptTokens: tokenCount, estCostUsd };
+        // Preserve wire compat: AuditEstimate.breakdown.basePromptTokens → promptTokens,
+        // AuditEstimate.lower → estCostUsd (lower bound matches the previous
+        // input-tokens-only point estimate semantics most closely).
+        estimate = {
+          promptTokens: result.breakdown.basePromptTokens,
+          estCostUsd: result.lower,
+        };
       }
     } catch {
       // Estimate failure must NOT block the run — engine will surface real telemetry
@@ -478,6 +578,63 @@ export const auditRoutes = new OpenAPIHono<AppEnv>()
       },
       200,
     );
+  })
+
+  // GET /api/universes/:uid/audits/estimate — Phase 26 Plan 08 Task 1 (D-15/D-16)
+  // MUST appear before the /audits/{runId} binding so the literal `/estimate`
+  // segment is matched before the dynamic {runId} matcher.
+  .openapi(getAuditEstimateRoute, async (c) => {
+    const { uid } = c.req.valid('param');
+    const query = c.req.valid('query');
+    const userId = c.var.userId;
+
+    // T-24-05-02: requireUniverse INLINE
+    const universe = await requireUniverse(uid, userId);
+
+    // T-26-08-01: opt-in invariant preserved across the audit-trigger family.
+    // Estimate is purely informational but the audit-trigger surface MUST NOT
+    // bypass the opt-in (Phase 24 SC-1).
+    if (!universe.auditEnabled) {
+      throw new HTTPException(403, { message: 'Audit not enabled for this universe' });
+    }
+
+    // Resolve provider/model: query overrides universe defaults; both required.
+    const provider = (query.provider ?? universe.auditProvider) as
+      | 'anthropic'
+      | 'openai'
+      | null;
+    const model = query.model ?? universe.auditModel;
+    if (!provider || !model) {
+      return c.json(
+        { error: 'No provider/model configured for this universe' },
+        400,
+      );
+    }
+
+    // Resolve decrypted API key for the user+provider — required for the
+    // estimator's basePromptTokens call (provider local tokenizer).
+    const cfg = env();
+    const apiKey = await getDecryptedKey(userId, provider, cfg.llmKeyEncryptionKey);
+    if (!apiKey) {
+      return c.json({ error: `No API key configured for ${provider}` }, 400);
+    }
+
+    // T-26-08-02: wrap the estimator in try/catch — provider failure surfaces
+    // 502 with generic copy, NEVER leaks provider error text or stack.
+    try {
+      const result = await estimateAudit({
+        universeId: uid,
+        scope: query.scope,
+        entryId: query.entryId,
+        provider,
+        model,
+        apiKey,
+        userId,
+      });
+      return c.json(result, 200);
+    } catch {
+      return c.json({ error: 'Could not estimate run cost' }, 502);
+    }
   })
 
   // GET /api/universes/:uid/audits/:runId
