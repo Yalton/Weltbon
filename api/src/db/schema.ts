@@ -186,6 +186,12 @@ export const auditRuns = pgTable('audit_runs', {
   // AUDIT-09: engine increments on each suggestion dropped due to unknown referenced_entry_id.
   // Load-bearing observability column; Plan 04 atomically increments this on every drop.
   hallucinatedEntryReferenceCount: integer('hallucinated_entry_reference_count').default(0).notNull(),
+  // AUDIT-07 / Phase 26 D-08: count of universe entries the engine actually examined
+  // during this run. The completion banner surfaces a "Partial coverage" warning chip
+  // when analyzed_entries < 0.5 × universe total_entries (provider safety filters,
+  // budget caps, or early-termination signal). DEFAULT 0 backfills pre-Phase-26 rows
+  // (they report zero analyzed entries — a known historical gap, not a regression).
+  analyzedEntries: integer('analyzed_entries').default(0).notNull(),
 }, (t) => ({
   // BL-01: partial unique index closing the TOCTOU race window in routes/audits.ts
   // between the pre-check SELECT and INSERT. Without this index, two concurrent POSTs

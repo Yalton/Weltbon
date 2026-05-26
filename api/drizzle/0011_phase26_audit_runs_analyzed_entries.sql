@@ -1,0 +1,14 @@
+-- Phase 26 LLMUI-02/AUDIT-07: additive column for partial-coverage tracking.
+-- Hand-written migration (NOT drizzle-kit generated) matching the Phase 24/25
+-- additive convention (see 0008_phase24_audit_runs.sql, 0010_phase25_issues_dismissal.sql).
+-- drizzle-kit would regenerate the full schema diff rather than a surgical ADD COLUMN block.
+--
+-- The DEFAULT 0 NOT NULL backfills every existing audit_runs row at metadata-only
+-- ALTER speed in PostgreSQL 11+ (no table rewrite, no row UPDATE pass).
+--
+-- D-08 partial-coverage warning depends on this column: the completion banner
+-- compares analyzed_entries against universe total_entries and surfaces a
+-- "⚠ Partial coverage" chip when analyzed_entries < 0.5 × total. The Phase 26
+-- engine update writes this value as it streams suggestions.
+ALTER TABLE "audit_runs" ADD COLUMN "analyzed_entries" integer DEFAULT 0 NOT NULL;
+--> statement-breakpoint
