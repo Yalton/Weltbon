@@ -219,6 +219,53 @@ export interface AuditEngineDeps {
  * @param runId - The UUID of the audit_runs row to execute.
  * @param deps  - Optional overrides for unit-testing (db, provider, config).
  */
+/**
+ * Locate and parse a JSON object inside the model's final-turn text.
+ *
+ * Three fallbacks, in order:
+ *   1. Bare `JSON.parse(text)` — Claude 3.x usually emits clean JSON.
+ *   2. ```json … ``` fenced code block (or unlabeled ``` … ```) — Claude 4.x
+ *      defaults. Captures the first fenced region; non-greedy.
+ *   3. First `{` to last `}` slice — last-resort scan when prose surrounds
+ *      the JSON without fences.
+ *
+ * Throws SyntaxError if none of the three paths yield valid JSON. The caller
+ * is the engine's final-output catch block, which logs the failure and the
+ * raw text preview.
+ *
+ * Returns `unknown` so the caller MUST still validate shape via the strict
+ * Zod schema — this function only widens LOCATION tolerance, not SHAPE.
+ */
+function extractJsonFromResponseText(text: string): unknown {
+  if (!text) return JSON.parse('{}');
+  // Path 1
+  try {
+    return JSON.parse(text);
+  } catch {
+    /* fall through */
+  }
+  // Path 2: fenced ``` block (with or without `json` label)
+  const fenceMatch = text.match(/```(?:json)?\s*\n?([\s\S]*?)\n?```/);
+  if (fenceMatch) {
+    try {
+      return JSON.parse(fenceMatch[1]);
+    } catch {
+      /* fall through */
+    }
+  }
+  // Path 3: first { to matching last }
+  const firstBrace = text.indexOf('{');
+  const lastBrace = text.lastIndexOf('}');
+  if (firstBrace !== -1 && lastBrace > firstBrace) {
+    try {
+      return JSON.parse(text.slice(firstBrace, lastBrace + 1));
+    } catch {
+      /* fall through */
+    }
+  }
+  throw new SyntaxError('No parseable JSON object found in model response text');
+}
+
 export async function runAudit(runId: string, deps?: AuditEngineDeps): Promise<void> {
   // Resolve injected vs real dependencies
   const _db = deps?.db ?? db;
@@ -670,9 +717,34 @@ When done, return your findings as JSON: { "suggestions": [...] }`;
       // BL-02 / T-24-04-03: strict-mode parse is the ONLY parse — rejects LLM-smuggled
       // extra fields (e.g., gap_key) at both the envelope and suggestion levels.
       // A Zod throw here is caught immediately below and mapped to INVALID_OUTPUT.
-      const raw = JSON.parse(result.text || '{}');
+      //
+      // Claude 4.x routinely (a) prepends a one-line preamble and (b) wraps the
+      // JSON in a ```json fenced block, even when the prompt asks for bare JSON.
+      // The extractor walks three fallbacks in order: bare parse → fenced block
+      // → first-`{` to last-`}` slice. This preserves the strict Zod validation
+      // (extra fields still get rejected) — we only widen the JSON LOCATION
+      // tolerance, not the SHAPE tolerance.
+      const raw = extractJsonFromResponseText(result.text ?? '');
       parsed = AuditOutputStrictSchema.parse(raw);
-    } catch {
+    } catch (parseErr) {
+      // Diagnostic surface (matches the anthropic provider pattern). Without
+      // this, INVALID_OUTPUT is a black hole — operators can't tell whether
+      // the model returned prose, wrapped JSON in fences, smuggled extra
+      // fields, or returned empty text. T-24-04-09 forbids persisting raw
+      // text to the DB; stderr is the appropriate diagnostic channel.
+      const textPreview =
+        result.text === undefined || result.text === null
+          ? '(no text in final turn)'
+          : result.text.length > 800
+            ? `${result.text.slice(0, 800)}…(truncated, total ${result.text.length} chars)`
+            : result.text;
+      const errMsg =
+        parseErr instanceof Error
+          ? `${parseErr.constructor.name}: ${parseErr.message}`
+          : String(parseErr);
+      console.error(
+        `[audit-engine] INVALID_OUTPUT run=${runId} parseErr=${errMsg} resultText=${JSON.stringify(textPreview)}`,
+      );
       // Zod parse failure or JSON parse failure
       if (!anyValidSuggestions) {
         await markFailed(runId, ENGINE_ERROR.INVALID_OUTPUT);
