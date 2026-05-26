@@ -516,6 +516,16 @@ export class AnthropicProvider implements LLMProvider {
    * extraction. Refusals are HTTP-200 success responses, not thrown SDK
    * exceptions — this is the ONLY place a `stop_reason` can produce an
    * exception in this method.
+   *
+   * Phase 27 D-09 — tools array flows through unchanged:
+   * The engine passes `[getEntryBodyTool, emitFindingsTool]` on every turn
+   * (see audit-engine.ts). Anthropic's SDK accepts the engine-shape `{name,
+   * description, input_schema}` tool definition directly — no wire translation
+   * needed. emit_findings is a structured-output mechanism (the model's
+   * invocation IS the final answer); the engine consumes the tool_use block
+   * via the extractor below (preserves `name + input`) and Zod-parses
+   * `tool_use.input` via AuditOutputStrictSchema. The Anthropic provider
+   * NEVER executes emit_findings locally — it's a wire-only construct.
    */
   async runAudit(opts: RunAuditOpts): Promise<RunAuditResult> {
     const model = opts.model ?? defaultModel;

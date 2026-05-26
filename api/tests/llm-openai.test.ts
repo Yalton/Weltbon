@@ -67,8 +67,13 @@ vi.hoisted(() => {
 // Pattern adapted from RESEARCH §Mock SDK Strategy and the proven
 // llm-anthropic.test.ts convention.
 
-const { mockChatCompletionsParse, mockModelsList, MockedErrors } = vi.hoisted(() => {
+const { mockChatCompletionsParse, mockChatCompletionsCreate, mockModelsList, MockedErrors } = vi.hoisted(() => {
   const mockChatCompletionsParse = vi.fn();
+  // Phase 27 D-09: OpenAI provider migrated from chat.completions.parse
+  // (Phase 23 response_format path) to chat.completions.create with
+  // function-tool calling. The `parse` mock is kept for backward-compat
+  // shape but should never be invoked from runAudit() anymore.
+  const mockChatCompletionsCreate = vi.fn();
   const mockModelsList = vi.fn();
 
   // Build instanceof-checkable error subclasses. Each one extends Error so
@@ -105,7 +110,7 @@ const { mockChatCompletionsParse, mockModelsList, MockedErrors } = vi.hoisted(()
     UnprocessableEntityError: MockUnprocessableEntityError,
   };
 
-  return { mockChatCompletionsParse, mockModelsList, MockedErrors };
+  return { mockChatCompletionsParse, mockChatCompletionsCreate, mockModelsList, MockedErrors };
 });
 
 vi.mock('openai', () => {
@@ -113,9 +118,16 @@ vi.mock('openai', () => {
   // function (vi.fn → mockImplementation) returning the chat + models stubs,
   // then Object.assign the error subclasses so static-member instanceof
   // checks (`OpenAI.AuthenticationError`) work in production code.
+  //
+  // Phase 27 D-09: chat.completions exposes BOTH `create` (new — function-tool
+  // path) and `parse` (legacy — response_format path, retained for the Zod-v4
+  // smoke test in this file). runAudit() now uses `create`; the `parse` mock
+  // remains attached so the smoke test that exercises the real
+  // openai/helpers/zod helper still has a callable handle.
   const OpenAIMock = vi.fn().mockImplementation(() => ({
     chat: {
       completions: {
+        create: mockChatCompletionsCreate,
         parse: mockChatCompletionsParse,
       },
     },
@@ -138,27 +150,38 @@ vi.mock('openai/helpers/zod', () => ({
   })),
 }));
 
-// Canonical happy-path response fixture for runAudit. One parsed suggestion
-// inside `message.parsed`, normal stop. Mirrors the contract-test fixture in
-// RESEARCH §Mock SDK Strategy lines 568-600.
+// Phase 27 D-09 canonical happy-path response fixture for runAudit.
+// runAudit now calls chat.completions.create() and consumes tool_calls
+// (function-tool calling). The model "invokes" emit_findings to deliver the
+// final answer; arguments is a JSON string per OpenAI spec.
 const HAPPY_PATH_RESPONSE = {
   choices: [
     {
       message: {
-        parsed: {
-          suggestions: [
-            {
-              category: 'missing-link' as const,
-              referencedEntryIds: ['entry-1', 'entry-2'],
-              rationale: 'These two entries have no explicit connection.',
-              evidence: 'Entry 1 mentions X; Entry 2 mentions Y.',
-            },
-          ],
-        },
+        role: 'assistant' as const,
+        content: null,
         refusal: null,
-        content: '',
+        tool_calls: [
+          {
+            id: 'call_emit_findings_mock',
+            type: 'function' as const,
+            function: {
+              name: 'emit_findings',
+              arguments: JSON.stringify({
+                suggestions: [
+                  {
+                    category: 'missing-link' as const,
+                    referencedEntryIds: ['entry-1', 'entry-2'],
+                    rationale: 'These two entries have no explicit connection.',
+                    evidence: 'Entry 1 mentions X; Entry 2 mentions Y.',
+                  },
+                ],
+              }),
+            },
+          },
+        ],
       },
-      finish_reason: 'stop' as const,
+      finish_reason: 'tool_calls' as const,
     },
   ],
   usage: {
@@ -170,9 +193,10 @@ const HAPPY_PATH_RESPONSE = {
 beforeEach(() => {
   mockModelsList.mockReset();
   mockChatCompletionsParse.mockReset();
+  mockChatCompletionsCreate.mockReset();
   // Sensible defaults for tests that don't override them.
   mockModelsList.mockResolvedValue({ data: [], object: 'list' });
-  mockChatCompletionsParse.mockResolvedValue(HAPPY_PATH_RESPONSE);
+  mockChatCompletionsCreate.mockResolvedValue(HAPPY_PATH_RESPONSE);
 });
 
 describe('OpenAIProvider (PROVIDER-03 + PROVIDER-05 + PROVIDER-07)', () => {
@@ -348,6 +372,7 @@ describe('OpenAIProvider (PROVIDER-03 + PROVIDER-05 + PROVIDER-07)', () => {
     });
     expect(mockModelsList).not.toHaveBeenCalled();
     expect(mockChatCompletionsParse).not.toHaveBeenCalled();
+    expect(mockChatCompletionsCreate).not.toHaveBeenCalled();
   });
 
   it('estimate with system-aware shape includes system contribution in count (Test D — PROVIDER-07 preserved)', async () => {
@@ -372,6 +397,7 @@ describe('OpenAIProvider (PROVIDER-03 + PROVIDER-05 + PROVIDER-07)', () => {
     // Zero-network-call invariant preserved (PROVIDER-07)
     expect(mockModelsList).not.toHaveBeenCalled();
     expect(mockChatCompletionsParse).not.toHaveBeenCalled();
+    expect(mockChatCompletionsCreate).not.toHaveBeenCalled();
   });
 
   // -----------------------------------------------------------------------
@@ -409,8 +435,8 @@ describe('OpenAIProvider (PROVIDER-03 + PROVIDER-05 + PROVIDER-07)', () => {
   // runAudit() — wire-shape, cost math, dual safety-filter check
   // -----------------------------------------------------------------------
 
-  it('runAudit calls chat.completions.parse once and returns canonical wire shape', async () => {
-    mockChatCompletionsParse.mockResolvedValueOnce(HAPPY_PATH_RESPONSE);
+  it('runAudit calls chat.completions.create once and returns canonical wire shape (Phase 27 D-09 — function tool)', async () => {
+    mockChatCompletionsCreate.mockResolvedValueOnce(HAPPY_PATH_RESPONSE);
 
     const { getProvider } = await import('../src/providers/llm/index.js');
     const result = await getProvider('openai').runAudit({
@@ -419,7 +445,9 @@ describe('OpenAIProvider (PROVIDER-03 + PROVIDER-05 + PROVIDER-07)', () => {
       model: 'gpt-5-mini',
     });
 
-    expect(mockChatCompletionsParse).toHaveBeenCalledTimes(1);
+    expect(mockChatCompletionsCreate).toHaveBeenCalledTimes(1);
+    // The legacy parse path must NEVER be invoked from runAudit anymore.
+    expect(mockChatCompletionsParse).not.toHaveBeenCalled();
     expect(result.toolUse).toHaveLength(1);
     expect(result.toolUse[0]?.name).toBe('emit_findings');
     const suggestions = result.toolUse[0]?.input.suggestions as Array<{ category: string }>;
@@ -435,15 +463,22 @@ describe('OpenAIProvider (PROVIDER-03 + PROVIDER-05 + PROVIDER-07)', () => {
   });
 
   it('runAudit cost computed correctly with cached prompt tokens (RESEARCH Pattern 7)', async () => {
-    mockChatCompletionsParse.mockResolvedValueOnce({
+    mockChatCompletionsCreate.mockResolvedValueOnce({
       choices: [
         {
           message: {
-            parsed: { suggestions: [] },
+            role: 'assistant' as const,
+            content: null,
             refusal: null,
-            content: '',
+            tool_calls: [
+              {
+                id: 'call_emit_empty',
+                type: 'function' as const,
+                function: { name: 'emit_findings', arguments: '{"suggestions":[]}' },
+              },
+            ],
           },
-          finish_reason: 'stop' as const,
+          finish_reason: 'tool_calls' as const,
         },
       ],
       usage: {
@@ -471,10 +506,10 @@ describe('OpenAIProvider (PROVIDER-03 + PROVIDER-05 + PROVIDER-07)', () => {
   });
 
   it("runAudit throws ContentBlockedBySafetyFilter when finish_reason === 'content_filter'", async () => {
-    mockChatCompletionsParse.mockResolvedValueOnce({
+    mockChatCompletionsCreate.mockResolvedValueOnce({
       choices: [
         {
-          message: { parsed: null, refusal: null, content: '' },
+          message: { role: 'assistant', content: null, refusal: null, tool_calls: [] },
           finish_reason: 'content_filter' as const,
         },
       ],
@@ -499,13 +534,14 @@ describe('OpenAIProvider (PROVIDER-03 + PROVIDER-05 + PROVIDER-07)', () => {
   });
 
   it('runAudit throws ContentBlockedBySafetyFilter when message.refusal is non-null', async () => {
-    mockChatCompletionsParse.mockResolvedValueOnce({
+    mockChatCompletionsCreate.mockResolvedValueOnce({
       choices: [
         {
           message: {
-            parsed: null,
+            role: 'assistant' as const,
+            content: null,
             refusal: 'I cannot help with that.',
-            content: '',
+            tool_calls: [],
           },
           finish_reason: 'stop' as const,
         },
@@ -532,13 +568,12 @@ describe('OpenAIProvider (PROVIDER-03 + PROVIDER-05 + PROVIDER-07)', () => {
 
   it("runAudit throws UnknownProviderError when finish_reason === 'length' (truncation guard — Test F)", async () => {
     // finish_reason 'length' signals the response was cut off at the token
-    // limit. parsed is null (the structured output is incomplete).
-    // The `parsed ?? { suggestions: [] }` fallback must NOT be reached —
-    // the truncation guard must throw BEFORE the fallback path.
-    mockChatCompletionsParse.mockResolvedValueOnce({
+    // limit. tool_calls (if any) may have incomplete arguments JSON.
+    // The truncation guard must throw BEFORE callers see a partial response.
+    mockChatCompletionsCreate.mockResolvedValueOnce({
       choices: [
         {
-          message: { parsed: null, refusal: null, content: '' },
+          message: { role: 'assistant', content: null, refusal: null, tool_calls: [] },
           finish_reason: 'length' as const,
         },
       ],
@@ -561,6 +596,151 @@ describe('OpenAIProvider (PROVIDER-03 + PROVIDER-05 + PROVIDER-07)', () => {
       );
       expect((err as InstanceType<typeof LLMProviderError>).message).toMatch(
         /truncated|token limit|length/i,
+      );
+    }
+  });
+
+  // -----------------------------------------------------------------------
+  // Phase 27 D-09 — emit_findings function-tool wire shape
+  // -----------------------------------------------------------------------
+
+  it('runAudit forwards engine tools as OpenAI function-tool array (Phase 27 D-09 — emit_findings)', async () => {
+    mockChatCompletionsCreate.mockResolvedValueOnce(HAPPY_PATH_RESPONSE);
+
+    const { getProvider } = await import('../src/providers/llm/index.js');
+    // Simulate the engine handing both tools through opts.tools — the
+    // production engine passes [getEntryBodyTool, emitFindingsTool] on every
+    // turn (see audit-engine.ts post-Phase-27). The provider must wire each
+    // engine-shape tool into OpenAI's function-tool shape verbatim.
+    const engineTools = [
+      {
+        name: 'getEntryBody',
+        description: 'Fetch the full body of one entry by ID.',
+        input_schema: {
+          type: 'object',
+          properties: { entryId: { type: 'string', format: 'uuid' } },
+          required: ['entryId'],
+        },
+      },
+      {
+        name: 'emit_findings',
+        description: 'Call once to deliver the complete suggestions array.',
+        input_schema: {
+          type: 'object',
+          properties: { suggestions: { type: 'array', items: { type: 'object' } } },
+          required: ['suggestions'],
+        },
+      },
+    ];
+    await getProvider('openai').runAudit({
+      apiKey: 'k',
+      messages: [{ role: 'user', content: 'find gaps' }],
+      model: 'gpt-5-mini',
+      tools: engineTools,
+    });
+
+    // Assert chat.completions.create was called with the `tools` parameter
+    // containing OpenAI's function-tool shape; emit_findings + getEntryBody
+    // BOTH flow through alongside each other.
+    const callArgs = mockChatCompletionsCreate.mock.calls[0]?.[0] as {
+      tools: Array<{ type: string; function: { name: string; description: string; parameters: unknown } }>;
+    };
+    expect(callArgs.tools).toBeDefined();
+    expect(callArgs.tools).toHaveLength(2);
+    const emitTool = callArgs.tools.find((t) => t.function.name === 'emit_findings');
+    expect(emitTool).toBeDefined();
+    expect(emitTool!.type).toBe('function');
+    expect(emitTool!.function.description).toContain('suggestions');
+    // The parameters slot carries the engine's input_schema verbatim (single
+    // shared Zod schema, per-provider wire wrapper — D-09).
+    expect(emitTool!.function.parameters).toEqual(engineTools[1].input_schema);
+    const getEntryTool = callArgs.tools.find((t) => t.function.name === 'getEntryBody');
+    expect(getEntryTool).toBeDefined();
+    expect(getEntryTool!.function.parameters).toEqual(engineTools[0].input_schema);
+  });
+
+  it('runAudit normalizes OpenAI tool_calls into engine-facing { id, name, input } shape', async () => {
+    mockChatCompletionsCreate.mockResolvedValueOnce({
+      choices: [
+        {
+          message: {
+            role: 'assistant',
+            content: null,
+            refusal: null,
+            tool_calls: [
+              {
+                id: 'call_abc123',
+                type: 'function' as const,
+                function: {
+                  name: 'emit_findings',
+                  arguments: JSON.stringify({ suggestions: [{ category: 'underdeveloped' }] }),
+                },
+              },
+            ],
+          },
+          finish_reason: 'tool_calls' as const,
+        },
+      ],
+      usage: { prompt_tokens: 10, completion_tokens: 5 },
+    });
+
+    const { getProvider } = await import('../src/providers/llm/index.js');
+    const result = await getProvider('openai').runAudit({
+      apiKey: 'k',
+      messages: [{ role: 'user', content: 'q' }],
+      model: 'gpt-5-mini',
+    });
+
+    // Engine-facing normalized shape — IDENTICAL to Anthropic's tool_use:
+    expect(result.toolUse).toHaveLength(1);
+    expect(result.toolUse[0].id).toBe('call_abc123');
+    expect(result.toolUse[0].name).toBe('emit_findings');
+    // `input` is the parsed JSON object (NOT the string), matching the
+    // single-shared-Zod-schema contract (D-09).
+    expect(result.toolUse[0].input).toEqual({
+      suggestions: [{ category: 'underdeveloped' }],
+    });
+  });
+
+  it('runAudit throws UnknownProviderError when tool_call arguments are malformed JSON', async () => {
+    mockChatCompletionsCreate.mockResolvedValueOnce({
+      choices: [
+        {
+          message: {
+            role: 'assistant',
+            content: null,
+            refusal: null,
+            tool_calls: [
+              {
+                id: 'call_bad_json',
+                type: 'function' as const,
+                function: {
+                  name: 'emit_findings',
+                  arguments: '{this is not valid JSON',
+                },
+              },
+            ],
+          },
+          finish_reason: 'tool_calls' as const,
+        },
+      ],
+      usage: { prompt_tokens: 10, completion_tokens: 5 },
+    });
+
+    const { getProvider, LLMProviderError, LLMError } = await import(
+      '../src/providers/llm/index.js'
+    );
+    try {
+      await getProvider('openai').runAudit({
+        apiKey: 'k',
+        messages: [{ role: 'user', content: 'q' }],
+        model: 'gpt-5-mini',
+      });
+      expect.fail('should have thrown');
+    } catch (err) {
+      expect(err).toBeInstanceOf(LLMProviderError);
+      expect((err as InstanceType<typeof LLMProviderError>).variant).toBe(
+        LLMError.UnknownProviderError,
       );
     }
   });

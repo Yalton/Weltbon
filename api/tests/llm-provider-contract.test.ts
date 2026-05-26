@@ -255,19 +255,30 @@ const { OpenAIMockedErrors } = vi.hoisted(() => {
 });
 
 vi.mock('openai', () => {
-  // Mocked OpenAI happy-path response: choices[0].message.parsed.suggestions
-  // carries SHARED_SUGGESTIONS. OpenAI provider synthesizes a tool_use-shaped
-  // wrapper around this so result.toolUse[0].input.suggestions matches the
-  // Anthropic shape exactly (per Plan 23-04 step 9c).
+  // Phase 27 D-09: OpenAI provider now calls chat.completions.create() with
+  // function-tool calling. The model "invokes" emit_findings to deliver the
+  // final answer; arguments is a JSON-stringified suggestions envelope.
+  // The provider parses arguments and normalizes to the engine-facing
+  // { id, name, input } shape — IDENTICAL to Anthropic's tool_use blocks.
   const happyResponse = {
     choices: [
       {
         message: {
-          parsed: { suggestions: SHARED_SUGGESTIONS },
+          role: 'assistant' as const,
+          content: null,
           refusal: null,
-          content: '',
+          tool_calls: [
+            {
+              id: 'call_contract_mock',
+              type: 'function' as const,
+              function: {
+                name: 'emit_findings',
+                arguments: JSON.stringify({ suggestions: SHARED_SUGGESTIONS }),
+              },
+            },
+          ],
         },
-        finish_reason: 'stop' as const,
+        finish_reason: 'tool_calls' as const,
       },
     ],
     usage: {
@@ -279,6 +290,9 @@ vi.mock('openai', () => {
   const OpenAIMock = vi.fn().mockImplementation(() => ({
     chat: {
       completions: {
+        create: vi.fn().mockResolvedValue(happyResponse),
+        // `parse` retained for back-compat with any test that still references
+        // it; runAudit() no longer invokes it (Phase 27 D-09).
         parse: vi.fn().mockResolvedValue(happyResponse),
       },
     },
