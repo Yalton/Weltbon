@@ -86,6 +86,43 @@ const auditRunStateSchema = z.object({
 
 const errorSchema = z.object({ error: z.string() });
 
+// ─── Phase 26 Plan 03 — D-09 audit-history schemas ──────────────────────────
+
+const auditHistoryRowSchema = z.object({
+  id: z.string().uuid(),
+  scope: z.enum(['universe', 'entry']),
+  scopeEntryId: z.string().uuid().nullable(),
+  scopeEntryTitle: z.string().nullable(),
+  provider: z.string(),
+  model: z.string(),
+  status: z.enum(['pending', 'running', 'succeeded', 'failed']),
+  // NUMERIC(10,4) → string (string preserves decimal precision)
+  costUsd: z.string(),
+  startedAt: z.string().or(z.date()),
+  finishedAt: z.string().or(z.date()).nullable(),
+  // Categories with zero counts are omitted; null-category issues are excluded.
+  // Keys are AuditCategory values (validated app-side); typed as string at the
+  // OpenAPI boundary because z.record() with an enum key requires ALL enum keys
+  // present, which conflicts with the Partial<Record<AuditCategory, number>>
+  // wire shape (Plan 26-01 AuditHistoryRow).
+  suggestionsByCategory: z.record(z.string(), z.number().int()),
+  analyzedEntries: z.number().int(),
+  // null for entry-scoped runs (per AuditHistoryRow JSDoc)
+  totalEntries: z.number().int().nullable(),
+});
+
+const auditHistoryResponseSchema = z.object({
+  rows: z.array(auditHistoryRowSchema),
+  total: z.number().int(),
+  hasMore: z.boolean(),
+});
+
+const auditHistoryQuerySchema = z.object({
+  // T-26-03-03: bounded limit (max 200) prevents unbounded-scan DoS
+  limit: z.coerce.number().int().min(1).max(200).default(100),
+  offset: z.coerce.number().int().min(0).default(0),
+});
+
 // ─── Route definitions ───────────────────────────────────────────────────────
 
 const triggerAuditRoute = createRoute({
@@ -133,6 +170,53 @@ const triggerAuditRoute = createRoute({
     409: {
       content: { 'application/json': { schema: errorSchema } },
       description: 'An audit is already in progress for this universe',
+    },
+    500: {
+      content: { 'application/json': { schema: errorSchema } },
+      description: 'Internal error',
+    },
+  },
+});
+
+// Phase 26 Plan 03 Task 2 — D-09 paginated audit-history list for the settings tab.
+// Mount path resolves to /api/universes/:uid/audits (mounted in api/src/index.ts via
+// `apiR.route('/universes/:uid', auditRoutes)`).
+const listAuditHistoryRoute = createRoute({
+  method: 'get',
+  path: '/audits',
+  tags: ['Audits'],
+  summary: 'List past audit runs for a universe (paginated)',
+  description:
+    'D-09 audit history powering the AuditHistoryTable tab inside UniverseSettings ' +
+    '(Plan 26-05 + Plan 26-06). Returns rows ordered by startedAt DESC. Aggregates ' +
+    'suggestionsByCategory from the issues table (GROUP BY category) in a single batched ' +
+    'query. T-24-05-02 requireUniverse fires inline; cross-tenant access → 403. ' +
+    'Empty universe returns `{ rows:[], total:0, hasMore:false }`, NOT 404.',
+  security: [{ bearerAuth: [] }],
+  request: {
+    params: uidParams,
+    query: auditHistoryQuerySchema,
+  },
+  responses: {
+    200: {
+      content: { 'application/json': { schema: auditHistoryResponseSchema } },
+      description: 'Paginated audit-run history',
+    },
+    400: {
+      content: { 'application/json': { schema: errorSchema } },
+      description: 'Validation error (e.g. limit > 200)',
+    },
+    401: {
+      content: { 'application/json': { schema: errorSchema } },
+      description: 'Unauthorized',
+    },
+    403: {
+      content: { 'application/json': { schema: errorSchema } },
+      description: 'Cross-tenant access',
+    },
+    404: {
+      content: { 'application/json': { schema: errorSchema } },
+      description: 'Universe not found',
     },
     500: {
       content: { 'application/json': { schema: errorSchema } },
@@ -284,6 +368,116 @@ export const auditRoutes = new OpenAPIHono<AppEnv>()
     });
 
     return c.json({ runId, estimate }, 202);
+  })
+
+  // GET /api/universes/:uid/audits — Phase 26 Plan 03 Task 2 (D-09 history)
+  .openapi(listAuditHistoryRoute, async (c) => {
+    const { uid } = c.req.valid('param');
+    const { limit, offset } = c.req.valid('query');
+    const userId = c.var.userId;
+
+    // T-26-03-04 / T-24-05-02: requireUniverse INLINE.
+    await requireUniverse(uid, userId);
+
+    // Base universe-scoped page: ORDER BY started_at DESC LIMIT ?n OFFSET ?n
+    // LEFT JOIN entries for scopeEntryTitle (NULL for scope='universe' or deleted entry)
+    const rows = await db()
+      .select({
+        id: auditRuns.id,
+        scope: auditRuns.scope,
+        scopeEntryId: auditRuns.scopeEntryId,
+        scopeEntryTitle: entries.title,
+        provider: auditRuns.provider,
+        model: auditRuns.model,
+        status: auditRuns.status,
+        costUsd: auditRuns.costUsd,
+        startedAt: auditRuns.startedAt,
+        finishedAt: auditRuns.finishedAt,
+        analyzedEntries: auditRuns.analyzedEntries,
+      })
+      .from(auditRuns)
+      .leftJoin(entries, eq(entries.id, auditRuns.scopeEntryId))
+      .where(eq(auditRuns.universeId, uid))
+      .orderBy(desc(auditRuns.startedAt))
+      .limit(limit)
+      .offset(offset);
+
+    // total count for this universe (same WHERE predicate)
+    const [{ count: totalCount }] = await db()
+      .select({ count: count() })
+      .from(auditRuns)
+      .where(eq(auditRuns.universeId, uid));
+    const total = Number(totalCount);
+
+    // T-26-03-02: suggestionsByCategory aggregation. Single batched query keyed
+    // by audit_run_id IN (:runIdsForThisPage); runIds came from the universe-
+    // filtered base query above so cross-universe leak is impossible. Excludes
+    // null-category issues (human-source) via IS NOT NULL.
+    const runIds = rows.map((r) => r.id);
+    const byCategoryRows: Array<{ auditRunId: string; category: string; cnt: number }> =
+      runIds.length === 0
+        ? []
+        : (
+            await db()
+              .select({
+                auditRunId: issues.auditRunId,
+                category: issues.category,
+                cnt: count(),
+              })
+              .from(issues)
+              .where(inArray(issues.auditRunId, runIds))
+              .groupBy(issues.auditRunId, issues.category)
+          )
+            // Filter out null-category in app code (Drizzle's isNotNull import path
+            // wasn't already imported; group-by then app-side filter is functionally
+            // equivalent and keeps the where clause minimal).
+            .filter((r) => r.category !== null)
+            .map((r) => ({
+              auditRunId: r.auditRunId as string,
+              category: r.category as string,
+              cnt: Number(r.cnt),
+            }));
+
+    const byRunCategory = new Map<string, Record<string, number>>();
+    for (const r of byCategoryRows) {
+      const bucket = byRunCategory.get(r.auditRunId) ?? {};
+      bucket[r.category] = r.cnt;
+      byRunCategory.set(r.auditRunId, bucket);
+    }
+
+    // totalEntries: single COUNT(*) FROM entries WHERE universe_id = :uid;
+    // applied to universe-scoped rows only. Entry-scoped rows get null
+    // (per AuditHistoryRow JSDoc — totalEntries is ambiguous when scope=entry).
+    const [{ count: totalEntriesCount }] = await db()
+      .select({ count: count() })
+      .from(entries)
+      .where(eq(entries.universeId, uid));
+    const universeTotalEntries = Number(totalEntriesCount);
+
+    const responseRows = rows.map((r) => ({
+      id: r.id,
+      scope: r.scope as 'universe' | 'entry',
+      scopeEntryId: r.scopeEntryId,
+      scopeEntryTitle: r.scopeEntryTitle, // null when scope='universe' (no JOIN match)
+      provider: r.provider,
+      model: r.model,
+      status: r.status as 'pending' | 'running' | 'succeeded' | 'failed',
+      costUsd: r.costUsd, // string from NUMERIC(10,4)
+      startedAt: r.startedAt,
+      finishedAt: r.finishedAt,
+      suggestionsByCategory: byRunCategory.get(r.id) ?? {},
+      analyzedEntries: r.analyzedEntries,
+      totalEntries: r.scope === 'entry' ? null : universeTotalEntries,
+    }));
+
+    return c.json(
+      {
+        rows: responseRows,
+        total,
+        hasMore: offset + responseRows.length < total,
+      },
+      200,
+    );
   })
 
   // GET /api/universes/:uid/audits/:runId
