@@ -1,5 +1,5 @@
-import { useMemo, useState } from 'react';
-import { Link, useParams } from 'react-router-dom';
+import { useCallback, useEffect, useMemo, useState } from 'react';
+import { Link, useParams, useSearchParams } from 'react-router-dom';
 import {
   AUDIT_CATEGORIES,
   SEVERITIES,
@@ -12,6 +12,7 @@ import {
   type IssueFilters,
   type Severity,
 } from '../hooks/useIssues';
+import { useUniverse } from '../hooks/useUniverse';
 import { SeverityPill } from '../components/SeverityPill';
 import { AIBadge } from '../components/AIBadge';
 import { CategoryIcon, CATEGORY_STRIPE } from '../components/CategoryIcon';
@@ -21,6 +22,15 @@ import { IssueEditor } from '../components/IssueEditor';
 import { ConfirmDialog } from '../components/ConfirmDialog';
 import { EmptyState } from '../components/EmptyState';
 import { Toast } from '../components/Toast';
+import { AuditCompletionBanner } from '../components/AuditCompletionBanner';
+
+/**
+ * UUID v4-shape regex (Phase 26 D-10). Belt-and-suspenders alongside the
+ * server-side Zod guard added in Plan 08 — a non-UUID `?audit_run_id=` value
+ * is silently dropped so we never send garbage to the server.
+ */
+const AUDIT_RUN_ID_UUID_RE =
+  /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i;
 
 type ResolutionFilter = 'open' | 'resolved' | 'dismissed' | 'all';
 
@@ -44,6 +54,25 @@ type ResolutionFilter = 'open' | 'resolved' | 'dismissed' | 'all';
  */
 export function IssuesView() {
   const { uid } = useParams<{ uid: string }>();
+
+  // ── Phase 26 D-10: audit_run_id deep-link filter ─────────────────────────
+  // URL-only filter (no UI control); set by completion-banner CTA + audit-
+  // history row click. UUID guard is defense-in-depth alongside server Zod.
+  const [searchParams, setSearchParams] = useSearchParams();
+  const auditRunIdRaw = searchParams.get('audit_run_id');
+  const safeAuditRunId =
+    auditRunIdRaw && AUDIT_RUN_ID_UUID_RE.test(auditRunIdRaw)
+      ? auditRunIdRaw
+      : undefined;
+  const clearAuditFilter = useCallback(() => {
+    const next = new URLSearchParams(searchParams);
+    next.delete('audit_run_id');
+    setSearchParams(next, { replace: true });
+  }, [searchParams, setSearchParams]);
+
+  // ── Phase 26 D-13: empty-state nudge depends on universe opt-in ──────────
+  const { data: universe } = useUniverse(uid);
+  const auditEnabled = universe?.auditEnabled === true;
 
   // ── Filter state ──────────────────────────────────────────────────────────
   const [severity, setSeverity] = useState<Severity | ''>('');
@@ -71,8 +100,10 @@ export function IssuesView() {
     if (categoryFilter.size > 0) {
       f.category = Array.from(categoryFilter);
     }
+    // Phase 26 D-10: scope to a specific audit run when deep-linked.
+    if (safeAuditRunId) f.auditRunId = safeAuditRunId;
     return f;
-  }, [severity, resolutionFilter, sourceFilter, categoryFilter]);
+  }, [severity, resolutionFilter, sourceFilter, categoryFilter, safeAuditRunId]);
 
   const { data: issues, isLoading } = useIssues(uid!, serverFilters);
 
@@ -150,6 +181,19 @@ export function IssuesView() {
         setToast({ message: 'Failed to restore suggestion.', variant: 'error' }),
     });
   };
+
+  // ── Phase 26 D-10: Esc clears the audit_run_id filter (a11y parity with
+  // the "✕ Clear filter" button per UI-SPEC §Accessibility). Listener is
+  // installed only while the filter is active so it never interferes with
+  // dialogs or other Esc-bound surfaces.
+  useEffect(() => {
+    if (!safeAuditRunId) return;
+    const onKeyDown = (e: KeyboardEvent) => {
+      if (e.key === 'Escape') clearAuditFilter();
+    };
+    window.addEventListener('keydown', onKeyDown);
+    return () => window.removeEventListener('keydown', onKeyDown);
+  }, [safeAuditRunId, clearAuditFilter]);
 
   // ── Render ────────────────────────────────────────────────────────────────
   return (
@@ -248,12 +292,41 @@ export function IssuesView() {
         </div>
       </div>
 
+      {/* Phase 26 D-10: completion-banner header when ?audit_run_id= filter active.
+          Renders above the list (and above the empty-state branches) so users
+          always see the run telemetry alongside the filtered rows. */}
+      {safeAuditRunId && uid && (
+        <div className="mt-6">
+          <AuditCompletionBanner
+            universeId={uid}
+            runId={safeAuditRunId}
+            dismissible={false}
+            onClearFilter={clearAuditFilter}
+          />
+        </div>
+      )}
+
       {/* List */}
       <div className="mt-6">
         {isLoading ? (
           <p className="text-sm text-neutral-500">Loading…</p>
         ) : !displayedIssues || displayedIssues.length === 0 ? (
-          resolutionFilter === 'dismissed' ? (
+          safeAuditRunId ? (
+            // Phase 26 D-10: zero-rows-when-filtered branch with Clear filter CTA.
+            <EmptyState
+              title="No suggestions from this run"
+              body="Try clearing the run filter to see all suggestions."
+              action={
+                <button
+                  type="button"
+                  onClick={clearAuditFilter}
+                  className="rounded-md border border-neutral-300 dark:border-neutral-700 text-sm px-3 py-1.5"
+                >
+                  ✕ Clear filter
+                </button>
+              }
+            />
+          ) : resolutionFilter === 'dismissed' ? (
             <EmptyState
               title="No dismissed AI suggestions"
               body="No dismissed AI suggestions. They're filtered out of audit runs and won't burn tokens."
@@ -278,10 +351,27 @@ export function IssuesView() {
               }
             />
           ) : (
-            <EmptyState
-              title="Nothing flagged yet"
-              body="Issues are open questions, contradictions, or gaps. File one from any entry's Issues section."
-            />
+            // Phase 26 D-13: append a secondary "Or let AI surface gaps for you"
+            // nudge below the empty-state — only when the universe has NOT
+            // opted in to the AI Gap Auditor. Suppressed once auditEnabled=true
+            // so already-opted-in users don't see a redundant prompt.
+            <>
+              <EmptyState
+                title="Nothing flagged yet"
+                body="Issues are open questions, contradictions, or gaps. File one from any entry's Issues section."
+              />
+              {!auditEnabled && uid && (
+                <p className="text-sm text-neutral-500 dark:text-neutral-400 mt-3 italic text-center">
+                  Or let AI surface gaps for you —{' '}
+                  <Link
+                    to={`/universes/${uid}/settings?tab=ai-auditor`}
+                    className="underline text-[color:var(--color-accent)]"
+                  >
+                    Enable AI Gap Auditor in universe settings
+                  </Link>
+                </p>
+              )}
+            </>
           )
         ) : (
           <ul className="space-y-2">

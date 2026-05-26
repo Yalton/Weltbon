@@ -32,6 +32,15 @@ export interface LlmKey {
   label: string;
   createdAt: string;
   lastValidatedAt: string | null;
+  /**
+   * Phase 26 D-14: cumulative cost across all audit runs that consumed this
+   * key's provider (joined server-side by provider + user_id — see Plan 08).
+   * Already 4-decimal-formatted (`"0.0042"`); the LlmKeys view prefixes `$`.
+   * Approximate: multiple keys per (provider, user_id) share the same total
+   * since `audit_runs` does not store `byok_key_id`. Documented as a known
+   * limitation in CONTEXT.md D-14; precise per-key attribution is deferred.
+   */
+  totalSpentUsd: string;
 }
 
 export interface LlmConsentState {

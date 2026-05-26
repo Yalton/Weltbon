@@ -40,6 +40,7 @@ import {
 import { EmptyState } from '../components/EmptyState';
 import { ConfirmDialog } from '../components/ConfirmDialog';
 import { CreateLlmKeyDialog } from '../components/CreateLlmKeyDialog';
+import { PricingTable } from '../components/PricingTable';
 import { formatRelative } from '../utils/formatRelative';
 import { ApiError } from '../api/client';
 
@@ -241,6 +242,12 @@ export default function LlmKeys() {
         </div>
       )}
 
+      {/* Phase 26 D-14: Models & pricing transparency. Collapsible <details>
+          mount placed ABOVE the keys table so users discover the pricing
+          surface as the first thing post-consent; default-collapsed keeps the
+          page tight for users who already know the rates. */}
+      <PricingTable />
+
       {/* Populated state */}
       {!isPending && !listError && data && data.length > 0 && (
         <div className="mt-6 overflow-x-auto">
@@ -262,6 +269,12 @@ export default function LlmKeys() {
                 </th>
                 <th scope="col" className="pb-2 text-left text-xs uppercase tracking-wide font-medium text-neutral-500 w-40">
                   Last validated
+                </th>
+                {/* Phase 26 D-14: per-key cumulative spend (approximate;
+                    joined by provider+user_id since audit_runs lacks
+                    byok_key_id — see CONTEXT.md D-14 known limitation). */}
+                <th scope="col" className="pb-2 text-left text-xs uppercase tracking-wide font-medium text-neutral-500 w-32">
+                  Total spent
                 </th>
                 <th scope="col" className="pb-2 text-right text-xs uppercase tracking-wide font-medium text-neutral-500 w-56">
                   {/* action column */}
@@ -328,6 +341,16 @@ export default function LlmKeys() {
                           {status.err}
                         </span>
                       )}
+                    </td>
+                    {/* Phase 26 D-14: per-key Total spent. Server already
+                        4-decimal-formats `totalSpentUsd` (Plan 08); we prefix
+                        $ literal here. Defensive fallback to "0.0000" handles
+                        any pre-Plan-08 cached row that lacks the field. */}
+                    <td
+                      className="py-3 pr-4 text-sm leading-[1.5] tabular-nums text-neutral-700 dark:text-neutral-300"
+                      data-testid={`llmkey-total-spent-${llmKey.id}`}
+                    >
+                      ${llmKey.totalSpentUsd ?? '0.0000'}
                     </td>
                     <td className="py-3 text-right">
                       <div className="flex justify-end gap-3">
