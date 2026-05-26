@@ -578,11 +578,23 @@ When done, return your findings as JSON: { "suggestions": [...] }`;
           if (entryId) {
             const entry = await _getEntryBody(universeId, entryId);
             if (entry !== null) {
-              // Append to consulted_entry_ids (D-15) — atomic sql array append
+              // Append to consulted_entry_ids (D-15) — atomic sql array append.
+              //
+              // Phase 26-02 / AUDIT-07 / D-08: bump analyzed_entries by 1 in the
+              // SAME UPDATE statement (single SQL round-trip, no read-then-write
+              // race). The increment co-locates with consultedEntryIds because
+              // BOTH observability columns advance together on every entry-body
+              // materialization. Per AUDIT-04 the structural digest is
+              // bodies-NONE — the ONLY path that materializes an entry body is
+              // this getEntryBody tool call, so the per-tool-call increment is
+              // exhaustive for D-08's partial-coverage heuristic
+              // (analyzed_entries < 0.5 × total_entries → "Partial coverage"
+              // chip in the completion banner).
               await _db()
                 .update(auditRuns)
                 .set({
                   consultedEntryIds: sql`${auditRuns.consultedEntryIds} || ARRAY[${entryId}::uuid]`,
+                  analyzedEntries: sql`${auditRuns.analyzedEntries} + 1`,
                 })
                 .where(eq(auditRuns.id, runId));
               consultedEntryIds.push(entryId);
