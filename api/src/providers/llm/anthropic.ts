@@ -115,6 +115,121 @@ import { PRICING, type AnthropicModelPricing } from './pricing.js';
  */
 const defaultModel = 'claude-haiku-4-5-20251001';
 
+// ---------------------------------------------------------------------------
+// Engine-shape → Anthropic-shape message adapter
+// ---------------------------------------------------------------------------
+
+/**
+ * The audit engine builds messages in an OpenAI-flavored abstract shape:
+ *   - `{ role: 'assistant', content: JSON.stringify(toolUse[]) }` for tool-use turns
+ *   - `{ role: 'tool',     content: JSON.stringify({ tool_call_id, content }) }` per result
+ *   - `{ role: 'user'|'assistant', content: string }` for plain text turns
+ *
+ * Anthropic's `messages.create` rejects `role: 'tool'` outright and requires
+ * tool_use / tool_result as structured CONTENT BLOCKS inside `assistant` /
+ * `user` messages respectively. Multiple tool results in a single assistant
+ * turn must coalesce into ONE `user` message containing multiple
+ * `tool_result` blocks (Anthropic tool-use contract).
+ *
+ * This adapter is the translation boundary the Phase 23 provider abstraction
+ * promised but never delivered — without it, every multi-turn Anthropic
+ * audit fails with HTTP 400 `Unexpected role "tool"`.
+ */
+type EngineMsg = { role: 'system' | 'user' | 'assistant' | 'tool'; content: string };
+
+function toAnthropicMessages(msgs: EngineMsg[]): MessageParam[] {
+  const out: MessageParam[] = [];
+  let pendingToolResults: Array<{
+    type: 'tool_result';
+    tool_use_id: string;
+    content: string;
+  }> = [];
+
+  const flushPendingToolResults = (): void => {
+    if (pendingToolResults.length === 0) return;
+    out.push({ role: 'user', content: pendingToolResults });
+    pendingToolResults = [];
+  };
+
+  for (const m of msgs) {
+    if (m.role === 'system') {
+      // System messages are handled separately by the caller (extracted into
+      // the top-level `system` param). Skip here so we don't double-emit.
+      continue;
+    }
+
+    if (m.role === 'tool') {
+      // Engine envelope: { tool_call_id, content } — both fields stringified.
+      let envelope: { tool_call_id?: string; content?: string };
+      try {
+        envelope = JSON.parse(m.content) as typeof envelope;
+      } catch {
+        // Malformed tool message — preserve as a text user message so the
+        // provider doesn't silently lose data; Anthropic will surface a
+        // useful error if the content is genuinely invalid.
+        flushPendingToolResults();
+        out.push({ role: 'user', content: m.content });
+        continue;
+      }
+      pendingToolResults.push({
+        type: 'tool_result',
+        tool_use_id: envelope.tool_call_id ?? '',
+        content: envelope.content ?? '',
+      });
+      continue;
+    }
+
+    // role: 'user' | 'assistant'
+    flushPendingToolResults();
+
+    if (m.role === 'assistant') {
+      // Detect engine's tool-use serialization (JSON array of {id,name,input}).
+      let toolUseBlocks: Array<{
+        type: 'tool_use';
+        id: string;
+        name: string;
+        input: Record<string, unknown>;
+      }> | null = null;
+      try {
+        const parsed = JSON.parse(m.content);
+        if (
+          Array.isArray(parsed) &&
+          parsed.length > 0 &&
+          typeof parsed[0] === 'object' &&
+          parsed[0] !== null &&
+          'name' in parsed[0] &&
+          'id' in parsed[0]
+        ) {
+          toolUseBlocks = (parsed as Array<{
+            id: string;
+            name: string;
+            input: Record<string, unknown>;
+          }>).map((tu) => ({
+            type: 'tool_use',
+            id: tu.id,
+            name: tu.name,
+            input: tu.input,
+          }));
+        }
+      } catch {
+        /* plain text content — fall through */
+      }
+      if (toolUseBlocks) {
+        out.push({ role: 'assistant', content: toolUseBlocks });
+      } else {
+        out.push({ role: 'assistant', content: m.content });
+      }
+      continue;
+    }
+
+    // role: 'user' — plain text
+    out.push({ role: 'user', content: m.content });
+  }
+
+  flushPendingToolResults();
+  return out;
+}
+
 /**
  * Maximum response token budget passed as `max_tokens` to
  * `client.messages.create` in `runAudit`.
@@ -223,6 +338,15 @@ function mapAnthropicError(err: unknown): LLMProviderError {
     // Falls through to BadRequestError / generic APIError handling below.
   }
   if (err instanceof Anthropic.BadRequestError) {
+    // Surface the raw SDK message to stderr (the LLMProviderError swallows it
+    // by design — T-24-04-09 forbids persisting raw provider text to the DB,
+    // but operators still need it for diagnosis). status + message only; no
+    // request bodies, headers, or API key material.
+    console.error(
+      '[anthropic] BadRequestError:',
+      err.status,
+      err.message,
+    );
     return new LLMProviderError(
       LLMError.UnknownProviderError,
       'Unexpected Anthropic bad-request — see server log',
@@ -230,7 +354,11 @@ function mapAnthropicError(err: unknown): LLMProviderError {
   }
   // Defensive fallback. Anything not matched above (including non-SDK
   // exceptions and any future SDK subclass) lands here so callers can
-  // always rely on receiving an LLMProviderError.
+  // always rely on receiving an LLMProviderError. Log enough to diagnose.
+  console.error(
+    '[anthropic] unmapped error:',
+    (err instanceof Error ? `${err.constructor.name}: ${err.message}` : String(err)),
+  );
   return new LLMProviderError(LLMError.UnknownProviderError, 'Unknown Anthropic error');
 }
 
@@ -416,17 +544,30 @@ export class AnthropicProvider implements LLMProvider {
       conversationMessages = opts.messages;
     }
 
-    // Determine cache eligibility based on the full prompt token count (including
-    // system text). The estimate() call is itself free (countTokens).
-    // Pitfall #3: applying cache_control below the threshold is silently no-op'd
-    // by Anthropic. System is now passed via the new system-aware estimate shape
-    // so countTokens includes the system contribution in the count.
-    const promptTokens = await this.estimate({
-      apiKey: opts.apiKey,
-      messages: conversationMessages,
-      model,
-      ...(extractedSystemText !== undefined ? { system: extractedSystemText } : {}),
-    });
+    // Translate engine-shape → Anthropic-shape ONCE, then reuse for both the
+    // countTokens call (cache eligibility) AND the messages.create call. The
+    // engine emits `role: 'tool'` and JSON-stringified tool_use blocks; both
+    // Anthropic endpoints reject that shape with HTTP 400. See
+    // `toAnthropicMessages` above for the contract.
+    const anthropicMessages = toAnthropicMessages(conversationMessages);
+
+    // Determine cache eligibility based on the full prompt token count
+    // (including system text). countTokens is free (no billing). System text
+    // is passed top-level so the count includes its contribution.
+    // Pitfall #3: applying cache_control below the threshold is silently
+    // no-op'd by Anthropic.
+    let promptTokens: number;
+    try {
+      const countClient = new Anthropic({ apiKey: opts.apiKey });
+      const countRes = await countClient.messages.countTokens({
+        model,
+        messages: anthropicMessages,
+        ...(extractedSystemText !== undefined ? { system: extractedSystemText } : {}),
+      });
+      promptTokens = countRes.input_tokens;
+    } catch (err) {
+      throw mapAnthropicError(err);
+    }
     const useCache = promptTokens >= MIN_CACHEABLE_TOKENS;
 
     // Build the systemParam for messages.create — cache_control applied only
@@ -448,7 +589,7 @@ export class AnthropicProvider implements LLMProvider {
       const createParams: MessageCreateParams = {
         model,
         max_tokens: ANTHROPIC_MAX_TOKENS,
-        messages: conversationMessages as MessageParam[],
+        messages: anthropicMessages, // shape adapter ran once above; see toAnthropicMessages.
         ...(systemParam ? { system: systemParam } : {}),
         ...(opts.tools ? { tools: opts.tools as Tool[] } : {}),
       };
