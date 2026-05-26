@@ -296,6 +296,10 @@ const listIssuesRoute = createRoute({
         z.enum(AUDIT_CATEGORIES),
       ]).optional(),
       includeDismissed: z.enum(['true', 'false']).optional(),
+      // Phase 26 Plan 08 Task 2 (D-10) — deep-link filter from the audit
+      // completion banner. T-26-08-03: UUID validation at the Zod layer;
+      // non-UUID returns 400 BEFORE the handler runs (no silent no-op).
+      audit_run_id: z.string().uuid().optional(),
     }),
   },
   responses: {
@@ -577,6 +581,9 @@ export const issueRoutes = new OpenAPIHono<AppEnv>()
     const sourceParam = c.req.query('source')?.trim();
     const categoryParam = c.req.queries('category'); // repeatable param → string[]
     const includeDismissedParam = c.req.query('includeDismissed')?.trim();
+    // Phase 26 Plan 08 Task 2 (D-10) — audit_run_id deep-link filter.
+    // Zod already validated as UUID (or omitted); reading the raw query is safe.
+    const auditRunIdParam = c.req.query('audit_run_id')?.trim();
 
     const conditions: SQL[] = [eq(issues.universeId, uid)];
     if (severity) {
@@ -603,6 +610,13 @@ export const issueRoutes = new OpenAPIHono<AppEnv>()
     // When includeDismissed is NOT 'true', filter out dismissed AI rows server-side.
     if (includeDismissedParam !== 'true') {
       conditions.push(isNull(issues.dismissedAt));
+    }
+    // Phase 26 Plan 08 Task 2 (D-10) — push audit_run_id filter (UUID already
+    // validated at the Zod layer). Universe filter (line above) still wins
+    // for cross-universe IDs — T-26-08-04 disposition: accept (no leakage,
+    // no enumeration enabled).
+    if (auditRunIdParam) {
+      conditions.push(eq(issues.auditRunId, auditRunIdParam));
     }
 
     const issueRows = await db()

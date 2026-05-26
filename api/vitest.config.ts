@@ -25,6 +25,7 @@ import { defineConfig } from 'vitest/config';
 const DB_GATED_TESTS = [
   'tests/audit-recovery.test.ts',
   'tests/audit-routes.test.ts',
+  'tests/audits-estimate.test.ts',
   'tests/audits-history.test.ts',
   'tests/audits-in-flight.test.ts',
   'tests/auth.test.ts',
@@ -43,8 +44,10 @@ const DB_GATED_TESTS = [
   'tests/ingest-endpoint.test.ts',
   'tests/invites.test.ts',
   'tests/issues.test.ts',
+  'tests/issues-audit-run-id-filter.test.ts',
   'tests/links.test.ts',
   'tests/llm-keys.test.ts',
+  'tests/llm-keys-total-spent.test.ts',
   'tests/pat-parity.test.ts',
   'tests/pat-service.test.ts',
   'tests/requireAuth-pat.test.ts',

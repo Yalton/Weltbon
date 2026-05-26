@@ -31,7 +31,7 @@
 import { OpenAPIHono, createRoute, z } from '@hono/zod-openapi';
 import { and, desc, eq, sql } from 'drizzle-orm';
 import { db as getDb } from '../db/client.js';
-import { llmApiKeys, users } from '../db/schema.js';
+import { llmApiKeys, users, auditRuns } from '../db/schema.js';
 import { requireJwtAuth, type AuthVariables } from '../middleware/auth.js';
 import {
   encryptKey,
@@ -77,6 +77,26 @@ const maskedKeySchema = z.object({
   label: z.string(),
   createdAt: z.string(),
   lastValidatedAt: z.string().nullable(),
+});
+
+/**
+ * Phase 26 Plan 08 Task 3 (D-14) — masked row + per-provider cumulative cost.
+ *
+ * `totalSpentUsd` is `SUM(audit_runs.cost_usd) WHERE user_id = caller AND
+ * provider = key.provider`, formatted as a 4-decimal string (cost-as-string
+ * convention; NEVER a number). Always a string — '0.0000' when no runs match.
+ *
+ * Approximation: joined by (provider, user_id), not byok_key_id. If a user
+ * has multiple keys for the same provider, all rows show the same total
+ * (Phase 22 schema choice; documented limitation per CONTEXT D-14).
+ */
+const maskedKeyWithSpentSchema = maskedKeySchema.extend({
+  /**
+   * Sum of audit_runs.cost_usd matched by (provider, user_id). Approximation:
+   * not joined by byok_key_id — if the user has multiple keys for the same
+   * provider, all rows show the same total. Per D-14.
+   */
+  totalSpentUsd: z.string(),
 });
 
 const revalidateResponseSchema = z.object({
@@ -178,8 +198,8 @@ const getRoute = createRoute({
   middleware: [requireJwtAuth] as const,
   responses: {
     200: {
-      content: { 'application/json': { schema: z.array(maskedKeySchema) } },
-      description: 'Array of masked LLM key rows.',
+      content: { 'application/json': { schema: z.array(maskedKeyWithSpentSchema) } },
+      description: 'Array of masked LLM key rows with totalSpentUsd per row (D-14).',
     },
     401: {
       content: { 'application/json': { schema: errorSchema } },
@@ -403,7 +423,38 @@ export const llmKeyRoutes = new OpenAPIHono<AppEnv>()
       .from(llmApiKeys)
       .where(eq(llmApiKeys.userId, userId))
       .orderBy(desc(llmApiKeys.createdAt));
-    return c.json(rows.map(toMaskedRow), 200);
+
+    // Phase 26 Plan 08 Task 3 (D-14) — per-provider cumulative cost.
+    // T-26-08-05: strict user_id filter ensures cross-tenant isolation.
+    // Approximation: joined by (provider, user_id), not byok_key_id — if user
+    // has multiple keys per provider, they all show the same total.
+    // NUMERIC(10,4) is preserved as a string (cost-as-string convention).
+    const spentRows = await getDb()
+      .select({
+        provider: auditRuns.provider,
+        // COALESCE → '0' when GROUP BY yields no rows for the provider; toFixed(4)
+        // below normalizes to the 4-decimal wire shape.
+        total: sql<string>`COALESCE(SUM(${auditRuns.costUsd}), 0)::text`,
+      })
+      .from(auditRuns)
+      .where(eq(auditRuns.userId, userId))
+      .groupBy(auditRuns.provider);
+
+    const spentByProvider = new Map<string, string>();
+    for (const r of spentRows) {
+      // Normalize to 4-decimal string. Parsing as Number then toFixed preserves
+      // precision for sums within audit_runs.cost_usd's NUMERIC(10,4) range
+      // (~$1,000,000 max) without losing the trailing zeros required by the UI.
+      spentByProvider.set(r.provider, Number(r.total).toFixed(4));
+    }
+
+    return c.json(
+      rows.map((r) => ({
+        ...toMaskedRow(r),
+        totalSpentUsd: spentByProvider.get(r.provider) ?? '0.0000',
+      })),
+      200,
+    );
   })
 
   .openapi(putRoute, async (c) => {
