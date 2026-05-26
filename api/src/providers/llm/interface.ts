@@ -161,6 +161,46 @@ export interface ModelListing {
 }
 
 /**
+ * Phase 27 D-05 wire shape: a single entry in the live-list response.
+ *
+ * `id` is the provider-emitted model id. `hasPricing` reflects whether
+ * the id is present in `PRICING[provider]`; when `true`, `pricing` is the
+ * full `ModelListing` row. When `false`, `pricing` is undefined and the UI
+ * renders a `⚠ no pricing` chip next to the id (the model is still selectable).
+ *
+ * This is NOT a subtype of `ModelListing` — Phase 27 D-04 revision: live API
+ * is the catalog, PRICING is the cost lookup, so the catalog row exposes the
+ * id + coverage flag and the pricing row hangs off it.
+ */
+export interface ModelListingWithCoverage {
+  id: string;
+  hasPricing: boolean;
+  pricing?: ModelListing;
+}
+
+/**
+ * Phase 27 D-01/D-02 wire shape: the cache + fallback result envelope.
+ *
+ * `source` discriminates which path produced the listing:
+ *   - 'live'             — fresh provider response (cache miss + success) OR
+ *                          a still-fresh cached entry (within 30-min TTL).
+ *   - 'cache_stale'      — provider SDK threw AND a cached entry existed for
+ *                          this `(provider, keyId)`; returned regardless of TTL.
+ *   - 'pricing_fallback' — provider SDK threw AND no cached entry existed;
+ *                          synthesized from `Object.keys(PRICING[provider])`.
+ *
+ * `fetchedAt` is an ISO8601 UTC string; for fallback paths it is the timestamp
+ * of the cached entry (cache_stale) or `new Date().toISOString()` at synthesis
+ * time (pricing_fallback). The frontend uses `source` to render an optional
+ * "live list unavailable" indicator; `fetchedAt` powers debug surfaces only.
+ */
+export interface ListingsResult {
+  models: ModelListingWithCoverage[];
+  source: 'live' | 'cache_stale' | 'pricing_fallback';
+  fetchedAt: string;
+}
+
+/**
  * Single-turn audit invocation inputs.
  *
  * RESEARCH Pitfall #6: `apiKey` is passed per-call, NEVER held as instance
@@ -270,13 +310,21 @@ export interface LLMProvider {
   runAudit(opts: RunAuditOpts): Promise<RunAuditResult>;
 
   /**
-   * List every model this provider knows about. Per D-04, the source of truth
-   * is the hardcoded `PRICING` constant in `./pricing.js` — this method is
-   * synchronous, performs no network I/O, and is offline-deterministic.
+   * List the priced models this provider knows about — synchronous, offline,
+   * no network I/O. Derived from `Object.keys(PRICING[provider])`.
    *
-   * T-23-01-04 (mitigate): MUST return only models present in `PRICING` —
-   * never invent an `id` that the UI doesn't have pricing for. Plan 23-02's
-   * `PRICING` shape and this contract together enforce the invariant.
+   * Phase 27 D-04 revision: PRICING is the cost lookup; live `models.list()`
+   * from each provider is the catalog. This synchronous `listModels()` retains
+   * its original semantics (PRICING-derived, offline) and continues to power
+   * the offline PRICING-fallback path inside `model-catalog.ts` (D-02) and the
+   * `/settings/llm` PricingTable. The new async catalog surface is
+   * `getModels(provider, keyId, apiKey): Promise<ListingsResult>` exposed from
+   * `./index.js` — that is what the universe-settings model dropdown consumes.
+   *
+   * `pricing(model)` returning `undefined` is now a documented expected branch
+   * (D-05 unpriced-but-selectable case) — see `ModelListingWithCoverage.hasPricing`.
+   * It is NOT a contract violation; the live catalog may contain models PRICING
+   * does not yet have rates for (new provider releases between PRICING bumps).
    */
   listModels(): ModelListing[];
 

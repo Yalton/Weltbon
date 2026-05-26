@@ -192,6 +192,13 @@ export const auditRuns = pgTable('audit_runs', {
   // budget caps, or early-termination signal). DEFAULT 0 backfills pre-Phase-26 rows
   // (they report zero analyzed entries — a known historical gap, not a regression).
   analyzedEntries: integer('analyzed_entries').default(0).notNull(),
+  // Phase 27 D-06: set TRUE by the engine when the selected model is not in PRICING
+  // (newly-released live-list model the dropdown surfaced via the D-05 unpriced UX path).
+  // When TRUE, cost_usd is persisted as 0 (keeps SUM math safe) and surfaces in the UI as
+  // a "cost unknown" amber chip on AuditCompletionBanner + AuditHistoryTable, and is
+  // excluded from llm-keys totalSpent SUM (with parallel COUNT footnote). DEFAULT false
+  // backfills every pre-Phase-27 row at metadata-only ALTER speed (PostgreSQL 11+).
+  costUnknown: boolean('cost_unknown').default(false).notNull(),
 }, (t) => ({
   // BL-01: partial unique index closing the TOCTOU race window in routes/audits.ts
   // between the pre-check SELECT and INSERT. Without this index, two concurrent POSTs

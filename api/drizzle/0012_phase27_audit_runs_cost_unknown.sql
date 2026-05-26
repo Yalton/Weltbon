@@ -1,0 +1,21 @@
+-- Phase 27 D-06: additive column tracking audit runs that used an unpriced model.
+-- Hand-written migration (NOT drizzle-kit generated) matching the Phase 24/25/26
+-- additive convention (see 0008_phase24_audit_runs.sql, 0010_phase25_issues_dismissal.sql,
+-- 0011_phase26_audit_runs_analyzed_entries.sql). drizzle-kit would regenerate the full
+-- schema diff rather than a surgical ADD COLUMN block.
+--
+-- DEFAULT false NOT NULL backfills every existing audit_runs row at metadata-only
+-- ALTER speed in PostgreSQL 11+ (no table rewrite, no row UPDATE pass).
+--
+-- D-06 cost_unknown semantics: the engine sets this TRUE when pricing(model) returns
+-- undefined (D-05 live-but-not-in-PRICING case). cost_usd is persisted as 0 (keeps
+-- SUM math safe) and the flag drives the "cost unknown" amber chip on
+-- AuditCompletionBanner + AuditHistoryTable; llm-keys totalSpent SUM excludes
+-- cost_unknown=true rows and surfaces a parallel COUNT as a footnote
+-- ("plus N runs with unknown pricing").
+--
+-- Journal registration: api/drizzle/meta/_journal.json idx=12 entry MUST land in the
+-- same commit (Phase 24 CR-01 lesson — drizzle migrator silently skips unregistered
+-- entries).
+ALTER TABLE "audit_runs" ADD COLUMN "cost_unknown" boolean DEFAULT false NOT NULL;
+--> statement-breakpoint

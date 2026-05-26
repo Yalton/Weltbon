@@ -88,6 +88,12 @@ export type { RunAuditResult } from './interface.js';
 export type { NormalizedUsage } from './interface.js';
 export type { ModelListing } from './interface.js';
 export type { AuditSuggestion } from './interface.js';
+// Phase 27 D-01/D-02/D-05 wire shapes for the live model-catalog cache.
+export type { ListingsResult } from './interface.js';
+export type { ModelListingWithCoverage } from './interface.js';
+
+// Values from ./model-catalog.js — Phase 27 D-01 cache surface.
+export { getModels } from './model-catalog.js';
 
 // Values from ./pricing.js
 export { PRICING } from './pricing.js';
