@@ -96,6 +96,9 @@ export interface IssueFilters {
   source?: 'human' | 'ai';
   category?: AuditCategory[];
   includeDismissed?: boolean;
+  // Phase 26 D-10: scope the issue list to a specific audit run (serialized as
+  // ?audit_run_id= — snake_case to match the API Zod schema in Plan 08).
+  auditRunId?: string;
 }
 
 export type CreateIssueInput = {
@@ -141,6 +144,8 @@ export function useIssues(universeId: string, filters: IssueFilters = {}) {
     }
   }
   if (filters.includeDismissed !== undefined) qs.set('includeDismissed', String(filters.includeDismissed));
+  // Phase 26 D-10: snake_case to match API Zod schema (audit_run_id).
+  if (filters.auditRunId) qs.set('audit_run_id', filters.auditRunId);
   const suffix = qs.toString() ? `?${qs}` : '';
   return useQuery({
     queryKey: ['issues', universeId, filters],

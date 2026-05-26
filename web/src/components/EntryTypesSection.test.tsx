@@ -23,6 +23,10 @@ const UNIVERSE: Universe = {
   timelineWindow: null,
   createdAt: '',
   updatedAt: '',
+  // Phase 26 LLMUI-08: audit opt-in fields default to disabled/null.
+  auditEnabled: false,
+  auditProvider: null,
+  auditModel: null,
 };
 
 function renderSection(universe: Universe = UNIVERSE) {
