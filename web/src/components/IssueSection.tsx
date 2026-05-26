@@ -2,11 +2,13 @@ import { useState } from 'react';
 import { Link } from 'react-router-dom';
 import type { EntryIssueRef } from '../hooks/useEntries';
 import { useUpdateIssue, useUndismissIssue } from '../hooks/useIssues';
+import { useUniverse } from '../hooks/useUniverse';
 import { SeverityPill } from './SeverityPill';
 import { AIBadge } from './AIBadge';
 import { CategoryIcon, CATEGORY_STRIPE } from './CategoryIcon';
 import { DismissAIIssueDialog } from './DismissAIIssueDialog';
 import { IssueEditor } from './IssueEditor';
+import { AuditCostDialog } from './AuditCostDialog';
 import type { AuditCategory, Issue } from '../hooks/useIssues';
 
 interface Props {
@@ -41,10 +43,12 @@ interface Props {
  */
 export function IssueSection({ universeId, entryId, issues, onChanged }: Props) {
   const [editorOpen, setEditorOpen] = useState(false);
+  const [auditDialogOpen, setAuditDialogOpen] = useState(false);
   const [dismissing, setDismissing] = useState<EntryIssueRef | null>(null);
 
   const updateIssue = useUpdateIssue(universeId);
   const undismissIssue = useUndismissIssue(universeId);
+  const { data: universe } = useUniverse(universeId);
 
   const handleResolve = (issueId: string) => {
     updateIssue.mutate(
@@ -57,13 +61,25 @@ export function IssueSection({ universeId, entryId, issues, onChanged }: Props) 
     <div className="mt-6 pt-6 border-t border-neutral-200 dark:border-neutral-800">
       <div className="flex items-center justify-between">
         <h2 className="text-xl font-semibold">Issues ({issues.length})</h2>
-        <button
-          type="button"
-          onClick={() => setEditorOpen(true)}
-          className="rounded-md border border-neutral-300 dark:border-neutral-700 text-sm px-3 py-1.5"
-        >
-          Flag issue
-        </button>
+        <div className="flex items-center gap-2">
+          {universe?.auditEnabled === true && (
+            <button
+              type="button"
+              onClick={() => setAuditDialogOpen(true)}
+              className="rounded-md border border-neutral-300 dark:border-neutral-700 text-sm px-3 py-1.5 inline-flex items-center gap-1.5 hover:bg-neutral-50 dark:hover:bg-neutral-800"
+              aria-haspopup="dialog"
+            >
+              ⚖ Audit this entry
+            </button>
+          )}
+          <button
+            type="button"
+            onClick={() => setEditorOpen(true)}
+            className="rounded-md border border-neutral-300 dark:border-neutral-700 text-sm px-3 py-1.5"
+          >
+            Flag issue
+          </button>
+        </div>
       </div>
 
       {issues.length === 0 ? (
@@ -152,6 +168,20 @@ export function IssueSection({ universeId, entryId, issues, onChanged }: Props) 
         initialEntryIds={[entryId]}
         onSaved={() => onChanged?.()}
       />
+
+      {/* Audit cost / progress dialog — opened by ⚖ Audit this entry button (D-12).
+          Mount only when the audit feature is enabled on this universe so the
+          dialog's useEstimateAudit query never fires for opted-out universes
+          (defense-in-depth: server is canonical guard via Plan 08 /estimate). */}
+      {universe?.auditEnabled === true && (
+        <AuditCostDialog
+          open={auditDialogOpen}
+          onOpenChange={setAuditDialogOpen}
+          universeId={universeId}
+          scope="entry"
+          entryId={entryId}
+        />
+      )}
 
       {/* DismissAIIssueDialog — mounted at section level so dismissal works inline */}
       <DismissAIIssueDialog
