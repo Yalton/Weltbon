@@ -557,6 +557,100 @@ describe('AnthropicProvider (PROVIDER-02 + PROVIDER-05 + PROVIDER-07)', () => {
   });
 
   // -----------------------------------------------------------------------
+  // Phase 27 D-09 — emit_findings tool wire shape
+  // -----------------------------------------------------------------------
+
+  it('runAudit forwards engine tools (including emit_findings) to messages.create tools[] (Phase 27 D-09)', async () => {
+    mockCountTokens.mockResolvedValueOnce({ input_tokens: 100 });
+    mockCreate.mockResolvedValueOnce(HAPPY_PATH_RESPONSE);
+
+    const { getProvider } = await import('../src/providers/llm/index.js');
+    // Simulate the engine handing both tools through opts.tools — the
+    // production engine passes [getEntryBodyTool, emitFindingsTool] on
+    // every turn (see audit-engine.ts post-Phase-27).
+    const engineTools = [
+      {
+        name: 'getEntryBody',
+        description: 'Fetch the full body of one entry by ID.',
+        input_schema: {
+          type: 'object',
+          properties: { entryId: { type: 'string', format: 'uuid' } },
+          required: ['entryId'],
+        },
+      },
+      {
+        name: 'emit_findings',
+        description: 'Call once to deliver the complete suggestions array.',
+        input_schema: {
+          type: 'object',
+          properties: { suggestions: { type: 'array', items: { type: 'object' } } },
+          required: ['suggestions'],
+        },
+      },
+    ];
+    await getProvider('anthropic').runAudit({
+      apiKey: 'k',
+      messages: [{ role: 'user', content: 'find gaps' }],
+      model: 'claude-haiku-4-5-20251001',
+      tools: engineTools,
+    });
+
+    // Assert messages.create was called with `tools` containing BOTH engine
+    // tools verbatim. Anthropic accepts the engine-shape directly (name +
+    // description + input_schema), no wire translation needed.
+    const createArgs = mockCreate.mock.calls[0]?.[0] as {
+      tools: Array<{ name: string; description: string; input_schema: unknown }>;
+    };
+    expect(createArgs.tools).toBeDefined();
+    expect(createArgs.tools).toHaveLength(2);
+    const emitTool = createArgs.tools.find((t) => t.name === 'emit_findings');
+    expect(emitTool).toBeDefined();
+    expect(emitTool!.description).toContain('suggestions');
+    expect(emitTool!.input_schema).toEqual(engineTools[1].input_schema);
+    const getEntryTool = createArgs.tools.find((t) => t.name === 'getEntryBody');
+    expect(getEntryTool).toBeDefined();
+    expect(getEntryTool!.input_schema).toEqual(engineTools[0].input_schema);
+  });
+
+  it('runAudit extracts emit_findings tool_use into engine-facing { id, name, input } shape', async () => {
+    mockCountTokens.mockResolvedValueOnce({ input_tokens: 100 });
+    mockCreate.mockResolvedValueOnce({
+      id: 'msg_emit',
+      role: 'assistant' as const,
+      content: [
+        {
+          type: 'tool_use' as const,
+          id: 'tu_emit_anth',
+          name: 'emit_findings',
+          input: { suggestions: [{ category: 'underdeveloped' }] },
+        },
+      ],
+      stop_reason: 'tool_use',
+      usage: {
+        input_tokens: 100,
+        output_tokens: 50,
+        cache_creation_input_tokens: 0,
+        cache_read_input_tokens: 0,
+      },
+    });
+
+    const { getProvider } = await import('../src/providers/llm/index.js');
+    const result = await getProvider('anthropic').runAudit({
+      apiKey: 'k',
+      messages: [{ role: 'user', content: 'q' }],
+      model: 'claude-haiku-4-5-20251001',
+    });
+
+    // Engine-facing normalized shape: { id, name, input } with parsed input.
+    expect(result.toolUse).toHaveLength(1);
+    expect(result.toolUse[0].id).toBe('tu_emit_anth');
+    expect(result.toolUse[0].name).toBe('emit_findings');
+    expect(result.toolUse[0].input).toEqual({
+      suggestions: [{ category: 'underdeveloped' }],
+    });
+  });
+
+  // -----------------------------------------------------------------------
   // listModels() + pricing()
   // -----------------------------------------------------------------------
 

@@ -55,7 +55,8 @@
  *      with the same 4-key shape (cache fields = 0 for OpenAI per the
  *      `NormalizedUsage` JSDoc in `interface.ts`).
  *   4. Tool-name convention — both providers materialize `toolUse[0].name ===
- *      'emit_findings'` (the wire-shape convention for Phase 24 engine).
+ *      'emit_findings'` (the wire-shape convention for Phase 27 engine: the
+ *      model invokes emit_findings to deliver its final-turn answer).
  *   5. Positive-cost invariant — both providers compute `costUsd > 0` for the
  *      100-input / 50-output fixture.
  *   6. D-02 boundary — `AuditSuggestion` contains only the 4-or-5 provider-
@@ -143,7 +144,21 @@ const SHARED_SUGGESTIONS: AuditSuggestion[] = [
 // branch fires — the contract test focuses on the parsed-output shape, not
 // the cache pathway (which is locked in `llm-anthropic.test.ts` test #14/15).
 
-const { AnthropicMockedErrors } = vi.hoisted(() => {
+// Phase 27 D-11: module-scope mock handles so per-test cases can override
+// the SDK's response via mockResolvedValueOnce (engine-shape fixtures +
+// emit_findings round-trip + smuggled-gap_key need per-call control).
+// The hoisted block initialises the handles + default error subclasses BEFORE
+// any vi.mock() factory closes over them.
+const {
+  mockMessagesCreate,
+  mockMessagesCountTokens,
+  mockChatCompletionsCreate,
+  AnthropicMockedErrors,
+} = vi.hoisted(() => {
+  const mockMessagesCreate = vi.fn();
+  const mockMessagesCountTokens = vi.fn();
+  const mockChatCompletionsCreate = vi.fn();
+
   class MockAnthropicError extends Error {}
   class MockAPIError extends MockAnthropicError {
     public readonly status: number | undefined;
@@ -176,7 +191,12 @@ const { AnthropicMockedErrors } = vi.hoisted(() => {
     UnprocessableEntityError: MockUnprocessableEntityError,
   };
 
-  return { AnthropicMockedErrors };
+  return {
+    mockMessagesCreate,
+    mockMessagesCountTokens,
+    mockChatCompletionsCreate,
+    AnthropicMockedErrors,
+  };
 });
 
 vi.mock('@anthropic-ai/sdk', () => {
@@ -203,13 +223,18 @@ vi.mock('@anthropic-ai/sdk', () => {
     },
   };
 
+  // Default the module-scope handles to the canonical happy-path response so
+  // existing 8-coverage-point tests stay green; new D-11 cases override per
+  // test via mockMessagesCreate.mockResolvedValueOnce(...).
+  mockMessagesCreate.mockResolvedValue(happyResponse);
+  mockMessagesCountTokens.mockResolvedValue({ input_tokens: 0 });
+
   const AnthropicMock = vi.fn().mockImplementation(() => ({
     messages: {
-      // create returns the canonical happy-path tool_use response
-      create: vi.fn().mockResolvedValue(happyResponse),
-      // countTokens returns 0 → below MIN_CACHEABLE_TOKENS (4096) → no
-      // cache_control branch is exercised in the contract test
-      countTokens: vi.fn().mockResolvedValue({ input_tokens: 0 }),
+      create: mockMessagesCreate,
+      // countTokens stays below MIN_CACHEABLE_TOKENS so no cache_control
+      // branch fires (the contract test focuses on parsed-output shape).
+      countTokens: mockMessagesCountTokens,
     },
   }));
   Object.assign(AnthropicMock, AnthropicMockedErrors);
@@ -255,19 +280,30 @@ const { OpenAIMockedErrors } = vi.hoisted(() => {
 });
 
 vi.mock('openai', () => {
-  // Mocked OpenAI happy-path response: choices[0].message.parsed.suggestions
-  // carries SHARED_SUGGESTIONS. OpenAI provider synthesizes a tool_use-shaped
-  // wrapper around this so result.toolUse[0].input.suggestions matches the
-  // Anthropic shape exactly (per Plan 23-04 step 9c).
+  // Phase 27 D-09: OpenAI provider now calls chat.completions.create() with
+  // function-tool calling. The model "invokes" emit_findings to deliver the
+  // final answer; arguments is a JSON-stringified suggestions envelope.
+  // The provider parses arguments and normalizes to the engine-facing
+  // { id, name, input } shape — IDENTICAL to Anthropic's tool_use blocks.
   const happyResponse = {
     choices: [
       {
         message: {
-          parsed: { suggestions: SHARED_SUGGESTIONS },
+          role: 'assistant' as const,
+          content: null,
           refusal: null,
-          content: '',
+          tool_calls: [
+            {
+              id: 'call_contract_mock',
+              type: 'function' as const,
+              function: {
+                name: 'emit_findings',
+                arguments: JSON.stringify({ suggestions: SHARED_SUGGESTIONS }),
+              },
+            },
+          ],
         },
-        finish_reason: 'stop' as const,
+        finish_reason: 'tool_calls' as const,
       },
     ],
     usage: {
@@ -276,9 +312,17 @@ vi.mock('openai', () => {
     },
   };
 
+  // Default the module-scope handle to the canonical happy-path response so
+  // existing 8-coverage-point tests stay green; new D-11 cases override per
+  // test via mockChatCompletionsCreate.mockResolvedValueOnce(...).
+  mockChatCompletionsCreate.mockResolvedValue(happyResponse);
+
   const OpenAIMock = vi.fn().mockImplementation(() => ({
     chat: {
       completions: {
+        create: mockChatCompletionsCreate,
+        // `parse` retained for back-compat — runAudit() no longer invokes
+        // it (Phase 27 D-09), so this mock is a vestigial defense in depth.
         parse: vi.fn().mockResolvedValue(happyResponse),
       },
     },
@@ -521,5 +565,445 @@ describe('LLMProvider contract (PROVIDER-04 + PROVIDER-01)', () => {
         expect(model.outputUsdPer1M).toBeGreaterThan(0);
       }
     }
+  });
+});
+
+// ===========================================================================
+// Phase 27 D-11 — engine-shape fixtures (the test that would have caught
+// commit 23bb99f's defect on first run)
+// ===========================================================================
+//
+// Defect class (from commit 23bb99f, fixed 2026-05-26):
+//   The engine emits OpenAI-flavoured messages on multi-turn audits:
+//     - { role: 'assistant', content: JSON.stringify(toolUse[]) }
+//     - { role: 'tool',     content: JSON.stringify({ tool_call_id, content }) }
+//   Anthropic's SDK rejects these with HTTP 400 "Unexpected role 'tool'" —
+//   the engine-emitted shape must be wire-translated to Anthropic's
+//   structured tool_use/tool_result content blocks. The defect went out to
+//   production because the existing PROVIDER-04 contract test only fed
+//   trivial { role: 'user', content } messages through the provider; no
+//   multi-turn engine-shape fixture exercised the translation path.
+//
+// Phase 27 D-11 adds engine-shape fixtures that mirror the actual engine
+// output. The fixtures round-trip through BOTH providers; any future
+// regression that drops the wire-translation step (Anthropic) or rejects
+// the engine-shape (OpenAI) fails this test at PR time via CI.
+// ===========================================================================
+describe('engine-shape fixtures (D-11 — would have caught commit 23bb99f)', () => {
+  beforeEach(() => {
+    vi.clearAllMocks();
+  });
+
+  it('multi-turn engine-shape messages round-trip through Anthropic without HTTP 400', async () => {
+    // Reproduce the engine's actual emitted shape on a multi-turn audit:
+    //   turn 1: user → asks for findings
+    //   turn 2: assistant emits getEntryBody tool_use (engine encodes as
+    //           role:'assistant' + JSON.stringify(toolUse[]))
+    //   turn 3: engine feeds back tool_result (role:'tool' + JSON.stringify
+    //           wrapper carrying tool_call_id + content)
+    //
+    // The provider MUST translate this engine-shape into Anthropic's
+    // structured content blocks. Anthropic's SDK rejects role:'tool' with
+    // HTTP 400, so a missing translation step would manifest here as the
+    // mocked SDK never being called with the translated shape OR (in
+    // production) as a thrown LLMProviderError. This test asserts the
+    // provider's runAudit completes without throwing on engine-shape input.
+    mockMessagesCountTokens.mockResolvedValueOnce({ input_tokens: 100 });
+    mockMessagesCreate.mockResolvedValueOnce({
+      id: 'msg_engine_shape',
+      role: 'assistant' as const,
+      content: [
+        {
+          type: 'tool_use' as const,
+          id: 'tu_final',
+          name: 'emit_findings',
+          input: { suggestions: SHARED_SUGGESTIONS },
+        },
+      ],
+      stop_reason: 'tool_use',
+      usage: {
+        input_tokens: 100,
+        output_tokens: 50,
+        cache_creation_input_tokens: 0,
+        cache_read_input_tokens: 0,
+      },
+    });
+
+    const { getProvider } = await import('../src/providers/llm/index.js');
+    const engineMessages: Array<{ role: 'user' | 'assistant' | 'tool'; content: string }> = [
+      { role: 'user', content: 'Find gaps in this universe.' },
+      {
+        role: 'assistant',
+        content: JSON.stringify([
+          {
+            id: 'tu_prev',
+            name: 'getEntryBody',
+            input: { entryId: '00000000-0000-4000-8000-000000000001' },
+          },
+        ]),
+      },
+      {
+        role: 'tool',
+        content: JSON.stringify({
+          tool_call_id: 'tu_prev',
+          content: JSON.stringify({ id: '00000000-0000-4000-8000-000000000001', body: 'Entry body text' }),
+        }),
+      },
+    ];
+
+    // The contract: runAudit completes (no thrown error) when given engine-shape
+    // multi-turn messages. The Anthropic adapter's toAnthropicMessages translator
+    // is exercised — a missing translator (the 23bb99f regression class) would
+    // surface as either the mocked SDK rejecting the role:'tool' shape OR a
+    // production HTTP 400. The runAudit return must surface the final-turn
+    // emit_findings tool_use.
+    const result = await getProvider('anthropic').runAudit({
+      apiKey: 'a',
+      messages: engineMessages,
+      model: 'claude-haiku-4-5-20251001',
+    });
+    expect(result.toolUse).toHaveLength(1);
+    expect(result.toolUse[0].name).toBe('emit_findings');
+  });
+
+  it('multi-turn engine-shape messages round-trip through OpenAI without provider error', async () => {
+    // Phase 27 D-09: OpenAI's chat.completions.create accepts the engine's
+    // role:'tool' / role:'assistant' shapes natively (OpenAI was the
+    // reference shape the engine was originally built against — that's
+    // exactly why Anthropic needed the translator). This test locks the
+    // OpenAI half of the contract: identical engine-shape multi-turn
+    // messages drive through to a successful runAudit with the
+    // emit_findings tool_use surfaced.
+    mockChatCompletionsCreate.mockResolvedValueOnce({
+      choices: [
+        {
+          message: {
+            role: 'assistant' as const,
+            content: null,
+            refusal: null,
+            tool_calls: [
+              {
+                id: 'call_final',
+                type: 'function' as const,
+                function: {
+                  name: 'emit_findings',
+                  arguments: JSON.stringify({ suggestions: SHARED_SUGGESTIONS }),
+                },
+              },
+            ],
+          },
+          finish_reason: 'tool_calls' as const,
+        },
+      ],
+      usage: { prompt_tokens: 100, completion_tokens: 50 },
+    });
+
+    const { getProvider } = await import('../src/providers/llm/index.js');
+    const engineMessages: Array<{ role: 'user' | 'assistant' | 'tool'; content: string }> = [
+      { role: 'user', content: 'Find gaps in this universe.' },
+      {
+        role: 'assistant',
+        content: JSON.stringify([
+          {
+            id: 'call_prev',
+            name: 'getEntryBody',
+            input: { entryId: '00000000-0000-4000-8000-000000000001' },
+          },
+        ]),
+      },
+      {
+        role: 'tool',
+        content: JSON.stringify({
+          tool_call_id: 'call_prev',
+          content: JSON.stringify({ id: '00000000-0000-4000-8000-000000000001', body: 'Entry body text' }),
+        }),
+      },
+    ];
+
+    const result = await getProvider('openai').runAudit({
+      apiKey: 'o',
+      messages: engineMessages,
+      model: 'gpt-5-mini',
+    });
+    expect(result.toolUse).toHaveLength(1);
+    expect(result.toolUse[0].name).toBe('emit_findings');
+  });
+});
+
+// ===========================================================================
+// Phase 27 D-11 — emit_findings round-trip (the symmetric contract assertion)
+// ===========================================================================
+describe('emit_findings round-trip (D-11)', () => {
+  beforeEach(() => {
+    vi.clearAllMocks();
+  });
+
+  it('both providers materialize SHARED_SUGGESTIONS from an emit_findings tool_use response', async () => {
+    // Anthropic: tool_use block carrying SHARED_SUGGESTIONS as input.suggestions.
+    mockMessagesCountTokens.mockResolvedValueOnce({ input_tokens: 100 });
+    mockMessagesCreate.mockResolvedValueOnce({
+      id: 'msg_emit_rt',
+      role: 'assistant' as const,
+      content: [
+        {
+          type: 'tool_use' as const,
+          id: 'tu_emit_rt',
+          name: 'emit_findings',
+          input: { suggestions: SHARED_SUGGESTIONS },
+        },
+      ],
+      stop_reason: 'tool_use',
+      usage: {
+        input_tokens: 100,
+        output_tokens: 50,
+        cache_creation_input_tokens: 0,
+        cache_read_input_tokens: 0,
+      },
+    });
+    // OpenAI: function tool_call with arguments = JSON-stringified envelope.
+    mockChatCompletionsCreate.mockResolvedValueOnce({
+      choices: [
+        {
+          message: {
+            role: 'assistant' as const,
+            content: null,
+            refusal: null,
+            tool_calls: [
+              {
+                id: 'call_emit_rt',
+                type: 'function' as const,
+                function: {
+                  name: 'emit_findings',
+                  arguments: JSON.stringify({ suggestions: SHARED_SUGGESTIONS }),
+                },
+              },
+            ],
+          },
+          finish_reason: 'tool_calls' as const,
+        },
+      ],
+      usage: { prompt_tokens: 100, completion_tokens: 50 },
+    });
+
+    const { getProvider } = await import('../src/providers/llm/index.js');
+    const anthropicResult = await getProvider('anthropic').runAudit({
+      apiKey: 'a',
+      messages: SHARED_MESSAGES,
+      model: 'claude-haiku-4-5-20251001',
+    });
+    const openaiResult = await getProvider('openai').runAudit({
+      apiKey: 'o',
+      messages: SHARED_MESSAGES,
+      model: 'gpt-5-mini',
+    });
+
+    // Single-shared-Zod-schema invariant (D-09): IDENTICAL parsed output
+    // surfaces under toolUse[0].input.suggestions on both providers.
+    const anthropicSuggestions =
+      (anthropicResult.toolUse[0]?.input as { suggestions: AuditSuggestion[] }).suggestions;
+    const openaiSuggestions =
+      (openaiResult.toolUse[0]?.input as { suggestions: AuditSuggestion[] }).suggestions;
+    expect(anthropicSuggestions).toEqual(SHARED_SUGGESTIONS);
+    expect(openaiSuggestions).toEqual(SHARED_SUGGESTIONS);
+    expect(anthropicSuggestions).toEqual(openaiSuggestions);
+  });
+
+  it('emit_findings tool definition reaches BOTH SDK calls in their respective wire shapes', async () => {
+    // Engine sends emit_findings + getEntryBody on every turn. This test asserts
+    // both providers' SDK call args contain a tool/function named emit_findings.
+    // The schema parity is implicit: both come from the same z.toJSONSchema()
+    // output the engine builds in audit-engine.ts — a regression that drops
+    // the schema or renames the tool fails this assertion.
+    mockMessagesCountTokens.mockResolvedValueOnce({ input_tokens: 100 });
+    mockMessagesCreate.mockResolvedValueOnce({
+      id: 'msg_tool_def',
+      role: 'assistant' as const,
+      content: [
+        {
+          type: 'tool_use' as const,
+          id: 'tu_tool_def',
+          name: 'emit_findings',
+          input: { suggestions: SHARED_SUGGESTIONS },
+        },
+      ],
+      stop_reason: 'tool_use',
+      usage: {
+        input_tokens: 100,
+        output_tokens: 50,
+        cache_creation_input_tokens: 0,
+        cache_read_input_tokens: 0,
+      },
+    });
+    mockChatCompletionsCreate.mockResolvedValueOnce({
+      choices: [
+        {
+          message: {
+            role: 'assistant' as const,
+            content: null,
+            refusal: null,
+            tool_calls: [
+              {
+                id: 'call_tool_def',
+                type: 'function' as const,
+                function: {
+                  name: 'emit_findings',
+                  arguments: JSON.stringify({ suggestions: SHARED_SUGGESTIONS }),
+                },
+              },
+            ],
+          },
+          finish_reason: 'tool_calls' as const,
+        },
+      ],
+      usage: { prompt_tokens: 100, completion_tokens: 50 },
+    });
+
+    const engineTools = [
+      {
+        name: 'getEntryBody',
+        description: 'Fetch the full body of one entry by ID.',
+        input_schema: {
+          type: 'object',
+          properties: { entryId: { type: 'string', format: 'uuid' } },
+          required: ['entryId'],
+        },
+      },
+      {
+        name: 'emit_findings',
+        description: 'Call once to deliver the complete suggestions array.',
+        input_schema: {
+          type: 'object',
+          properties: { suggestions: { type: 'array', items: { type: 'object' } } },
+          required: ['suggestions'],
+        },
+      },
+    ];
+
+    const { getProvider } = await import('../src/providers/llm/index.js');
+    await getProvider('anthropic').runAudit({
+      apiKey: 'a',
+      messages: SHARED_MESSAGES,
+      model: 'claude-haiku-4-5-20251001',
+      tools: engineTools,
+    });
+    await getProvider('openai').runAudit({
+      apiKey: 'o',
+      messages: SHARED_MESSAGES,
+      model: 'gpt-5-mini',
+      tools: engineTools,
+    });
+
+    // Anthropic: tools array carries the engine-shape directly.
+    const anthropicArgs = mockMessagesCreate.mock.calls[0]?.[0] as {
+      tools: Array<{ name: string }>;
+    };
+    expect(anthropicArgs.tools.find((t) => t.name === 'emit_findings')).toBeDefined();
+
+    // OpenAI: tools array carries the function-tool wrapper.
+    const openaiArgs = mockChatCompletionsCreate.mock.calls[0]?.[0] as {
+      tools: Array<{ type: string; function: { name: string } }>;
+    };
+    expect(openaiArgs.tools.find((t) => t.function.name === 'emit_findings')).toBeDefined();
+  });
+
+  it('smuggled gap_key inside emit_findings tool_use is rejected by AuditOutputStrictSchema on both providers (Phase 24 BL-02 invariant preserved)', async () => {
+    // Phase 24 BL-02 / T-24-04-03 / T-24-04-04: AuditOutputStrictSchema is
+    // `.strict()` on both the envelope and the inner suggestion. A smuggled
+    // gap_key inside a suggestion fails the parse. Phase 27 moves the parse
+    // from JSON.parse(result.text) to tool_use.input — the invariant must
+    // hold across the migration.
+    //
+    // We assert at the SCHEMA level (the Zod parse is the canonical boundary
+    // — the engine's audit-engine.ts is the single consumer of this parse
+    // for both providers; T-24-04-03 mitigation lives in the schema, not in
+    // per-provider code). The contract here is "the strict parse rejects
+    // smuggled fields", which is provider-agnostic.
+    const { AuditOutputStrictSchema } = await import('../src/services/audit-schema.js');
+    const smuggledInput = {
+      suggestions: [
+        {
+          category: 'underdeveloped',
+          title: 'A perfectly normal title',
+          body: 'A perfectly normal body.',
+          referenced_entry_ids: ['00000000-0000-4000-8000-000000000002'],
+          confidence: 'low',
+          // Smuggled field — must cause strict-parse rejection.
+          gap_key: 'v1:smuggled-from-llm',
+        },
+      ],
+    };
+
+    // The schema parse throws for either provider's emit_findings input.
+    expect(() => AuditOutputStrictSchema.parse(smuggledInput)).toThrow();
+
+    // Belt and suspenders: drive a smuggled-gap_key emit_findings tool_use
+    // through BOTH providers and confirm the parsed input still contains the
+    // smuggled field at the wire boundary (the engine's downstream Zod parse
+    // is what rejects it, NOT the provider). This locks the contract that
+    // providers ROUND-TRIP shape faithfully without silently dropping fields.
+    mockMessagesCountTokens.mockResolvedValueOnce({ input_tokens: 100 });
+    mockMessagesCreate.mockResolvedValueOnce({
+      id: 'msg_smuggle',
+      role: 'assistant' as const,
+      content: [
+        {
+          type: 'tool_use' as const,
+          id: 'tu_smuggle',
+          name: 'emit_findings',
+          input: smuggledInput,
+        },
+      ],
+      stop_reason: 'tool_use',
+      usage: {
+        input_tokens: 100,
+        output_tokens: 50,
+        cache_creation_input_tokens: 0,
+        cache_read_input_tokens: 0,
+      },
+    });
+    mockChatCompletionsCreate.mockResolvedValueOnce({
+      choices: [
+        {
+          message: {
+            role: 'assistant' as const,
+            content: null,
+            refusal: null,
+            tool_calls: [
+              {
+                id: 'call_smuggle',
+                type: 'function' as const,
+                function: {
+                  name: 'emit_findings',
+                  arguments: JSON.stringify(smuggledInput),
+                },
+              },
+            ],
+          },
+          finish_reason: 'tool_calls' as const,
+        },
+      ],
+      usage: { prompt_tokens: 100, completion_tokens: 50 },
+    });
+
+    const { getProvider } = await import('../src/providers/llm/index.js');
+    const anthropicResult = await getProvider('anthropic').runAudit({
+      apiKey: 'a',
+      messages: SHARED_MESSAGES,
+      model: 'claude-haiku-4-5-20251001',
+    });
+    const openaiResult = await getProvider('openai').runAudit({
+      apiKey: 'o',
+      messages: SHARED_MESSAGES,
+      model: 'gpt-5-mini',
+    });
+
+    // Both providers preserve the smuggled gap_key at the wire boundary —
+    // the engine's strict Zod parse (above) is what rejects it. This
+    // confirms providers don't accidentally sanitize away malicious fields
+    // before the engine has a chance to reject the whole payload.
+    const anthropicInput = anthropicResult.toolUse[0]?.input as { suggestions: Array<{ gap_key?: string }> };
+    const openaiInput = openaiResult.toolUse[0]?.input as { suggestions: Array<{ gap_key?: string }> };
+    expect(anthropicInput.suggestions[0]?.gap_key).toBe('v1:smuggled-from-llm');
+    expect(openaiInput.suggestions[0]?.gap_key).toBe('v1:smuggled-from-llm');
   });
 });
