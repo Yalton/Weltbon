@@ -9,6 +9,7 @@ import { authRoutes } from './routes/auth.js';
 import { tokenRoutes } from './routes/tokens.js';
 import { inviteRoutes } from './routes/invites.js';
 import { llmKeyRoutes } from './routes/llm-keys.js';
+import { llmModelsRoutes } from './routes/llm-models.js';
 import { universeRoutes } from './routes/universes.js';
 import { entryRoutes } from './routes/entries.js';
 import { linkRoutes, relationRoutes } from './routes/links.js';
@@ -78,6 +79,11 @@ export function createApp() {
   const apiR = createApiRouter();
   apiR.route('/auth/tokens', tokenRoutes);
   apiR.route('/llm-keys', llmKeyRoutes);
+  // Phase 27 Plan 03 Task 2 — GET /api/llm/models?provider= (model-catalog cache).
+  // Mounted at the bare /api prefix; the createRoute path '/llm/models' resolves
+  // to the full /api/llm/models URL. JWT-only via the route's own requireJwtAuth
+  // middleware — no apiR.use() needed (mirrors llmKeyRoutes' per-route gate).
+  apiR.route('/', llmModelsRoutes);
   apiR.route('/auth/invites', inviteRoutes);
   apiR.route('/auth', authRoutes);
   apiR.use('/universes/*', requireAuth);
