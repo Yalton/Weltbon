@@ -266,19 +266,29 @@ const RUN_ID = 'aaaaaaaa-aaaa-4aaa-8aaa-aaaaaaaaaaaa';
 const UNIVERSE_ID = 'bbbbbbbb-bbbb-4bbb-8bbb-bbbbbbbbbbbb';
 const VALID_ENTRY_ID = 'cccccccc-cccc-4ccc-8ccc-cccccccccccc';
 
+// Phase 27 D-09/D-10/D-12: the final-turn answer is delivered via the
+// emit_findings tool_use block (NOT prose text). The engine's parse path
+// looks for toolUse.find(t => t.name === 'emit_findings') and Zod-parses
+// `input` via AuditOutputStrictSchema.
 const VALID_SUGGESTION_OUTPUT = {
-  text: JSON.stringify({
-    suggestions: [
-      {
-        category: 'missing-link',
-        title: 'Missing connection between two characters',
-        body: 'These characters have no explicit narrative link.',
-        referenced_entry_ids: [VALID_ENTRY_ID],
-        confidence: 'high',
+  text: '',
+  toolUse: [
+    {
+      id: 'tu_emit_findings',
+      name: 'emit_findings',
+      input: {
+        suggestions: [
+          {
+            category: 'missing-link',
+            title: 'Missing connection between two characters',
+            body: 'These characters have no explicit narrative link.',
+            referenced_entry_ids: [VALID_ENTRY_ID],
+            confidence: 'high',
+          },
+        ],
       },
-    ],
-  }),
-  toolUse: [],
+    },
+  ],
   usage: {
     inputTokens: 100,
     outputTokens: 50,
@@ -621,18 +631,24 @@ describe('audit-engine runAudit (Phase 24-04)', () => {
   // =========================================================================
   it("invalid output: category='influence-gap' fails Zod parse → status=failed, error=invalid_output", async () => {
     mockRunAudit.mockResolvedValue({
-      text: JSON.stringify({
-        suggestions: [
-          {
-            category: 'influence-gap', // legacy name — MUST fail AUDIT-07 taxonomy
-            title: 'Test',
-            body: 'Test body',
-            referenced_entry_ids: [VALID_ENTRY_ID],
-            confidence: 'high',
+      text: '',
+      toolUse: [
+        {
+          id: 'tu_invalid_cat',
+          name: 'emit_findings',
+          input: {
+            suggestions: [
+              {
+                category: 'influence-gap', // legacy name — MUST fail AUDIT-07 taxonomy
+                title: 'Test',
+                body: 'Test body',
+                referenced_entry_ids: [VALID_ENTRY_ID],
+                confidence: 'high',
+              },
+            ],
           },
-        ],
-      }),
-      toolUse: [],
+        },
+      ],
       usage: { inputTokens: 100, outputTokens: 50, cacheCreationInputTokens: 0, cacheReadInputTokens: 0 },
       costUsd: 0.001,
     });
@@ -672,21 +688,30 @@ describe('audit-engine runAudit (Phase 24-04)', () => {
       // structurally undetectable. With AuditOutputStrictSchema (BL-02), the
       // strict envelope + strict suggestion rejects the whole payload,
       // triggering the engine's INVALID_OUTPUT fall-through.
+      // Phase 27 D-09: smuggled gap_key now arrives inside emit_findings
+      // tool_use.input — the strict Zod parse still rejects it (BL-02
+      // invariant preserved, just applied to tool_use.input).
       mockRunAudit.mockResolvedValue({
-        text: JSON.stringify({
-          suggestions: [
-            {
-              category: 'underdeveloped',
-              title: 'A perfectly normal title',
-              body: 'A perfectly normal body — the only thing wrong here is the extra gap_key field below.',
-              referenced_entry_ids: [VALID_ENTRY_ID],
-              confidence: 'low',
-              // The smuggled field — must cause strict-parse rejection.
-              gap_key: 'v1:smuggled-from-llm',
+        text: '',
+        toolUse: [
+          {
+            id: 'tu_smuggled_gap',
+            name: 'emit_findings',
+            input: {
+              suggestions: [
+                {
+                  category: 'underdeveloped',
+                  title: 'A perfectly normal title',
+                  body: 'A perfectly normal body — the only thing wrong here is the extra gap_key field below.',
+                  referenced_entry_ids: [VALID_ENTRY_ID],
+                  confidence: 'low',
+                  // The smuggled field — must cause strict-parse rejection.
+                  gap_key: 'v1:smuggled-from-llm',
+                },
+              ],
             },
-          ],
-        }),
-        toolUse: [],
+          },
+        ],
         usage: {
           inputTokens: 100,
           outputTokens: 50,
@@ -737,18 +762,24 @@ describe('audit-engine runAudit (Phase 24-04)', () => {
       } as any);
 
       mockRunAudit.mockResolvedValue({
-        text: JSON.stringify({
-          suggestions: [
-            {
-              category: 'missing-link',
-              title: 'Hallucinated suggestion',
-              body: 'body',
-              referenced_entry_ids: [VALID_ENTRY_ID, HALLUCINATED_UUID],
-              confidence: 'medium',
+        text: '',
+        toolUse: [
+          {
+            id: 'tu_hallucinated',
+            name: 'emit_findings',
+            input: {
+              suggestions: [
+                {
+                  category: 'missing-link',
+                  title: 'Hallucinated suggestion',
+                  body: 'body',
+                  referenced_entry_ids: [VALID_ENTRY_ID, HALLUCINATED_UUID],
+                  confidence: 'medium',
+                },
+              ],
             },
-          ],
-        }),
-        toolUse: [],
+          },
+        ],
         usage: { inputTokens: 100, outputTokens: 50, cacheCreationInputTokens: 0, cacheReadInputTokens: 0 },
         costUsd: 0.001,
       });
@@ -1253,25 +1284,31 @@ describe('Phase 25 dismissed-set filter (AISSUE-04, AISSUE-05)', () => {
         .mockReturnValueOnce(FRESH_KEY);
 
       mockRunAudit.mockResolvedValue({
-        text: JSON.stringify({
-          suggestions: [
-            {
-              category: 'missing-link',
-              title: 'Dismissed suggestion',
-              body: 'Should be dropped.',
-              referenced_entry_ids: [VALID_ENTRY_ID],
-              confidence: 'high',
+        text: '',
+        toolUse: [
+          {
+            id: 'tu_dismissed_test',
+            name: 'emit_findings',
+            input: {
+              suggestions: [
+                {
+                  category: 'missing-link',
+                  title: 'Dismissed suggestion',
+                  body: 'Should be dropped.',
+                  referenced_entry_ids: [VALID_ENTRY_ID],
+                  confidence: 'high',
+                },
+                {
+                  category: 'underdeveloped',
+                  title: 'Fresh suggestion',
+                  body: 'Should be inserted.',
+                  referenced_entry_ids: [VALID_ENTRY_ID],
+                  confidence: 'medium',
+                },
+              ],
             },
-            {
-              category: 'underdeveloped',
-              title: 'Fresh suggestion',
-              body: 'Should be inserted.',
-              referenced_entry_ids: [VALID_ENTRY_ID],
-              confidence: 'medium',
-            },
-          ],
-        }),
-        toolUse: [],
+          },
+        ],
         usage: { inputTokens: 100, outputTokens: 50, cacheCreationInputTokens: 0, cacheReadInputTokens: 0 },
         costUsd: 0.001,
       });

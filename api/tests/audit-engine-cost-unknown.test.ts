@@ -125,8 +125,17 @@ describe('audit-engine cost_unknown flag (Phase 27 Plan 03 Task 1 / D-06)', () =
       validate: vi.fn().mockResolvedValue(undefined),
       estimate: vi.fn().mockResolvedValue(0),
       runAudit: vi.fn().mockResolvedValue({
-        text: '{"suggestions":[]}',
-        toolUse: [],
+        // Phase 27 D-09/D-10: final-turn answer arrives via emit_findings
+        // tool_use.input (prose text in the final turn is now a contract
+        // violation that fails with INVALID_OUTPUT).
+        text: '',
+        toolUse: [
+          {
+            id: 'tu_emit_empty',
+            name: 'emit_findings',
+            input: { suggestions: [] },
+          },
+        ],
         usage: {
           inputTokens: 0,
           outputTokens: 0,
