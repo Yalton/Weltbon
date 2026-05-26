@@ -245,9 +245,21 @@ export function AuditHistoryTable({
                   {row.provider} / {row.model}
                 </td>
                 <td className="py-3 pr-4 text-sm leading-[1.5] tabular-nums text-right">
-                  {isFailed && parseFloat(row.costUsd) === 0
-                    ? '—'
-                    : `$${row.costUsd}`}
+                  {/* Phase 27 D-06 — three-branch conditional with the
+                      cost-unknown branch FIRST (amber chip). Failed-zero
+                      em-dash and priced render are unchanged. */}
+                  {row.costUnknown ? (
+                    <span
+                      className="text-xs text-amber-700 dark:text-amber-400 bg-amber-50 dark:bg-amber-950/30 border border-amber-300 dark:border-amber-800 rounded px-2 py-1"
+                      aria-label="Cost unknown — the model used has no published rates"
+                    >
+                      cost unknown
+                    </span>
+                  ) : isFailed && parseFloat(row.costUsd) === 0 ? (
+                    '—'
+                  ) : (
+                    `$${row.costUsd}`
+                  )}
                 </td>
                 <td className="py-3 pr-4 text-sm leading-[1.5]">
                   {findingsEntries.length === 0 && isFailed
