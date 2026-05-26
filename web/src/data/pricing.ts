@@ -26,7 +26,7 @@
  * MUST accompany any change to `PRICING` (D-04 pricing-update discipline)
  * AND must be mirrored to api/src/providers/llm/pricing.ts in the same commit.
  */
-export const PRICING_AS_OF = '2026-05-26';
+export const PRICING_AS_OF = '2026-05-27';
 
 /**
  * Phase 26 D-02: recommended cheap (default) model per provider on first opt-in.

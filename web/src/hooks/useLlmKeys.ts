@@ -41,6 +41,15 @@ export interface LlmKey {
    * limitation in CONTEXT.md D-14; precise per-key attribution is deferred.
    */
   totalSpentUsd: string;
+  /**
+   * Phase 27 D-06: count of audit runs against this key's provider for this
+   * user that were charged against an unpriced model (`audit_runs.cost_unknown
+   * = true`). These rows are excluded from `totalSpentUsd` (the SUM); the
+   * LlmKeys view renders a neutral footnote `(plus N runs with unknown
+   * pricing)` when the count is > 0. Optional for backward-compatibility with
+   * older cached payloads; treat absence as `0`.
+   */
+  costUnknownCount?: number;
 }
 
 export interface LlmConsentState {
