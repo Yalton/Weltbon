@@ -782,7 +782,7 @@ describe('audit-engine runAudit (Phase 24-04)', () => {
   // Test 7: Provider error → taxonomy classification (T-24-04-09)
   // =========================================================================
   it(
-    "provider LLMProviderError(InvalidApiKey) → status=failed, error='provider_error'; raw message NOT in update",
+    "provider LLMProviderError(InvalidApiKey) → status=failed, error='invalid_api_key' (variant-specific tag); raw message NOT in update",
     async () => {
       const rawProviderMessage = 'Anthropic rejected the API key with code 401';
       mockRunAudit.mockRejectedValue(
@@ -803,11 +803,12 @@ describe('audit-engine runAudit (Phase 24-04)', () => {
         cfg: { auditMaxToolCalls: 20, auditMaxCostUsd: 100, auditMaxTokensTotal: 10_000_000, auditMaxWallClockMs: 120_000 },
       });
 
-      // Must have set error=provider_error
-      const providerErrorUpdate = updateCalls.find(
-        (c) => c.set.status === 'failed' && c.set.error === ENGINE_ERROR.PROVIDER_ERROR,
+      // Fix B: engine now maps LLMError.InvalidApiKey → ENGINE_ERROR.INVALID_API_KEY
+      // (previously squashed to PROVIDER_ERROR — blinded operators to the real cause).
+      const variantUpdate = updateCalls.find(
+        (c) => c.set.status === 'failed' && c.set.error === ENGINE_ERROR.INVALID_API_KEY,
       );
-      expect(providerErrorUpdate).toBeDefined();
+      expect(variantUpdate).toBeDefined();
 
       // Raw message MUST NOT appear in any update's set values
       const rawMessageAppeared = updateCalls.some(

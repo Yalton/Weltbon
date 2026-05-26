@@ -50,6 +50,15 @@ const ERROR_COPY: Record<string, string> = {
     "Could not reach the provider. Check your network and the provider's status page.",
   process_restarted:
     'The server restarted mid-run. Partial suggestions were preserved.',
+  // Variant-specific copy unlocked by engine err.variant pass-through.
+  invalid_api_key:
+    'The provider rejected the API key. Update or replace it under Settings → LLM keys.',
+  insufficient_credits:
+    'The provider account is out of credits. Top up and try again.',
+  model_not_available:
+    'The selected model is not available on this account. Pick a different model in universe settings.',
+  content_blocked:
+    'The provider blocked some content for safety reasons. Try a narrower audit scope.',
   fallback:
     'An unexpected error occurred. See the run details for more.',
 };

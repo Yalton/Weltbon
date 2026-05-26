@@ -93,9 +93,39 @@ export const ENGINE_ERROR = {
   PROVIDER_ERROR: 'provider_error',
   INVALID_OUTPUT: 'invalid_output',
   UNKNOWN: 'unknown',
+  // LLMError variants surfaced verbatim (snake_case) so the UI banner can
+  // show a useful, variant-specific message instead of the generic
+  // "provider returned an error" fallback. Raw provider error text is still
+  // never persisted — only the typed variant name.
+  INVALID_API_KEY: 'invalid_api_key',
+  INSUFFICIENT_CREDITS: 'insufficient_credits',
+  MODEL_NOT_AVAILABLE: 'model_not_available',
+  CONTENT_BLOCKED: 'content_blocked',
+  RATE_LIMITED: 'rate_limited',
+  NETWORK_ERROR: 'network_error',
 } as const;
 
 export type EngineErrorTag = (typeof ENGINE_ERROR)[keyof typeof ENGINE_ERROR];
+
+/** Maps a typed LLMError variant to the persisted engine tag. */
+function llmErrorToTag(variant: LLMError): EngineErrorTag {
+  switch (variant) {
+    case LLMError.InvalidApiKey:
+      return ENGINE_ERROR.INVALID_API_KEY;
+    case LLMError.InsufficientCredits:
+      return ENGINE_ERROR.INSUFFICIENT_CREDITS;
+    case LLMError.ModelNotAvailable:
+      return ENGINE_ERROR.MODEL_NOT_AVAILABLE;
+    case LLMError.ContentBlockedBySafetyFilter:
+      return ENGINE_ERROR.CONTENT_BLOCKED;
+    case LLMError.RateLimited:
+      return ENGINE_ERROR.RATE_LIMITED;
+    case LLMError.NetworkError:
+      return ENGINE_ERROR.NETWORK_ERROR;
+    case LLMError.UnknownProviderError:
+      return ENGINE_ERROR.PROVIDER_ERROR;
+  }
+}
 
 // ---------------------------------------------------------------------------
 // Tool definition for getEntryBody (sent to both Anthropic and OpenAI providers)
@@ -500,8 +530,9 @@ When done, return your findings as JSON: { "suggestions": [...] }`;
         return;
       }
       if (err instanceof LLMProviderError) {
-        // T-24-04-09: only taxonomy string written; raw provider error text is never persisted
-        await markFailed(runId, ENGINE_ERROR.PROVIDER_ERROR);
+        // T-24-04-09: only taxonomy string written; raw provider error text is never persisted.
+        // The typed variant name itself is safe to surface — it carries no provider message text.
+        await markFailed(runId, llmErrorToTag(err.variant));
         return;
       }
       // Non-provider errors (programming errors, network timeouts not wrapped) — re-throw
