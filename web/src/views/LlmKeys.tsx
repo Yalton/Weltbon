@@ -345,12 +345,24 @@ export default function LlmKeys() {
                     {/* Phase 26 D-14: per-key Total spent. Server already
                         4-decimal-formats `totalSpentUsd` (Plan 08); we prefix
                         $ literal here. Defensive fallback to "0.0000" handles
-                        any pre-Plan-08 cached row that lacks the field. */}
+                        any pre-Plan-08 cached row that lacks the field.
+
+                        Phase 27 D-06: when the key's provider has audit runs
+                        flagged `cost_unknown=true`, append a neutral footnote
+                        "(plus N runs with unknown pricing)". Tone is neutral
+                        (NOT amber) per CONTEXT line 174 — this is
+                        informational metadata at the aggregate level; the
+                        amber chip is reserved for per-run cost surfaces. */}
                     <td
                       className="py-3 pr-4 text-sm leading-[1.5] tabular-nums text-neutral-700 dark:text-neutral-300"
                       data-testid={`llmkey-total-spent-${llmKey.id}`}
                     >
                       ${llmKey.totalSpentUsd ?? '0.0000'}
+                      {(llmKey.costUnknownCount ?? 0) > 0 && (
+                        <span className="text-xs text-neutral-500 ml-1">
+                          (plus {llmKey.costUnknownCount} runs with unknown pricing)
+                        </span>
+                      )}
                     </td>
                     <td className="py-3 text-right">
                       <div className="flex justify-end gap-3">
