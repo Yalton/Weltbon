@@ -1,0 +1,104 @@
+# Weltbon PR + master CI (Phase 27 PROV-FOLLOWUP-03).
+#
+# Two lanes per locked Phase 27 decisions:
+#   - Lane 1 (unit, ~30 sec):   pnpm test (api unit project, no DB) + web vitest
+#   - Lane 2 (integration, ~3 min): postgres:16-alpine service container; runs
+#     drizzle migrations then `pnpm test:integration` (the DB-gated suites
+#     registered in api/vitest.config.ts DB_GATED_TESTS, including the 8
+#     suites named in Phase 27 SC3).
+#
+# Triggers per D-15: every pull_request (any base) + every push to master.
+# No path filter — see CONTEXT.md <deferred> for rationale.
+#
+# Branch protection (D-16) is an operator action: GitHub -> Repo Settings ->
+# Branches -> master -> Branch protection rules -> Require status checks to
+# pass before merging -> mark `ci / unit` AND `ci / integration` as required.
+# Documented in the phase SUMMARY.
+#
+# Test-only postgres creds (weltbon/weltbon/weltbon) are scoped to the
+# ephemeral service container and mirror docker-compose.yml verbatim per D-14.
+# Per the phase threat model (T-27-01-01), this workflow MUST NOT reference
+# any repository-secret context for provider API keys; cross-AI smoke against
+# real provider keys is explicitly out of scope and routed to a future
+# hardening phase.
+
+name: ci
+
+on:
+  pull_request:
+  push:
+    branches: [master]
+
+permissions:
+  contents: read
+
+concurrency:
+  group: ${{ github.workflow }}-${{ github.ref }}
+  cancel-in-progress: true
+
+jobs:
+  unit:
+    name: unit
+    runs-on: ubuntu-latest
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Set up pnpm
+        uses: pnpm/action-setup@v4
+
+      - name: Set up Node.js
+        uses: actions/setup-node@v4
+        with:
+          node-version: 22
+          cache: pnpm
+
+      - name: Install dependencies
+        run: pnpm install --frozen-lockfile
+
+      - name: Run api unit tests
+        run: cd api && pnpm test
+
+      - name: Run web tests
+        run: cd web && pnpm exec vitest run
+
+  integration:
+    name: integration
+    runs-on: ubuntu-latest
+    services:
+      postgres:
+        image: postgres:16-alpine
+        env:
+          POSTGRES_DB: weltbon
+          POSTGRES_USER: weltbon
+          POSTGRES_PASSWORD: weltbon
+        ports:
+          - 5432:5432
+        options: >-
+          --health-cmd "pg_isready -U weltbon -d weltbon"
+          --health-interval 10s
+          --health-timeout 5s
+          --health-retries 5
+    env:
+      DATABASE_URL: postgresql://weltbon:weltbon@localhost:5432/weltbon
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Set up pnpm
+        uses: pnpm/action-setup@v4
+
+      - name: Set up Node.js
+        uses: actions/setup-node@v4
+        with:
+          node-version: 22
+          cache: pnpm
+
+      - name: Install dependencies
+        run: pnpm install --frozen-lockfile
+
+      - name: Apply database migrations
+        run: cd api && pnpm db:migrate
+
+      - name: Run api integration tests
+        run: cd api && pnpm test:integration
