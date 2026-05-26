@@ -148,7 +148,7 @@ describe('estimateAudit (Phase 26-02 Task 1, LLMUI-04 formula)', () => {
       universeId: UNIVERSE_ID,
       scope: 'universe',
       provider: 'anthropic',
-      model: 'claude-haiku-4-5',
+      model: 'claude-haiku-4-5-20251001',
       apiKey: API_KEY,
       userId: USER_ID,
       _db: makeDbStub({ entryCount: 47, tracker }) as unknown as typeof import('../src/db/client.js').db,
@@ -157,7 +157,7 @@ describe('estimateAudit (Phase 26-02 Task 1, LLMUI-04 formula)', () => {
     expect(result.lower).toBeGreaterThan(0);
     expect(result.upper).toBeGreaterThan(0);
     expect(result.lower).toBeLessThan(result.upper);
-    expect(result.model).toEqual({ provider: 'anthropic', name: 'claude-haiku-4-5' });
+    expect(result.model).toEqual({ provider: 'anthropic', name: 'claude-haiku-4-5-20251001' });
   });
 
   // =========================================================================
@@ -193,13 +193,13 @@ describe('estimateAudit (Phase 26-02 Task 1, LLMUI-04 formula)', () => {
       universeId: UNIVERSE_ID,
       scope: 'universe',
       provider: 'anthropic',
-      model: 'claude-haiku-4-5',
+      model: 'claude-haiku-4-5-20251001',
       apiKey: API_KEY,
       userId: USER_ID,
       _db: makeDbStub({ entryCount: 10, tracker }) as unknown as typeof import('../src/db/client.js').db,
     });
 
-    const pricing = PRICING.anthropic['claude-haiku-4-5'];
+    const pricing = PRICING.anthropic['claude-haiku-4-5-20251001'];
     const expectedLower =
       (12_400 / 1_000_000) * pricing.inputUsdPer1M +
       (MIN_OUTPUT_TOKENS / 1_000_000) * pricing.outputUsdPer1M;
@@ -226,13 +226,13 @@ describe('estimateAudit (Phase 26-02 Task 1, LLMUI-04 formula)', () => {
       universeId: UNIVERSE_ID,
       scope: 'universe',
       provider: 'anthropic',
-      model: 'claude-haiku-4-5',
+      model: 'claude-haiku-4-5-20251001',
       apiKey: API_KEY,
       userId: USER_ID,
       _db: makeDbStub({ entryCount: 10, tracker }) as unknown as typeof import('../src/db/client.js').db,
     });
 
-    const pricing = PRICING.anthropic['claude-haiku-4-5'];
+    const pricing = PRICING.anthropic['claude-haiku-4-5-20251001'];
     const perCallCost =
       (PER_CALL_INPUT_TOKENS / 1_000_000) * pricing.cachedInputUsdPer1M +
       (PER_CALL_OUTPUT_TOKENS / 1_000_000) * pricing.outputUsdPer1M;
@@ -257,7 +257,7 @@ describe('estimateAudit (Phase 26-02 Task 1, LLMUI-04 formula)', () => {
       universeId: UNIVERSE_ID,
       scope: 'universe',
       provider: 'anthropic',
-      model: 'claude-haiku-4-5',
+      model: 'claude-haiku-4-5-20251001',
       apiKey: API_KEY,
       userId: USER_ID,
       _db: makeDbStub({ entryCount: 1, tracker }) as unknown as typeof import('../src/db/client.js').db,
@@ -274,7 +274,7 @@ describe('estimateAudit (Phase 26-02 Task 1, LLMUI-04 formula)', () => {
       universeId: UNIVERSE_ID,
       scope: 'universe',
       provider: 'anthropic',
-      model: 'claude-haiku-4-5',
+      model: 'claude-haiku-4-5-20251001',
       apiKey: API_KEY,
       userId: USER_ID,
       _db: makeDbStub({ entryCount: 47, tracker }) as unknown as typeof import('../src/db/client.js').db,
@@ -313,7 +313,7 @@ describe('estimateAudit (Phase 26-02 Task 1, LLMUI-04 formula)', () => {
       universeId: UNIVERSE_ID,
       scope: 'universe',
       provider: 'anthropic',
-      model: 'claude-haiku-4-5',
+      model: 'claude-haiku-4-5-20251001',
       apiKey: API_KEY,
       userId: USER_ID,
       _db: makeDbStub({ entryCount: 47, tracker }) as unknown as typeof import('../src/db/client.js').db,

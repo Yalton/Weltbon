@@ -129,10 +129,10 @@ describe('issues dismissal (AISSUE-03, AISSUE-04, AISSUE-05, AISSUE-06)', () => 
 
     // Universes
     const [uniA1Row] = await handle.db.insert(universes).values({
-      userId: userA.id, name: 'Universe A1', auditEnabled: true, auditProvider: 'anthropic', auditModel: 'claude-haiku-4-5',
+      userId: userA.id, name: 'Universe A1', auditEnabled: true, auditProvider: 'anthropic', auditModel: 'claude-haiku-4-5-20251001',
     }).returning({ id: universes.id });
     const [uniA2Row] = await handle.db.insert(universes).values({
-      userId: userA.id, name: 'Universe A2', auditEnabled: true, auditProvider: 'anthropic', auditModel: 'claude-haiku-4-5',
+      userId: userA.id, name: 'Universe A2', auditEnabled: true, auditProvider: 'anthropic', auditModel: 'claude-haiku-4-5-20251001',
     }).returning({ id: universes.id });
     const [uniB1Row] = await handle.db.insert(universes).values({
       userId: userB.id, name: 'Universe B1',
@@ -155,7 +155,7 @@ describe('issues dismissal (AISSUE-03, AISSUE-04, AISSUE-05, AISSUE-06)', () => 
       userId: userA.id,
       scope: 'universe',
       provider: 'anthropic',
-      model: 'claude-haiku-4-5',
+      model: 'claude-haiku-4-5-20251001',
       status: 'succeeded',
       consultedEntryIds: [e1.id, e2.id],
     } as any).returning({ id: auditRuns.id });
@@ -168,7 +168,7 @@ describe('issues dismissal (AISSUE-03, AISSUE-04, AISSUE-05, AISSUE-06)', () => 
       severity: 'minor',
       source: 'ai',
       gapKey: 'v1:test01',
-      model: 'claude-haiku-4-5',
+      model: 'claude-haiku-4-5-20251001',
       auditRunId: runA1.id,
       category: 'underdeveloped',
     } as any).returning({ id: issues.id });
@@ -181,7 +181,7 @@ describe('issues dismissal (AISSUE-03, AISSUE-04, AISSUE-05, AISSUE-06)', () => 
       severity: 'minor',
       source: 'ai',
       gapKey: 'v1:test02',
-      model: 'claude-haiku-4-5',
+      model: 'claude-haiku-4-5-20251001',
       auditRunId: runA1.id,
       category: 'missing-link',
     } as any).returning({ id: issues.id });
@@ -194,7 +194,7 @@ describe('issues dismissal (AISSUE-03, AISSUE-04, AISSUE-05, AISSUE-06)', () => 
       severity: 'minor',
       source: 'ai',
       gapKey: 'v1:test03',
-      model: 'claude-haiku-4-5',
+      model: 'claude-haiku-4-5-20251001',
       category: 'contradiction',
     } as any).returning({ id: issues.id });
 

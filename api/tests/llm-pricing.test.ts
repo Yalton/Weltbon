@@ -32,7 +32,7 @@ describe('PRICING constants (PROVIDER-06)', () => {
 
   it('PRICING contains the 3 required Anthropic models with 4-field numeric rows', async () => {
     const { PRICING } = await import('../src/providers/llm/pricing.js');
-    const required = ['claude-haiku-4-5', 'claude-sonnet-4-6', 'claude-opus-4-7'] as const;
+    const required = ['claude-haiku-4-5-20251001', 'claude-sonnet-4-6', 'claude-opus-4-7'] as const;
     for (const id of required) {
       expect(PRICING.anthropic).toHaveProperty(id);
       const row = (PRICING.anthropic as Record<string, Record<string, number>>)[id];
@@ -71,9 +71,9 @@ describe('PRICING constants (PROVIDER-06)', () => {
     // be removed from PRICING when the official OpenAI catalog is confirmed).
   });
 
-  it('claude-haiku-4-5 baseline pricing matches verified values', async () => {
+  it('claude-haiku-4-5-20251001 baseline pricing matches verified values', async () => {
     const { PRICING } = await import('../src/providers/llm/pricing.js');
-    const row = PRICING.anthropic['claude-haiku-4-5'];
+    const row = PRICING.anthropic['claude-haiku-4-5-20251001'];
     expect(row.inputUsdPer1M).toBe(1.0);
     expect(row.outputUsdPer1M).toBe(5.0);
     expect(row.cachedInputUsdPer1M).toBe(0.1);

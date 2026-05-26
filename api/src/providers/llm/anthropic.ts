@@ -113,7 +113,7 @@ import { PRICING, type AnthropicModelPricing } from './pricing.js';
  * Default Anthropic model when callers omit `opts.model`. Module scope (not
  * a class field) keeps the class stateless per Pitfall #6 / T-23-03-04.
  */
-const defaultModel = 'claude-haiku-4-5';
+const defaultModel = 'claude-haiku-4-5-20251001';
 
 /**
  * Maximum response token budget passed as `max_tokens` to

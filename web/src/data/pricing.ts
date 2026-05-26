@@ -26,7 +26,7 @@
  * MUST accompany any change to `PRICING` (D-04 pricing-update discipline)
  * AND must be mirrored to api/src/providers/llm/pricing.ts in the same commit.
  */
-export const PRICING_AS_OF = '2026-05-23';
+export const PRICING_AS_OF = '2026-05-26';
 
 /**
  * Phase 26 D-02: recommended cheap (default) model per provider on first opt-in.
@@ -37,7 +37,7 @@ export const PRICING_AS_OF = '2026-05-23';
  * via the dropdown.
  */
 export const RECOMMENDED_CHEAP_MODEL: Record<'anthropic' | 'openai', string> = {
-  anthropic: 'claude-haiku-4-5',
+  anthropic: 'claude-haiku-4-5-20251001',
   openai: 'gpt-5-mini',
 } as const;
 
@@ -91,7 +91,9 @@ export type ModelPricing = AnthropicModelPricing | OpenAIModelPricing;
  */
 export const PRICING = {
   anthropic: {
-    'claude-haiku-4-5': {
+    // Anthropic's API rejects bare aliases like `claude-haiku-4-5` — only the
+    // dated snapshot is accepted (mirror of api/src/providers/llm/pricing.ts).
+    'claude-haiku-4-5-20251001': {
       inputUsdPer1M: 1.0,
       outputUsdPer1M: 5.0,
       cachedInputUsdPer1M: 0.1,

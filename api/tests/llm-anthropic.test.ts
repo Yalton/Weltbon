@@ -164,7 +164,7 @@ describe('AnthropicProvider (PROVIDER-02 + PROVIDER-05 + PROVIDER-07)', () => {
     await getProvider('anthropic').validate('sk-ant-test');
     expect(mockCountTokens).toHaveBeenCalledTimes(1);
     expect(mockCountTokens).toHaveBeenCalledWith({
-      model: 'claude-haiku-4-5',
+      model: 'claude-haiku-4-5-20251001',
       messages: [{ role: 'user', content: 'hi' }],
     });
   });
@@ -361,7 +361,7 @@ describe('AnthropicProvider (PROVIDER-02 + PROVIDER-05 + PROVIDER-07)', () => {
     const result = await getProvider('anthropic').runAudit({
       apiKey: 'k',
       messages: [{ role: 'user', content: 'find gaps' }],
-      model: 'claude-haiku-4-5',
+      model: 'claude-haiku-4-5-20251001',
     });
 
     expect(mockCreate).toHaveBeenCalledTimes(1);
@@ -389,7 +389,7 @@ describe('AnthropicProvider (PROVIDER-02 + PROVIDER-05 + PROVIDER-07)', () => {
         { role: 'system', content: 'SYSTEM_TEXT' },
         { role: 'user', content: 'q' },
       ],
-      model: 'claude-haiku-4-5',
+      model: 'claude-haiku-4-5-20251001',
     });
 
     // countTokens must receive system as top-level parameter
@@ -415,7 +415,7 @@ describe('AnthropicProvider (PROVIDER-02 + PROVIDER-05 + PROVIDER-07)', () => {
         { role: 'system', content: 'long system prompt content here ...' },
         { role: 'user', content: 'q' },
       ],
-      model: 'claude-haiku-4-5',
+      model: 'claude-haiku-4-5-20251001',
     });
 
     const createArgs = mockCreate.mock.calls[0]?.[0];
@@ -443,7 +443,7 @@ describe('AnthropicProvider (PROVIDER-02 + PROVIDER-05 + PROVIDER-07)', () => {
         { role: 'system', content: 'long system' },
         { role: 'user', content: 'q' },
       ],
-      model: 'claude-haiku-4-5',
+      model: 'claude-haiku-4-5-20251001',
     });
 
     // countTokens must also receive system as top-level (not just messages.create)
@@ -473,7 +473,7 @@ describe('AnthropicProvider (PROVIDER-02 + PROVIDER-05 + PROVIDER-07)', () => {
         { role: 'system', content: 'short system prompt' },
         { role: 'user', content: 'q' },
       ],
-      model: 'claude-haiku-4-5',
+      model: 'claude-haiku-4-5-20251001',
     });
 
     const createArgs = mockCreate.mock.calls[0]?.[0];
@@ -508,7 +508,7 @@ describe('AnthropicProvider (PROVIDER-02 + PROVIDER-05 + PROVIDER-07)', () => {
       await getProvider('anthropic').runAudit({
         apiKey: 'k',
         messages: [{ role: 'user', content: 'q' }],
-        model: 'claude-haiku-4-5',
+        model: 'claude-haiku-4-5-20251001',
       });
       expect.fail('should have thrown');
     } catch (err) {
@@ -542,7 +542,7 @@ describe('AnthropicProvider (PROVIDER-02 + PROVIDER-05 + PROVIDER-07)', () => {
       await getProvider('anthropic').runAudit({
         apiKey: 'k',
         messages: [{ role: 'user', content: 'q' }],
-        model: 'claude-haiku-4-5',
+        model: 'claude-haiku-4-5-20251001',
       });
       expect.fail('should have thrown — truncated response must not return as success');
     } catch (err) {
@@ -565,13 +565,13 @@ describe('AnthropicProvider (PROVIDER-02 + PROVIDER-05 + PROVIDER-07)', () => {
     const models = getProvider('anthropic').listModels();
     expect(models).toHaveLength(3);
     expect(models.map((m) => m.id)).toEqual(
-      expect.arrayContaining(['claude-haiku-4-5', 'claude-sonnet-4-6', 'claude-opus-4-7']),
+      expect.arrayContaining(['claude-haiku-4-5-20251001', 'claude-sonnet-4-6', 'claude-opus-4-7']),
     );
   });
 
   it('pricing(model) returns entry for known model', async () => {
     const { getProvider } = await import('../src/providers/llm/index.js');
-    const p = getProvider('anthropic').pricing('claude-haiku-4-5');
+    const p = getProvider('anthropic').pricing('claude-haiku-4-5-20251001');
     expect(p).toBeDefined();
     expect(p?.inputUsdPer1M).toBe(1.0);
     expect(p?.outputUsdPer1M).toBe(5.0);

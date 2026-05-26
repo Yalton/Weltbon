@@ -337,7 +337,7 @@ describe('LLMProvider contract (PROVIDER-04 + PROVIDER-01)', () => {
     const anthropicResult = await getProvider('anthropic').runAudit({
       apiKey: 'a',
       messages: SHARED_MESSAGES,
-      model: 'claude-haiku-4-5',
+      model: 'claude-haiku-4-5-20251001',
     });
     const openaiResult = await getProvider('openai').runAudit({
       apiKey: 'o',
@@ -376,7 +376,7 @@ describe('LLMProvider contract (PROVIDER-04 + PROVIDER-01)', () => {
     const anthropicResult = await getProvider('anthropic').runAudit({
       apiKey: 'a',
       messages: SHARED_MESSAGES,
-      model: 'claude-haiku-4-5',
+      model: 'claude-haiku-4-5-20251001',
     });
     const openaiResult = await getProvider('openai').runAudit({
       apiKey: 'o',
@@ -414,7 +414,7 @@ describe('LLMProvider contract (PROVIDER-04 + PROVIDER-01)', () => {
     const anthropicResult = await getProvider('anthropic').runAudit({
       apiKey: 'a',
       messages: SHARED_MESSAGES,
-      model: 'claude-haiku-4-5',
+      model: 'claude-haiku-4-5-20251001',
     });
     const openaiResult = await getProvider('openai').runAudit({
       apiKey: 'o',
@@ -434,7 +434,7 @@ describe('LLMProvider contract (PROVIDER-04 + PROVIDER-01)', () => {
     const anthropicResult = await getProvider('anthropic').runAudit({
       apiKey: 'a',
       messages: SHARED_MESSAGES,
-      model: 'claude-haiku-4-5',
+      model: 'claude-haiku-4-5-20251001',
     });
     const openaiResult = await getProvider('openai').runAudit({
       apiKey: 'o',
@@ -463,7 +463,7 @@ describe('LLMProvider contract (PROVIDER-04 + PROVIDER-01)', () => {
     const result = await getProvider('anthropic').runAudit({
       apiKey: 'a',
       messages: SHARED_MESSAGES,
-      model: 'claude-haiku-4-5',
+      model: 'claude-haiku-4-5-20251001',
     });
     const suggestions =
       (result.toolUse[0]?.input as { suggestions: AuditSuggestion[] } | undefined)
