@@ -727,11 +727,13 @@ When done, return your findings as JSON: { "suggestions": [...] }`;
       const raw = extractJsonFromResponseText(result.text ?? '');
       parsed = AuditOutputStrictSchema.parse(raw);
     } catch (parseErr) {
-      // Diagnostic surface (matches the anthropic provider pattern). Without
-      // this, INVALID_OUTPUT is a black hole — operators can't tell whether
-      // the model returned prose, wrapped JSON in fences, smuggled extra
-      // fields, or returned empty text. T-24-04-09 forbids persisting raw
-      // text to the DB; stderr is the appropriate diagnostic channel.
+      // DIAGNOSTIC SURFACE — KEEP. Matches the anthropic provider pattern.
+      // Without this, INVALID_OUTPUT is a black hole — operators can't tell
+      // whether the model returned prose, wrapped JSON in fences, smuggled
+      // extra fields, or returned empty text. T-24-04-09 forbids persisting
+      // raw text to the DB; stderr is the appropriate diagnostic channel.
+      // The Claude 4.x prose-+-fences regression on 2026-05-26 was undetectable
+      // without this log — see project documentation §Defect 4.
       const textPreview =
         result.text === undefined || result.text === null
           ? '(no text in final turn)'

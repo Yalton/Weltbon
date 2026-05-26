@@ -338,10 +338,14 @@ function mapAnthropicError(err: unknown): LLMProviderError {
     // Falls through to BadRequestError / generic APIError handling below.
   }
   if (err instanceof Anthropic.BadRequestError) {
-    // Surface the raw SDK message to stderr (the LLMProviderError swallows it
-    // by design — T-24-04-09 forbids persisting raw provider text to the DB,
-    // but operators still need it for diagnosis). status + message only; no
-    // request bodies, headers, or API key material.
+    // DIAGNOSTIC SURFACE — KEEP. T-24-04-09 forbids persisting raw provider
+    // text to the DB (and the LLMProviderError carrier deliberately swallows
+    // it), but operators still need it to diagnose 400s. status + message
+    // only; never request bodies, headers, or API key material. The
+    // wrapper message below references this exact line. Without it, the
+    // Phase 24 message-shape adapter defect (engine role:'tool' rejected
+    // by Anthropic) would have remained unfindable on 2026-05-26 — see
+    // project documentation.
     console.error(
       '[anthropic] BadRequestError:',
       err.status,
@@ -352,9 +356,10 @@ function mapAnthropicError(err: unknown): LLMProviderError {
       'Unexpected Anthropic bad-request — see server log',
     );
   }
-  // Defensive fallback. Anything not matched above (including non-SDK
-  // exceptions and any future SDK subclass) lands here so callers can
-  // always rely on receiving an LLMProviderError. Log enough to diagnose.
+  // DIAGNOSTIC SURFACE — KEEP. Defensive fallback for any non-SDK
+  // exception or future SDK subclass. Class name + message only; no
+  // request bodies, headers, or key material. Same rationale as the
+  // BadRequestError branch above.
   console.error(
     '[anthropic] unmapped error:',
     (err instanceof Error ? `${err.constructor.name}: ${err.message}` : String(err)),
