@@ -1,4 +1,4 @@
-import { useState, useEffect } from 'react';
+import { useState, useEffect, useMemo } from 'react';
 import { Link, useParams, useNavigate, useSearchParams } from 'react-router-dom';
 import { useUniverse, useUpdateUniverse, useDeleteUniverse } from '../hooks/useUniverse';
 import { ConfirmDialog } from '../components/ConfirmDialog';
@@ -7,7 +7,9 @@ import { SettingsTabBar } from '../components/SettingsTabBar';
 import { Toggle } from '../components/Toggle';
 import { AuditHistoryTable } from '../components/AuditHistoryTable';
 import { useLlmKeys } from '../hooks/useLlmKeys';
-import { PRICING, RECOMMENDED_CHEAP_MODEL } from '../data/pricing';
+import { useListModels } from '../hooks/useAudits';
+import { RECOMMENDED_CHEAP_MODEL } from '../data/pricing';
+import type { ModelListingWithCoverage } from '../types/audit';
 
 /**
  * Phase 26 — UniverseSettings tabbed layout (D-09).
@@ -69,12 +71,33 @@ export function UniverseSettings() {
     }
   }, [data]);
 
-  // When provider changes and model is empty, default to RECOMMENDED_CHEAP_MODEL[provider].
+  // Phase 27 D-01 — live model catalog for the active provider. Hook is
+  // disabled (no fetch) when provider is empty; 30-min staleTime aligns with
+  // backend cache TTL.
+  const { data: modelListing } = useListModels(
+    auditProvider === '' ? undefined : auditProvider,
+  );
+  const modelOptions: ModelListingWithCoverage[] = useMemo(
+    () => modelListing?.models ?? [],
+    [modelListing],
+  );
+
+  // Phase 27 D-08 — default-selection fallback chain when the universe has no
+  // saved auditModel yet:
+  //   (1) RECOMMENDED_CHEAP_MODEL[provider] if present in the live list
+  //   (2) live[0].id otherwise
+  //   (3) '' (with "no models available" UI shown in place of the select)
   useEffect(() => {
-    if (auditProvider !== '' && auditModel === '') {
-      setAuditModel(RECOMMENDED_CHEAP_MODEL[auditProvider]);
+    if (auditProvider === '' || auditModel !== '') return;
+    if (modelOptions.length === 0) return; // nothing to pick yet; UI shows empty-state
+    const recommended = RECOMMENDED_CHEAP_MODEL[auditProvider];
+    const ids = modelOptions.map((m) => m.id);
+    if (ids.includes(recommended)) {
+      setAuditModel(recommended);
+    } else {
+      setAuditModel(modelOptions[0].id);
     }
-  }, [auditProvider, auditModel]);
+  }, [auditProvider, auditModel, modelOptions]);
 
   if (isLoading || !data) return <p className="text-sm text-neutral-500">Loading...</p>;
 
@@ -115,9 +138,7 @@ export function UniverseSettings() {
     (auditProvider === '' ? null : auditProvider) === (data.auditProvider ?? null) &&
     (auditModel === '' ? null : auditModel) === (data.auditModel ?? null);
 
-  // Model options for the currently-selected provider.
-  const modelOptions =
-    auditProvider === '' ? [] : Object.keys(PRICING[auditProvider] ?? {});
+  // `modelOptions` is computed above from `useListModels()` (Phase 27 D-01).
 
   return (
     <div className="max-w-2xl mx-auto">
@@ -240,21 +261,40 @@ export function UniverseSettings() {
               </p>
             )}
 
-            {/* Model dropdown */}
+            {/* Model dropdown — Phase 27 D-05/D-08 live-driven, with the
+                `⚠ no pricing` suffix on entries the user's BYOK key can call
+                but PRICING does not yet cover. When the live list resolves
+                to empty (provider has no models at all for this key), the
+                <select> is replaced by an inline "no models available"
+                message (D-08 chain step 3). */}
             <label className="block text-sm mt-4 mb-1" htmlFor="model">Model</label>
-            <select
-              id="model"
-              value={auditModel}
-              onChange={(e) => setAuditModel(e.target.value)}
-              disabled={!auditEnabled || auditProvider === ''}
-              className={`w-full rounded-md border border-neutral-300 dark:border-neutral-700 bg-transparent px-3 py-2 text-sm ${!auditEnabled || auditProvider === '' ? 'opacity-50 cursor-not-allowed' : ''}`}
-            >
-              {auditProvider === '' && <option value="">Select a provider first</option>}
-              {auditProvider !== '' && <option value="">Select model</option>}
-              {modelOptions.map((m) => (
-                <option key={m} value={m}>{m}</option>
-              ))}
-            </select>
+            {auditProvider !== '' && modelListing !== undefined && modelOptions.length === 0 ? (
+              <p
+                id="model"
+                role="status"
+                className="text-sm text-neutral-500 dark:text-neutral-400 italic"
+              >
+                No models available for the selected provider.
+              </p>
+            ) : (
+              <select
+                id="model"
+                value={auditModel}
+                onChange={(e) => setAuditModel(e.target.value)}
+                disabled={!auditEnabled || auditProvider === ''}
+                className={`w-full rounded-md border border-neutral-300 dark:border-neutral-700 bg-transparent px-3 py-2 text-sm ${!auditEnabled || auditProvider === '' ? 'opacity-50 cursor-not-allowed' : ''}`}
+              >
+                {auditProvider === '' && <option value="">Select a provider first</option>}
+                {auditProvider !== '' && modelOptions.length === 0 && (
+                  <option value="">Loading…</option>
+                )}
+                {modelOptions.map((m) => (
+                  <option key={m.id} value={m.id}>
+                    {m.id}{m.hasPricing ? '' : ' ⚠ no pricing'}
+                  </option>
+                ))}
+              </select>
+            )}
 
             <div className="mt-6 flex items-center gap-3">
               <button

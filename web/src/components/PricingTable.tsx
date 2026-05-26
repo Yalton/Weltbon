@@ -16,6 +16,7 @@
 
 import { useState } from 'react';
 import { PRICING, PRICING_AS_OF } from '../data/pricing';
+import { useListModels } from '../hooks/useAudits';
 
 const PROVIDER_LABELS: Record<'anthropic' | 'openai', string> = {
   anthropic: 'Anthropic',
@@ -40,6 +41,19 @@ export function PricingTable() {
     [string, AnyRow]
   >;
   const openaiRows = Object.entries(PRICING.openai) as Array<[string, AnyRow]>;
+
+  // Phase 27 D-07: overflow caption — count live models absent from PRICING
+  // across both providers. PricingTable is provider-agnostic at the mount
+  // site (web/src/views/LlmKeys.tsx) so we sum the counts. The hooks are
+  // gated by `enabled: !!provider`; both fire because we pass concrete
+  // provider names.
+  const { data: anthropicListing } = useListModels('anthropic');
+  const { data: openaiListing } = useListModels('openai');
+  const liveOnlyAnthropic =
+    anthropicListing?.models.filter((m) => !m.hasPricing).length ?? 0;
+  const liveOnlyOpenAI =
+    openaiListing?.models.filter((m) => !m.hasPricing).length ?? 0;
+  const liveOnlyCount = liveOnlyAnthropic + liveOnlyOpenAI;
 
   return (
     <details
@@ -160,6 +174,16 @@ export function PricingTable() {
             ))}
           </tbody>
         </table>
+        {/* Phase 27 D-07 — overflow caption. Rendered only when the live
+            listings have returned AND have at least one model absent from
+            PRICING for either provider. Never shown when both queries are
+            still pending (no flicker of "0 additional models …") because
+            we count only via resolved `data`. */}
+        {liveOnlyCount > 0 && (
+          <p className="text-xs text-neutral-500 mt-2">
+            {liveOnlyCount} additional models available without published rates — see model picker in universe settings.
+          </p>
+        )}
       </div>
     </details>
   );
