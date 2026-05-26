@@ -39,6 +39,22 @@
  */
 export const PRICING_AS_OF = '2026-05-23';
 
+/**
+ * Phase 26 D-02: recommended cheap (default) model per provider on first opt-in.
+ * Resolved from PRICING-listed model IDs — CONTEXT.md D-02 mentioned older
+ * IDs ('claude-3-5-haiku-20241022' / 'gpt-4o-mini') but those are NOT in PRICING.
+ * In-repo PRICING is the source of truth (per invariant #1 above) — neither
+ * older ID is in PRICING, so this mapping uses the cheapest tool-use-capable
+ * model from each provider currently in PRICING.
+ *
+ * UI binding: UniverseSettings AI Gap Auditor section seeds the provider/model
+ * dropdowns with this value on first opt-in; users can override via the dropdown.
+ */
+export const RECOMMENDED_CHEAP_MODEL: Record<'anthropic' | 'openai', string> = {
+  anthropic: 'claude-haiku-4-5',
+  openai: 'gpt-5-mini',
+} as const;
+
 // ---------------------------------------------------------------------------
 // Per-provider pricing-row interfaces
 // ---------------------------------------------------------------------------
@@ -54,6 +70,8 @@ export interface AnthropicModelPricing {
   outputUsdPer1M: number;
   cachedInputUsdPer1M: number;
   cacheWriteUsdPer1M: number;
+  /** Maximum total context window (input + output) for this model, in tokens. Sourced from provider docs at PRICING_AS_OF. */
+  contextWindow: number;
 }
 
 /**
@@ -65,6 +83,8 @@ export interface OpenAIModelPricing {
   inputUsdPer1M: number;
   outputUsdPer1M: number;
   cachedInputUsdPer1M: number;
+  /** Maximum total context window (input + output) for this model, in tokens. Sourced from provider docs at PRICING_AS_OF. */
+  contextWindow: number;
 }
 
 /**
@@ -96,18 +116,24 @@ export const PRICING = {
       outputUsdPer1M: 5.0,
       cachedInputUsdPer1M: 0.1,
       cacheWriteUsdPer1M: 1.25,
+      // VERIFIED per platform.claude.com/docs/en/about-claude/pricing — claude-4 family 200k context window.
+      contextWindow: 200_000,
     },
     'claude-sonnet-4-6': {
       inputUsdPer1M: 3.0,
       outputUsdPer1M: 15.0,
       cachedInputUsdPer1M: 0.3,
       cacheWriteUsdPer1M: 3.75,
+      // VERIFIED per platform.claude.com/docs/en/about-claude/pricing — claude-4 family 200k context window.
+      contextWindow: 200_000,
     },
     'claude-opus-4-7': {
       inputUsdPer1M: 5.0,
       outputUsdPer1M: 25.0,
       cachedInputUsdPer1M: 0.5,
       cacheWriteUsdPer1M: 6.25,
+      // VERIFIED per platform.claude.com/docs/en/about-claude/pricing — claude-4 family 200k context window.
+      contextWindow: 200_000,
     },
   },
   openai: {
@@ -115,6 +141,8 @@ export const PRICING = {
       inputUsdPer1M: 0.25,
       outputUsdPer1M: 2.0,
       cachedInputUsdPer1M: 0.025,
+      // VERIFIED per developers.openai.com/api/docs/models/gpt-5-mini — gpt-5 family 400k context window.
+      contextWindow: 400_000,
     },
     /**
      * gpt-5 — input/output VERIFIED, cachedInputUsdPer1M ASSUMED.
@@ -127,6 +155,8 @@ export const PRICING = {
       outputUsdPer1M: 10.0,
       // ASSUMED per RESEARCH Assumption A2 (90% discount inferred from gpt-5-mini pattern; verify against openai.com before Phase 26 exposes)
       cachedInputUsdPer1M: 0.125,
+      // ASSUMED — same gpt-5 family context-window as gpt-5-mini; verify against openai.com docs.
+      contextWindow: 400_000,
     },
     /**
      * gpt-5-pro — fully ASSUMED. Model ID is not yet confirmed in the official
@@ -139,6 +169,8 @@ export const PRICING = {
       inputUsdPer1M: 1.25,
       outputUsdPer1M: 10.0,
       cachedInputUsdPer1M: 0.125,
+      // ASSUMED — same gpt-5 family context-window; verify against openai.com docs.
+      contextWindow: 400_000,
     },
   },
 } as const;

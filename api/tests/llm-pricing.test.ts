@@ -44,6 +44,10 @@ describe('PRICING constants (PROVIDER-06)', () => {
       expect(row.cachedInputUsdPer1M).toBeGreaterThan(0);
       expect(typeof row.cacheWriteUsdPer1M).toBe('number');
       expect(row.cacheWriteUsdPer1M).toBeGreaterThan(0);
+      // Phase 26 W-4: contextWindow required on every row so PricingTable shows the actual number
+      // instead of '—'. Removing the field triggers red CI without a paired PRICING_AS_OF bump.
+      expect(typeof row.contextWindow).toBe('number');
+      expect(row.contextWindow).toBeGreaterThan(0);
     }
   });
 
@@ -59,6 +63,9 @@ describe('PRICING constants (PROVIDER-06)', () => {
       expect(row.outputUsdPer1M).toBeGreaterThanOrEqual(0);
       expect(typeof row.cachedInputUsdPer1M).toBe('number');
       expect(row.cachedInputUsdPer1M).toBeGreaterThanOrEqual(0);
+      // Phase 26 W-4: contextWindow required on every row.
+      expect(typeof row.contextWindow).toBe('number');
+      expect(row.contextWindow).toBeGreaterThan(0);
     }
     // Note: gpt-5-pro existence is NOT asserted (Assumption A1 — model id may
     // be removed from PRICING when the official OpenAI catalog is confirmed).
@@ -71,6 +78,8 @@ describe('PRICING constants (PROVIDER-06)', () => {
     expect(row.outputUsdPer1M).toBe(5.0);
     expect(row.cachedInputUsdPer1M).toBe(0.1);
     expect(row.cacheWriteUsdPer1M).toBe(1.25);
+    // Phase 26 W-4: contextWindow pinned to verified provider-docs value for the baseline model.
+    expect(row.contextWindow).toBe(200_000);
   });
 
   it('gpt-5-mini baseline pricing matches verified values', async () => {
@@ -79,6 +88,8 @@ describe('PRICING constants (PROVIDER-06)', () => {
     expect(row.inputUsdPer1M).toBe(0.25);
     expect(row.outputUsdPer1M).toBe(2.0);
     expect(row.cachedInputUsdPer1M).toBe(0.025);
+    // Phase 26 W-4: contextWindow pinned to verified provider-docs value for the baseline model.
+    expect(row.contextWindow).toBe(400_000);
   });
 
   it("getProvider('anthropic' | 'openai') returns LLMProvider-conforming instances with working listModels()", async () => {

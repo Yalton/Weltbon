@@ -125,3 +125,98 @@ export interface IssueApiResponse extends PersistedAuditSuggestion {
   // their linked_issue_id points at this human row. Empty/undefined otherwise.
   linkedByAiIssueIds?: string[];
 }
+
+// ---------------------------------------------------------------------------
+// Phase 26 LLMUI-* wire shapes (additive — DO NOT modify the exports above)
+// ---------------------------------------------------------------------------
+
+/**
+ * Phase 26 D-06/D-09 — discriminated status union for audit_runs.status.
+ * Mirrors the literal values written by the engine (api/src/db/schema.ts
+ * auditRuns.status column).
+ */
+export type AuditRunStatus = 'pending' | 'running' | 'succeeded' | 'failed';
+
+/**
+ * Phase 26 D-15/D-16 — flat breakdown of the LLMUI-04 cost-range formula.
+ *
+ * Intentionally flat so the AuditCostDialog disclosure (D-01) can render rows
+ * trivially: each numeric field maps to one row in the "Show cost breakdown"
+ * table.
+ */
+export interface AuditEstimateBreakdown {
+  basePromptTokens: number;
+  ratePerMTokIn: number;
+  ratePerMTokOut: number;
+  ratePerMTokCachedRead: number;
+  maxToolCalls: number;
+  maxOutputTokens: number;
+  perCallInputTokens: number;
+  perCallOutputTokens: number;
+  minOutputTokens: number;
+  scopeEntryCount: number;
+}
+
+/**
+ * Phase 26 D-15/D-16 — wire shape for GET /api/universes/:uid/audits/:runId/estimate.
+ *
+ * Returned synchronously when the AuditCostDialog opens; cached for 30s per
+ * (universe, scope, entryId) per D-15.
+ */
+export interface AuditEstimate {
+  /** USD lower bound of the cost-range (Estimated cost: $LOWER – $UPPER). */
+  lower: number;
+  /** USD upper bound of the cost-range. */
+  upper: number;
+  breakdown: AuditEstimateBreakdown;
+  model: { provider: 'anthropic' | 'openai'; name: string };
+}
+
+/**
+ * Phase 26 D-06 — wire shape for GET /api/audits/in-flight (cross-universe rollup
+ * powering the InFlightAuditsBadge corner widget).
+ *
+ * costUsd is typed as string to match the Drizzle NUMERIC(10,4) serialization
+ * convention used by IssueApiResponse.costUsd (lines 99-101 above).
+ */
+export interface InFlightAuditSummary {
+  id: string;
+  universeId: string;
+  universeName: string;
+  scope: 'universe' | 'entry';
+  scopeEntryId: string | null;
+  scopeEntryTitle: string | null;
+  /** Narrowed to in-flight statuses only; succeeded/failed rows are NOT returned by /in-flight. */
+  status: Extract<AuditRunStatus, 'pending' | 'running'>;
+  startedAt: string;
+  /** Drizzle NUMERIC(10,4) → string (preserves decimal precision; never a number). */
+  costUsd: string;
+  toolCallCount: number;
+}
+
+/**
+ * Phase 26 D-09 — wire shape for GET /api/universes/:uid/audits (audit-history tab).
+ *
+ * Includes the analyzedEntries column added in this plan (Phase 24 schema +
+ * the Phase 26 0011 migration) so the UI can derive partial-coverage status
+ * (AUDIT-07 / D-08) at history-tab render time.
+ */
+export interface AuditHistoryRow {
+  id: string;
+  scope: 'universe' | 'entry';
+  scopeEntryId: string | null;
+  scopeEntryTitle: string | null;
+  provider: string;
+  model: string;
+  status: AuditRunStatus;
+  /** Drizzle NUMERIC(10,4) → string. */
+  costUsd: string;
+  startedAt: string;
+  finishedAt: string | null;
+  /** Histogram of finding counts per category, used by the Findings chip row. Categories with zero counts are omitted. */
+  suggestionsByCategory: Partial<Record<AuditCategory, number>>;
+  /** AUDIT-07 / D-08: number of entries the engine actually analyzed during this run. */
+  analyzedEntries: number;
+  /** Universe total entry count at run time. `null` for entry-scoped runs where "total" is ambiguous. */
+  totalEntries: number | null;
+}
