@@ -16,10 +16,10 @@
  */
 
 import { OpenAPIHono, createRoute, z } from '@hono/zod-openapi';
-import { and, eq, inArray, count } from 'drizzle-orm';
+import { and, eq, inArray, count, desc } from 'drizzle-orm';
 import { HTTPException } from 'hono/http-exception';
 import { db } from '../db/client.js';
-import { auditRuns, issues, entries } from '../db/schema.js';
+import { auditRuns, issues, entries, universes } from '../db/schema.js';
 import { requireUniverse } from '../utils/ownership.js';
 import { getProvider } from '../providers/llm/index.js';
 import { PRICING } from '../providers/llm/pricing.js';
@@ -336,4 +336,116 @@ export const auditRoutes = new OpenAPIHono<AppEnv>()
       },
       200
     );
+  });
+
+// ─── Cross-universe audit routes ─────────────────────────────────────────────
+//
+// Phase 26 Plan 03 — D-06 / D-16 cross-universe rollup.
+//
+// These routes are NOT mounted under /universes/:uid because they operate
+// across ALL of the authed user's universes. requireUniverse does NOT fire;
+// the only authorization filter is the `audit_runs.user_id = c.var.userId`
+// predicate in the handler (T-26-03-01).
+//
+// Mount in api/src/index.ts:
+//   apiR.route('/audits', auditCrossUniverseRoutes);
+//   apiR.use('/audits/*', requireAuth);   // ← bearerAuth gate for the surface
+//
+// Full path: /api/audits/in-flight
+
+const inFlightSummarySchema = z.object({
+  id: z.string().uuid(),
+  universeId: z.string().uuid(),
+  universeName: z.string(),
+  scope: z.enum(['universe', 'entry']),
+  scopeEntryId: z.string().uuid().nullable(),
+  scopeEntryTitle: z.string().nullable(),
+  status: z.enum(['pending', 'running']),
+  startedAt: z.string().or(z.date()),
+  // NUMERIC(10,4) → string from pg (preserves precision; never a number)
+  costUsd: z.string(),
+  toolCallCount: z.number().int(),
+});
+
+const inFlightArraySchema = z.array(inFlightSummarySchema);
+
+const getInFlightAuditsRoute = createRoute({
+  method: 'get',
+  path: '/in-flight',
+  tags: ['Audits'],
+  summary: "List the authed user's in-flight audit runs across all universes",
+  description:
+    'D-06 cross-universe rollup powering the corner badge (Plan 26-05 InFlightAuditsBadge). ' +
+    'Returns audit_runs rows with status IN (\'pending\',\'running\') filtered by user_id. ' +
+    'NO requireUniverse fires — this is a user-scoped endpoint. Ordering: startedAt DESC. ' +
+    'Empty result is `[]`, NOT 404.',
+  security: [{ bearerAuth: [] }],
+  request: {
+    // No params — auth derives userId from bearer token
+  },
+  responses: {
+    200: {
+      content: { 'application/json': { schema: inFlightArraySchema } },
+      description: "Array of the user's pending+running audit runs (possibly empty)",
+    },
+    401: {
+      content: { 'application/json': { schema: errorSchema } },
+      description: 'Unauthorized',
+    },
+    500: {
+      content: { 'application/json': { schema: errorSchema } },
+      description: 'Internal error',
+    },
+  },
+});
+
+export const auditCrossUniverseRoutes = new OpenAPIHono<AppEnv>()
+
+  // GET /api/audits/in-flight
+  .openapi(getInFlightAuditsRoute, async (c) => {
+    const userId = c.var.userId;
+
+    // T-26-03-01: filter strictly by user_id; cross-tenant invariant.
+    // LEFT JOIN universes for universeName; LEFT JOIN entries for scopeEntryTitle
+    // (NULL when scope='universe' or when the entry was deleted via onDelete:'set null').
+    const rows = await db()
+      .select({
+        id: auditRuns.id,
+        universeId: auditRuns.universeId,
+        universeName: universes.name,
+        scope: auditRuns.scope,
+        scopeEntryId: auditRuns.scopeEntryId,
+        scopeEntryTitle: entries.title,
+        status: auditRuns.status,
+        startedAt: auditRuns.startedAt,
+        costUsd: auditRuns.costUsd,
+        toolCallCount: auditRuns.toolCallCount,
+      })
+      .from(auditRuns)
+      .leftJoin(universes, eq(universes.id, auditRuns.universeId))
+      .leftJoin(entries, eq(entries.id, auditRuns.scopeEntryId))
+      .where(
+        and(
+          eq(auditRuns.userId, userId),
+          inArray(auditRuns.status, ['pending', 'running']),
+        ),
+      )
+      .orderBy(desc(auditRuns.startedAt));
+
+    const body = rows.map((r) => ({
+      id: r.id,
+      universeId: r.universeId,
+      // universeName is non-null in practice (universes row exists via FK cascade)
+      // but the LEFT JOIN typing makes it nullable — defensive empty-string fallback.
+      universeName: r.universeName ?? '',
+      scope: r.scope as 'universe' | 'entry',
+      scopeEntryId: r.scopeEntryId,
+      scopeEntryTitle: r.scopeEntryTitle, // null for scope='universe' (no JOIN match)
+      status: r.status as 'pending' | 'running',
+      startedAt: r.startedAt,
+      costUsd: r.costUsd, // string from NUMERIC(10,4)
+      toolCallCount: r.toolCallCount,
+    }));
+
+    return c.json(body, 200);
   });

@@ -19,7 +19,7 @@ import { exportRoutes } from './routes/export.js';
 import { importRoutes } from './routes/import.js';
 import { ingestRoutes } from './routes/ingest.js';
 import { timelinePinRoutes, timelineListRoutes } from './routes/timeline.js';
-import { auditRoutes } from './routes/audits.js';
+import { auditRoutes, auditCrossUniverseRoutes } from './routes/audits.js';
 import { recoverOrphanAuditRuns } from './services/audit-recovery.js';
 import { wireSigtermDrain } from './services/audit-shutdown.js';
 import { requireAuth } from './middleware/auth.js';
@@ -81,6 +81,12 @@ export function createApp() {
   apiR.route('/auth/invites', inviteRoutes);
   apiR.route('/auth', authRoutes);
   apiR.use('/universes/*', requireAuth);
+  // Phase 26 Plan 03 — D-06 cross-universe in-flight rollup.
+  // Mounted at root /api prefix (NOT under /universes/:uid) because it
+  // operates across ALL of the authed user's universes. Full path:
+  // /api/audits/in-flight. requireAuth gates the bearerAuth contract.
+  apiR.use('/audits/*', requireAuth);
+  apiR.route('/audits', auditCrossUniverseRoutes);
   apiR.route('/universes/import', importRoutes);
   // 11-03: mount /universes/:uid/ingest BEFORE the bare /universes mount so
   // the more-specific path wins, mirroring the /universes/import precedence.
