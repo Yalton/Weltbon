@@ -47,6 +47,7 @@ const DB_GATED_TESTS = [
   'tests/issues-audit-run-id-filter.test.ts',
   'tests/links.test.ts',
   'tests/llm-keys.test.ts',
+  'tests/llm-keys-total-spent.test.ts',
   'tests/pat-parity.test.ts',
   'tests/pat-service.test.ts',
   'tests/requireAuth-pat.test.ts',
