@@ -11,6 +11,7 @@ import { FilterChipRow } from '../components/FilterChipRow';
 import { ExportMenu } from '../components/ExportMenu';
 import { TemplatePicker } from '../components/TemplatePicker';
 import { Toast } from '../components/Toast';
+import { AuditCostDialog } from '../components/AuditCostDialog';
 
 type ToastState = { message: string; variant: 'success' | 'error' } | null;
 
@@ -23,6 +24,7 @@ export function EntryList() {
 
   const [importOpen, setImportOpen] = useState(false);
   const [pickerOpen, setPickerOpen] = useState(false);
+  const [auditDialogOpen, setAuditDialogOpen] = useState(false);
   const [toast, setToast] = useState<ToastState>(null);
 
   // Toast auto-dismiss is now handled inside <Toast />.
@@ -77,6 +79,16 @@ export function EntryList() {
           >
             Import notes
           </Link>
+          {universe?.auditEnabled === true && (
+            <button
+              type="button"
+              onClick={() => setAuditDialogOpen(true)}
+              className="rounded-md border border-neutral-300 dark:border-neutral-700 text-sm px-3 py-1.5 inline-flex items-center gap-1.5 hover:bg-neutral-50 dark:hover:bg-neutral-800"
+              aria-haspopup="dialog"
+            >
+              ⚖ Audit gaps
+            </button>
+          )}
           {!isEmpty && (
             <button
               type="button"
@@ -139,6 +151,15 @@ export function EntryList() {
         open={pickerOpen}
         onOpenChange={setPickerOpen}
         universeId={uid!}
+      />
+
+      {/* Audit cost / progress dialog — opened by ⚖ Audit gaps button */}
+      <AuditCostDialog
+        open={auditDialogOpen}
+        onOpenChange={setAuditDialogOpen}
+        universeId={uid!}
+        scope="universe"
+        onStarted={() => setToast({ message: 'Audit started.', variant: 'success' })}
       />
 
       {/* Toast notification */}
