@@ -1004,6 +1004,94 @@ describe('audit-engine runAudit (Phase 24-04)', () => {
       );
     },
   );
+
+  // =========================================================================
+  // Phase 26-02 Task 2: analyzed_entries atomic increment (AUDIT-07 / D-08)
+  //
+  // Behavior under test: when the engine materializes an entry body via a
+  // getEntryBody tool call, audit_runs.analyzed_entries MUST be incremented
+  // by 1 in the SAME UPDATE statement as the existing consultedEntryIds
+  // array append (audit-engine.ts:583-588 — the single source of truth for
+  // the per-tool-call observability write).
+  //
+  // The set object will carry BOTH:
+  //   - consultedEntryIds: sql`... || ARRAY[${entryId}::uuid]`
+  //   - analyzedEntries:   sql`... + 1`
+  // co-located in one update call. The increment is the atomic SQL `+ 1`
+  // pattern (mirrors hallucinatedEntryReferenceCount semantics) — no
+  // read-then-write race.
+  //
+  // Per AUDIT-04 the digest is bodies-NONE, so the ONLY path that
+  // materializes an entry body is the getEntryBody tool call. The plan
+  // documents this design decision: digest-construction time does NOT bump
+  // analyzedEntries (no bodies materialized there); only the per-tool-call
+  // increment fires.
+  //
+  // Unit-level test (no live DB) — exercises the engine's mocked harness.
+  // Integration coverage in audit-routes.test.ts (DB-gated) requires the
+  // 0011 migration applied; documented in deferred-items.md.
+  // =========================================================================
+  it(
+    "analyzed_entries: getEntryBody tool call → atomic SQL `+ 1` increment co-located with consultedEntryIds append (AUDIT-07 / D-08)",
+    async () => {
+      // Stage two provider turns:
+      //   Turn 1: tool-use (engine MUST increment analyzed_entries)
+      //   Turn 2: final answer (parsed + persisted → succeeded)
+      mockRunAudit
+        .mockResolvedValueOnce(TOOL_USE_RESPONSE)
+        .mockResolvedValueOnce(VALID_SUGGESTION_OUTPUT);
+
+      // The tool handler needs the entry body resolver to return a non-null
+      // entry; only then does the engine push to consultedEntryIds AND the
+      // analyzed_entries increment fires inside the same UPDATE.
+      // eslint-disable-next-line @typescript-eslint/no-explicit-any
+      mockGetEntryBody.mockResolvedValue({
+        id: VALID_ENTRY_ID,
+        title: 'Test entry',
+        body: 'body',
+        summary: null,
+        tags: [],
+        meta: {},
+      } as any);
+
+      const updateCalls: DbUpdateCall[] = [];
+      const { dbStub } = makeDbStub({ updateCalls });
+
+      await runAudit(RUN_ID, {
+        db: dbStub as unknown as typeof import('../src/db/client.js').db,
+        getDecryptedKey: mockGetDecryptedKey,
+        runCheapFinds: mockRunCheapFinds,
+        buildStructuralDigest: mockBuildStructuralDigest,
+        validateReferencedEntryIds: mockValidateReferencedEntryIds,
+        computeGapKey: mockComputeGapKey,
+        getEntryBody: mockGetEntryBody,
+        cfg: { auditMaxToolCalls: 20, auditMaxCostUsd: 100, auditMaxTokensTotal: 10_000_000, auditMaxWallClockMs: 120_000 },
+      });
+
+      // The tool-call branch update sets BOTH consultedEntryIds AND analyzedEntries
+      // in the SAME set object. We check key presence (the value is a Drizzle
+      // sql`` template object, not directly comparable to a primitive).
+      const toolCallUpdate = updateCalls.find(
+        (c) =>
+          'consultedEntryIds' in c.set && 'analyzedEntries' in c.set,
+      );
+      expect(toolCallUpdate).toBeDefined();
+
+      // Defensive: the engine should not also emit a SEPARATE update that
+      // touches only analyzedEntries — the per-tool-call increment lives
+      // exclusively co-located with consultedEntryIds (efficient, single UPDATE).
+      const lonelyAnalyzedUpdate = updateCalls.filter(
+        (c) =>
+          'analyzedEntries' in c.set && !('consultedEntryIds' in c.set),
+      );
+      expect(lonelyAnalyzedUpdate.length).toBe(0);
+
+      // Sanity: the run still succeeded after the tool turn returned a final
+      // answer — i.e., the increment did NOT alter the existing engine flow.
+      const succeededUpdate = updateCalls.find((c) => c.set.status === 'succeeded');
+      expect(succeededUpdate).toBeDefined();
+    },
+  );
 });
 
 // ---------------------------------------------------------------------------
