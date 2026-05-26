@@ -153,14 +153,18 @@ export function EntryList() {
         universeId={uid!}
       />
 
-      {/* Audit cost / progress dialog — opened by ⚖ Audit gaps button */}
-      <AuditCostDialog
-        open={auditDialogOpen}
-        onOpenChange={setAuditDialogOpen}
-        universeId={uid!}
-        scope="universe"
-        onStarted={() => setToast({ message: 'Audit started.', variant: 'success' })}
-      />
+      {/* Audit cost / progress dialog — opened by ⚖ Audit gaps button.
+          Mount only when the audit feature is enabled on this universe so the
+          dialog's useEstimateAudit query never fires for opted-out universes. */}
+      {universe?.auditEnabled === true && (
+        <AuditCostDialog
+          open={auditDialogOpen}
+          onOpenChange={setAuditDialogOpen}
+          universeId={uid!}
+          scope="universe"
+          onStarted={() => setToast({ message: 'Audit started.', variant: 'success' })}
+        />
+      )}
 
       {/* Toast notification */}
       {toast && (
