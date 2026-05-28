@@ -33,6 +33,16 @@ function Wrapper({ children, qc }: { children: ReactNode; qc: QueryClient }) {
   return <QueryClientProvider client={qc}>{children}</QueryClientProvider>;
 }
 
+/**
+ * Shared mock for `/llm-keys` — returns a row for both providers so the
+ * CR-01 gate (`hasAnthropicKey` / `hasOpenAIKey`) is open by default. Tests
+ * that need the keyless path (Test 8) override this to return `[]`.
+ */
+const KEYS_BOTH_PROVIDERS = [
+  { id: 'k-a', provider: 'anthropic', bodySuffix: 'aaaa', label: 'a', createdAt: '', lastValidatedAt: null, totalSpentUsd: '0.0000' },
+  { id: 'k-o', provider: 'openai', bodySuffix: 'oooo', label: 'o', createdAt: '', lastValidatedAt: null, totalSpentUsd: '0.0000' },
+];
+
 describe('PricingTable — Phase 27 D-07 overflow caption', () => {
   beforeEach(() => {
     vi.mocked(api).mockReset();
@@ -40,6 +50,7 @@ describe('PricingTable — Phase 27 D-07 overflow caption', () => {
 
   it('Test 5 — renders caption when live list has unpriced models for at least one provider', async () => {
     vi.mocked(api).mockImplementation(async (path: string) => {
+      if (path === '/llm-keys') return KEYS_BOTH_PROVIDERS as never;
       if (path === '/llm/models?provider=anthropic') {
         return {
           models: [
@@ -83,6 +94,7 @@ describe('PricingTable — Phase 27 D-07 overflow caption', () => {
 
   it('Test 6 — does NOT render caption when overflow is 0', async () => {
     vi.mocked(api).mockImplementation(async (path: string) => {
+      if (path === '/llm-keys') return KEYS_BOTH_PROVIDERS as never;
       if (path === '/llm/models?provider=anthropic') {
         return {
           models: [
@@ -132,5 +144,43 @@ describe('PricingTable — Phase 27 D-07 overflow caption', () => {
     expect(
       screen.queryByText(/additional models available without published rates/i),
     ).not.toBeInTheDocument();
+  });
+
+  it('Test 8 (CR-01) — keyless user: no /llm/models calls, no caption, no 404', async () => {
+    // Reproduces the double-404 reported in CR-01. Before the fix, PricingTable
+    // unconditionally called useListModels('anthropic') and useListModels('openai')
+    // — both returned 404 `no_key_for_provider` for a user with no keys row.
+    // After the fix, both are gated on hasAnthropicKey/hasOpenAIKey derived from
+    // useLlmKeys() and therefore do not fire.
+    vi.mocked(api).mockImplementation(async (path: string) => {
+      if (path === '/llm-keys') return [] as never;
+      if (path.startsWith('/llm/models')) {
+        throw new Error(
+          `CR-01 regression: /llm/models call fired for keyless user (path=${path})`,
+        );
+      }
+      return null as never;
+    });
+
+    const qc = makeClient();
+    render(<PricingTable />, { wrapper: ({ children }) => <Wrapper qc={qc}>{children}</Wrapper> });
+
+    // Let the /llm-keys query settle and React-Query reconcile.
+    await new Promise((r) => setTimeout(r, 50));
+
+    // 1. Base PRICING table still renders.
+    expect(screen.getByText(/Models & pricing/)).toBeInTheDocument();
+
+    // 2. No caption (no live list to overflow over).
+    expect(
+      screen.queryByText(/additional models available without published rates/i),
+    ).not.toBeInTheDocument();
+
+    // 3. Only `/llm-keys` was called — never `/llm/models?provider=*`.
+    const calls = vi.mocked(api).mock.calls;
+    const modelCalls = calls.filter((c) =>
+      typeof c[0] === 'string' && (c[0] as string).startsWith('/llm/models'),
+    );
+    expect(modelCalls).toHaveLength(0);
   });
 });

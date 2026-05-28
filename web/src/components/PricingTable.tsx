@@ -17,6 +17,7 @@
 import { useState } from 'react';
 import { PRICING, PRICING_AS_OF } from '../data/pricing';
 import { useListModels } from '../hooks/useAudits';
+import { useLlmKeys } from '../hooks/useLlmKeys';
 
 const PROVIDER_LABELS: Record<'anthropic' | 'openai', string> = {
   anthropic: 'Anthropic',
@@ -44,11 +45,23 @@ export function PricingTable() {
 
   // Phase 27 D-07: overflow caption — count live models absent from PRICING
   // across both providers. PricingTable is provider-agnostic at the mount
-  // site (web/src/views/LlmKeys.tsx) so we sum the counts. The hooks are
-  // gated by `enabled: !!provider`; both fire because we pass concrete
-  // provider names.
-  const { data: anthropicListing } = useListModels('anthropic');
-  const { data: openaiListing } = useListModels('openai');
+  // site (web/src/views/LlmKeys.tsx) so we sum the counts.
+  //
+  // CR-01 fix (2026-05-28): gate the per-provider `useListModels` call on
+  // whether the caller has a key for that provider. Without this, a fresh
+  // visit by a keyless user issues two 404s (`no_key_for_provider`) — and
+  // the resulting `liveOnlyCount` stays 0 anyway, so the D-07 caption is
+  // structurally unreachable for that population. Passing `undefined` keeps
+  // `enabled: !!provider` off in `useListModels`, so no request fires.
+  const { data: llmKeys } = useLlmKeys();
+  const hasAnthropicKey = llmKeys?.some((k) => k.provider === 'anthropic') ?? false;
+  const hasOpenAIKey = llmKeys?.some((k) => k.provider === 'openai') ?? false;
+  const { data: anthropicListing } = useListModels(
+    hasAnthropicKey ? 'anthropic' : undefined,
+  );
+  const { data: openaiListing } = useListModels(
+    hasOpenAIKey ? 'openai' : undefined,
+  );
   const liveOnlyAnthropic =
     anthropicListing?.models.filter((m) => !m.hasPricing).length ?? 0;
   const liveOnlyOpenAI =
