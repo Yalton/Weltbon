@@ -95,46 +95,6 @@ export default function Templates() {
     }
   };
 
-  /** Shared table column headers for both Default and Your templates tables. */
-  const TableHead = ({ caption }: { caption: string }) => (
-    <thead>
-      <tr className="border-b border-neutral-200 dark:border-neutral-800">
-        <th
-          scope="col"
-          className="pb-2 text-left text-xs uppercase tracking-wide font-medium text-neutral-500 w-32"
-        >
-          Type
-        </th>
-        <th
-          scope="col"
-          className="pb-2 text-left text-xs uppercase tracking-wide font-medium text-neutral-500 w-auto"
-        >
-          Name
-        </th>
-        <th
-          scope="col"
-          className="pb-2 text-left text-xs uppercase tracking-wide font-medium text-neutral-500 w-auto"
-        >
-          Fields
-        </th>
-        <th
-          scope="col"
-          className="pb-2 text-left text-xs uppercase tracking-wide font-medium text-neutral-500 w-32"
-        >
-          Last used
-        </th>
-        <th
-          scope="col"
-          className="pb-2 text-right text-xs uppercase tracking-wide font-medium text-neutral-500 w-20"
-        >
-          {/* action column — no header text */}
-        </th>
-      </tr>
-      {/* sr-only caption is in the <table> element via <caption> */}
-      <caption className="sr-only">{caption}</caption>
-    </thead>
-  );
-
   return (
     <div className="max-w-3xl">
       {/* Page header — NO "New template" button per UI-SPEC §D */}
