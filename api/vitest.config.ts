@@ -61,6 +61,7 @@ const DB_GATED_TESTS = [
   'tests/universe-types.test.ts',
   'tests/universes.test.ts',
   'tests/issues-dismiss.test.ts',
+  'tests/templates.test.ts',
 ];
 
 export default defineConfig({

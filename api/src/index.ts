@@ -7,6 +7,7 @@ import { HTTPException } from 'hono/http-exception';
 import { env, type Env } from './config.js';
 import { authRoutes } from './routes/auth.js';
 import { tokenRoutes } from './routes/tokens.js';
+import { templates } from './routes/templates.js';
 import { inviteRoutes } from './routes/invites.js';
 import { llmKeyRoutes } from './routes/llm-keys.js';
 import { llmModelsRoutes } from './routes/llm-models.js';
@@ -78,6 +79,7 @@ export function createApp() {
   app.use('*', forwarded);
   const apiR = createApiRouter();
   apiR.route('/auth/tokens', tokenRoutes);
+  apiR.route('/templates', templates);
   apiR.route('/llm-keys', llmKeyRoutes);
   // Phase 27 Plan 03 Task 2 — GET /api/llm/models?provider= (model-catalog cache).
   // Mounted at the bare /api prefix; the createRoute path '/llm/models' resolves
