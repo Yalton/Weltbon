@@ -196,7 +196,7 @@ describe('routes/templates', () => {
       expect(second.status).toBe(409);
       // D-04 + UI-SPEC §C exact string — SaveAsTemplateDialog detects by err.status === 409
       // and surfaces err.message (which holds the server's `error` string) under the input.
-      expect(second.body.error).toBe('You already have a entity template named "Hero". Pick a different name.');
+      expect(second.body.error).toBe('A template named "Hero" already exists for the entity entry type. Pick a different name.');
     });
 
     it('succeeds when same name is used with a DIFFERENT entryType (D-04 per-type uniqueness)', async () => {
@@ -281,7 +281,7 @@ describe('routes/templates', () => {
         headers: { Authorization: `Bearer ${jwt}` },
       });
       expect(res.status).toBe(409);
-      expect(res.body.error).toBe('You already have a entity template named "Template A". Pick a different name.');
+      expect(res.body.error).toBe('A template named "Template A" already exists for the entity entry type. Pick a different name.');
     });
 
     it('returns 404 when targeting another user\'s templateId (NOT 403 — established convention)', async () => {

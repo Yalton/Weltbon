@@ -80,8 +80,13 @@ function toResponseShape(row: EntryTemplateRow) {
     entryType: row.entryType,
     summary: row.summary,
     body: row.body,
-    // D-09: meta is stored as the ordered array [{name, default_value}]; pass through as-is
-    meta: (row.meta as { name: string; default_value: string }[]) ?? [],
+    // D-09: meta is stored as the ordered array [{name, default_value}]; pass through as-is.
+    // WR-04: Array.isArray guard against corrupt rows (manual SQL UPDATE, prior bug, migration
+    // drift) — falls back to [] so frontend MetaChips.slice() and metaArrayToRecord for/of
+    // never crash on a non-array meta value.
+    meta: Array.isArray(row.meta)
+      ? (row.meta as { name: string; default_value: string }[])
+      : [],
     clonedFrom: row.clonedFrom ?? null,
     lastUsedAt: row.lastUsedAt ? row.lastUsedAt.toISOString() : null,
     createdAt: row.createdAt.toISOString(),
@@ -272,7 +277,7 @@ export const templates = new OpenAPIHono<AppEnv>()
       if (code === '23505') {
         return c.json(
           {
-            error: `You already have a ${entryType} template named "${name}". Pick a different name.`,
+            error: `A template named "${name}" already exists for the ${entryType} entry type. Pick a different name.`,
           },
           409,
         );
@@ -318,7 +323,7 @@ export const templates = new OpenAPIHono<AppEnv>()
         // Use existing.entryType (not the payload — entryType not in rename body)
         return c.json(
           {
-            error: `You already have a ${existing.entryType} template named "${name}". Pick a different name.`,
+            error: `A template named "${name}" already exists for the ${existing.entryType} entry type. Pick a different name.`,
           },
           409,
         );
