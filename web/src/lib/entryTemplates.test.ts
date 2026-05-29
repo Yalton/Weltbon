@@ -1,64 +1,109 @@
 import { describe, it, expect } from 'vitest';
-import { TEMPLATES, TEMPLATE_GROUPS, getTemplate } from './entryTemplates';
+import { TEMPLATES, getTemplate, metaArrayToRecord, type EntryTemplate } from './entryTemplates';
 
 describe('entryTemplates', () => {
-  it('exports exactly 10 templates (9 builtin types + Blank)', () => {
-    expect(TEMPLATES).toHaveLength(10);
+  // Test 1: exactly 6 templates
+  it('exports exactly 6 default templates', () => {
+    expect(TEMPLATES).toHaveLength(6);
   });
 
-  it('includes the 9 default builtin entry types plus blank', () => {
-    const ids = TEMPLATES.map((t) => t.id);
-    const expected = [
-      'blank',
-      'concept',
-      'entity',
-      'location',
-      'event',
-      'faction',
-      'artifact',
-      'species',
-      'culture',
-      'thread',
-    ];
-    for (const id of expected) {
-      expect(ids).toContain(id);
+  // Test 2: ids in exact order
+  it('TEMPLATES ids match the v3.2 spec in order', () => {
+    expect(TEMPLATES.map((t) => t.id)).toEqual([
+      'character-detailed',
+      'location-settlement',
+      'magic-system',
+      'religion',
+      'conlang-word',
+      'research-note',
+    ]);
+  });
+
+  // Test 3: meta is an ordered array with 5-10 fields per D-08/D-09/D-12
+  it('each template meta is an ordered array of 5-10 {name, default_value: string} fields', () => {
+    for (const t of TEMPLATES) {
+      expect(Array.isArray(t.meta), `${t.id} meta should be an array`).toBe(true);
+      expect(
+        t.meta.length,
+        `${t.id} meta should have 5-10 fields, got ${t.meta.length}`,
+      ).toBeGreaterThanOrEqual(5);
+      expect(
+        t.meta.length,
+        `${t.id} meta should have at most 10 fields, got ${t.meta.length}`,
+      ).toBeLessThanOrEqual(10);
+      for (const field of t.meta) {
+        expect(typeof field.name).toBe('string');
+        expect(
+          typeof field.default_value,
+          `${t.id} field "${field.name}" default_value must be string (D-12)`,
+        ).toBe('string');
+      }
     }
   });
 
-  it('Blank template has empty body and meta and entryType', () => {
-    const blank = getTemplate('blank');
-    expect(blank).toBeDefined();
-    expect(blank!.body).toBe('');
-    expect(blank!.meta).toEqual({});
-    expect(blank!.entryType).toBe('');
+  // Test 4: body has at least 2 ## section headers per D-08
+  it('each template body contains at least 2 markdown section headers (D-08)', () => {
+    for (const t of TEMPLATES) {
+      const matches = t.body.match(/^## /gm);
+      expect(
+        matches?.length ?? 0,
+        `${t.id} body should have at least 2 ## headers, found ${matches?.length ?? 0}`,
+      ).toBeGreaterThanOrEqual(2);
+    }
   });
 
-  it('Location template has Geography section and worldbuilder meta keys', () => {
-    const loc = getTemplate('location');
-    expect(loc).toBeDefined();
-    expect(loc!.body).toContain('## Geography');
-    expect(Object.keys(loc!.meta)).toEqual(
-      expect.arrayContaining(['region', 'climate', 'population']),
-    );
-    expect(loc!.entryType).toBe('location');
+  // Test 5: entryType values match D-07 in TEMPLATES order
+  it('entryType values match D-07 spec in TEMPLATES order', () => {
+    expect(TEMPLATES.map((t) => t.entryType)).toEqual([
+      'entity',
+      'location',
+      'magic-system',
+      'religion',
+      'conlang-word',
+      'research-note',
+    ]);
   });
 
-  it('getTemplate(unknown) returns undefined', () => {
+  // Test 6: getTemplate lookup
+  it('getTemplate returns the correct template or undefined', () => {
+    const ms = getTemplate('magic-system');
+    expect(ms).toBeDefined();
+    expect(ms!.id).toBe('magic-system');
+    expect(ms!.label).toBe('Magic-System');
     expect(getTemplate('does-not-exist')).toBeUndefined();
   });
 
-  it('TEMPLATE_GROUPS has 5 categories and templates sum to 10', () => {
-    expect(TEMPLATE_GROUPS).toHaveLength(5);
-    const labels = TEMPLATE_GROUPS.map((g) => g.label);
-    expect(labels).toEqual(['Setting', 'People', 'Things', 'Time', 'Other']);
-    const total = TEMPLATE_GROUPS.reduce((sum, g) => sum + g.templates.length, 0);
-    expect(total).toBe(10);
+  // Test 7: metaArrayToRecord round-trip
+  it('metaArrayToRecord converts array to Record correctly', () => {
+    expect(
+      metaArrayToRecord([
+        { name: 'a', default_value: '1' },
+        { name: 'b', default_value: '' },
+      ]),
+    ).toEqual({ a: '1', b: '' });
   });
 
-  it('every template has a non-empty label and description', () => {
+  // Test 8: metaArrayToRecord with empty input
+  it('metaArrayToRecord with empty array returns empty object', () => {
+    expect(metaArrayToRecord([])).toEqual({});
+  });
+
+  // Test 9 (regression): no duplicate ids
+  it('TEMPLATES has no duplicate ids', () => {
+    const ids = TEMPLATES.map((t) => t.id);
+    const uniqueIds = new Set(ids);
+    expect(uniqueIds.size).toBe(6);
+  });
+
+  // D-12 explicit: assert default_value is ALWAYS string, never number/Date/etc
+  it('all meta field default_values are strings (D-12 typed-field deferral)', () => {
     for (const t of TEMPLATES) {
-      expect(t.label.length).toBeGreaterThan(0);
-      expect(t.description?.length ?? 0).toBeGreaterThan(0);
+      for (const field of t.meta) {
+        expect(
+          typeof field.default_value === 'string',
+          `${t.id}.meta["${field.name}"].default_value must be string, got ${typeof field.default_value}`,
+        ).toBe(true);
+      }
     }
   });
 });
