@@ -3,11 +3,15 @@ import { useParams, useNavigate, Link, useLocation } from 'react-router-dom';
 import { useForm } from 'react-hook-form';
 import { zodResolver } from '@hookform/resolvers/zod';
 import { z } from 'zod';
+import * as DropdownMenu from '@radix-ui/react-dropdown-menu';
 import { useEntry, useCreateEntry, useUpdateEntry } from '../hooks/useEntries';
 import { useUniverse } from '../hooks/useUniverse';
 import { TagInput } from '../components/TagInput';
 import { MetaEditor } from '../components/MetaEditor';
 import { EntryCategoryPicker } from '../components/EntryCategoryPicker';
+import SaveAsTemplateDialog from '../components/SaveAsTemplateDialog';
+import { Toast } from '../components/Toast';
+import { metaArrayToRecord } from '../lib/entryTemplates';
 import type { Entry } from '../hooks/useEntries';
 import type { EntryTemplate } from '../lib/entryTemplates';
 
@@ -36,11 +40,14 @@ export function EntryEditor() {
   const [meta, setMeta] = useState<Record<string, string>>({});
   const [categoryId, setCategoryId] = useState<string | null>(null);
   const [metaValid, setMetaValid] = useState(true);
+  const [saveAsOpen, setSaveAsOpen] = useState(false);
+  const [toast, setToast] = useState<{ message: string; variant: 'success' | 'error' } | null>(null);
 
   const {
     register,
     handleSubmit,
     reset,
+    getValues,
     formState: { errors },
   } = useForm<EntryFormValues>({
     resolver: zodResolver(entryFormSchema),
@@ -80,7 +87,8 @@ export function EntryEditor() {
         body: template.body,
         icon: '',
       });
-      setMeta(template.meta);
+      // D-10: transform array meta blueprint to Record for the editor's state shape
+      setMeta(metaArrayToRecord(template.meta));
       setTags([]);
       setCategoryId(null);
     }
@@ -94,6 +102,12 @@ export function EntryEditor() {
   }
 
   const onSubmit = handleSubmit(async (values) => {
+    // D-16: read templateId from location.state and forward to POST /entries
+    // Treated as opaque — no shape parsing/branching
+    const stateTemplateId = (
+      location.state as { template?: EntryTemplate; templateId?: string } | null
+    )?.templateId ?? null;
+
     const payload = {
       title: values.title,
       entryType: values.entryType,
@@ -103,6 +117,7 @@ export function EntryEditor() {
       tags,
       meta,
       categoryId,
+      ...(stateTemplateId ? { templateId: stateTemplateId } : {}),
     };
 
     if (isEditMode) {
@@ -244,6 +259,45 @@ export function EntryEditor() {
           >
             {isEditMode ? 'Discard changes' : 'Cancel'}
           </Link>
+
+          {/* Kebab overflow menu — D-14 / UI-SPEC §B */}
+          <DropdownMenu.Root>
+            <DropdownMenu.Trigger asChild>
+              <button
+                type="button"
+                aria-label="Entry actions"
+                className="inline-flex items-center justify-center h-8 w-8 rounded-md text-neutral-500 dark:text-neutral-400 bg-transparent hover:text-neutral-900 dark:hover:text-neutral-100 hover:bg-neutral-100 dark:hover:bg-neutral-800 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-[color:var(--color-accent)] focus-visible:ring-offset-2 focus-visible:ring-offset-white dark:focus-visible:ring-offset-neutral-900 data-[state=open]:bg-neutral-100 dark:data-[state=open]:bg-neutral-800 data-[state=open]:text-neutral-900 dark:data-[state=open]:text-neutral-100"
+              >
+                <svg
+                  viewBox="0 0 16 16"
+                  width="16"
+                  height="16"
+                  fill="currentColor"
+                  aria-hidden="true"
+                  focusable="false"
+                >
+                  <circle cx="8" cy="3" r="1.5" />
+                  <circle cx="8" cy="8" r="1.5" />
+                  <circle cx="8" cy="13" r="1.5" />
+                </svg>
+              </button>
+            </DropdownMenu.Trigger>
+            <DropdownMenu.Portal>
+              <DropdownMenu.Content
+                align="end"
+                sideOffset={4}
+                className="min-w-[160px] rounded-md border border-neutral-200 dark:border-neutral-800 bg-white dark:bg-neutral-900 p-1 shadow-lg z-50 data-[state=open]:animate-popover-in data-[state=closed]:animate-popover-out"
+              >
+                <DropdownMenu.Item
+                  onSelect={() => setSaveAsOpen(true)}
+                  className="px-3 py-2 text-sm rounded-sm cursor-pointer outline-none data-[highlighted]:bg-neutral-100 dark:data-[highlighted]:bg-neutral-800"
+                >
+                  Save as template…
+                </DropdownMenu.Item>
+              </DropdownMenu.Content>
+            </DropdownMenu.Portal>
+          </DropdownMenu.Root>
+
           <button
             type="submit"
             disabled={isPending || !metaValid}
@@ -257,6 +311,33 @@ export function EntryEditor() {
           </button>
         </div>
       </form>
+
+      {/* Save-as-template dialog — D-15 */}
+      <SaveAsTemplateDialog
+        open={saveAsOpen}
+        onOpenChange={setSaveAsOpen}
+        entryType={getValues('entryType')}
+        captureSnapshot={() => ({
+          summary: getValues('summary'),
+          body: getValues('body'),
+          // D-15 write-path: Record<string,string> → Array<{name, default_value}>
+          // Object.entries is correct because meta is Record (NOT tuple array)
+          meta: Object.entries(meta).map(([name, default_value]) => ({ name, default_value })),
+        })}
+        onSuccess={() => setToast({ message: 'Template saved.', variant: 'success' })}
+        onGenericError={() =>
+          setToast({ message: "Couldn't save the template. Try again.", variant: 'error' })
+        }
+      />
+
+      {/* Toast notifications */}
+      {toast && (
+        <Toast
+          message={toast.message}
+          variant={toast.variant}
+          onDismiss={() => setToast(null)}
+        />
+      )}
     </div>
   );
 }
