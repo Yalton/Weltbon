@@ -304,6 +304,10 @@ export const templates = new OpenAPIHono<AppEnv>()
         .set({ name, updatedAt: new Date() })
         .where(and(eq(entryTemplates.id, id), eq(entryTemplates.userId, userId)))
         .returning();
+      if (!row) {
+        // TOCTOU: row deleted between pre-check SELECT and UPDATE (CR-02)
+        return c.json({ error: 'Template not found' }, 404);
+      }
       return c.json(toResponseShape(row), 200);
     } catch (e: unknown) {
       // Drizzle wraps the PG error: the '23505' code may be on the top-level
