@@ -1,5 +1,5 @@
 import { describe, it, expect, beforeEach, vi } from 'vitest';
-import { render, screen, waitFor } from '@testing-library/react';
+import { render, screen, waitFor, fireEvent } from '@testing-library/react';
 import userEvent from '@testing-library/user-event';
 import { MemoryRouter, Routes, Route } from 'react-router-dom';
 import { QueryClient, QueryClientProvider } from '@tanstack/react-query';
@@ -129,7 +129,7 @@ describe('EntryEditor category picker', () => {
 describe('EntryEditor template prefill (POL-04)', () => {
   beforeEach(() => vi.mocked(api).mockReset());
 
-  it('pre-fills entryType, body, and meta from location.state.template on mount', async () => {
+  it('pre-fills entryType, body, and meta from location.state.template on mount (D-10 array shape)', async () => {
     setupApi({
       universe: { entryTypes: ['location', 'character'] },
       categories: [],
@@ -139,12 +139,16 @@ describe('EntryEditor template prefill (POL-04)', () => {
     renderEditor({
       state: {
         template: {
-          id: 'location',
-          label: 'Location',
+          id: 'location-settlement',
+          label: 'Location-Settlement',
           entryType: 'location',
-          category: 'Setting',
+          summary: '',
           body: '## Geography\n\n## Population\n',
-          meta: { region: '', climate: '' },
+          // D-09/D-10: new array shape (metaArrayToRecord transforms on read path)
+          meta: [
+            { name: 'region', default_value: '' },
+            { name: 'climate', default_value: '' },
+          ],
         },
       },
     });
@@ -174,12 +178,13 @@ describe('EntryEditor template prefill (POL-04)', () => {
     renderEditor({
       state: {
         template: {
-          id: 'concept',
-          label: 'Concept',
+          id: 'character-detailed',
+          label: 'Character-Detailed',
           entryType: 'character',
-          category: 'Setting',
+          summary: '',
           body: '',
-          meta: { foo: 'a' },
+          // D-09/D-10: new array shape
+          meta: [{ name: 'foo', default_value: 'a' }],
         },
       },
     });
@@ -200,6 +205,165 @@ describe('EntryEditor template prefill (POL-04)', () => {
     // Save should now be disabled due to dup
     await waitFor(() => {
       expect(submitBtn.disabled).toBe(true);
+    });
+  });
+});
+
+describe('EntryEditor kebab + SaveAsTemplateDialog (28-06)', () => {
+  beforeEach(() => {
+    vi.mocked(api).mockReset();
+    // Reset body pointer-events left over from Radix Dialog/DismissableLayer in jsdom
+    document.body.style.removeProperty('pointer-events');
+    document.body.removeAttribute('data-scroll-locked');
+  });
+
+  it('renders the kebab "Entry actions" button in create mode', async () => {
+    setupApi({
+      universe: { entryTypes: ['entity'] },
+      categories: [],
+      createResponse: { id: 'new-id' },
+    });
+
+    renderEditor();
+
+    // The kebab button should be in the form actions row
+    await waitFor(() => {
+      expect(screen.getByRole('button', { name: 'Entry actions' })).toBeInTheDocument();
+    });
+  });
+
+  it('renders the kebab "Entry actions" button in edit mode', async () => {
+    vi.mocked(api).mockImplementation(async (path?: string) => {
+      if (!path) return undefined;
+      if (path === '/universes/U1') return { entryTypes: ['entity'] };
+      if (path.startsWith('/universes/U1/categories')) return { categories: [], uncategorizedCount: 0 };
+      if (path === '/universes/U1/entries/E1')
+        return {
+          id: 'E1',
+          title: 'My Hero',
+          entryType: 'entity',
+          summary: '',
+          body: '',
+          icon: '',
+          tags: [],
+          meta: {},
+          categoryId: null,
+        };
+      return undefined;
+    });
+
+    const qc = new QueryClient({
+      defaultOptions: { queries: { retry: false }, mutations: { retry: false } },
+    });
+    render(
+      <QueryClientProvider client={qc}>
+        <MemoryRouter initialEntries={['/universes/U1/entries/E1/edit']}>
+          <Routes>
+            <Route path="/universes/:uid/entries/:entryId/edit" element={<EntryEditor />} />
+            <Route path="/universes/:uid/entries/:entryId" element={<div>Entry detail</div>} />
+          </Routes>
+        </MemoryRouter>
+      </QueryClientProvider>,
+    );
+
+    await waitFor(() => {
+      expect(screen.getByRole('button', { name: 'Entry actions' })).toBeInTheDocument();
+    });
+  });
+
+  it('opens SaveAsTemplateDialog when "Save as template…" is clicked in the dropdown', async () => {
+    setupApi({
+      universe: { entryTypes: ['entity'] },
+      categories: [],
+      createResponse: { id: 'new-id' },
+    });
+
+    renderEditor();
+
+    await waitFor(() => {
+      expect(screen.getByRole('button', { name: 'Entry actions' })).toBeInTheDocument();
+    });
+
+    // Click kebab
+    await userEvent.click(screen.getByRole('button', { name: 'Entry actions' }));
+
+    // Menu item "Save as template…" should appear
+    await waitFor(() => {
+      expect(screen.getByText('Save as template…')).toBeInTheDocument();
+    });
+
+    // Click the menu item
+    await userEvent.click(screen.getByText('Save as template…'));
+
+    // The dialog should now be open (dialog title visible)
+    await waitFor(() => {
+      expect(screen.getByRole('heading', { name: 'Save as template' })).toBeInTheDocument();
+    });
+
+    // Close the dialog to avoid pointer-events leaking into next tests
+    await userEvent.click(screen.getByRole('button', { name: 'Cancel' }));
+    await waitFor(() => {
+      expect(screen.queryByRole('heading', { name: 'Save as template' })).not.toBeInTheDocument();
+    });
+  });
+
+  it('forwards templateId from location.state into POST /entries payload (D-16)', async () => {
+    setupApi({
+      universe: { entryTypes: ['entity'] },
+      categories: [],
+      createResponse: { id: 'new-id' },
+    });
+
+    renderEditor({
+      state: {
+        templateId: 'tmpl-uuid-123',
+      },
+    });
+
+    const user = userEvent.setup({ pointerEventsCheck: 0 });
+
+    await user.type(await screen.findByLabelText(/title/i), 'My Hero');
+    const typeSelect = screen.getByLabelText(/type/i) as HTMLSelectElement;
+    await user.selectOptions(typeSelect, 'entity');
+
+    await user.click(screen.getByRole('button', { name: /create entry/i }));
+
+    await waitFor(() => {
+      const calls = vi.mocked(api).mock.calls;
+      const createCall = calls.find(([path, init]) =>
+        path === '/universes/U1/entries' && (init as RequestInit)?.method === 'POST',
+      );
+      expect(createCall).toBeDefined();
+      const body = JSON.parse((createCall![1] as RequestInit).body as string);
+      expect(body.templateId).toBe('tmpl-uuid-123');
+    });
+  });
+
+  it('does NOT include templateId in POST /entries when location.state has no templateId', async () => {
+    setupApi({
+      universe: { entryTypes: ['entity'] },
+      categories: [],
+      createResponse: { id: 'new-id' },
+    });
+
+    renderEditor();
+
+    const user = userEvent.setup({ pointerEventsCheck: 0 });
+
+    await user.type(await screen.findByLabelText(/title/i), 'My Hero');
+    const typeSelect = screen.getByLabelText(/type/i) as HTMLSelectElement;
+    await user.selectOptions(typeSelect, 'entity');
+
+    await user.click(screen.getByRole('button', { name: /create entry/i }));
+
+    await waitFor(() => {
+      const calls = vi.mocked(api).mock.calls;
+      const createCall = calls.find(([path, init]) =>
+        path === '/universes/U1/entries' && (init as RequestInit)?.method === 'POST',
+      );
+      expect(createCall).toBeDefined();
+      const body = JSON.parse((createCall![1] as RequestInit).body as string);
+      expect(body.templateId).toBeUndefined();
     });
   });
 });
