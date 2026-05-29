@@ -1,4 +1,4 @@
-import { useState, useEffect } from 'react';
+import { useState, useEffect, useRef } from 'react';
 import { useParams, useNavigate, Link, useLocation } from 'react-router-dom';
 import { useForm } from 'react-hook-form';
 import { zodResolver } from '@hookform/resolvers/zod';
@@ -42,6 +42,11 @@ export function EntryEditor() {
   const [metaValid, setMetaValid] = useState(true);
   const [saveAsOpen, setSaveAsOpen] = useState(false);
   const [toast, setToast] = useState<{ message: string; variant: 'success' | 'error' } | null>(null);
+  // CR-03: gate the create-mode template prefill so it runs at most once per
+  // navigation. Without this, every refetch of `universe` (window focus,
+  // stale-time expiry) re-runs the prefill effect and silently wipes any
+  // content the user has typed into the form.
+  const prefilledRef = useRef(false);
 
   const {
     register,
@@ -75,27 +80,31 @@ export function EntryEditor() {
       setCategoryId(existingEntry.categoryId ?? null);
       return;
     }
-    // Create mode: optionally pre-fill from template state passed via
-    // location.state (set by TemplatePicker on /entries/new navigation).
-    const template = (location.state as { template?: EntryTemplate } | null)
-      ?.template;
-    if (template) {
-      reset({
-        title: '',
-        entryType: template.entryType,
-        summary: '',
-        body: template.body,
-        icon: '',
-      });
-      // D-10: transform array meta blueprint to Record for the editor's state shape
-      setMeta(metaArrayToRecord(template.meta));
-      setTags([]);
-      setCategoryId(null);
+    // Create mode: prefill from location.state.template ONCE per navigation.
+    // CR-03 fix — prefilledRef gates re-runs so a TanStack Query refetch of
+    // `universe` (window focus, stale-time expiry) does NOT silently wipe
+    // the user's typed content. Per D-07 entryType is a freeform string and
+    // the native <select> retains its DOM value across re-renders even when
+    // options mount later, so dropping the entry-types reference from deps is safe.
+    if (!prefilledRef.current) {
+      const template = (location.state as { template?: EntryTemplate } | null)
+        ?.template;
+      if (template) {
+        reset({
+          title: '',
+          entryType: template.entryType,
+          summary: '',
+          body: template.body,
+          icon: '',
+        });
+        // D-10: transform array meta blueprint to Record for the editor's state shape
+        setMeta(metaArrayToRecord(template.meta));
+        setTags([]);
+        setCategoryId(null);
+      }
+      prefilledRef.current = true;
     }
-    // No template state: useForm() defaultValues apply (empty form).
-    // Note: depending on universe?.entryTypes too so the native <select>
-    // value is re-applied once options are mounted (race avoidance).
-  }, [isEditMode, existingEntry, reset, location.state, universe?.entryTypes]);
+  }, [isEditMode, existingEntry, reset, location.state]);
 
   if (isEditMode && entryLoading) {
     return <p className="text-sm text-neutral-500">Loading...</p>;
