@@ -83,10 +83,12 @@ export function EntryEditor() {
     // Create mode: prefill from location.state.template ONCE per navigation.
     // CR-03 fix — prefilledRef gates re-runs so a TanStack Query refetch of
     // `universe` (window focus, stale-time expiry) does NOT silently wipe
-    // the user's typed content. Per D-07 entryType is a freeform string and
-    // the native <select> retains its DOM value across re-renders even when
-    // options mount later, so dropping the entry-types reference from deps is safe.
-    if (!prefilledRef.current) {
+    // the user's typed content. `universe?.entryTypes` stays in the deps so the
+    // effect re-fires once universe loads — the entryType <select>'s options
+    // must be mounted before react-hook-form's reset() can apply the templated
+    // value to the DOM; the ref-guard then makes every subsequent refetch a
+    // no-op so user-typed content is preserved.
+    if (!prefilledRef.current && universe?.entryTypes) {
       const template = (location.state as { template?: EntryTemplate } | null)
         ?.template;
       if (template) {
@@ -104,7 +106,7 @@ export function EntryEditor() {
       }
       prefilledRef.current = true;
     }
-  }, [isEditMode, existingEntry, reset, location.state]);
+  }, [isEditMode, existingEntry, reset, location.state, universe?.entryTypes]);
 
   if (isEditMode && entryLoading) {
     return <p className="text-sm text-neutral-500">Loading...</p>;
