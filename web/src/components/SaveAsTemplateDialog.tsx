@@ -4,7 +4,7 @@ import { useForm } from 'react-hook-form';
 import { zodResolver } from '@hookform/resolvers/zod';
 import { z } from 'zod';
 import { useCreateTemplate } from '../hooks/useTemplates';
-import { ApiError } from '../api/client';
+import { ApiError, UnauthenticatedError } from '../api/client';
 
 const schema = z.object({
   name: z.string().trim().min(1, 'Name is required.').max(80, 'Name can be at most 80 characters.'),
@@ -68,6 +68,10 @@ export function SaveAsTemplateDialog({
       onSuccess?.();
       onOpenChange(false);
     } catch (err) {
+      // WR-05: let the app-level handler redirect on a stale-session mutation.
+      // Without this re-throw, the user sees a generic "couldn't save" toast and
+      // keeps clicking Save indefinitely; the actual cause is a logged-out session.
+      if (err instanceof UnauthenticatedError) throw err;
       if (err instanceof ApiError && err.status === 409) {
         setCollisionError(err.message);
         setFocus('name');

@@ -15,7 +15,7 @@
  */
 
 import { useMutation, useQuery, useQueryClient } from '@tanstack/react-query';
-import { api } from '../api/client';
+import { api, ApiError } from '../api/client';
 import { getTemplate, type EntryTemplateMetaField } from '../lib/entryTemplates';
 
 /**
@@ -118,9 +118,12 @@ export function useDeleteTemplate() {
     onSuccess: () => {
       qc.invalidateQueries({ queryKey: ['templates'] });
     },
-    onError: () => {
-      // 404 race — silently invalidate, the row will disappear on refresh.
-      qc.invalidateQueries({ queryKey: ['templates'] });
+    onError: (err) => {
+      if (err instanceof ApiError && err.status === 404) {
+        // 404 race — silently invalidate, the row will disappear on refresh.
+        qc.invalidateQueries({ queryKey: ['templates'] });
+      }
+      // else: propagate; the caller's try/catch handles the toast
     },
   });
 }
