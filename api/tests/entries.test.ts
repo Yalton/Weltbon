@@ -3,6 +3,8 @@ import { createApp } from '../src/index.js';
 import { createTestDb, cleanDb, createTestUser, authHeader, type TestDbHandle } from './helpers.js';
 import { issueAccessToken } from '../src/services/auth.js';
 import { setTestDb } from '../src/db/client.js';
+import { eq, and } from 'drizzle-orm';
+import { entryTemplates } from '../src/db/schema.js';
 
 describe('entry routes (ENT-01..06)', () => {
   let handle: TestDbHandle;
@@ -608,6 +610,171 @@ describe('entry routes (ENT-01..06)', () => {
       const resB = await req('GET', `/universes/${universe.id}/entries/${entryB.id}`, { headers: hdrs });
       const detailB = await json(resB);
       expect(detailB.issues).toEqual([]);
+    });
+  });
+
+  // ─── D-16: POST /entries — template last_used_at stamping ───────────────────
+
+  describe('POST /universes/:universeId/entries — template last_used_at stamping (D-16)', () => {
+    // Shared helpers scoped to this describe block
+    async function insertTemplate(
+      handle: TestDbHandle,
+      userId: string,
+      overrides: Partial<{
+        name: string;
+        entryType: string;
+        lastUsedAt: Date | null;
+      }> = {}
+    ) {
+      const [row] = await handle.db
+        .insert(entryTemplates)
+        .values({
+          userId,
+          name: overrides.name ?? 'Test Template',
+          entryType: overrides.entryType ?? 'entity',
+          summary: '',
+          body: '',
+          meta: [],
+          lastUsedAt: overrides.lastUsedAt ?? null,
+        })
+        .returning();
+      return row;
+    }
+
+    // Test 1 — stamp happens: templateId in body → last_used_at is set
+    it('stamps last_used_at on the template when entry is created with templateId', async () => {
+      const { user, hdrs } = await userWithToken('d16-stamp@test.com');
+      const universe = await createUniverse(hdrs);
+
+      // Insert template with lastUsedAt null
+      const tmpl = await insertTemplate(handle, user.id);
+      expect(tmpl.lastUsedAt).toBeNull();
+
+      const res = await req('POST', `/universes/${universe.id}/entries`, {
+        headers: hdrs,
+        body: {
+          title: 'Hero Character',
+          entryType: 'entity',
+          templateId: tmpl.id,
+        },
+      });
+      expect(res.status).toBe(201);
+
+      // Re-SELECT the template row and assert last_used_at was stamped
+      const [updated] = await handle.db
+        .select()
+        .from(entryTemplates)
+        .where(eq(entryTemplates.id, tmpl.id));
+      expect(updated.lastUsedAt).not.toBeNull();
+      expect(Date.now() - updated.lastUsedAt!.getTime()).toBeLessThan(5000);
+    });
+
+    // Test 2 — no templateId → no-op on existing templates
+    it('does not modify any template last_used_at when entry is created without templateId', async () => {
+      const { user, hdrs } = await userWithToken('d16-noop@test.com');
+      const universe = await createUniverse(hdrs);
+
+      // Pre-existing template with lastUsedAt null
+      const tmpl = await insertTemplate(handle, user.id, { name: 'Existing Template' });
+
+      const res = await req('POST', `/universes/${universe.id}/entries`, {
+        headers: hdrs,
+        body: {
+          title: 'Blank Entry',
+          entryType: 'entity',
+          // no templateId
+        },
+      });
+      expect(res.status).toBe(201);
+
+      // Template should still have lastUsedAt null
+      const [unchanged] = await handle.db
+        .select()
+        .from(entryTemplates)
+        .where(eq(entryTemplates.id, tmpl.id));
+      expect(unchanged.lastUsedAt).toBeNull();
+    });
+
+    // Test 3 — foreign templateId → entry created, but no stamp on other user's template
+    it('creates the entry but does not stamp a template owned by another user (foreign templateId)', async () => {
+      const userA = await userWithToken('d16-owner@test.com');
+      const userB = await userWithToken('d16-thief@test.com');
+
+      // User A creates a universe and a template
+      const universeA = await createUniverse(userA.hdrs, 'World A');
+      // User B creates their own universe to post an entry into
+      const universeB = await createUniverse(userB.hdrs, 'World B');
+
+      const tmplA = await insertTemplate(handle, userA.user.id, { name: 'Template A' });
+      expect(tmplA.lastUsedAt).toBeNull();
+
+      // User B POSTs an entry with user A's templateId
+      const res = await req('POST', `/universes/${universeB.id}/entries`, {
+        headers: userB.hdrs,
+        body: {
+          title: 'B Entry using A template',
+          entryType: 'entity',
+          templateId: tmplA.id,  // foreign templateId
+        },
+      });
+      // Entry must still be created (best-effort — D-16)
+      expect(res.status).toBe(201);
+
+      // User A's template must NOT have been stamped (ownership WHERE returned 0 rows)
+      const [row] = await handle.db
+        .select()
+        .from(entryTemplates)
+        .where(eq(entryTemplates.id, tmplA.id));
+      expect(row.lastUsedAt).toBeNull();
+    });
+
+    // Test 4 — deleted template between picker and create → no throw, entry still created
+    it('creates the entry and does not throw when templateId references a deleted template', async () => {
+      const { user, hdrs } = await userWithToken('d16-stale@test.com');
+      const universe = await createUniverse(hdrs);
+
+      // Insert then delete the template
+      const tmpl = await insertTemplate(handle, user.id, { name: 'Stale Template' });
+      await handle.db
+        .delete(entryTemplates)
+        .where(eq(entryTemplates.id, tmpl.id));
+
+      // POST entry with the now-stale templateId — must return 201 (silent try/catch per D-16)
+      const res = await req('POST', `/universes/${universe.id}/entries`, {
+        headers: hdrs,
+        body: {
+          title: 'Entry with stale template',
+          entryType: 'entity',
+          templateId: tmpl.id,
+        },
+      });
+      expect(res.status).toBe(201);
+      const entry = await json(res);
+      expect(entry.title).toBe('Entry with stale template');
+    });
+
+    // Test 5 — regression: existing non-template create flow still returns 201
+    it('existing entry-create flow (no templateId) is unchanged', async () => {
+      const { hdrs } = await userWithToken('d16-regression@test.com');
+      const universe = await createUniverse(hdrs);
+
+      const res = await req('POST', `/universes/${universe.id}/entries`, {
+        headers: hdrs,
+        body: {
+          title: 'Regression Entry',
+          entryType: 'concept',
+          summary: 'still works',
+          body: 'body text',
+          tags: ['tag1'],
+          meta: { key: 'value' },
+          icon: '🔥',
+        },
+      });
+      expect(res.status).toBe(201);
+      const entry = await json(res);
+      expect(entry.title).toBe('Regression Entry');
+      expect(entry.summary).toBe('still works');
+      expect(entry.tags).toEqual(['tag1']);
     });
   });
 });
