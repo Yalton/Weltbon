@@ -107,6 +107,37 @@ export const inviteCodesRelations = relations(inviteCodes, ({ one }) => ({
   consumedBy:  one(users, { fields: [inviteCodes.consumedByUserId], references: [users.id], relationName: 'invite_consumer' }),
 }));
 
+/**
+ * Phase 28 TEMPLATES-01/03: Per-user entry templates.
+ *
+ * - Templates are user-scoped (no universe_id per D-05); they travel with the author
+ *   across all universes.
+ * - `meta` stores an ordered array of `{name, default_value}` blueprint fields as JSONB
+ *   (D-09 — array shape, NOT Record). Contrast with `entries.meta` which is `{}` (Record shape).
+ * - `cloned_from` is a nullable text field (NOT a FK) referencing an in-tree default
+ *   template id string (D-02). Enables future "reset to default" without a schema change.
+ * - `last_used_at` is stamped when the template scaffolds a real entry create (D-16).
+ * - UNIQUE(user_id, entry_type, name) enforces per-user, per-type name uniqueness (D-04).
+ *   The constraint name `entry_templates_user_id_entry_type_name_unique` is load-bearing
+ *   for the 23505 catch in the /templates router.
+ * - No per-user hide list column per D-03 — defaults always render in the picker.
+ */
+export const entryTemplates = pgTable('entry_templates', {
+  id:          uuid('id').primaryKey().defaultRandom(),
+  userId:      uuid('user_id').references(() => users.id, { onDelete: 'cascade' }).notNull(),
+  name:        text('name').notNull(),
+  entryType:   text('entry_type').notNull(),
+  summary:     text('summary').default('').notNull(),
+  body:        text('body').default('').notNull(),
+  meta:        jsonb('meta').default([]).notNull(),     // D-09 — ordered array [{name, default_value}]
+  clonedFrom:  text('cloned_from'),                     // D-02 — nullable; references in-tree default id string (NOT a FK)
+  lastUsedAt:  timestamp('last_used_at', { withTimezone: true }),
+  createdAt:   timestamp('created_at', { withTimezone: true }).defaultNow().notNull(),
+  updatedAt:   timestamp('updated_at', { withTimezone: true }).defaultNow().notNull(),
+}, (t) => ({
+  userTypeNameUnique: unique('entry_templates_user_id_entry_type_name_unique').on(t.userId, t.entryType, t.name),  // D-04
+}));
+
 export const categories = pgTable('categories', {
   id:         uuid('id').primaryKey().defaultRandom(),
   universeId: uuid('universe_id').references(() => universes.id, { onDelete: 'cascade' }).notNull(),
