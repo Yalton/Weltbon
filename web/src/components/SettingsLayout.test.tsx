@@ -39,20 +39,22 @@ describe('SettingsLayout', () => {
     expect(nav.tagName).toBe('NAV');
   });
 
-  it('renders four NavLinks: "Visual", "API tokens", "Invite codes", "LLM keys"', () => {
+  it('renders five NavLinks: "Visual", "API tokens", "Invite codes", "Templates", "LLM keys"', () => {
     renderAt('/settings');
     const visual = screen.getByRole('link', { name: 'Visual' });
     const apiTokens = screen.getByRole('link', { name: 'API tokens' });
     const inviteCodes = screen.getByRole('link', { name: 'Invite codes' });
+    const templates = screen.getByRole('link', { name: 'Templates' });
     const llmKeys = screen.getByRole('link', { name: 'LLM keys' });
 
     expect(visual.getAttribute('href')).toBe('/settings');
     expect(apiTokens.getAttribute('href')).toBe('/settings/tokens');
     expect(inviteCodes.getAttribute('href')).toBe('/settings/invites');
+    expect(templates.getAttribute('href')).toBe('/settings/templates');
     expect(llmKeys.getAttribute('href')).toBe('/settings/llm');
 
     const nav = screen.getByRole('navigation', { name: 'Settings sections' });
-    expect(nav.querySelectorAll('a').length).toBe(4);
+    expect(nav.querySelectorAll('a').length).toBe(5);
   });
 
   it('applies active classes to the "Visual" link when route is /settings', () => {
