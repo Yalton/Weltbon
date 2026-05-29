@@ -94,11 +94,18 @@ export function TemplatePicker({
               </h3>
               <div className="grid grid-cols-2 gap-3">
                 {TEMPLATES.map((t) => (
-                  <button
+                  <div
                     key={t.id}
-                    type="button"
+                    role="button"
+                    tabIndex={0}
                     onClick={() => handleSelectDefault(t)}
-                    className="group relative text-left rounded-md border border-neutral-200 dark:border-neutral-800 p-3 hover:border-[color:var(--color-accent)] transition-colors"
+                    onKeyDown={(e) => {
+                      if (e.key === 'Enter' || e.key === ' ') {
+                        e.preventDefault();
+                        handleSelectDefault(t);
+                      }
+                    }}
+                    className="group relative text-left rounded-md border border-neutral-200 dark:border-neutral-800 p-3 hover:border-[color:var(--color-accent)] transition-colors cursor-pointer"
                   >
                     {/* Card header row: label + Default badge */}
                     <div className="flex items-start justify-between gap-2">
@@ -120,7 +127,7 @@ export function TemplatePicker({
                         Clone to personal
                       </button>
                     </div>
-                  </button>
+                  </div>
                 ))}
               </div>
 

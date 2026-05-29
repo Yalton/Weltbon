@@ -302,6 +302,36 @@ describe('routes/templates', () => {
       });
       expect(res.status).toBe(404);
     });
+
+    // CR-02 regression — pre-fix this case returned 200 (success) or 500 (crash) intermittently;
+    // post-fix returns 404 unconditionally. The TOCTOU race itself (DELETE between pre-check and UPDATE)
+    // cannot be reproduced without invasive test hooks; the `if (!row)` guard at templates.ts
+    // is the post-fix safety net for that race — verified by the grep gate in 28-08-PLAN.md Task 2 <verify>.
+    it('returns 404 when the row is deleted between pre-check and update (TOCTOU race)', async () => {
+      const { jwt } = await createUserAndJwt('put-toctou@test.com');
+
+      // Create a template
+      const created = await appRequest('POST', '/api/templates', {
+        body: { name: 'Original', entryType: 'entity', summary: '', body: '', meta: [] },
+        headers: { Authorization: `Bearer ${jwt}` },
+      });
+      expect(created.status).toBe(201);
+      const id = created.body.id as string;
+
+      // Out-of-band delete simulates the post-pre-check, pre-update DELETE in the TOCTOU race
+      const del = await appRequest('DELETE', `/api/templates/${id}`, {
+        headers: { Authorization: `Bearer ${jwt}` },
+      });
+      expect(del.status).toBe(204);
+
+      // PUT against the now-deleted id must return 404 (not 500)
+      const res = await appRequest('PUT', `/api/templates/${id}`, {
+        body: { name: 'Renamed' },
+        headers: { Authorization: `Bearer ${jwt}` },
+      });
+      expect(res.status).toBe(404);
+      expect(res.body.error).toBe('Template not found');
+    });
   });
 
   // ─── DELETE /templates/:id ────────────────────────────────────────────────
