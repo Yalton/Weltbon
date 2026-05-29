@@ -321,6 +321,12 @@ export default function Templates() {
                         <DropdownMenu.Content
                           align="end"
                           sideOffset={4}
+                          // FU-01: Radix restores focus to the kebab trigger on close, which
+                          // immediately fires onBlur={cancelRename} on the inline rename input
+                          // that just mounted — flashing the input invisibly. Suppress the
+                          // auto-restore so the input keeps focus until the user explicitly
+                          // cancels (Esc or click-away).
+                          onCloseAutoFocus={(e) => e.preventDefault()}
                           className="min-w-[160px] rounded-md border border-neutral-200 dark:border-neutral-800 bg-white dark:bg-neutral-900 p-1 shadow-lg z-50 data-[state=open]:animate-popover-in data-[state=closed]:animate-popover-out"
                         >
                           <DropdownMenu.Item
