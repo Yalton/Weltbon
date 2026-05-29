@@ -92,6 +92,13 @@
       "when": 1780000000000,
       "tag": "0012_phase27_audit_runs_cost_unknown",
       "breakpoints": true
+    },
+    {
+      "idx": 13,
+      "version": "7",
+      "when": 1780100000000,
+      "tag": "0013_phase28_entry_templates",
+      "breakpoints": true
     }
   ]
 }
