@@ -5,7 +5,11 @@ import { QueryClient, QueryClientProvider, MutationCache } from '@tanstack/react
 import type { ReactNode } from 'react';
 import { SaveAsTemplateDialog } from './SaveAsTemplateDialog';
 
-// Mock the api client (useCreateTemplate relies on it)
+// Mock the api client (useCreateTemplate relies on it).
+// SaveAsTemplateDialog also imports UnauthenticatedError (WR-05 re-throw
+// path); the mock must export it, otherwise the dialog's `err instanceof
+// UnauthenticatedError` check throws a TypeError that short-circuits the
+// 409/generic catch branches.
 vi.mock('../api/client', () => ({
   api: vi.fn(),
   ApiError: class ApiError extends Error {
@@ -17,6 +21,9 @@ vi.mock('../api/client', () => ({
       this.status = status;
       this.body = body;
     }
+  },
+  UnauthenticatedError: class UnauthenticatedError extends Error {
+    constructor() { super('Not authenticated'); this.name = 'UnauthenticatedError'; }
   },
 }));
 
