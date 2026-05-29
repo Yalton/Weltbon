@@ -2,7 +2,7 @@ import { OpenAPIHono, createRoute, z } from '@hono/zod-openapi';
 import { and, eq, desc, isNull, sql, arrayContains, type SQL } from 'drizzle-orm';
 import { HTTPException } from 'hono/http-exception';
 import { db } from '../db/client.js';
-import { entries, links, categories, issues, issueEntries } from '../db/schema.js';
+import { entries, links, categories, issues, issueEntries, entryTemplates } from '../db/schema.js';
 import { requireUniverse } from '../utils/ownership.js';
 import type { AuthVariables } from '../middleware/auth.js';
 
@@ -24,6 +24,7 @@ const createEntrySchema = z.object({
   meta: z.record(z.string(), z.unknown()).optional().default({}),
   icon: z.string().max(10).optional().default(''),
   categoryId: z.string().uuid().nullable().optional(),
+  templateId: z.string().uuid().nullable().optional(),   // D-16 — optional best-effort stamp target
 });
 
 const patchEntrySchema = z.object({
@@ -381,6 +382,20 @@ export const entryRoutes = new OpenAPIHono<AppEnv>()
         categoryId: data.categoryId ?? null,
       })
       .returning();
+
+    // D-16: best-effort last_used_at stamp on the referenced template.
+    // Runs AFTER the entry insert resolves, in its own implicit autocommit.
+    // Failure does NOT roll back the entry create — the entry is the source of truth.
+    if (data.templateId) {
+      try {
+        await db()
+          .update(entryTemplates)
+          .set({ lastUsedAt: new Date() })
+          .where(and(eq(entryTemplates.id, data.templateId), eq(entryTemplates.userId, userId)));
+      } catch {
+        // D-16 — silent: the entry is the source of truth; last_used_at is observability metadata.
+      }
+    }
 
     return c.json(created as any, 201);
   })
