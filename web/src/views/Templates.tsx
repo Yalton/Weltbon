@@ -331,9 +331,20 @@ export default function Templates() {
                         >
                           <DropdownMenu.Item
                             onSelect={() => {
-                              setRenameTargetId(t.id);
-                              setRenameDraft(t.name);
-                              setRenameError(null);
+                              // FU-01: defer the state update by one animation frame so
+                              // Radix finishes its menu-close + focus-dance before the
+                              // inline <input> mounts. Without the defer, Radix briefly
+                              // focuses the just-selected menu item AFTER our autoFocus,
+                              // blurring the input → onBlur={cancelRename} fires →
+                              // renameTargetId resets → the input unmounts before the
+                              // user sees it. Plain console.log traces confirm the
+                              // input mounts (isEditing: true) then immediately unmounts
+                              // (isEditing: false) inside a single click.
+                              requestAnimationFrame(() => {
+                                setRenameTargetId(t.id);
+                                setRenameDraft(t.name);
+                                setRenameError(null);
+                              });
                             }}
                             className="px-3 py-2 text-sm rounded-sm cursor-pointer outline-none data-[highlighted]:bg-neutral-100 dark:data-[highlighted]:bg-neutral-800"
                           >
