@@ -18,6 +18,7 @@ import { SettingsLayout } from './components/SettingsLayout';
 import Tokens from './views/Tokens';
 import Invites from './views/Invites';
 import LlmKeys from './views/LlmKeys';
+import Templates from './views/Templates';
 
 export default function App() {
   return (
@@ -35,6 +36,7 @@ export default function App() {
             <Route index element={<Settings />} />
             <Route path="tokens" element={<Tokens />} />
             <Route path="invites" element={<Invites />} />
+            <Route path="templates" element={<Templates />} />
             <Route path="llm" element={<LlmKeys />} />
           </Route>
         </Route>
