@@ -1,5 +1,5 @@
 import { useMutation, useQuery, useQueryClient } from '@tanstack/react-query';
-import { api } from '../api/client';
+import { api, getShareToken } from '../api/client';
 
 export interface Category {
   id: string;
@@ -17,14 +17,21 @@ export interface CategoryListResponse {
 /**
  * TanStack Query hook for the universe-scoped category list.
  *
- * Keyed on ['categories', universeId] so mutations on categories (Plan 07
- * drag-to-reorder, create/rename) can invalidate precisely.
+ * Keyed on ['categories', universeId, shareToken] so mutations on categories
+ * (Plan 07 drag-to-reorder, create/rename) can invalidate precisely, AND so
+ * a transient null-token (StrictMode clear) cache entry cannot be read back as
+ * the ready-token result. See Gap 1 race fix (half b) in 29-08-PLAN.md.
+ * In authenticated mode shareToken is the stable constant null, so the owner
+ * cache key ['categories', universeId, null] is behaviorally unchanged.
  */
 export function useCategories(universeId: string) {
+  // HALF (b) — share-token-keyed cache + enabled gate (Gap 1 race fix):
+  const shareToken = getShareToken();
+  const shareMode = shareToken !== null;
   return useQuery({
-    queryKey: ['categories', universeId],
+    queryKey: ['categories', universeId, shareToken],
     queryFn: () => api<CategoryListResponse>(`/universes/${universeId}/categories`),
-    enabled: !!universeId,
+    enabled: !!universeId && (!shareMode || shareToken !== null),
   });
 }
 

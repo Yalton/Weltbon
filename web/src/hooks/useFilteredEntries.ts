@@ -1,5 +1,5 @@
 import { useQuery } from '@tanstack/react-query';
-import { api } from '../api/client';
+import { api, getShareToken } from '../api/client';
 import type { Entry } from './useEntries';
 import type { EntryFilters } from './useFilterParams';
 
@@ -29,10 +29,22 @@ export function buildEntriesQueryString(f: EntryFilters): string {
  * identifies the filtered branch distinctly from the bare list).
  */
 export function useFilteredEntries(universeId: string, filters: EntryFilters) {
+  // HALF (b) — share-token-keyed cache + enabled gate (Gap 1 race fix):
+  // Read the share token at hook-call time from the module seam (not via
+  // useShareMode, which is a React context that doesn't track the module-level
+  // shareTokenPlaintext used by the api seam). In authenticated mode
+  // shareToken is the stable constant null, so the owner cache key is
+  // behaviorally unchanged. In share mode the token becomes part of the key so
+  // a null-token (transient StrictMode clear) and a ready-token attempt occupy
+  // DISTINCT cache slots — a cached null-token 404 can never be read back as
+  // the ready-token result. The enabled guard withholds the query in share mode
+  // until the token is present, eliminating the null-token fetch window.
+  const shareToken = getShareToken();
+  const shareMode = shareToken !== null;
   return useQuery({
-    queryKey: ['entries', universeId, filters],
+    queryKey: ['entries', universeId, filters, shareToken],
     queryFn: () =>
       api<Entry[]>(`/universes/${universeId}/entries${buildEntriesQueryString(filters)}`),
-    enabled: !!universeId,
+    enabled: !!universeId && (!shareMode || shareToken !== null),
   });
 }
