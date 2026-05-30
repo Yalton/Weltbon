@@ -15,6 +15,7 @@ import {
   useResetGraphLayout,
 } from '../hooks/useGraphPositions';
 import { neighborhood } from '../lib/neighborhood';
+import { useShareMode } from '../contexts/ShareModeContext';
 
 const SUBGRAPH_THRESHOLD = 300;
 
@@ -69,7 +70,14 @@ function lookupExistingLabel(
  *  - canvas-level Esc handler gated on dragSourceId === null (UI-SPEC §G)
  */
 export function GraphView() {
-  const { uid } = useParams<{ uid: string }>();
+  // Phase 29 — share-mode awareness. In share mode the route is
+  // `/share/:token/graph` (no `uid` param); substitute the literal 'share'
+  // so the existing useGraphData(universeId) hook builds a path the
+  // api-client seam can translate to /api/share/graph-data. The `token`
+  // param drives navigation back into the share subtree on node click.
+  const { uid: paramUid, token } = useParams<{ uid: string; token: string }>();
+  const isShareMode = useShareMode();
+  const uid = paramUid ?? (isShareMode ? 'share' : undefined);
   const navigate = useNavigate();
   const universeId = uid ?? '';
 
@@ -163,15 +171,22 @@ export function GraphView() {
     return (
       <EmptyState
         title="The graph draws itself once entries exist"
-        body="Create entries and link them — relationships show up here automatically."
+        body={
+          isShareMode
+            ? 'There are no public entries to graph in this universe yet.'
+            : 'Create entries and link them — relationships show up here automatically.'
+        }
         action={
-          <button
-            type="button"
-            onClick={() => navigate(`/universes/${universeId}/entries`)}
-            className="bg-[color:var(--color-accent)] text-white text-sm font-medium px-4 py-2 rounded-md hover:opacity-90 focus:outline-none focus:ring-2 focus:ring-[color:var(--color-accent)] focus:ring-offset-2"
-          >
-            New entry
-          </button>
+          // Phase 29 D-18 — no "New entry" CTA for visitors.
+          !isShareMode ? (
+            <button
+              type="button"
+              onClick={() => navigate(`/universes/${universeId}/entries`)}
+              className="bg-[color:var(--color-accent)] text-white text-sm font-medium px-4 py-2 rounded-md hover:opacity-90 focus:outline-none focus:ring-2 focus:ring-[color:var(--color-accent)] focus:ring-offset-2"
+            >
+              New entry
+            </button>
+          ) : undefined
         }
       />
     );
@@ -228,34 +243,45 @@ export function GraphView() {
           {data.edges.length === 1 ? 'link' : 'links'}
         </div>
         <div className="pointer-events-auto flex items-center gap-2">
-          <button
-            type="button"
-            onClick={() => setEditMode((v) => !v)}
-            aria-pressed={editMode}
-            aria-label={editMode ? 'Exit edit mode' : 'Enter edit mode'}
-            title={
-              editMode
-                ? 'Press Esc to exit edit mode'
-                : 'Drag between entries to create a link'
-            }
-            className={[
-              'rounded-md px-3 py-1.5 text-sm shadow-sm transition-colors',
-              'focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-[color:var(--color-accent)] focus-visible:ring-offset-2 focus-visible:ring-offset-white dark:focus-visible:ring-offset-neutral-900',
-              editMode
-                ? 'border border-[color:var(--color-accent)] bg-[color:var(--color-accent-soft)] text-[color:var(--color-accent)]'
-                : 'border border-neutral-300 bg-white/80 hover:bg-white dark:border-neutral-700 dark:bg-neutral-900/80 dark:text-neutral-100 dark:hover:bg-neutral-900',
-            ].join(' ')}
-          >
-            {editMode ? 'Editing' : 'Edit'}
-          </button>
-          <button
-            type="button"
-            onClick={() => reset.mutate()}
-            disabled={reset.isPending}
-            className="rounded-md border border-neutral-300 bg-white/80 px-3 py-1.5 text-sm shadow-sm hover:bg-white dark:border-neutral-700 dark:bg-neutral-900/80 dark:text-neutral-100 dark:hover:bg-neutral-900"
-          >
-            Reset layout
-          </button>
+          {/*
+            Phase 29 D-18 / UI-SPEC §A — in share mode the entire toolbar
+            mutation cluster (Edit-mode toggle for drag-to-link, Reset
+            layout) is hidden. The graph canvas itself, the subgraph
+            filter UI, node click navigation, hover tooltip, and pan/zoom
+            remain — they are pure reads.
+          */}
+          {!isShareMode && (
+            <>
+              <button
+                type="button"
+                onClick={() => setEditMode((v) => !v)}
+                aria-pressed={editMode}
+                aria-label={editMode ? 'Exit edit mode' : 'Enter edit mode'}
+                title={
+                  editMode
+                    ? 'Press Esc to exit edit mode'
+                    : 'Drag between entries to create a link'
+                }
+                className={[
+                  'rounded-md px-3 py-1.5 text-sm shadow-sm transition-colors',
+                  'focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-[color:var(--color-accent)] focus-visible:ring-offset-2 focus-visible:ring-offset-white dark:focus-visible:ring-offset-neutral-900',
+                  editMode
+                    ? 'border border-[color:var(--color-accent)] bg-[color:var(--color-accent-soft)] text-[color:var(--color-accent)]'
+                    : 'border border-neutral-300 bg-white/80 hover:bg-white dark:border-neutral-700 dark:bg-neutral-900/80 dark:text-neutral-100 dark:hover:bg-neutral-900',
+                ].join(' ')}
+              >
+                {editMode ? 'Editing' : 'Edit'}
+              </button>
+              <button
+                type="button"
+                onClick={() => reset.mutate()}
+                disabled={reset.isPending}
+                className="rounded-md border border-neutral-300 bg-white/80 px-3 py-1.5 text-sm shadow-sm hover:bg-white dark:border-neutral-700 dark:bg-neutral-900/80 dark:text-neutral-100 dark:hover:bg-neutral-900"
+              >
+                Reset layout
+              </button>
+            </>
+          )}
         </div>
       </div>
 
@@ -275,13 +301,28 @@ export function GraphView() {
           positions={data.positions}
           width={size.width}
           height={size.height}
-          onNodeClick={(node) => navigate(`/universes/${universeId}/entries/${node.id}`)}
-          onPinNode={(node, x, y) => pin.mutate({ entryId: node.id, x, y })}
+          onNodeClick={(node) =>
+            isShareMode
+              ? navigate(`/share/${token ?? ''}/entries/${node.id}`)
+              : navigate(`/universes/${universeId}/entries/${node.id}`)
+          }
+          // Pin (drag-to-reposition save) is a mutation — silently no-op
+          // in share mode; the visitor cannot persist layout state.
+          onPinNode={
+            isShareMode
+              ? () => {
+                  /* read-only: positions are owner state */
+                }
+              : (node, x, y) => pin.mutate({ entryId: node.id, x, y })
+          }
           onHoverNode={(node, x, y) =>
             setHovered(node ? { node, x, y } : null)
           }
-          // Phase 19 Plan 19-02 — edit-mode wiring.
-          editMode={editMode}
+          // Phase 29 — share mode forces editMode=false at the canvas
+          // boundary so the drag-to-link gesture is unreachable even if
+          // editMode state were somehow toggled (defense in depth — the
+          // toolbar toggle is hidden, but this is the canvas-level guard).
+          editMode={isShareMode ? false : editMode}
           onLinkDragEnd={handleLinkDragEnd}
           onDragSourceChange={setDragSourceId}
         />
@@ -298,8 +339,13 @@ export function GraphView() {
         cleanup. onError fires the per-view Toast with the locked
         belt-and-suspenders error copy (UI-SPEC §H — identical to the
         popover's inline error).
+
+        Phase 29: In share mode the popover is never mounted — editMode
+        is forced false above, so the drop callback never reaches the
+        popover-state setter. The `!isShareMode` guard here is
+        belt-and-suspenders for the same constraint.
       */}
-      {popoverState && (
+      {popoverState && !isShareMode && (
         <CreateLinkPopover
           universeId={universeId}
           open={true}

@@ -19,6 +19,7 @@ import Tokens from './views/Tokens';
 import Invites from './views/Invites';
 import LlmKeys from './views/LlmKeys';
 import Templates from './views/Templates';
+import { ShareLayout } from './components/ShareLayout';
 
 export default function App() {
   return (
@@ -51,6 +52,20 @@ export default function App() {
           <Route path="/universes/:uid/issues" element={<IssuesView />} />
           <Route path="/universes/:uid/import" element={<IngestImport />} />
         </Route>
+      </Route>
+      {/*
+        Phase 29 — public read-only share-link visitor subtree. Mounted
+        OUTSIDE <ProtectedRoute> so an unauthenticated visitor can reach
+        these routes; the api-client share-mode seam (web/src/api/client.ts)
+        rewrites every fetch to /api/share/* with a share-token header for
+        the lifetime of ShareLayout mount. The four reused views adapt via
+        useShareMode() rather than being duplicated as Shared* variants.
+      */}
+      <Route path="/share/:token" element={<ShareLayout />}>
+        <Route index element={<EntryList />} />
+        <Route path="entries/:entryId" element={<EntryDetail />} />
+        <Route path="graph" element={<GraphView />} />
+        <Route path="timeline" element={<TimelineView />} />
       </Route>
       <Route path="*" element={<Navigate to="/universes" replace />} />
     </Routes>

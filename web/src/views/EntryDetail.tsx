@@ -7,9 +7,20 @@ import { ConfirmDialog } from '../components/ConfirmDialog';
 import { LinkSection } from '../components/LinkSection';
 import { IssueSection } from '../components/IssueSection';
 import { TimelinePinSection } from '../components/TimelinePinSection';
+import { useShareMode } from '../contexts/ShareModeContext';
 
 export function EntryDetail() {
-  const { uid, entryId } = useParams<{ uid: string; entryId: string }>();
+  // Phase 29 — share-mode awareness. In share mode the route is
+  // `/share/:token/entries/:entryId` (no `uid` param), so substitute
+  // 'share' for the universe id; the api-client seam swaps the path to
+  // /api/share/entries/:entryId.
+  const { uid: paramUid, token, entryId } = useParams<{
+    uid: string;
+    token: string;
+    entryId: string;
+  }>();
+  const isShareMode = useShareMode();
+  const uid = paramUid ?? (isShareMode ? 'share' : undefined);
   const navigate = useNavigate();
   const { data: entry, isLoading, refetch } = useEntry(uid!, entryId!);
   const deleteEntry = useDeleteEntry(uid!);
@@ -28,7 +39,11 @@ export function EntryDetail() {
     <div className="max-w-3xl mx-auto">
       {/* Back link */}
       <Link
-        to={`/universes/${uid}/entries`}
+        to={
+          isShareMode
+            ? `/share/${token ?? ''}`
+            : `/universes/${uid}/entries`
+        }
         className="text-sm text-neutral-400 hover:text-neutral-200"
       >
         &larr; Back to entries
@@ -43,21 +58,29 @@ export function EntryDetail() {
         <div className="mt-1">
           <TypeBadge type={entry.entryType} />
         </div>
-        <div className="flex gap-2 mt-3">
-          <Link
-            to={`/universes/${uid}/entries/${entryId}/edit`}
-            className="rounded-md border border-neutral-300 dark:border-neutral-700 text-sm px-3 py-1.5"
-          >
-            Edit
-          </Link>
-          <button
-            type="button"
-            onClick={() => setConfirmOpen(true)}
-            className="rounded-md bg-red-600 text-white text-sm px-3 py-1.5"
-          >
-            Delete
-          </button>
-        </div>
+        {/*
+          Phase 29 D-18 / UI-SPEC §A Kept-affordances — in share mode the
+          Edit and Delete buttons are hidden entirely. The visitor has no
+          authenticated session and the share read namespace exposes no
+          mutation surface; surfacing these controls would mislead.
+        */}
+        {!isShareMode && (
+          <div className="flex gap-2 mt-3">
+            <Link
+              to={`/universes/${uid}/entries/${entryId}/edit`}
+              className="rounded-md border border-neutral-300 dark:border-neutral-700 text-sm px-3 py-1.5"
+            >
+              Edit
+            </Link>
+            <button
+              type="button"
+              onClick={() => setConfirmOpen(true)}
+              className="rounded-md bg-red-600 text-white text-sm px-3 py-1.5"
+            >
+              Delete
+            </button>
+          </div>
+        )}
       </div>
 
       {/* Summary */}
@@ -97,16 +120,26 @@ export function EntryDetail() {
         onLinkCreated={() => refetch()}
       />
 
-      {/* Issues (ISS-06: open-only from GET /entries/:id) */}
-      <IssueSection
-        universeId={uid!}
-        entryId={entryId!}
-        issues={entry.issues ?? []}
-        onChanged={() => refetch()}
-      />
-
-      {/* Timeline pin (TIME-02: per-entry pin section) */}
-      <TimelinePinSection universeId={uid!} entryId={entryId!} />
+      {/*
+        Phase 29 D-18 / UI-SPEC §A Kept-affordances — IssueSection is
+        hidden in share mode (issues are an owner workflow surface;
+        visitor must not see or affect them). TimelinePinSection on the
+        detail view exposes the pin label + a manage control to upsert
+        the pin position; the entire mutation surface is removed, so we
+        omit the section. The visitor still sees timeline pin context on
+        the dedicated TimelineView (pin click navigates to entry).
+      */}
+      {!isShareMode && (
+        <>
+          <IssueSection
+            universeId={uid!}
+            entryId={entryId!}
+            issues={entry.issues ?? []}
+            onChanged={() => refetch()}
+          />
+          <TimelinePinSection universeId={uid!} entryId={entryId!} />
+        </>
+      )}
 
       {/* Meta section */}
       {metaEntries.length > 0 && (
