@@ -20,6 +20,7 @@ import {
   type TimelinePin,
 } from '../hooks/useTimelinePins';
 import { xToPos } from '../lib/timelineMath';
+import { useShareMode } from '../contexts/ShareModeContext';
 
 type ToastState = { message: string; variant: 'success' | 'error' } | null;
 
@@ -65,7 +66,14 @@ const TOAST_ERROR_COPY = "Couldn't save pin. Try again.";
  * (lifted to PrecisionBadge in Plan 04).
  */
 export function TimelineView() {
-  const { uid } = useParams<{ uid: string }>();
+  // Phase 29 — share-mode awareness. In share mode the route is
+  // `/share/:token/timeline` (no `uid` param); substitute 'share' so
+  // useTimelinePins / useTimelineWindow build paths the api-client seam
+  // can translate to /api/share/timeline. The `token` drives navigation
+  // back into the share subtree on pin click.
+  const { uid: paramUid, token } = useParams<{ uid: string; token: string }>();
+  const isShareMode = useShareMode();
+  const uid = paramUid ?? (isShareMode ? 'share' : undefined);
   const universeId = uid ?? '';
   const navigate = useNavigate();
 
@@ -236,7 +244,27 @@ export function TimelineView() {
   // dialog open; the canvas is NOT rendered behind it. Closing without saving
   // leaves window=null and the dialog re-mounts on the next visit (no nagging
   // mid-session because onOpenChange is a no-op here).
+  //
+  // Phase 29 — share-mode visitors never see the configure dialog (D-18
+  // mutation surface). Instead, render a friendly empty state explaining
+  // the owner hasn't configured a timeline yet.
+  //
+  // Backend gap noted in 29-06 SUMMARY: Plan 04 /api/share/universe does
+  // NOT return `timelineWindow`. In share mode `useUniverse` returns
+  // undefined → `timelineWindow` is always null today. A follow-up plan
+  // should widen the share-universe endpoint to surface timelineWindow so
+  // visitors can see a configured timeline.
   if (!timelineWindow) {
+    if (isShareMode) {
+      return (
+        <div className="max-w-3xl mx-auto p-6">
+          <h1 className="text-2xl font-semibold tracking-tight">Timeline</h1>
+          <p className="mt-4 text-sm text-neutral-600 dark:text-neutral-400">
+            No timeline is available for this universe yet.
+          </p>
+        </div>
+      );
+    }
     return (
       <div ref={containerRef} className="flex h-full flex-col">
         <TimelineRangeDialog
@@ -263,13 +291,16 @@ export function TimelineView() {
       >
         <header className="flex items-center justify-between px-6 pt-6 pb-3">
           <h1 className="text-2xl font-semibold">Timeline</h1>
-          <button
-            type="button"
-            onClick={() => setRangeDialogOpen(true)}
-            className="rounded-md border border-neutral-300 bg-white/80 px-3 py-1.5 text-sm shadow-sm hover:bg-white dark:border-neutral-700 dark:bg-neutral-900/80 dark:text-neutral-100 dark:hover:bg-neutral-900"
-          >
-            Configure range
-          </button>
+          {/* Phase 29 D-18 — Configure range is owner-only. */}
+          {!isShareMode && (
+            <button
+              type="button"
+              onClick={() => setRangeDialogOpen(true)}
+              className="rounded-md border border-neutral-300 bg-white/80 px-3 py-1.5 text-sm shadow-sm hover:bg-white dark:border-neutral-700 dark:bg-neutral-900/80 dark:text-neutral-100 dark:hover:bg-neutral-900"
+            >
+              Configure range
+            </button>
+          )}
         </header>
         <div className="flex min-h-0 flex-1">
           <div ref={canvasContainerRef} className="relative flex-1">
@@ -279,9 +310,18 @@ export function TimelineView() {
               window={timelineWindow}
               width={size.width}
               height={size.height}
-              onPinDragEnd={handlePinDragEnd}
+              // Phase 29 — share-mode pin drag is suppressed (no save
+              // mutation); pass a no-op handler so the canvas-level
+              // d3-drag does not call the upsert mutation.
+              onPinDragEnd={
+                isShareMode ? async () => undefined : handlePinDragEnd
+              }
               onPinClick={(pin) => {
-                navigate(`/universes/${universeId}/entries/${pin.entryId}`);
+                navigate(
+                  isShareMode
+                    ? `/share/${token ?? ''}/entries/${pin.entryId}`
+                    : `/universes/${universeId}/entries/${pin.entryId}`,
+                );
               }}
               onTransformChange={(t) => {
                 currentTransformRef.current = t;
@@ -289,11 +329,19 @@ export function TimelineView() {
               isDndDragActive={isDndDragActive}
             />
           </div>
-          <TimelineEntryPanel universeId={universeId} pins={pins} />
+          {/*
+            Phase 29 — TimelineEntryPanel is the drag-from-list source for
+            new pin creation (visitor must not have it). The pin list is
+            still visible inside the timeline canvas itself; the panel is
+            a creation surface, not a reading surface.
+          */}
+          {!isShareMode && (
+            <TimelineEntryPanel universeId={universeId} pins={pins} />
+          )}
         </div>
       </DndContext>
 
-      {rangeDialogOpen && (
+      {rangeDialogOpen && !isShareMode && (
         <TimelineRangeDialog
           open={rangeDialogOpen}
           onOpenChange={setRangeDialogOpen}
@@ -301,7 +349,7 @@ export function TimelineView() {
         />
       )}
 
-      {popoverState && (
+      {popoverState && !isShareMode && (
         <PinPopover
           universeId={universeId}
           open
