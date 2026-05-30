@@ -3,6 +3,7 @@ import { Link, useParams, useNavigate, useSearchParams } from 'react-router-dom'
 import { useUniverse, useUpdateUniverse, useDeleteUniverse } from '../hooks/useUniverse';
 import { ConfirmDialog } from '../components/ConfirmDialog';
 import { EntryTypesSection } from '../components/EntryTypesSection';
+import { ShareLinksSection } from '../components/ShareLinksSection';
 import { SettingsTabBar } from '../components/SettingsTabBar';
 import { Toggle } from '../components/Toggle';
 import { AuditHistoryTable } from '../components/AuditHistoryTable';
@@ -36,6 +37,9 @@ import type { ModelListingWithCoverage } from '../types/audit';
 const TABS = [
   { id: 'general', label: 'General' },
   { id: 'entry-types', label: 'Entry types' },
+  // Phase 29 D-20 / UI-SPEC §D — Share Links tab between Entry types and AI
+  // Gap Auditor: a universe-level concept adjacent to configuration.
+  { id: 'share-links', label: 'Share Links' },
   { id: 'ai-auditor', label: 'AI Gap Auditor' },
   { id: 'audit-history', label: 'Audit history' },
 ];
@@ -201,6 +205,14 @@ export function UniverseSettings() {
             </p>
             <EntryTypesSection universe={data} />
           </div>
+        )}
+
+        {/* ─── Share Links tab ─────────────────────────────────────── */}
+        {/* Phase 29 D-20 / UI-SPEC §D — per-universe share link management
+            (mint via CreateShareLinkDialog, revoke inline). Global audit
+            view lives at /settings/shares (Plan 07 Task 3). */}
+        {safeTab === 'share-links' && id && (
+          <ShareLinksSection universeId={id} />
         )}
 
         {/* ─── AI Gap Auditor tab ──────────────────────────────────── */}
