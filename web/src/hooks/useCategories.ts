@@ -109,6 +109,11 @@ export function useDeleteCategory(universeId: string) {
  */
 export function useReorderCategories(universeId: string) {
   const qc = useQueryClient();
+  // Match the read query's share-token-keyed cache slot (see useCategories).
+  // Reorder is owner-only, so shareToken is null here — but reading it from the
+  // same seam keeps the optimistic getQueryData/setQueryData aligned with the
+  // exact key the read query writes to, instead of the pre-29-08 two-element key.
+  const shareToken = getShareToken();
   return useMutation<void, Error, string[], { prev: CategoryListResponse | undefined }>({
     mutationFn: (orderedIds: string[]) =>
       api<void>(`/universes/${universeId}/categories/reorder`, {
@@ -117,7 +122,7 @@ export function useReorderCategories(universeId: string) {
       }),
     onMutate: async (orderedIds) => {
       await qc.cancelQueries({ queryKey: ['categories', universeId] });
-      const prev = qc.getQueryData<CategoryListResponse>(['categories', universeId]);
+      const prev = qc.getQueryData<CategoryListResponse>(['categories', universeId, shareToken]);
       if (prev) {
         const byId = new Map(prev.categories.map((c) => [c.id, c]));
         const reordered = orderedIds
@@ -126,7 +131,7 @@ export function useReorderCategories(universeId: string) {
             return existing ? { ...existing, sortOrder: i } : null;
           })
           .filter((c): c is Category => c !== null);
-        qc.setQueryData<CategoryListResponse>(['categories', universeId], {
+        qc.setQueryData<CategoryListResponse>(['categories', universeId, shareToken], {
           ...prev,
           categories: reordered,
         });
@@ -135,7 +140,7 @@ export function useReorderCategories(universeId: string) {
     },
     onError: (_err, _vars, ctx) => {
       if (ctx?.prev) {
-        qc.setQueryData(['categories', universeId], ctx.prev);
+        qc.setQueryData(['categories', universeId, shareToken], ctx.prev);
       }
     },
     onSettled: () => {

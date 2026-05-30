@@ -5,6 +5,7 @@ import type { ReactNode } from 'react';
 
 vi.mock('../api/client', () => ({
   api: vi.fn(),
+  getShareToken: () => null,
 }));
 import { api } from '../api/client';
 import {
@@ -155,14 +156,17 @@ describe('useReorderCategories', () => {
       ],
       uncategorizedCount: 0,
     };
-    qc.setQueryData(['categories', 'U1'], initial);
+    // Owner mode → shareToken is null; the read query and the reorder mutation
+    // both key on ['categories', universeId, null]. Seeding the bare two-element
+    // key here (pre-29-08) would let a mis-keyed mutation pass silently (CR-01).
+    qc.setQueryData(['categories', 'U1', null], initial);
 
     const { result } = renderHook(() => useReorderCategories('U1'), { wrapper: makeWrapper(qc) });
 
     act(() => { result.current.mutate(['c2', 'c1']); });
 
     await waitFor(() => {
-      const next = qc.getQueryData<CategoryListResponse>(['categories', 'U1']);
+      const next = qc.getQueryData<CategoryListResponse>(['categories', 'U1', null]);
       expect(next?.categories.map((c: Category) => c.id)).toEqual(['c2', 'c1']);
       expect(next?.categories[0].sortOrder).toBe(0);
       expect(next?.categories[1].sortOrder).toBe(1);
