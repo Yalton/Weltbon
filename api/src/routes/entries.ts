@@ -24,6 +24,9 @@ const createEntrySchema = z.object({
   meta: z.record(z.string(), z.unknown()).optional().default({}),
   icon: z.string().max(10).optional().default(''),
   categoryId: z.string().uuid().nullable().optional(),
+  // Phase 29 D-10 / SHARE-04: per-entry public flag for share-link visibility.
+  // `.default(false)` ensures omitting on POST yields `false` server-side (default-private).
+  isPublic: z.boolean().optional().default(false),
   templateId: z.string().uuid().nullable().optional(),   // D-16 — optional best-effort stamp target
 });
 
@@ -36,6 +39,9 @@ const patchEntrySchema = z.object({
   meta: z.record(z.string(), z.unknown()).optional(),
   icon: z.string().max(10).optional(),
   categoryId: z.string().uuid().nullable().optional(),
+  // Phase 29 SHARE-04: optional with NO default — omitting on PATCH must NOT flip the
+  // existing column value (PATCH is non-destructive for unset fields).
+  isPublic: z.boolean().optional(),
 }).refine((v) => Object.values(v).some((val) => val !== undefined), {
   message: 'At least one field is required',
 });
@@ -52,6 +58,9 @@ const entrySchema = z.object({
   meta: z.record(z.string(), z.unknown()),
   icon: z.string(),
   categoryId: z.string().nullable(),
+  // Phase 29 D-10 / SHARE-04: surfaces the per-entry public flag so EntryEditor + EntryDetail
+  // can render the toggle + chip (UI-SPEC §B/§C); owner sees this on every read.
+  isPublic: z.boolean(),
   createdAt: z.string(),
   updatedAt: z.string(),
 });
@@ -326,6 +335,9 @@ export const entryRoutes = new OpenAPIHono<AppEnv>()
       meta: entries.meta,
       icon: entries.icon,
       categoryId: entries.categoryId,
+      // Phase 29 SHARE-04: projected so list responses surface isPublic for the EntryEditor
+      // toggle + EntryDetail chip (Plan 07 wiring). Owner sees every entry's flag.
+      isPublic: entries.isPublic,
       createdAt: entries.createdAt,
       updatedAt: entries.updatedAt,
     };
@@ -380,6 +392,9 @@ export const entryRoutes = new OpenAPIHono<AppEnv>()
         meta: data.meta,
         icon: data.icon,
         categoryId: data.categoryId ?? null,
+        // Phase 29 D-10 / SHARE-04: zod default already converts undefined → false,
+        // so omitting on POST yields private (safer-default).
+        isPublic: data.isPublic,
       })
       .returning();
 
