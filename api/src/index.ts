@@ -9,6 +9,10 @@ import { authRoutes } from './routes/auth.js';
 import { tokenRoutes } from './routes/tokens.js';
 import { templates } from './routes/templates.js';
 import { inviteRoutes } from './routes/invites.js';
+// Phase 29 D-02 — share-CRUD owner-facing router (JWT-only via per-route requireJwtAuth)
+import { shareCrudRoutes } from './routes/shares.js';
+// Phase 29 SHARE-02/03 — visitor share-read router (share-token via per-route requireShareToken)
+import { shareRoutes } from './routes/share.js';
 import { llmKeyRoutes } from './routes/llm-keys.js';
 import { llmModelsRoutes } from './routes/llm-models.js';
 import { universeRoutes } from './routes/universes.js';
@@ -90,6 +94,12 @@ export function createApp() {
   apiR.route('/', llmModelsRoutes);
   apiR.route('/auth/invites', inviteRoutes);
   apiR.route('/auth', authRoutes);
+  // Phase 29 D-02 / D-13 — owner-facing share CRUD (POST mint, GET list, PATCH rename,
+  // DELETE revoke). Mounted BEFORE the `requireAuth` gate below because each route in
+  // shareCrudRoutes carries its own `requireJwtAuth` per-route middleware (D-13: PAT
+  // cannot mint or revoke share tokens). Keeping it outside the global `requireAuth`
+  // ensures the global gate never interferes with per-route auth semantics.
+  apiR.route('/shares', shareCrudRoutes);
   apiR.use('/universes/*', requireAuth);
   // Phase 26 Plan 03 — D-06 cross-universe in-flight rollup.
   // Mounted at root /api prefix (NOT under /universes/:uid) because it
@@ -113,6 +123,14 @@ export function createApp() {
   apiR.route('/universes/:uid/graph-positions', graphPositionRoutes);
   apiR.route('/universes/:uid/export', exportRoutes);
   apiR.route('/universes/:uid', timelineListRoutes);
+  // Phase 29 D-02 / T-29-20 / SHARE-03 — visitor read namespace mounted on `app`
+  // (a SIBLING of `apiR`), so requests to `/api/share/*` NEVER traverse the apiR
+  // mount tree at all. The `apiR.use('/universes/*', requireAuth)` gate never sees
+  // share requests; the share-token credential domain stays strictly separate from
+  // the JWT/PAT bearer domain (T-29-04 elevation-of-privilege mitigation). The
+  // singular `/api/share` (read) vs plural `/api/shares` (CRUD) namespace split is
+  // the URL contract per D-02.
+  app.route('/api/share', shareRoutes);
   app.route('/api', apiR);
   // D-08: OpenAPI schema at /api/openapi.json
   // D-07: Scalar docs at /api/docs — Hono-mounted so SPA fallback never intercepts
