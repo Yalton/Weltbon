@@ -19,6 +19,7 @@ import Tokens from './views/Tokens';
 import Invites from './views/Invites';
 import LlmKeys from './views/LlmKeys';
 import Templates from './views/Templates';
+import Shares from './views/Shares';
 import { ShareLayout } from './components/ShareLayout';
 
 export default function App() {
@@ -38,6 +39,8 @@ export default function App() {
             <Route path="tokens" element={<Tokens />} />
             <Route path="invites" element={<Invites />} />
             <Route path="templates" element={<Templates />} />
+            {/* Phase 29 — global owner audit view for all share links. */}
+            <Route path="shares" element={<Shares />} />
             <Route path="llm" element={<LlmKeys />} />
           </Route>
         </Route>
