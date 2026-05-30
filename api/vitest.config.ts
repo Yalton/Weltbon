@@ -62,6 +62,10 @@ const DB_GATED_TESTS = [
   'tests/tokens.test.ts',
   'tests/universe-types.test.ts',
   'tests/universes.test.ts',
+  // Phase 29 Plan 05 — share-token security boundary + share-view privacy
+  // invariants. Both files use createTestDb/setTestDb (DB-gated lane required).
+  'tests/share-boundary.test.ts',
+  'tests/share-views.test.ts',
 ];
 
 export default defineConfig({
