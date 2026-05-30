@@ -21,6 +21,8 @@ import LlmKeys from './views/LlmKeys';
 import Templates from './views/Templates';
 import Shares from './views/Shares';
 import { ShareLayout } from './components/ShareLayout';
+import { ErrorBoundary } from './components/ErrorBoundary';
+import { ShareFallback } from './views/ShareFallback';
 
 export default function App() {
   return (
@@ -64,7 +66,7 @@ export default function App() {
         the lifetime of ShareLayout mount. The four reused views adapt via
         useShareMode() rather than being duplicated as Shared* variants.
       */}
-      <Route path="/share/:token" element={<ShareLayout />}>
+      <Route path="/share/:token" element={<ErrorBoundary fallback={<ShareFallback />}><ShareLayout /></ErrorBoundary>}>
         <Route index element={<EntryList />} />
         <Route path="entries/:entryId" element={<EntryDetail />} />
         <Route path="graph" element={<GraphView />} />
