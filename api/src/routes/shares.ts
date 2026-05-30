@@ -116,6 +116,104 @@ const postRoute = createRoute({
   },
 });
 
+const getRoute = createRoute({
+  method: 'get',
+  path: '/',
+  tags: ['Shares'],
+  summary: 'List all share tokens owned by the authenticated user',
+  description:
+    "Lists ALL share tokens across ALL universes owned by the caller — active, revoked, and expired. Joins `universes` for the `universeName` column (UI-SPEC §F). Ordered by createdAt desc. Response NEVER includes shareUrl or plaintext (T-29-09). JWT auth required (D-13 mirror).",
+  security: [{ bearerJwtAuth: [] }],
+  middleware: [requireJwtAuth] as const,
+  responses: {
+    200: {
+      content: { 'application/json': { schema: z.object({ shares: z.array(shareListItemSchema) }) } },
+      description: 'Array of share-token metadata (no shareUrl, no plaintext)',
+    },
+    401: {
+      content: { 'application/json': { schema: errorSchema } },
+      description: 'Missing or invalid JWT bearer token',
+    },
+    500: {
+      content: { 'application/json': { schema: errorSchema } },
+      description: 'Internal error',
+    },
+  },
+});
+
+const patchRoute = createRoute({
+  method: 'patch',
+  path: '/{id}',
+  tags: ['Shares'],
+  summary: 'Rename a share token',
+  description:
+    'Updates the share token label only. Rejects revoked tokens with 404 (T-29-11 — revoked rows are immutable). Idempotent: re-applying the same label returns 200 with the same row.',
+  security: [{ bearerJwtAuth: [] }],
+  middleware: [requireJwtAuth] as const,
+  request: {
+    params: z.object({ id: z.string().uuid() }),
+    body: {
+      content: {
+        'application/json': {
+          schema: z.object({ label: z.string().trim().max(100) }),
+        },
+      },
+      required: true,
+    },
+  },
+  responses: {
+    200: {
+      content: { 'application/json': { schema: z.object({ id: z.string(), label: z.string() }) } },
+      description: 'Renamed; returns the updated id + label',
+    },
+    400: {
+      content: { 'application/json': { schema: errorSchema } },
+      description: 'Validation error (label too long)',
+    },
+    401: {
+      content: { 'application/json': { schema: errorSchema } },
+      description: 'Missing or invalid JWT bearer token',
+    },
+    404: {
+      content: { 'application/json': { schema: errorSchema } },
+      description: 'Share token not found, not owned by caller, or revoked',
+    },
+    500: {
+      content: { 'application/json': { schema: errorSchema } },
+      description: 'Internal error',
+    },
+  },
+});
+
+const deleteRoute = createRoute({
+  method: 'delete',
+  path: '/{id}',
+  tags: ['Shares'],
+  summary: 'Soft-revoke a share token',
+  description:
+    'Soft-revoke: sets revoked_at = now() while preserving last_accessed_at + access_count + label for the owner audit trail (D-06 + SHARE-05 + T-29-10). Idempotent: a second DELETE on the same id returns 404 (the `revokedAt IS NULL` WHERE guard filters already-revoked rows).',
+  security: [{ bearerJwtAuth: [] }],
+  middleware: [requireJwtAuth] as const,
+  request: {
+    params: z.object({ id: z.string().uuid() }),
+  },
+  responses: {
+    204: { description: 'Share token revoked' },
+    401: {
+      content: { 'application/json': { schema: errorSchema } },
+      description: 'Missing or invalid JWT bearer token',
+    },
+    404: {
+      content: { 'application/json': { schema: errorSchema } },
+      description: 'Share token not found, not owned by caller, or already revoked',
+    },
+    500: {
+      content: { 'application/json': { schema: errorSchema } },
+      description: 'Internal error',
+    },
+  },
+});
+
 // ─── Router ──────────────────────────────────────────────────────────────────
 
 export const shareCrudRoutes = new OpenAPIHono<AppEnv>()
@@ -191,4 +289,106 @@ export const shareCrudRoutes = new OpenAPIHono<AppEnv>()
       }
       throw err;
     }
+  })
+
+  .openapi(getRoute, async (c) => {
+    const userId = c.var.userId;
+
+    // D-20 / UI-SPEC §F: list ALL the caller's tokens across ALL their universes
+    // (revoked + active + expired). The /settings/shares table renders status
+    // chips per row; UniverseSettings filters revoked client-side.
+    // innerJoin universes for the universeName column (UI-SPEC §F Universe column).
+    const rows = await getDb()
+      .select({
+        id:             shareTokens.id,
+        universeId:     shareTokens.universeId,
+        universeName:   universes.name,
+        label:          shareTokens.label,
+        bodySuffix:     shareTokens.bodySuffix,
+        scope:          shareTokens.scope,
+        createdAt:      shareTokens.createdAt,
+        expiresAt:      shareTokens.expiresAt,
+        revokedAt:      shareTokens.revokedAt,
+        lastAccessedAt: shareTokens.lastAccessedAt,
+        accessCount:    shareTokens.accessCount,
+      })
+      .from(shareTokens)
+      .innerJoin(universes, eq(shareTokens.universeId, universes.id))
+      .where(eq(shareTokens.userId, userId))
+      .orderBy(desc(shareTokens.createdAt));
+
+    // Project timestamps to ISO strings; the response schema (T-29-09) carries
+    // NO shareUrl / plaintext fields — a stolen list response cannot mint a hit.
+    return c.json(
+      {
+        shares: rows.map((r) => ({
+          id:             r.id,
+          universeId:     r.universeId,
+          universeName:   r.universeName,
+          label:          r.label,
+          bodySuffix:     r.bodySuffix,
+          scope:          r.scope,
+          createdAt:      r.createdAt.toISOString(),
+          expiresAt:      r.expiresAt ? r.expiresAt.toISOString() : null,
+          revokedAt:      r.revokedAt ? r.revokedAt.toISOString() : null,
+          lastAccessedAt: r.lastAccessedAt ? r.lastAccessedAt.toISOString() : null,
+          accessCount:    r.accessCount,
+        })),
+      },
+      200
+    );
+  })
+
+  .openapi(patchRoute, async (c) => {
+    const userId = c.var.userId;
+    const id = c.req.valid('param').id;
+    const { label } = c.req.valid('json');
+
+    // T-29-11: `isNull(shareTokens.revokedAt)` WHERE guard makes revoked rows
+    // unrenameable (returns 404 — same surface as not-found, so a probing
+    // caller cannot distinguish revoked-vs-missing).
+    // Cross-user guard: `eq(shareTokens.userId, userId)`.
+    const updated = await getDb()
+      .update(shareTokens)
+      .set({ label })
+      .where(
+        and(
+          eq(shareTokens.id, id),
+          eq(shareTokens.userId, userId),
+          isNull(shareTokens.revokedAt),
+        )
+      )
+      .returning({ id: shareTokens.id, label: shareTokens.label });
+    if (updated.length === 0) {
+      return c.json({ error: 'Share link not found' }, 404);
+    }
+    return c.json(updated[0], 200);
+  })
+
+  .openapi(deleteRoute, async (c) => {
+    const userId = c.var.userId;
+    const id = c.req.valid('param').id;
+
+    // D-06 + T-29-10: soft-revoke by setting revoked_at = now(). The row
+    // stays in the DB so last_accessed_at + access_count + label remain for
+    // the owner's audit trail. Per D-15 there is no scope/scope_entry_id
+    // mutation endpoint — scope is mint-time-only in v1.
+    //
+    // Idempotency: the `isNull(revokedAt)` guard makes a second DELETE on the
+    // same id return 404 (already revoked).
+    const updated = await getDb()
+      .update(shareTokens)
+      .set({ revokedAt: new Date() })
+      .where(
+        and(
+          eq(shareTokens.id, id),
+          eq(shareTokens.userId, userId),
+          isNull(shareTokens.revokedAt),
+        )
+      )
+      .returning({ id: shareTokens.id });
+    if (updated.length === 0) {
+      return c.json({ error: 'Share link not found' }, 404);
+    }
+    return c.body(null, 204);
   });
