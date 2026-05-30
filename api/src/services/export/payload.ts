@@ -51,6 +51,8 @@ export interface ExportPayloadEntry {
   meta: Record<string, unknown>;
   icon: string;
   categoryId: string | null;
+  /** Phase 29 D-11 / SHARE-04: round-trips through universe JSON export/import. */
+  isPublic: boolean;
   createdAt: Date;
   updatedAt: Date;
 }
@@ -204,6 +206,8 @@ export async function loadUniverseExportPayload(universeId: string): Promise<Exp
     meta: e.meta as Record<string, unknown>,
     icon: e.icon,
     categoryId: e.categoryId,
+    // Phase 29 SHARE-04 — round-trips through JSON export/import (D-11).
+    isPublic: e.isPublic,
     createdAt: e.createdAt,
     updatedAt: e.updatedAt,
   }));

@@ -43,6 +43,10 @@ export const importSchema = z.object({
     tags: z.array(z.string()).optional().default([]),
     meta: z.record(z.string(), z.unknown()).optional().default({}),
     icon: z.string().optional().default(''),
+    // Phase 29 D-11 / T-29-13: pre-Phase-29 exports lack this field — default to false
+    // (safer side; importing a missing flag as `public` would silently disclose every
+    // imported entry). Users flip entries public via the toggle after import.
+    isPublic: z.boolean().optional().default(false),
     categoryId: z.string().uuid().nullable().optional().default(null),
   })),
   links: z.array(z.object({
@@ -145,6 +149,10 @@ export async function importUniverseJson(userId: string, rawData: unknown) {
           meta: entry.meta,
           icon: entry.icon,
           categoryId: mappedCategoryId,
+          // Phase 29 D-11 / T-29-13 defense-in-depth: zod default already converts
+          // missing → false; the `?? false` survives schema-coupling drift if the
+          // zod default is ever changed.
+          isPublic: entry.isPublic ?? false,
         })
         .returning({ id: entries.id });
       entryIdMap.set(entry.id, created.id);
