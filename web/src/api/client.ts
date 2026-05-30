@@ -114,7 +114,16 @@ export async function api<T = unknown>(
   // the user), a 401 from /auth/refresh means "refresh cookie invalid"
   // (already the refresh attempt — don't recurse). Guarding here prevents
   // infinite refresh loops and spurious refresh calls on failed logins.
-  if (res.status === 401 && !path.startsWith('/auth/') && !shareTokenPlaintext) {
+  // Defense-in-depth: also skip the refresh path for any request whose URL is
+  // under /share/ — a visitor has no refresh cookie, and the token is either
+  // valid or not. This guards the edge case where shareTokenPlaintext was null
+  // at call-site check time but the URL is still a share path.
+  if (
+    res.status === 401 &&
+    !path.startsWith('/auth/') &&
+    !shareTokenPlaintext &&
+    !window.location.pathname.startsWith('/share/')
+  ) {
     const fresh = await attemptRefresh();
     if (!fresh) {
       accessToken = null;

@@ -142,8 +142,16 @@ export function EntryList() {
         />
       ) : isEmpty ? (
         <EmptyState
-          title="Start with one idea"
-          body="Entries are the building blocks of your universe — people, places, events, ideas. Pick a template or start from scratch."
+          // Phase 29 Gap 3 — gate empty-state copy on isShareMode so the
+          // visitor surface uses jargon-free, visitor-appropriate strings
+          // instead of owner-onboarding copy that leaks "universe" terminology
+          // and prompts actions unavailable to a read-only visitor.
+          title={isShareMode ? 'Nothing shared yet' : 'Start with one idea'}
+          body={
+            isShareMode
+              ? "The owner hasn't shared any entries here yet."
+              : 'Entries are the building blocks of your universe — people, places, events, ideas. Pick a template or start from scratch.'
+          }
           action={
             // Phase 29 D-18 — share-mode visitors get no create CTA on the
             // empty state. The empty-state copy is still useful context

@@ -1,5 +1,5 @@
 import { useMutation, useQuery, useQueryClient } from '@tanstack/react-query';
-import { api } from '../api/client';
+import { api, getShareToken } from '../api/client';
 
 export interface Universe {
   id: string;
@@ -25,10 +25,16 @@ export function useUniverses() {
 }
 
 export function useUniverse(id: string | undefined) {
+  // HALF (b) — share-token-keyed cache + enabled gate (Gap 1 race fix):
+  // Read from the module seam, not useShareMode(), so the gate tracks the
+  // exact value whose readiness is the bug. In authenticated mode shareToken
+  // is null (stable constant), so the owner cache key is unchanged.
+  const shareToken = getShareToken();
+  const shareMode = shareToken !== null;
   return useQuery({
-    queryKey: ['universe', id],
+    queryKey: ['universe', id, shareToken],
     queryFn: () => api<Universe>(`/universes/${id}`),
-    enabled: !!id,
+    enabled: !!id && (!shareMode || shareToken !== null),
   });
 }
 

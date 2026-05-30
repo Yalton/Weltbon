@@ -34,10 +34,15 @@ interface ShareUniverseResponse {
  * sticky at the top.
  *
  * Lifecycle (T-29-27 leak prevention):
- *  - On mount: `setShareToken(token)` so every descendant api() call routes
- *    through the share-mode seam (`/api/share/*` with `share-token` header).
- *  - On unmount: `clearShareToken()` so navigating away guarantees no leak
- *    into a subsequent authenticated session in the same tab.
+ *  - On render: `setShareToken(token)` is called SYNCHRONOUSLY in the render
+ *    body (before any descendant queries fire) so the module-level seam is
+ *    ready by the time child hooks call their first queryFn. This closes the
+ *    StrictMode race (mount→clear→remount cycle) in combination with the
+ *    token-keyed query cache in the share-subtree read hooks (half b of the
+ *    Gap 1 fix — see useFilteredEntries, useCategories, useUniverse).
+ *  - On mount (useEffect): `setShareToken(token)` is also set here for the
+ *    metadata fetch, and cleanup runs `clearShareToken()` so navigating away
+ *    guarantees no leak into a subsequent authenticated session (T-29-27).
  *
  * Universe metadata is fetched from `GET /api/share/universe` (Plan 04
  * — `{ universe: { name, ownerDisplayName } }`). A 404 here means the token
@@ -51,6 +56,18 @@ export function ShareLayout() {
   const { token } = useParams<{ token: string }>();
   const [universeMeta, setUniverseMeta] = useState<UniverseMeta | null>(null);
   const [error, setError] = useState<boolean>(false);
+
+  // HALF (a) — synchronous token readiness (Gap 1 race fix):
+  // Set the share token in the render body, BEFORE the useEffect below and
+  // BEFORE any descendant component renders or fires its first query. This
+  // ensures the module-level shareTokenPlaintext seam is non-null by the time
+  // React calls any child queryFn on this render pass. The StrictMode
+  // unmount→clearShareToken(null)→remount cycle is safe because the
+  // token-keyed cache (half b) ensures a null-token 404 entry occupies a
+  // distinct cache slot from the ready-token result.
+  if (token) {
+    setShareToken(token);
+  }
 
   useEffect(() => {
     if (!token) return;
