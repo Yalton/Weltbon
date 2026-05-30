@@ -108,6 +108,46 @@ export const inviteCodesRelations = relations(inviteCodes, ({ one }) => ({
 }));
 
 /**
+ * Phase 29 D-15: Per-(user, universe) share-token credentials for unauthenticated
+ * read-only /share/:token routes. Combines personalAccessTokens (hash/body_suffix/
+ * lastUsedAt pattern) + inviteCodes (revokedAt soft-delete) + per-token expiry +
+ * access tracking + scope columns.
+ *
+ * - `scope` ships ready for v3.3 single-entry sharing (CHECK constraint in raw SQL
+ *   migration restricts to 'universe' | 'entry'); the v1 router rejects scope !== 'universe'.
+ * - `scopeEntryId` is nullable and FK-cascades on entries; left as a plain FK (no
+ *   Drizzle relation declaration) until v3.3 single-entry-scope work surfaces a
+ *   `with: { scopeEntry }` use case.
+ * - `hash` is SHA-256 hex of the `wbn_share_<base64url(32)>` token string — D-08 hash-only at rest.
+ *   The UNIQUE constraint name `share_tokens_hash_unique` is load-bearing for the
+ *   23505 collision catch in Plan 02 routes/shares.ts.
+ * - `bodySuffix` is the last 4 chars of the body (UI-SPEC §D 4-char `••••••ABCD` mask;
+ *   deliberate divergence from PAT's 3-char suffix).
+ * - `lastAccessedAt` + `accessCount` are fire-and-forget telemetry written on every
+ *   /api/share/* hit by recordShareAccess (D-09; T-29-06).
+ */
+export const shareTokens = pgTable('share_tokens', {
+  id:             uuid('id').primaryKey().defaultRandom(),
+  userId:         uuid('user_id').references(() => users.id, { onDelete: 'cascade' }).notNull(),
+  universeId:     uuid('universe_id').references(() => universes.id, { onDelete: 'cascade' }).notNull(),
+  scope:          text('scope').default('universe').notNull(),
+  scopeEntryId:   uuid('scope_entry_id').references(() => entries.id, { onDelete: 'cascade' }),
+  label:          text('label').default('').notNull(),
+  hash:           text('hash').notNull().unique(),
+  bodySuffix:     text('body_suffix').notNull(),
+  expiresAt:      timestamp('expires_at', { withTimezone: true }),
+  revokedAt:      timestamp('revoked_at', { withTimezone: true }),
+  lastAccessedAt: timestamp('last_accessed_at', { withTimezone: true }),
+  accessCount:    integer('access_count').default(0).notNull(),
+  createdAt:      timestamp('created_at', { withTimezone: true }).defaultNow().notNull(),
+});
+
+export const shareTokensRelations = relations(shareTokens, ({ one }) => ({
+  user:     one(users, { fields: [shareTokens.userId], references: [users.id], relationName: 'share_owner' }),
+  universe: one(universes, { fields: [shareTokens.universeId], references: [universes.id], relationName: 'share_universe' }),
+}));
+
+/**
  * Phase 28 TEMPLATES-01/03: Per-user entry templates.
  *
  * - Templates are user-scoped (no universe_id per D-05); they travel with the author
@@ -161,6 +201,10 @@ export const entries = pgTable('entries', {
   categoryId:   uuid('category_id').references(() => categories.id, { onDelete: 'set null' }),
   createdAt:    timestamp('created_at').defaultNow().notNull(),
   updatedAt:    timestamp('updated_at').defaultNow().notNull(),
+  // Phase 29 D-10: per-entry public flag for share-link visibility (default OFF).
+  // Backfilled to false for every existing row by 0014_phase29_entries_is_public.sql.
+  // Mirrors universes.auditEnabled (line ~40) pattern: boolean opt-in with safer-by-default.
+  isPublic: boolean('is_public').default(false).notNull(),
 });
 
 export const links = pgTable('links', {
