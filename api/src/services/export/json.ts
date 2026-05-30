@@ -40,6 +40,10 @@ export async function exportUniverseJson(universeId: string) {
       tags: e.tags,
       meta: e.meta,
       icon: e.icon,
+      // Phase 29 D-11 / SHARE-04: round-trip the per-entry public flag through
+      // JSON export/import. Additive — no weltbon_version bump (older importers
+      // ignore the field; this importer defaults missing isPublic to false).
+      isPublic: e.isPublic,
       categoryId: e.categoryId,
       createdAt: e.createdAt.toISOString(),
       updatedAt: e.updatedAt.toISOString(),
