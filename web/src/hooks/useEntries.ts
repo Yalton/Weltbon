@@ -12,6 +12,15 @@ export interface Entry {
   meta: Record<string, unknown>;
   icon: string;
   categoryId: string | null;
+  /**
+   * Phase 29 — SHARE-04 / D-10 / Plan 03 surface.
+   * `false` by default; `true` makes the entry visible to share-link visitors
+   * (Plan 04 share-read handlers filter on this column). Owner UI surfaces
+   * a toggle in EntryEditor (UI-SPEC §B) and a chip on EntryDetail (UI-SPEC §C).
+   * The DB column is NOT NULL (Plan 01 schema), so the field is always present
+   * on every response — never optional.
+   */
+  isPublic: boolean;
   createdAt: string;
   updatedAt: string;
 }
@@ -57,6 +66,8 @@ export type CreateEntryInput = {
   meta?: Record<string, unknown>;
   icon?: string;
   categoryId?: string | null;
+  /** Phase 29 SHARE-04 — defaults to false server-side; explicit on the wire so PATCH non-destructive. */
+  isPublic?: boolean;
 };
 
 export type UpdateEntryInput = Partial<CreateEntryInput>;

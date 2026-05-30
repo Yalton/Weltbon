@@ -19,9 +19,17 @@ export interface ToggleProps {
   disabled?: boolean;
   /** ID of the visible label element (aria-labelledby target). */
   labelId: string;
+  /**
+   * Optional native tooltip — Phase 29 UI-SPEC §B requires a contextual
+   * `title` attribute on the Public toggle that swaps between off/on
+   * states ("Make this entry visible in shared views" vs "This entry is
+   * visible in shared views"). Pre-existing AI Gap Auditor toggle does
+   * not set this, preserving its current no-tooltip behavior.
+   */
+  title?: string;
 }
 
-export function Toggle({ checked, onChange, disabled, labelId }: ToggleProps) {
+export function Toggle({ checked, onChange, disabled, labelId, title }: ToggleProps) {
   const trackBg = checked
     ? 'bg-[color:var(--color-accent)]'
     : 'bg-neutral-300 dark:bg-neutral-700';
@@ -37,6 +45,7 @@ export function Toggle({ checked, onChange, disabled, labelId }: ToggleProps) {
       aria-labelledby={labelId}
       disabled={disabled}
       onClick={() => onChange(!checked)}
+      title={title}
       className={trackClass}
     >
       <span aria-hidden="true" className={thumbClass} />

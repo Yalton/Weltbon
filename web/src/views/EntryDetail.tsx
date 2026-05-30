@@ -55,8 +55,33 @@ export function EntryDetail() {
           {entry.icon && <span className="text-[28px] leading-none">{entry.icon}</span>}
           <h1 className="text-2xl font-semibold tracking-tight">{entry.title}</h1>
         </div>
-        <div className="mt-1">
+        <div className="mt-1 flex items-center gap-2">
           <TypeBadge type={entry.entryType} />
+          {/*
+            Phase 29 SHARE-04 / UI-SPEC §C / D-16 — accent-tint Public chip
+            rendered next to TypeBadge ONLY when entry.isPublic === true.
+            Visible in BOTH authenticated and share-view contexts per
+            UI-SPEC §A Kept-affordances + T-29-34 (accept): the chip helps
+            the visitor understand they're viewing a public entry, and
+            helps the owner see which entries are marked public from the
+            detail view. Eye icon (10×10 SVG) is aria-hidden="true"
+            (decorative); the <span>Public</span> text remains readable
+            by screen readers (Accessibility Checklist §C).
+          */}
+          {entry.isPublic && (
+            <span className="inline-flex items-center gap-1 rounded px-2 py-1 text-sm font-semibold bg-[color:var(--color-accent)]/10 text-[color:var(--color-accent)]">
+              <svg
+                aria-hidden="true"
+                width="10"
+                height="10"
+                viewBox="0 0 16 16"
+                fill="currentColor"
+              >
+                <path d="M8 3C4.667 3 1.787 5.013 .5 8c1.287 2.987 4.167 5 7.5 5s6.213-2.013 7.5-5C14.213 5.013 11.333 3 8 3zm0 8.333A3.333 3.333 0 1 1 8 4.667a3.333 3.333 0 0 1 0 6.666zm0-5.333a2 2 0 1 0 0 4 2 2 0 0 0 0-4z" />
+              </svg>
+              <span>Public</span>
+            </span>
+          )}
         </div>
         {/*
           Phase 29 D-18 / UI-SPEC §A Kept-affordances — in share mode the
