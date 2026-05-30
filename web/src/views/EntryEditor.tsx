@@ -11,6 +11,7 @@ import { MetaEditor } from '../components/MetaEditor';
 import { EntryCategoryPicker } from '../components/EntryCategoryPicker';
 import SaveAsTemplateDialog from '../components/SaveAsTemplateDialog';
 import { Toast } from '../components/Toast';
+import { Toggle } from '../components/Toggle';
 import { metaArrayToRecord } from '../lib/entryTemplates';
 import type { Entry } from '../hooks/useEntries';
 import type { EntryTemplate } from '../lib/entryTemplates';
@@ -42,6 +43,9 @@ export function EntryEditor() {
   const [metaValid, setMetaValid] = useState(true);
   const [saveAsOpen, setSaveAsOpen] = useState(false);
   const [toast, setToast] = useState<{ message: string; variant: 'success' | 'error' } | null>(null);
+  // Phase 29 SHARE-04 / UI-SPEC §B / D-10 — Public toggle state. Default
+  // false on new entries; seeded from existingEntry.isPublic on edit.
+  const [isPublic, setIsPublic] = useState(false);
   // CR-03: gate the create-mode template prefill so it runs at most once per
   // navigation. Without this, every refetch of `universe` (window focus,
   // stale-time expiry) re-runs the prefill effect and silently wipes any
@@ -78,6 +82,8 @@ export function EntryEditor() {
       setTags(existingEntry.tags ?? []);
       setMeta((existingEntry.meta as Record<string, string>) ?? {});
       setCategoryId(existingEntry.categoryId ?? null);
+      // Phase 29 SHARE-04 — seed the Public toggle from the loaded entry.
+      setIsPublic(existingEntry.isPublic ?? false);
       return;
     }
     // Create mode: prefill from location.state.template ONCE per navigation.
@@ -128,6 +134,8 @@ export function EntryEditor() {
       tags,
       meta,
       categoryId,
+      // Phase 29 SHARE-04 — Plan 03 surface accepts isPublic on POST + PATCH.
+      isPublic,
       ...(stateTemplateId ? { templateId: stateTemplateId } : {}),
     };
 
@@ -258,8 +266,12 @@ export function EntryEditor() {
           />
         </div>
 
-        {/* Form actions */}
-        <div className="flex justify-between items-center mt-8 pt-6 border-t border-neutral-200 dark:border-neutral-800">
+        {/* Form actions.
+            Phase 29 UI-SPEC §B order (left-to-right):
+              [Discard / Cancel] ... [Kebab] [Public toggle + label] [Save]
+            flex-wrap on the parent lets the right cluster wrap below the
+            Discard/Cancel link on narrow viewports (< 480px). */}
+        <div className="flex flex-wrap justify-between items-center gap-y-2 mt-8 pt-6 border-t border-neutral-200 dark:border-neutral-800">
           <Link
             to={
               isEditMode
@@ -270,6 +282,9 @@ export function EntryEditor() {
           >
             {isEditMode ? 'Discard changes' : 'Cancel'}
           </Link>
+
+          {/* Right cluster — UI-SPEC §B: [Kebab] [Public toggle + label] [Save]. */}
+          <div className="flex items-center gap-3">
 
           {/* Kebab overflow menu — D-14 / UI-SPEC §B */}
           <DropdownMenu.Root>
@@ -309,6 +324,32 @@ export function EntryEditor() {
             </DropdownMenu.Portal>
           </DropdownMenu.Root>
 
+          {/* Phase 29 UI-SPEC §B — Public toggle group BETWEEN kebab and
+              Save. Toggle + visible "Public" label, flex items-center
+              gap-2. Tooltip text swaps per UI-SPEC §B states. */}
+          <div className="flex items-center gap-2">
+            <Toggle
+              checked={isPublic}
+              onChange={setIsPublic}
+              labelId={`public-label-${entryId ?? 'new'}`}
+              title={
+                isPublic
+                  ? 'This entry is visible in shared views'
+                  : 'Make this entry visible in shared views'
+              }
+            />
+            <span
+              id={`public-label-${entryId ?? 'new'}`}
+              className={`text-sm ${
+                isPublic
+                  ? 'text-neutral-900 dark:text-neutral-100'
+                  : 'text-neutral-500 dark:text-neutral-400'
+              }`}
+            >
+              Public
+            </span>
+          </div>
+
           <button
             type="submit"
             disabled={isPending || !metaValid}
@@ -320,6 +361,7 @@ export function EntryEditor() {
                 ? 'Save changes'
                 : 'Create entry'}
           </button>
+          </div>
         </div>
       </form>
 
