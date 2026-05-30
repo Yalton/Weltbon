@@ -45,6 +45,7 @@ const cfg = env();
  *   - sk-ant-* and sk-* keys, anchored on {32,} (WR-05) so universe slugs
  *     like "sk-foo-uid" are not false-positive scrubbed
  *   - wbn_pat_* and wbn_inv_* tokens
+ *   - wbn_share_* tokens (Phase 29 — share-link plaintext URLs)
  */
 function scrubLogLine(msg: string): string {
   return msg
@@ -52,7 +53,8 @@ function scrubLogLine(msg: string): string {
     .replace(/sk-ant-[A-Za-z0-9_-]{32,}/g, '[REDACTED]')
     .replace(/sk-[A-Za-z0-9_-]{32,}/g, '[REDACTED]')
     .replace(/wbn_pat_[A-Za-z0-9_-]+/g, '[REDACTED]')
-    .replace(/wbn_inv_[A-Za-z0-9_-]+/g, '[REDACTED]');
+    .replace(/wbn_inv_[A-Za-z0-9_-]+/g, '[REDACTED]')
+    .replace(/wbn_share_[A-Za-z0-9_-]+/g, '[REDACTED]');
 }
 
 export function createApp() {
