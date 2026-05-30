@@ -6,6 +6,7 @@ import { QueryClient, QueryClientProvider } from '@tanstack/react-query';
 
 // Mock the api client so useCategories doesn't actually hit the network.
 vi.mock('../api/client', () => ({
+  getShareToken: () => null,
   api: vi.fn(),
 }));
 import { api } from '../api/client';

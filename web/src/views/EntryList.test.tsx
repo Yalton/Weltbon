@@ -6,6 +6,7 @@ import { QueryClient, QueryClientProvider } from '@tanstack/react-query';
 
 // Mock api client so every network call is dispatched by path.
 vi.mock('../api/client', () => ({
+  getShareToken: () => null,
   api: vi.fn(),
   getAccessToken: () => null,
 }));

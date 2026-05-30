@@ -18,6 +18,7 @@ vi.mock('../hooks/useFilterParams', () => ({
 
 // Mock api client so useUniverse + useCategories resolve without a network.
 vi.mock('../api/client', () => ({
+  getShareToken: () => null,
   api: vi.fn(async (path: string) => {
     if (path === '/universes/U1') {
       return { id: 'U1', entryTypes: ['character', 'place', 'event'] };
