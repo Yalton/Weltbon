@@ -6,6 +6,7 @@ import { posToX, xToPos, clampedPosToX } from '../lib/timelineMath';
 import { inferEraSpans, type EraSpan } from '../lib/groupByEra';
 import { entryTypeHexColor } from '../lib/entryTypeColor';
 import type { TimelinePin } from '../hooks/useTimelinePins';
+import { formatCalendar, type Calendar } from '../lib/calendarFormat';
 
 /**
  * Fixed parallax scroll-rate ratio between the era-layer and the pin-layer
@@ -33,6 +34,12 @@ export interface TimelineCanvasProps {
   window: { start: number; end: number };
   width: number;
   height: number;
+  /**
+   * Per-universe fictional calendar (CALENDAR-02). When non-null, position
+   * labels and hover popovers render the compact calendar date string instead
+   * of the raw numeric value. When null, falls back to raw numeric (CALENDAR-03).
+   */
+  calendar: Calendar | null;
   /** Click handler — fires on pin click without modifier keys. */
   onPinClick?: (pin: TimelinePin) => void;
   /**
@@ -91,6 +98,7 @@ export function TimelineCanvas({
   window: timelineWindow,
   width,
   height,
+  calendar,
   onPinClick,
   onPinDragEnd,
   onDragSourceChange,
@@ -498,7 +506,7 @@ export function TimelineCanvas({
               <div className="min-w-[180px] max-w-[260px] rounded-lg border border-neutral-700 bg-neutral-900/95 px-3 py-2 shadow-xl backdrop-blur-sm">
                 <div className="text-sm font-semibold text-neutral-50">{displayName}</div>
                 <div className="mt-0.5 text-xs text-neutral-400">
-                  {POSITION_FORMAT.format(pin.position)}
+                  {formatCalendar(pin.position, calendar)?.compact ?? POSITION_FORMAT.format(pin.position)}
                   <span className="mx-1 text-neutral-600">·</span>
                   {pin.precision}
                 </div>

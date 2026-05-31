@@ -19,6 +19,7 @@ import {
   useUpsertTimelinePin,
   type TimelinePin,
 } from '../hooks/useTimelinePins';
+import { useCalendar } from '../hooks/useCalendar';
 import { xToPos } from '../lib/timelineMath';
 import { useShareMode } from '../contexts/ShareModeContext';
 
@@ -81,6 +82,13 @@ export function TimelineView() {
     useTimelineWindow(universeId);
   const { data: pins = [], isLoading: pinsLoading } = useTimelinePins(universeId);
   const upsert = useUpsertTimelinePin(universeId);
+  // Phase 30 CALENDAR-02: source the per-universe calendar for date formatting.
+  // In authenticated mode, useCalendar reads from useUniverse (the
+  // /universes/:uid endpoint). In share mode, useUniverse 404s for the 'share'
+  // sentinel uid, so calendar resolves to null → raw-numeric fallback
+  // (CALENDAR-03). Share-mode calendar support requires the share meta endpoint
+  // to be widened (Task 2, 30-03) and the API client path routing to be updated.
+  const { calendar } = useCalendar(universeId);
 
   const [toast, setToast] = useState<ToastState>(null);
   const [popoverState, setPopoverState] = useState<PopoverState>(null);
@@ -310,6 +318,7 @@ export function TimelineView() {
               window={timelineWindow}
               width={size.width}
               height={size.height}
+              calendar={calendar}
               // Phase 29 — share-mode pin drag is suppressed (no save
               // mutation); pass a no-op handler so the canvas-level
               // d3-drag does not call the upsert mutation.

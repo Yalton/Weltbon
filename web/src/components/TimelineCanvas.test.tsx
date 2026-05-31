@@ -35,6 +35,7 @@ const DEFAULT_PROPS = {
   width: 800,
   height: 400,
   window: { start: 0, end: 1000 },
+  calendar: null,
 } as const;
 
 describe('TimelineCanvas', () => {
