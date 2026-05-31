@@ -29,27 +29,29 @@ import {
   timelinePins,
   universes,
   users,
+  type Calendar,
 } from '../db/schema.js';
 
 // ─── Function 1: getPublicUniverseMeta ──────────────────────────────────────
 //
 // Banner consumer (UI-SPEC §A + D-19): the share-view banner needs only the
 // universe name + owner display name. We project ONLY those two columns from
-// `universes JOIN users`. The zod response schema in routes/share.ts is
-// `{ universe: { name, ownerDisplayName } }` — extra fields would fail zod
-// validation, providing a second line of defense against accidental leaks
-// (T-29-21b minimal-disclosure binding).
+// `universes JOIN users` PLUS the `calendar` JSONB (Phase 30 CALENDAR-02 /
+// D-13 / SHARE-02). The zod response schema in routes/share.ts declares
+// `{ universe: { name, ownerDisplayName, calendar } }` — extra fields still
+// fail zod validation (T-29-21b minimal-disclosure binding preserved).
 //
 // On no row: returns null (handler returns 404 — race-with-delete or invalid
 // universe id from a stale token).
 //
 export async function getPublicUniverseMeta(
   universeId: string,
-): Promise<{ name: string; ownerDisplayName: string } | null> {
+): Promise<{ name: string; ownerDisplayName: string; calendar: Calendar | null } | null> {
   const rows = await getDb()
     .select({
       name: universes.name,
       ownerDisplayName: users.displayName,
+      calendar: universes.calendar,
     })
     .from(universes)
     .innerJoin(users, eq(universes.userId, users.id))

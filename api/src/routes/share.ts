@@ -46,17 +46,46 @@ type AppEnv = { Variables: ShareVariables };
 // ─── Zod response schemas ────────────────────────────────────────────────────
 
 /**
+ * Phase 30 CALENDAR-02 / D-13 / SHARE-02: Inline calendar shape for the
+ * share meta response. D-04 prohibits importing from routes/universes.ts, so
+ * we declare a local z.object matching the Calendar type shape (mirrors the
+ * canonical calendarSchema in universes.ts). `.nullable()` accepts the
+ * "no calendar" case (CALENDAR-03). The full `.strict()` + `.refine()` guards
+ * from calendarSchema are intentionally omitted here — this schema is
+ * read-only response validation, not a mutation input validator. The canonical
+ * write-path guards live in universes.ts calendarSchema.
+ */
+const calendarResponseSchema = z
+  .object({
+    eras: z.array(
+      z.object({ name: z.string(), abbr: z.string(), startPosition: z.number() }),
+    ),
+    months: z.array(z.object({ name: z.string(), lengthDays: z.number() })),
+    weekdays: z.array(z.string()),
+    moons: z.array(z.object({ name: z.string(), cycleDays: z.number() })),
+    beforeEraAbbr: z.string(),
+  })
+  .nullable();
+
+/**
  * T-29-21b minimal-disclosure binding: the universe banner schema declares
- * ONLY `name` and `ownerDisplayName`. Any extra field flowing from the service
- * layer would fail zod validation at response serialisation time. This is the
- * second line of defense behind getPublicUniverseMeta's explicit-projection
- * query: even if a future refactor accidentally widened the projection, the
- * response would still be rejected before the visitor saw it.
+ * ONLY `name`, `ownerDisplayName`, and `calendar`. Any extra field flowing
+ * from the service layer would fail zod validation at response serialisation
+ * time. This is the second line of defense behind getPublicUniverseMeta's
+ * explicit-projection query: even if a future refactor accidentally widened
+ * the projection, the response would still be rejected before the visitor
+ * saw it.
+ *
+ * Phase 30 CALENDAR-02 / D-13 / SHARE-02: `calendar` is cosmetic display
+ * data (no PII); intentional disclosure per the threat register (T-30-09 /
+ * T-30-10). The share frontend uses it to format timeline dates identically
+ * to the authenticated view.
  */
 const universeMetaResponseSchema = z.object({
   universe: z.object({
     name: z.string(),
     ownerDisplayName: z.string(),
+    calendar: calendarResponseSchema,
   }),
 });
 
