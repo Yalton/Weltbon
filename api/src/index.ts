@@ -26,6 +26,7 @@ import { importRoutes } from './routes/import.js';
 import { ingestRoutes } from './routes/ingest.js';
 import { timelinePinRoutes, timelineListRoutes } from './routes/timeline.js';
 import { auditRoutes, auditCrossUniverseRoutes } from './routes/audits.js';
+import { diagramsRouter } from './routes/diagrams.js';
 import { recoverOrphanAuditRuns } from './services/audit-recovery.js';
 import { wireSigtermDrain } from './services/audit-shutdown.js';
 import { requireAuth } from './middleware/auth.js';
@@ -119,6 +120,7 @@ export function createApp() {
   apiR.route('/universes/:uid/categories', categoryRoutes);
   apiR.route('/universes/:uid/issues', issueRoutes);
   apiR.route('/universes/:uid', auditRoutes);
+  apiR.route('/universes/:uid/diagrams', diagramsRouter);
   apiR.route('/universes/:uid/graph-data', graphRoutes);
   apiR.route('/universes/:uid/graph-positions', graphPositionRoutes);
   apiR.route('/universes/:uid/export', exportRoutes);
