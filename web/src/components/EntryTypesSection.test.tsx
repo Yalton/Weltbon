@@ -21,6 +21,8 @@ const UNIVERSE: Universe = {
   description: '',
   entryTypes: ['concept', 'entity', 'location'],
   timelineWindow: null,
+  // Phase 30 CALENDAR-01: no calendar defined.
+  calendar: null,
   createdAt: '',
   updatedAt: '',
   // Phase 26 LLMUI-08: audit opt-in fields default to disabled/null.

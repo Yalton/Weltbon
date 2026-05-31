@@ -1,5 +1,6 @@
 import { useMutation, useQuery, useQueryClient } from '@tanstack/react-query';
 import { api, getShareToken } from '../api/client';
+import type { Calendar } from '../lib/calendarFormat';
 
 export interface Universe {
   id: string;
@@ -8,6 +9,9 @@ export interface Universe {
   description: string;
   entryTypes: string[];
   timelineWindow: { start: number; end: number } | null;
+  // Phase 30 CALENDAR-01: per-universe fictional calendar (nullable JSONB).
+  // null = no calendar defined; timeline positions display as raw numbers (CALENDAR-03).
+  calendar: Calendar | null;
   createdAt: string;
   updatedAt: string;
   // Phase 24 AUDIT-03 / Phase 26 LLMUI-08: per-universe AI Gap Auditor opt-in.
@@ -54,6 +58,9 @@ export function useUpdateUniverse(id: string) {
       name?: string;
       description?: string;
       timelineWindow?: { start: number; end: number } | null;
+      // Phase 30 CALENDAR-01: per-universe fictional calendar (nullable JSONB).
+      // Pass `null` to remove (CALENDAR-03 raw-numeric revert).
+      calendar?: Calendar | null;
       // Phase 26 LLMUI-08: audit opt-in patch fields (server enforces invariant
       // that auditEnabled=true → provider+model non-null).
       auditEnabled?: boolean;
