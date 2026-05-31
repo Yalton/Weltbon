@@ -175,6 +175,22 @@ export function UniverseSettings() {
                 className="w-full rounded-md border border-neutral-300 dark:border-neutral-700 bg-transparent px-3 py-2 text-sm"
               />
             </div>
+            {/* Phase 30 CALENDAR-01 — Calendar entry point */}
+            {id && (
+              <div className="pt-4 border-t border-neutral-200 dark:border-neutral-800">
+                <h2 className="text-lg font-medium mb-2">Calendar</h2>
+                <p className="text-sm text-neutral-500 mb-2">
+                  Define an in-world calendar so timeline positions display as dates.
+                </p>
+                <Link
+                  to={`/universes/${id}/calendar`}
+                  className="text-sm text-[color:var(--color-accent)] hover:underline"
+                >
+                  Manage calendar →
+                </Link>
+              </div>
+            )}
+
             <div className="flex items-center justify-between pt-4 border-t border-neutral-200 dark:border-neutral-800">
               <button
                 type="button"
