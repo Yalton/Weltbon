@@ -6,8 +6,12 @@
  * No DOM, no React, no module-level side effects.
  *
  * Caller contract:
- *   - `calendar` must have >= 1 era and >= 1 month (enforced by the API's
- *     `calendarSchema` .refine() guards; formatCalendar trusts the shape).
+ *   - `calendar` is expected to have >= 1 era and >= 1 month with positive
+ *     month lengths (enforced by the API's `calendarSchema` .refine() guards on
+ *     the write path). The public share path does NOT enforce these, so as of
+ *     CR-01 `formatCalendar` self-guards: a structurally unusable calendar
+ *     (no eras, no months, or zero total year length) returns `null` and the
+ *     caller falls back to the raw numeric position (CALENDAR-03).
  *   - `calendar === null` → returns `null` (CALENDAR-03 raw-numeric fallback).
  *   - Era `startPosition` values must be strictly increasing (D-05); the
  *     active era is the one with the greatest `startPosition <= position`.
@@ -119,6 +123,15 @@ export function formatCalendar(
   // yearLen = total days in one year (sum of all month lengths).
   const yearLen = months.reduce((sum, m) => sum + m.lengthDays, 0);
 
+  // CR-01 self-guard: the authenticated write path enforces non-empty eras/
+  // months and positive lengths via `calendarSchema`, but the public share path
+  // (`calendarResponseSchema` in routes/share.ts) does NOT. Trusting those
+  // invariants here let malformed data produce literal `NaN`/`Infinity` dates
+  // for unauthenticated visitors (`% 0 === NaN`, `/ 0 === Infinity`). Degrade
+  // gracefully to the raw-numeric fallback (CALENDAR-03) instead of rendering
+  // garbage, on both the authenticated and share surfaces.
+  if (eras.length === 0 || months.length === 0 || yearLen <= 0) return null;
+
   // Epoch is defined as the earliest era's startPosition (D-05 / CONTEXT D-08).
   const epochStart = eras[0].startPosition;
 
@@ -129,10 +142,14 @@ export function formatCalendar(
   const weekday = weekdays.length > 0 ? weekdays[mod(dayIndex, weekdays.length)] : null;
 
   // ── Moon phases (D-04, modulo guard for negative dayIndex) ───────────────
-  const moonPhases = moons.map((m) => ({
-    name: m.name,
-    phase: mod(dayIndex, m.cycleDays),
-  }));
+  // CR-01: skip degenerate moons (`cycleDays <= 0`) — `mod(x, 0)` is `NaN`.
+  // The write path requires positive cycleDays; the share path does not.
+  const moonPhases = moons
+    .filter((m) => m.cycleDays > 0)
+    .map((m) => ({
+      name: m.name,
+      phase: mod(dayIndex, m.cycleDays),
+    }));
 
   // ── Pre-epoch positions (D-08) ───────────────────────────────────────────
   if (Math.floor(position) < epochStart) {

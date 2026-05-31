@@ -215,4 +215,61 @@ describe('formatCalendar', () => {
     expect(result!.eraAbbr).toBe('CE');
     expect(result!.year).toBe(2);
   });
+
+  // ─── CR-01: malformed-calendar self-guard (public share path) ────────────────
+  // The public share schema does not enforce non-empty arrays / positive lengths;
+  // formatCalendar must degrade to null (raw-numeric fallback) rather than emit
+  // NaN/Infinity dates to an unauthenticated visitor.
+
+  it('CR-01: returns null when months is empty (yearLen === 0 → no NaN/Infinity)', () => {
+    const bad: Calendar = {
+      eras: [{ name: 'Era', abbr: 'E', startPosition: 0 }],
+      months: [],
+      weekdays: [],
+      moons: [],
+      beforeEraAbbr: 'BE',
+    };
+    expect(formatCalendar(100, bad)).toBeNull();
+    expect(formatCalendar(-100, bad)).toBeNull();
+  });
+
+  it('CR-01: returns null when all month lengths sum to zero', () => {
+    const bad: Calendar = {
+      eras: [{ name: 'Era', abbr: 'E', startPosition: 0 }],
+      months: [{ name: 'Void', lengthDays: 0 }],
+      weekdays: [],
+      moons: [],
+      beforeEraAbbr: 'BE',
+    };
+    expect(formatCalendar(5, bad)).toBeNull();
+  });
+
+  it('CR-01: returns null when eras is empty', () => {
+    const bad: Calendar = {
+      eras: [],
+      months: [{ name: 'Frostmoon', lengthDays: 30 }],
+      weekdays: [],
+      moons: [],
+      beforeEraAbbr: 'BE',
+    };
+    expect(formatCalendar(10, bad)).toBeNull();
+  });
+
+  it('CR-01: skips degenerate moons (cycleDays <= 0) without emitting NaN phases', () => {
+    const withBadMoon: Calendar = {
+      eras: [{ name: 'Era', abbr: 'E', startPosition: 0 }],
+      months: [{ name: 'Frostmoon', lengthDays: 30 }],
+      weekdays: [],
+      moons: [
+        { name: 'Dead', cycleDays: 0 },
+        { name: 'Luna', cycleDays: 7 },
+      ],
+      beforeEraAbbr: 'BE',
+    };
+    const result = formatCalendar(10, withBadMoon);
+    expect(result).not.toBeNull();
+    expect(result!.moonPhases).toHaveLength(1);
+    expect(result!.moonPhases[0].name).toBe('Luna');
+    expect(Number.isFinite(result!.moonPhases[0].phase)).toBe(true);
+  });
 });
