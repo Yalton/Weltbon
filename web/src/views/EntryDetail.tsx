@@ -1,6 +1,9 @@
 import { useState } from 'react';
 import { Link, useParams, useNavigate } from 'react-router-dom';
 import { useEntry, useDeleteEntry } from '../hooks/useEntries';
+import { useTimelinePins } from '../hooks/useTimelinePins';
+import { useCalendar } from '../hooks/useCalendar';
+import { formatCalendar } from '../lib/calendarFormat';
 import { TypeBadge } from '../components/TypeBadge';
 import { MarkdownRenderer } from '../components/MarkdownRenderer';
 import { ConfirmDialog } from '../components/ConfirmDialog';
@@ -26,7 +29,19 @@ export function EntryDetail() {
   const deleteEntry = useDeleteEntry(uid!);
   const [confirmOpen, setConfirmOpen] = useState(false);
 
+  // Phase 30 — calendar date + "View on timeline →" (EVENTS-02 / D-11).
+  // useTimelinePins is already cached if the user visited /timeline; no extra
+  // fetch in the common case. useCalendar is a thin wrapper over useUniverse
+  // (same cache key) — also zero extra fetches.
+  const { data: pins } = useTimelinePins(uid!);
+  const { calendar } = useCalendar(uid!);
+
   if (isLoading || !entry) return <p className="text-sm text-neutral-500">Loading...</p>;
+
+  // Resolve the pin for THIS entry (may be undefined if not pinned).
+  const entryPin = pins?.find((p) => p.entryId === entryId);
+  // Compute calendar date from pin position (D-11).
+  const calendarDate = entryPin ? formatCalendar(entryPin.position, calendar) : null;
 
   const handleDelete = async () => {
     await deleteEntry.mutateAsync(entryId!);
@@ -107,6 +122,50 @@ export function EntryDetail() {
           </div>
         )}
       </div>
+
+      {/*
+        Phase 30 EVENTS-02 / D-11 — Calendar date + "View on timeline →".
+        Rendered when this entry has a timeline pin AND (for calendar date)
+        the universe has a calendar. When no calendar → falls back to the
+        raw position (CALENDAR-03). When no pin → section is omitted.
+        Read-only-safe: no edit chrome; works identically in share mode.
+      */}
+      {entryPin && (
+        <div className="mt-4 flex flex-col gap-1">
+          {/* Calendar date (full form) or raw position fallback */}
+          <div className="text-sm text-neutral-600 dark:text-neutral-400">
+            {calendarDate ? (
+              <>
+                {calendarDate.weekday && (
+                  <span className="mr-1">{calendarDate.weekday},</span>
+                )}
+                <span>
+                  {calendarDate.day} {calendarDate.monthName},{' '}
+                  {calendarDate.year} {calendarDate.eraAbbr}
+                </span>
+                {calendarDate.moonPhases.length > 0 && (
+                  <span className="ml-2 text-neutral-500">
+                    {calendarDate.moonPhases
+                      .map((mp) => `${mp.name}: ${mp.phase}`)
+                      .join(', ')}
+                  </span>
+                )}
+              </>
+            ) : (
+              <span className="tabular-nums font-mono">
+                Position: {entryPin.position}
+              </span>
+            )}
+          </div>
+          {/* "View on timeline →" accent link */}
+          <Link
+            to={`/universes/${uid}/timeline`}
+            className="text-sm text-[color:var(--color-accent)] hover:underline"
+          >
+            View on timeline &rarr;
+          </Link>
+        </div>
+      )}
 
       {/* Summary */}
       {entry.summary && (
