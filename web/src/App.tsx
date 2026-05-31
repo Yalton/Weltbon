@@ -14,6 +14,7 @@ import { IngestImport } from './views/IngestImport';
 import { IssuesView } from './views/IssuesView';
 import { TimelineView } from './views/TimelineView';
 import { CalendarEditor } from './views/CalendarEditor';
+import { EventsView } from './views/EventsView';
 import Settings from './views/Settings';
 import { SettingsLayout } from './components/SettingsLayout';
 import Tokens from './views/Tokens';
@@ -56,6 +57,7 @@ export default function App() {
           <Route path="/universes/:uid/graph" element={<GraphView />} />
           <Route path="/universes/:uid/timeline" element={<TimelineView />} />
           <Route path="/universes/:uid/calendar" element={<CalendarEditor />} />
+          <Route path="/universes/:uid/events" element={<EventsView />} />
           <Route path="/universes/:uid/issues" element={<IssuesView />} />
           <Route path="/universes/:uid/import" element={<IngestImport />} />
         </Route>
