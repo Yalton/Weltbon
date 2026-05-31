@@ -258,6 +258,13 @@ export const links = pgTable('links', {
   label:         text('label').notNull(),
   bidirectional: boolean('bidirectional').default(false).notNull(),
   createdAt:     timestamp('created_at').defaultNow().notNull(),
+  // Phase 31 DIAGRAM-02: diagram back-reference + edge styling write-through.
+  // diagramId is nullable so a link with no diagram_id still renders in the force graph.
+  // lineStyle + color are constrained server-side (solid/dashed/dotted; fixed palette).
+  // eslint-disable-next-line @typescript-eslint/no-use-before-define
+  diagramId:     uuid('diagram_id').references((): any => diagrams.id, { onDelete: 'set null' }),
+  lineStyle:     text('line_style'),
+  color:         text('color'),
 });
 
 /**
@@ -385,3 +392,35 @@ export const timelinePins = pgTable('timeline_pins', {
   position:  doublePrecision('position').notNull(),
   precision: text('precision').default('exact').notNull(),
 });
+
+/**
+ * Phase 31 DIAGRAM-01: Named diagram definitions scoped to a universe.
+ *
+ * A diagram is a named, manual-layout canvas (family tree, org chart, etc.)
+ * that lives alongside the force-directed Graph view. Nodes (entries) and
+ * edges (links) are added explicitly — no auto-population.
+ */
+export const diagrams = pgTable('diagrams', {
+  id:          uuid('id').primaryKey().defaultRandom(),
+  universeId:  uuid('universe_id').references(() => universes.id, { onDelete: 'cascade' }).notNull(),
+  name:        text('name').notNull(),
+  description: text('description'),
+  createdAt:   timestamp('created_at').defaultNow().notNull(),
+});
+
+/**
+ * Phase 31 DIAGRAM-01: Positioned entry nodes within a named diagram.
+ *
+ * Mirrors graphPositions but scoped to a diagram rather than the whole universe.
+ * The unique index on (diagramId, entryId) prevents the same entry from appearing
+ * twice in one diagram. Deleting a node row NEVER touches the underlying entries row.
+ */
+export const diagramNodes = pgTable('diagram_nodes', {
+  id:        uuid('id').primaryKey().defaultRandom(),
+  diagramId: uuid('diagram_id').references(() => diagrams.id, { onDelete: 'cascade' }).notNull(),
+  entryId:   uuid('entry_id').references(() => entries.id, { onDelete: 'cascade' }).notNull(),
+  x:         doublePrecision('x').notNull(),
+  y:         doublePrecision('y').notNull(),
+}, (t) => ({
+  diagramNodesUniqueIdx: uniqueIndex('diagram_nodes_unique_idx').on(t.diagramId, t.entryId),
+}));
