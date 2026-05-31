@@ -46,7 +46,7 @@ export async function createTestDb(): Promise<TestDbHandle> {
 
 export async function cleanDb(handle: TestDbHandle): Promise<void> {
   await handle.db.execute(sql`
-    TRUNCATE TABLE entry_templates, invite_codes, llm_api_keys, personal_access_tokens, refresh_tokens, graph_positions, issue_entries, issues, links, entries, categories, universes, users RESTART IDENTITY CASCADE
+    TRUNCATE TABLE entry_templates, invite_codes, llm_api_keys, personal_access_tokens, refresh_tokens, graph_positions, diagram_nodes, diagrams, issue_entries, issues, links, entries, categories, universes, users RESTART IDENTITY CASCADE
   `);
 }
 

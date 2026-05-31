@@ -66,6 +66,8 @@ const DB_GATED_TESTS = [
   // invariants. Both files use createTestDb/setTestDb (DB-gated lane required).
   'tests/share-boundary.test.ts',
   'tests/share-views.test.ts',
+  // Phase 31 Plan 01 — diagram CRUD + node + edge write-through integration tests.
+  'tests/diagrams.test.ts',
 ];
 
 export default defineConfig({
