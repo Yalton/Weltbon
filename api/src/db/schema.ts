@@ -11,6 +11,45 @@ export interface TimelineWindow {
   end: number;
 }
 
+/**
+ * Phase 30 CALENDAR-01: per-universe fictional calendar definition persisted as
+ * JSONB on `universes.calendar`. `null` (the default for existing rows) means
+ * "no calendar defined" — positions render as raw abstract numerics everywhere
+ * (CALENDAR-03 backwards-compat). Non-null value unlocks the position→date
+ * renderer (`formatCalendar`) for all display surfaces.
+ */
+export interface CalendarEra {
+  name: string;
+  abbr: string;
+  /** Absolute day-number position where this era begins (D-05). */
+  startPosition: number;
+}
+
+export interface CalendarMonth {
+  name: string;
+  /** Fixed number of days in this month (no leap years in v1, D-04). */
+  lengthDays: number;
+}
+
+export interface CalendarMoon {
+  name: string;
+  /** Orbital cycle in days; moon phase = dayIndex mod cycleDays (D-04). */
+  cycleDays: number;
+}
+
+export interface Calendar {
+  /** Ordered list of eras; must have >= 1 entry. startPosition values must be strictly increasing. */
+  eras: CalendarEra[];
+  /** Ordered list of months in a year; must have >= 1 entry. */
+  months: CalendarMonth[];
+  /** Optional weekday names in cycle order; empty = no weekday display. */
+  weekdays: string[];
+  /** Optional moons; empty = no moon-phase display. */
+  moons: CalendarMoon[];
+  /** Abbreviation for pre-epoch dates (e.g. "BE" for "Before Era"). Used as the era-abbr for positions before the earliest era's startPosition (D-08). */
+  beforeEraAbbr: string;
+}
+
 export const users = pgTable('users', {
   id:               uuid('id').primaryKey().defaultRandom(),
   email:            text('email').notNull().unique(),
@@ -33,6 +72,10 @@ export const universes = pgTable('universes', {
   ]).notNull(),
   // Phase 20 D-01: nullable JSONB; `null` = "first visit, configure range".
   timelineWindow: jsonb('timeline_window').$type<TimelineWindow | null>(),
+  // Phase 30 CALENDAR-01: nullable JSONB; `null` = "no calendar" → raw numeric
+  // fallback everywhere (CALENDAR-03 backwards-compat). Non-null unlocks the
+  // formatCalendar renderer for all position-display surfaces.
+  calendar: jsonb('calendar').$type<Calendar | null>(),
   createdAt:    timestamp('created_at').defaultNow().notNull(),
   updatedAt:    timestamp('updated_at').defaultNow().notNull(),
   // Phase 24 AUDIT-03: per-universe LLM audit opt-in (default OFF).
