@@ -1,32 +1,17 @@
 import { describe, it, expect } from 'vitest';
 import { serializeDiagram, parseDiagram } from './diagramExport';
+import type { DiagramNode, DiagramEdge } from './diagramExport';
 
 // ─── Fixtures ─────────────────────────────────────────────────────────────────
 
 const META = { id: 'diag-001', name: 'Targaryen family tree', description: 'Test diagram' };
 
-interface TestNode {
-  id: string;
-  entryId: string;
-  x: number;
-  y: number;
-}
-
-interface TestEdge {
-  id: string;
-  source: string;
-  target: string;
-  label: string | null;
-  lineStyle: 'solid' | 'dashed' | 'dotted';
-  color: string;
-}
-
-const NODES: TestNode[] = [
+const NODES: DiagramNode[] = [
   { id: 'node-1', entryId: 'entry-a', x: 100, y: 200 },
   { id: 'node-2', entryId: 'entry-b', x: 300, y: 400 },
 ];
 
-const EDGES: TestEdge[] = [
+const EDGES: DiagramEdge[] = [
   { id: 'edge-1', source: 'node-1', target: 'node-2', label: 'parent', lineStyle: 'solid', color: '#6b7280' },
   { id: 'edge-2', source: 'node-2', target: 'node-1', label: null, lineStyle: 'dashed', color: '#3b82f6' },
 ];
