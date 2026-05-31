@@ -29,6 +29,69 @@ export const timelineWindowSchema = z
   })
   .nullable();
 
+// Phase 30 CALENDAR-01: strict Zod schema for the per-universe fictional calendar.
+// Uses `.strict()` on every nested object to reject undeclared keys (T-30-01).
+// `.max()` bounds on all arrays block pathological payloads (T-30-01).
+// `.refine` guards prevent division-by-zero / empty-month yearLen (T-30-02)
+// and enforce monotonic era start positions (correctness requirement D-05).
+// `null` (literal) is accepted and clears the calendar (CALENDAR-03 opt-in).
+export const calendarSchema = z
+  .object({
+    eras: z
+      .array(
+        z
+          .object({
+            name: z.string().min(1).max(120),
+            abbr: z.string().min(1).max(16),
+            startPosition: z.number().finite(),
+          })
+          .strict(),
+      )
+      .min(1)
+      .max(1000),
+    months: z
+      .array(
+        z
+          .object({
+            name: z.string().min(1).max(120),
+            lengthDays: z.number().int().positive().max(100000),
+          })
+          .strict(),
+      )
+      .min(1)
+      .max(1000),
+    weekdays: z.array(z.string().min(1).max(120)).max(1000),
+    moons: z
+      .array(
+        z
+          .object({
+            name: z.string().min(1).max(120),
+            cycleDays: z.number().int().positive().max(1000000),
+          })
+          .strict(),
+      )
+      .max(1000),
+    beforeEraAbbr: z.string().min(1).max(16),
+  })
+  .strict()
+  .refine((v) => v.months.length >= 1, {
+    message: 'Calendar must have at least one month (prevents yearLen=0 division by zero)',
+  })
+  .refine((v) => v.eras.length >= 1, {
+    message: 'Calendar must have at least one era',
+  })
+  .refine(
+    (v) => {
+      // Era startPositions must be strictly increasing (D-05 monotonic constraint).
+      for (let i = 1; i < v.eras.length; i++) {
+        if (v.eras[i].startPosition <= v.eras[i - 1].startPosition) return false;
+      }
+      return true;
+    },
+    { message: 'Era startPosition values must be strictly increasing' },
+  )
+  .nullable();
+
 export const patchSchema = z
   .object({
     name: z.string().min(1).max(80).optional(),
@@ -39,6 +102,8 @@ export const patchSchema = z
     auditEnabled: z.boolean().optional(),
     auditProvider: z.enum(['anthropic', 'openai']).nullable().optional(),
     auditModel: z.string().nullable().optional(),
+    // Phase 30 CALENDAR-01: per-universe fictional calendar (nullable = clear).
+    calendar: calendarSchema.optional(),
   })
   .refine(
     (v) =>
@@ -47,7 +112,8 @@ export const patchSchema = z
       v.timelineWindow !== undefined ||
       v.auditEnabled !== undefined ||
       v.auditProvider !== undefined ||
-      v.auditModel !== undefined,
+      v.auditModel !== undefined ||
+      v.calendar !== undefined,
     { message: 'At least one of name, description, or timelineWindow is required' },
   )
   .refine(
@@ -80,6 +146,8 @@ const universeSchema = z.object({
   timelineWindow: z
     .object({ start: z.number(), end: z.number() })
     .nullable(),
+  // Phase 30 CALENDAR-01: nullable per-universe fictional calendar.
+  calendar: calendarSchema,
   createdAt: z.string(),
   updatedAt: z.string(),
 });
