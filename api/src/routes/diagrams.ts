@@ -277,6 +277,36 @@ const deleteEdgeRoute = createRoute({
   },
 });
 
+// ─── PATCH edge schema + route (DIAGRAM-02 / T-31-17/18) ─────────────────────
+
+const updateEdgeSchema = z.object({
+  label: z.string().max(100).optional(),
+  lineStyle: z.enum(LINE_STYLES).optional(),
+  color: z.string().max(50).optional(),
+});
+
+const updateEdgeRoute = createRoute({
+  method: 'patch',
+  path: '/{did}/edges/{edgeId}',
+  tags: ['Diagrams'],
+  summary: 'Update a diagram edge label, lineStyle, and/or color (universe-scoped)',
+  security: [{ bearerAuth: [] }],
+  request: {
+    params: uidDidEdgeParams,
+    body: { content: { 'application/json': { schema: updateEdgeSchema } }, required: true },
+  },
+  responses: {
+    200: {
+      content: { 'application/json': { schema: edgeSchema } },
+      description: 'Edge updated',
+    },
+    400: { content: { 'application/json': { schema: errorSchema } }, description: 'Validation error' },
+    401: { content: { 'application/json': { schema: errorSchema } }, description: 'Unauthorized' },
+    403: { content: { 'application/json': { schema: errorSchema } }, description: 'Forbidden' },
+    404: { content: { 'application/json': { schema: errorSchema } }, description: 'Edge not found' },
+  },
+});
+
 // ─── Helper ───────────────────────────────────────────────────────────────────
 
 /**
@@ -521,4 +551,45 @@ export const diagramsRouter = new OpenAPIHono<AppEnv>()
     }
 
     return c.body(null, 204);
+  })
+
+  // PATCH /universes/:uid/diagrams/:did/edges/:edgeId — update edge label/lineStyle/color
+  // T-31-17: requireUniverse blocks cross-tenant access. Then we assert the edge belongs to
+  //          this diagram+universe before updating (cross-universe write guard).
+  // T-31-18: lineStyle validated by zod enum (solid|dashed|dotted); color by z.string().max(50).
+  .openapi(updateEdgeRoute, async (c) => {
+    const { uid, did, edgeId } = c.req.valid('param');
+    // Step 1: requireAuth (applied by apiR.use) + requireUniverse (T-31-17)
+    await requireUniverse(uid, c.var.userId);
+    // Step 2: verify the diagram belongs to this universe
+    await requireDiagram(did, uid);
+
+    const data = c.req.valid('json');
+
+    // Step 3: assert the edge (links row) belongs to this diagramId AND universe
+    // — prevents cross-universe writes if an attacker supplies a valid uid/did pair
+    // that doesn't contain the target edgeId (T-31-17).
+    const existing = await db()
+      .select()
+      .from(links)
+      .where(and(eq(links.id, edgeId), eq(links.universeId, uid), eq(links.diagramId, did)));
+
+    if (existing.length === 0) {
+      return c.json({ error: 'Edge not found' }, 404);
+    }
+
+    // Step 4: Build the update set — only mutate label/lineStyle/color. Never touch
+    // sourceEntryId/targetEntryId/universeId/diagramId (those are immutable on update).
+    const updateSet: Record<string, unknown> = {};
+    if (data.label !== undefined) updateSet.label = data.label;
+    if (data.lineStyle !== undefined) updateSet.lineStyle = data.lineStyle;
+    if (data.color !== undefined) updateSet.color = data.color;
+
+    const [updated] = await db()
+      .update(links)
+      .set(updateSet)
+      .where(eq(links.id, edgeId))
+      .returning();
+
+    return c.json(updated as any, 200);
   });
