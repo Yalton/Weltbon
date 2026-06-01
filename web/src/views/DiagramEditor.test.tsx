@@ -5,7 +5,7 @@
  *  1. Editor renders toolbar stat reflecting mocked node/edge counts
  *  2. Toggling Edit sets aria-pressed=true on the Edit toggle button
  *  3. Export JSON calls URL.createObjectURL (DIAGRAM-03 export)
- *  4. With Family tree mode on, clicking Auto-layout invokes the move-node mutation (DIAGRAM-04)
+ *  4. With layout-mode set to Family tree via selector, clicking Auto-layout invokes the move-node mutation (DIAGRAM-04)
  *  5. Undo after a tracked op restores prior state (undo handler re-applies a position)
  */
 import { describe, it, expect, beforeEach, vi, afterEach } from 'vitest';
@@ -212,7 +212,7 @@ describe('DiagramEditor', () => {
     removeSpy.mockRestore();
   });
 
-  it('Test 4: Family tree mode on + Auto-layout invokes the move-node mutation (DIAGRAM-04)', async () => {
+  it('Test 4: Layout mode selector + Auto-layout invokes the move-node mutation (DIAGRAM-04)', async () => {
     vi.mocked(api).mockImplementation(async (path: string, init?: RequestInit) => {
       if (path.includes('/entries')) return makeEntries(3) as never;
       if ((init?.method ?? 'GET') === 'PATCH' && path.includes('/nodes')) {
@@ -226,9 +226,11 @@ describe('DiagramEditor', () => {
 
     await screen.findByText(/nodes/);
 
-    // Enable family tree mode
-    const checkbox = screen.getByRole('checkbox', { name: /family tree mode/i });
-    await user.click(checkbox);
+    // Open the layout-mode Radix Select and choose "Family tree mode"
+    const layoutTrigger = screen.getByRole('combobox', { name: /layout mode/i });
+    await user.click(layoutTrigger);
+    const familyTreeOption = await screen.findByRole('option', { name: /family tree mode/i });
+    await user.click(familyTreeOption);
 
     // Auto-layout button should now be visible
     const autoLayoutBtn = await screen.findByRole('button', { name: /auto-layout/i });

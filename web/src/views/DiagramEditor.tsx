@@ -15,9 +15,11 @@ import {
 } from '../hooks/useDiagram';
 import { useEntries } from '../hooks/useEntries';
 import { familyTreeLayout } from '../lib/familyTreeLayout';
+import { orgChartLayout } from '../lib/orgChartLayout';
 import { serializeDiagram } from '../lib/diagramExport';
 import type { CanvasNode } from '../components/DiagramCanvas';
 import type { DiagramNode, DiagramEdge } from '../hooks/useDiagram';
+import type { LayoutMode } from '../components/DiagramToolbar';
 
 // ─── Constants ────────────────────────────────────────────────────────────────
 
@@ -79,7 +81,8 @@ const COPY = {
  * Orchestrates: DiagramToolbar, DiagramCanvas, AddEntriesPicker, DrawEdgePopover, Toast.
  * Data layer: useDiagram + useEntries + node/edge mutation hooks.
  * Undo/redo: session-scoped stack (cap 50), tracks node moves + edge create/delete.
- * Family tree mode: Auto-layout applies familyTreeLayout as a single undoable batch.
+ * Layout mode: Auto-layout dispatches to familyTreeLayout (family-tree) or orgChartLayout
+ * (org-chart) per layoutMode state; result applied as a single undoable batch.
  * Export JSON: serializeDiagram → URL.createObjectURL + transient <a download>.
  * Esc priority: 1=close popover, 2=cancel drag (handled in DiagramCanvas), 3=exit edit mode.
  *
@@ -101,7 +104,7 @@ export function DiagramEditor() {
   // ── UI state ───────────────────────────────────────────────────────────────
   const [editMode, setEditMode] = useState(false);
   const [pickerOpen, setPickerOpen] = useState(false);
-  const [familyTreeMode, setFamilyTreeMode] = useState(false);
+  const [layoutMode, setLayoutMode] = useState<LayoutMode>(null);
   const [selection, setSelection] = useState<Set<string>>(new Set());
   const [selectedEdgeId, setSelectedEdgeId] = useState<string | null>(null);
   const [popoverState, setPopoverState] = useState<PopoverState>(null);
@@ -349,9 +352,12 @@ export function DiagramEditor() {
     if (id !== null) setSelection(new Set());
   }, []);
 
-  // ── Auto-layout (family tree mode) ───────────────────────────────────────
+  // ── Auto-layout (mode-aware dispatch) ────────────────────────────────────
+  // Dispatches to familyTreeLayout or orgChartLayout based on layoutMode.
+  // Both functions accept the same (nodes, edges, opts) signature and return
+  // the same Map<string, {x, y}> type — single apply path for both.
   const handleAutoLayout = useCallback(async () => {
-    if (!diagram) return;
+    if (!diagram || layoutMode === null) return;
     const layoutEdges = (diagram.edges ?? []).map((e) => ({
       id: e.id,
       source: e.sourceEntryId,
@@ -359,10 +365,11 @@ export function DiagramEditor() {
       label: e.label,
     }));
     const layoutNodes = canvasNodes.map((n) => ({ id: n.entryId, x: n.x, y: n.y }));
-    const positions = familyTreeLayout(layoutNodes, layoutEdges, {
-      startX: 400,
-      startY: 80,
-    });
+    const layoutOpts = { startX: 400, startY: 80 };
+    const positions =
+      layoutMode === 'org-chart'
+        ? orgChartLayout(layoutNodes, layoutEdges, layoutOpts)
+        : familyTreeLayout(layoutNodes, layoutEdges, layoutOpts);
 
     // Build batch op for undo (single batch = one Undo reverts all)
     const batchOps: NodeMoveOp[] = [];
@@ -384,7 +391,7 @@ export function DiagramEditor() {
     }
 
     pushOp({ type: 'batch', ops: batchOps });
-  }, [diagram, canvasNodes, moveNode, pushOp]);
+  }, [diagram, layoutMode, canvasNodes, moveNode, pushOp]);
 
   // ── Export JSON ───────────────────────────────────────────────────────────
   const handleExportJson = useCallback(() => {
@@ -453,8 +460,8 @@ export function DiagramEditor() {
         onTogglePicker={() => setPickerOpen((v) => !v)}
         editMode={editMode}
         onToggleEditMode={() => setEditMode((v) => !v)}
-        familyTreeMode={familyTreeMode}
-        onToggleFamilyTreeMode={() => setFamilyTreeMode((v) => !v)}
+        layoutMode={layoutMode}
+        onSetLayoutMode={setLayoutMode}
         onAutoLayout={handleAutoLayout}
         canUndo={canUndo}
         onUndo={handleUndo}
