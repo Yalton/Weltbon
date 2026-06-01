@@ -3,6 +3,7 @@ import { drag } from 'd3-drag';
 import { select } from 'd3-selection';
 import { zoom, type ZoomBehavior } from 'd3-zoom';
 import { entryTypeHexColor } from '../lib/entryTypeColor';
+import { snapToGrid, DEFAULT_GRID_SIZE } from '../lib/diagramAlign';
 import type { DiagramNode, DiagramEdge } from '../hooks/useDiagram';
 
 // Canvas geometry constants — mirrors GraphCanvas.tsx
@@ -56,6 +57,16 @@ export interface DiagramCanvasProps {
   /** When true: drag from node to node shows a preview edge and emits draw-edge intent. */
   editMode: boolean;
   /**
+   * When true, node positions are snapped to the grid at drag-end before persisting.
+   * Defaults to false — existing callers compile unchanged.
+   */
+  snapEnabled?: boolean;
+  /**
+   * Grid cell size in pixels for snap-to-grid.
+   * Defaults to DEFAULT_GRID_SIZE (16px) when snapEnabled is true.
+   */
+  gridSize?: number;
+  /**
    * Called when a node-to-node edit-mode drag succeeds (different nodes).
    * dropCoords are container-relative so the editor can anchor DrawEdgePopover.
    */
@@ -98,6 +109,8 @@ export function DiagramCanvas({
   selection,
   selectedEdgeId,
   editMode,
+  snapEnabled = false,
+  gridSize = DEFAULT_GRID_SIZE,
   onDrawEdge,
   onSelfDrop,
   onMoveNode,
@@ -120,6 +133,8 @@ export function DiagramCanvas({
   const onEditNodeRef = useRef(onEditNode);
   const editModeRef = useRef(editMode);
   const selectionRef = useRef(selection);
+  const snapEnabledRef = useRef(snapEnabled);
+  const gridSizeRef = useRef(gridSize);
   useEffect(() => {
     onDrawEdgeRef.current = onDrawEdge;
     onSelfDropRef.current = onSelfDrop;
@@ -131,6 +146,8 @@ export function DiagramCanvas({
     onEditNodeRef.current = onEditNode;
     editModeRef.current = editMode;
     selectionRef.current = selection;
+    snapEnabledRef.current = snapEnabled;
+    gridSizeRef.current = gridSize;
   });
 
   // Mid-drag cancel flag and live node registry for hit-testing.
@@ -140,6 +157,14 @@ export function DiagramCanvas({
   // React state for the edit-mode preview edge.
   const [dragSource, setDragSource] = useState<LayoutNode | null>(null);
   const [pointer, setPointer] = useState<{ x: number; y: number } | null>(null);
+
+  // Alignment guide lines — shown while dragging in view mode when a node aligns
+  // with another node's x or y within GUIDE_THRESHOLD pixels.
+  const [guides, setGuides] = useState<{ axis: 'x' | 'y'; value: number }[]>([]);
+
+  // Snap the live drag position to the grid if enabled (optional live preview).
+  // We apply snap on drag-end definitively; this provides visual feedback during drag.
+  const [liveSnapPos, setLiveSnapPos] = useState<{ x: number; y: number } | null>(null);
 
   useEffect(() => {
     if (!svgRef.current) return;
@@ -325,6 +350,9 @@ export function DiagramCanvas({
 
     writePositions();
 
+    // Threshold (in canvas pixels) within which an alignment guide line appears.
+    const GUIDE_THRESHOLD = 8;
+
     // --- d3-drag (dual intent: reposition in view mode, draw-edge in edit mode) ---
     const dragBehavior = drag<SVGGElement, LayoutNode>()
       .on('start', (evt, d) => {
@@ -333,18 +361,44 @@ export function DiagramCanvas({
           setDragSource({ ...d });
           setPointer({ x: d.x, y: d.y });
           onDragSourceChangeRef.current?.(d.entryId);
+        } else {
+          // Clear any lingering guides on new drag
+          setGuides([]);
+          setLiveSnapPos(null);
         }
-        // In view mode: no special start action needed (positions are fixed)
       })
       .on('drag', (evt, d) => {
         if (editModeRef.current) {
           // Preview edge tracks pointer in canvas space.
           setPointer({ x: evt.x, y: evt.y });
         } else {
-          // Reposition node live (synchronously — DIAGRAM-05 Animation Contract).
-          d.x = evt.x;
-          d.y = evt.y;
+          // Reposition node live (synchronously — Animation Contract: no JS animation).
+          // If snap is enabled, show snapped position during drag (visual feedback).
+          let liveX = evt.x;
+          let liveY = evt.y;
+          if (snapEnabledRef.current) {
+            const snapped = snapToGrid({ x: evt.x, y: evt.y }, gridSizeRef.current);
+            liveX = snapped.x;
+            liveY = snapped.y;
+          }
+          d.x = liveX;
+          d.y = liveY;
           writePositions();
+
+          // Compute alignment guides: check if this node's x or y aligns with others.
+          const draggingId = d.entryId;
+          const newGuides: { axis: 'x' | 'y'; value: number }[] = [];
+          for (const other of layoutNodesRef.current) {
+            if (other.entryId === draggingId) continue;
+            if (Math.abs(liveX - other.x) <= GUIDE_THRESHOLD) {
+              newGuides.push({ axis: 'x', value: other.x });
+            }
+            if (Math.abs(liveY - other.y) <= GUIDE_THRESHOLD) {
+              newGuides.push({ axis: 'y', value: other.y });
+            }
+          }
+          setGuides(newGuides);
+          setLiveSnapPos({ x: liveX, y: liveY });
         }
       })
       .on('end', (evt, d) => {
@@ -371,8 +425,23 @@ export function DiagramCanvas({
           setPointer(null);
           onDragSourceChangeRef.current?.(null);
         } else {
+          // Apply snap at drag-end (definitive — DIAGRAM-01 requirement).
+          // T-31-21 mitigate: snapToGrid always returns finite numbers.
+          let finalX = d.x;
+          let finalY = d.y;
+          if (snapEnabledRef.current) {
+            const snapped = snapToGrid({ x: d.x, y: d.y }, gridSizeRef.current);
+            finalX = snapped.x;
+            finalY = snapped.y;
+            d.x = finalX;
+            d.y = finalY;
+            writePositions();
+          }
+          // Clear guides on drag end
+          setGuides([]);
+          setLiveSnapPos(null);
           // Persist final position via onMoveNode callback.
-          onMoveNodeRef.current(d.entryId, d.x, d.y);
+          onMoveNodeRef.current(d.entryId, finalX, finalY);
         }
       });
 
@@ -444,7 +513,8 @@ export function DiagramCanvas({
         .join(' ')}
       data-testid="diagram-canvas"
     >
-      {/* SVG layer order (UI-SPEC): edges, edge-labels, preview-edge, selection-rings, halos, nodes */}
+      {/* SVG layer order (UI-SPEC): edges, edge-labels, preview-edge, selection-rings, halos, nodes.
+          align-guides is added above nodes as a pointer-events:none layer (per plan spec). */}
       <g className="viewport">
         <g className="edges" />
         <g className="edge-labels" />
@@ -467,6 +537,41 @@ export function DiagramCanvas({
         <g className="selection-rings" />
         <g className="halos" />
         <g className="nodes" />
+        {/* Alignment guide lines: pointer-events:none, accent-colored thin lines.
+            Show a vertical/horizontal line when the dragged node's x or y aligns
+            (within GUIDE_THRESHOLD px) with another node. Purely visual — no animation
+            (Animation Contract: node drag has NO animation, synchronous). */}
+        {guides.length > 0 && (
+          <g className="align-guides" pointerEvents="none" data-testid="align-guides">
+            {guides.map((guide, i) =>
+              guide.axis === 'x' ? (
+                <line
+                  key={`guide-x-${i}`}
+                  x1={guide.value}
+                  y1={-10000}
+                  x2={guide.value}
+                  y2={10000}
+                  stroke="var(--color-accent)"
+                  strokeWidth={1}
+                  strokeOpacity={0.5}
+                  strokeDasharray="4 4"
+                />
+              ) : (
+                <line
+                  key={`guide-y-${i}`}
+                  x1={-10000}
+                  y1={guide.value}
+                  x2={10000}
+                  y2={guide.value}
+                  stroke="var(--color-accent)"
+                  strokeWidth={1}
+                  strokeOpacity={0.5}
+                  strokeDasharray="4 4"
+                />
+              ),
+            )}
+          </g>
+        )}
       </g>
     </svg>
   );
