@@ -10,6 +10,7 @@
  */
 import { describe, it, expect, beforeEach, vi, afterEach } from 'vitest';
 import { act } from 'react';
+import React from 'react';
 import { render, screen, waitFor } from '@testing-library/react';
 import userEvent from '@testing-library/user-event';
 import { MemoryRouter, Routes, Route } from 'react-router-dom';
@@ -32,7 +33,7 @@ type MockCanvasCallbacks = {
 const capturedCanvas: MockCanvasCallbacks = {};
 
 vi.mock('../components/DiagramCanvas', () => ({
-  DiagramCanvas: (props: MockCanvasCallbacks) => {
+  DiagramCanvas: React.forwardRef((props: MockCanvasCallbacks, ref: React.Ref<SVGSVGElement>) => {
     capturedCanvas.onMoveNode = props.onMoveNode;
     capturedCanvas.onSelfDrop = props.onSelfDrop;
     capturedCanvas.onDrawEdge = props.onDrawEdge;
@@ -41,6 +42,14 @@ vi.mock('../components/DiagramCanvas', () => ({
     capturedCanvas.onSelectNode = props.onSelectNode;
     capturedCanvas.editMode = props.editMode;
     return (
+      <>
+        {/* Stub SVG element so canvasSvgRef.current is non-null for Export SVG/PNG tests */}
+        <svg
+          ref={ref as React.Ref<SVGSVGElement>}
+          data-testid="diagram-canvas-svg-stub"
+          width="400"
+          height="300"
+        />
       <div
         data-testid="diagram-canvas-stub"
         data-edit-mode={String(props.editMode)}
@@ -82,8 +91,9 @@ vi.mock('../components/DiagramCanvas', () => ({
           [stub] select B (add)
         </button>
       </div>
+      </>
     );
-  },
+  }),
 }));
 
 // Mock DrawEdgePopover — capture mode + onSubmit for edit-edge assertions.
@@ -452,6 +462,39 @@ describe('DiagramEditor', () => {
       );
       expect(patches.length).toBeGreaterThanOrEqual(1);
     });
+  });
+
+  it('Test 10: Export SVG calls URL.createObjectURL with a Blob of type image/svg+xml (Plan 10)', async () => {
+    vi.mocked(api).mockImplementation(async (path: string) => {
+      if (path.includes('/entries') && !path.includes('/diagrams')) return makeEntries(2) as never;
+      return makeDiagramDetail(2, 1) as never;
+    });
+
+    const user = userEvent.setup();
+    renderEditor();
+
+    // Wait for the toolbar to appear (diagram loaded).
+    const exportSvgBtn = await screen.findByRole('button', { name: /export svg/i });
+
+    // Spy on URL.createObjectURL (jsdom does not implement it).
+    const createObjectURLStub = vi.fn().mockReturnValue('blob:test-svg');
+    const revokeObjectURLStub = vi.fn();
+    URL.createObjectURL = createObjectURLStub;
+    URL.revokeObjectURL = revokeObjectURLStub;
+
+    // Prevent jsdom navigation error from the anchor click.
+    const appendSpy = vi.spyOn(document.body, 'appendChild').mockImplementation((el) => el);
+    const removeSpy = vi.spyOn(document.body, 'removeChild').mockImplementation((el) => el);
+
+    await user.click(exportSvgBtn);
+
+    expect(createObjectURLStub).toHaveBeenCalledOnce();
+    const blob = createObjectURLStub.mock.calls[0][0] as Blob;
+    expect(blob).toBeInstanceOf(Blob);
+    expect(blob.type).toBe('image/svg+xml');
+
+    appendSpy.mockRestore();
+    removeSpy.mockRestore();
   });
 
   it('Test 5: Undo after a tracked node move reverts the position (DIAGRAM-03)', async () => {

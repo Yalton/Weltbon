@@ -1,4 +1,4 @@
-import { useEffect, useRef, useState } from 'react';
+import { forwardRef, useEffect, useImperativeHandle, useRef, useState } from 'react';
 import { drag } from 'd3-drag';
 import { select } from 'd3-selection';
 import { zoom, type ZoomBehavior } from 'd3-zoom';
@@ -103,7 +103,7 @@ export interface DiagramCanvasProps {
  * dangerouslySetInnerHTML (T-31-10 mitigate). lineStyle is mapped to a fixed
  * strokeDasharray switch (T-31-11 mitigate).
  */
-export function DiagramCanvas({
+export const DiagramCanvas = forwardRef<SVGSVGElement, DiagramCanvasProps>(function DiagramCanvas({
   nodes,
   edges,
   selection,
@@ -119,8 +119,12 @@ export function DiagramCanvas({
   onDragSourceChange,
   onEditEdge,
   onEditNode,
-}: DiagramCanvasProps) {
+}, forwardedRef) {
   const svgRef = useRef<SVGSVGElement>(null);
+
+  // Expose the internal svgRef to the parent via forwardRef so DiagramEditor
+  // can read the live <svg> element for image export (Plan 10).
+  useImperativeHandle(forwardedRef, () => svgRef.current as SVGSVGElement);
 
   // Stable callback refs so the d3 useEffect doesn't re-run on every render.
   const onDrawEdgeRef = useRef(onDrawEdge);
@@ -575,7 +579,7 @@ export function DiagramCanvas({
       </g>
     </svg>
   );
-}
+});
 
 /**
  * Hit-test the layout node under the pointer at drag-end. Uses

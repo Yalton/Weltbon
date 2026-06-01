@@ -19,6 +19,7 @@ import { useEntries } from '../hooks/useEntries';
 import { familyTreeLayout } from '../lib/familyTreeLayout';
 import { orgChartLayout } from '../lib/orgChartLayout';
 import { serializeDiagram } from '../lib/diagramExport';
+import { exportSvg, exportPng } from '../lib/diagramImageExport';
 import { alignNodes, distributeNodes, type AlignEdge } from '../lib/diagramAlign';
 import type { CanvasNode } from '../components/DiagramCanvas';
 import type { DiagramNode, DiagramEdge } from '../hooks/useDiagram';
@@ -127,6 +128,9 @@ export function DiagramEditor() {
   const deleteEdge = useDeleteEdge(uid, did);
   const updateEdge = useUpdateEdge(uid, did);
   const renameNode = useRenameNode(uid, did);
+
+  // ── Canvas SVG ref — used by Export SVG / Export PNG (Plan 10) ──────────
+  const canvasSvgRef = useRef<SVGSVGElement>(null);
 
   // ── UI state ───────────────────────────────────────────────────────────────
   const [editMode, setEditMode] = useState(false);
@@ -601,6 +605,18 @@ export function DiagramEditor() {
     URL.revokeObjectURL(url);
   }, [diagram]);
 
+  // ── Export SVG ───────────────────────────────────────────────────────────
+  const handleExportSvg = useCallback(() => {
+    if (!diagram || !canvasSvgRef.current) return;
+    exportSvg(canvasSvgRef.current, diagram.name);
+  }, [diagram]);
+
+  // ── Export PNG ───────────────────────────────────────────────────────────
+  const handleExportPng = useCallback(() => {
+    if (!diagram || !canvasSvgRef.current) return;
+    exportPng(canvasSvgRef.current, diagram.name);
+  }, [diagram]);
+
   // ── Find source/target titles for DrawEdgePopover ─────────────────────────
   const sourceTitle = popoverState
     ? (entryMap.get(popoverState.sourceEntryId)?.title ?? popoverState.sourceEntryId)
@@ -637,6 +653,8 @@ export function DiagramEditor() {
         canRedo={canRedo}
         onRedo={handleRedo}
         onExportJson={handleExportJson}
+        onExportSvg={handleExportSvg}
+        onExportPng={handleExportPng}
         snapEnabled={snapEnabled}
         onToggleSnap={() => setSnapEnabled((v) => !v)}
         selectionCount={selection.size}
@@ -671,6 +689,7 @@ export function DiagramEditor() {
 
       {/* Full-bleed SVG canvas */}
       <DiagramCanvas
+        ref={canvasSvgRef}
         nodes={canvasNodes}
         edges={diagram.edges ?? []}
         selection={selection}

@@ -21,6 +21,8 @@ const COPY = {
   editTitleOn: 'Press Esc to exit edit mode',
   autoLayout: 'Auto-layout',
   exportJson: 'Export JSON',
+  exportSvg: 'Export SVG',
+  exportPng: 'Export PNG',
   undoLabel: 'Undo',
   redoLabel: 'Redo',
   undoDisabledTitle: 'Nothing to undo',
@@ -65,6 +67,8 @@ export interface DiagramToolbarProps {
   canRedo: boolean;
   onRedo: () => void;
   onExportJson: () => void;
+  onExportSvg: () => void;
+  onExportPng: () => void;
   /** Whether snap-to-grid is currently enabled. */
   snapEnabled: boolean;
   onToggleSnap: () => void;
@@ -115,6 +119,8 @@ export function DiagramToolbar({
   canRedo,
   onRedo,
   onExportJson,
+  onExportSvg,
+  onExportPng,
   snapEnabled,
   onToggleSnap,
   selectionCount,
@@ -378,6 +384,24 @@ export function DiagramToolbar({
           className="rounded-md border border-neutral-300 bg-white/80 px-3 py-1.5 text-sm shadow-sm hover:bg-white dark:border-neutral-700 dark:bg-neutral-900/80 dark:text-neutral-100 dark:hover:bg-neutral-900 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-[color:var(--color-accent)]"
         >
           {COPY.exportJson}
+        </button>
+
+        {/* Export SVG */}
+        <button
+          type="button"
+          onClick={onExportSvg}
+          className="rounded-md border border-neutral-300 bg-white/80 px-3 py-1.5 text-sm shadow-sm hover:bg-white dark:border-neutral-700 dark:bg-neutral-900/80 dark:text-neutral-100 dark:hover:bg-neutral-900 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-[color:var(--color-accent)]"
+        >
+          {COPY.exportSvg}
+        </button>
+
+        {/* Export PNG */}
+        <button
+          type="button"
+          onClick={onExportPng}
+          className="rounded-md border border-neutral-300 bg-white/80 px-3 py-1.5 text-sm shadow-sm hover:bg-white dark:border-neutral-700 dark:bg-neutral-900/80 dark:text-neutral-100 dark:hover:bg-neutral-900 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-[color:var(--color-accent)]"
+        >
+          {COPY.exportPng}
         </button>
       </div>
     </div>
