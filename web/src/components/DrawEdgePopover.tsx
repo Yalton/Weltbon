@@ -19,8 +19,10 @@ export const EDGE_PALETTE: readonly string[] = [
 export type LineStyle = 'solid' | 'dashed' | 'dotted';
 
 // Locked copy block (UI-SPEC "Draw-Edge Popover" copy table).
+// Edit-mode strings ("Edit edge", "Save changes", "Saving...") added for plan 08.
 const COPY = {
   title: 'Draw edge',
+  titleEdit: 'Edit edge',
   fromCaption: 'From',
   toCaption: 'To',
   labelPlaceholder: 'Relation label (optional)',
@@ -32,10 +34,18 @@ const COPY = {
   ],
   colorLabel: 'Color',
   submit: 'Draw edge',
+  submitEdit: 'Save changes',
   pending: 'Drawing...',
+  pendingEdit: 'Saving...',
   cancel: 'Discard',
   error: "Couldn't draw edge. Try again.",
 } as const;
+
+export interface InitialEdgeValues {
+  label: string;
+  lineStyle: LineStyle;
+  color: string;
+}
 
 export interface DrawEdgePopoverProps {
   open: boolean;
@@ -51,6 +61,18 @@ export interface DrawEdgePopoverProps {
   onSubmit: (opts: { label: string; lineStyle: LineStyle; color: string }) => Promise<void>;
   /** Optional error callback so the parent can surface a Toast too. */
   onError?: (err: unknown) => void;
+  /**
+   * Edit mode: pre-fills label/lineStyle/color from an existing edge.
+   * When provided alongside mode='edit', the title and submit copy switch to edit strings.
+   * Defaults to undefined (create mode — preserves Plan 05/06 callers byte-compatible).
+   */
+  initialEdge?: InitialEdgeValues;
+  /**
+   * 'create' (default) or 'edit'.
+   * 'edit' mode pre-fills controls from initialEdge, uses edit-mode copy strings,
+   * and routes submit to the caller's useUpdateEdge mutation.
+   */
+  mode?: 'create' | 'edit';
 }
 
 /**
@@ -71,10 +93,13 @@ export function DrawEdgePopover({
   dropY,
   onSubmit,
   onError,
+  initialEdge,
+  mode = 'create',
 }: DrawEdgePopoverProps) {
-  const [label, setLabel] = useState('');
-  const [lineStyle, setLineStyle] = useState<LineStyle>('solid');
-  const [color, setColor] = useState<string>(EDGE_PALETTE[0]);
+  const isEdit = mode === 'edit';
+  const [label, setLabel] = useState(initialEdge?.label ?? '');
+  const [lineStyle, setLineStyle] = useState<LineStyle>(initialEdge?.lineStyle ?? 'solid');
+  const [color, setColor] = useState<string>(initialEdge?.color ?? EDGE_PALETTE[0]);
   const [pending, setPending] = useState(false);
   const [error, setError] = useState<unknown>(null);
 
@@ -93,11 +118,13 @@ export function DrawEdgePopover({
   };
 
   // Reset internal state whenever the popover closes so the next open is fresh.
+  // In edit mode, reset to the initialEdge values (not blank) so re-opens reflect
+  // the current edge values.
   const handleOpenChange = (next: boolean) => {
     if (!next) {
-      setLabel('');
-      setLineStyle('solid');
-      setColor(EDGE_PALETTE[0]);
+      setLabel(isEdit && initialEdge ? initialEdge.label : '');
+      setLineStyle(isEdit && initialEdge ? initialEdge.lineStyle : 'solid');
+      setColor(isEdit && initialEdge ? initialEdge.color : EDGE_PALETTE[0]);
       setError(null);
       setPending(false);
     }
@@ -136,7 +163,7 @@ export function DrawEdgePopover({
           onPointerDownOutside={() => handleOpenChange(false)}
           className="w-[300px] bg-white dark:bg-neutral-900 border border-neutral-200 dark:border-neutral-800 rounded-md shadow-lg z-50 p-4 data-[state=open]:animate-popover-in data-[state=closed]:animate-popover-out"
         >
-          <h3 className="text-sm font-semibold mb-3">{COPY.title}</h3>
+          <h3 className="text-sm font-semibold mb-3">{isEdit ? COPY.titleEdit : COPY.title}</h3>
 
           {/* From / To rows */}
           <div className="flex items-baseline gap-2">
@@ -241,7 +268,9 @@ export function DrawEdgePopover({
               disabled={pending}
               className="rounded-md bg-[color:var(--color-accent)] text-white text-sm px-3 py-1.5 disabled:opacity-50 disabled:cursor-not-allowed"
             >
-              {pending ? COPY.pending : COPY.submit}
+              {pending
+                ? (isEdit ? COPY.pendingEdit : COPY.pending)
+                : (isEdit ? COPY.submitEdit : COPY.submit)}
             </button>
           </div>
         </Popover.Content>

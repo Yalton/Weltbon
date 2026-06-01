@@ -140,3 +140,62 @@ export function useDeleteEdge(universeId: string, diagramId: string) {
     },
   });
 }
+
+export interface UpdateEdgeInput {
+  label?: string;
+  lineStyle?: 'solid' | 'dashed' | 'dotted';
+  color?: string;
+}
+
+/**
+ * PATCH /universes/:uid/diagrams/:did/edges/:edgeId
+ * Invalidates the isolated diagram key AND the graph-data key (same set as
+ * useCreateEdge / useDeleteEdge — never re-keys the ['graph-data'] family).
+ * T-31-20: no shared-key re-keying.
+ */
+export function useUpdateEdge(universeId: string, diagramId: string) {
+  const qc = useQueryClient();
+  return useMutation({
+    mutationFn: ({ edgeId, ...input }: UpdateEdgeInput & { edgeId: string }) =>
+      api<DiagramEdge>(
+        `/universes/${universeId}/diagrams/${diagramId}/edges/${edgeId}`,
+        {
+          method: 'PATCH',
+          body: JSON.stringify(input),
+        },
+      ),
+    onSuccess: () => {
+      qc.invalidateQueries({ queryKey: ['diagram', universeId, diagramId] });
+      qc.invalidateQueries({ queryKey: ['graph-data', universeId] });
+    },
+  });
+}
+
+/**
+ * Rename a node by updating the underlying entry title via the existing
+ * entry-update route (PATCH /universes/:uid/entries/:entryId).
+ *
+ * Node rename approach: entry-title update (not a diagram-local label column).
+ * Rationale from 31-01-SUMMARY: diagram_nodes carries no title; canvas reads
+ * titles from entries join. Renaming updates the entry title which propagates
+ * to all surfaces (canvas + force graph). The entry is NEVER deleted (DIAGRAM-01 invariant).
+ *
+ * Invalidates ['entries', universeId] and the diagram key so the canvas re-renders.
+ */
+export function useRenameNode(universeId: string, diagramId: string) {
+  const qc = useQueryClient();
+  return useMutation({
+    mutationFn: ({ entryId, title }: { entryId: string; title: string }) =>
+      api<{ id: string; title: string }>(
+        `/universes/${universeId}/entries/${entryId}`,
+        {
+          method: 'PATCH',
+          body: JSON.stringify({ title }),
+        },
+      ),
+    onSuccess: () => {
+      qc.invalidateQueries({ queryKey: ['entries', universeId] });
+      qc.invalidateQueries({ queryKey: ['diagram', universeId, diagramId] });
+    },
+  });
+}
