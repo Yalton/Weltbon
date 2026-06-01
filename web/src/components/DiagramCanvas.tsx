@@ -70,6 +70,15 @@ export interface DiagramCanvasProps {
   onSelectEdge: (id: string | null) => void;
   /** Surfaces the drag source id so the editor can gate its own Esc handler. */
   onDragSourceChange?: (sourceEntryId: string | null) => void;
+  /**
+   * Called when the user triggers the edit affordance on a selected edge.
+   * dropCoords are container-relative for the editor to position DrawEdgePopover in edit mode.
+   */
+  onEditEdge?: (edgeId: string, dropCoords: DropCoords) => void;
+  /**
+   * Called when the user triggers the edit affordance on a selected node (rename intent).
+   */
+  onEditNode?: (nodeId: string) => void;
 }
 
 /**
@@ -95,6 +104,8 @@ export function DiagramCanvas({
   onSelectNode,
   onSelectEdge,
   onDragSourceChange,
+  onEditEdge,
+  onEditNode,
 }: DiagramCanvasProps) {
   const svgRef = useRef<SVGSVGElement>(null);
 
@@ -105,6 +116,8 @@ export function DiagramCanvas({
   const onSelectNodeRef = useRef(onSelectNode);
   const onSelectEdgeRef = useRef(onSelectEdge);
   const onDragSourceChangeRef = useRef(onDragSourceChange);
+  const onEditEdgeRef = useRef(onEditEdge);
+  const onEditNodeRef = useRef(onEditNode);
   const editModeRef = useRef(editMode);
   const selectionRef = useRef(selection);
   useEffect(() => {
@@ -114,6 +127,8 @@ export function DiagramCanvas({
     onSelectNodeRef.current = onSelectNode;
     onSelectEdgeRef.current = onSelectEdge;
     onDragSourceChangeRef.current = onDragSourceChange;
+    onEditEdgeRef.current = onEditEdge;
+    onEditNodeRef.current = onEditNode;
     editModeRef.current = editMode;
     selectionRef.current = selection;
   });
@@ -160,6 +175,18 @@ export function DiagramCanvas({
     edgeSel.on('click', (evt: MouseEvent, d) => {
       evt.stopPropagation();
       onSelectEdgeRef.current(d.id);
+    });
+
+    // Edge double-click handler — open edit affordance for selected edge.
+    // dropCoords are container-relative so the editor can anchor DrawEdgePopover.
+    edgeSel.on('dblclick', (evt: MouseEvent, d) => {
+      evt.stopPropagation();
+      const rect = svgRef.current?.getBoundingClientRect();
+      const dropCoords: DropCoords = {
+        x: evt.clientX - (rect?.left ?? 0),
+        y: evt.clientY - (rect?.top ?? 0),
+      };
+      onEditEdgeRef.current?.(d.id, dropCoords);
     });
 
     // --- Edge labels layer ---
@@ -263,6 +290,12 @@ export function DiagramCanvas({
     nodeSel.on('click', (evt: MouseEvent, d) => {
       evt.stopPropagation();
       onSelectNodeRef.current(d.entryId, evt.shiftKey);
+    });
+
+    // Node double-click handler — open rename affordance.
+    nodeSel.on('dblclick', (evt: MouseEvent, d) => {
+      evt.stopPropagation();
+      onEditNodeRef.current?.(d.entryId);
     });
 
     // --- Position writer (synchronous — no simulation tick needed) ---
@@ -369,8 +402,10 @@ export function DiagramCanvas({
       svg.on('.zoom', null);
       svg.on('click.canvas', null);
       nodeSel.on('click', null);
+      nodeSel.on('dblclick', null);
       nodeSel.on('.drag', null);
       edgeSel.on('click', null);
+      edgeSel.on('dblclick', null);
     };
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [nodes, edges, selection, selectedEdgeId, editMode]);

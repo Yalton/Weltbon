@@ -3,7 +3,7 @@ import { useParams } from 'react-router-dom';
 import { AddEntriesPicker } from '../components/AddEntriesPicker';
 import { DiagramCanvas, type DropCoords } from '../components/DiagramCanvas';
 import { DiagramToolbar } from '../components/DiagramToolbar';
-import { DrawEdgePopover, type LineStyle } from '../components/DrawEdgePopover';
+import { DrawEdgePopover, type LineStyle, type InitialEdgeValues } from '../components/DrawEdgePopover';
 import { Toast } from '../components/Toast';
 import {
   useDiagram,
@@ -12,6 +12,8 @@ import {
   useMoveNode,
   useCreateEdge,
   useDeleteEdge,
+  useUpdateEdge,
+  useRenameNode,
 } from '../hooks/useDiagram';
 import { useEntries } from '../hooks/useEntries';
 import { familyTreeLayout } from '../lib/familyTreeLayout';
@@ -62,6 +64,24 @@ type PopoverState = {
   dropY: number;
 } | null;
 
+// ─── EditEdgeState ────────────────────────────────────────────────────────────
+
+type EditEdgeState = {
+  edgeId: string;
+  dropX: number;
+  dropY: number;
+  initial: InitialEdgeValues;
+  fromTitle: string;
+  toTitle: string;
+} | null;
+
+// ─── RenameNodeState ──────────────────────────────────────────────────────────
+
+type RenameNodeState = {
+  entryId: string;
+  currentTitle: string;
+} | null;
+
 // ─── ToastState ───────────────────────────────────────────────────────────────
 
 type ToastState = { message: string; variant: 'success' | 'error' } | null;
@@ -73,6 +93,10 @@ const COPY = {
   error: "Couldn't load diagram. Refresh the page.",
   selfDropToast: "Can't draw an edge from a node to itself.",
   edgeSaveErrorToast: "Couldn't save edge. Try again.",
+  renameLabel: 'Rename',
+  renamePlaceholder: 'New name',
+  renameSave: 'Save',
+  renameCancel: 'Cancel',
 } as const;
 
 /**
@@ -100,6 +124,8 @@ export function DiagramEditor() {
   const moveNode = useMoveNode(uid, did);
   const createEdge = useCreateEdge(uid, did);
   const deleteEdge = useDeleteEdge(uid, did);
+  const updateEdge = useUpdateEdge(uid, did);
+  const renameNode = useRenameNode(uid, did);
 
   // ── UI state ───────────────────────────────────────────────────────────────
   const [editMode, setEditMode] = useState(false);
@@ -108,6 +134,9 @@ export function DiagramEditor() {
   const [selection, setSelection] = useState<Set<string>>(new Set());
   const [selectedEdgeId, setSelectedEdgeId] = useState<string | null>(null);
   const [popoverState, setPopoverState] = useState<PopoverState>(null);
+  const [editEdgeState, setEditEdgeState] = useState<EditEdgeState>(null);
+  const [renameNodeState, setRenameNodeState] = useState<RenameNodeState>(null);
+  const [renameInput, setRenameInput] = useState('');
   const [toast, setToast] = useState<ToastState>(null);
   const [dragSourceId, setDragSourceId] = useState<string | null>(null);
 
@@ -218,13 +247,13 @@ export function DiagramEditor() {
   // ── Canvas-level Esc: exit edit mode (priority 3) ─────────────────────────
   // Only fires when no popover is open, no drag is in flight, and the picker is closed.
   useEffect(() => {
-    if (!editMode || popoverState !== null || dragSourceId !== null || pickerOpen) return;
+    if (!editMode || popoverState !== null || editEdgeState !== null || renameNodeState !== null || dragSourceId !== null || pickerOpen) return;
     const handler = (e: KeyboardEvent) => {
       if (e.key === 'Escape') setEditMode(false);
     };
     window.addEventListener('keydown', handler);
     return () => window.removeEventListener('keydown', handler);
-  }, [editMode, popoverState, dragSourceId, pickerOpen]);
+  }, [editMode, popoverState, editEdgeState, renameNodeState, dragSourceId, pickerOpen]);
 
   // ── Build CanvasNodes: join DiagramNode with Entry display fields ──────────
   const canvasNodes = useMemo<CanvasNode[]>(() => {
@@ -346,11 +375,79 @@ export function DiagramEditor() {
     [],
   );
 
+  // ── Entry map (used by edit-edge + edit-node + popover title resolution) ──
+  const entryMap = useMemo(
+    () => new Map((entriesData ?? []).map((e) => [e.id, e])),
+    [entriesData],
+  );
+
   // ── Edge selection ─────────────────────────────────────────────────────────
   const handleSelectEdge = useCallback((id: string | null) => {
     setSelectedEdgeId(id);
     if (id !== null) setSelection(new Set());
   }, []);
+
+  // ── Edit-edge affordance: open DrawEdgePopover in edit mode ───────────────
+  const handleEditEdge = useCallback(
+    (edgeId: string, dropCoords: DropCoords) => {
+      const edge = diagram?.edges?.find((e) => e.id === edgeId);
+      if (!edge) return;
+      const fromEntry = entryMap.get(edge.sourceEntryId);
+      const toEntry = entryMap.get(edge.targetEntryId);
+      setEditEdgeState({
+        edgeId,
+        dropX: dropCoords.x,
+        dropY: dropCoords.y,
+        initial: {
+          label: edge.label ?? '',
+          lineStyle: (edge.lineStyle as LineStyle) ?? 'solid',
+          color: edge.color ?? '#6b7280',
+        },
+        fromTitle: fromEntry?.title ?? edge.sourceEntryId,
+        toTitle: toEntry?.title ?? edge.targetEntryId,
+      });
+    },
+    [diagram?.edges, entryMap],
+  );
+
+  // ── Edge-edit submit (routes to useUpdateEdge) ────────────────────────────
+  const handleUpdateEdgeSubmit = useCallback(
+    async (opts: { label: string; lineStyle: LineStyle; color: string }) => {
+      if (!editEdgeState) return;
+      await updateEdge.mutateAsync({
+        edgeId: editEdgeState.edgeId,
+        label: opts.label,
+        lineStyle: opts.lineStyle,
+        color: opts.color,
+      });
+      setEditEdgeState(null);
+      setSelectedEdgeId(null);
+    },
+    [editEdgeState, updateEdge],
+  );
+
+  // ── Edit-node affordance: open inline rename input ────────────────────────
+  const handleEditNode = useCallback(
+    (entryId: string) => {
+      const entry = entryMap.get(entryId);
+      const currentTitle = entry?.title ?? entryId;
+      setRenameNodeState({ entryId, currentTitle });
+      setRenameInput(currentTitle);
+    },
+    [entryMap],
+  );
+
+  // ── Node rename submit (routes to useRenameNode) ──────────────────────────
+  const handleRenameSubmit = useCallback(async () => {
+    if (!renameNodeState) return;
+    const trimmed = renameInput.trim();
+    if (!trimmed || trimmed === renameNodeState.currentTitle) {
+      setRenameNodeState(null);
+      return;
+    }
+    await renameNode.mutateAsync({ entryId: renameNodeState.entryId, title: trimmed });
+    setRenameNodeState(null);
+  }, [renameNodeState, renameInput, renameNode]);
 
   // ── Auto-layout (mode-aware dispatch) ────────────────────────────────────
   // Dispatches to familyTreeLayout or orgChartLayout based on layoutMode.
@@ -429,10 +526,6 @@ export function DiagramEditor() {
   }, [diagram]);
 
   // ── Find source/target titles for DrawEdgePopover ─────────────────────────
-  const entryMap = useMemo(
-    () => new Map((entriesData ?? []).map((e) => [e.id, e])),
-    [entriesData],
-  );
   const sourceTitle = popoverState
     ? (entryMap.get(popoverState.sourceEntryId)?.title ?? popoverState.sourceEntryId)
     : '';
@@ -502,6 +595,8 @@ export function DiagramEditor() {
         onSelectNode={handleSelectNode}
         onSelectEdge={handleSelectEdge}
         onDragSourceChange={setDragSourceId}
+        onEditEdge={handleEditEdge}
+        onEditNode={handleEditNode}
       />
 
       {/* AddEntriesPicker — slide-in panel */}
@@ -514,7 +609,7 @@ export function DiagramEditor() {
         open={pickerOpen}
       />
 
-      {/* DrawEdgePopover — anchored at drop coords */}
+      {/* DrawEdgePopover — anchored at drop coords (create mode) */}
       {popoverState && (
         <DrawEdgePopover
           open={true}
@@ -528,6 +623,63 @@ export function DiagramEditor() {
           onSubmit={handleDrawEdgeSubmit}
           onError={() => setToast({ message: COPY.edgeSaveErrorToast, variant: 'error' })}
         />
+      )}
+
+      {/* DrawEdgePopover — edit mode: pre-filled with selected edge's current values */}
+      {editEdgeState && (
+        <DrawEdgePopover
+          open={true}
+          onOpenChange={(open) => {
+            if (!open) setEditEdgeState(null);
+          }}
+          fromTitle={editEdgeState.fromTitle}
+          toTitle={editEdgeState.toTitle}
+          dropX={editEdgeState.dropX}
+          dropY={editEdgeState.dropY}
+          mode="edit"
+          initialEdge={editEdgeState.initial}
+          onSubmit={handleUpdateEdgeSubmit}
+          onError={() => setToast({ message: COPY.edgeSaveErrorToast, variant: 'error' })}
+        />
+      )}
+
+      {/* Inline rename node input — small floating panel anchored above the canvas */}
+      {renameNodeState && (
+        <div
+          data-testid="rename-node-panel"
+          className="absolute left-1/2 top-24 z-30 -translate-x-1/2 flex items-center gap-2 rounded-md border border-neutral-200 dark:border-neutral-700 bg-white dark:bg-neutral-900 shadow-lg px-3 py-2"
+        >
+          <span className="text-xs text-neutral-500 dark:text-neutral-400 shrink-0">
+            {COPY.renameLabel}
+          </span>
+          <input
+            data-testid="rename-node-input"
+            type="text"
+            value={renameInput}
+            onChange={(e) => setRenameInput(e.target.value)}
+            onKeyDown={(e) => {
+              if (e.key === 'Enter') { e.preventDefault(); handleRenameSubmit(); }
+              if (e.key === 'Escape') { e.preventDefault(); setRenameNodeState(null); }
+            }}
+            placeholder={COPY.renamePlaceholder}
+            autoFocus
+            className="rounded border border-neutral-300 dark:border-neutral-700 bg-transparent px-2 py-1 text-sm focus:outline-none focus:ring-2 focus:ring-[color:var(--color-accent)] w-48"
+          />
+          <button
+            type="button"
+            onClick={handleRenameSubmit}
+            className="rounded bg-[color:var(--color-accent)] text-white text-xs px-2 py-1"
+          >
+            {COPY.renameSave}
+          </button>
+          <button
+            type="button"
+            onClick={() => setRenameNodeState(null)}
+            className="rounded border border-neutral-300 dark:border-neutral-700 text-xs px-2 py-1"
+          >
+            {COPY.renameCancel}
+          </button>
+        </div>
       )}
 
       {/* Toast (bottom-center, same as GraphView) */}

@@ -24,6 +24,8 @@ type MockCanvasCallbacks = {
   onMoveNode?: (entryId: string, x: number, y: number) => void;
   onSelfDrop?: () => void;
   onDrawEdge?: (srcId: string, tgtId: string, coords: { x: number; y: number }) => void;
+  onEditEdge?: (edgeId: string, coords: { x: number; y: number }) => void;
+  onEditNode?: (entryId: string) => void;
   editMode?: boolean;
 };
 const capturedCanvas: MockCanvasCallbacks = {};
@@ -33,6 +35,8 @@ vi.mock('../components/DiagramCanvas', () => ({
     capturedCanvas.onMoveNode = props.onMoveNode;
     capturedCanvas.onSelfDrop = props.onSelfDrop;
     capturedCanvas.onDrawEdge = props.onDrawEdge;
+    capturedCanvas.onEditEdge = props.onEditEdge;
+    capturedCanvas.onEditNode = props.onEditNode;
     capturedCanvas.editMode = props.editMode;
     return (
       <div
@@ -46,14 +50,60 @@ vi.mock('../components/DiagramCanvas', () => ({
         >
           [stub] move node
         </button>
+        <button
+          type="button"
+          data-testid="stub-edit-edge"
+          onClick={() => props.onEditEdge?.('edge-0', { x: 100, y: 100 })}
+        >
+          [stub] edit edge
+        </button>
+        <button
+          type="button"
+          data-testid="stub-edit-node"
+          onClick={() => props.onEditNode?.('entry-A')}
+        >
+          [stub] edit node
+        </button>
       </div>
     );
   },
 }));
 
-// Mock DrawEdgePopover (we don't need full popover in editor tests)
+// Mock DrawEdgePopover — capture mode + onSubmit for edit-edge assertions.
+type MockPopoverProps = {
+  open?: boolean;
+  mode?: string;
+  initialEdge?: { label: string; lineStyle: string; color: string };
+  onSubmit?: (opts: { label: string; lineStyle: string; color: string }) => Promise<void>;
+};
+const capturedPopover: MockPopoverProps = {};
 vi.mock('../components/DrawEdgePopover', () => ({
-  DrawEdgePopover: () => <div data-testid="draw-edge-popover-stub" />,
+  DrawEdgePopover: (props: MockPopoverProps) => {
+    capturedPopover.open = props.open;
+    capturedPopover.mode = props.mode;
+    capturedPopover.initialEdge = props.initialEdge;
+    capturedPopover.onSubmit = props.onSubmit;
+    return (
+      <div data-testid="draw-edge-popover-stub" data-mode={props.mode ?? 'create'}>
+        {props.mode === 'edit' && props.initialEdge && (
+          <span data-testid="popover-initial-label">{props.initialEdge.label}</span>
+        )}
+        <button
+          type="button"
+          data-testid="stub-popover-save"
+          onClick={() =>
+            props.onSubmit?.({
+              label: props.initialEdge?.label ?? 'updated',
+              lineStyle: props.initialEdge?.lineStyle ?? 'dotted',
+              color: props.initialEdge?.color ?? '#f43f5e',
+            })
+          }
+        >
+          [stub] save
+        </button>
+      </div>
+    );
+  },
   EDGE_PALETTE: ['#6b7280', '#3b82f6'],
 }));
 
@@ -144,6 +194,12 @@ describe('DiagramEditor', () => {
     capturedCanvas.onMoveNode = undefined;
     capturedCanvas.onSelfDrop = undefined;
     capturedCanvas.onDrawEdge = undefined;
+    capturedCanvas.onEditEdge = undefined;
+    capturedCanvas.onEditNode = undefined;
+    capturedPopover.open = undefined;
+    capturedPopover.mode = undefined;
+    capturedPopover.initialEdge = undefined;
+    capturedPopover.onSubmit = undefined;
   });
 
   afterEach(() => {
@@ -246,6 +302,100 @@ describe('DiagramEditor', () => {
       );
       expect(patches.length).toBeGreaterThanOrEqual(1);
     });
+  });
+
+  it('Test 6: triggering edit-edge opens DrawEdgePopover in edit mode pre-filled with edge values', async () => {
+    vi.mocked(api).mockImplementation(async (path: string) => {
+      if (path.includes('/entries')) return makeEntries(2) as never;
+      return makeDiagramDetail(2, 1) as never;
+    });
+
+    const user = userEvent.setup();
+    renderEditor();
+
+    await screen.findByText(/nodes/);
+
+    // Trigger onEditEdge via stub button
+    const editEdgeBtn = screen.getByTestId('stub-edit-edge');
+    await user.click(editEdgeBtn);
+
+    // Popover should appear in edit mode
+    await waitFor(() => {
+      const popover = screen.getByTestId('draw-edge-popover-stub');
+      expect(popover.getAttribute('data-mode')).toBe('edit');
+    });
+
+    // Initial edge label should be pre-filled (edge-0 has label='parent' from makeDiagramDetail)
+    const labelEl = screen.getByTestId('popover-initial-label');
+    expect(labelEl.textContent).toBe('parent');
+  });
+
+  it('Test 7: saving edge edit calls the PATCH update-edge mutation', async () => {
+    vi.mocked(api).mockImplementation(async (path: string, init?: RequestInit) => {
+      if (path.includes('/entries')) return makeEntries(2) as never;
+      if ((init?.method ?? 'GET') === 'PATCH' && path.includes('/edges')) {
+        return {
+          id: 'edge-0', universeId: 'uni-1', sourceEntryId: 'entry-A',
+          targetEntryId: 'entry-B', label: 'updated', bidirectional: false,
+          diagramId: 'diag-1', lineStyle: 'dotted', color: '#f43f5e',
+          createdAt: '2026-01-01T00:00:00Z',
+        } as never;
+      }
+      return makeDiagramDetail(2, 1) as never;
+    });
+
+    const user = userEvent.setup();
+    renderEditor();
+
+    await screen.findByText(/nodes/);
+
+    // Open edit-edge popover
+    const editEdgeBtn = screen.getByTestId('stub-edit-edge');
+    await user.click(editEdgeBtn);
+
+    // Wait for popover to appear in edit mode
+    await waitFor(() => {
+      expect(screen.getByTestId('draw-edge-popover-stub').getAttribute('data-mode')).toBe('edit');
+    });
+
+    // Click save in the popover stub
+    const saveBtn = screen.getByTestId('stub-popover-save');
+    await user.click(saveBtn);
+
+    // A PATCH to /edges should have fired
+    await waitFor(() => {
+      const patches = vi.mocked(api).mock.calls.filter(
+        ([p, init]) =>
+          typeof p === 'string' &&
+          p.includes('/edges') &&
+          (init as RequestInit | undefined)?.method === 'PATCH',
+      );
+      expect(patches.length).toBeGreaterThanOrEqual(1);
+    });
+  });
+
+  it('Test 8: triggering edit-node opens the rename panel', async () => {
+    vi.mocked(api).mockImplementation(async (path: string) => {
+      if (path.includes('/entries')) return makeEntries(2) as never;
+      return makeDiagramDetail(2, 0) as never;
+    });
+
+    const user = userEvent.setup();
+    renderEditor();
+
+    await screen.findByText(/nodes/);
+
+    // Trigger onEditNode via stub button
+    const editNodeBtn = screen.getByTestId('stub-edit-node');
+    await user.click(editNodeBtn);
+
+    // Rename panel should appear with current title pre-filled
+    await waitFor(() => {
+      expect(screen.getByTestId('rename-node-panel')).toBeInTheDocument();
+    });
+    const input = screen.getByTestId('rename-node-input') as HTMLInputElement;
+    // Entry A's title is 'Entry A' from makeEntries
+    expect(input.value).toBe('Entry A');
   });
 
   it('Test 5: Undo after a tracked node move reverts the position (DIAGRAM-03)', async () => {
