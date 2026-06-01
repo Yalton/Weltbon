@@ -26,6 +26,7 @@ type MockCanvasCallbacks = {
   onDrawEdge?: (srcId: string, tgtId: string, coords: { x: number; y: number }) => void;
   onEditEdge?: (edgeId: string, coords: { x: number; y: number }) => void;
   onEditNode?: (entryId: string) => void;
+  onSelectNode?: (id: string | null, addToSelection?: boolean) => void;
   editMode?: boolean;
 };
 const capturedCanvas: MockCanvasCallbacks = {};
@@ -37,6 +38,7 @@ vi.mock('../components/DiagramCanvas', () => ({
     capturedCanvas.onDrawEdge = props.onDrawEdge;
     capturedCanvas.onEditEdge = props.onEditEdge;
     capturedCanvas.onEditNode = props.onEditNode;
+    capturedCanvas.onSelectNode = props.onSelectNode;
     capturedCanvas.editMode = props.editMode;
     return (
       <div
@@ -63,6 +65,21 @@ vi.mock('../components/DiagramCanvas', () => ({
           onClick={() => props.onEditNode?.('entry-A')}
         >
           [stub] edit node
+        </button>
+        {/* Select two nodes to set up multi-selection for align tests */}
+        <button
+          type="button"
+          data-testid="stub-select-node-a"
+          onClick={() => props.onSelectNode?.('entry-A', false)}
+        >
+          [stub] select A
+        </button>
+        <button
+          type="button"
+          data-testid="stub-select-node-b"
+          onClick={() => props.onSelectNode?.('entry-B', true)}
+        >
+          [stub] select B (add)
         </button>
       </div>
     );
@@ -196,6 +213,7 @@ describe('DiagramEditor', () => {
     capturedCanvas.onDrawEdge = undefined;
     capturedCanvas.onEditEdge = undefined;
     capturedCanvas.onEditNode = undefined;
+    capturedCanvas.onSelectNode = undefined;
     capturedPopover.open = undefined;
     capturedPopover.mode = undefined;
     capturedPopover.initialEdge = undefined;
@@ -396,6 +414,44 @@ describe('DiagramEditor', () => {
     const input = screen.getByTestId('rename-node-input') as HTMLInputElement;
     // Entry A's title is 'Entry A' from makeEntries
     expect(input.value).toBe('Entry A');
+  });
+
+  it('Test 9: align action on multi-selection invokes the move-node mutation (DIAGRAM-01/03)', async () => {
+    vi.mocked(api).mockImplementation(async (path: string, init?: RequestInit) => {
+      if (path.includes('/entries')) return makeEntries(3) as never;
+      if ((init?.method ?? 'GET') === 'PATCH' && path.includes('/nodes')) {
+        return { id: 'node-0', diagramId: 'diag-1', entryId: 'entry-A', x: 0, y: 0 } as never;
+      }
+      return makeDiagramDetail(3, 0) as never;
+    });
+
+    const user = userEvent.setup();
+    renderEditor();
+
+    await screen.findByText(/nodes/);
+
+    // Select node A (single select)
+    const selectA = screen.getByTestId('stub-select-node-a');
+    await user.click(selectA);
+
+    // Add node B to selection (shift-select via addToSelection=true)
+    const selectB = screen.getByTestId('stub-select-node-b');
+    await user.click(selectB);
+
+    // The "Align left" button should now be visible (selectionCount >= 2)
+    const alignLeftBtn = await screen.findByRole('button', { name: /align left/i });
+    await user.click(alignLeftBtn);
+
+    // Move-node mutation (PATCH /nodes) should fire for the aligned nodes
+    await waitFor(() => {
+      const patches = vi.mocked(api).mock.calls.filter(
+        ([p, init]) =>
+          typeof p === 'string' &&
+          p.includes('/nodes') &&
+          (init as RequestInit | undefined)?.method === 'PATCH',
+      );
+      expect(patches.length).toBeGreaterThanOrEqual(1);
+    });
   });
 
   it('Test 5: Undo after a tracked node move reverts the position (DIAGRAM-03)', async () => {

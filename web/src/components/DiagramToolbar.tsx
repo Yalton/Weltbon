@@ -31,6 +31,18 @@ const COPY = {
   orgChartHint: 'Reporting-line edges drive the top-down layout.',
   layoutModeLabel: 'Layout mode',
   layoutModeNone: 'None',
+  // Snap + align/distribute copy (Plan 09)
+  snapToGrid: 'Snap to grid',
+  alignLeft: 'Align left',
+  alignRight: 'Align right',
+  alignTop: 'Align top',
+  alignBottom: 'Align bottom',
+  centerH: 'Center H',
+  centerV: 'Center V',
+  distributeH: 'Distribute H',
+  distributeV: 'Distribute V',
+  alignDisabledTitle: 'Select 2+ nodes to align',
+  distributeDisabledTitle: 'Select 3+ nodes to distribute',
 } as const;
 
 export interface DiagramToolbarProps {
@@ -53,6 +65,22 @@ export interface DiagramToolbarProps {
   canRedo: boolean;
   onRedo: () => void;
   onExportJson: () => void;
+  /** Whether snap-to-grid is currently enabled. */
+  snapEnabled: boolean;
+  onToggleSnap: () => void;
+  /**
+   * Number of currently selected nodes. Used to enable/disable align/distribute
+   * controls: align requires >= 2, distribute requires >= 3.
+   */
+  selectionCount: number;
+  onAlignLeft: () => void;
+  onAlignRight: () => void;
+  onAlignTop: () => void;
+  onAlignBottom: () => void;
+  onCenterH: () => void;
+  onCenterV: () => void;
+  onDistributeH: () => void;
+  onDistributeV: () => void;
 }
 
 /**
@@ -87,6 +115,17 @@ export function DiagramToolbar({
   canRedo,
   onRedo,
   onExportJson,
+  snapEnabled,
+  onToggleSnap,
+  selectionCount,
+  onAlignLeft,
+  onAlignRight,
+  onAlignTop,
+  onAlignBottom,
+  onCenterH,
+  onCenterV,
+  onDistributeH,
+  onDistributeV,
 }: DiagramToolbarProps) {
   // Determine hint text for the active layout mode
   const layoutHint =
@@ -189,6 +228,83 @@ export function DiagramToolbar({
             </span>
           )}
         </div>
+
+        {/* Snap to grid toggle — mirrors layout-mode toggle styling */}
+        <button
+          type="button"
+          onClick={onToggleSnap}
+          aria-pressed={snapEnabled}
+          aria-label="Snap to grid"
+          className={[
+            'rounded-md px-3 py-1.5 text-sm shadow-sm',
+            'focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-[color:var(--color-accent)]',
+            snapEnabled
+              ? 'border border-[color:var(--color-accent)] bg-[color:var(--color-accent-soft)] text-[color:var(--color-accent)]'
+              : 'border border-neutral-300 bg-white/80 hover:bg-white dark:border-neutral-700 dark:bg-neutral-900/80 dark:text-neutral-100 dark:hover:bg-neutral-900',
+          ].join(' ')}
+        >
+          {COPY.snapToGrid}
+        </button>
+
+        {/* Align / distribute controls — text-label buttons, no icon import.
+            Align: enabled when selectionCount >= 2; aria-disabled otherwise.
+            Distribute: enabled when selectionCount >= 3; aria-disabled otherwise. */}
+        {selectionCount >= 2 && (
+          <div className="flex items-center gap-1">
+            {(
+              [
+                { label: COPY.alignLeft, handler: onAlignLeft, 'aria-label': 'Align left' },
+                { label: COPY.alignRight, handler: onAlignRight, 'aria-label': 'Align right' },
+                { label: COPY.alignTop, handler: onAlignTop, 'aria-label': 'Align top' },
+                { label: COPY.alignBottom, handler: onAlignBottom, 'aria-label': 'Align bottom' },
+                { label: COPY.centerH, handler: onCenterH, 'aria-label': 'Center H' },
+                { label: COPY.centerV, handler: onCenterV, 'aria-label': 'Center V' },
+              ] as const
+            ).map((item) => (
+              <button
+                key={item.label}
+                type="button"
+                onClick={item.handler}
+                aria-label={item['aria-label']}
+                className="rounded-md border border-neutral-300 bg-white/80 px-2 py-1.5 text-xs shadow-sm hover:bg-white dark:border-neutral-700 dark:bg-neutral-900/80 dark:text-neutral-100 dark:hover:bg-neutral-900 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-[color:var(--color-accent)]"
+              >
+                {item.label}
+              </button>
+            ))}
+            {selectionCount >= 3 && (
+              <>
+                <button
+                  type="button"
+                  onClick={onDistributeH}
+                  aria-label="Distribute H"
+                  className="rounded-md border border-neutral-300 bg-white/80 px-2 py-1.5 text-xs shadow-sm hover:bg-white dark:border-neutral-700 dark:bg-neutral-900/80 dark:text-neutral-100 dark:hover:bg-neutral-900 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-[color:var(--color-accent)]"
+                >
+                  {COPY.distributeH}
+                </button>
+                <button
+                  type="button"
+                  onClick={onDistributeV}
+                  aria-label="Distribute V"
+                  className="rounded-md border border-neutral-300 bg-white/80 px-2 py-1.5 text-xs shadow-sm hover:bg-white dark:border-neutral-700 dark:bg-neutral-900/80 dark:text-neutral-100 dark:hover:bg-neutral-900 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-[color:var(--color-accent)]"
+                >
+                  {COPY.distributeV}
+                </button>
+              </>
+            )}
+          </div>
+        )}
+        {/* When fewer than 2 selected: show aria-disabled align placeholder */}
+        {selectionCount < 2 && (
+          <button
+            type="button"
+            aria-disabled="true"
+            aria-label="Align (select 2+ nodes)"
+            title={COPY.alignDisabledTitle}
+            className="rounded-md border border-neutral-200 bg-white/50 px-2 py-1.5 text-xs text-neutral-400 dark:border-neutral-800 dark:bg-neutral-900/50 dark:text-neutral-600 cursor-not-allowed"
+          >
+            Align
+          </button>
+        )}
 
         {/* Edit / Editing toggle */}
         <button

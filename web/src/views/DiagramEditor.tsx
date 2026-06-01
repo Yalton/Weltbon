@@ -19,6 +19,7 @@ import { useEntries } from '../hooks/useEntries';
 import { familyTreeLayout } from '../lib/familyTreeLayout';
 import { orgChartLayout } from '../lib/orgChartLayout';
 import { serializeDiagram } from '../lib/diagramExport';
+import { alignNodes, distributeNodes, type AlignEdge } from '../lib/diagramAlign';
 import type { CanvasNode } from '../components/DiagramCanvas';
 import type { DiagramNode, DiagramEdge } from '../hooks/useDiagram';
 import type { LayoutMode } from '../components/DiagramToolbar';
@@ -131,6 +132,7 @@ export function DiagramEditor() {
   const [editMode, setEditMode] = useState(false);
   const [pickerOpen, setPickerOpen] = useState(false);
   const [layoutMode, setLayoutMode] = useState<LayoutMode>(null);
+  const [snapEnabled, setSnapEnabled] = useState(false);
   const [selection, setSelection] = useState<Set<string>>(new Set());
   const [selectedEdgeId, setSelectedEdgeId] = useState<string | null>(null);
   const [popoverState, setPopoverState] = useState<PopoverState>(null);
@@ -490,6 +492,80 @@ export function DiagramEditor() {
     pushOp({ type: 'batch', ops: batchOps });
   }, [diagram, layoutMode, canvasNodes, moveNode, pushOp]);
 
+  // ── Align/distribute (single-undoable-batch path — same as Auto-layout) ───
+  // Takes the current multi-selection, applies alignNodes / distributeNodes,
+  // persists each position via moveNode.mutateAsync, and pushes a single BatchOp
+  // so one Undo restores all pre-align positions. DIAGRAM-01/03.
+  const handleAlign = useCallback(
+    async (edge: AlignEdge) => {
+      if (!diagram || selection.size < 2) return;
+      const selectedNodes = canvasNodes.filter((n) => selection.has(n.entryId));
+      const inputNodes = selectedNodes.map((n) => ({
+        id: n.entryId,
+        x: n.x,
+        y: n.y,
+      }));
+      const newPositions = alignNodes(inputNodes, edge);
+
+      // Build batch op for undo (single batch = one Undo reverts all)
+      const batchOps: NodeMoveOp[] = [];
+      for (const [entryId, pos] of newPositions) {
+        const prev = diagram.nodes.find((n) => n.entryId === entryId);
+        batchOps.push({
+          type: 'node-move',
+          entryId,
+          prevX: prev?.x ?? pos.x,
+          prevY: prev?.y ?? pos.y,
+          nextX: pos.x,
+          nextY: pos.y,
+        });
+      }
+
+      // Persist all aligned positions
+      for (const op of batchOps) {
+        await moveNode.mutateAsync({ entryId: op.entryId, x: op.nextX, y: op.nextY });
+      }
+
+      pushOp({ type: 'batch', ops: batchOps });
+    },
+    [diagram, selection, canvasNodes, moveNode, pushOp],
+  );
+
+  const handleDistribute = useCallback(
+    async (axis: 'horizontal' | 'vertical') => {
+      if (!diagram || selection.size < 3) return;
+      const selectedNodes = canvasNodes.filter((n) => selection.has(n.entryId));
+      const inputNodes = selectedNodes.map((n) => ({
+        id: n.entryId,
+        x: n.x,
+        y: n.y,
+      }));
+      const newPositions = distributeNodes(inputNodes, axis);
+
+      // Build batch op for undo
+      const batchOps: NodeMoveOp[] = [];
+      for (const [entryId, pos] of newPositions) {
+        const prev = diagram.nodes.find((n) => n.entryId === entryId);
+        batchOps.push({
+          type: 'node-move',
+          entryId,
+          prevX: prev?.x ?? pos.x,
+          prevY: prev?.y ?? pos.y,
+          nextX: pos.x,
+          nextY: pos.y,
+        });
+      }
+
+      // Persist all distributed positions
+      for (const op of batchOps) {
+        await moveNode.mutateAsync({ entryId: op.entryId, x: op.nextX, y: op.nextY });
+      }
+
+      pushOp({ type: 'batch', ops: batchOps });
+    },
+    [diagram, selection, canvasNodes, moveNode, pushOp],
+  );
+
   // ── Export JSON ───────────────────────────────────────────────────────────
   const handleExportJson = useCallback(() => {
     if (!diagram) return;
@@ -561,6 +637,17 @@ export function DiagramEditor() {
         canRedo={canRedo}
         onRedo={handleRedo}
         onExportJson={handleExportJson}
+        snapEnabled={snapEnabled}
+        onToggleSnap={() => setSnapEnabled((v) => !v)}
+        selectionCount={selection.size}
+        onAlignLeft={() => handleAlign('left')}
+        onAlignRight={() => handleAlign('right')}
+        onAlignTop={() => handleAlign('top')}
+        onAlignBottom={() => handleAlign('bottom')}
+        onCenterH={() => handleAlign('center-x')}
+        onCenterV={() => handleAlign('center-y')}
+        onDistributeH={() => handleDistribute('horizontal')}
+        onDistributeV={() => handleDistribute('vertical')}
       />
 
       {/* Connect-edge discoverability hint — teaches the Edit→drag flow.
@@ -589,6 +676,7 @@ export function DiagramEditor() {
         selection={selection}
         selectedEdgeId={selectedEdgeId}
         editMode={editMode}
+        snapEnabled={snapEnabled}
         onDrawEdge={handleDrawEdge}
         onSelfDrop={handleSelfDrop}
         onMoveNode={handleMoveNode}
