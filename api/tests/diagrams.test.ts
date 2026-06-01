@@ -454,4 +454,164 @@ describe('diagram routes (DIAGRAM-01 + DIAGRAM-02)', () => {
 
     expect(res.status).toBe(400);
   });
+
+  // ─── PATCH edge (DIAGRAM-02: T-31-17/18) ──────────────────────────────────
+
+  it('PATCH edge updates label, lineStyle, and color; GET detail reflects new values', async () => {
+    const { hdrs } = await userWithToken('p@test.com');
+    const universe = await createUniverse(hdrs);
+    const entryA = await createEntry(universe.id, hdrs, { title: 'Hero' });
+    const entryB = await createEntry(universe.id, hdrs, { title: 'Villain' });
+    const diagram = await createDiagram(universe.id, hdrs);
+
+    // Create edge
+    const edgeRes = await req('POST', `/universes/${universe.id}/diagrams/${diagram.id}/edges`, {
+      headers: hdrs,
+      body: {
+        sourceEntryId: entryA.id,
+        targetEntryId: entryB.id,
+        label: 'rivals',
+        lineStyle: 'solid',
+        color: '#6b7280',
+      },
+    });
+    expect(edgeRes.status).toBe(201);
+    const edge = await json(edgeRes);
+
+    // PATCH edge
+    const patchRes = await req(
+      'PATCH',
+      `/universes/${universe.id}/diagrams/${diagram.id}/edges/${edge.id}`,
+      {
+        headers: hdrs,
+        body: { label: 'enemies', lineStyle: 'dotted', color: '#f43f5e' },
+      }
+    );
+    expect(patchRes.status).toBe(200);
+    const updated = await json(patchRes);
+    expect(updated.label).toBe('enemies');
+    expect(updated.lineStyle).toBe('dotted');
+    expect(updated.color).toBe('#f43f5e');
+
+    // GET detail reflects the new values
+    const detailRes = await req('GET', `/universes/${universe.id}/diagrams/${diagram.id}`, {
+      headers: hdrs,
+    });
+    const detail = await json(detailRes);
+    const found = detail.edges.find((e: any) => e.id === edge.id);
+    expect(found).toBeDefined();
+    expect(found.label).toBe('enemies');
+    expect(found.lineStyle).toBe('dotted');
+    expect(found.color).toBe('#f43f5e');
+  });
+
+  it('PATCH edge with invalid lineStyle is rejected 4xx, row unchanged (T-31-18)', async () => {
+    const { hdrs } = await userWithToken('q@test.com');
+    const universe = await createUniverse(hdrs);
+    const entryA = await createEntry(universe.id, hdrs, { title: 'A' });
+    const entryB = await createEntry(universe.id, hdrs, { title: 'B' });
+    const diagram = await createDiagram(universe.id, hdrs);
+
+    const edgeRes = await req('POST', `/universes/${universe.id}/diagrams/${diagram.id}/edges`, {
+      headers: hdrs,
+      body: {
+        sourceEntryId: entryA.id,
+        targetEntryId: entryB.id,
+        label: 'original',
+        lineStyle: 'solid',
+        color: '#6b7280',
+      },
+    });
+    const edge = await json(edgeRes);
+
+    const patchRes = await req(
+      'PATCH',
+      `/universes/${universe.id}/diagrams/${diagram.id}/edges/${edge.id}`,
+      {
+        headers: hdrs,
+        body: { lineStyle: 'invalid_style' },
+      }
+    );
+    expect(patchRes.status).toBeGreaterThanOrEqual(400);
+    expect(patchRes.status).toBeLessThan(500);
+
+    // Row must be unchanged
+    const detailRes = await req('GET', `/universes/${universe.id}/diagrams/${diagram.id}`, {
+      headers: hdrs,
+    });
+    const detail = await json(detailRes);
+    const found = detail.edges.find((e: any) => e.id === edge.id);
+    expect(found?.lineStyle).toBe('solid');
+  });
+
+  it('PATCH edge cross-universe write is blocked 404/403 (T-31-17)', async () => {
+    const { hdrs: ownerHdrs } = await userWithToken('r@test.com');
+    const { hdrs: attackerHdrs } = await userWithToken('s@test.com');
+
+    const ownerUniverse = await createUniverse(ownerHdrs);
+    const entryA = await createEntry(ownerUniverse.id, ownerHdrs, { title: 'Alpha' });
+    const entryB = await createEntry(ownerUniverse.id, ownerHdrs, { title: 'Beta' });
+    const diagram = await createDiagram(ownerUniverse.id, ownerHdrs);
+    const edgeRes = await req(
+      'POST',
+      `/universes/${ownerUniverse.id}/diagrams/${diagram.id}/edges`,
+      {
+        headers: ownerHdrs,
+        body: {
+          sourceEntryId: entryA.id,
+          targetEntryId: entryB.id,
+          label: 'knows',
+          lineStyle: 'solid',
+          color: '#6b7280',
+        },
+      }
+    );
+    const edge = await json(edgeRes);
+
+    // Attacker has their own universe — attacker targets owner's edge via owner's UID/DID
+    const attackRes = await req(
+      'PATCH',
+      `/universes/${ownerUniverse.id}/diagrams/${diagram.id}/edges/${edge.id}`,
+      {
+        headers: attackerHdrs,
+        body: { label: 'hacked' },
+      }
+    );
+    // Must be blocked — 403 from requireUniverse
+    expect(attackRes.status === 403 || attackRes.status === 404).toBe(true);
+
+    // Edge label must be unchanged
+    const detailRes = await req('GET', `/universes/${ownerUniverse.id}/diagrams/${diagram.id}`, {
+      headers: ownerHdrs,
+    });
+    const detail = await json(detailRes);
+    const found = detail.edges.find((e: any) => e.id === edge.id);
+    expect(found?.label).toBe('knows');
+  });
+
+  it('PATCH edge without auth returns 401 (T-31-17)', async () => {
+    const { hdrs } = await userWithToken('t@test.com');
+    const universe = await createUniverse(hdrs);
+    const entryA = await createEntry(universe.id, hdrs, { title: 'A' });
+    const entryB = await createEntry(universe.id, hdrs, { title: 'B' });
+    const diagram = await createDiagram(universe.id, hdrs);
+    const edgeRes = await req('POST', `/universes/${universe.id}/diagrams/${diagram.id}/edges`, {
+      headers: hdrs,
+      body: {
+        sourceEntryId: entryA.id,
+        targetEntryId: entryB.id,
+        label: 'test',
+        lineStyle: 'solid',
+        color: '#6b7280',
+      },
+    });
+    const edge = await json(edgeRes);
+
+    const patchRes = await req(
+      'PATCH',
+      `/universes/${universe.id}/diagrams/${diagram.id}/edges/${edge.id}`,
+      { body: { label: 'no-auth' } }
+    );
+    expect(patchRes.status).toBe(401);
+  });
 });
