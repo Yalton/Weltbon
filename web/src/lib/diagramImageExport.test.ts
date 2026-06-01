@@ -92,7 +92,9 @@ describe('serializeSvgElement', () => {
     const svg = makeSvg();
     const serialized = serializeSvgElement(svg);
     const parser = new DOMParser();
-    const doc = parser.parseFromString(serialized, 'image/svg+xml');
+    // jsdom supports 'application/xml' but not 'image/svg+xml'.
+    // Both parse the same SVG markup; 'application/xml' is equivalent for round-trip tests.
+    const doc = parser.parseFromString(serialized, 'application/xml');
     const root = doc.documentElement;
     expect(root.tagName.toLowerCase()).toBe('svg');
   });
@@ -101,7 +103,8 @@ describe('serializeSvgElement', () => {
     const svg = makeSvg(); // circle + line + text = 3 children
     const serialized = serializeSvgElement(svg);
     const parser = new DOMParser();
-    const doc = parser.parseFromString(serialized, 'image/svg+xml');
+    // jsdom supports 'application/xml' but not 'image/svg+xml'.
+    const doc = parser.parseFromString(serialized, 'application/xml');
     const root = doc.documentElement;
     // At least the 3 children we added (serializer may add xmlns attrs — child count same)
     expect(root.childNodes.length).toBe(svg.childNodes.length);
