@@ -385,6 +385,10 @@ export function DiagramCanvas({
         g.attr('transform', evt.transform.toString());
       });
     svg.call(zoomBehavior);
+    // Disable d3-zoom's built-in double-click-to-zoom so a double-click on a
+    // node/edge opens the rename/edit-edge affordance instead of zooming the
+    // canvas (31-08 checkpoint). Pan + wheel-zoom remain active.
+    svg.on('dblclick.zoom', null);
 
     // Click on empty canvas clears selection.
     svg.on('click.canvas', (evt: MouseEvent) => {
