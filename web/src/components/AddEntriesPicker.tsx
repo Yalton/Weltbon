@@ -13,6 +13,7 @@ const COPY = {
   removeDialogBody:
     'This removes the node from this diagram. The entry and its links in the force-directed graph are not affected.',
   removeDialogConfirm: 'Remove',
+  close: 'Close add entries panel',
 } as const;
 
 export interface UniverseEntry {
@@ -30,6 +31,8 @@ export interface AddEntriesPickerProps {
   onAdd: (entryId: string) => void;
   /** Called when the user confirms "Remove from diagram". */
   onRemove: (entryId: string) => void;
+  /** Called when the user dismisses the panel (× button or Esc). */
+  onClose: () => void;
   /** Whether the panel is visible. */
   open: boolean;
 }
@@ -48,6 +51,7 @@ export function AddEntriesPicker({
   placedEntryIds,
   onAdd,
   onRemove,
+  onClose,
   open,
 }: AddEntriesPickerProps) {
   const [query, setQuery] = useState('');
@@ -86,6 +90,14 @@ export function AddEntriesPicker({
           <h2 className="text-sm font-semibold text-neutral-900 dark:text-neutral-100">
             {COPY.title}
           </h2>
+          <button
+            type="button"
+            onClick={onClose}
+            aria-label={COPY.close}
+            className="rounded-md px-1.5 text-lg leading-none text-neutral-400 hover:text-neutral-700 dark:hover:text-neutral-200 focus:outline-none focus-visible:ring-2 focus-visible:ring-[color:var(--color-accent)]"
+          >
+            ×
+          </button>
         </div>
 
         {/* Search input */}

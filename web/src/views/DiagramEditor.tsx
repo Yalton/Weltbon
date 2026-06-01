@@ -202,16 +202,26 @@ export function DiagramEditor() {
     return () => window.removeEventListener('keydown', handler);
   }, [handleUndo, handleRedo]);
 
-  // ── Canvas-level Esc: exit edit mode (priority 3) ─────────────────────────
-  // Only fires when no popover is open and no drag is in flight.
+  // ── Esc closes the Add Entries picker (priority above exit-edit-mode) ──────
   useEffect(() => {
-    if (!editMode || popoverState !== null || dragSourceId !== null) return;
+    if (!pickerOpen) return;
+    const handler = (e: KeyboardEvent) => {
+      if (e.key === 'Escape') setPickerOpen(false);
+    };
+    window.addEventListener('keydown', handler);
+    return () => window.removeEventListener('keydown', handler);
+  }, [pickerOpen]);
+
+  // ── Canvas-level Esc: exit edit mode (priority 3) ─────────────────────────
+  // Only fires when no popover is open, no drag is in flight, and the picker is closed.
+  useEffect(() => {
+    if (!editMode || popoverState !== null || dragSourceId !== null || pickerOpen) return;
     const handler = (e: KeyboardEvent) => {
       if (e.key === 'Escape') setEditMode(false);
     };
     window.addEventListener('keydown', handler);
     return () => window.removeEventListener('keydown', handler);
-  }, [editMode, popoverState, dragSourceId]);
+  }, [editMode, popoverState, dragSourceId, pickerOpen]);
 
   // ── Build CanvasNodes: join DiagramNode with Entry display fields ──────────
   const canvasNodes = useMemo<CanvasNode[]>(() => {
@@ -453,6 +463,25 @@ export function DiagramEditor() {
         onExportJson={handleExportJson}
       />
 
+      {/* Connect-edge discoverability hint — teaches the Edit→drag flow.
+          In view mode: how to start. In edit mode: what to do now. */}
+      {(diagram.nodes?.length ?? 0) >= 2 && popoverState === null && (
+        <div className="pointer-events-none absolute left-1/2 top-14 z-10 -translate-x-1/2 px-3">
+          <div
+            className={[
+              'rounded-full px-3 py-1 text-xs shadow-sm whitespace-nowrap',
+              editMode
+                ? 'border border-[color:var(--color-accent)] bg-[color:var(--color-accent-soft)] text-[color:var(--color-accent)]'
+                : 'border border-neutral-300 bg-white/80 text-neutral-500 dark:border-neutral-700 dark:bg-neutral-900/80 dark:text-neutral-400',
+            ].join(' ')}
+          >
+            {editMode
+              ? 'Drag from one node onto another to draw an edge · Esc to exit'
+              : 'To connect: click Edit, then drag one node onto another'}
+          </div>
+        </div>
+      )}
+
       {/* Full-bleed SVG canvas */}
       <DiagramCanvas
         nodes={canvasNodes}
@@ -474,6 +503,7 @@ export function DiagramEditor() {
         placedEntryIds={placedEntryIds}
         onAdd={handleAddEntry}
         onRemove={handleRemoveEntry}
+        onClose={() => setPickerOpen(false)}
         open={pickerOpen}
       />
 
