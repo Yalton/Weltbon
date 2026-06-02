@@ -211,11 +211,16 @@ function triggerDownload(blob: Blob, filename: string): void {
  *
  * @param svgEl    The live canvas <svg> element to export.
  * @param name     The desired base name (without extension). Will be sanitized.
+ * @param onError  Optional callback invoked if export fails (e.g. serialization throws).
  */
-export function exportSvg(svgEl: SVGSVGElement, name: string): void {
-  const svgString = serializeSvgElement(svgEl);
-  const blob = new Blob([svgString], { type: 'image/svg+xml' });
-  triggerDownload(blob, `${sanitizeFilename(name)}.svg`);
+export function exportSvg(svgEl: SVGSVGElement, name: string, onError?: (err: unknown) => void): void {
+  try {
+    const svgString = serializeSvgElement(svgEl);
+    const blob = new Blob([svgString], { type: 'image/svg+xml' });
+    triggerDownload(blob, `${sanitizeFilename(name)}.svg`);
+  } catch (err) {
+    onError?.(err);
+  }
 }
 
 // ─── exportPng ───────────────────────────────────────────────────────────────
@@ -226,6 +231,11 @@ export interface ExportPngOptions {
    * @default DEFAULT_SCALE (2)
    */
   scale?: number;
+  /**
+   * Called when rasterization fails — img.onerror, null ctx, or null blob
+   * (WR-01 fix). If not provided, failures are silently swallowed.
+   */
+  onError?: (err: unknown) => void;
 }
 
 /**
@@ -257,6 +267,7 @@ export function exportPng(
   opts: ExportPngOptions = {},
 ): void {
   const scale = opts.scale ?? DEFAULT_SCALE;
+  const { onError } = opts;
 
   // Resolve dimensions from the element.
   const srcWidth = svgEl.getAttribute('width');
@@ -270,7 +281,13 @@ export function exportPng(
       ? Number(srcHeight)
       : svgEl.clientHeight || svgEl.getBoundingClientRect().height || 300;
 
-  const svgString = serializeSvgElement(svgEl);
+  let svgString: string;
+  try {
+    svgString = serializeSvgElement(svgEl);
+  } catch (err) {
+    onError?.(err);
+    return;
+  }
   const sanitized = sanitizeFilename(name);
 
   // Encode to data URL (more reliable than object URL for Image loading in some contexts).
@@ -284,17 +301,27 @@ export function exportPng(
     canvas.height = h * scale;
 
     const ctx = canvas.getContext('2d');
-    if (!ctx) return;
+    if (!ctx) {
+      onError?.(new Error('Could not get 2d canvas context'));
+      return;
+    }
 
     ctx.drawImage(img, 0, 0, canvas.width, canvas.height);
 
     canvas.toBlob(
       (blob) => {
-        if (!blob) return;
+        if (!blob) {
+          onError?.(new Error('canvas.toBlob produced null — canvas may exceed browser size limits'));
+          return;
+        }
         triggerDownload(blob, `${sanitized}.png`);
       },
       'image/png',
     );
+  };
+  // WR-01: surface rasterization errors to the caller instead of silently hanging.
+  img.onerror = (evt) => {
+    onError?.(evt instanceof Error ? evt : new Error('SVG rasterization failed'));
   };
   img.src = dataUrl;
 }

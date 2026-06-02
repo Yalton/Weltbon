@@ -194,4 +194,31 @@ describe('exportPng', () => {
     // We only assert no synchronous throw.
     expect(() => exportPng(svg, 'test')).not.toThrow();
   });
+
+  it('calls onError when img.onerror fires (WR-01)', () => {
+    const svg = makeSvg();
+    URL.createObjectURL = vi.fn().mockReturnValue('blob:test');
+    URL.revokeObjectURL = vi.fn();
+
+    const onError = vi.fn();
+
+    // Intercept Image construction and immediately fire onerror.
+    const OrigImage = globalThis.Image;
+    class ErrorImage {
+      onload: (() => void) | null = null;
+      onerror: ((evt: unknown) => void) | null = null;
+      set src(_url: string) {
+        // Simulate failed rasterization
+        this.onerror?.(new Error('rasterization failed'));
+      }
+    }
+    // @ts-expect-error — patching global for test
+    globalThis.Image = ErrorImage;
+
+    exportPng(svg, 'test', { onError });
+
+    expect(onError).toHaveBeenCalledOnce();
+
+    globalThis.Image = OrigImage;
+  });
 });

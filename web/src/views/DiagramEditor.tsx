@@ -614,13 +614,19 @@ export function DiagramEditor() {
   // ── Export SVG ───────────────────────────────────────────────────────────
   const handleExportSvg = useCallback(() => {
     if (!diagram || !canvasSvgRef.current) return;
-    exportSvg(canvasSvgRef.current, diagram.name);
+    exportSvg(canvasSvgRef.current, diagram.name, () => {
+      setToast({ message: 'Export failed. Try again.', variant: 'error' });
+    });
   }, [diagram]);
 
   // ── Export PNG ───────────────────────────────────────────────────────────
   const handleExportPng = useCallback(() => {
     if (!diagram || !canvasSvgRef.current) return;
-    exportPng(canvasSvgRef.current, diagram.name);
+    exportPng(canvasSvgRef.current, diagram.name, {
+      onError: () => {
+        setToast({ message: 'Export failed. Try again.', variant: 'error' });
+      },
+    });
   }, [diagram]);
 
   // ── Find source/target titles for DrawEdgePopover ─────────────────────────
