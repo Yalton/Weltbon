@@ -68,7 +68,7 @@ export const universes = pgTable('universes', {
   description:  text('description').default('').notNull(),
   entryTypes:   text('entry_types').array().default([
     'concept','entity','location','event','faction',
-    'artifact','species','culture','thread'
+    'artifact','species','culture','thread','language'  // Phase 32 D-08: 'language' as 10th element
   ]).notNull(),
   // Phase 20 D-01: nullable JSONB; `null` = "first visit, configure range".
   timelineWindow: jsonb('timeline_window').$type<TimelineWindow | null>(),
@@ -424,3 +424,37 @@ export const diagramNodes = pgTable('diagram_nodes', {
 }, (t) => ({
   diagramNodesUniqueIdx: uniqueIndex('diagram_nodes_unique_idx').on(t.diagramId, t.entryId),
 }));
+
+/**
+ * Phase 32 CONLANG-01: Per-universe conlang dictionary words.
+ *
+ * - `universeId` scopes words to a universe; FK cascades on universe delete.
+ * - `languageEntryId` is NULLABLE: when null the word belongs to a universe-level
+ *   fallback dictionary (D-06). When set, the word belongs to the language entry's
+ *   specific dictionary.
+ * - `searchVector` is declared as plain text() (GENERATED in raw SQL migration 0018)
+ *   — same convention as entries.searchVector (line ~243). The actual tsvector type
+ *   and GENERATED ALWAYS AS expression live in 0018_phase32_dictionary.sql.
+ * - Scope-unique index: (universe_id, COALESCE(language_entry_id, sentinel), lower(word))
+ *   lives in the migration only — Drizzle TS uniqueIndex() cannot express COALESCE
+ *   sentinel or lower() expressions (same caveat as diagram_nodes_unique_idx).
+ * - `etymology` is a markdown field (D-11); rendered via MarkdownRenderer.
+ * - The 'simple' regconfig for word/ipa prevents English stemming from corrupting
+ *   invented conlang words (T-32-02 / Pitfall 2 in RESEARCH.md).
+ */
+export const dictionaryWords = pgTable('dictionary_words', {
+  id:              uuid('id').primaryKey().defaultRandom(),
+  universeId:      uuid('universe_id').references(() => universes.id, { onDelete: 'cascade' }).notNull(),
+  languageEntryId: uuid('language_entry_id').references(() => entries.id, { onDelete: 'cascade' }),  // nullable = universe-level fallback (D-06)
+  word:            text('word').notNull(),
+  ipa:             text('ipa').default('').notNull(),
+  partOfSpeech:    text('part_of_speech').default('').notNull(),
+  gloss:           text('gloss').notNull(),
+  etymology:       text('etymology').default('').notNull(),  // markdown field (D-11)
+  tags:            text('tags').array().default([]).notNull(),
+  searchVector:    text('search_vector'),  // GENERATED in SQL migration (same as entries.searchVector ln ~243)
+  createdAt:       timestamp('created_at').defaultNow().notNull(),
+  updatedAt:       timestamp('updated_at').defaultNow().notNull(),
+  // NOTE: scope-unique index with lower(word) + COALESCE sentinel lives in migration 0018 only —
+  // Drizzle TS uniqueIndex() cannot express COALESCE-sentinel or lower() expressions.
+});
