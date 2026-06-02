@@ -125,6 +125,28 @@ describe('serializeSvgElement', () => {
     const result = serializeSvgElement(svg);
     expect(result).toContain('#3b82f6');
   });
+
+  it('output contains a viewBox attribute (WR-03: content bbox, not viewport)', () => {
+    // When getBBox() is unavailable (jsdom), the fallback sets viewBox from the
+    // element's explicit width/height attributes. Either way, viewBox must be present.
+    const svg = makeSvg({ width: 800, height: 600 });
+    const result = serializeSvgElement(svg);
+    expect(result).toContain('viewBox=');
+  });
+
+  it('g.viewport transform is neutralized in the clone (WR-03)', () => {
+    const svg = document.createElementNS('http://www.w3.org/2000/svg', 'svg');
+    svg.setAttribute('width', '400');
+    svg.setAttribute('height', '300');
+    const g = document.createElementNS('http://www.w3.org/2000/svg', 'g');
+    g.setAttribute('class', 'viewport');
+    g.setAttribute('transform', 'translate(50,30) scale(1.5)');
+    svg.appendChild(g);
+
+    const result = serializeSvgElement(svg, { inlineComputedStyles: false });
+    // The clone's g.viewport must not retain the live pan/zoom transform.
+    expect(result).not.toContain('translate(50,30)');
+  });
 });
 
 // ─── exportSvg ────────────────────────────────────────────────────────────────

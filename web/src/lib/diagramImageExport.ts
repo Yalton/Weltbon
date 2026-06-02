@@ -129,8 +129,11 @@ export interface SerializeSvgOptions {
  *
  * The output:
  *   - Has `xmlns="http://www.w3.org/2000/svg"` on the root.
- *   - Has explicit `width` and `height` attributes (read from the element's
- *     width/height attributes or, if zero, from its bounding-box clientWidth/clientHeight).
+ *   - Has width/height + viewBox derived from the *content* bounding box
+ *     (getBBox on g.viewport, or getBBox on the whole SVG as fallback) so
+ *     panned/zoomed nodes are never cropped (WR-03 fix).
+ *   - Has the live pan/zoom transform neutralized (reset to identity) so the
+ *     export shows the whole diagram, not just the viewport window.
  *   - Has computed fill/stroke/font styles inlined onto all descendants so the
  *     rasterized PNG matches the on-screen render even without external stylesheets.
  *   - Is produced by XMLSerializer — never by string concatenation (T-31-25).
@@ -162,22 +165,56 @@ export function serializeSvgElement(
     clone.setAttribute('xmlns', 'http://www.w3.org/2000/svg');
   }
 
-  // Ensure explicit width/height. Read from source attributes first; fall back
-  // to the live element's rendered dimensions.
-  const srcWidth = svgEl.getAttribute('width');
-  const srcHeight = svgEl.getAttribute('height');
+  // WR-03: Compute content bounding box from the live element tree.
+  // The SVG uses a <g class="viewport"> that carries the d3-zoom pan/zoom
+  // transform. We read getBBox() on that group (which gives coordinates in
+  // the un-transformed SVG coordinate space), not the viewport dimensions.
+  // This ensures nodes panned outside the visible window are still exported.
+  const EXPORT_PADDING = 24; // px padding around the content bbox
+  let bboxX = 0;
+  let bboxY = 0;
+  let bboxW = 0;
+  let bboxH = 0;
 
-  const width =
-    srcWidth && srcWidth !== '0'
-      ? srcWidth
-      : String(svgEl.clientWidth || svgEl.getBoundingClientRect().width || 400);
-  const height =
-    srcHeight && srcHeight !== '0'
-      ? srcHeight
-      : String(svgEl.clientHeight || svgEl.getBoundingClientRect().height || 300);
+  try {
+    // Try g.viewport first (DiagramCanvas structure).
+    const viewportG = svgEl.querySelector<SVGGElement>('g.viewport');
+    const rawBBox = viewportG ? viewportG.getBBox() : svgEl.getBBox();
+    if (rawBBox && rawBBox.width > 0 && rawBBox.height > 0) {
+      bboxX = rawBBox.x - EXPORT_PADDING;
+      bboxY = rawBBox.y - EXPORT_PADDING;
+      bboxW = rawBBox.width + EXPORT_PADDING * 2;
+      bboxH = rawBBox.height + EXPORT_PADDING * 2;
+    }
+  } catch {
+    // getBBox() throws in jsdom (not attached to a rendering context).
+    // Fall through to viewport-size fallback below.
+  }
 
-  clone.setAttribute('width', width);
-  clone.setAttribute('height', height);
+  if (bboxW === 0 || bboxH === 0) {
+    // Fallback: use the SVG element's rendered viewport dimensions.
+    const srcWidth = svgEl.getAttribute('width');
+    const srcHeight = svgEl.getAttribute('height');
+    bboxW =
+      srcWidth && srcWidth !== '0'
+        ? Number(srcWidth)
+        : svgEl.clientWidth || svgEl.getBoundingClientRect().width || 400;
+    bboxH =
+      srcHeight && srcHeight !== '0'
+        ? Number(srcHeight)
+        : svgEl.clientHeight || svgEl.getBoundingClientRect().height || 300;
+  }
+
+  clone.setAttribute('width', String(Math.round(bboxW)));
+  clone.setAttribute('height', String(Math.round(bboxH)));
+  clone.setAttribute('viewBox', `${bboxX} ${bboxY} ${bboxW} ${bboxH}`);
+
+  // Neutralize the live pan/zoom transform on g.viewport so the export shows
+  // the whole diagram centred on the content bbox, not the panned/zoomed window.
+  const cloneViewportG = clone.querySelector<SVGGElement>('g.viewport');
+  if (cloneViewportG) {
+    cloneViewportG.removeAttribute('transform');
+  }
 
   // Inline computed presentation styles so fills/strokes/fonts that rely on
   // CSS variables or external classes are resolved to concrete values.
@@ -276,24 +313,30 @@ export function exportPng(
   const scale = opts.scale ?? DEFAULT_SCALE;
   const { onError } = opts;
 
-  // Resolve dimensions from the element.
-  const srcWidth = svgEl.getAttribute('width');
-  const srcHeight = svgEl.getAttribute('height');
-  const w =
-    srcWidth && srcWidth !== '0'
-      ? Number(srcWidth)
-      : svgEl.clientWidth || svgEl.getBoundingClientRect().width || 400;
-  const h =
-    srcHeight && srcHeight !== '0'
-      ? Number(srcHeight)
-      : svgEl.clientHeight || svgEl.getBoundingClientRect().height || 300;
-
   let svgString: string;
   try {
     svgString = serializeSvgElement(svgEl);
   } catch (err) {
     onError?.(err);
     return;
+  }
+
+  // WR-03: resolve dimensions from the serialized SVG's width/height attributes
+  // (set by serializeSvgElement to the content bbox), not from the live element
+  // whose viewport may be smaller than the diagram content.
+  // Parse via DOMParser to extract the attributes without regex.
+  let w = 400;
+  let h = 300;
+  try {
+    const parser = new DOMParser();
+    const parsed = parser.parseFromString(svgString, 'image/svg+xml');
+    const parsedSvg = parsed.documentElement;
+    const pw = Number(parsedSvg.getAttribute('width'));
+    const ph = Number(parsedSvg.getAttribute('height'));
+    if (pw > 0) w = pw;
+    if (ph > 0) h = ph;
+  } catch {
+    // DOMParser not available in some environments — keep defaults.
   }
   const sanitized = sanitizeFilename(name);
 
