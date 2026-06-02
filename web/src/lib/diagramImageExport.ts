@@ -99,7 +99,11 @@ function inlineStylesFromOriginal(original: Element, clone: Element): void {
 
   for (const prop of INLINE_STYLE_PROPS) {
     const value = computedStyle.getPropertyValue(prop);
-    if (value && value !== '' && value !== 'none' && value !== 'normal' && value !== '0px') {
+    // WR-04: only skip empty string — do NOT filter 'none', 'normal', or '0px'
+    // blanket-wide, since those are legitimate SVG presentation values.
+    // e.g. fill="none" on selection rings / halos must be preserved so they
+    // don't render as solid black discs in the exported PNG/SVG.
+    if (value !== '') {
       clone.setAttribute(prop, value);
     }
   }
