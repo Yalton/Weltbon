@@ -56,40 +56,6 @@ function sanitizeFilename(name: string): string {
 }
 
 /**
- * Inline computed presentation styles onto an SVG element subtree so the
- * serialized string is self-contained — CSS-variable accent colors, entry-type
- * fills, and stroke values are resolved to concrete values before export.
- *
- * We walk the element tree and, for each Element, copy the computed values of
- * INLINE_STYLE_PROPS from getComputedStyle onto explicit presentation attributes.
- * This overwrites any existing attribute values with the resolved computed value,
- * ensuring colors that were set via CSS variables or class-based styles are
- * captured as concrete hex/rgb values in the output.
- *
- * Only called on the *clone*, not the live DOM node.
- */
-function inlineStyles(el: Element): void {
-  // getComputedStyle is only available for elements attached to a document.
-  // In the live DOM the original SVG is attached; we call this on the clone
-  // using the *original* element's computed styles (see serializeSvgElement).
-  // This overload is called with the original element for computed styles and
-  // the clone element for writing attributes — see serializeSvgElement for wiring.
-  const computedStyle = window.getComputedStyle(el);
-
-  for (const prop of INLINE_STYLE_PROPS) {
-    const value = computedStyle.getPropertyValue(prop);
-    if (value && value !== '' && value !== 'none' && value !== 'normal' && value !== '0px') {
-      el.setAttribute(prop, value);
-    }
-  }
-
-  // Recurse into children
-  for (const child of Array.from(el.children)) {
-    inlineStyles(child);
-  }
-}
-
-/**
  * Inline computed styles from the original element tree onto the cloned element tree.
  * We zip the original and clone trees together so getComputedStyle reads from the
  * live DOM original (which has computed values), while setAttribute writes to the clone.
