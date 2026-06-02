@@ -107,7 +107,9 @@ export interface DiagramCanvasProps {
  * dangerouslySetInnerHTML (T-31-10 mitigate). lineStyle is mapped to a fixed
  * strokeDasharray switch (T-31-11 mitigate).
  */
-export const DiagramCanvas = forwardRef<SVGSVGElement, DiagramCanvasProps>(function DiagramCanvas({
+// WR-07: Widen the handle type to SVGSVGElement | null so the cast-free
+// useImperativeHandle factory compiles and callers' null guards remain accurate.
+export const DiagramCanvas = forwardRef<SVGSVGElement | null, DiagramCanvasProps>(function DiagramCanvas({
   nodes,
   edges,
   selection,
@@ -128,7 +130,10 @@ export const DiagramCanvas = forwardRef<SVGSVGElement, DiagramCanvasProps>(funct
 
   // Expose the internal svgRef to the parent via forwardRef so DiagramEditor
   // can read the live <svg> element for image export (Plan 10).
-  useImperativeHandle(forwardedRef, () => svgRef.current as SVGSVGElement);
+  // WR-07: add [] deps so this only runs once (not on every render). The
+  // DiagramCanvas ref type is widened to SVGSVGElement | null so callers'
+  // null guards (canvasSvgRef.current) retain their type contract.
+  useImperativeHandle<SVGSVGElement | null, SVGSVGElement | null>(forwardedRef, () => svgRef.current, []);
 
   // Stable callback refs so the d3 useEffect doesn't re-run on every render.
   const onDrawEdgeRef = useRef(onDrawEdge);

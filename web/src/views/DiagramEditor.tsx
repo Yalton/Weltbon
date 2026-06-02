@@ -130,7 +130,10 @@ export function DiagramEditor() {
   const renameNode = useRenameNode(uid, did);
 
   // ── Canvas SVG ref — used by Export SVG / Export PNG (Plan 10) ──────────
-  const canvasSvgRef = useRef<SVGSVGElement>(null);
+  // WR-07: widened to SVGSVGElement | null to match the honest handle type from
+  // DiagramCanvas. The existing null guards (if (!canvasSvgRef.current) return)
+  // continue to work and now also satisfy the narrowed type.
+  const canvasSvgRef = useRef<SVGSVGElement | null>(null);
 
   // ── UI state ───────────────────────────────────────────────────────────────
   const [editMode, setEditMode] = useState(false);
