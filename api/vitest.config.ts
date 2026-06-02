@@ -68,6 +68,10 @@ const DB_GATED_TESTS = [
   'tests/share-views.test.ts',
   // Phase 31 Plan 01 — diagram CRUD + node + edge write-through integration tests.
   'tests/diagrams.test.ts',
+  // Phase 32 Plan 02 — dictionary CRUD + FTS + CSV import + share read integration tests.
+  'tests/dictionary-routes.test.ts',
+  'tests/dictionary-fts.test.ts',
+  'tests/dictionary-import.test.ts',
 ];
 
 export default defineConfig({
