@@ -494,12 +494,20 @@ export function DiagramEditor() {
       });
     }
 
-    // Persist all positions
-    for (const op of batchOps) {
-      await moveNode.mutateAsync({ entryId: op.entryId, x: op.nextX, y: op.nextY });
+    // WR-06: persist all positions with failure rollback tracking.
+    // If request k fails, push only the ops that succeeded so undo is accurate.
+    const succeededOps: NodeMoveOp[] = [];
+    try {
+      for (const op of batchOps) {
+        await moveNode.mutateAsync({ entryId: op.entryId, x: op.nextX, y: op.nextY });
+        succeededOps.push(op);
+      }
+    } catch {
+      setToast({ message: "Layout partially applied — some nodes couldn't be saved. Try again.", variant: 'error' });
     }
-
-    pushOp({ type: 'batch', ops: batchOps });
+    if (succeededOps.length > 0) {
+      pushOp({ type: 'batch', ops: succeededOps });
+    }
   }, [diagram, layoutMode, canvasNodes, moveNode, pushOp]);
 
   // ── Align/distribute (single-undoable-batch path — same as Auto-layout) ───
@@ -531,12 +539,19 @@ export function DiagramEditor() {
         });
       }
 
-      // Persist all aligned positions
-      for (const op of batchOps) {
-        await moveNode.mutateAsync({ entryId: op.entryId, x: op.nextX, y: op.nextY });
+      // WR-06: persist with failure tracking — only push successfully applied ops.
+      const succeededOps: NodeMoveOp[] = [];
+      try {
+        for (const op of batchOps) {
+          await moveNode.mutateAsync({ entryId: op.entryId, x: op.nextX, y: op.nextY });
+          succeededOps.push(op);
+        }
+      } catch {
+        setToast({ message: "Align partially applied — some nodes couldn't be saved. Try again.", variant: 'error' });
       }
-
-      pushOp({ type: 'batch', ops: batchOps });
+      if (succeededOps.length > 0) {
+        pushOp({ type: 'batch', ops: succeededOps });
+      }
     },
     [diagram, selection, canvasNodes, moveNode, pushOp],
   );
@@ -566,12 +581,19 @@ export function DiagramEditor() {
         });
       }
 
-      // Persist all distributed positions
-      for (const op of batchOps) {
-        await moveNode.mutateAsync({ entryId: op.entryId, x: op.nextX, y: op.nextY });
+      // WR-06: persist with failure tracking — only push successfully applied ops.
+      const succeededOps: NodeMoveOp[] = [];
+      try {
+        for (const op of batchOps) {
+          await moveNode.mutateAsync({ entryId: op.entryId, x: op.nextX, y: op.nextY });
+          succeededOps.push(op);
+        }
+      } catch {
+        setToast({ message: "Distribute partially applied — some nodes couldn't be saved. Try again.", variant: 'error' });
       }
-
-      pushOp({ type: 'batch', ops: batchOps });
+      if (succeededOps.length > 0) {
+        pushOp({ type: 'batch', ops: succeededOps });
+      }
     },
     [diagram, selection, canvasNodes, moveNode, pushOp],
   );
