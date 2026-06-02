@@ -315,6 +315,32 @@ describe('distributeNodes — degenerate inputs', () => {
     expect(() => distributeNodes([{ id: 'A', x: 0, y: 0 }], 'vertical')).not.toThrow();
     expect(() => distributeNodes([], 'vertical')).not.toThrow();
   });
+
+  it('zero-span horizontal: all nodes share same x — no-op, returns original positions (WR-05)', () => {
+    // All nodes stacked at x=50; distributing horizontally has totalSpan=0.
+    const nodes: TestNode[] = [
+      { id: 'A', x: 50, y: 10 },
+      { id: 'B', x: 50, y: 40 },
+      { id: 'C', x: 50, y: 80 },
+    ];
+    const result = distributeNodes(nodes, 'horizontal');
+    // Positions must be unchanged (no collapse to first.x)
+    expect(result.get('A')).toEqual({ x: 50, y: 10 });
+    expect(result.get('B')).toEqual({ x: 50, y: 40 });
+    expect(result.get('C')).toEqual({ x: 50, y: 80 });
+  });
+
+  it('zero-span vertical: all nodes share same y — no-op, returns original positions (WR-05)', () => {
+    const nodes: TestNode[] = [
+      { id: 'A', x: 10, y: 100 },
+      { id: 'B', x: 50, y: 100 },
+      { id: 'C', x: 90, y: 100 },
+    ];
+    const result = distributeNodes(nodes, 'vertical');
+    expect(result.get('A')).toEqual({ x: 10, y: 100 });
+    expect(result.get('B')).toEqual({ x: 50, y: 100 });
+    expect(result.get('C')).toEqual({ x: 90, y: 100 });
+  });
 });
 
 describe('distributeNodes — 4+ nodes', () => {

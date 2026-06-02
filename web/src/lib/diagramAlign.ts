@@ -175,6 +175,17 @@ export function distributeNodes(
   // Total span along the axis.
   const totalSpan = axis === 'horizontal' ? last.x - first.x : last.y - first.y;
 
+  // WR-05: degenerate zero-span — all nodes are stacked on the same axis
+  // coordinate (e.g. all selected nodes have the same x when distributing
+  // horizontally). Distributing would collapse all nodes to first.x (gap = 0/NaN).
+  // No-op: return original positions, mirroring the < 3 nodes guard.
+  if (totalSpan === 0 || !isFinite(totalSpan)) {
+    for (const node of nodes) {
+      result.set(node.id, { x: node.x, y: node.y });
+    }
+    return result;
+  }
+
   // Equal gap between consecutive nodes.
   const gap = totalSpan / (n - 1);
 
