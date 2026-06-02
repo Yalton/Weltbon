@@ -20,6 +20,13 @@
 /** Default pixel-ratio scale factor applied when rasterizing to PNG. */
 export const DEFAULT_SCALE = 2;
 
+/**
+ * Maximum canvas dimension (width or height) in pixels.
+ * Most browsers cap canvas size at 16384 px (some at 32767). We use a
+ * conservative 8192 to stay well within all targets (WR-02 fix).
+ */
+export const MAX_CANVAS_DIMENSION = 8192;
+
 // SVG attributes that carry presentation information and should be inlined
 // into the clone so the PNG raster matches the on-screen render.
 const INLINE_STYLE_PROPS: readonly string[] = [
@@ -297,8 +304,13 @@ export function exportPng(
   const img = new Image();
   img.onload = () => {
     const canvas = document.createElement('canvas');
-    canvas.width = w * scale;
-    canvas.height = h * scale;
+    // WR-02: clamp canvas dimensions to MAX_CANVAS_DIMENSION to avoid exceeding
+    // per-browser max canvas size (~16384 px), which causes toBlob to return null.
+    const rawW = w * scale;
+    const rawH = h * scale;
+    const clampRatio = Math.min(1, MAX_CANVAS_DIMENSION / Math.max(rawW, rawH, 1));
+    canvas.width = Math.round(rawW * clampRatio);
+    canvas.height = Math.round(rawH * clampRatio);
 
     const ctx = canvas.getContext('2d');
     if (!ctx) {
