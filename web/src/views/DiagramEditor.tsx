@@ -323,16 +323,15 @@ export function DiagramEditor() {
   );
 
   // ── Node move handler (tracked for undo) ─────────────────────────────────
+  // CR-02: Accept prevX/prevY from DiagramCanvas (captured at drag-start) instead
+  // of reconstructing them from the React-Query cache, which may already reflect
+  // an in-flight optimistic update, causing undo to be a no-op.
   const handleMoveNode = useCallback(
-    (entryId: string, x: number, y: number) => {
-      // Find previous position for undo
-      const prev = diagram?.nodes.find((n) => n.entryId === entryId);
-      const prevX = prev?.x ?? x;
-      const prevY = prev?.y ?? y;
+    (entryId: string, prevX: number, prevY: number, x: number, y: number) => {
       moveNode.mutate({ entryId, x, y });
       pushOp({ type: 'node-move', entryId, prevX, prevY, nextX: x, nextY: y });
     },
-    [diagram?.nodes, moveNode, pushOp],
+    [moveNode, pushOp],
   );
 
   // ── Draw-edge callback from canvas ────────────────────────────────────────

@@ -22,7 +22,7 @@ vi.mock('../api/client', () => ({ api: vi.fn() }));
 // Mock DiagramCanvas so we can control callbacks without needing d3/jsdom SVG.
 // Exposes test buttons to fire canvas events synthetically.
 type MockCanvasCallbacks = {
-  onMoveNode?: (entryId: string, x: number, y: number) => void;
+  onMoveNode?: (entryId: string, prevX: number, prevY: number, x: number, y: number) => void;
   onSelfDrop?: () => void;
   onDrawEdge?: (srcId: string, tgtId: string, coords: { x: number; y: number }) => void;
   onEditEdge?: (edgeId: string, coords: { x: number; y: number }) => void;
@@ -57,7 +57,7 @@ vi.mock('../components/DiagramCanvas', () => ({
         <button
           type="button"
           data-testid="stub-move-node"
-          onClick={() => props.onMoveNode?.('entry-A', 250, 300)}
+          onClick={() => props.onMoveNode?.('entry-A', 100, 100, 250, 300)}
         >
           [stub] move node
         </button>

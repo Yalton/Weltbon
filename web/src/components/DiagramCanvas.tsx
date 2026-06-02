@@ -73,8 +73,12 @@ export interface DiagramCanvasProps {
   onDrawEdge: (sourceEntryId: string, targetEntryId: string, dropCoords: DropCoords) => void;
   /** Called when a drag is released on the source node (self-drop). */
   onSelfDrop: () => void;
-  /** Called after a node drag ends with the final canvas-space position. */
-  onMoveNode: (entryId: string, x: number, y: number) => void;
+  /**
+   * Called after a node drag ends with both the pre-drag and final canvas-space
+   * positions so the editor can record an accurate undo op without consulting
+   * the potentially-stale React-Query cache (CR-02 fix).
+   */
+  onMoveNode: (entryId: string, prevX: number, prevY: number, x: number, y: number) => void;
   /** Called when a node is clicked (single select; undefined to clear). */
   onSelectNode: (id: string | null, addToSelection?: boolean) => void;
   /** Called when an edge is clicked. */
@@ -357,6 +361,11 @@ export const DiagramCanvas = forwardRef<SVGSVGElement, DiagramCanvasProps>(funct
     // Threshold (in canvas pixels) within which an alignment guide line appears.
     const GUIDE_THRESHOLD = 8;
 
+    // CR-02: Record the authoritative pre-drag position at drag-start, keyed by
+    // entryId, so drag-end can pass prevX/prevY to onMoveNode without consulting
+    // the possibly-stale React-Query cache.
+    const dragStartPos = new Map<string, { x: number; y: number }>();
+
     // --- d3-drag (dual intent: reposition in view mode, draw-edge in edit mode) ---
     const dragBehavior = drag<SVGGElement, LayoutNode>()
       .on('start', (evt, d) => {
@@ -366,6 +375,8 @@ export const DiagramCanvas = forwardRef<SVGSVGElement, DiagramCanvasProps>(funct
           setPointer({ x: d.x, y: d.y });
           onDragSourceChangeRef.current?.(d.entryId);
         } else {
+          // Record position at drag-start (before d.x/d.y are mutated by drag events).
+          dragStartPos.set(d.entryId, { x: d.x, y: d.y });
           // Clear any lingering guides on new drag
           setGuides([]);
           setLiveSnapPos(null);
@@ -445,7 +456,13 @@ export const DiagramCanvas = forwardRef<SVGSVGElement, DiagramCanvasProps>(funct
           setGuides([]);
           setLiveSnapPos(null);
           // Persist final position via onMoveNode callback.
-          onMoveNodeRef.current(d.entryId, finalX, finalY);
+          // Pass the pre-drag position captured at drag-start (CR-02 fix) so the
+          // editor records an accurate undo op without querying the stale cache.
+          const startPos = dragStartPos.get(d.entryId);
+          const prevX = startPos?.x ?? finalX;
+          const prevY = startPos?.y ?? finalY;
+          dragStartPos.delete(d.entryId);
+          onMoveNodeRef.current(d.entryId, prevX, prevY, finalX, finalY);
         }
       });
 
