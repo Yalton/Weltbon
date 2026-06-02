@@ -151,23 +151,30 @@ export function DiagramEditor() {
   const [undoStack, setUndoStack] = useState<UndoableOp[]>([]);
   const [undoPointer, setUndoPointer] = useState(-1); // -1 = nothing to undo
 
+  // Ref kept in sync with undoPointer so pushOp's setUndoStack updater can read
+  // the authoritative pointer without a stale closure (CR-01 fix).
+  const undoPointerRef = useRef(-1);
+  useEffect(() => {
+    undoPointerRef.current = undoPointer;
+  });
+
   const pushOp = useCallback((op: UndoableOp) => {
+    // CR-01: derive both the new stack AND the new pointer inside a single
+    // functional update so they come from one authoritative computation, not
+    // two stale closures that can diverge on cap overflow or redo-trim.
     setUndoStack((prev) => {
       // Discard any "future" ops above the current pointer (redo history cleared on new op)
-      const base = prev.slice(0, undoPointer + 1);
-      const next = [...base, op];
-      // Cap at limit
+      const base = prev.slice(0, undoPointerRef.current + 1);
+      let next = [...base, op];
+      // Cap at limit — trim from the front
       if (next.length > UNDO_STACK_LIMIT) {
-        return next.slice(next.length - UNDO_STACK_LIMIT);
+        next = next.slice(next.length - UNDO_STACK_LIMIT);
       }
+      // Update the pointer to the top of the freshly-built stack (inside same updater)
+      setUndoPointer(next.length - 1);
       return next;
     });
-    setUndoPointer((p) => {
-      const base = Math.min(p + 1, undoStack.length);
-      const capped = Math.min(base, UNDO_STACK_LIMIT - 1);
-      return capped;
-    });
-  }, [undoPointer, undoStack.length]);
+  }, []);
 
   const canUndo = undoPointer >= 0;
   const canRedo = undoPointer < undoStack.length - 1;
