@@ -134,6 +134,12 @@ export function EntryDetail() {
           const params = new URLSearchParams({ prefill: token });
           navigate(`/universes/${uid}/dictionary?${params.toString()}`);
         },
+    // Phase 33 INT-BLOCKER-2 fix: thread share-mode flag + token so
+    // WikilinkText can build /share/:token/entries/:id targets instead of
+    // /universes/:uid/entries/:id (which lands on ProtectedRoute → /login
+    // for unauthenticated share visitors).
+    isShareMode,
+    shareToken: token ?? null,
   };
 
   return (

@@ -10,6 +10,8 @@
  *   T6. Share/read-only path: unresolved span renders WITHOUT "+" add button
  *       when onAddWord is absent
  *   T7. Alias [[word|Alias]] resolves on "word" but displays "Alias"
+ *   T8. Share-mode entry-title wikilink navigates to /share/:token/entries/:id
+ *       (Phase 33 INT-BLOCKER-2 fix)
  */
 
 import { describe, it, expect, vi } from 'vitest';
@@ -238,5 +240,44 @@ describe('T7: alias [[word|Alias]] resolves on "word" and displays "Alias"', () 
 
     const link = screen.getByRole('link', { name: 'The King' });
     expect(link).toHaveAttribute('href', '/universes/u1/entries/entry-99');
+  });
+});
+
+// ---------------------------------------------------------------------------
+// T8 — Share-mode entry-title wikilink navigates to /share/:token/entries/:id
+// (Phase 33 INT-BLOCKER-2 fix)
+// ---------------------------------------------------------------------------
+
+describe('T8: share-mode entry-title wikilink uses /share/:token/entries/:id', () => {
+  it('generates a share-subtree href when isShareMode=true and shareToken is set', () => {
+    const entryTitles = new Map([['Gondor', 'entry-55']]);
+    const wikis = makeWikis({
+      entryTitles,
+      isShareMode: true,
+      shareToken: 'tok_abc123',
+    });
+
+    render(
+      <Wrapper>
+        <MarkdownRenderer content="See [[Gondor]] for details." wikis={wikis} />
+      </Wrapper>,
+    );
+
+    const link = screen.getByRole('link', { name: 'Gondor' });
+    expect(link).toHaveAttribute('href', '/share/tok_abc123/entries/entry-55');
+  });
+
+  it('falls back to authenticated path when isShareMode is absent (default behavior)', () => {
+    const entryTitles = new Map([['Gondor', 'entry-55']]);
+    const wikis = makeWikis({ entryTitles }); // no isShareMode
+
+    render(
+      <Wrapper>
+        <MarkdownRenderer content="See [[Gondor]] for details." wikis={wikis} />
+      </Wrapper>,
+    );
+
+    const link = screen.getByRole('link', { name: 'Gondor' });
+    expect(link).toHaveAttribute('href', '/universes/u1/entries/entry-55');
   });
 });
