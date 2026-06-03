@@ -332,10 +332,10 @@ describe('dictionary routes (CONLANG-01 / CONLANG-02)', () => {
     });
     const w = await json(createRes);
 
-    // Create a non-language entry (person)
+    // Create a non-language entry (concept — a valid non-language entry type)
     const entryRes = await req('POST', `/universes/${u.id}/entries`, {
       headers: hdrs,
-      body: { title: 'A Person', entryType: 'person' },
+      body: { title: 'A Concept', entryType: 'concept' },
     });
     const personEntry = await json(entryRes);
 
