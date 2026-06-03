@@ -21,7 +21,7 @@ import {
 } from '../hooks/useTimelinePins';
 import { useCalendar } from '../hooks/useCalendar';
 import { xToPos } from '../lib/timelineMath';
-import { useShareMode } from '../contexts/ShareModeContext';
+import { useShareMode, useShareCalendar } from '../contexts/ShareModeContext';
 
 type ToastState = { message: string; variant: 'success' | 'error' } | null;
 
@@ -83,12 +83,14 @@ export function TimelineView() {
   const { data: pins = [], isLoading: pinsLoading } = useTimelinePins(universeId);
   const upsert = useUpsertTimelinePin(universeId);
   // Phase 30 CALENDAR-02: source the per-universe calendar for date formatting.
-  // In authenticated mode, useCalendar reads from useUniverse (the
-  // /universes/:uid endpoint). In share mode, useUniverse 404s for the 'share'
-  // sentinel uid, so calendar resolves to null → raw-numeric fallback
-  // (CALENDAR-03). Share-mode calendar support requires the share meta endpoint
-  // to be widened (Task 2, 30-03) and the API client path routing to be updated.
-  const { calendar } = useCalendar(universeId);
+  // In authenticated mode, useCalendar reads from useUniverse (/universes/:uid).
+  // In share mode, useUniverse 404s for the 'share' sentinel uid and calendar is
+  // null — but ShareModeContext now carries the calendar from the share-meta
+  // endpoint (Phase 33 INT-BLOCKER-1 fix). Select the effective calendar:
+  // share calendar when isShareMode, else the authenticated useCalendar value.
+  const { calendar: authCalendar } = useCalendar(universeId);
+  const shareCalendar = useShareCalendar();
+  const calendar = isShareMode ? shareCalendar : authCalendar;
 
   const [toast, setToast] = useState<ToastState>(null);
   const [popoverState, setPopoverState] = useState<PopoverState>(null);
@@ -256,12 +258,6 @@ export function TimelineView() {
   // Phase 29 — share-mode visitors never see the configure dialog (D-18
   // mutation surface). Instead, render a friendly empty state explaining
   // the owner hasn't configured a timeline yet.
-  //
-  // Backend gap noted in 29-06 SUMMARY: Plan 04 /api/share/universe does
-  // NOT return `timelineWindow`. In share mode `useUniverse` returns
-  // undefined → `timelineWindow` is always null today. A follow-up plan
-  // should widen the share-universe endpoint to surface timelineWindow so
-  // visitors can see a configured timeline.
   if (!timelineWindow) {
     if (isShareMode) {
       return (

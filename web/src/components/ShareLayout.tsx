@@ -5,6 +5,7 @@ import { ShareSidebar } from './ShareSidebar';
 import { ShareModeProvider } from '../contexts/ShareModeContext';
 import { ShareNotFound } from '../views/ShareNotFound';
 import { api, setShareToken, clearShareToken, ApiError } from '../api/client';
+import type { Calendar } from '../lib/calendarFormat';
 
 /**
  * Public root URL for the "Made with Weltbon" banner brand link.
@@ -20,6 +21,13 @@ const PUBLIC_ROOT_URL = 'https://weltbon.app';
 interface UniverseMeta {
   name: string;
   ownerDisplayName: string;
+  /**
+   * Phase 33 INT-BLOCKER-1 fix: the server already returns `calendar` on this
+   * object (api/src/services/share-views.ts getPublicUniverseMeta +
+   * universeMetaResponseSchema). Widen the client type so the value flows
+   * through instead of being silently dropped.
+   */
+  calendar?: Calendar | null;
 }
 
 interface ShareUniverseResponse {
@@ -107,7 +115,10 @@ export function ShareLayout() {
   }
 
   return (
-    <ShareModeProvider>
+    <ShareModeProvider
+      calendar={universeMeta.calendar ?? null}
+      token={token ?? null}
+    >
       <div className="min-h-full flex flex-col">
         <AppBackground />
         <header
