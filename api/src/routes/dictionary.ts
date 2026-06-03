@@ -312,13 +312,18 @@ export const dictionaryRoutes = new OpenAPIHono<AppEnv>()
     const body = c.req.valid('json');
 
     // T-32-06: if languageEntryId is provided, validate it belongs to this universe
+    // WR-01: also confirm the entry is of type 'language' — non-language entries must not
+    // be used as a language pointer (downstream UI checks entryType === 'language').
     if (body.languageEntryId) {
       const [langEntry] = await db()
-        .select({ id: entries.id })
+        .select({ id: entries.id, entryType: entries.entryType })
         .from(entries)
         .where(and(eq(entries.id, body.languageEntryId), eq(entries.universeId, uid)));
       if (!langEntry) {
         return c.json({ error: 'languageEntryId does not belong to this universe' }, 400);
+      }
+      if (langEntry.entryType !== 'language') {
+        return c.json({ error: 'languageEntryId must reference a language-type entry' }, 400);
       }
     }
 
@@ -363,6 +368,22 @@ export const dictionaryRoutes = new OpenAPIHono<AppEnv>()
     await requireUniverse(uid, userId);
 
     const body = c.req.valid('json');
+
+    // CR-02: mirror the POST ownership check — if languageEntryId is being set/changed,
+    // verify the target entry exists in this universe and is a language-type entry.
+    // WR-01: also confirm entryType === 'language' (same as the POST check above).
+    if ('languageEntryId' in body && body.languageEntryId !== null) {
+      const [langEntry] = await db()
+        .select({ id: entries.id, entryType: entries.entryType })
+        .from(entries)
+        .where(and(eq(entries.id, body.languageEntryId!), eq(entries.universeId, uid)));
+      if (!langEntry) {
+        return c.json({ error: 'languageEntryId does not belong to this universe' }, 400);
+      }
+      if (langEntry.entryType !== 'language') {
+        return c.json({ error: 'languageEntryId must reference a language-type entry' }, 400);
+      }
+    }
 
     // Build update set — only include provided fields
     const updateSet: Record<string, unknown> = { updatedAt: sql`now()` };

@@ -266,6 +266,89 @@ describe('dictionary routes (CONLANG-01 / CONLANG-02)', () => {
     expect(res.status).toBe(400);
   });
 
+  // ─── CR-02: PATCH cross-universe languageEntryId rejection ──────────────────
+
+  it('CR-02: PATCH with languageEntryId from another universe → 400', async () => {
+    const { hdrs: hdrs1 } = await userWithToken('cr02a@test.com');
+    const { hdrs: hdrs2 } = await userWithToken('cr02b@test.com');
+    const u1 = await createUniverse(hdrs1, 'CrUniverse1');
+    const u2 = await createUniverse(hdrs2, 'CrUniverse2');
+
+    // Create a word in u1 (no languageEntryId)
+    const createRes = await req('POST', `/universes/${u1.id}/dictionary`, {
+      headers: hdrs1,
+      body: { word: 'lumis', gloss: 'light' },
+    });
+    const w = await json(createRes);
+
+    // Create a language entry in u2
+    const entryRes = await req('POST', `/universes/${u2.id}/entries`, {
+      headers: hdrs2,
+      body: { title: 'Foreign Lang', entryType: 'language' },
+    });
+    const foreignEntry = await json(entryRes);
+
+    // PATCH the word in u1 to point at u2's entry → 400 (cross-universe)
+    const patchRes = await req('PATCH', `/universes/${u1.id}/dictionary/${w.id}`, {
+      headers: hdrs1,
+      body: { languageEntryId: foreignEntry.id },
+    });
+    expect(patchRes.status).toBe(400);
+    const body = await json(patchRes);
+    expect(body.error).toMatch(/does not belong to this universe/i);
+  });
+
+  // ─── WR-01: non-language entryType rejected in POST and PATCH ───────────────
+
+  it('WR-01: POST with languageEntryId pointing to a non-language entry → 400', async () => {
+    const { hdrs } = await userWithToken('wr01a@test.com');
+    const u = await createUniverse(hdrs);
+
+    // Create a non-language entry (concept)
+    const entryRes = await req('POST', `/universes/${u.id}/entries`, {
+      headers: hdrs,
+      body: { title: 'A Concept', entryType: 'concept' },
+    });
+    const conceptEntry = await json(entryRes);
+
+    // Attempt to use concept entry as languageEntryId → 400
+    const res = await req('POST', `/universes/${u.id}/dictionary`, {
+      headers: hdrs,
+      body: { word: 'novu', gloss: 'new', languageEntryId: conceptEntry.id },
+    });
+    expect(res.status).toBe(400);
+    const body = await json(res);
+    expect(body.error).toMatch(/language-type entry/i);
+  });
+
+  it('WR-01: PATCH with languageEntryId pointing to a non-language entry → 400', async () => {
+    const { hdrs } = await userWithToken('wr01b@test.com');
+    const u = await createUniverse(hdrs);
+
+    // Create a word (no languageEntryId)
+    const createRes = await req('POST', `/universes/${u.id}/dictionary`, {
+      headers: hdrs,
+      body: { word: 'proba', gloss: 'test' },
+    });
+    const w = await json(createRes);
+
+    // Create a non-language entry (person)
+    const entryRes = await req('POST', `/universes/${u.id}/entries`, {
+      headers: hdrs,
+      body: { title: 'A Person', entryType: 'person' },
+    });
+    const personEntry = await json(entryRes);
+
+    // PATCH to assign the person entry as languageEntryId → 400
+    const patchRes = await req('PATCH', `/universes/${u.id}/dictionary/${w.id}`, {
+      headers: hdrs,
+      body: { languageEntryId: personEntry.id },
+    });
+    expect(patchRes.status).toBe(400);
+    const body = await json(patchRes);
+    expect(body.error).toMatch(/language-type entry/i);
+  });
+
   it('GET /universes/:uid/dictionary?lid= returns only that language words', async () => {
     const { hdrs } = await userWithToken('lid3@test.com');
     const u = await createUniverse(hdrs);
