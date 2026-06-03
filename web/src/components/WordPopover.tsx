@@ -1,6 +1,7 @@
 import { useState, useRef } from 'react';
 import * as Popover from '@radix-ui/react-popover';
 import { useNavigate } from 'react-router-dom';
+import { useShareMode } from '../contexts/ShareModeContext';
 
 interface WordPopoverProps {
   word: string;
@@ -26,6 +27,12 @@ interface WordPopoverProps {
  * text-neutral-500. Gloss: body text.
  *
  * T-32-12 XSS: all content is plain-text props; no dangerouslySetInnerHTML.
+ *
+ * Phase 33 T-33-07 / CONLANG-04: In share mode, the click navigation to
+ * /universes/share/dictionary (a protected route) is suppressed so visitors
+ * are never stranded at /login. Hover-only gloss+IPA popover is preserved.
+ * The trigger span loses role="button", tabIndex, and keyboard handlers in
+ * share mode — it is a plain hoverable span with no button semantics.
  */
 export function WordPopover({
   word,
@@ -36,6 +43,7 @@ export function WordPopover({
   languageEntryId,
 }: WordPopoverProps) {
   const navigate = useNavigate();
+  const isShareMode = useShareMode();
   const [open, setOpen] = useState(false);
   const openTimerRef = useRef<ReturnType<typeof setTimeout> | null>(null);
   const closeTimerRef = useRef<ReturnType<typeof setTimeout> | null>(null);
@@ -61,6 +69,10 @@ export function WordPopover({
   }
 
   function handleClick() {
+    // T-33-07: no-op in share mode — /universes/share/dictionary is a protected
+    // route that would redirect to /login. There is no share-mode dictionary
+    // route by design; the fix is to remove the dead click target.
+    if (isShareMode) return;
     const params = new URLSearchParams();
     if (languageEntryId) params.set('lid', languageEntryId);
     params.set('highlight', word);
@@ -77,18 +89,32 @@ export function WordPopover({
   return (
     <Popover.Root open={open} onOpenChange={setOpen}>
       <Popover.Trigger asChild>
-        <span
-          role="button"
-          tabIndex={0}
-          onClick={handleClick}
-          onKeyDown={handleKeyDown}
-          onMouseEnter={handleMouseEnter}
-          onMouseLeave={handleMouseLeave}
-          className="rounded px-0.5 cursor-pointer bg-[color:var(--color-accent-soft)] focus:outline-none focus-visible:ring-2 focus-visible:ring-[color:var(--color-accent)]"
-          aria-label={`${word}: hover to see gloss`}
-        >
-          {displayLabel}
-        </span>
+        {isShareMode ? (
+          // Share mode: hover-only plain span — no button role, no tabIndex,
+          // no click/keydown handlers. Hover gloss+IPA popover intact.
+          <span
+            onMouseEnter={handleMouseEnter}
+            onMouseLeave={handleMouseLeave}
+            className="rounded px-0.5 bg-[color:var(--color-accent-soft)]"
+            aria-label={`${word}: hover to see gloss`}
+          >
+            {displayLabel}
+          </span>
+        ) : (
+          // Authenticated mode: full click-to-dictionary + keyboard activation.
+          <span
+            role="button"
+            tabIndex={0}
+            onClick={handleClick}
+            onKeyDown={handleKeyDown}
+            onMouseEnter={handleMouseEnter}
+            onMouseLeave={handleMouseLeave}
+            className="rounded px-0.5 cursor-pointer bg-[color:var(--color-accent-soft)] focus:outline-none focus-visible:ring-2 focus-visible:ring-[color:var(--color-accent)]"
+            aria-label={`${word}: hover to see gloss`}
+          >
+            {displayLabel}
+          </span>
+        )}
       </Popover.Trigger>
       <Popover.Portal>
         <Popover.Content
