@@ -8,6 +8,11 @@ import {
 import { DictionaryRowEditor } from './DictionaryRowEditor';
 import { ConfirmDialog } from './ConfirmDialog';
 import { EmptyState } from './EmptyState';
+import { DICTIONARY_TERMS } from './dictionaryTerms';
+
+// Dotted-underline cue signalling a hover definition is available on a term.
+const TERM_HINT =
+  'cursor-help underline decoration-dotted decoration-neutral-400 dark:decoration-neutral-600 underline-offset-2';
 
 // ─── Types ───────────────────────────────────────────────────────────────────
 
@@ -242,7 +247,9 @@ export function DictionaryTable({
                 scope="col"
                 className="pb-2 text-left text-xs font-semibold uppercase tracking-wide text-neutral-500"
               >
-                IPA
+                <span className={TERM_HINT} title={DICTIONARY_TERMS.ipa}>
+                  IPA
+                </span>
               </th>
 
               {/* POS — sortable */}
@@ -260,7 +267,10 @@ export function DictionaryTable({
                       : ''
                   }`}
                 >
-                  POS {sortArrow('partOfSpeech')}
+                  <span className={TERM_HINT} title={DICTIONARY_TERMS.partOfSpeech}>
+                    POS
+                  </span>{' '}
+                  {sortArrow('partOfSpeech')}
                 </button>
               </th>
 
@@ -269,7 +279,9 @@ export function DictionaryTable({
                 scope="col"
                 className="pb-2 text-left text-xs font-semibold uppercase tracking-wide text-neutral-500"
               >
-                Gloss
+                <span className={TERM_HINT} title={DICTIONARY_TERMS.gloss}>
+                  Gloss
+                </span>
               </th>
 
               {/* Etymology */}
@@ -277,7 +289,9 @@ export function DictionaryTable({
                 scope="col"
                 className="pb-2 text-left text-xs font-semibold uppercase tracking-wide text-neutral-500"
               >
-                Etymology
+                <span className={TERM_HINT} title={DICTIONARY_TERMS.etymology}>
+                  Etymology
+                </span>
               </th>
 
               {/* Tags */}
@@ -285,7 +299,9 @@ export function DictionaryTable({
                 scope="col"
                 className="pb-2 text-left text-xs font-semibold uppercase tracking-wide text-neutral-500"
               >
-                Tags
+                <span className={TERM_HINT} title={DICTIONARY_TERMS.tags}>
+                  Tags
+                </span>
               </th>
 
               {/* Actions — no label, sr-only */}

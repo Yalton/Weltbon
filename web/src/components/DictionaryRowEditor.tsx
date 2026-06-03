@@ -1,5 +1,6 @@
 import { useState, type KeyboardEvent } from 'react';
 import { TagInput } from './TagInput';
+import { DICTIONARY_TERMS } from './dictionaryTerms';
 import type { DictionaryWord, CreateWordInput } from '../hooks/useDictionary';
 
 // ─── Types ───────────────────────────────────────────────────────────────────
@@ -107,6 +108,7 @@ export function DictionaryRowEditor({
           disabled={isSaving}
           placeholder="word"
           aria-label="Word"
+          title={DICTIONARY_TERMS.word}
           className={inputClass}
         />
       </td>
@@ -121,6 +123,7 @@ export function DictionaryRowEditor({
           disabled={isSaving}
           placeholder="IPA"
           aria-label="IPA transcription"
+          title={DICTIONARY_TERMS.ipa}
           className={inputClass}
         />
       </td>
@@ -135,6 +138,7 @@ export function DictionaryRowEditor({
           disabled={isSaving}
           placeholder="POS"
           aria-label="Part of speech"
+          title={DICTIONARY_TERMS.partOfSpeech}
           className={inputClass}
         />
       </td>
@@ -149,6 +153,7 @@ export function DictionaryRowEditor({
           disabled={isSaving}
           placeholder="gloss"
           aria-label="Gloss"
+          title={DICTIONARY_TERMS.gloss}
           className={inputClass}
         />
       </td>
@@ -162,6 +167,7 @@ export function DictionaryRowEditor({
           disabled={isSaving}
           placeholder="Etymology (markdown)"
           aria-label="Etymology"
+          title={DICTIONARY_TERMS.etymology}
           className={`${inputClass} resize-y`}
           style={{ minHeight: '96px' }} // UI-SPEC constraint — not a spacing token
         />
