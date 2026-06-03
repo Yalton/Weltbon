@@ -70,7 +70,19 @@ export async function getPublicUniverseMeta(
 // render the same EntryList rows. Ordered by `updatedAt DESC` to match the
 // authenticated list convention.
 //
-export async function getPublicEntries(universeId: string) {
+// Phase 33 CONLANG-04 / T-33-04 / T-33-05: optional `entryType` filter.
+// When provided, an `eq(entries.entryType, entryType)` condition is APPENDED
+// (additive) to the `isPublic = true` filter — never substituted. A visitor
+// supplying ?type=<anything> can only NARROW the already-public set; private
+// entries and private entry titles can never be reached through this filter.
+// `entryType` is bound via Drizzle's parameterized `eq()` (no string
+// interpolation → T-33-05 SQL injection surface is zero).
+//
+export async function getPublicEntries(universeId: string, entryType?: string) {
+  const baseCondition = and(eq(entries.universeId, universeId), eq(entries.isPublic, true));
+  const whereClause = entryType
+    ? and(baseCondition, eq(entries.entryType, entryType))
+    : baseCondition;
   return getDb()
     .select({
       id: entries.id,
@@ -87,7 +99,7 @@ export async function getPublicEntries(universeId: string) {
       updatedAt: entries.updatedAt,
     })
     .from(entries)
-    .where(and(eq(entries.universeId, universeId), eq(entries.isPublic, true)))
+    .where(whereClause)
     .orderBy(desc(entries.updatedAt));
 }
 
