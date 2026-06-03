@@ -111,9 +111,13 @@ const publicEntryListItemSchema = z.object({
   updatedAt: z.string(),
 });
 
-const publicEntriesResponseSchema = z.object({
-  entries: z.array(publicEntryListItemSchema),
-});
+// Phase 33: bare array matching the authenticated /universes/:uid/entries
+// contract (returns rows directly). The share seam in web/src/api/client.ts is
+// transparent — the web hooks (useFilteredEntries, useLanguageEntries) expect
+// `Entry[]`, so the share endpoint MUST return a bare array, not a {entries}
+// wrapper. The wrapped shape was a latent Phase 29 bug that crashed EntryList
+// (`s.map is not a function`) the first time the share view rendered in a browser.
+const publicEntriesResponseSchema = z.array(publicEntryListItemSchema);
 
 /**
  * Public entry detail with backlinks + outbound links. Both link arrays only
@@ -192,9 +196,11 @@ const publicTimelineItemSchema = z.object({
   entryIcon: z.string(),
   entryType: z.string(),
 });
-const publicTimelineResponseSchema = z.object({
-  pins: z.array(publicTimelineItemSchema),
-});
+// Phase 33: bare array matching the authenticated /universes/:uid/timeline
+// contract (useTimelinePins expects `TimelinePin[]`). Was a latent Phase 29
+// {pins} wrapper that would crash TimelineView in share mode the same way
+// EntryList crashed — see publicEntriesResponseSchema note above.
+const publicTimelineResponseSchema = z.array(publicTimelineItemSchema);
 
 const publicCategoryItemSchema = z.object({
   id: z.string(),
@@ -358,9 +364,10 @@ const publicDictionaryWordSchema = z.object({
   tags: z.array(z.string()),
 });
 
-const publicDictionaryResponseSchema = z.object({
-  words: z.array(publicDictionaryWordSchema),
-});
+// Phase 33: bare array matching the authenticated dictionary contract
+// (useFilteredDictionary/useUniverseDictionary expect `DictionaryWord[]`).
+// Was a latent Phase 29 {words} wrapper.
+const publicDictionaryResponseSchema = z.array(publicDictionaryWordSchema);
 
 const dictionaryRoute = createRoute({
   method: 'get',
@@ -423,7 +430,7 @@ export const shareRoutes = router
       createdAt: r.createdAt.toISOString(),
       updatedAt: r.updatedAt.toISOString(),
     }));
-    return c.json({ entries } as any, 200);
+    return c.json(entries as any, 200);
   })
 
   // GET /entries/{entryId} — single public entry with public-only backlinks
@@ -454,7 +461,7 @@ export const shareRoutes = router
   // GET /timeline — public-only timeline pins (D-14)
   .openapi(timelineRoute, async (c) => {
     const pins = await getPublicTimeline(c.var.shareUniverseId);
-    return c.json({ pins } as any, 200);
+    return c.json(pins as any, 200);
   })
 
   // GET /categories — categories list (D-14 — no privacy filter)
@@ -467,5 +474,5 @@ export const shareRoutes = router
   .openapi(dictionaryRoute, async (c) => {
     const lid = c.req.query('lid')?.trim() || null;
     const words = await getPublicDictionaryWords(c.var.shareUniverseId, lid);
-    return c.json({ words } as any, 200);
+    return c.json(words as any, 200);
   });

@@ -408,16 +408,16 @@ describe('dictionary routes (CONLANG-01 / CONLANG-02)', () => {
       { method: 'GET', headers: { 'share-token': seed.plaintext } },
     );
     expect(shareRes.status).toBe(200);
+    // Phase 33: share /dictionary returns a bare array (matches authenticated contract)
     const body = await shareRes.json() as any;
-    expect(body).toHaveProperty('words');
-    expect(Array.isArray(body.words)).toBe(true);
-    expect(body.words.length).toBe(1);
-    expect(body.words[0].word).toBe('zephyr');
+    expect(Array.isArray(body)).toBe(true);
+    expect(body.length).toBe(1);
+    expect(body[0].word).toBe('zephyr');
     // Cosmetic fields only: no universeId private field details leakage
-    expect(body.words[0]).toHaveProperty('id');
-    expect(body.words[0]).toHaveProperty('gloss');
-    expect(body.words[0]).toHaveProperty('ipa');
-    expect(body.words[0]).toHaveProperty('partOfSpeech');
-    expect(body.words[0]).toHaveProperty('tags');
+    expect(body[0]).toHaveProperty('id');
+    expect(body[0]).toHaveProperty('gloss');
+    expect(body[0]).toHaveProperty('ipa');
+    expect(body[0]).toHaveProperty('partOfSpeech');
+    expect(body[0]).toHaveProperty('tags');
   });
 });

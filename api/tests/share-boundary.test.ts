@@ -213,6 +213,7 @@ describe('SHARE-03 baseline sanity (the seed produced a valid token)', () => {
         `or shareRoutes is not mounted on /api/share. ` +
         `Body: ${JSON.stringify(res.body)?.slice(0, 200)}`,
     ).toBe(200);
-    expect(res.body).toHaveProperty('entries');
+    // Phase 33: share /entries returns a bare array (matches authenticated contract)
+    expect(Array.isArray(res.body)).toBe(true);
   });
 });

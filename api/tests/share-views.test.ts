@@ -148,9 +148,10 @@ describe('Phase 29 share-view privacy invariants', () => {
     });
 
     expect(res.status).toBe(200);
-    expect(res.body).toHaveProperty('entries');
+    // Phase 33: share /entries returns a bare array (matches authenticated contract)
+    expect(Array.isArray(res.body)).toBe(true);
     // eslint-disable-next-line @typescript-eslint/no-explicit-any
-    const list = res.body.entries as any[];
+    const list = res.body as any[];
     expect(
       list.length,
       `T-29-23: GET /api/share/entries returned ${list.length} entries — expected exactly 1 ` +
@@ -299,9 +300,10 @@ describe('Phase 29 share-view privacy invariants', () => {
     });
 
     expect(res.status).toBe(200);
-    expect(res.body).toHaveProperty('entries');
+    // Phase 33: share /entries returns a bare array (matches authenticated contract)
+    expect(Array.isArray(res.body)).toBe(true);
     // eslint-disable-next-line @typescript-eslint/no-explicit-any
-    const list = res.body.entries as any[];
+    const list = res.body as any[];
     const ids = list.map((e: { id: string }) => e.id);
 
     expect(
@@ -326,8 +328,9 @@ describe('Phase 29 share-view privacy invariants', () => {
     });
 
     expect(res.status).toBe(200);
+    // Phase 33: share /entries returns a bare array (matches authenticated contract)
     // eslint-disable-next-line @typescript-eslint/no-explicit-any
-    const list = res.body.entries as any[];
+    const list = res.body as any[];
     expect(
       list.length,
       `T-33-04: no ?type= must return all 2 public entries (both language and note). ` +
