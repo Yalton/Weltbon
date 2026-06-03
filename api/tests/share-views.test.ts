@@ -109,13 +109,13 @@ async function appRequest(
   return { status: res.status, body: json };
 }
 
-async function seedEntry(opts: { isPublic: boolean; title?: string }) {
+async function seedEntry(opts: { isPublic: boolean; title?: string; entryType?: string }) {
   const [row] = await handle.db
     .insert(entries)
     .values({
       universeId,
       title: opts.title ?? 'Test Entry',
-      entryType: 'note',
+      entryType: opts.entryType ?? 'note',
       isPublic: opts.isPublic,
     })
     .returning();
@@ -283,6 +283,57 @@ describe('Phase 29 share-view privacy invariants', () => {
         `D-05/D-06 require ALL failure modes (missing / wrong prefix / unknown / revoked / expired) ` +
         `to collapse to the same 404 so visitors cannot distinguish them.`,
     ).toBe(404);
+  });
+
+  // ────────────────────────────────────────────────────────────────────
+  // Test G — T-33-04 + T-33-05: ?type= filter on public share entries
+  // (Phase 33 CONLANG-04 N+1 fix: server-side entryType narrowing)
+  // ────────────────────────────────────────────────────────────────────
+  it('GET /api/share/entries?type=language returns only public language entries (T-33-04/T-33-05)', async () => {
+    const publicLang = await seedEntry({ isPublic: true, title: 'Public Language', entryType: 'language' });
+    const publicNote = await seedEntry({ isPublic: true, title: 'Public Note', entryType: 'note' });
+    const privateLang = await seedEntry({ isPublic: false, title: 'Private Language', entryType: 'language' });
+
+    const res = await appRequest('GET', '/api/share/entries?type=language', {
+      headers: { 'share-token': activeTokenPlaintext },
+    });
+
+    expect(res.status).toBe(200);
+    expect(res.body).toHaveProperty('entries');
+    // eslint-disable-next-line @typescript-eslint/no-explicit-any
+    const list = res.body.entries as any[];
+    const ids = list.map((e: { id: string }) => e.id);
+
+    expect(
+      list.length,
+      `T-33-04: ?type=language must return exactly 1 entry (the public language one). ` +
+        `The private language entry (isPublic=false) must be excluded. ` +
+        `The public note entry (wrong type) must be excluded. ` +
+        `Returned ids: ${JSON.stringify(ids)}`,
+    ).toBe(1);
+    expect(ids).toContain(publicLang.id);
+    expect(ids).not.toContain(publicNote.id);
+    expect(ids).not.toContain(privateLang.id);
+  });
+
+  it('GET /api/share/entries (no ?type=) returns all public entries regardless of type (T-33-04)', async () => {
+    await seedEntry({ isPublic: true, title: 'Public Language', entryType: 'language' });
+    await seedEntry({ isPublic: true, title: 'Public Note', entryType: 'note' });
+    await seedEntry({ isPublic: false, title: 'Private Language', entryType: 'language' });
+
+    const res = await appRequest('GET', '/api/share/entries', {
+      headers: { 'share-token': activeTokenPlaintext },
+    });
+
+    expect(res.status).toBe(200);
+    // eslint-disable-next-line @typescript-eslint/no-explicit-any
+    const list = res.body.entries as any[];
+    expect(
+      list.length,
+      `T-33-04: no ?type= must return all 2 public entries (both language and note). ` +
+        `Private entries must never appear. Got ${list.length}.`,
+    ).toBe(2);
+    expect(list.every((e: { isPublic: boolean }) => e.isPublic === true)).toBe(true);
   });
 
   // ────────────────────────────────────────────────────────────────────
