@@ -20,10 +20,11 @@
  */
 
 import { alias } from 'drizzle-orm/pg-core';
-import { and, asc, desc, eq, inArray } from 'drizzle-orm';
+import { and, asc, desc, eq, inArray, isNull } from 'drizzle-orm';
 import { db as getDb } from '../db/client.js';
 import {
   categories,
+  dictionaryWords,
   entries,
   links,
   timelinePins,
@@ -293,4 +294,39 @@ export async function getPublicCategories(universeId: string) {
     .from(categories)
     .where(eq(categories.universeId, universeId))
     .orderBy(asc(categories.sortOrder));
+}
+
+// ─── Function 7: getPublicDictionaryWords ────────────────────────────────────
+//
+// Phase 32 CONLANG-03 / T-32-07 / T-32-08 — Public dictionary word list.
+//
+// Negative design (D-04): does NOT import from routes/dictionary.ts.
+// Serves cosmetic display fields only (T-32-08 — no PII; words are public by
+// nature of being in the dictionary). Universe scoping is from the share-token
+// context (same pattern as all other share-views functions).
+//
+// languageEntryId = null → universe-level fallback dictionary (D-06).
+// languageEntryId = uuid → language-scoped dictionary.
+//
+export async function getPublicDictionaryWords(
+  universeId: string,
+  languageEntryId: string | null,
+): Promise<
+  { id: string; word: string; gloss: string; ipa: string; partOfSpeech: string; tags: string[] }[]
+> {
+  const scope = languageEntryId
+    ? eq(dictionaryWords.languageEntryId, languageEntryId)
+    : isNull(dictionaryWords.languageEntryId);
+  return getDb()
+    .select({
+      id: dictionaryWords.id,
+      word: dictionaryWords.word,
+      gloss: dictionaryWords.gloss,
+      ipa: dictionaryWords.ipa,
+      partOfSpeech: dictionaryWords.partOfSpeech,
+      tags: dictionaryWords.tags,
+    })
+    .from(dictionaryWords)
+    .where(and(eq(dictionaryWords.universeId, universeId), scope))
+    .orderBy(asc(dictionaryWords.word));
 }

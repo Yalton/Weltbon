@@ -34,6 +34,7 @@ import { OpenAPIHono, createRoute, z } from '@hono/zod-openapi';
 import { requireShareToken, type ShareVariables } from '../middleware/share.js';
 import {
   getPublicCategories,
+  getPublicDictionaryWords,
   getPublicEntries,
   getPublicEntryById,
   getPublicGraph,
@@ -339,6 +340,46 @@ const categoriesRoute = createRoute({
   },
 });
 
+// Phase 32 CONLANG-03 / T-32-07 — Public dictionary read route.
+// GET-only; no mutations reachable in /share/* (T-32-07 enforced).
+// Cosmetic fields only: id, word, gloss, ipa, partOfSpeech, tags (T-32-08).
+// ?lid= scopes to a language-entry dictionary (null = universe-level fallback).
+const publicDictionaryWordSchema = z.object({
+  id: z.string(),
+  word: z.string(),
+  gloss: z.string(),
+  ipa: z.string(),
+  partOfSpeech: z.string(),
+  tags: z.array(z.string()),
+});
+
+const publicDictionaryResponseSchema = z.object({
+  words: z.array(publicDictionaryWordSchema),
+});
+
+const dictionaryRoute = createRoute({
+  method: 'get',
+  path: '/dictionary',
+  tags: ['Share'],
+  summary: 'Public dictionary words for the share-token universe',
+  description:
+    'Returns dictionary words (cosmetic fields only: id, word, gloss, ipa, partOfSpeech, tags) ' +
+    'for the share-token universe. ?lid= scopes to a language entry (null = universe-level fallback). ' +
+    'T-32-07: GET-only in /share/* — mutations reject share-token via the apiR gate. ' +
+    'T-32-08: projects cosmetic fields only (no PII; no private metadata).',
+  security: [{ shareToken: [] }],
+  middleware: [requireShareToken] as const,
+  request: {
+    query: z.object({ lid: z.string().optional() }),
+  },
+  responses: {
+    200: {
+      content: { 'application/json': { schema: publicDictionaryResponseSchema } },
+      description: 'Public dictionary words list (ordered word ASC)',
+    },
+  },
+});
+
 // ─── Router ──────────────────────────────────────────────────────────────────
 
 const router = new OpenAPIHono<AppEnv>();
@@ -412,4 +453,11 @@ export const shareRoutes = router
   .openapi(categoriesRoute, async (c) => {
     const categories = await getPublicCategories(c.var.shareUniverseId);
     return c.json({ categories } as any, 200);
+  })
+
+  // GET /dictionary — public dictionary words (Phase 32 CONLANG-03 / T-32-07 / T-32-08)
+  .openapi(dictionaryRoute, async (c) => {
+    const lid = c.req.query('lid')?.trim() || null;
+    const words = await getPublicDictionaryWords(c.var.shareUniverseId, lid);
+    return c.json({ words } as any, 200);
   });
