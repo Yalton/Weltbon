@@ -20,8 +20,8 @@ import { createApp } from '../src/index.js';
 import { createTestDb, cleanDb, createTestUser, authHeader, type TestDbHandle } from './helpers.js';
 import { issueAccessToken } from '../src/services/auth.js';
 import { setTestDb } from '../src/db/client.js';
-import { personalAccessTokens, shareTokens, universes } from '../src/db/schema.js';
-import { hashPat } from '../src/services/pat.js';
+import { personalAccessTokens, shareTokens } from '../src/db/schema.js';
+import { generatePatToken } from '../src/services/pat.js';
 import { generateShareToken } from '../src/services/share-token.js';
 
 describe('dictionary routes (CONLANG-01 / CONLANG-02)', () => {
@@ -53,7 +53,7 @@ describe('dictionary routes (CONLANG-01 / CONLANG-02)', () => {
     path: string,
     opts?: { headers?: Record<string, string>; body?: unknown },
   ) {
-    const url = `http://localhost${path}`;
+    const url = `http://localhost/api${path}`;
     const init: RequestInit = { method, headers: { ...opts?.headers } };
     if (opts?.body !== undefined) {
       (init.headers as Record<string, string>)['Content-Type'] = 'application/json';
@@ -184,7 +184,8 @@ describe('dictionary routes (CONLANG-01 / CONLANG-02)', () => {
 
   it('GET dictionary for non-existent universe → 404', async () => {
     const { hdrs } = await userWithToken('g@test.com');
-    const res = await req('GET', '/universes/00000000-0000-0000-0000-000000000001/dictionary', {
+    // Use a valid UUID v4 format that does not exist in the DB
+    const res = await req('GET', '/universes/00000000-0000-4000-8000-000000000001/dictionary', {
       headers: hdrs,
     });
     expect(res.status).toBe(404);
@@ -193,7 +194,7 @@ describe('dictionary routes (CONLANG-01 / CONLANG-02)', () => {
   it('PATCH non-existent word → 404', async () => {
     const { hdrs } = await userWithToken('h@test.com');
     const u = await createUniverse(hdrs);
-    const res = await req('PATCH', `/universes/${u.id}/dictionary/00000000-0000-0000-0000-000000000002`, {
+    const res = await req('PATCH', `/universes/${u.id}/dictionary/00000000-0000-4000-8000-000000000002`, {
       headers: hdrs,
       body: { gloss: 'updated' },
     });
@@ -203,7 +204,7 @@ describe('dictionary routes (CONLANG-01 / CONLANG-02)', () => {
   it('DELETE non-existent word → 404', async () => {
     const { hdrs } = await userWithToken('i@test.com');
     const u = await createUniverse(hdrs);
-    const res = await req('DELETE', `/universes/${u.id}/dictionary/00000000-0000-0000-0000-000000000003`, {
+    const res = await req('DELETE', `/universes/${u.id}/dictionary/00000000-0000-4000-8000-000000000003`, {
       headers: hdrs,
     });
     expect(res.status).toBe(404);
@@ -212,7 +213,6 @@ describe('dictionary routes (CONLANG-01 / CONLANG-02)', () => {
   // ─── PAT parity ─────────────────────────────────────────────────────────
 
   it('PAT Bearer token works the same as JWT for dictionary routes', async () => {
-    const { user } = await userWithToken('pat@test.com');
     const jwtUser = await createTestUser(handle, { email: 'patjwt@test.com', password: 'longenoughpw12' });
     const jwtToken = await issueAccessToken(jwtUser.id);
     const jwtHdrs = authHeader(jwtToken);
@@ -221,15 +221,15 @@ describe('dictionary routes (CONLANG-01 / CONLANG-02)', () => {
     const u = await createUniverse(jwtHdrs);
 
     // Create a PAT for the JWT user
-    const rawPat = 'wbpat_' + 'a'.repeat(40);
-    const patHash = await hashPat(rawPat);
+    const pat = generatePatToken();
     await handle.db.insert(personalAccessTokens).values({
       userId: jwtUser.id,
-      hash: patHash,
+      hash: pat.hash,
+      bodySuffix: pat.bodySuffix,
       label: 'test-pat',
     });
 
-    const patHdrs = { Authorization: `Bearer ${rawPat}` };
+    const patHdrs = { Authorization: `Bearer ${pat.plaintext}` };
 
     // PAT can list dictionary
     const res = await req('GET', `/universes/${u.id}/dictionary`, { headers: patHdrs });
@@ -296,7 +296,9 @@ describe('dictionary routes (CONLANG-01 / CONLANG-02)', () => {
     expect(words[0].word).toBe('anar');
   });
 
-  // ─── Share read route ────────────────────────────────────────────────────
+  // NOTE: Share read test (GET /api/share/dictionary) is implemented in Task 3
+  // (share-views.ts + share.ts extension). The test assertion is added below
+  // and will pass once Task 3 routes are mounted.
 
   it('GET /api/share/dictionary with valid share-token returns universe-level words', async () => {
     const { user, hdrs } = await userWithToken('share@test.com');

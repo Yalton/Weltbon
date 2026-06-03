@@ -27,6 +27,7 @@ import { ingestRoutes } from './routes/ingest.js';
 import { timelinePinRoutes, timelineListRoutes } from './routes/timeline.js';
 import { auditRoutes, auditCrossUniverseRoutes } from './routes/audits.js';
 import { diagramsRouter } from './routes/diagrams.js';
+import { dictionaryRoutes } from './routes/dictionary.js';
 import { recoverOrphanAuditRuns } from './services/audit-recovery.js';
 import { wireSigtermDrain } from './services/audit-shutdown.js';
 import { requireAuth } from './middleware/auth.js';
@@ -121,6 +122,10 @@ export function createApp() {
   apiR.route('/universes/:uid/issues', issueRoutes);
   apiR.route('/universes/:uid', auditRoutes);
   apiR.route('/universes/:uid/diagrams', diagramsRouter);
+  // Phase 32 CONLANG-01/02: dictionary CRUD + FTS + CSV import.
+  // requireAuth already applies via apiR.use('/universes/*', requireAuth) at ln 104 —
+  // PAT parity (T-32-06) and share-boundary coverage (T-32-07) come for free.
+  apiR.route('/universes/:uid/dictionary', dictionaryRoutes);
   apiR.route('/universes/:uid/graph-data', graphRoutes);
   apiR.route('/universes/:uid/graph-positions', graphPositionRoutes);
   apiR.route('/universes/:uid/export', exportRoutes);
