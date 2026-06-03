@@ -75,8 +75,9 @@ export default function Templates() {
       setRenameError('Name is required.');
       return;
     }
+    if (!renameTargetId) return;
     try {
-      await renameMutation.mutateAsync({ id: renameTargetId!, name: trimmed });
+      await renameMutation.mutateAsync({ id: renameTargetId, name: trimmed });
       setRenameTargetId(null);
       setRenameDraft('');
       setRenameError(null);
