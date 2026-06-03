@@ -244,9 +244,14 @@ const entriesRoute = createRoute({
   summary: 'List public entries in the share-token universe',
   description:
     'Returns only entries where is_public = true (D-14 server-side privacy filter). ' +
-    'No :uid in URL (D-03 — universe resolved from share-token middleware).',
+    'No :uid in URL (D-03 — universe resolved from share-token middleware). ' +
+    'Phase 33 CONLANG-04: optional ?type= query param narrows to a specific entryType ' +
+    '(T-33-04 — isPublic=true always ANDed; T-33-05 — entryType bound via Drizzle eq() parameterized query).',
   security: [{ shareToken: [] }],
   middleware: [requireShareToken] as const,
+  request: {
+    query: z.object({ type: z.string().optional() }),
+  },
   responses: {
     200: {
       content: { 'application/json': { schema: publicEntriesResponseSchema } },
@@ -407,9 +412,12 @@ export const shareRoutes = router
     return c.json({ universe: meta }, 200);
   })
 
-  // GET /entries — public entries list (D-14)
+  // GET /entries — public entries list (D-14 + Phase 33 CONLANG-04 ?type= filter)
   .openapi(entriesRoute, async (c) => {
-    const rows = await getPublicEntries(c.var.shareUniverseId);
+    // T-33-04: read optional ?type= and pass through to getPublicEntries.
+    // getPublicEntries always keeps isPublic=true in the WHERE clause; type is additive.
+    const type = c.req.query('type')?.trim() || undefined;
+    const rows = await getPublicEntries(c.var.shareUniverseId, type);
     const entries = rows.map((r) => ({
       ...r,
       createdAt: r.createdAt.toISOString(),
