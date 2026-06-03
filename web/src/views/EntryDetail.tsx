@@ -1,11 +1,13 @@
-import { useState } from 'react';
+import { useMemo, useState } from 'react';
 import { Link, useParams, useNavigate } from 'react-router-dom';
-import { useEntry, useDeleteEntry } from '../hooks/useEntries';
+import { useEntries, useEntry, useDeleteEntry } from '../hooks/useEntries';
+import { useFilteredDictionary, useUniverseDictionary, type DictionaryWord } from '../hooks/useDictionary';
 import { useTimelinePins } from '../hooks/useTimelinePins';
 import { useCalendar } from '../hooks/useCalendar';
 import { formatCalendar } from '../lib/calendarFormat';
 import { TypeBadge } from '../components/TypeBadge';
 import { MarkdownRenderer } from '../components/MarkdownRenderer';
+import type { WikilinkResolutionData } from '../components/MarkdownRenderer';
 import { ConfirmDialog } from '../components/ConfirmDialog';
 import { LinkSection } from '../components/LinkSection';
 import { IssueSection } from '../components/IssueSection';
@@ -36,6 +38,66 @@ export function EntryDetail() {
   const { data: pins } = useTimelinePins(uid!);
   const { calendar } = useCalendar(uid!);
 
+  // ── Resolution data for [[word]] wikilinks ───────────────────────────────
+  // useEntries works in both authenticated and share mode: the api-client seam
+  // rewrites /universes/<uid>/entries → /api/share/entries automatically when
+  // shareTokenPlaintext is set. Public-only entries flow through the share path
+  // (T-32-11: no private entry titles enter the share-mode resolution map).
+  const { data: allEntries } = useEntries(uid!);
+
+  // Build entryTitles map: normalized title (trim) → entryId.
+  // Used to populate the D-01 entry-title-first resolution bucket.
+  const entryTitles = useMemo<Map<string, string>>(() => {
+    const map = new Map<string, string>();
+    for (const e of allEntries ?? []) {
+      map.set(e.title.trim(), e.id);
+    }
+    return map;
+  }, [allEntries]);
+
+  // Determine the linked language entry (D-02 scope): find an outbound link
+  // whose targetEntryId resolves to a 'language'-type entry in the entries list.
+  // We cross-reference outboundLinks (has targetEntryId) with allEntries (has
+  // entryType). The `entry` object is not yet in scope here (early return above
+  // is absent), so we guard against undefined.
+  // NOTE: this useMemo runs after `entry` is loaded (see early return below).
+  const linkedLanguageEntryId = useMemo<string | null>(() => {
+    if (!entry || !allEntries) return null;
+    const entryMap = new Map(allEntries.map((e) => [e.id, e]));
+    for (const link of entry.outboundLinks ?? []) {
+      const linked = entryMap.get(link.targetEntryId);
+      if (linked?.entryType === 'language') {
+        return linked.id;
+      }
+    }
+    return null;
+  }, [entry, allEntries]);
+
+  // D-02 language-scoped dictionary (when entry links a language entry).
+  // Always called (hooks can't be conditional); disabled when no linked lang.
+  const { data: langScopedWords } = useFilteredDictionary(
+    uid!,
+    { q: '', lid: linkedLanguageEntryId },
+  );
+
+  // D-02 universe-wide dictionary UNION (when entry links NO language entry).
+  // Fetches null-scope fallback + every language dict and merges them.
+  // In share mode the seam translates each fetch to /api/share/dictionary?lid=...
+  const { words: universeWords } = useUniverseDictionary(uid!);
+
+  // Build dictionaryWords map per D-02 scope rule:
+  //   linked language entry → use langScopedWords only
+  //   no linked language entry → use the universe-wide union (universeWords)
+  const dictionaryWords = useMemo<Map<string, DictionaryWord>>(() => {
+    const map = new Map<string, DictionaryWord>();
+    const source = linkedLanguageEntryId ? (langScopedWords ?? []) : universeWords;
+    for (const w of source) {
+      const key = w.word.toLowerCase();
+      if (!map.has(key)) map.set(key, w);
+    }
+    return map;
+  }, [linkedLanguageEntryId, langScopedWords, universeWords]);
+
   if (isLoading || !entry) return <p className="text-sm text-neutral-500">Loading...</p>;
 
   // Resolve the pin for THIS entry (may be undefined if not pinned).
@@ -49,6 +111,24 @@ export function EntryDetail() {
   };
 
   const metaEntries = Object.entries(entry.meta as Record<string, string>);
+
+  // ── wikis resolution data ─────────────────────────────────────────────────
+  // Authenticated branch: pass onAddWord → navigates to dictionary with
+  //   ?prefill=<token> so the user can add the missing word.
+  // Share branch (isShareMode): no onAddWord (T-32-11 — no mutation surface
+  //   for visitors; amber affordance rendered without "+" button per WikilinkText).
+  const wikis: WikilinkResolutionData = {
+    entryTitles,
+    dictionaryWords,
+    universeId: uid!,
+    languageEntryId: linkedLanguageEntryId,
+    onAddWord: isShareMode
+      ? undefined
+      : (token: string) => {
+          const params = new URLSearchParams({ prefill: token });
+          navigate(`/universes/${uid}/dictionary?${params.toString()}`);
+        },
+  };
 
   return (
     <div className="max-w-3xl mx-auto">
@@ -188,10 +268,14 @@ export function EntryDetail() {
         </div>
       )}
 
-      {/* Body (Markdown) */}
+      {/* Body (Markdown) — Phase 32 Plan 04 D-01/D-02/D-03/D-04 [[word]] resolution.
+          wikis is always provided: authenticated branch includes onAddWord;
+          share branch omits onAddWord (T-32-11 read-only, no mutation surface).
+          entryTitles + dictionaryWords are derived from public-scoped data in
+          share mode (via the api-client seam → /api/share/entries + /api/share/dictionary). */}
       {entry.body && (
         <div className="mt-6">
-          <MarkdownRenderer content={entry.body} />
+          <MarkdownRenderer content={entry.body} wikis={wikis} />
         </div>
       )}
 

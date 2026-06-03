@@ -1,4 +1,4 @@
-import { useMutation, useQuery, useQueryClient } from '@tanstack/react-query';
+import { useMutation, useQueries, useQuery, useQueryClient } from '@tanstack/react-query';
 import { api } from '../api/client';
 
 // ─── Types ───────────────────────────────────────────────────────────────────
@@ -170,4 +170,64 @@ export function useLanguageEntries(universeId: string) {
       ),
     enabled: !!universeId,
   });
+}
+
+/**
+ * Phase 32 Plan 04 — D-02 universe-wide dictionary union.
+ *
+ * Used by EntryDetail when the entry links NO language entry. The server-side
+ * GET /dictionary endpoint returns only the null-scoped fallback when no `lid`
+ * is provided. To build the UNION of ALL dictionaries in the universe (all
+ * language dicts + null-scope fallback), we:
+ *   1. Fetch the language-entries list to get each language's id.
+ *   2. Issue one query per language dict (lid=<id>) + one for the null-scope
+ *      fallback (lid=null).
+ *   3. Merge all rows into a single lower(word)→DictionaryWord map. On
+ *      spelling collision, first encountered wins (acceptable per D-02).
+ *
+ * In share mode the api-client seam rewrites these fetches to
+ * /api/share/dictionary?lid=... — only public words enter the map (T-32-11).
+ *
+ * Returns: { words: DictionaryWord[], isLoading, isError }
+ */
+export function useUniverseDictionary(universeId: string) {
+  // Step 1: get language entries (already cached from Dictionary view)
+  const { data: langEntries, isPending: langPending, isError: langError } = useLanguageEntries(universeId);
+
+  // Step 2: dynamic parallel queries — one per language + one for null-scope
+  // useQueries with a static config per available lang + the null-scope entry.
+  // We represent null-scope as lid='' in the query params (no lid param sent).
+  const lidList: Array<string | null> = [
+    null, // null-scope fallback
+    ...(langEntries ?? []).map((e) => e.id),
+  ];
+
+  const dictQueries = useQueries({
+    queries: lidList.map((lid) => ({
+      queryKey: ['dictionary', universeId, { q: '', lid }] as const,
+      queryFn: () => {
+        const p = new URLSearchParams();
+        if (lid) p.set('lid', lid);
+        const qs = p.toString();
+        return api<DictionaryWord[]>(
+          `/universes/${universeId}/dictionary${qs ? `?${qs}` : ''}`,
+        );
+      },
+      enabled: !!universeId && !langPending && !langError,
+      staleTime: 30_000,
+    })),
+  });
+
+  const isLoading = langPending || dictQueries.some((q) => q.isPending);
+  const isError = langError || dictQueries.some((q) => q.isError);
+
+  // Merge all rows into a single lower(word)→DictionaryWord map. On collision,
+  // null-scope (index 0, loaded first) takes priority; language-scoped rows
+  // fill in the rest. Order is deterministic by lidList iteration order.
+  const words: DictionaryWord[] = [];
+  for (const q of dictQueries) {
+    if (q.data) words.push(...q.data);
+  }
+
+  return { words, isLoading, isError };
 }
