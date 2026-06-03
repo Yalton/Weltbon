@@ -82,11 +82,19 @@ const calendarResponseSchema = z
  * T-30-10). The share frontend uses it to format timeline dates identically
  * to the authenticated view.
  */
+// Phase 33 SHARE-02: timelineWindow (cosmetic {start,end} range, no PII) is
+// disclosed so the share TimelineView can render — mirrors the calendar
+// disclosure. Without it the visitor timeline is always "No timeline available".
+const timelineWindowResponseSchema = z
+  .object({ start: z.number(), end: z.number() })
+  .nullable();
+
 const universeMetaResponseSchema = z.object({
   universe: z.object({
     name: z.string(),
     ownerDisplayName: z.string(),
     calendar: calendarResponseSchema,
+    timelineWindow: timelineWindowResponseSchema,
   }),
 });
 

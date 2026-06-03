@@ -21,7 +21,11 @@ import {
 } from '../hooks/useTimelinePins';
 import { useCalendar } from '../hooks/useCalendar';
 import { xToPos } from '../lib/timelineMath';
-import { useShareMode, useShareCalendar } from '../contexts/ShareModeContext';
+import {
+  useShareMode,
+  useShareCalendar,
+  useShareTimelineWindow,
+} from '../contexts/ShareModeContext';
 
 type ToastState = { message: string; variant: 'success' | 'error' } | null;
 
@@ -78,8 +82,16 @@ export function TimelineView() {
   const universeId = uid ?? '';
   const navigate = useNavigate();
 
-  const { window: timelineWindow, isLoading: windowLoading } =
+  // Phase 33 SHARE-02: in share mode useTimelineWindow → useUniverse('share')
+  // 404s, so authWindow is null and the timeline renders empty. Use the
+  // timelineWindow threaded from the share-meta endpoint via ShareModeContext
+  // as the effective window when inside the share subtree (mirrors the calendar
+  // fix below). windowLoading is irrelevant in share mode (no query in flight).
+  const { window: authWindow, isLoading: windowLoadingAuth } =
     useTimelineWindow(universeId);
+  const shareWindow = useShareTimelineWindow();
+  const timelineWindow = isShareMode ? shareWindow : authWindow;
+  const windowLoading = isShareMode ? false : windowLoadingAuth;
   const { data: pins = [], isLoading: pinsLoading } = useTimelinePins(universeId);
   const upsert = useUpsertTimelinePin(universeId);
   // Phase 30 CALENDAR-02: source the per-universe calendar for date formatting.

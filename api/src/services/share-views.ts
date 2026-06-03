@@ -38,21 +38,32 @@ import {
 // Banner consumer (UI-SPEC §A + D-19): the share-view banner needs only the
 // universe name + owner display name. We project ONLY those two columns from
 // `universes JOIN users` PLUS the `calendar` JSONB (Phase 30 CALENDAR-02 /
-// D-13 / SHARE-02). The zod response schema in routes/share.ts declares
-// `{ universe: { name, ownerDisplayName, calendar } }` — extra fields still
-// fail zod validation (T-29-21b minimal-disclosure binding preserved).
+// D-13 / SHARE-02) and the `timelineWindow` JSONB (Phase 33 SHARE-02: without
+// it the share TimelineView never renders — `useTimelineWindow('share')` 404s
+// and falls to null, so the visitor sees "No timeline available" even when the
+// owner configured a range). The zod response schema in routes/share.ts
+// declares `{ universe: { name, ownerDisplayName, calendar, timelineWindow } }`
+// — extra fields still fail zod validation (T-29-21b minimal-disclosure binding
+// preserved). Both calendar and timelineWindow are cosmetic display data (no
+// PII) per the threat register.
 //
 // On no row: returns null (handler returns 404 — race-with-delete or invalid
 // universe id from a stale token).
 //
 export async function getPublicUniverseMeta(
   universeId: string,
-): Promise<{ name: string; ownerDisplayName: string; calendar: Calendar | null } | null> {
+): Promise<{
+  name: string;
+  ownerDisplayName: string;
+  calendar: Calendar | null;
+  timelineWindow: { start: number; end: number } | null;
+} | null> {
   const rows = await getDb()
     .select({
       name: universes.name,
       ownerDisplayName: users.displayName,
       calendar: universes.calendar,
+      timelineWindow: universes.timelineWindow,
     })
     .from(universes)
     .innerJoin(users, eq(universes.userId, users.id))

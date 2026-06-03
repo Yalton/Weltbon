@@ -6,6 +6,7 @@ import { ShareModeProvider } from '../contexts/ShareModeContext';
 import { ShareNotFound } from '../views/ShareNotFound';
 import { api, setShareToken, clearShareToken, ApiError } from '../api/client';
 import type { Calendar } from '../lib/calendarFormat';
+import type { TimelineWindow } from '../hooks/useTimelineWindow';
 
 /**
  * Public root URL for the "Made with Weltbon" banner brand link.
@@ -28,6 +29,12 @@ interface UniverseMeta {
    * through instead of being silently dropped.
    */
   calendar?: Calendar | null;
+  /**
+   * Phase 33 SHARE-02: timelineWindow is also returned by getPublicUniverseMeta
+   * so the share TimelineView can render (it 404s on useTimelineWindow('share')
+   * otherwise). Threaded into ShareModeContext like `calendar`.
+   */
+  timelineWindow?: TimelineWindow | null;
 }
 
 interface ShareUniverseResponse {
@@ -118,6 +125,7 @@ export function ShareLayout() {
     <ShareModeProvider
       calendar={universeMeta.calendar ?? null}
       token={token ?? null}
+      timelineWindow={universeMeta.timelineWindow ?? null}
     >
       <div className="min-h-full flex flex-col">
         <AppBackground />

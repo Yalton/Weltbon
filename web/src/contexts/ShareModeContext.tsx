@@ -1,5 +1,6 @@
 import { createContext, useContext, type ReactNode } from 'react';
 import type { Calendar } from '../lib/calendarFormat';
+import type { TimelineWindow } from '../hooks/useTimelineWindow';
 
 /**
  * Phase 29 share-mode context — widened in Phase 33 from a boolean to an
@@ -23,12 +24,14 @@ interface ShareModeContextValue {
   isShareMode: boolean;
   calendar: Calendar | null;
   token: string | null;
+  timelineWindow: TimelineWindow | null;
 }
 
 const DEFAULT_VALUE: ShareModeContextValue = {
   isShareMode: false,
   calendar: null,
   token: null,
+  timelineWindow: null,
 };
 
 export const ShareModeContext = createContext<ShareModeContextValue>(DEFAULT_VALUE);
@@ -39,6 +42,8 @@ interface ShareModeProviderProps {
   calendar?: Calendar | null;
   /** The share token extracted from the route param. */
   token?: string | null;
+  /** timelineWindow from `GET /api/share/universe`; null if unconfigured. */
+  timelineWindow?: TimelineWindow | null;
 }
 
 /**
@@ -52,9 +57,12 @@ export function ShareModeProvider({
   children,
   calendar = null,
   token = null,
+  timelineWindow = null,
 }: ShareModeProviderProps) {
   return (
-    <ShareModeContext.Provider value={{ isShareMode: true, calendar, token }}>
+    <ShareModeContext.Provider
+      value={{ isShareMode: true, calendar, token, timelineWindow }}
+    >
       {children}
     </ShareModeContext.Provider>
   );
@@ -89,4 +97,14 @@ export function useShareCalendar(): Calendar | null {
  */
 export function useShareToken(): string | null {
   return useContext(ShareModeContext).token;
+}
+
+/**
+ * Hook for the share TimelineView to access the universe's configured
+ * timelineWindow, supplied via the share meta endpoint. Returns `null` outside
+ * a provider or when the owner has not configured a range. Without this the
+ * share timeline 404s on `useTimelineWindow('share')` and renders empty.
+ */
+export function useShareTimelineWindow(): TimelineWindow | null {
+  return useContext(ShareModeContext).timelineWindow;
 }
