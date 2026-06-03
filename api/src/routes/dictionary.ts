@@ -288,6 +288,19 @@ export const dictionaryRoutes = new OpenAPIHono<AppEnv>()
 
     const lid = c.req.query('lid')?.trim() || undefined;
 
+    // WR-04: validate that the provided lid belongs to this universe (cross-tenant check).
+    // Without this, a user who owns universe A but knows an entry UUID from universe B
+    // could import words scoped to B's entry by passing ?lid=<entry-from-B>.
+    if (lid) {
+      const [langEntry] = await db()
+        .select({ id: entries.id })
+        .from(entries)
+        .where(and(eq(entries.id, lid), eq(entries.universeId, uid)));
+      if (!langEntry) {
+        return c.json({ error: 'lid does not belong to this universe' }, 400);
+      }
+    }
+
     const body = await c.req.parseBody({ all: true });
     const file = body['file'];
     if (!(file instanceof File)) {

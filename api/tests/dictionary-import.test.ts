@@ -319,4 +319,44 @@ describe('dictionary CSV import (CONLANG-02)', () => {
     expect(body.inserted).toBe(2);
     expect(body.rowErrors).toHaveLength(0);
   });
+
+  // ─── WR-04: import ?lid= cross-universe rejection ───────────────────────
+
+  it('WR-04: POST /import with ?lid= from another universe → 400', async () => {
+    // Create a second user + universe
+    const user2 = await createTestUser(handle, {
+      email: `wr04-other-${Date.now()}@test.com`,
+      password: 'longenoughpw12',
+    });
+    const [otherUniverse] = await handle.db
+      .insert(universes)
+      .values({ userId: user2.id, name: 'OtherWorld' })
+      .returning();
+
+    // Create a language entry in the OTHER universe
+    // We need to insert via SQL since we don't want to go through the auth layer
+    const { entries } = await import('../src/db/schema.js');
+    const [langEntry] = await handle.db
+      .insert(entries)
+      .values({ universeId: otherUniverse!.id, userId: user2.id, title: 'Foreign Lang', entryType: 'language' })
+      .returning();
+
+    // Attempt to import to OUR universe with the foreign lid
+    const csvContent = 'word,gloss\ntest,word\n';
+    const file = new File([csvContent], 'words.csv', { type: 'text/csv' });
+    const formData = new FormData();
+    formData.append('file', file);
+
+    const res = await app.request(
+      `http://localhost/api/universes/${universeId}/dictionary/import?lid=${langEntry!.id}`,
+      {
+        method: 'POST',
+        headers: { ...authHdrs },
+        body: formData,
+      },
+    );
+    expect(res.status).toBe(400);
+    const body = await res.json() as any;
+    expect(body.error).toMatch(/does not belong to this universe/i);
+  });
 });
