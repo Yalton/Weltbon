@@ -173,20 +173,39 @@ export async function importDictionaryCsv(
 
       for (const row of chunk) {
         // Use raw SQL to target the expression-based unique index.
-        // The tags array is passed as a PostgreSQL array literal via Drizzle sql tag.
+        // The tags array must be cast to text[] for Postgres to accept it.
+        // Drizzle's sql tag parameterizes arrays correctly as Postgres arrays
+        // when the value is passed directly (not nested in sql expressions).
+        // We build a valid PostgreSQL ARRAY literal from the tags array.
+        const tags = row.tags ?? [];
+        // Build the tags array literal as a SQL expression: ARRAY[$1, $2, ...]::text[]
+        // If empty, use ARRAY[]::text[].
+        const tagsExpr =
+          tags.length === 0
+            ? sql`ARRAY[]::text[]`
+            : sql`ARRAY[${sql.join(
+                tags.map((t) => sql`${t}`),
+                sql`, `,
+              )}]::text[]`;
+
+        // Handle nullable languageEntryId — null must be passed as SQL NULL, not '${null}::uuid'
+        const langIdExpr = languageEntryId
+          ? sql`${languageEntryId}::uuid`
+          : sql`NULL::uuid`;
+
         const result = await tx.execute(
           sql`
             INSERT INTO dictionary_words (
               universe_id, language_entry_id, word, ipa, part_of_speech, gloss, etymology, tags
             ) VALUES (
               ${universeId}::uuid,
-              ${languageEntryId}::uuid,
+              ${langIdExpr},
               ${row.word},
               ${row.ipa ?? ''},
               ${row.partOfSpeech ?? ''},
               ${row.gloss},
               ${row.etymology ?? ''},
-              ${row.tags ?? []}
+              ${tagsExpr}
             )
             ON CONFLICT (universe_id, COALESCE(language_entry_id, ${NULL_SENTINEL}::uuid), lower(word))
             DO UPDATE SET
