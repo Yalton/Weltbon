@@ -12,7 +12,7 @@ import { ConfirmDialog } from '../components/ConfirmDialog';
 import { LinkSection } from '../components/LinkSection';
 import { IssueSection } from '../components/IssueSection';
 import { TimelinePinSection } from '../components/TimelinePinSection';
-import { useShareMode } from '../contexts/ShareModeContext';
+import { useShareMode, useShareCalendar } from '../contexts/ShareModeContext';
 
 export function EntryDetail() {
   // Phase 29 — share-mode awareness. In share mode the route is
@@ -35,8 +35,14 @@ export function EntryDetail() {
   // useTimelinePins is already cached if the user visited /timeline; no extra
   // fetch in the common case. useCalendar is a thin wrapper over useUniverse
   // (same cache key) — also zero extra fetches.
+  // Phase 33 INT-BLOCKER-1 fix: in share mode useUniverse('share') 404s, so
+  // calendar from useCalendar is null. Use the share calendar from context
+  // (threaded from the share-meta endpoint via ShareLayout) as the effective
+  // calendar when rendering inside the share subtree.
   const { data: pins } = useTimelinePins(uid!);
-  const { calendar } = useCalendar(uid!);
+  const { calendar: authCalendar } = useCalendar(uid!);
+  const shareCalendar = useShareCalendar();
+  const calendar = isShareMode ? shareCalendar : authCalendar;
 
   // ── Resolution data for [[word]] wikilinks ───────────────────────────────
   // useEntries works in both authenticated and share mode: the api-client seam
@@ -128,6 +134,12 @@ export function EntryDetail() {
           const params = new URLSearchParams({ prefill: token });
           navigate(`/universes/${uid}/dictionary?${params.toString()}`);
         },
+    // Phase 33 INT-BLOCKER-2 fix: thread share-mode flag + token so
+    // WikilinkText can build /share/:token/entries/:id targets instead of
+    // /universes/:uid/entries/:id (which lands on ProtectedRoute → /login
+    // for unauthenticated share visitors).
+    isShareMode,
+    shareToken: token ?? null,
   };
 
   return (

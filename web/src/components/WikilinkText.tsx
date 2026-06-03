@@ -25,6 +25,19 @@ export interface WikilinkResolutionData {
    * the "+" button is not rendered (T-32-11).
    */
   onAddWord?: (token: string) => void;
+  /**
+   * Phase 33 INT-BLOCKER-2 fix: when true, entry-title wikilinks generate a
+   * `/share/${shareToken}/entries/${entryId}` target instead of the
+   * authenticated `/universes/${universeId}/entries/${entryId}` path.
+   * Absent (undefined) is treated as false — backward-compatible, matching
+   * the existing optional `onAddWord` convention.
+   */
+  isShareMode?: boolean;
+  /**
+   * The share token for building share-subtree navigation targets.
+   * Required when `isShareMode` is true; ignored otherwise.
+   */
+  shareToken?: string | null;
 }
 
 // ---------------------------------------------------------------------------
@@ -130,7 +143,15 @@ interface WikilinkTextProps {
  * never scanned — code-span exclusion holds automatically.
  */
 export function WikilinkText({ children, wikis }: WikilinkTextProps) {
-  const { entryTitles, dictionaryWords, universeId, languageEntryId, onAddWord } = wikis;
+  const {
+    entryTitles,
+    dictionaryWords,
+    universeId,
+    languageEntryId,
+    onAddWord,
+    isShareMode,
+    shareToken,
+  } = wikis;
 
   function resolveSegment(inner: string, label: string, raw: string, key: string) {
     const { target } = parseWikilink(inner);
@@ -143,10 +164,17 @@ export function WikilinkText({ children, wikis }: WikilinkTextProps) {
     // two-pass resolver in ingest-markdown.ts which uses the normalized title map)
     if (entryTitles.has(target)) {
       const entryId = entryTitles.get(target)!;
+      // Phase 33 INT-BLOCKER-2 fix: in share mode, navigate within the share
+      // subtree to keep visitors out of the ProtectedRoute tree. When
+      // isShareMode is false/absent, use the authenticated path (default).
+      const entryTo =
+        isShareMode && shareToken
+          ? `/share/${shareToken}/entries/${entryId}`
+          : `/universes/${universeId}/entries/${entryId}`;
       return (
         <Link
           key={key}
-          to={`/universes/${universeId}/entries/${entryId}`}
+          to={entryTo}
           className="text-sm text-[color:var(--color-accent)] hover:underline"
         >
           {label}
