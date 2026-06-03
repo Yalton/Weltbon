@@ -66,7 +66,7 @@ describe('universe routes (UNIV-01..06)', () => {
     expect(body.userId).toBe(user.id);
     expect(body.entryTypes).toEqual([
       'concept', 'entity', 'location', 'event', 'faction',
-      'artifact', 'species', 'culture', 'thread',
+      'artifact', 'species', 'culture', 'thread', 'language',
     ]);
     expect(typeof body.id).toBe('string');
   });
