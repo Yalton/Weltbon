@@ -205,6 +205,19 @@ describe('DictionaryTable — empty state', () => {
 
     expect(screen.getByText('No words match')).toBeInTheDocument();
   });
+
+  it('(d3) empty data with addingNew renders the blank editor row, not the empty state', () => {
+    // Regression: "Add word" on an empty dictionary must show the inline editor
+    // row instead of short-circuiting to the "No words yet" EmptyState.
+    render(
+      <DictionaryTable {...baseProps} data={[]} addingNew={true} />,
+      { wrapper: Wrapper },
+    );
+
+    expect(screen.queryByText('No words yet')).not.toBeInTheDocument();
+    // The populated branch (which hosts the add-new editor row) renders a table.
+    expect(screen.getByRole('table')).toBeInTheDocument();
+  });
 });
 
 // ─── DictionaryImportDialog smoke tests (Task 3 extension) ───────────────────

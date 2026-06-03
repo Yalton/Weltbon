@@ -188,8 +188,10 @@ export function DictionaryTable({
   }
 
   // ── Empty state — no words at all ─────────────────────────────────────────
+  // When addingNew is active, fall through to the table so the blank editor
+  // row renders — otherwise "Add word" on an empty dictionary does nothing.
   const hasFilters = !!posFilter || !!tagFilter;
-  if (!data || data.length === 0) {
+  if ((!data || data.length === 0) && !addingNew) {
     return (
       <EmptyState
         title="No words yet"
@@ -199,7 +201,7 @@ export function DictionaryTable({
   }
 
   // ── Empty state — filters match nothing ──────────────────────────────────
-  if (sortedRows.length === 0 && hasFilters) {
+  if (sortedRows.length === 0 && hasFilters && !addingNew) {
     return (
       <EmptyState
         title="No words match"
