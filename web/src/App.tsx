@@ -17,6 +17,7 @@ import { CalendarEditor } from './views/CalendarEditor';
 import { EventsView } from './views/EventsView';
 import { DiagramList } from './views/DiagramList';
 import { DiagramEditor } from './views/DiagramEditor';
+import { Dictionary } from './views/Dictionary';
 import Settings from './views/Settings';
 import { SettingsLayout } from './components/SettingsLayout';
 import Tokens from './views/Tokens';
@@ -62,6 +63,8 @@ export default function App() {
           <Route path="/universes/:uid/events" element={<EventsView />} />
           <Route path="/universes/:uid/diagrams" element={<DiagramList />} />
           <Route path="/universes/:uid/diagrams/:did" element={<DiagramEditor />} />
+          <Route path="/universes/:uid/dictionary" element={<Dictionary />} />
+          <Route path="/universes/:uid/languages/:lid/dictionary" element={<Dictionary />} />
           <Route path="/universes/:uid/issues" element={<IssuesView />} />
           <Route path="/universes/:uid/import" element={<IngestImport />} />
         </Route>
