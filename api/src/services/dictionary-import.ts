@@ -44,13 +44,17 @@ export interface DictionaryRowError {
 
 // ─── Row schema ──────────────────────────────────────────────────────────────
 
+// CR-03: max() guards mirror the CRUD route Zod schemas in dictionary.ts so that
+// oversized values in a CSV row surface as per-row errors instead of writing
+// arbitrarily-long strings to the DB. etymology uses 10000 (markdown field, no
+// explicit CRUD max) matching the reviewer's recommendation.
 const rowSchema = z.object({
-  word: z.string().min(1, 'word is required'),
-  gloss: z.string().min(1, 'gloss is required'),
-  ipa: z.string().optional().default(''),
-  partOfSpeech: z.string().optional().default(''),
-  etymology: z.string().optional().default(''),
-  tags: z.array(z.string()).optional().default([]),
+  word:         z.string().min(1, 'word is required').max(200),
+  gloss:        z.string().min(1, 'gloss is required').max(1000),
+  ipa:          z.string().max(200).optional().default(''),
+  partOfSpeech: z.string().max(100).optional().default(''),
+  etymology:    z.string().max(10000).optional().default(''),
+  tags:         z.array(z.string().max(50)).max(20).optional().default([]),
 });
 
 type ParsedRow = z.output<typeof rowSchema>;

@@ -206,6 +206,77 @@ describe('dictionary CSV import (CONLANG-02)', () => {
     expect(row!.tags).toEqual(['noun', 'archaic', 'latin']);
   });
 
+  // ─── CR-03: field-length limits surface as per-row errors ───────────────
+
+  it('CR-03: oversized word (>200 chars) surfaces as row error, valid rows still committed', async () => {
+    const longWord = 'a'.repeat(201);
+    const buf = csv([
+      ['word', 'gloss'],
+      [longWord, 'too long'],
+      ['short', 'valid word'],
+    ]);
+    const result = await importDictionaryCsv(buf, { universeId, languageEntryId: null });
+    expect(result.rowErrors.length).toBeGreaterThan(0);
+    expect(result.rowErrors[0].row).toBe(1);
+    expect(result.inserted).toBe(1); // 'short' committed
+  });
+
+  it('CR-03: oversized gloss (>1000 chars) surfaces as row error', async () => {
+    const longGloss = 'g'.repeat(1001);
+    const buf = csv([
+      ['word', 'gloss'],
+      ['anar', longGloss],
+    ]);
+    const result = await importDictionaryCsv(buf, { universeId, languageEntryId: null });
+    expect(result.rowErrors.length).toBe(1);
+    expect(result.inserted).toBe(0);
+  });
+
+  it('CR-03: oversized ipa (>200 chars) surfaces as row error', async () => {
+    const longIpa = 'i'.repeat(201);
+    const buf = csv([
+      ['word', 'gloss', 'ipa'],
+      ['sol', 'sun', longIpa],
+    ]);
+    const result = await importDictionaryCsv(buf, { universeId, languageEntryId: null });
+    expect(result.rowErrors.length).toBe(1);
+    expect(result.inserted).toBe(0);
+  });
+
+  it('CR-03: oversized partOfSpeech (>100 chars) surfaces as row error', async () => {
+    const longPos = 'p'.repeat(101);
+    const buf = csv([
+      ['word', 'gloss', 'pos'],
+      ['luna', 'moon', longPos],
+    ]);
+    const result = await importDictionaryCsv(buf, { universeId, languageEntryId: null });
+    expect(result.rowErrors.length).toBe(1);
+    expect(result.inserted).toBe(0);
+  });
+
+  it('CR-03: oversized tag string (>50 chars) surfaces as row error', async () => {
+    const longTag = 't'.repeat(51);
+    const buf = csv([
+      ['word', 'gloss', 'tags'],
+      ['nox', 'night', longTag],
+    ]);
+    const result = await importDictionaryCsv(buf, { universeId, languageEntryId: null });
+    expect(result.rowErrors.length).toBe(1);
+    expect(result.inserted).toBe(0);
+  });
+
+  it('CR-03: tag count exceeding 20 surfaces as row error', async () => {
+    // 21 semicolon-delimited tags
+    const tooManyTags = Array.from({ length: 21 }, (_, i) => `tag${i}`).join(';');
+    const buf = csv([
+      ['word', 'gloss', 'tags'],
+      ['astrum', 'star', tooManyTags],
+    ]);
+    const result = await importDictionaryCsv(buf, { universeId, languageEntryId: null });
+    expect(result.rowErrors.length).toBe(1);
+    expect(result.inserted).toBe(0);
+  });
+
   // ─── Route-level: 5 MB size cap ─────────────────────────────────────────
 
   it('T-32-04: POST /import with file > 5 MB returns 413', async () => {
