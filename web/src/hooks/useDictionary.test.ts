@@ -224,7 +224,7 @@ describe('useImportDictionaryCsv', () => {
     vi.mocked(api).mockReset();
   });
 
-  it('(b4) POSTs FormData to /universes/:uid/dictionary/import', async () => {
+  it('(b4) POSTs FormData to /universes/:uid/dictionary/import (no lid → universe-level)', async () => {
     vi.mocked(api).mockResolvedValue({ inserted: 5, updated: 1, rowErrors: [] });
 
     const qc = makeQueryClient();
@@ -245,6 +245,30 @@ describe('useImportDictionaryCsv', () => {
     expect(calledPath).toBe(`/universes/${UNIVERSE_ID}/dictionary/import`);
     expect((calledInit as RequestInit).method).toBe('POST');
     expect((calledInit as RequestInit).body).toBeInstanceOf(FormData);
+  });
+
+  it('(b4-lid) appends ?lid= when lid is provided — CR-01 scope fix', async () => {
+    vi.mocked(api).mockResolvedValue({ inserted: 3, updated: 0, rowErrors: [] });
+
+    const LID = 'lang-cccc';
+    const qc = makeQueryClient();
+    const { result } = renderHook(
+      () => useImportDictionaryCsv(UNIVERSE_ID, LID),
+      { wrapper: wrapperFactory(qc) },
+    );
+
+    const fakeFile = new File(['word,gloss\nanar,sun'], 'words.csv', {
+      type: 'text/csv',
+    });
+
+    await act(async () => {
+      await result.current.mutateAsync(fakeFile);
+    });
+
+    const [calledPath] = vi.mocked(api).mock.calls[0];
+    expect(calledPath).toBe(
+      `/universes/${UNIVERSE_ID}/dictionary/import?lid=${encodeURIComponent(LID)}`,
+    );
   });
 });
 

@@ -65,7 +65,7 @@ export function DictionaryImportDialog({
   } | null>(_testImportResult ?? null);
   const [missingHeadersError, setMissingHeadersError] = useState(false);
 
-  const importMutation = useImportDictionaryCsv(universeId);
+  const importMutation = useImportDictionaryCsv(universeId, lid);
   const isImporting = importMutation.isPending;
 
   function handleFileChange(e: React.ChangeEvent<HTMLInputElement>) {

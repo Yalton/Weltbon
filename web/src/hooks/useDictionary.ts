@@ -131,17 +131,20 @@ export function useDeleteWord(universeId: string, wordId: string) {
 /**
  * Bulk-import words from a CSV file.
  * Posts multipart FormData to /universes/:uid/dictionary/import.
+ * If `lid` is provided, appends ?lid=<lid> so the import targets the
+ * language-scoped dictionary rather than the universe-level fallback (CR-01).
  * Returns { inserted, updated, rowErrors[] }.
  * Invalidates the ['dictionary', universeId] prefix on success.
  */
-export function useImportDictionaryCsv(universeId: string) {
+export function useImportDictionaryCsv(universeId: string, lid?: string | null) {
   const qc = useQueryClient();
   return useMutation({
     mutationFn: (file: File) => {
       const formData = new FormData();
       formData.append('file', file);
+      const qs = lid ? `?lid=${encodeURIComponent(lid)}` : '';
       return api<ImportResult>(
-        `/universes/${universeId}/dictionary/import`,
+        `/universes/${universeId}/dictionary/import${qs}`,
         {
           method: 'POST',
           body: formData,
