@@ -327,6 +327,10 @@ export function TimelineView() {
               width={size.width}
               height={size.height}
               calendar={calendar}
+              // Phase 33 — in share mode pins are read-only and must NOT be
+              // draggable: attaching d3-drag suppresses the trailing click and
+              // breaks the visitor's "CLICK TO OPEN" → entry navigation.
+              pinsDraggable={!isShareMode}
               // Phase 29 — share-mode pin drag is suppressed (no save
               // mutation); pass a no-op handler so the canvas-level
               // d3-drag does not call the upsert mutation.

@@ -43,6 +43,16 @@ export interface TimelineCanvasProps {
   /** Click handler — fires on pin click without modifier keys. */
   onPinClick?: (pin: TimelinePin) => void;
   /**
+   * Whether pins are draggable. Default true. When false (Phase 33 — share
+   * mode), the d3-drag behavior is NOT attached to pins, so the trailing
+   * native `click` is never suppressed by d3-drag's post-gesture click filter.
+   * Without this, a read-only share visitor's "CLICK TO OPEN" never fires
+   * `onPinClick` because the (no-op) drag swallows the click on any pointer
+   * jitter. Pan/zoom of the canvas is unaffected (that lives on the svg, not
+   * the pins).
+   */
+  pinsDraggable?: boolean;
+  /**
    * Fires at d3-drag `end` (pointer-up) with the translated new position.
    * NOT fired if the drag was cancelled mid-flight via Esc (D-08a).
    */
@@ -100,6 +110,7 @@ export function TimelineCanvas({
   height,
   calendar,
   onPinClick,
+  pinsDraggable = true,
   onPinDragEnd,
   onDragSourceChange,
   isDndDragActive,
@@ -113,11 +124,16 @@ export function TimelineCanvas({
   const onPinDragEndRef = useRef(onPinDragEnd);
   const onDragSourceChangeRef = useRef(onDragSourceChange);
   const onTransformChangeRef = useRef(onTransformChange);
+  // Mirror pinsDraggable so the main setup effect reads the live value without
+  // re-binding (share-mode is constant per mount, but a ref keeps the stable
+  // dep list intact — same pattern as the callback refs above).
+  const pinsDraggableRef = useRef(pinsDraggable);
   useEffect(() => {
     onPinClickRef.current = onPinClick;
     onPinDragEndRef.current = onPinDragEnd;
     onDragSourceChangeRef.current = onDragSourceChange;
     onTransformChangeRef.current = onTransformChange;
+    pinsDraggableRef.current = pinsDraggable;
   });
 
   // Esc-cancel mid-drag (D-08a): set by the keydown listener installed at
@@ -278,13 +294,20 @@ export function TimelineCanvas({
         onPinDragEndRef.current?.(d.pin, newPosition);
         onDragSourceChangeRef.current?.(null);
       });
-    pinSel.call(dragBehavior);
+    // Phase 33: in share mode (pinsDraggable=false) do NOT attach the drag
+    // behavior — read-only pins must not be repositionable.
+    if (pinsDraggableRef.current) {
+      pinSel.call(dragBehavior);
+    }
 
     // ---------- click dispatch ----------
-    pinSel.on('click', (evt: MouseEvent, d) => {
-      evt.stopPropagation();
-      onPinClickRef.current?.(d.pin);
-    });
+    // Pin click-to-open is handled by a React onClick on the <circle> JSX, NOT
+    // here. The pins are React-rendered, so this d3 selection carries NO datum
+    // (`d` is undefined) — the old `d3 .on('click', (e,d) => onPinClick(d.pin))`
+    // threw "Cannot read properties of undefined (reading 'pin')" AND its
+    // evt.stopPropagation() blocked the React handler from bubbling, so the
+    // pin never opened. Removed entirely; the React onClick is the single,
+    // working path (Phase 33 — fixes share-visitor "CLICK TO OPEN").
 
     // ---------- Esc → home (when no drag in flight) ----------
     const escHomeHandler = (e: KeyboardEvent) => {
@@ -304,7 +327,7 @@ export function TimelineCanvas({
 
     return () => {
       svg.on('.zoom', null);
-      pinSel.on('.drag', null).on('click', null);
+      pinSel.on('.drag', null);
       removeKeydown();
       globalThis.removeEventListener('keydown', escHomeHandler);
       zoomBehaviorRef.current = null;
@@ -419,6 +442,12 @@ export function TimelineCanvas({
                 cy={cy}
                 r={PIN_RADIUS}
                 fill={fillColor}
+                // Phase 33: React onClick directly on the pin is the open path.
+                // The pins are React-rendered, so the imperative d3 selection
+                // carried no datum and its `.on('click')` threw on `d.pin`
+                // (undefined) while stopPropagation-ing the real click. This
+                // delegated React handler is the single, working open path.
+                onClick={() => onPinClick?.(pin)}
                 className={
                   clamped
                     ? 'opacity-40 cursor-pointer'
