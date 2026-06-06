@@ -663,10 +663,29 @@ export class AnthropicProvider implements LLMProvider {
   }
 
   /**
+   * Phase 27: live model IDs from the Anthropic API.
+   * Async, network I/O, constructs a fresh client per call (Pitfall #6).
+   * Returns a flat array of raw model IDs; no PRICING merge, no filtering.
+   * Throws LLMProviderError on failure (caller falls back per D-02).
+   */
+  async liveListModels(apiKey: string): Promise<string[]> {
+    const client = new Anthropic({ apiKey });
+    const ids: string[] = [];
+    try {
+      for await (const m of client.models.list({ limit: 100 })) {
+        ids.push(m.id);
+      }
+    } catch (err) {
+      throw mapAnthropicError(err);
+    }
+    return ids;
+  }
+
+  /**
    * Synchronous offline lookup of every Anthropic model in `PRICING.anthropic`.
-   * Per D-04: this is the source of truth for the UI dropdown — never any
-   * network I/O. Adding/removing a model in `pricing.ts` is the ONLY way to
-   * change what `listModels()` returns.
+   * Phase 27 D-04 revised: this is a fallback primitive — the live catalog
+   * is `liveListModels()`. Adding/removing a model in `pricing.ts` is the
+   * ONLY way to change what this fallback returns.
    */
   listModels(): ModelListing[] {
     return Object.keys(PRICING.anthropic).map((id) => {

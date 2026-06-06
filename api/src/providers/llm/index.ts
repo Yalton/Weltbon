@@ -92,6 +92,7 @@ export type { AuditSuggestion } from './interface.js';
 // Values from ./pricing.js
 export { PRICING } from './pricing.js';
 export { PRICING_AS_OF } from './pricing.js';
+export { RECOMMENDED_CHEAP_MODEL } from './pricing.js';
 
 // Types from ./pricing.js
 export type { AnthropicModelPricing } from './pricing.js';
@@ -100,3 +101,7 @@ export type { ModelPricing } from './pricing.js';
 
 // Provider name union — canonical home is services/llm-key.ts per D-03b
 export type { LlmProvider } from '../../services/llm-key.js';
+
+// Phase 27 PROV-FOLLOWUP-01: model catalog with TTL cache + 3-tier fallback
+export { getModels } from './model-catalog.js';
+export type { ModelEntry, ModelsResult } from './model-catalog.js';

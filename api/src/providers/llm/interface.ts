@@ -270,15 +270,33 @@ export interface LLMProvider {
   runAudit(opts: RunAuditOpts): Promise<RunAuditResult>;
 
   /**
-   * List every model this provider knows about. Per D-04, the source of truth
-   * is the hardcoded `PRICING` constant in `./pricing.js` — this method is
-   * synchronous, performs no network I/O, and is offline-deterministic.
+   * List every model this provider knows about.
+   *
+   * Phase 27 D-04 revised: this is a fallback primitive — the sync PRICING-derived
+   * offline list. Live catalog is `liveListModels()` (async, per-key, network I/O).
+   * Downstream code prefers `liveListModels()` via the model-catalog cache; this
+   * method is the last-resort fallback when both live fetch and stale cache fail.
    *
    * T-23-01-04 (mitigate): MUST return only models present in `PRICING` —
-   * never invent an `id` that the UI doesn't have pricing for. Plan 23-02's
-   * `PRICING` shape and this contract together enforce the invariant.
+   * never invent an `id` that the UI doesn't have pricing for.
    */
   listModels(): ModelListing[];
+
+  /**
+   * Phase 27: fetch the live model ID list from the provider's API.
+   * Async, requires network I/O, uses the per-call `apiKey`.
+   *
+   * Returns a flat array of raw model IDs directly from the provider
+   * (no PRICING merge, no filtering — that is the catalog layer's job so
+   * the fallback primitive stays simple and all rules live in one place).
+   *
+   * Throws `LLMProviderError` on any SDK failure. Callers (model-catalog.ts)
+   * catch and apply the D-02 stale-cache → PRICING fallback chain.
+   *
+   * Per Pitfall #6: MUST construct a fresh SDK client inside the method body
+   * using the per-call `apiKey`. Never hold plaintext as instance state.
+   */
+  liveListModels(apiKey: string): Promise<string[]>;
 
   /**
    * Look up pricing for a single model id. Returns `undefined` if the model

@@ -506,10 +506,34 @@ export class OpenAIProvider implements LLMProvider {
   }
 
   /**
+   * Phase 27: live model IDs from the OpenAI API.
+   * Async, network I/O, constructs a fresh client per call (Pitfall #6).
+   * Returns a flat array of raw model IDs; no PRICING merge, no filtering —
+   * the catalog layer (model-catalog.ts) applies the OpenAI chat-capable filter.
+   * Throws LLMProviderError on failure (caller falls back per D-02).
+   *
+   * Note: OpenAI's models.list() returns ALL org-accessible models including
+   * embeddings/whisper/dall-e/tts/legacy — the chat-capable filter lives in
+   * model-catalog.ts so the rule stays in one place (Assumption A3).
+   */
+  async liveListModels(apiKey: string): Promise<string[]> {
+    const client = new OpenAI({ apiKey });
+    const ids: string[] = [];
+    try {
+      for await (const m of client.models.list()) {
+        ids.push(m.id);
+      }
+    } catch (err) {
+      throw mapOpenAIError(err);
+    }
+    return ids;
+  }
+
+  /**
    * Synchronous offline lookup of every OpenAI model in `PRICING.openai`.
-   * Per D-04: this is the source of truth for the UI dropdown — never any
-   * network I/O. Adding/removing a model in `pricing.ts` is the ONLY way to
-   * change what `listModels()` returns.
+   * Phase 27 D-04 revised: this is a fallback primitive — the live catalog
+   * is `liveListModels()`. Adding/removing a model in `pricing.ts` is the
+   * ONLY way to change what this fallback returns.
    *
    * `cacheWriteUsdPer1M` is omitted (undefined) for every OpenAI listing
    * because OpenAI does not bill cache writes separately — the
