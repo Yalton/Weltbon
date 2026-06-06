@@ -40,9 +40,11 @@ import {
 } from '../services/llm-key.js';
 import {
   getProvider,
+  getModels,
   LLMProviderError,
   LLMError,
 } from '../providers/llm/index.js';
+import type { ModelPricing } from '../providers/llm/index.js';
 import { env } from '../config.js';
 
 type AppEnv = { Variables: AuthVariables };
@@ -81,10 +83,16 @@ const maskedKeySchema = z.object({
 
 /**
  * Phase 26 Plan 08 Task 3 (D-14) — masked row + per-provider cumulative cost.
+ * Phase 27 Plan 03 (D-06) — adds unknownCount: runs with cost_unknown=true are
+ * excluded from totalSpentUsd SUM; their count is reported separately.
  *
- * `totalSpentUsd` is `SUM(audit_runs.cost_usd) WHERE user_id = caller AND
- * provider = key.provider`, formatted as a 4-decimal string (cost-as-string
- * convention; NEVER a number). Always a string — '0.0000' when no runs match.
+ * `totalSpentUsd` is `SUM(audit_runs.cost_usd) FILTER (WHERE cost_unknown = false)
+ * WHERE user_id = caller AND provider = key.provider`, formatted as a 4-decimal
+ * string (cost-as-string convention; NEVER a number). Always a string — '0.0000'
+ * when no runs match.
+ *
+ * `unknownCount` is the count of runs with cost_unknown=true for this
+ * (provider, user_id) pairing. Defaults to 0 when no such runs exist.
  *
  * Approximation: joined by (provider, user_id), not byok_key_id. If a user
  * has multiple keys for the same provider, all rows show the same total
@@ -92,11 +100,47 @@ const maskedKeySchema = z.object({
  */
 const maskedKeyWithSpentSchema = maskedKeySchema.extend({
   /**
-   * Sum of audit_runs.cost_usd matched by (provider, user_id). Approximation:
-   * not joined by byok_key_id — if the user has multiple keys for the same
-   * provider, all rows show the same total. Per D-14.
+   * Sum of audit_runs.cost_usd (cost_unknown=false only) matched by
+   * (provider, user_id). Per D-14/D-06.
    */
   totalSpentUsd: z.string(),
+  /**
+   * Count of runs with cost_unknown=true for this (provider, user_id).
+   * Phase 27 D-06 SUM-safe rollup: unpriced runs excluded from totalSpentUsd.
+   */
+  unknownCount: z.number().int().nonnegative(),
+});
+
+// ─── Phase 27 Plan 03 Task 1 — /models response schema ──────────────────────
+
+/**
+ * ModelPricing-compatible Zod schema for the wire shape.
+ * Matches the ModelPricing type from pricing.ts (both providers share the same
+ * numeric field set except cacheWriteUsdPer1M which is Anthropic-only).
+ */
+const modelPricingSchema = z.object({
+  inputUsdPer1M: z.number(),
+  outputUsdPer1M: z.number(),
+  cachedInputUsdPer1M: z.number(),
+  cacheWriteUsdPer1M: z.number().optional(),
+  contextWindow: z.number().int().optional(),
+});
+
+/**
+ * Phase 27 Plan 03 — GET /models response wire shape.
+ * `{ models: [{id, hasPricing, pricing?}], source, fetchedAt }`
+ * Per CONTEXT §Specifics + 27-03-PLAN.md Task 1.
+ */
+const modelsResponseSchema = z.object({
+  models: z.array(
+    z.object({
+      id: z.string(),
+      hasPricing: z.boolean(),
+      pricing: modelPricingSchema.optional(),
+    }),
+  ),
+  source: z.enum(['live', 'cache_stale', 'pricing_fallback']),
+  fetchedAt: z.string(),
 });
 
 const revalidateResponseSchema = z.object({
@@ -303,6 +347,60 @@ const getConsentRoute = createRoute({
     401: {
       content: { 'application/json': { schema: errorSchema } },
       description: 'Missing or invalid JWT bearer token (or PAT — LLMKEY-06).',
+    },
+  },
+});
+
+/**
+ * Phase 27 Plan 03 Task 1 — GET /api/llm-keys/models
+ *
+ * JWT-only (requireJwtAuth — D-13 mirror; PAT bearer 401).
+ * Returns the hybrid model catalog for the caller's own key for the given provider.
+ *
+ * Security:
+ *   T-27-03-01: keyId resolved server-side from JWT subject — NEVER from client.
+ *   T-27-03-02: requireJwtAuth blocks PAT bearers (401).
+ *   T-27-03-04: providerEnum validates + rejects unknown providers.
+ *   T-27-03-03: env-gate 503 when LLM_KEY_ENCRYPTION_KEY unset.
+ */
+const getModelsRoute = createRoute({
+  method: 'get',
+  path: '/models',
+  tags: ['LLM API Keys'],
+  summary: 'List live models for a provider key (hybrid catalog)',
+  description:
+    'Returns the hybrid model catalog for the caller\'s own key for the requested provider. ' +
+    'JWT auth required (PAT bearer → 401). keyId is resolved server-side from the authenticated ' +
+    'user; the client never supplies a keyId (T-27-03-01 / V4 access control). ' +
+    'Calls getModels(provider, keyId, apiKey) which implements the 3-tier fallback (D-01/D-02): ' +
+    '(1) live provider.models.list() with 30-min TTL cache; (2) stale cache on live-fail; ' +
+    '(3) PRICING keys as last resort. Returns 404 when the user has no key for the provider. ' +
+    'Returns 503 when LLM_KEY_ENCRYPTION_KEY is unset.',
+  security: [{ bearerJwtAuth: [] }],
+  middleware: [requireJwtAuth] as const,
+  request: {
+    query: z.object({ provider: providerEnum }),
+  },
+  responses: {
+    200: {
+      content: { 'application/json': { schema: modelsResponseSchema } },
+      description: 'Hybrid model catalog — list of model entries with pricing metadata.',
+    },
+    401: {
+      content: { 'application/json': { schema: errorSchema } },
+      description: 'Missing or invalid JWT bearer token (or PAT — LLMKEY-06 / T-27-03-02).',
+    },
+    404: {
+      content: { 'application/json': { schema: errorSchema } },
+      description: 'No key configured for the requested provider.',
+    },
+    422: {
+      content: { 'application/json': { schema: errorSchema } },
+      description: 'Provider rejected the key.',
+    },
+    503: {
+      content: { 'application/json': { schema: errorSchema } },
+      description: 'Server not configured (LLM_KEY_ENCRYPTION_KEY unset) or provider transient failure.',
     },
   },
 });
@@ -624,6 +722,65 @@ export const llmKeyRoutes = new OpenAPIHono<AppEnv>()
       },
       200,
     );
+  })
+
+  .openapi(getModelsRoute, async (c) => {
+    // T-27-03-03 env-gate: decrypt requires the encryption key
+    const cfg = env();
+    if (!cfg.llmKeyEncryptionKey) {
+      return c.json(
+        {
+          error:
+            'Server is not configured for LLM key encryption. ' +
+            'Operator must set LLM_KEY_ENCRYPTION_KEY (see README ## Self-Host).',
+        },
+        503,
+      );
+    }
+
+    const userId = c.var.userId;
+    const { provider } = c.req.valid('query');
+
+    // T-27-03-01 / V4: resolve keyId server-side from (userId, provider).
+    // NEVER accept keyId from the client — cross-tenant enumeration risk (Pitfall #6).
+    const keyRows = await getDb()
+      .select({ id: llmApiKeys.id })
+      .from(llmApiKeys)
+      .where(and(eq(llmApiKeys.userId, userId), eq(llmApiKeys.provider, provider)))
+      .limit(1);
+
+    if (keyRows.length === 0) {
+      return c.json({ error: `No key configured for provider ${provider}` }, 404);
+    }
+    const keyId = keyRows[0].id;
+
+    // Decrypt the stored key (null collapses decrypt-fail / missing-env / version-mismatch)
+    const plaintext = await getDecryptedKey(userId, provider as LlmProvider, cfg.llmKeyEncryptionKey);
+    if (plaintext === null) {
+      return c.json(
+        {
+          error:
+            'Server cannot decrypt the stored key. ' +
+            'Operator must verify LLM_KEY_ENCRYPTION_KEY (see README ## Self-Host).',
+        },
+        503,
+      );
+    }
+
+    // Call getModels — 3-tier fallback (live → stale cache → PRICING keys)
+    // T-27-03-03: map LLMProviderError variants → status; never log plaintext
+    try {
+      const result = await getModels(provider as LlmProvider, keyId, plaintext);
+      return c.json(result, 200);
+    } catch (err) {
+      if (err instanceof LLMProviderError) {
+        if (err.variant === LLMError.InvalidApiKey) {
+          return c.json({ error: err.message }, 422);
+        }
+        return c.json({ error: err.message }, 503);
+      }
+      throw err;
+    }
   })
 
   .openapi(postConsentRoute, async (c) => {
