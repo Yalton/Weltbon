@@ -13,7 +13,7 @@ import { defineConfig } from 'vitest/config';
  *                    schemas managed by createTestDb).
  *
  * D-17-02: Files are partitioned by the canonical marker — every DB-gated
- * test imports `createTestDb` or `setTestDb` from `./helpers.ts`. The 36-file
+ * test imports `createTestDb` or `setTestDb` from `./helpers.ts`. The 37-file
  * list below was derived via:
  *   grep -l 'createTestDb\|setTestDb' tests/*.test.ts
  * If a new DB-gated test is added, append its path to the integration project's
