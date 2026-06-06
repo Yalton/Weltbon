@@ -7,7 +7,8 @@ import { SettingsTabBar } from '../components/SettingsTabBar';
 import { Toggle } from '../components/Toggle';
 import { AuditHistoryTable } from '../components/AuditHistoryTable';
 import { useLlmKeys } from '../hooks/useLlmKeys';
-import { PRICING, RECOMMENDED_CHEAP_MODEL } from '../data/pricing';
+import { RECOMMENDED_CHEAP_MODEL } from '../data/pricing';
+import { useListModels } from '../hooks/useAudits';
 
 /**
  * Phase 26 — UniverseSettings tabbed layout (D-09).
@@ -59,6 +60,10 @@ export function UniverseSettings() {
   const [auditProvider, setAuditProvider] = useState<'anthropic' | 'openai' | ''>('');
   const [auditModel, setAuditModel] = useState<string>('');
 
+  // Phase 27: live model catalog sourced from the /llm-keys/models endpoint
+  // (D-05 badge, D-08 fallback). PRICING no longer drives the dropdown.
+  const { data: modelsData } = useListModels(auditProvider !== '' ? auditProvider : undefined);
+
   useEffect(() => {
     if (data) {
       setName(data.name);
@@ -69,12 +74,22 @@ export function UniverseSettings() {
     }
   }, [data]);
 
-  // When provider changes and model is empty, default to RECOMMENDED_CHEAP_MODEL[provider].
+  // D-08 fallback chain: when provider changes and model is empty, pick:
+  // (1) RECOMMENDED_CHEAP_MODEL[provider] if present in the live list
+  // (2) live[0] if the list is non-empty
+  // (3) leave empty (renders "no models available" message)
   useEffect(() => {
     if (auditProvider !== '' && auditModel === '') {
-      setAuditModel(RECOMMENDED_CHEAP_MODEL[auditProvider]);
+      const liveModels = modelsData?.models ?? [];
+      const recommended = RECOMMENDED_CHEAP_MODEL[auditProvider];
+      if (recommended && liveModels.some((m) => m.id === recommended)) {
+        setAuditModel(recommended);
+      } else if (liveModels.length > 0) {
+        setAuditModel(liveModels[0].id);
+      }
+      // else: leave empty — select renders "no models available"
     }
-  }, [auditProvider, auditModel]);
+  }, [auditProvider, auditModel, modelsData]);
 
   if (isLoading || !data) return <p className="text-sm text-neutral-500">Loading...</p>;
 
@@ -115,9 +130,9 @@ export function UniverseSettings() {
     (auditProvider === '' ? null : auditProvider) === (data.auditProvider ?? null) &&
     (auditModel === '' ? null : auditModel) === (data.auditModel ?? null);
 
-  // Model options for the currently-selected provider.
-  const modelOptions =
-    auditProvider === '' ? [] : Object.keys(PRICING[auditProvider] ?? {});
+  // Phase 27: model options sourced from live /llm-keys/models endpoint.
+  // PRICING no longer drives the dropdown; it remains ONLY for cost display.
+  const liveModels = modelsData?.models ?? [];
 
   return (
     <div className="max-w-2xl mx-auto">
@@ -240,7 +255,7 @@ export function UniverseSettings() {
               </p>
             )}
 
-            {/* Model dropdown */}
+            {/* Model dropdown — Phase 27: sources from live /llm-keys/models */}
             <label className="block text-sm mt-4 mb-1" htmlFor="model">Model</label>
             <select
               id="model"
@@ -250,11 +265,27 @@ export function UniverseSettings() {
               className={`w-full rounded-md border border-neutral-300 dark:border-neutral-700 bg-transparent px-3 py-2 text-sm ${!auditEnabled || auditProvider === '' ? 'opacity-50 cursor-not-allowed' : ''}`}
             >
               {auditProvider === '' && <option value="">Select a provider first</option>}
-              {auditProvider !== '' && <option value="">Select model</option>}
-              {modelOptions.map((m) => (
-                <option key={m} value={m}>{m}</option>
+              {auditProvider !== '' && liveModels.length === 0 && (
+                <option value="">No models available</option>
+              )}
+              {auditProvider !== '' && liveModels.length > 0 && (
+                <option value="">Select model</option>
+              )}
+              {liveModels.map((m) => (
+                <option key={m.id} value={m.id}>
+                  {m.id}{m.hasPricing === false ? ' ⚠ no pricing' : ''}
+                </option>
               ))}
             </select>
+            {/* D-05: amber chip shown below dropdown when selected model has no pricing */}
+            {auditModel !== '' && liveModels.some((m) => m.id === auditModel && !m.hasPricing) && (
+              <span
+                className="mt-1 inline-flex items-center gap-2 text-xs text-amber-700 dark:text-amber-400 bg-amber-50 dark:bg-amber-950/30 border border-amber-300 dark:border-amber-800 rounded px-2 py-1"
+                aria-label="This model has no published pricing. Audit runs will be marked as cost unknown."
+              >
+                ⚠ no pricing — runs will be marked as cost unknown
+              </span>
+            )}
 
             <div className="mt-6 flex items-center gap-3">
               <button

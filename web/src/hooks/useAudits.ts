@@ -39,6 +39,42 @@ import type {
   AuditScope,
 } from '../types/audit';
 
+// ─── Phase 27 useListModels types ──────────────────────────────────────────
+
+/**
+ * Per-model pricing info (subset of the api/ ModelPricing shape).
+ * Only present when hasPricing is true.
+ */
+export interface ModelPricing {
+  inputUsdPer1M: number;
+  outputUsdPer1M: number;
+  cachedInputUsdPer1M?: number;
+  cachedWriteUsdPer1M?: number;
+  contextWindow: number;
+}
+
+/**
+ * Single model entry from the live /llm-keys/models endpoint.
+ * hasPricing=false means the model is live but has no rate card in PRICING —
+ * selecting it will produce cost_unknown=true audit runs (D-05).
+ */
+export interface LiveModel {
+  id: string;
+  hasPricing: boolean;
+  pricing?: ModelPricing;
+}
+
+/**
+ * Phase 27: response shape from GET /api/llm-keys/models?provider=…
+ * source indicates whether the list came from the live API, a stale cache,
+ * or the PRICING fallback (D-02).
+ */
+export interface ModelsResponse {
+  models: LiveModel[];
+  source: 'live' | 'cache_stale' | 'pricing_fallback';
+  fetchedAt: string;
+}
+
 // Re-export wire-shape types for consumer convenience — Plan 05 components
 // import everything they need from this module.
 export type {
@@ -70,6 +106,8 @@ export interface AuditRun {
   cachedTokens: number;
   toolCallCount: number;
   costUsd: string;
+  /** Phase 27 D-06: true when the run used a live-but-unpriced model; cost_usd stays "0.0000". */
+  costUnknown: boolean;
   error: string | null;
   startedAt: string;
   finishedAt: string | null;
@@ -250,6 +288,36 @@ export function useEstimateAudit(
       api<AuditEstimate>(`/universes/${universeId}/audits/estimate?${qs}`),
     enabled: !!universeId && (options?.enabled ?? true),
     staleTime: 30_000,
+    retry: 1,
+  });
+}
+
+/**
+ * Phase 27 D-01/D-05: fetch the live model catalog for a provider via the
+ * per-key server-side route (GET /api/llm-keys/models?provider=…).
+ *
+ * - queryKey: ['llm-models', provider] — per-provider cache bucket
+ * - staleTime: 1800_000 (30 min) — aligned to the backend 30-min TTL (D-01)
+ * - enabled: !!provider — skip when no provider is selected
+ * - retry: 1 — single retry before surfacing error; backend falls back to
+ *   stale-cache or PRICING anyway (D-02), so a hard failure from the hook
+ *   means both tiers are down
+ *
+ * D-05: the returned models include hasPricing=false entries — these are
+ * live-but-unpriced models that render with a ⚠ no pricing badge and produce
+ * cost_unknown=true audit runs (tracked in D-06).
+ *
+ * T-27-05-01: hook sends only `provider`; keyId is resolved server-side.
+ */
+export function useListModels(
+  provider?: 'anthropic' | 'openai',
+): UseQueryResult<ModelsResponse> {
+  return useQuery({
+    queryKey: ['llm-models', provider],
+    queryFn: () =>
+      api<ModelsResponse>(`/llm-keys/models?provider=${provider}`),
+    enabled: !!provider,
+    staleTime: 1800_000,
     retry: 1,
   });
 }
