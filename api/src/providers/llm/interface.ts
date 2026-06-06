@@ -181,6 +181,9 @@ export interface RunAuditOpts {
   messages: Array<{ role: 'system' | 'user' | 'assistant' | 'tool'; content: string }>;
   model?: string;
   tools?: unknown[];
+  /** Phase 27 D-12: when set on the terminal turn, the provider forces this named tool
+   *  (Anthropic tool_choice:{type:'tool',name}). undefined ⇒ default (auto). */
+  forceTool?: { type: 'tool'; name: string };
 }
 
 /**

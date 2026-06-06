@@ -606,6 +606,10 @@ export class AnthropicProvider implements LLMProvider {
         messages: anthropicMessages, // shape adapter ran once above; see toAnthropicMessages.
         ...(systemParam ? { system: systemParam } : {}),
         ...(opts.tools ? { tools: opts.tools as Tool[] } : {}),
+        // Phase 27 D-12: force named tool on terminal turn; undefined ⇒ auto.
+        // Pitfall #2: tool_choice change invalidates message-block cache (system stays cached) —
+        // one final turn only, acceptable. Do NOT add extended thinking (incompatible → 400).
+        ...(opts.forceTool ? { tool_choice: { type: 'tool' as const, name: opts.forceTool.name } } : {}),
       };
       response = await client.messages.create(createParams);
     } catch (err) {

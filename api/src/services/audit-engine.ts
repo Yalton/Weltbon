@@ -150,6 +150,59 @@ const getEntryBodyTool = {
 };
 
 // ---------------------------------------------------------------------------
+// Tool definition for emit_findings (Phase 27 D-12: forced on terminal turn)
+// ---------------------------------------------------------------------------
+//
+// Hand-written JSON Schema mirroring AuditOutputStrictSchema — no zod-to-json-schema
+// dependency (RESEARCH §"Don't Hand-Roll"; mirrors getEntryBodyTool pattern above).
+// Tool name is literally `emit_findings` (snake_case; matches existing fixture refs).
+// The description instructs the model to call this exactly ONCE with all findings
+// and emit no prose — forced via tool_choice:{type:'tool'} on the terminal turn.
+
+const emitFindingsTool = {
+  name: 'emit_findings',
+  description:
+    'Deliver your final audit findings. Call this exactly once when your analysis is ' +
+    'complete. Do not respond with prose — every finding must be a structured suggestion ' +
+    'in this call.',
+  input_schema: {
+    type: 'object',
+    properties: {
+      suggestions: {
+        type: 'array',
+        items: {
+          type: 'object',
+          properties: {
+            category: {
+              type: 'string',
+              enum: [
+                'underdeveloped',
+                'missing-link',
+                'contradiction',
+                'timeline-inconsistency',
+                'dangling-thread',
+              ],
+            },
+            title: { type: 'string' },
+            body: { type: 'string' },
+            referenced_entry_ids: {
+              type: 'array',
+              items: { type: 'string' },
+            },
+            confidence: {
+              type: 'string',
+              enum: ['high', 'medium', 'low'],
+            },
+          },
+          required: ['category', 'title', 'body', 'referenced_entry_ids', 'confidence'],
+        },
+      },
+    },
+    required: ['suggestions'],
+  },
+};
+
+// ---------------------------------------------------------------------------
 // Cache-hit ratio tracking (in-process, N=10 cadence)
 // ---------------------------------------------------------------------------
 
@@ -552,6 +605,15 @@ When done, return your findings as JSON: { "suggestions": [...] }`;
       costUsd: number;
     };
 
+    // Phase 27 D-12: force emit_findings on the terminal turn (when one more tool call
+    // would hit the cap, or when cost/token budget is exhausted). Intermediate turns use
+    // tool_choice:auto — the model naturally chooses between getEntryBody and emit_findings.
+    // Anti-Pattern: do NOT force emit_findings on every turn (blocks getEntryBody investigation).
+    const isTerminalTurn = toolCalls + 1 >= maxToolCalls;
+    const forceTool: { type: 'tool'; name: string } | undefined = isTerminalTurn
+      ? { type: 'tool', name: 'emit_findings' }
+      : undefined;
+
     // BL-04 (Phase 24-10): race the provider call against the remaining wall-clock budget.
     // A single hung provider call (e.g., network stall, model server timeout) cannot
     // exceed the wall-clock cap — the timeout sentinel resolves the race first and
@@ -564,7 +626,8 @@ When done, return your findings as JSON: { "suggestions": [...] }`;
         apiKey,
         messages,
         model,
-        tools: [getEntryBodyTool],
+        tools: [getEntryBodyTool, emitFindingsTool],
+        ...(forceTool ? { forceTool } : {}),
       });
       const timeoutPromise = new Promise<never>((_, reject) => {
         timeoutHandle = setTimeout(() => reject(PER_TURN_TIMEOUT), remainingMs);
@@ -640,9 +703,12 @@ When done, return your findings as JSON: { "suggestions": [...] }`;
     }
 
     // -------------------------------------------------------------------------
-    // Tool-use branch: dispatch each getEntryBody call and feed back as tool_result
+    // Tool-use branch: dispatch getEntryBody calls; detect emit_findings (terminal)
     // -------------------------------------------------------------------------
-    if (result.toolUse.length > 0) {
+    // Phase 27 D-12: if the model called emit_findings, fall through to the final
+    // parse block (do NOT continue the loop). Only getEntryBody tool calls continue.
+    const hasEmitFindings = result.toolUse.some((t) => t.name === 'emit_findings');
+    if (result.toolUse.length > 0 && !hasEmitFindings) {
       // Append the assistant's tool-use turn
       messages = [
         ...messages,
