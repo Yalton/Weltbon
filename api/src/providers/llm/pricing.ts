@@ -1,16 +1,26 @@
 /**
  * Phase 23 LLM provider-abstraction — pricing source of truth.
  *
- * Per D-04 + D-04a + PROVIDER-06, this constant is THE authoritative model
- * catalog for the Phase 23 provider abstraction. Three invariants:
+ * Per D-04 + D-04a + PROVIDER-06, this constant is the COST LOOKUP for
+ * the Phase 23 provider abstraction. Three invariants:
  *
- *   1. `listModels()` (in `./index.ts`) is derived from `Object.keys(PRICING[provider])`
- *      and never performs network I/O. Adding/removing a model here is the ONLY
- *      way to change what the UI dropdown displays.
+ *   1. **Phase 27 D-04 revision (supersedes Phase 23 D-04):**
+ *      PRICING is the COST LOOKUP, NOT the model catalog. The live
+ *      `provider.liveListModels()` — cached per `(provider, keyId)` at
+ *      30-min TTL in `model-catalog.ts` — is the authoritative catalog and
+ *      drives the UI dropdown. `listModels()` (derived from
+ *      `Object.keys(PRICING[provider])`) remains a **fallback primitive**
+ *      (Tier 3 of the 3-tier fallback in `model-catalog.ts`): it is used
+ *      when the live call fails AND no stale cache entry exists, ensuring the
+ *      dropdown always returns something usable. Adding/removing a model from
+ *      PRICING no longer changes what the dropdown displays (it only affects
+ *      the Tier-3 fallback and the cost-lookup surface).
  *
  *   2. `pricing(model)` (in `./index.ts`) is a direct lookup against this constant —
- *      `undefined` for unknown models lets the UI render an "unknown model" banner
- *      instead of falling back to a guessed price.
+ *      `undefined` for live-but-unpriced models (Phase 27 D-05/D-06: these are
+ *      selectable; the engine marks them with `cost_unknown=true` and `cost_usd=0.0000`).
+ *      Unknown priced models still return undefined, letting the UI render the
+ *      appropriate "cost unknown" chip.
  *
  *   3. Changing ANY numeric value in `PRICING` REQUIRES bumping `PRICING_AS_OF`
  *      in the same commit. The corresponding test in `api/tests/llm-pricing.test.ts`
@@ -37,7 +47,7 @@
  * `Date`. Bumping this MUST accompany any change to `PRICING` (D-04
  * pricing-update discipline).
  */
-export const PRICING_AS_OF = '2026-05-26';
+export const PRICING_AS_OF = '2026-06-06';
 
 /**
  * Phase 26 D-02: recommended cheap (default) model per provider on first opt-in.

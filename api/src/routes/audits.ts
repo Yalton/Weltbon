@@ -147,6 +147,9 @@ const auditHistoryRowSchema = z.object({
   analyzedEntries: z.number().int(),
   // null for entry-scoped runs (per AuditHistoryRow JSDoc)
   totalEntries: z.number().int().nullable(),
+  // Phase 27 D-06: true when the run used a live-but-unpriced model.
+  // UI renders a "cost unknown" chip instead of $0.0000 when this is true.
+  costUnknown: z.boolean(),
 });
 
 const auditHistoryResponseSchema = z.object({
@@ -491,6 +494,7 @@ export const auditRoutes = new OpenAPIHono<AppEnv>()
         model: auditRuns.model,
         status: auditRuns.status,
         costUsd: auditRuns.costUsd,
+        costUnknown: auditRuns.costUnknown,
         startedAt: auditRuns.startedAt,
         finishedAt: auditRuns.finishedAt,
         analyzedEntries: auditRuns.analyzedEntries,
@@ -563,6 +567,8 @@ export const auditRoutes = new OpenAPIHono<AppEnv>()
       model: r.model,
       status: r.status as 'pending' | 'running' | 'succeeded' | 'failed',
       costUsd: r.costUsd, // string from NUMERIC(10,4)
+      // Phase 27 D-06: carry cost_unknown so UI can render "cost unknown" chip.
+      costUnknown: r.costUnknown,
       startedAt: r.startedAt,
       finishedAt: r.finishedAt,
       suggestionsByCategory: byRunCategory.get(r.id) ?? {},

@@ -527,30 +527,42 @@ export const llmKeyRoutes = new OpenAPIHono<AppEnv>()
     // Approximation: joined by (provider, user_id), not byok_key_id — if user
     // has multiple keys per provider, they all show the same total.
     // NUMERIC(10,4) is preserved as a string (cost-as-string convention).
+    // Phase 27 Plan 03 (D-06 / Pitfall #5): SUM excludes cost_unknown=true rows;
+    // unknownCount is reported separately so the UI can render the footnote.
+    // T-27-03-05: FILTER (WHERE cost_unknown = false) on SUM is the load-bearing guard.
     const spentRows = await getDb()
       .select({
         provider: auditRuns.provider,
-        // COALESCE → '0' when GROUP BY yields no rows for the provider; toFixed(4)
-        // below normalizes to the 4-decimal wire shape.
-        total: sql<string>`COALESCE(SUM(${auditRuns.costUsd}), 0)::text`,
+        // Phase 27 D-06: SUM only priced runs (cost_unknown=false).
+        // COALESCE → '0' when GROUP BY yields no rows for the provider.
+        total: sql<string>`COALESCE(SUM(${auditRuns.costUsd}) FILTER (WHERE ${auditRuns.costUnknown} = false), 0)::text`,
+        // Phase 27 D-06: count of unpriced runs for the "(N runs unknown pricing)" footnote.
+        unknownCount: sql<number>`COUNT(*) FILTER (WHERE ${auditRuns.costUnknown} = true)`,
       })
       .from(auditRuns)
       .where(eq(auditRuns.userId, userId))
       .groupBy(auditRuns.provider);
 
-    const spentByProvider = new Map<string, string>();
+    const spentByProvider = new Map<string, { total: string; unknownCount: number }>();
     for (const r of spentRows) {
       // Normalize to 4-decimal string. Parsing as Number then toFixed preserves
       // precision for sums within audit_runs.cost_usd's NUMERIC(10,4) range
       // (~$1,000,000 max) without losing the trailing zeros required by the UI.
-      spentByProvider.set(r.provider, Number(r.total).toFixed(4));
+      spentByProvider.set(r.provider, {
+        total: Number(r.total).toFixed(4),
+        unknownCount: Number(r.unknownCount),
+      });
     }
 
     return c.json(
-      rows.map((r) => ({
-        ...toMaskedRow(r),
-        totalSpentUsd: spentByProvider.get(r.provider) ?? '0.0000',
-      })),
+      rows.map((r) => {
+        const spent = spentByProvider.get(r.provider);
+        return {
+          ...toMaskedRow(r),
+          totalSpentUsd: spent?.total ?? '0.0000',
+          unknownCount: spent?.unknownCount ?? 0,
+        };
+      }),
       200,
     );
   })

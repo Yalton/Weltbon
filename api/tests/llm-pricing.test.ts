@@ -109,13 +109,20 @@ describe('PRICING constants (PROVIDER-06)', () => {
     }
   });
 
-  it('PRICING is the source-of-truth for listModels() (D-04 invariant)', async () => {
+  it('listModels() is derived from PRICING keys (fallback primitive — Phase 27 D-04 revision)', async () => {
+    // Phase 27 D-04 revision: PRICING is now the COST LOOKUP, not the catalog.
+    // The live liveListModels() (cached in model-catalog.ts) is the authoritative
+    // catalog. listModels() remains a fallback primitive (Tier 3 of the 3-tier
+    // fallback) — it must still be derived from PRICING keys so Tier 3 works.
+    // This test preserves the Tier-3 correctness guarantee while removing the
+    // now-incorrect claim that PRICING *is* the catalog.
     const { getProvider } = await import('../src/providers/llm/index.js');
     const { PRICING } = await import('../src/providers/llm/pricing.js');
     for (const name of ['anthropic', 'openai'] as const) {
       const p = getProvider(name);
       const listedIds = p.listModels().map((m) => m.id).sort();
       const pricingIds = Object.keys(PRICING[name]).sort();
+      // listModels() fallback primitive is still derived from PRICING keys.
       expect(listedIds).toEqual(pricingIds);
     }
   });
