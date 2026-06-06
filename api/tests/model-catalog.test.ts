@@ -42,8 +42,8 @@ import { PRICING } from '../src/providers/llm/index.js';
 // vi.mock the provider factory. We only control liveListModels() here.
 // ---------------------------------------------------------------------------
 
-const mockAnthropicLiveList = vi.fn<[], Promise<string[]>>();
-const mockOpenAILiveList = vi.fn<[], Promise<string[]>>();
+const mockAnthropicLiveList = vi.fn<() => Promise<string[]>>();
+const mockOpenAILiveList = vi.fn<() => Promise<string[]>>();
 
 vi.mock('../src/providers/llm/index.js', async (importOriginal) => {
   const real = await importOriginal<typeof import('../src/providers/llm/index.js')>();

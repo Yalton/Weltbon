@@ -118,12 +118,14 @@ const maskedKeyWithSpentSchema = maskedKeySchema.extend({
  * Matches the ModelPricing type from pricing.ts (both providers share the same
  * numeric field set except cacheWriteUsdPer1M which is Anthropic-only).
  */
+// Mirrors the ModelListing shape that getModels() actually emits (via
+// provider.pricing()): id lives at the ModelEntry level, cache fields are
+// Anthropic-only/optional, and there is no contextWindow on the wire.
 const modelPricingSchema = z.object({
   inputUsdPer1M: z.number(),
   outputUsdPer1M: z.number(),
-  cachedInputUsdPer1M: z.number(),
+  cachedInputUsdPer1M: z.number().optional(),
   cacheWriteUsdPer1M: z.number().optional(),
-  contextWindow: z.number().int().optional(),
 });
 
 /**

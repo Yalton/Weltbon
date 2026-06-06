@@ -37,9 +37,8 @@
 
 import { getProvider } from './index.js';
 import { PRICING } from './pricing.js';
-import type { ModelListing, ModelPricing } from './pricing.js';
 import type { LlmProvider } from '../../services/llm-key.js';
-import { LLMProviderError } from './interface.js';
+import { LLMProviderError, type ModelListing } from './interface.js';
 
 // ---------------------------------------------------------------------------
 // Cache types
@@ -48,7 +47,7 @@ import { LLMProviderError } from './interface.js';
 export interface ModelEntry {
   id: string;
   hasPricing: boolean;
-  pricing?: ModelPricing;
+  pricing?: ModelListing;
 }
 
 interface CacheEntry {
@@ -141,11 +140,9 @@ export async function getModels(
 
     // Merge each surviving ID with PRICING
     const models: ModelEntry[] = filteredIds.map((id) => {
-      const pricingRow = getProvider(provider).pricing(id) as ModelListing | undefined;
+      const pricingRow = getProvider(provider).pricing(id);
       if (pricingRow) {
-        // Cast to ModelPricing shape for the wire
-        const pricing: ModelPricing = pricingRow;
-        return { id, hasPricing: true, pricing };
+        return { id, hasPricing: true, pricing: pricingRow };
       }
       return { id, hasPricing: false };
     });
@@ -187,9 +184,8 @@ export async function getModels(
         : Object.keys(PRICING.anthropic);
 
     const fallbackModels: ModelEntry[] = pricingKeys.map((id) => {
-      const pricingRow = getProvider(provider).pricing(id) as ModelListing | undefined;
-      const pricing: ModelPricing | undefined = pricingRow ?? undefined;
-      return { id, hasPricing: true, pricing };
+      const pricingRow = getProvider(provider).pricing(id);
+      return { id, hasPricing: true, pricing: pricingRow ?? undefined };
     });
 
     return {
