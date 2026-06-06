@@ -73,6 +73,7 @@
 
 import { describe, it, expect, vi, beforeEach } from 'vitest';
 import type { AuditSuggestion } from '../src/types/audit-suggestion.js';
+import { AuditOutputStrictSchema } from '../src/services/audit-schema.js';
 
 // CRITICAL — must be set BEFORE the *first* env() call in the process. config.ts
 // caches `_env` on first call. This is defensive: neither anthropic.ts nor
@@ -143,7 +144,12 @@ const SHARED_SUGGESTIONS: AuditSuggestion[] = [
 // branch fires — the contract test focuses on the parsed-output shape, not
 // the cache pathway (which is locked in `llm-anthropic.test.ts` test #14/15).
 
-const { AnthropicMockedErrors } = vi.hoisted(() => {
+// Module-level reprogrammable mock handles for D-11 per-test overrides.
+// These are set via vi.hoisted so they're available before vi.mock calls.
+const { mockAnthropicCreate, mockAnthropicCountTokens, mockOpenAIParse, AnthropicMockedErrors } = vi.hoisted(() => {
+  const mockAnthropicCreate = vi.fn();
+  const mockAnthropicCountTokens = vi.fn().mockResolvedValue({ input_tokens: 0 });
+  const mockOpenAIParse = vi.fn();
   class MockAnthropicError extends Error {}
   class MockAPIError extends MockAnthropicError {
     public readonly status: number | undefined;
@@ -176,7 +182,7 @@ const { AnthropicMockedErrors } = vi.hoisted(() => {
     UnprocessableEntityError: MockUnprocessableEntityError,
   };
 
-  return { AnthropicMockedErrors };
+  return { mockAnthropicCreate, mockAnthropicCountTokens, mockOpenAIParse, AnthropicMockedErrors };
 });
 
 vi.mock('@anthropic-ai/sdk', () => {
@@ -203,13 +209,17 @@ vi.mock('@anthropic-ai/sdk', () => {
     },
   };
 
+  // Use module-level mockAnthropicCreate so tests can reprogram it per-test.
+  // Default: return the SHARED_SUGGESTIONS happy-path (existing tests).
+  mockAnthropicCreate.mockResolvedValue(happyResponse);
+
   const AnthropicMock = vi.fn().mockImplementation(() => ({
     messages: {
-      // create returns the canonical happy-path tool_use response
-      create: vi.fn().mockResolvedValue(happyResponse),
+      // create delegates to the module-level mock handle (reprogrammable per-test)
+      create: mockAnthropicCreate,
       // countTokens returns 0 → below MIN_CACHEABLE_TOKENS (4096) → no
       // cache_control branch is exercised in the contract test
-      countTokens: vi.fn().mockResolvedValue({ input_tokens: 0 }),
+      countTokens: mockAnthropicCountTokens,
     },
   }));
   Object.assign(AnthropicMock, AnthropicMockedErrors);
@@ -276,10 +286,15 @@ vi.mock('openai', () => {
     },
   };
 
+  // Use module-level mockOpenAIParse so tests can reprogram it per-test.
+  // Default: return the SHARED_SUGGESTIONS happy-path (existing tests).
+  mockOpenAIParse.mockResolvedValue(happyResponse);
+
   const OpenAIMock = vi.fn().mockImplementation(() => ({
     chat: {
       completions: {
-        parse: vi.fn().mockResolvedValue(happyResponse),
+        // Delegates to module-level mock handle (reprogrammable per-test)
+        parse: mockOpenAIParse,
       },
     },
     models: {
@@ -308,6 +323,43 @@ vi.mock('openai/helpers/zod', () => ({
 
 beforeEach(() => {
   vi.clearAllMocks();
+  // Restore default happy-path responses after clearAllMocks wipes mockResolvedValue.
+  mockAnthropicCountTokens.mockResolvedValue({ input_tokens: 0 });
+  mockAnthropicCreate.mockResolvedValue({
+    id: 'msg_mock',
+    role: 'assistant' as const,
+    content: [
+      {
+        type: 'tool_use' as const,
+        id: 'tu_mock',
+        name: 'emit_findings',
+        input: { suggestions: SHARED_SUGGESTIONS },
+      },
+    ],
+    stop_reason: 'tool_use',
+    usage: {
+      input_tokens: 100,
+      output_tokens: 50,
+      cache_creation_input_tokens: 0,
+      cache_read_input_tokens: 0,
+    },
+  });
+  mockOpenAIParse.mockResolvedValue({
+    choices: [
+      {
+        message: {
+          parsed: { suggestions: SHARED_SUGGESTIONS },
+          refusal: null,
+          content: '',
+        },
+        finish_reason: 'stop' as const,
+      },
+    ],
+    usage: {
+      prompt_tokens: 100,
+      completion_tokens: 50,
+    },
+  });
 });
 
 // ---------------------------------------------------------------------------
@@ -521,5 +573,155 @@ describe('LLMProvider contract (PROVIDER-04 + PROVIDER-01)', () => {
         expect(model.outputUsdPer1M).toBeGreaterThan(0);
       }
     }
+  });
+
+  // ---- 9. D-11: Engine-shape fixture round-trip (23bb99f regression guard) ----
+  //
+  // Feed messages exactly as the engine emits them mid-loop through both providers.
+  // The engine appends role:'assistant' + role:'tool' messages after a getEntryBody
+  // tool call (audit-engine.ts:649, 679). Anthropic's toAnthropicMessages() must
+  // NOT throw "Unexpected role 'tool'" — this is the defect class fixed in
+  // commit 23bb99f that this test guards against.
+
+  it('engine-shape role:"tool" messages round-trip through both providers without throwing (23bb99f guard)', async () => {
+    const { getProvider } = await import('../src/providers/llm/index.js');
+
+    // Engine-emitted assistant + tool messages (exact shapes from audit-engine.ts:649,679)
+    const toolUseBlock = [{ id: 'tool-1', name: 'getEntryBody', input: { entryId: 'cccccccc-cccc-4ccc-8ccc-cccccccccccc' } }];
+    const engineShapeMessages: Array<{ role: 'user' | 'assistant' | 'tool'; content: string }> = [
+      { role: 'user', content: 'Find gaps in this universe.' },
+      // role:'assistant' with JSON-stringified toolUse[] (audit-engine.ts:649)
+      { role: 'assistant', content: JSON.stringify(toolUseBlock) },
+      // role:'tool' with JSON-stringified { tool_call_id, content } (audit-engine.ts:679)
+      {
+        role: 'tool',
+        content: JSON.stringify({
+          tool_call_id: 'tool-1',
+          content: JSON.stringify({ id: 'cccccccc-cccc-4ccc-8ccc-cccccccccccc', title: 'Entry A', body: 'Body text.' }),
+        }),
+      },
+    ];
+
+    // Both providers must handle engine-shape messages without throwing.
+    // Anthropic's toAnthropicMessages() must convert role:'tool' → tool_result block
+    // (not throw "Unexpected role 'tool'"). This is the regression guard for 23bb99f.
+    await expect(
+      getProvider('anthropic').runAudit({
+        apiKey: 'a',
+        messages: engineShapeMessages,
+        model: 'claude-haiku-4-5-20251001',
+      }),
+    ).resolves.toBeDefined();
+
+    await expect(
+      getProvider('openai').runAudit({
+        apiKey: 'o',
+        messages: engineShapeMessages,
+        model: 'gpt-5-mini',
+      }),
+    ).resolves.toBeDefined();
+  });
+
+  // ---- 10. D-11: emit_findings round-trip — identical AuditOutputStrictSchema output ----
+  //
+  // Override the mocks to return emit_findings tool_use blocks using AuditOutputStrictSchema
+  // field names (title/body/referenced_entry_ids/confidence — snake_case). Drive through
+  // both providers and assert each materializes toolUse[0].name === 'emit_findings' and
+  // that AuditOutputStrictSchema.parse yields identical canonical output from both.
+  //
+  // Note: The existing SHARED_SUGGESTIONS use the old AuditSuggestion type (rationale/evidence/
+  // referencedEntryIds). The emit_findings schema uses AuditOutputStrictSchema's field names
+  // (title/body/referenced_entry_ids). These are both correct for their respective uses —
+  // the engine parses via AuditOutputStrictSchema; the old contract shape was Phase 23.
+
+  it('emit_findings tool_use round-trips through both providers to identical AuditOutputStrictSchema output (D-11)', async () => {
+    // Canonical suggestions using AuditOutputStrictSchema field names (the engine schema)
+    const ENGINE_SCHEMA_SUGGESTIONS = [
+      {
+        category: 'missing-link' as const,
+        title: 'No connection between hero and mentor',
+        body: 'The hero and mentor share history but no narrative link is established.',
+        referenced_entry_ids: ['aaaaaaaa-aaaa-4aaa-8aaa-aaaaaaaaaaaa'],
+        confidence: 'high' as const,
+      },
+      {
+        category: 'underdeveloped' as const,
+        title: 'Setting glossed over',
+        body: 'The ancient city is mentioned but never described.',
+        referenced_entry_ids: ['bbbbbbbb-bbbb-4bbb-8bbb-bbbbbbbbbbbb'],
+        confidence: 'medium' as const,
+      },
+    ];
+
+    // Override the module-level mock handles to return ENGINE_SCHEMA_SUGGESTIONS.
+    // These are the handles shared with the constructors via the vi.mock closure.
+    mockAnthropicCreate.mockResolvedValueOnce({
+      id: 'msg_emit',
+      role: 'assistant' as const,
+      content: [
+        {
+          type: 'tool_use' as const,
+          id: 'tu_emit',
+          name: 'emit_findings',
+          input: { suggestions: ENGINE_SCHEMA_SUGGESTIONS },
+        },
+      ],
+      stop_reason: 'tool_use',
+      usage: {
+        input_tokens: 100,
+        output_tokens: 50,
+        cache_creation_input_tokens: 0,
+        cache_read_input_tokens: 0,
+      },
+    });
+    mockOpenAIParse.mockResolvedValueOnce({
+      choices: [
+        {
+          message: {
+            parsed: { suggestions: ENGINE_SCHEMA_SUGGESTIONS },
+            refusal: null,
+            content: '',
+          },
+          finish_reason: 'stop' as const,
+        },
+      ],
+      usage: {
+        prompt_tokens: 100,
+        completion_tokens: 50,
+      },
+    });
+
+    const { getProvider } = await import('../src/providers/llm/index.js');
+
+    const anthropicResult = await getProvider('anthropic').runAudit({
+      apiKey: 'a',
+      messages: SHARED_MESSAGES,
+      model: 'claude-haiku-4-5-20251001',
+    });
+    const openaiResult = await getProvider('openai').runAudit({
+      apiKey: 'o',
+      messages: SHARED_MESSAGES,
+      model: 'gpt-5-mini',
+    });
+
+    // Both providers must materialize emit_findings as toolUse[0]
+    expect(anthropicResult.toolUse[0]?.name).toBe('emit_findings');
+    expect(openaiResult.toolUse[0]?.name).toBe('emit_findings');
+
+    // Both inputs parse cleanly through AuditOutputStrictSchema (the engine schema — D-09)
+    const anthropicInput = anthropicResult.toolUse[0]?.input;
+    const openaiInput = openaiResult.toolUse[0]?.input;
+
+    expect(() => AuditOutputStrictSchema.parse(anthropicInput)).not.toThrow();
+    expect(() => AuditOutputStrictSchema.parse(openaiInput)).not.toThrow();
+
+    // The parsed outputs are identical from both providers (PROVIDER-04 contract extended)
+    const parsedAnthropic = AuditOutputStrictSchema.parse(anthropicInput);
+    const parsedOpenAI = AuditOutputStrictSchema.parse(openaiInput);
+    expect(parsedAnthropic).toEqual(parsedOpenAI);
+    expect(parsedAnthropic.suggestions).toHaveLength(2);
+    // Non-vacuity: each suggestion has the required fields
+    expect(parsedAnthropic.suggestions[0]?.category).toBe('missing-link');
+    expect(parsedAnthropic.suggestions[1]?.category).toBe('underdeveloped');
   });
 });
