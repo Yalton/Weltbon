@@ -1,0 +1,13 @@
+-- Phase 27 PROV-FOLLOWUP-01/D-06: additive column flagging runs on unpriced (live-but-not-in-PRICING) models.
+-- Hand-written migration (NOT drizzle-kit generated) matching the Phase 24/25/26
+-- additive convention (see 0011_phase26_audit_runs_analyzed_entries.sql).
+-- drizzle-kit would regenerate the full schema diff rather than a surgical ADD COLUMN block.
+--
+-- DEFAULT false NOT NULL backfills every existing audit_runs row at metadata-only
+-- ALTER speed in PostgreSQL 11+ (no table rewrite, no row UPDATE pass) —
+-- correct because all historical rows used priced models.
+--
+-- MUST be registered in meta/_journal.json idx=12 (Phase 24 CR-01 lesson:
+-- drizzle migrator silently skips unregistered migrations).
+ALTER TABLE "audit_runs" ADD COLUMN "cost_unknown" boolean DEFAULT false NOT NULL;
+--> statement-breakpoint

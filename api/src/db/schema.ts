@@ -192,6 +192,9 @@ export const auditRuns = pgTable('audit_runs', {
   // budget caps, or early-termination signal). DEFAULT 0 backfills pre-Phase-26 rows
   // (they report zero analyzed entries — a known historical gap, not a regression).
   analyzedEntries: integer('analyzed_entries').default(0).notNull(),
+  // Phase 27 D-06: true when the run used a live-but-unpriced model; cost_usd stays 0.0000.
+  // Excluded from totalSpentUsd SUM; surfaces "cost unknown" chip + "(N runs unknown pricing)" footnote.
+  costUnknown: boolean('cost_unknown').default(false).notNull(),
 }, (t) => ({
   // BL-01: partial unique index closing the TOCTOU race window in routes/audits.ts
   // between the pre-check SELECT and INSERT. Without this index, two concurrent POSTs
