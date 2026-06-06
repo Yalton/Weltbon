@@ -520,14 +520,23 @@ export class AnthropicProvider implements LLMProvider {
   async runAudit(opts: RunAuditOpts): Promise<RunAuditResult> {
     const model = opts.model ?? defaultModel;
     const pricing = (PRICING.anthropic as Record<string, AnthropicModelPricing>)[model];
-    if (!pricing) {
-      // T-23-03-05: unknown-model guard. Without this, costUsd would be NaN
-      // and propagate to Phase 24's audit_runs.cost_usd.
-      throw new LLMProviderError(
-        LLMError.ModelNotAvailable,
-        `Anthropic model not available: ${model}`,
-      );
-    }
+    // Phase 27 D-05/D-06 guard split (T-23-03-05 revised):
+    //
+    // BEFORE: this guard threw ModelNotAvailable for ANY model absent from PRICING.
+    // AFTER: only throw for genuine provider 404/422 (model does not exist on the live
+    //        API). A live-but-unpriced model is selectable per D-05; its cost contribution
+    //        is 0 per turn (costUsd = 0.0000, keeps SUM math safe per Pitfall #4/#5) and
+    //        the engine writes cost_unknown=true on the run row (D-06).
+    //
+    // The genuine-404/422 path is unchanged — it already fires via mapAnthropicError
+    // when the SDK receives a 404/422 from the provider (line ~602 catch block below).
+    // This guard only prevents NaN: unpriced-but-live models should proceed, not throw.
+    //
+    // If `pricing` is undefined here it means the model is not in PRICING but the user
+    // selected it via the live catalog (Phase 27 makes this legal). We allow the run
+    // and set costUsd=0 for every turn; the engine detects pricing===undefined and sets
+    // cost_unknown=true on the audit_runs row at terminal success (audit-engine.ts).
+    const isUnpriced = !pricing;
 
     // Wire-adapter discipline (D-01): extract system BEFORE calling estimate so
     // both the token count and the messages.create call receive the correct shapes.
@@ -652,7 +661,10 @@ export class AnthropicProvider implements LLMProvider {
       .map((b) => b.text)
       .join('');
 
-    const costUsd = computeAnthropicCost(response.usage, pricing);
+    // Phase 27 D-06: for unpriced-but-live models, costUsd is 0.0000 per turn
+    // (isUnpriced = true when pricing is undefined). computeAnthropicCost would
+    // produce NaN without a pricing row — avoid that by gating on isUnpriced.
+    const costUsd = isUnpriced ? 0 : computeAnthropicCost(response.usage, pricing!);
 
     return {
       text,

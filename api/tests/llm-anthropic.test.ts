@@ -582,4 +582,31 @@ describe('AnthropicProvider (PROVIDER-02 + PROVIDER-05 + PROVIDER-07)', () => {
     const p = getProvider('anthropic').pricing('claude-fake');
     expect(p).toBeUndefined();
   });
+
+  // -----------------------------------------------------------------------
+  // Phase 27 D-05/D-06: unpriced-model guard split (T-23-03-05 revised)
+  // -----------------------------------------------------------------------
+
+  it('runAudit does NOT throw ModelNotAvailable for live-but-unpriced model; yields costUsd=0 (Phase 27 D-06)', async () => {
+    // Use a model ID that is NOT in PRICING.anthropic — simulates a new live release.
+    mockCountTokens.mockResolvedValueOnce({ input_tokens: 100 });
+    mockCreate.mockResolvedValueOnce(HAPPY_PATH_RESPONSE);
+
+    const { getProvider } = await import('../src/providers/llm/index.js');
+
+    // Must NOT throw — unpriced-but-live model should proceed
+    const result = await getProvider('anthropic').runAudit({
+      apiKey: 'k',
+      messages: [{ role: 'user', content: 'find gaps' }],
+      model: 'claude-nova-future-unpriced',  // not in PRICING
+    });
+
+    // costUsd must be 0 (safe for SUM math — keeps audit_runs.cost_usd at 0.0000)
+    expect(result.costUsd).toBe(0);
+    // Usage is still returned (engine still records token counts for observability)
+    expect(result.usage.inputTokens).toBe(100);
+    expect(result.usage.outputTokens).toBe(50);
+    // The run completed with toolUse output
+    expect(result.toolUse).toHaveLength(1);
+  });
 });

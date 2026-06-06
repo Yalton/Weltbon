@@ -885,9 +885,13 @@ When done, return your findings as JSON: { "suggestions": [...] }`;
     `);
 
     // Terminal success
+    // Phase 27 D-06: compute cost_unknown flag — true when the model used for this
+    // run is live-but-not-in-PRICING. pricing(model) returns undefined for unpriced
+    // models; cost_usd stays 0.0000 per turn (keeps SUM math safe, Pitfall #4/#5).
+    const costUnknown = _getProvider(provider as LlmProvider).pricing(model) === undefined;
     await _db()
       .update(auditRuns)
-      .set({ status: 'succeeded', finishedAt: new Date() })
+      .set({ status: 'succeeded', finishedAt: new Date(), costUnknown })
       .where(eq(auditRuns.id, runId));
 
     return;

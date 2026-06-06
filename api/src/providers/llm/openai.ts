@@ -415,14 +415,16 @@ export class OpenAIProvider implements LLMProvider {
   async runAudit(opts: RunAuditOpts): Promise<RunAuditResult> {
     const model = opts.model ?? defaultModel;
     const pricing = (PRICING.openai as Record<string, OpenAIModelPricing>)[model];
-    if (!pricing) {
-      // T-23-04-05: unknown-model guard. Without this, costUsd would be NaN
-      // and propagate to Phase 24's audit_runs.cost_usd rollup.
-      throw new LLMProviderError(
-        LLMError.ModelNotAvailable,
-        `OpenAI model not available: ${model}`,
-      );
-    }
+    // Phase 27 D-05/D-06 guard split (T-23-04-05 revised — symmetric with Anthropic):
+    //
+    // BEFORE: this guard threw ModelNotAvailable for ANY model absent from PRICING.
+    // AFTER: only throw for genuine provider 400/404 (model does not exist on the
+    //        live API). A live-but-unpriced model is selectable per D-05; its cost
+    //        contribution is 0 per turn (keeps SUM math safe per Pitfall #4/#5).
+    //
+    // The genuine-error path is unchanged — it fires via mapOpenAIError when the
+    // SDK receives a 400/404 from the provider. This guard only prevents NaN.
+    const isUnpriced = !pricing;
 
     const client = new OpenAI({ apiKey: opts.apiKey });
     let completion;
@@ -495,7 +497,10 @@ export class OpenAIProvider implements LLMProvider {
       );
     }
 
-    const costUsd = computeOpenAICost(completion.usage, pricing);
+    // Phase 27 D-06: for unpriced-but-live models, costUsd is 0.0000 per turn
+    // (isUnpriced = true when pricing is undefined). computeOpenAICost would
+    // produce NaN without a pricing row — avoid that by gating on isUnpriced.
+    const costUsd = isUnpriced ? 0 : computeOpenAICost(completion.usage, pricing!);
 
     return {
       text,
