@@ -5,7 +5,7 @@ import { defineConfig } from 'vitest/config';
  *
  * Two named projects:
  *   - `unit`         No live Postgres required. Default `pnpm test` target.
- *                    Includes everything under tests/ except the 26 DB-gated
+ *                    Includes everything under tests/ except the 37 DB-gated
  *                    files listed in the integration project below.
  *   - `integration`  DB-gated. Explicit opt-in via `pnpm test:integration`.
  *                    Preserves pool:'forks' + singleFork:true (the existing
@@ -59,6 +59,8 @@ const DB_GATED_TESTS = [
   'tests/universe-types.test.ts',
   'tests/universes.test.ts',
   'tests/issues-dismiss.test.ts',
+  // Phase 27 Plan 03 Task 3: hybrid model catalog endpoint integration tests
+  'tests/llm-models.test.ts',
 ];
 
 export default defineConfig({
