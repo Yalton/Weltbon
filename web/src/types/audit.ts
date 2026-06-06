@@ -92,6 +92,8 @@ export interface AuditHistoryRow {
   status: AuditRunStatus;
   /** Drizzle NUMERIC(10,4) → string. */
   costUsd: string;
+  /** Phase 27 D-06: true when the run used a live-but-unpriced model; cost_usd stays "0.0000". */
+  costUnknown: boolean;
   startedAt: string;
   finishedAt: string | null;
   /** Histogram of finding counts per category. Categories with zero counts are omitted. */

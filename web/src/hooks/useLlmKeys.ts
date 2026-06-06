@@ -41,6 +41,11 @@ export interface LlmKey {
    * limitation in CONTEXT.md D-14; precise per-key attribution is deferred.
    */
   totalSpentUsd: string;
+  /**
+   * Phase 27 D-06: count of audit_runs with cost_unknown=true for this
+   * provider+user. 0 when no unpriced runs exist. Excluded from totalSpentUsd.
+   */
+  unknownCount: number;
 }
 
 export interface LlmConsentState {

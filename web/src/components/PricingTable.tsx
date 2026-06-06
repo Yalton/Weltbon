@@ -16,6 +16,7 @@
 
 import { useState } from 'react';
 import { PRICING, PRICING_AS_OF } from '../data/pricing';
+import { useListModels } from '../hooks/useAudits';
 
 const PROVIDER_LABELS: Record<'anthropic' | 'openai', string> = {
   anthropic: 'Anthropic',
@@ -40,6 +41,22 @@ export function PricingTable() {
     [string, AnyRow]
   >;
   const openaiRows = Object.entries(PRICING.openai) as Array<[string, AnyRow]>;
+
+  // Phase 27 D-07: fetch live model counts to compute how many models are
+  // available without published rates (live list minus PRICING keys).
+  // Hooks always called (Rules of Hooks); data only meaningful when open.
+  const { data: anthropicModels } = useListModels('anthropic');
+  const { data: openaiModels } = useListModels('openai');
+
+  const anthropicLiveCount = anthropicModels?.models.length ?? 0;
+  const openaiLiveCount = openaiModels?.models.length ?? 0;
+  const anthropicPricedCount = anthropicRows.length;
+  const openaiPricedCount = openaiRows.length;
+  // N = total live models across both providers minus priced models shown in the table.
+  // We sum both providers since the PricingTable shows all providers together.
+  const totalLive = anthropicLiveCount + openaiLiveCount;
+  const totalPriced = anthropicPricedCount + openaiPricedCount;
+  const unpricedCount = Math.max(0, totalLive - totalPriced);
 
   return (
     <details
@@ -161,6 +178,12 @@ export function PricingTable() {
           </tbody>
         </table>
       </div>
+      {/* Phase 27 D-07: overflow caption — only when live list exceeds PRICING */}
+      {unpricedCount > 0 && (
+        <p className="mt-2 text-xs text-neutral-500">
+          {unpricedCount} additional model{unpricedCount === 1 ? '' : 's'} available without published rates — see model picker in universe settings.
+        </p>
+      )}
     </details>
   );
 }

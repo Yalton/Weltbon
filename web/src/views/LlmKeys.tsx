@@ -345,12 +345,18 @@ export default function LlmKeys() {
                     {/* Phase 26 D-14: per-key Total spent. Server already
                         4-decimal-formats `totalSpentUsd` (Plan 08); we prefix
                         $ literal here. Defensive fallback to "0.0000" handles
-                        any pre-Plan-08 cached row that lacks the field. */}
+                        any pre-Plan-08 cached row that lacks the field.
+                        Phase 27 D-06: append footnote when unknownCount > 0. */}
                     <td
                       className="py-3 pr-4 text-sm leading-[1.5] tabular-nums text-neutral-700 dark:text-neutral-300"
                       data-testid={`llmkey-total-spent-${llmKey.id}`}
                     >
                       ${llmKey.totalSpentUsd ?? '0.0000'}
+                      {(llmKey.unknownCount ?? 0) > 0 && (
+                        <span className="ml-2 text-xs text-neutral-500 tabular-nums">
+                          (plus {llmKey.unknownCount} run{llmKey.unknownCount === 1 ? '' : 's'} with unknown pricing)
+                        </span>
+                      )}
                     </td>
                     <td className="py-3 text-right">
                       <div className="flex justify-end gap-3">
