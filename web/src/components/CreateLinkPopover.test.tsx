@@ -62,7 +62,8 @@ function renderPopover(props?: Partial<CreateLinkPopoverProps>) {
 describe('CreateLinkPopover', () => {
   beforeEach(() => {
     vi.mocked(api).mockReset();
-    // Default: useRelations call returns empty array so the combobox renders cleanly.
+    // Default: useRelations (GET /relations) and useLinkTypes (GET /link-types)
+    // both return empty arrays so the comboboxes render cleanly.
     vi.mocked(api).mockResolvedValue([] as unknown as never);
   });
 
@@ -77,13 +78,21 @@ describe('CreateLinkPopover', () => {
     expect(screen.getByText('Alpha')).toBeInTheDocument();
     expect(screen.getByText('Beta')).toBeInTheDocument();
 
-    const input = screen.getByRole('combobox') as HTMLInputElement;
-    expect(input).toHaveAttribute('placeholder', 'Relation label (optional)');
+    // 28-03: two comboboxes now exist (LinkTypeSelect + RelationCombobox).
+    // Assert both by their distinctive placeholders.
+    expect(screen.getByPlaceholderText('Search or enter a type...')).toBeInTheDocument();
+    const labelInput = screen.getByPlaceholderText(
+      'e.g. sworn shield since the Sundering',
+    ) as HTMLInputElement;
+    expect(labelInput).toBeInTheDocument();
   });
 
-  it('renders RelationCombobox inside the popover content (GRAPH-03)', async () => {
+  it('renders both LinkTypeSelect and RelationCombobox inside the popover content (GRAPH-03)', async () => {
     renderPopover();
-    expect(await screen.findByRole('combobox')).toBeInTheDocument();
+    // 28-03: LinkTypeSelect (type) + RelationCombobox (display label) — both role=combobox
+    await screen.findByRole('heading', { name: 'Create link' });
+    const comboboxes = screen.getAllByRole('combobox');
+    expect(comboboxes).toHaveLength(2);
   });
 
   it('clicking Create posts to /universes/:uid/links and closes on success (GRAPH-04)', async () => {
@@ -99,7 +108,9 @@ describe('CreateLinkPopover', () => {
     const user = userEvent.setup();
     const { onOpenChange } = renderPopover();
 
-    const input = await screen.findByRole('combobox');
+    // 28-03: two comboboxes; type the label into the RelationCombobox (display label).
+    await screen.findByRole('heading', { name: 'Create link' });
+    const input = screen.getByPlaceholderText('e.g. sworn shield since the Sundering');
     await user.click(input);
     await user.type(input, 'knows');
 
@@ -129,7 +140,12 @@ describe('CreateLinkPopover', () => {
 
   it('existingLabelHint becomes the initial label value (D-03d)', async () => {
     renderPopover({ existingLabelHint: 'rival of' });
-    const input = (await screen.findByRole('combobox')) as HTMLInputElement;
+    // 28-03: existingLabelHint hydrates the RelationCombobox (display label).
+    // Disambiguate from LinkTypeSelect by placeholder.
+    await screen.findByRole('heading', { name: 'Create link' });
+    const input = screen.getByPlaceholderText(
+      'e.g. sworn shield since the Sundering',
+    ) as HTMLInputElement;
     expect(input.value).toBe('rival of');
   });
 
@@ -147,7 +163,9 @@ describe('CreateLinkPopover', () => {
     const onErrorSpy = vi.fn();
     const { onOpenChange } = renderPopover({ onError: onErrorSpy });
 
-    const input = await screen.findByRole('combobox');
+    // 28-03: two comboboxes; target the display label (RelationCombobox) by placeholder
+    await screen.findByRole('heading', { name: 'Create link' });
+    const input = screen.getByPlaceholderText('e.g. sworn shield since the Sundering');
     await user.click(input);
     await user.type(input, 'invalid');
     await user.click(screen.getByRole('button', { name: 'Create link' }));
@@ -209,7 +227,9 @@ describe('CreateLinkPopover', () => {
     const user = userEvent.setup();
     renderPopover();
 
-    const input = await screen.findByRole('combobox');
+    // 28-03: two comboboxes; target the display label (RelationCombobox) by placeholder
+    await screen.findByRole('heading', { name: 'Create link' });
+    const input = screen.getByPlaceholderText('e.g. sworn shield since the Sundering');
     await user.click(input);
     await user.type(input, 'pending');
     await user.click(screen.getByRole('button', { name: 'Create link' }));
@@ -220,11 +240,12 @@ describe('CreateLinkPopover', () => {
     resolveApi(linkRecord);
   });
 
-  it('Cancel button closes the popover and does NOT POST', async () => {
+  it('Discard button closes the popover and does NOT POST', async () => {
     const user = userEvent.setup();
     const { onOpenChange } = renderPopover();
 
-    const cancelBtn = await screen.findByRole('button', { name: 'Cancel' });
+    // 28-03: cancel/discard button uses aria-label="Discard link" (renders × symbol)
+    const cancelBtn = await screen.findByRole('button', { name: 'Discard link' });
     await user.click(cancelBtn);
 
     expect(onOpenChange).toHaveBeenCalledWith(false);
