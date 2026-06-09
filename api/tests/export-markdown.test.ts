@@ -196,7 +196,7 @@ describe('EXP-02: markdown ZIP exporter — full integration', () => {
         sourceEntryId: entryA.id,
         targetEntryId: entryB.id,
         label: 'knows',
-        bidirectional: false,
+        direction: 'directed' as const,
       });
     await db()
       .insert(linksTable)
@@ -205,7 +205,7 @@ describe('EXP-02: markdown ZIP exporter — full integration', () => {
         sourceEntryId: entryA.id,
         targetEntryId: entryC.id,
         label: 'located in',
-        bidirectional: true,
+        direction: 'undirected' as const,
       });
     await db()
       .insert(linksTable)
@@ -214,7 +214,7 @@ describe('EXP-02: markdown ZIP exporter — full integration', () => {
         sourceEntryId: entryD.id,
         targetEntryId: entryE.id,
         label: 'owns',
-        bidirectional: false,
+        direction: 'directed' as const,
       });
     await db()
       .insert(linksTable)
@@ -223,7 +223,7 @@ describe('EXP-02: markdown ZIP exporter — full integration', () => {
         sourceEntryId: entryA.id,
         targetEntryId: entryD.id,
         label: 'knows',
-        bidirectional: false,
+        direction: 'directed' as const,
       });
 
     // ---------- seed 2 issues: 1 open on A (CRITICAL), 1 resolved on B ----------

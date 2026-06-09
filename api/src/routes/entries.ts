@@ -62,16 +62,18 @@ const entryDetailSchema = entrySchema.extend({
     targetEntryId: z.string(),
     targetTitle: z.string(),
     targetIcon: z.string(),
-    label: z.string(),
-    bidirectional: z.boolean(),
+    label: z.string().nullable(),
+    linkType: z.string().nullable(),
+    direction: z.string(),
   })),
   backlinks: z.array(z.object({
     id: z.string(),
     sourceEntryId: z.string(),
     sourceTitle: z.string(),
     sourceIcon: z.string(),
-    label: z.string(),
-    bidirectional: z.boolean(),
+    label: z.string().nullable(),
+    linkType: z.string().nullable(),
+    direction: z.string(),
   })),
   issues: z.array(z.object({
     id: z.string(),
@@ -407,7 +409,8 @@ export const entryRoutes = new OpenAPIHono<AppEnv>()
         targetTitle: entries.title,
         targetIcon: entries.icon,
         label: links.label,
-        bidirectional: links.bidirectional,
+        linkType: links.linkType,
+        direction: links.direction,
       })
       .from(links)
       .innerJoin(entries, eq(links.targetEntryId, entries.id))
@@ -420,7 +423,8 @@ export const entryRoutes = new OpenAPIHono<AppEnv>()
         sourceTitle: entries.title,
         sourceIcon: entries.icon,
         label: links.label,
-        bidirectional: links.bidirectional,
+        linkType: links.linkType,
+        direction: links.direction,
       })
       .from(links)
       .innerJoin(entries, eq(links.sourceEntryId, entries.id))

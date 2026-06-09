@@ -153,7 +153,7 @@ describe('EXP-04: DOCX exporter — full integration', () => {
         sourceEntryId: entryA.id,
         targetEntryId: entryC.id,
         label: 'knows',
-        bidirectional: false,
+        direction: 'directed' as const,
       });
 
     // 1 open issue on A (CRITICAL), 1 resolved issue on B

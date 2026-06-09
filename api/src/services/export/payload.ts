@@ -66,8 +66,9 @@ export interface ExportPayloadLink {
   id: string;
   sourceEntryId: string;
   targetEntryId: string;
-  label: string;
-  bidirectional: boolean;
+  label: string | null;
+  linkType: string | null;
+  direction: string;
   createdAt: Date;
 }
 
@@ -92,6 +93,10 @@ export interface ExportPayloadUniverse {
   entryTypes: string[];
   /** Phase 20 D-01: nullable per-universe horizontal timeline window. */
   timelineWindow: { start: number; end: number } | null;
+  /** Phase 28 D-10: per-universe link-type registry. */
+  linkTypes: Record<string, unknown>;
+  /** Phase 28 D-11: persisted entry templates. */
+  entryTemplates: unknown[];
 }
 
 export interface ExportPayload {
@@ -219,6 +224,8 @@ export async function loadUniverseExportPayload(universeId: string): Promise<Exp
       description: universe.description,
       entryTypes: universe.entryTypes,
       timelineWindow: universe.timelineWindow ?? null,
+      linkTypes: universe.linkTypes as Record<string, unknown>,
+      entryTemplates: universe.entryTemplates as unknown[],
     },
     categories: categoryRows.map((c) => ({
       id: c.id,
@@ -232,7 +239,8 @@ export async function loadUniverseExportPayload(universeId: string): Promise<Exp
       sourceEntryId: l.sourceEntryId,
       targetEntryId: l.targetEntryId,
       label: l.label,
-      bidirectional: l.bidirectional,
+      linkType: l.linkType,
+      direction: l.direction,
       createdAt: l.createdAt,
     })),
     openIssues: issuePayloads.filter((i) => i.resolved === false),

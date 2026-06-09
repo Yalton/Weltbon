@@ -34,8 +34,9 @@ const graphEdgeSchema = z.object({
   id: z.string(),
   source: z.string(),
   target: z.string(),
-  label: z.string(),
-  bidirectional: z.boolean(),
+  label: z.string().nullable(),
+  linkType: z.string().nullable(),
+  direction: z.string(),
 });
 
 const graphPositionSchema = z.object({
@@ -140,7 +141,8 @@ export const graphRoutes = new OpenAPIHono<AppEnv>()
           source: links.sourceEntryId,
           target: links.targetEntryId,
           label: links.label,
-          bidirectional: links.bidirectional,
+          linkType: links.linkType,
+          direction: links.direction,
         })
         .from(links)
         .where(eq(links.universeId, uid)),
