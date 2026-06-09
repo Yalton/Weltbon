@@ -358,4 +358,40 @@ describe('issues routes (ISS-01..05)', () => {
     const res = await req('GET', `/universes/${universe.id}/issues/00000000-0000-0000-0000-000000000000`, { headers: hdrs });
     expect(res.status).toBe(404);
   });
+
+  // FIX-01 (D-14): issues_universe_gap_key_unique was NULLS NOT DISTINCT (wrong —
+  // NULLs were treated as equal, blocking a 2nd human issue per universe). Migration
+  // 0013 recreates the index without that clause (NULLS DISTINCT = Postgres default),
+  // allowing unlimited manual (gap_key=NULL) issues per universe.
+  it('FIX-01: allows >= 2 manual (gap_key=null) issues in the same universe', async () => {
+    const { hdrs } = await userWithToken('fix01@test.com');
+    const universe = await createUniverse(hdrs);
+
+    // First manual issue — gap_key=NULL because entryIds is optional, no gapKey in createSchema
+    const r1 = await req('POST', `/universes/${universe.id}/issues`, {
+      headers: hdrs,
+      body: { title: 'Issue 1', severity: 'minor' },
+    });
+    expect(r1.status).toBe(201);
+    const body1 = await r1.json();
+    expect(body1.title).toBe('Issue 1');
+
+    // Second manual issue in the SAME universe — previously failed with unique violation
+    // before FIX-01 because NULLS NOT DISTINCT treated (universe_id, NULL) as a duplicate.
+    const r2 = await req('POST', `/universes/${universe.id}/issues`, {
+      headers: hdrs,
+      body: { title: 'Issue 2', severity: 'major' },
+    });
+    expect(r2.status).toBe(201); // This was 500 before FIX-01
+    const body2 = await r2.json();
+    expect(body2.title).toBe('Issue 2');
+
+    // Confirm both rows exist in the universe
+    const listRes = await req('GET', `/universes/${universe.id}/issues`, { headers: hdrs });
+    expect(listRes.status).toBe(200);
+    const list = await listRes.json();
+    expect(list).toHaveLength(2);
+    const titles = list.map((i: { title: string }) => i.title).sort();
+    expect(titles).toEqual(['Issue 1', 'Issue 2']);
+  });
 });
