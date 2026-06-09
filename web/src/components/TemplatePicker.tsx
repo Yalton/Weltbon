@@ -1,17 +1,21 @@
 import * as Dialog from '@radix-ui/react-dialog';
 import { useNavigate } from 'react-router-dom';
 import { TEMPLATE_GROUPS, type EntryTemplate } from '../lib/entryTemplates';
+import { useUpdateUniverse } from '../hooks/useUniverse';
 
 export function TemplatePicker({
   open,
   onOpenChange,
   universeId,
+  persistedTemplates = [],
 }: {
   open: boolean;
   onOpenChange: (open: boolean) => void;
   universeId: string;
+  persistedTemplates?: EntryTemplate[];
 }) {
   const navigate = useNavigate();
+  const update = useUpdateUniverse(universeId);
 
   const handleSelect = (template: EntryTemplate) => {
     if (template.id === 'blank') {
@@ -20,6 +24,17 @@ export function TemplatePicker({
       navigate(`/universes/${universeId}/entries/new`, { state: { template } });
     }
     onOpenChange(false);
+  };
+
+  const handleDuplicate = async (t: EntryTemplate, e: React.MouseEvent) => {
+    e.stopPropagation();
+    const copy: EntryTemplate = {
+      ...t,
+      id: `user-${crypto.randomUUID()}`,
+      label: `Copy of ${t.label}`,
+    };
+    const next = [...persistedTemplates, copy];
+    await update.mutateAsync({ entryTemplates: next });
   };
 
   return (
@@ -47,7 +62,7 @@ export function TemplatePicker({
                       type="button"
                       onClick={() => handleSelect(t)}
                       className={[
-                        'text-left rounded-md border p-3 hover:border-[color:var(--color-accent)] transition-colors',
+                        'relative group text-left rounded-md border p-3 hover:border-[color:var(--color-accent)] transition-colors',
                         t.id === 'blank'
                           ? 'border-dashed border-neutral-300 dark:border-neutral-700'
                           : 'border-neutral-200 dark:border-neutral-800',
@@ -64,11 +79,51 @@ export function TemplatePicker({
                           {t.description}
                         </div>
                       )}
+                      {t.id !== 'blank' && (
+                        <button
+                          type="button"
+                          onClick={(e) => void handleDuplicate(t, e)}
+                          className="absolute top-2 right-2 opacity-0 group-hover:opacity-100 transition-opacity text-neutral-400 hover:text-[color:var(--color-accent)] text-xs"
+                          aria-label="Duplicate template"
+                        >
+                          ⧉
+                        </button>
+                      )}
                     </button>
                   ))}
                 </div>
               </section>
             ))}
+
+            {persistedTemplates.length > 0 && (
+              <section key="my-templates">
+                <h3 className="text-xs uppercase tracking-wide text-neutral-500 mb-2">
+                  My Templates
+                </h3>
+                <div className="grid grid-cols-2 gap-2">
+                  {persistedTemplates.map((t) => (
+                    <button
+                      key={t.id}
+                      type="button"
+                      onClick={() => handleSelect(t)}
+                      className="relative group text-left rounded-md border border-neutral-200 dark:border-neutral-800 p-3 hover:border-[color:var(--color-accent)] transition-colors"
+                    >
+                      <div className="font-medium">{t.label}</div>
+                      {t.entryType && (
+                        <div className="text-xs text-neutral-500 mt-0.5">
+                          type: {t.entryType}
+                        </div>
+                      )}
+                      {t.category && (
+                        <div className="text-xs text-neutral-500 mt-0.5">
+                          {t.category}
+                        </div>
+                      )}
+                    </button>
+                  ))}
+                </div>
+              </section>
+            )}
           </div>
         </Dialog.Content>
       </Dialog.Portal>

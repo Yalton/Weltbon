@@ -1,5 +1,6 @@
 import { useMutation, useQuery, useQueryClient } from '@tanstack/react-query';
 import { api } from '../api/client';
+import type { EntryTemplate } from '../lib/entryTemplates';
 
 export interface Universe {
   id: string;
@@ -15,6 +16,11 @@ export interface Universe {
   auditEnabled: boolean;
   auditProvider: 'anthropic' | 'openai' | null;
   auditModel: string | null;
+  // Phase 28 D-11/D-12: per-universe persisted entry templates (DB-backed).
+  // Built-in TEMPLATES/TEMPLATE_GROUPS are additive and unmodified.
+  entryTemplates: EntryTemplate[];
+  // Phase 28 REL-02: link-type color/direction registry consumed by GraphCanvas + RelationLegend.
+  linkTypes: Record<string, { color?: string; directionDefault?: 'directed' | 'undirected'; inverseLabel?: string }>;
 }
 
 export function useUniverses() {
@@ -53,6 +59,10 @@ export function useUpdateUniverse(id: string) {
       auditEnabled?: boolean;
       auditProvider?: 'anthropic' | 'openai' | null;
       auditModel?: string | null;
+      // Phase 28 D-11: full entryTemplates array replace (max 50 server-enforced).
+      entryTemplates?: EntryTemplate[];
+      // Phase 28 REL-02: link-type registry patch.
+      linkTypes?: Record<string, { color?: string; directionDefault?: 'directed' | 'undirected'; inverseLabel?: string }>;
     }) =>
       api<Universe>(`/universes/${id}`, { method: 'PATCH', body: JSON.stringify(body) }),
     onSuccess: () => {

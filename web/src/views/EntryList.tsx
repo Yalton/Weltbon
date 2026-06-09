@@ -151,6 +151,7 @@ export function EntryList() {
         open={pickerOpen}
         onOpenChange={setPickerOpen}
         universeId={uid!}
+        persistedTemplates={universe?.entryTemplates ?? []}
       />
 
       {/* Audit cost / progress dialog — opened by ⚖ Audit gaps button.

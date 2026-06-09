@@ -27,6 +27,9 @@ const UNIVERSE: Universe = {
   auditEnabled: false,
   auditProvider: null,
   auditModel: null,
+  // Phase 28 D-11/REL-02: persisted templates + link-type registry.
+  entryTemplates: [],
+  linkTypes: {},
 };
 
 function renderSection(universe: Universe = UNIVERSE) {
