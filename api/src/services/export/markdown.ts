@@ -64,13 +64,18 @@ export function buildMarkdownZip(payload: ExportPayload): ReadableStream<Uint8Ar
     Array<{ relation: string; otherEntryId: string }>
   >();
   for (const l of payload.links) {
+    // Phase 28 CR-01: typed links may have a null label (linkType carries the
+    // semantics). Fall back to the link type, then a generic 'related', so the
+    // relation key is never null — the `sortedRelations` localeCompare below
+    // crashes on a null key and would abort the entire ZIP export.
+    const relation = l.label ?? l.linkType ?? 'related';
     push(outboundBySource, l.sourceEntryId, {
-      relation: l.label,
+      relation,
       otherEntryId: l.targetEntryId,
     });
     if (l.direction === 'undirected') {
       push(outboundBySource, l.targetEntryId, {
-        relation: l.label,
+        relation,
         otherEntryId: l.sourceEntryId,
       });
     }

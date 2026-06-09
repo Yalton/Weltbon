@@ -890,9 +890,10 @@ describe('export/import (EXP-01, IMP-01..03)', () => {
     const { hdrs } = await userWithToken('t28-lt-tmpl@test.com');
     const universe = await createUniverse(hdrs, 'TemplateUniverse');
 
+    // Canonical LinkTypeRegistryEntry shape: { color?, directionDefault?, inverseLabel? }
     const linkTypes = {
-      causal: { label: 'Causal', color: '#ff0000', directed: true },
-      spatial: { label: 'Spatial', color: '#00ff00', directed: false },
+      causal: { color: '#ff0000', directionDefault: 'directed', inverseLabel: 'Caused by' },
+      spatial: { color: '#00ff00', directionDefault: 'undirected' },
     };
     const entryTemplates = [
       { id: 'tmpl-001', name: 'Character', fields: [{ key: 'age', type: 'number' }] },
@@ -917,7 +918,7 @@ describe('export/import (EXP-01, IMP-01..03)', () => {
     const { hdrs } = await userWithToken('t28-tmpl-rt@test.com');
     const universe = await createUniverse(hdrs, 'TemplateRT');
 
-    const linkTypes = { causal: { label: 'Causal', color: '#ff0000' } };
+    const linkTypes = { causal: { color: '#ff0000', directionDefault: 'directed' } };
     const entryTemplates = [{ id: 'tmpl-xyz', name: 'Location', fields: [] }];
 
     await req('PATCH', `/api/universes/${universe.id}`, { headers: hdrs, body: { linkTypes, entryTemplates } });

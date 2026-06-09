@@ -197,9 +197,10 @@ describe('universe routes (UNIV-01..06)', () => {
     const createRes = await req('POST', '/api/universes', { headers: hdrs, body: { name: 'LinkTypesWorld' } });
     const created = await json(createRes);
 
+    // Canonical LinkTypeRegistryEntry shape: { color?, directionDefault?, inverseLabel? }
     const linkTypes = {
-      causal: { label: 'Causal', color: '#ff0000', directed: true },
-      spatial: { label: 'Spatial', color: '#00ff00', directed: false },
+      causal: { color: '#ff0000', directionDefault: 'directed', inverseLabel: 'Caused by' },
+      spatial: { color: '#00ff00', directionDefault: 'undirected' },
     };
 
     const patchRes = await req('PATCH', `/api/universes/${created.id}`, { headers: hdrs, body: { linkTypes } });
@@ -257,8 +258,8 @@ describe('universe routes (UNIV-01..06)', () => {
     const templates = [{ id: 'tmpl-a', name: 'Alpha' }];
     await req('PATCH', `/api/universes/${created.id}`, { headers: hdrs, body: { entryTemplates: templates } });
 
-    // Now patch only linkTypes
-    const linkTypes = { bond: { label: 'Bond' } };
+    // Now patch only linkTypes (canonical LinkTypeRegistryEntry shape)
+    const linkTypes = { bond: { directionDefault: 'undirected', inverseLabel: 'Bonded' } };
     const patchRes = await req('PATCH', `/api/universes/${created.id}`, { headers: hdrs, body: { linkTypes } });
     expect(patchRes.status).toBe(200);
     const patched = await json(patchRes);

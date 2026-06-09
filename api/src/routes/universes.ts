@@ -29,6 +29,28 @@ export const timelineWindowSchema = z
   })
   .nullable();
 
+// Phase 28 CR-02 / T-28-02-04: bound and validate the link-type registry to
+// prevent oversized-jsonb DoS and CSS/SVG injection via `color` (it flows into
+// graph edge `stroke` and legend swatches). Mirrors LinkTypeRegistryEntry; the
+// color is restricted to a hex literal so no `url(...)`/`expression(...)` can
+// reach the DOM, and the key count is capped.
+const linkTypeEntrySchema = z
+  .object({
+    color: z
+      .string()
+      .regex(/^#[0-9a-fA-F]{3,8}$/, 'color must be a hex value (e.g. #3b82f6)')
+      .optional(),
+    directionDefault: z.enum(['directed', 'undirected']).optional(),
+    inverseLabel: z.string().max(80).optional(),
+  })
+  .strict();
+
+const linkTypesSchema = z
+  .record(z.string().min(1).max(64), linkTypeEntrySchema)
+  .refine((r) => Object.keys(r).length <= 100, {
+    message: 'too many link types (max 100)',
+  });
+
 export const patchSchema = z
   .object({
     name: z.string().min(1).max(80).optional(),
@@ -40,8 +62,9 @@ export const patchSchema = z
     auditProvider: z.enum(['anthropic', 'openai']).nullable().optional(),
     auditModel: z.string().nullable().optional(),
     // Phase 28 D-10/D-11: per-universe link-type registry + entry templates.
-    // T-28-02-04: entryTemplates bounded by .max(50) to prevent oversized jsonb DoS.
-    linkTypes: z.record(z.string(), z.any()).optional(),
+    // T-28-02-04 / CR-02: both bounded — linkTypes via linkTypesSchema (key cap +
+    // hex-only color), entryTemplates via .max(50) — to prevent oversized jsonb DoS.
+    linkTypes: linkTypesSchema.optional(),
     entryTemplates: z.array(z.any()).max(50).optional(),
   })
   .refine(
