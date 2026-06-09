@@ -71,7 +71,7 @@ interface SimEdge {
   id: string;
   source: SimNode | string;
   target: SimNode | string;
-  label: string;
+  label: string | null;
 }
 
 const NODE_RADIUS = 14;
@@ -175,7 +175,7 @@ export function GraphCanvas({
       .select<SVGGElement>('g.edge-labels')
       .selectAll<SVGTextElement, SimEdge>('text.edge-label')
       .data(
-        simEdges.filter((e) => e.label && e.label.length > 0),
+        simEdges.filter((e) => e.label != null && e.label.length > 0),
         (d) => d.id,
       )
       .join(
@@ -187,8 +187,8 @@ export function GraphCanvas({
             .attr('fill', '#9ca3af')
             .attr('text-anchor', 'middle')
             .attr('pointer-events', 'none')
-            .text((d) => d.label),
-        (update) => update.text((d) => d.label),
+            .text((d) => d.label ?? ''),
+        (update) => update.text((d) => d.label ?? ''),
         (exit) => exit.remove(),
       );
 

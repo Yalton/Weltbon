@@ -13,8 +13,9 @@ export interface GraphEdge {
   id: string;
   source: string;
   target: string;
-  label: string;
-  bidirectional: boolean;
+  label: string | null;
+  linkType: string | null;
+  direction: string;
 }
 
 export interface GraphPosition {
