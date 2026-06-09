@@ -44,13 +44,13 @@ describe('issues routes (ISS-01..05)', () => {
   }
 
   async function createUniverse(hdrs: Record<string, string>, name = 'TestWorld') {
-    const res = await req('POST', '/universes', { headers: hdrs, body: { name } });
+    const res = await req('POST', '/api/universes', { headers: hdrs, body: { name } });
     return json(res);
   }
 
   async function createEntry(uid: string, hdrs: Record<string, string>, overrides: Record<string, unknown> = {}) {
     const defaults = { title: 'Test Entry', entryType: 'concept' };
-    const res = await req('POST', `/universes/${uid}/entries`, {
+    const res = await req('POST', `/api/universes/${uid}/entries`, {
       headers: hdrs,
       body: { ...defaults, ...overrides },
     });
@@ -62,7 +62,7 @@ describe('issues routes (ISS-01..05)', () => {
     const { hdrs } = await userWithToken('iss1@test.com');
     const universe = await createUniverse(hdrs);
 
-    const res = await req('POST', `/universes/${universe.id}/issues`, {
+    const res = await req('POST', `/api/universes/${universe.id}/issues`, {
       headers: hdrs,
       body: { title: 'Contradiction in history', severity: 'major' },
     });
@@ -85,7 +85,7 @@ describe('issues routes (ISS-01..05)', () => {
     const { hdrs } = await userWithToken('iss-sev@test.com');
     const universe = await createUniverse(hdrs);
 
-    const res = await req('POST', `/universes/${universe.id}/issues`, {
+    const res = await req('POST', `/api/universes/${universe.id}/issues`, {
       headers: hdrs,
       body: { title: 'Bad', severity: 'bogus' },
     });
@@ -99,7 +99,7 @@ describe('issues routes (ISS-01..05)', () => {
     const e1 = await createEntry(universe.id, hdrs, { title: 'E1' });
     const e2 = await createEntry(universe.id, hdrs, { title: 'E2' });
 
-    const res = await req('POST', `/universes/${universe.id}/issues`, {
+    const res = await req('POST', `/api/universes/${universe.id}/issues`, {
       headers: hdrs,
       body: {
         title: 'Double mention',
@@ -112,7 +112,7 @@ describe('issues routes (ISS-01..05)', () => {
     expect(body.entryIds.sort()).toEqual([e1.id, e2.id].sort());
 
     // GET /:id confirms entries array
-    const getRes = await req('GET', `/universes/${universe.id}/issues/${body.id}`, { headers: hdrs });
+    const getRes = await req('GET', `/api/universes/${universe.id}/issues/${body.id}`, { headers: hdrs });
     expect(getRes.status).toBe(200);
     const got = await json(getRes);
     expect(got.entries).toHaveLength(2);
@@ -129,7 +129,7 @@ describe('issues routes (ISS-01..05)', () => {
     const uniB = await createUniverse(hdrs, 'B');
     const entryB = await createEntry(uniB.id, hdrs, { title: 'InB' });
 
-    const res = await req('POST', `/universes/${uniA.id}/issues`, {
+    const res = await req('POST', `/api/universes/${uniA.id}/issues`, {
       headers: hdrs,
       body: { title: 'X', severity: 'minor', entryIds: [entryB.id] },
     });
@@ -142,7 +142,7 @@ describe('issues routes (ISS-01..05)', () => {
     const universe = await createUniverse(hdrs);
 
     const mk = async (body: Record<string, unknown>) => {
-      const r = await req('POST', `/universes/${universe.id}/issues`, { headers: hdrs, body });
+      const r = await req('POST', `/api/universes/${universe.id}/issues`, { headers: hdrs, body });
       return json(r);
     };
     const i1 = await mk({ title: 'Crit Open', severity: 'critical' });
@@ -150,32 +150,32 @@ describe('issues routes (ISS-01..05)', () => {
     const i3 = await mk({ title: 'Major Open', severity: 'major' });
 
     // Resolve one
-    await req('PATCH', `/universes/${universe.id}/issues/${i3.id}`, { headers: hdrs, body: { resolved: true } });
+    await req('PATCH', `/api/universes/${universe.id}/issues/${i3.id}`, { headers: hdrs, body: { resolved: true } });
 
     // All
-    const allRes = await req('GET', `/universes/${universe.id}/issues`, { headers: hdrs });
+    const allRes = await req('GET', `/api/universes/${universe.id}/issues`, { headers: hdrs });
     const all = await json(allRes);
     expect(all).toHaveLength(3);
 
     // ?severity=critical
-    const critRes = await req('GET', `/universes/${universe.id}/issues?severity=critical`, { headers: hdrs });
+    const critRes = await req('GET', `/api/universes/${universe.id}/issues?severity=critical`, { headers: hdrs });
     const crit = await json(critRes);
     expect(crit).toHaveLength(1);
     expect(crit[0].id).toBe(i1.id);
 
     // ?resolved=false
-    const openRes = await req('GET', `/universes/${universe.id}/issues?resolved=false`, { headers: hdrs });
+    const openRes = await req('GET', `/api/universes/${universe.id}/issues?resolved=false`, { headers: hdrs });
     const open = await json(openRes);
     expect(open).toHaveLength(2);
 
     // ?resolved=true
-    const resRes = await req('GET', `/universes/${universe.id}/issues?resolved=true`, { headers: hdrs });
+    const resRes = await req('GET', `/api/universes/${universe.id}/issues?resolved=true`, { headers: hdrs });
     const resolved = await json(resRes);
     expect(resolved).toHaveLength(1);
     expect(resolved[0].id).toBe(i3.id);
 
     // Combined
-    const comboRes = await req('GET', `/universes/${universe.id}/issues?severity=major&resolved=true`, { headers: hdrs });
+    const comboRes = await req('GET', `/api/universes/${universe.id}/issues?severity=major&resolved=true`, { headers: hdrs });
     const combo = await json(comboRes);
     expect(combo).toHaveLength(1);
     expect(combo[0].id).toBe(i3.id);
@@ -187,13 +187,13 @@ describe('issues routes (ISS-01..05)', () => {
     const universe = await createUniverse(hdrs);
     const e1 = await createEntry(universe.id, hdrs, { title: 'E1', icon: '💡' });
 
-    const postRes = await req('POST', `/universes/${universe.id}/issues`, {
+    const postRes = await req('POST', `/api/universes/${universe.id}/issues`, {
       headers: hdrs,
       body: { title: 'Issue X', severity: 'minor', entryIds: [e1.id] },
     });
     await json(postRes);
 
-    const listRes = await req('GET', `/universes/${universe.id}/issues`, { headers: hdrs });
+    const listRes = await req('GET', `/api/universes/${universe.id}/issues`, { headers: hdrs });
     const list = await json(listRes);
     expect(list).toHaveLength(1);
     expect(list[0].entries).toHaveLength(1);
@@ -206,14 +206,14 @@ describe('issues routes (ISS-01..05)', () => {
   it('PATCH marks issue resolved', async () => {
     const { hdrs } = await userWithToken('iss3@test.com');
     const universe = await createUniverse(hdrs);
-    const createRes = await req('POST', `/universes/${universe.id}/issues`, {
+    const createRes = await req('POST', `/api/universes/${universe.id}/issues`, {
       headers: hdrs,
       body: { title: 'To Resolve', severity: 'minor' },
     });
     const created = await json(createRes);
     expect(created.resolved).toBe(false);
 
-    const patchRes = await req('PATCH', `/universes/${universe.id}/issues/${created.id}`, {
+    const patchRes = await req('PATCH', `/api/universes/${universe.id}/issues/${created.id}`, {
       headers: hdrs,
       body: { resolved: true },
     });
@@ -226,13 +226,13 @@ describe('issues routes (ISS-01..05)', () => {
   it('PATCH updates title, description, severity', async () => {
     const { hdrs } = await userWithToken('iss4a@test.com');
     const universe = await createUniverse(hdrs);
-    const createRes = await req('POST', `/universes/${universe.id}/issues`, {
+    const createRes = await req('POST', `/api/universes/${universe.id}/issues`, {
       headers: hdrs,
       body: { title: 'Original', severity: 'minor' },
     });
     const created = await json(createRes);
 
-    const patchRes = await req('PATCH', `/universes/${universe.id}/issues/${created.id}`, {
+    const patchRes = await req('PATCH', `/api/universes/${universe.id}/issues/${created.id}`, {
       headers: hdrs,
       body: { title: 'New Title', description: 'More context', severity: 'critical' },
     });
@@ -247,16 +247,16 @@ describe('issues routes (ISS-01..05)', () => {
   it('DELETE removes issue', async () => {
     const { hdrs } = await userWithToken('iss4b@test.com');
     const universe = await createUniverse(hdrs);
-    const createRes = await req('POST', `/universes/${universe.id}/issues`, {
+    const createRes = await req('POST', `/api/universes/${universe.id}/issues`, {
       headers: hdrs,
       body: { title: 'Doomed', severity: 'minor' },
     });
     const created = await json(createRes);
 
-    const delRes = await req('DELETE', `/universes/${universe.id}/issues/${created.id}`, { headers: hdrs });
+    const delRes = await req('DELETE', `/api/universes/${universe.id}/issues/${created.id}`, { headers: hdrs });
     expect(delRes.status).toBe(204);
 
-    const getRes = await req('GET', `/universes/${universe.id}/issues/${created.id}`, { headers: hdrs });
+    const getRes = await req('GET', `/api/universes/${universe.id}/issues/${created.id}`, { headers: hdrs });
     expect(getRes.status).toBe(404);
   });
 
@@ -268,31 +268,31 @@ describe('issues routes (ISS-01..05)', () => {
     const e2 = await createEntry(universe.id, hdrs, { title: 'E2' });
     const e3 = await createEntry(universe.id, hdrs, { title: 'E3' });
 
-    const createRes = await req('POST', `/universes/${universe.id}/issues`, {
+    const createRes = await req('POST', `/api/universes/${universe.id}/issues`, {
       headers: hdrs,
       body: { title: 'Reassoc', severity: 'minor', entryIds: [e1.id, e2.id] },
     });
     const created = await json(createRes);
 
     // Replace with [e3]
-    const patchRes = await req('PATCH', `/universes/${universe.id}/issues/${created.id}`, {
+    const patchRes = await req('PATCH', `/api/universes/${universe.id}/issues/${created.id}`, {
       headers: hdrs,
       body: { entryIds: [e3.id] },
     });
     expect(patchRes.status).toBe(200);
 
-    const getRes = await req('GET', `/universes/${universe.id}/issues/${created.id}`, { headers: hdrs });
+    const getRes = await req('GET', `/api/universes/${universe.id}/issues/${created.id}`, { headers: hdrs });
     const got = await json(getRes);
     expect(got.entries).toHaveLength(1);
     expect(got.entries[0].id).toBe(e3.id);
 
     // Replace with []
-    const patchRes2 = await req('PATCH', `/universes/${universe.id}/issues/${created.id}`, {
+    const patchRes2 = await req('PATCH', `/api/universes/${universe.id}/issues/${created.id}`, {
       headers: hdrs,
       body: { entryIds: [] },
     });
     expect(patchRes2.status).toBe(200);
-    const getRes2 = await req('GET', `/universes/${universe.id}/issues/${created.id}`, { headers: hdrs });
+    const getRes2 = await req('GET', `/api/universes/${universe.id}/issues/${created.id}`, { headers: hdrs });
     const got2 = await json(getRes2);
     expect(got2.entries).toHaveLength(0);
   });
@@ -304,13 +304,13 @@ describe('issues routes (ISS-01..05)', () => {
     const uniB = await createUniverse(hdrs, 'B');
     const entryB = await createEntry(uniB.id, hdrs, { title: 'InB' });
 
-    const createRes = await req('POST', `/universes/${uniA.id}/issues`, {
+    const createRes = await req('POST', `/api/universes/${uniA.id}/issues`, {
       headers: hdrs,
       body: { title: 'I', severity: 'minor' },
     });
     const created = await json(createRes);
 
-    const patchRes = await req('PATCH', `/universes/${uniA.id}/issues/${created.id}`, {
+    const patchRes = await req('PATCH', `/api/universes/${uniA.id}/issues/${created.id}`, {
       headers: hdrs,
       body: { entryIds: [entryB.id] },
     });
@@ -323,31 +323,31 @@ describe('issues routes (ISS-01..05)', () => {
     const b = await userWithToken('stranger-iss@test.com');
     const universe = await createUniverse(a.hdrs);
 
-    const createRes = await req('POST', `/universes/${universe.id}/issues`, {
+    const createRes = await req('POST', `/api/universes/${universe.id}/issues`, {
       headers: a.hdrs,
       body: { title: 'Private', severity: 'minor' },
     });
     const created = await json(createRes);
 
-    const postRes = await req('POST', `/universes/${universe.id}/issues`, {
+    const postRes = await req('POST', `/api/universes/${universe.id}/issues`, {
       headers: b.hdrs,
       body: { title: 'Evil', severity: 'minor' },
     });
     expect(postRes.status).toBe(403);
 
-    const listRes = await req('GET', `/universes/${universe.id}/issues`, { headers: b.hdrs });
+    const listRes = await req('GET', `/api/universes/${universe.id}/issues`, { headers: b.hdrs });
     expect(listRes.status).toBe(403);
 
-    const getRes = await req('GET', `/universes/${universe.id}/issues/${created.id}`, { headers: b.hdrs });
+    const getRes = await req('GET', `/api/universes/${universe.id}/issues/${created.id}`, { headers: b.hdrs });
     expect(getRes.status).toBe(403);
 
-    const patchRes = await req('PATCH', `/universes/${universe.id}/issues/${created.id}`, {
+    const patchRes = await req('PATCH', `/api/universes/${universe.id}/issues/${created.id}`, {
       headers: b.hdrs,
       body: { resolved: true },
     });
     expect(patchRes.status).toBe(403);
 
-    const delRes = await req('DELETE', `/universes/${universe.id}/issues/${created.id}`, { headers: b.hdrs });
+    const delRes = await req('DELETE', `/api/universes/${universe.id}/issues/${created.id}`, { headers: b.hdrs });
     expect(delRes.status).toBe(403);
   });
 
@@ -355,7 +355,7 @@ describe('issues routes (ISS-01..05)', () => {
   it('GET /:id returns 404 for nonexistent issue', async () => {
     const { hdrs } = await userWithToken('iss-404@test.com');
     const universe = await createUniverse(hdrs);
-    const res = await req('GET', `/universes/${universe.id}/issues/00000000-0000-0000-0000-000000000000`, { headers: hdrs });
+    const res = await req('GET', `/api/universes/${universe.id}/issues/00000000-0000-0000-0000-000000000000`, { headers: hdrs });
     expect(res.status).toBe(404);
   });
 
@@ -368,7 +368,7 @@ describe('issues routes (ISS-01..05)', () => {
     const universe = await createUniverse(hdrs);
 
     // First manual issue — gap_key=NULL because entryIds is optional, no gapKey in createSchema
-    const r1 = await req('POST', `/universes/${universe.id}/issues`, {
+    const r1 = await req('POST', `/api/universes/${universe.id}/issues`, {
       headers: hdrs,
       body: { title: 'Issue 1', severity: 'minor' },
     });
@@ -378,7 +378,7 @@ describe('issues routes (ISS-01..05)', () => {
 
     // Second manual issue in the SAME universe — previously failed with unique violation
     // before FIX-01 because NULLS NOT DISTINCT treated (universe_id, NULL) as a duplicate.
-    const r2 = await req('POST', `/universes/${universe.id}/issues`, {
+    const r2 = await req('POST', `/api/universes/${universe.id}/issues`, {
       headers: hdrs,
       body: { title: 'Issue 2', severity: 'major' },
     });
@@ -387,7 +387,7 @@ describe('issues routes (ISS-01..05)', () => {
     expect(body2.title).toBe('Issue 2');
 
     // Confirm both rows exist in the universe
-    const listRes = await req('GET', `/universes/${universe.id}/issues`, { headers: hdrs });
+    const listRes = await req('GET', `/api/universes/${universe.id}/issues`, { headers: hdrs });
     expect(listRes.status).toBe(200);
     const list = await listRes.json();
     expect(list).toHaveLength(2);
