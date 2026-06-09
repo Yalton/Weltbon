@@ -1,9 +1,10 @@
-import { useEffect, useMemo, useRef, useState } from 'react';
+import { useCallback, useEffect, useMemo, useRef, useState } from 'react';
 import { useNavigate, useParams } from 'react-router-dom';
 import { CreateLinkPopover } from '../components/CreateLinkPopover';
 import { EmptyState } from '../components/EmptyState';
 import { GraphCanvas } from '../components/GraphCanvas';
 import { GraphTooltip } from '../components/GraphTooltip';
+import { RelationLegend } from '../components/RelationLegend';
 import {
   GraphSubgraphFilter,
   type SubgraphFocus,
@@ -14,7 +15,10 @@ import {
   usePinNode,
   useResetGraphLayout,
 } from '../hooks/useGraphPositions';
+import { useUniverse, useUpdateUniverse } from '../hooks/useUniverse';
 import { neighborhood } from '../lib/neighborhood';
+
+const LEGEND_STORAGE_KEY = 'weltbon.legendVisible';
 
 const SUBGRAPH_THRESHOLD = 300;
 
@@ -76,6 +80,49 @@ export function GraphView() {
   const { data, isLoading } = useGraphData(universeId);
   const pin = usePinNode(universeId);
   const reset = useResetGraphLayout(universeId);
+
+  // Phase 28 REL-02: per-universe link-type registry for edge coloring + legend.
+  const { data: universe } = useUniverse(universeId);
+  const updateUniverse = useUpdateUniverse(universeId);
+  const linkTypeRegistry = universe?.linkTypes ?? {};
+
+  // Legend visibility persisted to localStorage (default: true).
+  const [legendVisible, setLegendVisible] = useState<boolean>(() => {
+    try {
+      const stored = localStorage.getItem(LEGEND_STORAGE_KEY);
+      return stored === null ? true : stored !== 'false';
+    } catch {
+      return true;
+    }
+  });
+
+  const handleLegendToggle = useCallback(() => {
+    setLegendVisible((v) => {
+      const next = !v;
+      try {
+        localStorage.setItem(LEGEND_STORAGE_KEY, String(next));
+      } catch {
+        // localStorage unavailable (e.g. private browsing quota) — silent fail
+      }
+      return next;
+    });
+  }, []);
+
+  const handleLegendColorChange = useCallback(
+    (linkType: string, color: string) => {
+      if (!universe) return;
+      updateUniverse.mutate({
+        linkTypes: {
+          ...universe.linkTypes,
+          [linkType]: {
+            ...universe.linkTypes[linkType],
+            color,
+          },
+        },
+      });
+    },
+    [universe, updateUniverse],
+  );
 
   const [focus, setFocus] = useState<SubgraphFocus | null>(null);
   const [hovered, setHovered] = useState<{ node: GraphNode; x: number; y: number } | null>(null);
@@ -284,12 +331,25 @@ export function GraphView() {
           editMode={editMode}
           onLinkDragEnd={handleLinkDragEnd}
           onDragSourceChange={setDragSourceId}
+          // Phase 28 REL-02 — link-type color registry.
+          linkTypeRegistry={linkTypeRegistry}
         />
       )}
 
       {hovered && (
         <GraphTooltip node={hovered.node} x={hovered.x} y={hovered.y} />
       )}
+
+      {/* Phase 28 REL-02: toggle-able legend overlay. Uses pointer-events-none
+          wrapper (same pattern as GraphTooltip) so d3-zoom pan/drag is not
+          intercepted. Visibility persisted to localStorage. */}
+      <RelationLegend
+        edges={data.edges}
+        registry={linkTypeRegistry}
+        visible={legendVisible}
+        onToggle={handleLegendToggle}
+        onColorChange={handleLegendColorChange}
+      />
 
       {/*
         Phase 19 Plan 19-04: CreateLinkPopover mounted conditionally on
