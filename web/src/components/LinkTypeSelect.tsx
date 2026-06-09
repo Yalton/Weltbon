@@ -36,7 +36,11 @@ export function LinkTypeSelect({
   placeholder = 'Search or enter a type...',
   onDirectionChange,
 }: Props) {
-  const { data: usedTypes = [] } = useLinkTypes(universeId);
+  const { data } = useLinkTypes(universeId);
+  // Defensive: useLinkTypes resolves to LinkTypeCount[] in production, but guard
+  // against undefined (loading) and any non-array shape so a transient/odd
+  // response can never crash the combobox with `.filter is not a function`.
+  const usedTypes = Array.isArray(data) ? data : [];
   const [open, setOpen] = useState(false);
   const inputRef = useRef<HTMLInputElement>(null);
 
