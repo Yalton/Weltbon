@@ -39,6 +39,10 @@ export const patchSchema = z
     auditEnabled: z.boolean().optional(),
     auditProvider: z.enum(['anthropic', 'openai']).nullable().optional(),
     auditModel: z.string().nullable().optional(),
+    // Phase 28 D-10/D-11: per-universe link-type registry + entry templates.
+    // T-28-02-04: entryTemplates bounded by .max(50) to prevent oversized jsonb DoS.
+    linkTypes: z.record(z.string(), z.any()).optional(),
+    entryTemplates: z.array(z.any()).max(50).optional(),
   })
   .refine(
     (v) =>
@@ -47,7 +51,9 @@ export const patchSchema = z
       v.timelineWindow !== undefined ||
       v.auditEnabled !== undefined ||
       v.auditProvider !== undefined ||
-      v.auditModel !== undefined,
+      v.auditModel !== undefined ||
+      v.linkTypes !== undefined ||
+      v.entryTemplates !== undefined,
     { message: 'At least one of name, description, or timelineWindow is required' },
   )
   .refine(
@@ -82,6 +88,9 @@ const universeSchema = z.object({
     .nullable(),
   createdAt: z.string(),
   updatedAt: z.string(),
+  // Phase 28 D-10/D-11: link-type registry + entry templates.
+  linkTypes: z.record(z.string(), z.any()).optional(),
+  entryTemplates: z.array(z.any()).optional(),
 });
 
 const errorSchema = z.object({ error: z.string() });

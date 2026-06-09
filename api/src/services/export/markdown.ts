@@ -68,7 +68,7 @@ export function buildMarkdownZip(payload: ExportPayload): ReadableStream<Uint8Ar
       relation: l.label,
       otherEntryId: l.targetEntryId,
     });
-    if (l.bidirectional) {
+    if (l.direction === 'undirected') {
       push(outboundBySource, l.targetEntryId, {
         relation: l.label,
         otherEntryId: l.sourceEntryId,
@@ -76,12 +76,12 @@ export function buildMarkdownZip(payload: ExportPayload): ReadableStream<Uint8Ar
     }
   }
 
-  // Backlinks index: target -> [sourceId]. Bidirectional links are NOT
+  // Backlinks index: target -> [sourceId]. Undirected links are NOT
   // mirrored here — they already show up on both sides as outbound, and
   // doubling them as backlinks would clutter the file with redundant info.
   const backlinksByTarget = new Map<string, string[]>();
   for (const l of payload.links) {
-    if (l.bidirectional) continue;
+    if (l.direction === 'undirected') continue;
     push(backlinksByTarget, l.targetEntryId, l.sourceEntryId);
   }
 
