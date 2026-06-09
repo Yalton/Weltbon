@@ -2,6 +2,35 @@ import { pgTable, uuid, text, timestamp, jsonb, boolean, integer, doublePrecisio
 import { relations, sql } from 'drizzle-orm';
 
 /**
+ * Phase 28 D-10: per-universe link-type registry entry shape.
+ * Stored as universes.link_types jsonb (Record<string, LinkTypeRegistryEntry>).
+ * Preset link types are seeded from code constants; the registry stores custom
+ * types + user overrides.
+ */
+export interface LinkTypeRegistryEntry {
+  color?: string;
+  directionDefault?: 'directed' | 'undirected';
+  inverseLabel?: string;
+}
+
+export type LinkTypeRegistry = Record<string, LinkTypeRegistryEntry>;
+
+/**
+ * Phase 28 D-11/D-13: per-universe entry template shape.
+ * Mirrors web/src/lib/entryTemplates.ts EntryTemplate exactly — field names are
+ * the cross-package contract for export/import round-trips.
+ */
+export interface EntryTemplate {
+  id: string;
+  label: string;
+  entryType: string;
+  category: 'Setting' | 'People' | 'Things' | 'Time' | 'Other';
+  body: string;
+  meta: Record<string, string>;
+  description?: string;
+}
+
+/**
  * Phase 20 D-01: per-universe horizontal timeline window persisted as JSONB
  * on `universes.timeline_window`. `null` (the default for any pre-Phase-20
  * row) triggers the first-visit "Configure range" dialog (D-02).
@@ -40,6 +69,10 @@ export const universes = pgTable('universes', {
   auditEnabled: boolean('audit_enabled').default(false).notNull(),
   auditProvider: text('audit_provider'),
   auditModel: text('audit_model'),
+  // Phase 28 D-10: per-universe link-type registry; presets seeded from code, registry stores custom + overrides.
+  linkTypes:      jsonb('link_types').$type<LinkTypeRegistry>().default({}).notNull(),
+  // Phase 28 D-11: persisted user-defined entry templates; shape mirrors EntryTemplate interface (D-13).
+  entryTemplates: jsonb('entry_templates').$type<EntryTemplate[]>().default([]).notNull(),
 });
 
 export const refreshTokens = pgTable('refresh_tokens', {
@@ -137,8 +170,12 @@ export const links = pgTable('links', {
   universeId:    uuid('universe_id').references(() => universes.id, { onDelete: 'cascade' }).notNull(),
   sourceEntryId: uuid('source_entry_id').references(() => entries.id, { onDelete: 'cascade' }).notNull(),
   targetEntryId: uuid('target_entry_id').references(() => entries.id, { onDelete: 'cascade' }).notNull(),
-  label:         text('label').notNull(),
-  bidirectional: boolean('bidirectional').default(false).notNull(),
+  // Phase 28 D-04: label is now nullable (optional display override; link_type is the semantic carrier)
+  label:         text('label'),
+  // Phase 28 REL-01: link_type replaces the semantic role of label; nullable = untyped link
+  linkType:      text('link_type'),
+  // Phase 28 D-07: direction replaces bidirectional; CHECK constraint in migration SQL
+  direction:     text('direction').notNull(),
   createdAt:     timestamp('created_at').defaultNow().notNull(),
 });
 
