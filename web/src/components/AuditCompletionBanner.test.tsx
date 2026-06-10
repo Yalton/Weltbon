@@ -110,7 +110,7 @@ describe('AuditCompletionBanner — cost unknown chip (Phase 27 D-06)', () => {
       isSuccess: true,
       isError: false,
       error: null,
-    } as ReturnType<typeof useUniverse>);
+    } as unknown as ReturnType<typeof useUniverse>);
 
     // Issues: empty by default.
     vi.mocked(useIssues).mockReturnValue({
@@ -132,7 +132,7 @@ describe('AuditCompletionBanner — cost unknown chip (Phase 27 D-06)', () => {
       isSuccess: false,
       isError: false,
       error: null,
-    } as ReturnType<typeof useEstimateAudit>);
+    } as unknown as ReturnType<typeof useEstimateAudit>);
   });
 
   it('2a: renders "cost unknown" chip when run.costUnknown is true', () => {

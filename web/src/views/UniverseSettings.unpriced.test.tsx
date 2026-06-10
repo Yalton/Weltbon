@@ -150,7 +150,7 @@ describe('UniverseSettings — unpriced model dropdown (Phase 27 D-05 / D-08)', 
         isSuccess: false,
         isError: false,
         error: null,
-      } as ReturnType<typeof useListModels>;
+      } as unknown as ReturnType<typeof useListModels>;
     });
   });
 
@@ -244,7 +244,7 @@ describe('UniverseSettings — unpriced model dropdown (Phase 27 D-05 / D-08)', 
         isSuccess: false,
         isError: false,
         error: null,
-      } as ReturnType<typeof useListModels>;
+      } as unknown as ReturnType<typeof useListModels>;
     });
 
     renderOnAiTab({ auditModel: '' });

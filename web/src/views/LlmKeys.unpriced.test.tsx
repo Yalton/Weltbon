@@ -160,7 +160,7 @@ describe('LlmKeys — unknown pricing footnote (Phase 27 D-06)', () => {
       isSuccess: false,
       isError: false,
       error: null,
-    } as ReturnType<typeof useListModels>);
+    } as unknown as ReturnType<typeof useListModels>);
 
     stubMutations();
   });
