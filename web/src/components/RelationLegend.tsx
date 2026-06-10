@@ -103,24 +103,14 @@ export function RelationLegend({
 
   return (
     // Pointer-events-none wrapper so the d3-zoom SVG below is never blocked.
+    // The toggle button has been moved to GraphView's toolbar flex group (28-06).
     <div className="pointer-events-none absolute inset-0">
-      {/* Toggle button — always visible, pointer-events-auto */}
-      <button
-        type="button"
-        onClick={onToggle}
-        aria-label={visible ? 'Hide relation legend' : 'Show relation legend'}
-        title={visible ? 'Hide relation legend' : 'Show relation legend'}
-        className="pointer-events-auto absolute top-4 right-4 z-50 rounded-md border border-neutral-300 bg-white px-2 py-1 text-xs shadow-sm hover:bg-neutral-50 dark:border-neutral-700 dark:bg-neutral-900 dark:text-neutral-100 dark:hover:bg-neutral-800"
-      >
-        {visible ? 'Hide legend' : 'Show legend'}
-      </button>
-
       {/* Panel — only rendered when visible */}
       {visible && (
         <div
           role="region"
           aria-label="Relation type legend"
-          className="pointer-events-auto absolute top-10 right-4 z-50 w-48 max-h-64 overflow-y-auto rounded-md border border-neutral-200 bg-white shadow-lg dark:border-neutral-800 dark:bg-neutral-900"
+          className="pointer-events-auto absolute top-14 right-3 z-50 w-48 max-h-64 overflow-y-auto rounded-md border border-neutral-200 bg-white shadow-lg dark:border-neutral-800 dark:bg-neutral-900"
         >
           {/* Panel header */}
           <div className="flex items-center justify-between px-3 pt-2 pb-1">

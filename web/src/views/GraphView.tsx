@@ -303,6 +303,17 @@ export function GraphView() {
           >
             Reset layout
           </button>
+          {data.edges.length > 0 && (
+            <button
+              type="button"
+              onClick={handleLegendToggle}
+              aria-pressed={legendVisible}
+              aria-label={legendVisible ? 'Hide relation legend' : 'Show relation legend'}
+              className="rounded-md border border-neutral-300 bg-white/80 px-3 py-1.5 text-sm shadow-sm hover:bg-white dark:border-neutral-700 dark:bg-neutral-900/80 dark:text-neutral-100 dark:hover:bg-neutral-900"
+            >
+              {legendVisible ? 'Hide legend' : 'Show legend'}
+            </button>
+          )}
         </div>
       </div>
 
