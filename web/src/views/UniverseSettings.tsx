@@ -4,6 +4,7 @@ import * as Dialog from '@radix-ui/react-dialog';
 import { useUniverse, useUpdateUniverse, useDeleteUniverse } from '../hooks/useUniverse';
 import { ConfirmDialog } from '../components/ConfirmDialog';
 import { EntryTypesSection } from '../components/EntryTypesSection';
+import { FieldRegistrySection } from '../components/FieldRegistrySection';
 import { SettingsTabBar } from '../components/SettingsTabBar';
 import { Toggle } from '../components/Toggle';
 import { AuditHistoryTable } from '../components/AuditHistoryTable';
@@ -38,6 +39,8 @@ import type { EntryTemplate } from '../lib/entryTemplates';
 const TABS = [
   { id: 'general', label: 'General' },
   { id: 'entry-types', label: 'Entry types' },
+  // Phase 29 DATA-02: Fields tab inserted after entry-types, before ai-auditor (UI-SPEC D-09).
+  { id: 'fields', label: 'Fields' },
   { id: 'ai-auditor', label: 'AI Gap Auditor' },
   { id: 'audit-history', label: 'Audit history' },
   { id: 'templates', label: 'Templates' },
@@ -300,6 +303,18 @@ export function UniverseSettings() {
               Removing a type used by entries will prompt for a fallback.
             </p>
             <EntryTypesSection universe={data} />
+          </div>
+        )}
+
+        {/* ─── Fields tab ──────────────────────────────────────────── */}
+        {safeTab === 'fields' && (
+          <div>
+            <h2 className="text-sm font-semibold mb-1">Custom fields</h2>
+            <p className="text-sm text-neutral-500 mb-4">
+              Define typed fields that appear on every entry&rsquo;s editor, universe-wide.
+              All entry types share the same fields.
+            </p>
+            <FieldRegistrySection universe={data} />
           </div>
         )}
 

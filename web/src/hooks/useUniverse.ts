@@ -2,6 +2,14 @@ import { useMutation, useQuery, useQueryClient } from '@tanstack/react-query';
 import { api } from '../api/client';
 import type { EntryTemplate } from '../lib/entryTemplates';
 
+// Phase 29 DATA-02: universe-scoped typed custom-field registry.
+// Never per-entry-type (T1 line to hold). Globally applied to every entry editor.
+export interface FieldRegistryEntry {
+  name: string;
+  type: 'text' | 'number' | 'boolean' | 'url' | 'entry-ref';
+  hint?: string;
+}
+
 export interface Universe {
   id: string;
   userId: string;
@@ -21,6 +29,8 @@ export interface Universe {
   entryTemplates: EntryTemplate[];
   // Phase 28 REL-02: link-type color/direction registry consumed by GraphCanvas + RelationLegend.
   linkTypes: Record<string, { color?: string; directionDefault?: 'directed' | 'undirected'; inverseLabel?: string }>;
+  // Phase 29 DATA-02: custom-field registry (universe-scoped, globally typed — D-01..D-03).
+  fieldRegistry: FieldRegistryEntry[];
 }
 
 export function useUniverses() {
@@ -63,6 +73,8 @@ export function useUpdateUniverse(id: string) {
       entryTemplates?: EntryTemplate[];
       // Phase 28 REL-02: link-type registry patch.
       linkTypes?: Record<string, { color?: string; directionDefault?: 'directed' | 'undirected'; inverseLabel?: string }>;
+      // Phase 29 DATA-02: field registry full-array replace (mirrors entryTemplates pattern).
+      fieldRegistry?: FieldRegistryEntry[];
     }) =>
       api<Universe>(`/universes/${id}`, { method: 'PATCH', body: JSON.stringify(body) }),
     onSuccess: () => {
