@@ -59,8 +59,8 @@ export function FilterChipRow({ universeId }: { universeId: string }) {
     });
   }
 
-  // WIP chip: shown when wip !== null
-  if (filters.wip !== null) {
+  // WIP chip: shown when wip is an explicit boolean (callers may omit the key)
+  if (typeof filters.wip === 'boolean') {
     chips.push({
       key: 'wip',
       label: filters.wip ? 'WIP: yes' : 'WIP: no',
@@ -69,7 +69,7 @@ export function FilterChipRow({ universeId }: { universeId: string }) {
   }
 
   // Field filter chips: one per active field filter entry
-  Object.entries(filters.fieldFilters).forEach(([name, value]) => {
+  Object.entries(filters.fieldFilters ?? {}).forEach(([name, value]) => {
     chips.push({
       key: `field:${name}`,
       label: `${name}: ${value}`,
