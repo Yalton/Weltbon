@@ -92,18 +92,20 @@ describe('StatsView', () => {
     expect(screen.getByText('Pinned events')).toBeInTheDocument();
     expect(screen.getByText('Categories')).toBeInTheDocument();
 
-    // Counts
-    expect(screen.getByText('42')).toBeInTheDocument();
-    expect(screen.getByText('17')).toBeInTheDocument();
+    // Counts: use getAllByText for values that may appear multiple times
+    expect(await screen.findByText('42')).toBeInTheDocument();
+    // Links=17 also appears in uncategorized count; just verify at least one exists
+    expect(screen.getAllByText('17').length).toBeGreaterThanOrEqual(1);
     expect(screen.getByText('5')).toBeInTheDocument();
-    expect(screen.getByText('3')).toBeInTheDocument();
+    // Categories=3 also appears in the bar count for event; use getAllByText
+    expect(screen.getAllByText('3').length).toBeGreaterThanOrEqual(1);
   });
 
   it('renders a "By type" distribution bar row for each entriesByType item', async () => {
     renderAt('/universes/U1/stats');
 
     expect(await screen.findByText('By type')).toBeInTheDocument();
-    expect(screen.getByText('character')).toBeInTheDocument();
+    expect(await screen.findByText('character')).toBeInTheDocument();
     expect(screen.getByText('location')).toBeInTheDocument();
     expect(screen.getByText('event')).toBeInTheDocument();
     expect(screen.getByText('20')).toBeInTheDocument();
@@ -112,10 +114,8 @@ describe('StatsView', () => {
   it('navigates to entry list with ?category= when a category bar row is clicked', async () => {
     renderAt('/universes/U1/stats');
 
-    // Wait for data to render
-    await screen.findByText('By category');
-
-    const heroesRow = screen.getByRole('button', { name: /heroes/i });
+    // Wait for data to render (use findByRole to await button)
+    const heroesRow = await screen.findByRole('button', { name: /heroes/i });
     fireEvent.click(heroesRow);
 
     expect(navigateMock).toHaveBeenCalledWith(
@@ -126,9 +126,8 @@ describe('StatsView', () => {
   it('navigates to entry list with ?type= when a type bar row is clicked', async () => {
     renderAt('/universes/U1/stats');
 
-    await screen.findByText('By type');
-
-    const characterRow = screen.getByRole('button', { name: /character/i });
+    // Wait for data to render
+    const characterRow = await screen.findByRole('button', { name: /character/i });
     fireEvent.click(characterRow);
 
     expect(navigateMock).toHaveBeenCalledWith(
@@ -142,12 +141,12 @@ describe('StatsView', () => {
     expect(await screen.findByText('Recently edited')).toBeInTheDocument();
 
     // mockStats.recentlyEdited has 11 items, but only 10 should render
-    const recentList = screen.getByRole('list', { name: /recently edited entries/i });
+    const recentList = await screen.findByRole('list', { name: /recently edited entries/i });
     const items = recentList.querySelectorAll('li');
     expect(items.length).toBeLessThanOrEqual(10);
 
     // First entry should be visible
-    expect(screen.getByText('Aragorn')).toBeInTheDocument();
+    expect(await screen.findByText('Aragorn')).toBeInTheDocument();
     // Eleventh entry should NOT be visible
     expect(screen.queryByText('Eleventh Entry')).not.toBeInTheDocument();
   });
@@ -155,8 +154,8 @@ describe('StatsView', () => {
   it('navigates to entry detail when a recently-edited row is clicked', async () => {
     renderAt('/universes/U1/stats');
 
-    await screen.findByText('Recently edited');
-    const aragornRow = screen.getByRole('button', { name: /aragorn/i });
+    // Wait for the button to appear
+    const aragornRow = await screen.findByRole('button', { name: /aragorn/i });
     fireEvent.click(aragornRow);
 
     expect(navigateMock).toHaveBeenCalledWith(
