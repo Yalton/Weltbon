@@ -20,6 +20,7 @@ import { importRoutes } from './routes/import.js';
 import { ingestRoutes } from './routes/ingest.js';
 import { timelinePinRoutes, timelineListRoutes } from './routes/timeline.js';
 import { auditRoutes, auditCrossUniverseRoutes } from './routes/audits.js';
+import { statsRoutes } from './routes/stats.js';
 import { recoverOrphanAuditRuns } from './services/audit-recovery.js';
 import { wireSigtermDrain } from './services/audit-shutdown.js';
 import { requireAuth } from './middleware/auth.js';
@@ -91,6 +92,10 @@ export function createApp() {
   // 11-03: mount /universes/:uid/ingest BEFORE the bare /universes mount so
   // the more-specific path wins, mirroring the /universes/import precedence.
   apiR.route('/universes/:uid/ingest', ingestRoutes);
+  // Phase 29 DATA-05: universe statistics aggregate endpoint.
+  // statsRoutes uses path '/{id}/stats' internally, so it mounts under /universes.
+  // Mount BEFORE universeRoutes so '/{id}/stats' is more-specific than universeRoutes' '/{id}'.
+  apiR.route('/universes', statsRoutes);
   apiR.route('/universes', universeRoutes);
   apiR.route('/universes/:uid/entries', entryRoutes);
   apiR.route('/universes/:uid/entries', timelinePinRoutes);
