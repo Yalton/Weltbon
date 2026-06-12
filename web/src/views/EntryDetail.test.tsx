@@ -1,4 +1,4 @@
-import { describe, it, expect, beforeEach, vi } from 'vitest';
+import { describe, it, expect, beforeEach, vi, type Mock } from 'vitest';
 import { render, screen } from '@testing-library/react';
 import userEvent from '@testing-library/user-event';
 import { MemoryRouter, Routes, Route } from 'react-router-dom';
@@ -8,7 +8,15 @@ vi.mock('../api/client', () => ({
   api: vi.fn(),
   getAccessToken: () => null,
 }));
+vi.mock('../hooks/useEntries', async (importOriginal) => {
+  const actual = await importOriginal<typeof import('../hooks/useEntries')>();
+  return {
+    ...actual,
+    useUpdateEntry: vi.fn(),
+  };
+});
 import { api } from '../api/client';
+import { useUpdateEntry } from '../hooks/useEntries';
 import { EntryDetail } from './EntryDetail';
 
 function mkEntryDetail(overrides: Record<string, unknown> = {}) {
@@ -98,5 +106,63 @@ describe('EntryDetail (timeline section)', () => {
     // Wait for the timeline query to resolve (renders Loading… first).
     expect(await screen.findByText(/not pinned/i)).toBeInTheDocument();
     expect(screen.getByRole('button', { name: /add pin/i })).toBeInTheDocument();
+  });
+});
+
+describe('EntryDetail (WIP quick-toggle)', () => {
+  beforeEach(() => {
+    vi.mocked(api).mockReset();
+    // Default mock for useUpdateEntry
+    vi.mocked(useUpdateEntry as Mock).mockReturnValue({
+      mutateAsync: vi.fn().mockResolvedValue({}),
+      isPending: false,
+    });
+  });
+
+  it('renders a clickable WipPill (role=switch) in the header', async () => {
+    renderAt('/universes/U1/entries/E1', mkEntryDetail({ wip: false }));
+    // Wait for entry to load
+    await screen.findByRole('heading', { level: 1, name: /gondor/i });
+    expect(screen.getByRole('switch')).toBeInTheDocument();
+  });
+
+  it('clicking the WipPill calls updateEntry.mutateAsync with { wip: true } when entry.wip is false', async () => {
+    const mutateAsync = vi.fn().mockResolvedValue({});
+    vi.mocked(useUpdateEntry as Mock).mockReturnValue({
+      mutateAsync,
+      isPending: false,
+    });
+
+    renderAt('/universes/U1/entries/E1', mkEntryDetail({ wip: false }));
+    await screen.findByRole('heading', { level: 1, name: /gondor/i });
+
+    await userEvent.click(screen.getByRole('switch'));
+    expect(mutateAsync).toHaveBeenCalledWith({ wip: true });
+  });
+
+  it('clicking the WipPill calls updateEntry.mutateAsync with { wip: false } when entry.wip is true', async () => {
+    const mutateAsync = vi.fn().mockResolvedValue({});
+    vi.mocked(useUpdateEntry as Mock).mockReturnValue({
+      mutateAsync,
+      isPending: false,
+    });
+
+    renderAt('/universes/U1/entries/E1', mkEntryDetail({ wip: true }));
+    await screen.findByRole('heading', { level: 1, name: /gondor/i });
+
+    await userEvent.click(screen.getByRole('switch'));
+    expect(mutateAsync).toHaveBeenCalledWith({ wip: false });
+  });
+
+  it('WipPill is disabled while updateEntry.isPending is true', async () => {
+    vi.mocked(useUpdateEntry as Mock).mockReturnValue({
+      mutateAsync: vi.fn().mockResolvedValue({}),
+      isPending: true,
+    });
+
+    renderAt('/universes/U1/entries/E1', mkEntryDetail({ wip: false }));
+    await screen.findByRole('heading', { level: 1, name: /gondor/i });
+
+    expect(screen.getByRole('switch')).toBeDisabled();
   });
 });
