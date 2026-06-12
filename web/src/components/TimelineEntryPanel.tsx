@@ -36,6 +36,9 @@ interface PanelFilters {
   type: string | null;
   tags: string[];
   category: string | null;
+  // Plan 29-04: new EntryFilters fields — panel uses defaults (wip=null, no field filters)
+  wip: boolean | null;
+  fieldFilters: Record<string, string>;
 }
 
 export interface TimelineEntryPanelProps {
@@ -50,6 +53,8 @@ const EMPTY_FILTERS: PanelFilters = {
   type: null,
   tags: [],
   category: null,
+  wip: null,
+  fieldFilters: {},
 };
 
 function hasActiveFilter(f: PanelFilters): boolean {
