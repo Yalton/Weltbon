@@ -8,6 +8,7 @@ import { useUniverse } from '../hooks/useUniverse';
 import { TagInput } from '../components/TagInput';
 import { MetaEditor } from '../components/MetaEditor';
 import { EntryCategoryPicker } from '../components/EntryCategoryPicker';
+import { Toggle } from '../components/Toggle';
 import type { Entry } from '../hooks/useEntries';
 import type { EntryTemplate } from '../lib/entryTemplates';
 
@@ -36,6 +37,8 @@ export function EntryEditor() {
   const [meta, setMeta] = useState<Record<string, string>>({});
   const [categoryId, setCategoryId] = useState<string | null>(null);
   const [metaValid, setMetaValid] = useState(true);
+  // Phase 29 DATA-03: WIP toggle state.
+  const [wip, setWip] = useState(false);
 
   const {
     register,
@@ -66,6 +69,8 @@ export function EntryEditor() {
       setTags(existingEntry.tags ?? []);
       setMeta((existingEntry.meta as Record<string, string>) ?? {});
       setCategoryId(existingEntry.categoryId ?? null);
+      // Phase 29 DATA-03: restore wip flag from existing entry.
+      setWip((existingEntry as Entry & { wip?: boolean }).wip ?? false);
       return;
     }
     // Create mode: optionally pre-fill from template state passed via
@@ -103,6 +108,8 @@ export function EntryEditor() {
       tags,
       meta,
       categoryId,
+      // Phase 29 DATA-03: persist wip flag via Plan 01 PATCH/POST support.
+      wip,
     };
 
     if (isEditMode) {
@@ -137,6 +144,19 @@ export function EntryEditor() {
           {errors.title && (
             <p className="text-sm text-red-500 mt-1">{errors.title.message}</p>
           )}
+        </div>
+
+        {/* WIP toggle — Phase 29 DATA-03; placed below Title, above Icon/Body/Meta */}
+        <div className="flex items-center gap-3">
+          <div className="flex flex-col">
+            <span id="wip-toggle-label" className="text-sm">Mark as WIP</span>
+            <span className="text-xs text-neutral-500">Flag this entry as a work in progress.</span>
+          </div>
+          <Toggle
+            checked={wip}
+            onChange={setWip}
+            labelId="wip-toggle-label"
+          />
         </div>
 
         {/* Icon */}
@@ -229,6 +249,8 @@ export function EntryEditor() {
             value={meta}
             onChange={setMeta}
             onValidityChange={setMetaValid}
+            registeredFields={universe?.fieldRegistry ?? []}
+            universeId={uid}
           />
         </div>
 
