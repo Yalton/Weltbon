@@ -267,4 +267,86 @@ describe('universe routes (UNIV-01..06)', () => {
     expect(patched.entryTemplates).toHaveLength(1);
     expect(patched.linkTypes).toEqual(linkTypes);
   });
+
+  // --- Phase 29: fieldRegistry PATCH + serialization ---
+
+  // DATA-02-01: PATCH fieldRegistry with valid entry persists and is returned
+  it('PATCH /universes/:id with fieldRegistry persists and is returned', async () => {
+    const { hdrs } = await userWithToken('t29-fr-01@test.com');
+    const createRes = await req('POST', '/api/universes', { headers: hdrs, body: { name: 'FieldRegistryWorld' } });
+    const created = await json(createRes);
+
+    const fieldRegistry = [{ name: 'Born in year', type: 'number' }];
+    const patchRes = await req('PATCH', `/api/universes/${created.id}`, { headers: hdrs, body: { fieldRegistry } });
+    expect(patchRes.status).toBe(200);
+    const patched = await json(patchRes);
+    expect(Array.isArray(patched.fieldRegistry)).toBe(true);
+    expect(patched.fieldRegistry).toHaveLength(1);
+    expect(patched.fieldRegistry[0].name).toBe('Born in year');
+    expect(patched.fieldRegistry[0].type).toBe('number');
+  });
+
+  // DATA-02-02: PATCH fieldRegistry with invalid type enum returns 400
+  it('PATCH /universes/:id rejects fieldRegistry entry with invalid type', async () => {
+    const { hdrs } = await userWithToken('t29-fr-02@test.com');
+    const createRes = await req('POST', '/api/universes', { headers: hdrs, body: { name: 'BadTypeWorld' } });
+    const created = await json(createRes);
+
+    const patchRes = await req('PATCH', `/api/universes/${created.id}`, {
+      headers: hdrs,
+      body: { fieldRegistry: [{ name: 'Weapon class', type: 'dropdown' }] },
+    });
+    expect(patchRes.status).toBe(400);
+  });
+
+  // DATA-02-03: PATCH fieldRegistry with name > 50 chars returns 400
+  it('PATCH /universes/:id rejects fieldRegistry entry with name > 50 chars', async () => {
+    const { hdrs } = await userWithToken('t29-fr-03@test.com');
+    const createRes = await req('POST', '/api/universes', { headers: hdrs, body: { name: 'LongNameWorld' } });
+    const created = await json(createRes);
+
+    const longName = 'a'.repeat(51);
+    const patchRes = await req('PATCH', `/api/universes/${created.id}`, {
+      headers: hdrs,
+      body: { fieldRegistry: [{ name: longName, type: 'text' }] },
+    });
+    expect(patchRes.status).toBe(400);
+  });
+
+  // DATA-02-04: PATCH fieldRegistry with > 50 entries returns 400 (DoS bound)
+  it('PATCH /universes/:id rejects fieldRegistry with more than 50 entries', async () => {
+    const { hdrs } = await userWithToken('t29-fr-04@test.com');
+    const createRes = await req('POST', '/api/universes', { headers: hdrs, body: { name: 'TooManyFieldsWorld' } });
+    const created = await json(createRes);
+
+    const tooMany = Array.from({ length: 51 }, (_, i) => ({ name: `field${i}`, type: 'text' }));
+    const patchRes = await req('PATCH', `/api/universes/${created.id}`, {
+      headers: hdrs,
+      body: { fieldRegistry: tooMany },
+    });
+    expect(patchRes.status).toBe(400);
+  });
+
+  // DATA-02-05: PATCH omitting fieldRegistry leaves existing fieldRegistry unchanged
+  it('PATCH omitting fieldRegistry leaves existing fieldRegistry unchanged', async () => {
+    const { hdrs } = await userWithToken('t29-fr-05@test.com');
+    const createRes = await req('POST', '/api/universes', { headers: hdrs, body: { name: 'PartialPatchFR' } });
+    const created = await json(createRes);
+
+    // First set a fieldRegistry
+    const fieldRegistry = [{ name: 'Region', type: 'text', hint: 'Geographic region' }];
+    await req('PATCH', `/api/universes/${created.id}`, { headers: hdrs, body: { fieldRegistry } });
+
+    // Now patch only name — fieldRegistry should not be wiped
+    const patchRes = await req('PATCH', `/api/universes/${created.id}`, {
+      headers: hdrs,
+      body: { name: 'UpdatedName' },
+    });
+    expect(patchRes.status).toBe(200);
+    const patched = await json(patchRes);
+    expect(patched.name).toBe('UpdatedName');
+    expect(Array.isArray(patched.fieldRegistry)).toBe(true);
+    expect(patched.fieldRegistry).toHaveLength(1);
+    expect(patched.fieldRegistry[0].name).toBe('Region');
+  });
 });

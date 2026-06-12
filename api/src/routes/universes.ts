@@ -29,6 +29,34 @@ export const timelineWindowSchema = z
   })
   .nullable();
 
+// Phase 29 DATA-02 / T-29-01-FR: per-universe typed custom-field registry entry.
+// .strict() rejects unknown keys; type enum allowlist prevents free-form injection;
+// name max 50 and hint max 200 bound jsonb growth; array .max(50) mirrors T-28-02-04 DoS guard.
+// Case-insensitive duplicate name check prevents confusingly similar fields.
+const fieldRegistryEntrySchema = z
+  .object({
+    name: z.string().min(1).max(50),
+    type: z.enum(['text', 'number', 'boolean', 'url', 'entry-ref']),
+    hint: z.string().max(200).optional(),
+  })
+  .strict();
+
+const fieldRegistrySchema = z
+  .array(fieldRegistryEntrySchema)
+  .max(50, { message: 'too many field registry entries (max 50)' })
+  .refine(
+    (arr) => {
+      const seen = new Set<string>();
+      for (const entry of arr) {
+        const key = entry.name.toLowerCase();
+        if (seen.has(key)) return false;
+        seen.add(key);
+      }
+      return true;
+    },
+    { message: 'field registry names must be unique (case-insensitive)' },
+  );
+
 // Phase 28 CR-02 / T-28-02-04: bound and validate the link-type registry to
 // prevent oversized-jsonb DoS and CSS/SVG injection via `color` (it flows into
 // graph edge `stroke` and legend swatches). Mirrors LinkTypeRegistryEntry; the
@@ -66,6 +94,8 @@ export const patchSchema = z
     // hex-only color), entryTemplates via .max(50) — to prevent oversized jsonb DoS.
     linkTypes: linkTypesSchema.optional(),
     entryTemplates: z.array(z.any()).max(50).optional(),
+    // Phase 29 DATA-02 / T-29-01-FR: typed custom-field registry (bounded, enum-typed, unique names).
+    fieldRegistry: fieldRegistrySchema.optional(),
   })
   .refine(
     (v) =>
@@ -76,7 +106,8 @@ export const patchSchema = z
       v.auditProvider !== undefined ||
       v.auditModel !== undefined ||
       v.linkTypes !== undefined ||
-      v.entryTemplates !== undefined,
+      v.entryTemplates !== undefined ||
+      v.fieldRegistry !== undefined,
     { message: 'At least one of name, description, or timelineWindow is required' },
   )
   .refine(
@@ -114,6 +145,8 @@ const universeSchema = z.object({
   // Phase 28 D-10/D-11: link-type registry + entry templates.
   linkTypes: z.record(z.string(), z.any()).optional(),
   entryTemplates: z.array(z.any()).optional(),
+  // Phase 29 DATA-02: typed custom-field registry.
+  fieldRegistry: z.array(z.any()).optional(),
 });
 
 const errorSchema = z.object({ error: z.string() });
