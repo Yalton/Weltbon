@@ -61,6 +61,8 @@ const DB_GATED_TESTS = [
   'tests/issues-dismiss.test.ts',
   // Phase 27 Plan 03 Task 3: hybrid model catalog endpoint integration tests
   'tests/llm-models.test.ts',
+  // Phase 29 Plan 01 Task 5: universe stats aggregate endpoint
+  'tests/stats.test.ts',
 ];
 
 export default defineConfig({
