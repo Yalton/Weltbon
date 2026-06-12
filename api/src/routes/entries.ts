@@ -24,6 +24,8 @@ const createEntrySchema = z.object({
   meta: z.record(z.string(), z.unknown()).optional().default({}),
   icon: z.string().max(10).optional().default(''),
   categoryId: z.string().uuid().nullable().optional(),
+  // Phase 29 DATA-03: WIP/draft flag
+  wip: z.boolean().optional(),
 });
 
 const patchEntrySchema = z.object({
@@ -35,6 +37,8 @@ const patchEntrySchema = z.object({
   meta: z.record(z.string(), z.unknown()).optional(),
   icon: z.string().max(10).optional(),
   categoryId: z.string().uuid().nullable().optional(),
+  // Phase 29 DATA-03: WIP/draft flag
+  wip: z.boolean().optional(),
 }).refine((v) => Object.values(v).some((val) => val !== undefined), {
   message: 'At least one field is required',
 });
@@ -53,6 +57,8 @@ const entrySchema = z.object({
   categoryId: z.string().nullable(),
   createdAt: z.string(),
   updatedAt: z.string(),
+  // Phase 29 DATA-03: WIP/draft flag
+  wip: z.boolean().optional(),
 });
 
 const entryDetailSchema = entrySchema.extend({
@@ -99,7 +105,7 @@ const listRoute = createRoute({
   path: '/',
   tags: ['Entries'],
   summary: 'List entries in a universe',
-  description: 'Returns entries for the given universe. Supports optional filters: ?type=, ?tag=, ?category=, ?q= (FTS).',
+  description: 'Returns entries for the given universe. Supports optional filters: ?type=, ?tag=, ?category=, ?q= (FTS), ?wip=true|false (three-state), ?field.{name}={value} (AND exact-match).',
   security: [{ bearerAuth: [] }],
   request: {
     params: uidParams,
@@ -108,6 +114,8 @@ const listRoute = createRoute({
       tag: z.union([z.string(), z.array(z.string())]).optional(),
       category: z.string().optional(),
       q: z.string().optional(),
+      // Phase 29 DATA-03: three-state WIP filter (true/false/absent = all)
+      wip: z.enum(['true', 'false']).optional(),
     }),
   },
   responses: {
@@ -305,6 +313,8 @@ export const entryRoutes = new OpenAPIHono<AppEnv>()
     const category = c.req.query('category')?.trim() || undefined;
     const rawQ = c.req.query('q')?.trim() || '';
     const q = rawQ.length > 0 ? rawQ : undefined;
+    // Phase 29 DATA-03: three-state WIP filter
+    const wip = c.req.query('wip');
 
     if (category && category !== 'uncategorized' && !/^[0-9a-f-]{36}$/i.test(category)) {
       return c.json({ error: 'Invalid category id' }, 400);
@@ -316,6 +326,21 @@ export const entryRoutes = new OpenAPIHono<AppEnv>()
     if (category === 'uncategorized') conditions.push(isNull(entries.categoryId));
     else if (category) conditions.push(eq(entries.categoryId, category));
     if (q) conditions.push(sql`search_vector @@ websearch_to_tsquery('english', ${q})`);
+    // Phase 29 DATA-03: three-state wip filter (D-08: absent = all, true/false = filter)
+    if (wip === 'true') conditions.push(eq(entries.wip, true));
+    else if (wip === 'false') conditions.push(eq(entries.wip, false));
+
+    // Phase 29 DATA-04: meta-field exact-match filter (T-29-01-MF: parameterized SQL, no injection)
+    // Collect ?field.{key}={value} params from raw URL searchParams (AND semantics per D-11).
+    const rawUrl = c.req.url;
+    const searchParams = new URL(rawUrl).searchParams;
+    for (const [paramKey, paramVal] of searchParams.entries()) {
+      if (paramKey.startsWith('field.')) {
+        const metaKey = paramKey.slice('field.'.length);
+        // Parameterized ->> operator: key and value are bound params, never string-concatenated.
+        conditions.push(sql`${entries.meta} ->> ${metaKey} = ${paramVal}`);
+      }
+    }
 
     const baseShape = {
       id: entries.id,
@@ -329,6 +354,8 @@ export const entryRoutes = new OpenAPIHono<AppEnv>()
       categoryId: entries.categoryId,
       createdAt: entries.createdAt,
       updatedAt: entries.updatedAt,
+      // Phase 29 DATA-03: include wip in list responses
+      wip: entries.wip,
     };
 
     if (q) {
@@ -381,6 +408,8 @@ export const entryRoutes = new OpenAPIHono<AppEnv>()
         meta: data.meta,
         icon: data.icon,
         categoryId: data.categoryId ?? null,
+        // Phase 29 DATA-03: persist wip flag (default false if not supplied)
+        wip: data.wip ?? false,
       })
       .returning();
 
