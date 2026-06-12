@@ -2,6 +2,19 @@ import { pgTable, uuid, text, timestamp, jsonb, boolean, integer, doublePrecisio
 import { relations, sql } from 'drizzle-orm';
 
 /**
+ * Phase 29 DATA-02: per-universe typed custom-field registry entry shape.
+ * Stored as universes.field_registry jsonb (FieldRegistryEntry[]).
+ * Universe-scoped; globally typed — never per-entry-type rendering (D-06).
+ */
+export interface FieldRegistryEntry {
+  name: string;
+  type: 'text' | 'number' | 'boolean' | 'url' | 'entry-ref';
+  hint?: string;
+}
+
+export type FieldRegistry = FieldRegistryEntry[];
+
+/**
  * Phase 28 D-10: per-universe link-type registry entry shape.
  * Stored as universes.link_types jsonb (Record<string, LinkTypeRegistryEntry>).
  * Preset link types are seeded from code constants; the registry stores custom
@@ -73,6 +86,9 @@ export const universes = pgTable('universes', {
   linkTypes:      jsonb('link_types').$type<LinkTypeRegistry>().default({}).notNull(),
   // Phase 28 D-11: persisted user-defined entry templates; shape mirrors EntryTemplate interface (D-13).
   entryTemplates: jsonb('entry_templates').$type<EntryTemplate[]>().default([]).notNull(),
+  // Phase 29 DATA-02: per-universe typed custom-field registry (FieldRegistryEntry[]).
+  // DEFAULT '[]' backfills existing rows without a table-rewrite stall.
+  fieldRegistry: jsonb('field_registry').$type<FieldRegistry>().default([]).notNull(),
 });
 
 export const refreshTokens = pgTable('refresh_tokens', {
@@ -163,6 +179,8 @@ export const entries = pgTable('entries', {
   categoryId:   uuid('category_id').references(() => categories.id, { onDelete: 'set null' }),
   createdAt:    timestamp('created_at').defaultNow().notNull(),
   updatedAt:    timestamp('updated_at').defaultNow().notNull(),
+  // Phase 29 DATA-03: WIP/draft flag — default false; user sets to true for in-progress entries.
+  wip:          boolean('wip').default(false).notNull(),
 });
 
 export const links = pgTable('links', {

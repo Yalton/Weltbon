@@ -99,6 +99,13 @@
       "when": 1780966791000,
       "tag": "0013_phase28_typed_links",
       "breakpoints": true
+    },
+    {
+      "idx": 14,
+      "version": "7",
+      "when": 1781000000000,
+      "tag": "0014_phase29_structured_data",
+      "breakpoints": true
     }
   ]
 }
