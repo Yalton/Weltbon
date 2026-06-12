@@ -64,7 +64,13 @@ function renderAt(path: string, entry: ReturnType<typeof mkEntryDetail>) {
 }
 
 describe('EntryDetail (issues section)', () => {
-  beforeEach(() => vi.mocked(api).mockReset());
+  beforeEach(() => {
+    vi.mocked(api).mockReset();
+    vi.mocked(useUpdateEntry as Mock).mockReturnValue({
+      mutateAsync: vi.fn().mockResolvedValue({}),
+      isPending: false,
+    });
+  });
 
   it('renders the IssueSection with heading and issue rows from entry.issues', async () => {
     renderAt('/universes/U1/entries/E1', mkEntryDetail({
@@ -95,7 +101,13 @@ describe('EntryDetail (issues section)', () => {
 });
 
 describe('EntryDetail (timeline section)', () => {
-  beforeEach(() => vi.mocked(api).mockReset());
+  beforeEach(() => {
+    vi.mocked(api).mockReset();
+    vi.mocked(useUpdateEntry as Mock).mockReturnValue({
+      mutateAsync: vi.fn().mockResolvedValue({}),
+      isPending: false,
+    });
+  });
 
   it('renders the Timeline section with Not pinned + Add pin when entry has no pin', async () => {
     renderAt('/universes/U1/entries/E1', mkEntryDetail({ issues: [] }));
