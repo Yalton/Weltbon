@@ -1,5 +1,6 @@
 import type { Entry } from '../hooks/useEntries';
 import { TypeBadge } from './TypeBadge';
+import { WipPill } from './WipPill';
 
 export function EntryCard({ entry }: { entry: Entry }) {
   return (
@@ -13,6 +14,8 @@ export function EntryCard({ entry }: { entry: Entry }) {
       <span className="text-base leading-[1.5] truncate font-semibold">{entry.title}</span>
 
       <TypeBadge type={entry.entryType} />
+
+      {entry.wip === true && <WipPill wip={true} />}
 
       {entry.summary && (
         <span className="text-sm text-neutral-600 dark:text-neutral-400 truncate flex-1 min-w-0">

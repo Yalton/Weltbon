@@ -12,6 +12,7 @@ export interface Entry {
   meta: Record<string, unknown>;
   icon: string;
   categoryId: string | null;
+  wip: boolean;
   createdAt: string;
   updatedAt: string;
 }
@@ -59,6 +60,7 @@ export type CreateEntryInput = {
   meta?: Record<string, unknown>;
   icon?: string;
   categoryId?: string | null;
+  wip?: boolean;
 };
 
 export type UpdateEntryInput = Partial<CreateEntryInput>;

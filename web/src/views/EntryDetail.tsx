@@ -1,7 +1,8 @@
 import { useState } from 'react';
 import { Link, useParams, useNavigate } from 'react-router-dom';
-import { useEntry, useDeleteEntry } from '../hooks/useEntries';
+import { useEntry, useDeleteEntry, useUpdateEntry } from '../hooks/useEntries';
 import { TypeBadge } from '../components/TypeBadge';
+import { WipPill } from '../components/WipPill';
 import { MarkdownRenderer } from '../components/MarkdownRenderer';
 import { ConfirmDialog } from '../components/ConfirmDialog';
 import { LinkSection } from '../components/LinkSection';
@@ -13,6 +14,7 @@ export function EntryDetail() {
   const navigate = useNavigate();
   const { data: entry, isLoading, refetch } = useEntry(uid!, entryId!);
   const deleteEntry = useDeleteEntry(uid!);
+  const updateEntry = useUpdateEntry(uid!, entryId!);
   const [confirmOpen, setConfirmOpen] = useState(false);
 
   if (isLoading || !entry) return <p className="text-sm text-neutral-500">Loading...</p>;
@@ -40,8 +42,16 @@ export function EntryDetail() {
           {entry.icon && <span className="text-[28px] leading-none">{entry.icon}</span>}
           <h1 className="text-2xl font-semibold tracking-tight">{entry.title}</h1>
         </div>
-        <div className="mt-1">
+        <div className="mt-1 flex items-center gap-2 flex-wrap">
           <TypeBadge type={entry.entryType} />
+          <WipPill
+            wip={entry.wip}
+            disabled={updateEntry.isPending}
+            onToggle={async () => {
+              await updateEntry.mutateAsync({ wip: !entry.wip });
+              refetch();
+            }}
+          />
         </div>
         <div className="flex gap-2 mt-3">
           <Link
