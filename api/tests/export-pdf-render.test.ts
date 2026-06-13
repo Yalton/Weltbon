@@ -23,9 +23,6 @@ function buildMinimalPayload(): ExportPayload {
       name: 'Render Test',
       description: '',
       entryTypes: ['entity'],
-      timelineWindow: null,
-      linkTypes: {},
-      entryTemplates: [],
     },
     categories: [],
     entries: [],
@@ -33,7 +30,6 @@ function buildMinimalPayload(): ExportPayload {
     openIssues: [],
     fullIssues: [],
     graphPositions: [],
-    timelinePins: [],
     entrySlugMap: new Map(),
   };
 }

@@ -89,7 +89,7 @@ function makeEdge(
   target: string,
   label = '',
 ): GraphEdge {
-  return { id, source, target, label: label || null, linkType: null, direction: 'directed' };
+  return { id, source, target, label, bidirectional: false };
 }
 
 function renderGraphView(universeId = 'UNI') {
@@ -329,16 +329,12 @@ describe('GraphView', () => {
     it('Test 6: drop-on-other captures popoverState and renders the real CreateLinkPopover with From/To node titles (no existing edge → empty input)', async () => {
       // 19-04 swapped the test-only `popover-anchor` placeholder div with the
       // real <CreateLinkPopover>. The popover renders its own
-      // RelationCombobox which calls `useRelations` (GET /relations) and
-      // LinkTypeSelect which calls `useLinkTypes` (GET /link-types) — so
+      // RelationCombobox which calls `useRelations` (GET /relations) — so
       // we discriminate on method+path here instead of the blanket
       // mockResolvedValue used pre-19-04.
       vi.mocked(api).mockImplementation(async (path: string, init?: RequestInit) => {
         const method = init?.method ?? 'GET';
         if (method === 'GET' && path.endsWith('/relations')) {
-          return [] as unknown as never;
-        }
-        if (method === 'GET' && path.endsWith('/link-types')) {
           return [] as unknown as never;
         }
         return {
@@ -364,22 +360,15 @@ describe('GraphView', () => {
       // From/To rows show the node titles (makeNode default is "Node {id}")
       expect(screen.getByText('Node A')).toBeInTheDocument();
       expect(screen.getByText('Node B')).toBeInTheDocument();
-      // No existing edge A→B → the display label (RelationCombobox) starts empty.
-      // 28-03: two comboboxes exist (LinkTypeSelect + RelationCombobox); target
-      // the label input by its distinctive placeholder.
-      const labelInput = screen.getByPlaceholderText(
-        'e.g. sworn shield since the Sundering',
-      ) as HTMLInputElement;
-      expect(labelInput.value).toBe('');
+      // No existing edge A→B → label input starts empty
+      const input = screen.getByRole('combobox') as HTMLInputElement;
+      expect(input.value).toBe('');
     });
 
     it('Test 7: existing-link prefill — A→B edge with label "knows" hydrates the popover input', async () => {
       vi.mocked(api).mockImplementation(async (path: string, init?: RequestInit) => {
         const method = init?.method ?? 'GET';
         if (method === 'GET' && path.endsWith('/relations')) {
-          return [] as unknown as never;
-        }
-        if (method === 'GET' && path.endsWith('/link-types')) {
           return [] as unknown as never;
         }
         return {
@@ -398,14 +387,8 @@ describe('GraphView', () => {
         captured.onLinkDragEnd?.(nodeA, nodeB, 200, 150);
       });
 
-      // existingLabelHint="knows" is hydrated into the display label
-      // (RelationCombobox). 28-03: disambiguate from LinkTypeSelect combobox
-      // by placeholder.
-      await screen.findByRole('heading', { name: 'Create link' });
-      const labelInput = screen.getByPlaceholderText(
-        'e.g. sworn shield since the Sundering',
-      ) as HTMLInputElement;
-      expect(labelInput.value).toBe('knows');
+      const input = (await screen.findByRole('combobox')) as HTMLInputElement;
+      expect(input.value).toBe('knows');
     });
   });
 
@@ -548,10 +531,6 @@ describe('GraphView', () => {
         if (method === 'GET' && path.endsWith('/relations')) {
           return [] as unknown as never;
         }
-        // 28-03: LinkTypeSelect calls GET /link-types
-        if (method === 'GET' && path.endsWith('/link-types')) {
-          return [] as unknown as never;
-        }
         if (method === 'POST' && path.endsWith('/links')) {
           return record as unknown as never;
         }
@@ -564,10 +543,6 @@ describe('GraphView', () => {
       vi.mocked(api).mockImplementation(async (path: string, init?: RequestInit) => {
         const method = init?.method ?? 'GET';
         if (method === 'GET' && path.endsWith('/relations')) {
-          return [] as unknown as never;
-        }
-        // 28-03: LinkTypeSelect calls GET /link-types
-        if (method === 'GET' && path.endsWith('/link-types')) {
           return [] as unknown as never;
         }
         if (method === 'POST' && path.endsWith('/links')) {
@@ -613,13 +588,9 @@ describe('GraphView', () => {
       expect(screen.getByText('To')).toBeInTheDocument();
       expect(screen.getByText('Alpha')).toBeInTheDocument();
       expect(screen.getByText('Beta')).toBeInTheDocument();
-      // 28-03: two comboboxes (LinkTypeSelect + RelationCombobox); assert both
-      // are present and check the label input by distinctive placeholder.
-      expect(screen.getByPlaceholderText('Search or enter a type...')).toBeInTheDocument();
-      expect(screen.getByPlaceholderText('e.g. sworn shield since the Sundering')).toBeInTheDocument();
+      expect(screen.getByRole('combobox')).toBeInTheDocument();
       expect(screen.getByRole('button', { name: 'Create link' })).toBeInTheDocument();
-      // 28-03: Cancel/discard button now uses aria-label="Discard link" (renders ×)
-      expect(screen.getByRole('button', { name: 'Discard link' })).toBeInTheDocument();
+      expect(screen.getByRole('button', { name: 'Cancel' })).toBeInTheDocument();
     });
 
     it('Test 2 (integration): confirm POSTs /universes/U1/links with the typed label and closes popover; editMode persists', async () => {
@@ -645,10 +616,7 @@ describe('GraphView', () => {
         );
       });
 
-      // 28-03: two comboboxes; target the display label (RelationCombobox)
-      // by its distinctive placeholder to type the link label.
-      await screen.findByRole('heading', { name: 'Create link' });
-      const input = screen.getByPlaceholderText('e.g. sworn shield since the Sundering');
+      const input = await screen.findByRole('combobox');
       await user.click(input);
       await user.type(input, 'knows');
       await user.click(screen.getByRole('button', { name: 'Create link' }));
@@ -705,9 +673,7 @@ describe('GraphView', () => {
         );
       });
 
-      // 28-03: two comboboxes; target the display label (RelationCombobox) by placeholder
-      await screen.findByRole('heading', { name: 'Create link' });
-      const input = screen.getByPlaceholderText('e.g. sworn shield since the Sundering');
+      const input = await screen.findByRole('combobox');
       await user.click(input);
       await user.type(input, 'knows');
       await user.click(screen.getByRole('button', { name: 'Create link' }));
@@ -744,8 +710,7 @@ describe('GraphView', () => {
         );
       });
 
-      // 28-03: two comboboxes; target the display label (RelationCombobox) by placeholder
-      const input = await screen.findByPlaceholderText('e.g. sworn shield since the Sundering');
+      const input = await screen.findByRole('combobox');
       await user.click(input);
       await user.type(input, 'bogus');
       await user.click(screen.getByRole('button', { name: 'Create link' }));
@@ -839,8 +804,7 @@ describe('GraphView', () => {
         );
       });
 
-      // 28-03: discard button uses aria-label="Discard link" (renders × symbol)
-      const cancelBtn = await screen.findByRole('button', { name: 'Discard link' });
+      const cancelBtn = await screen.findByRole('button', { name: 'Cancel' });
       await user.click(cancelBtn);
 
       await waitFor(() => {
@@ -877,12 +841,7 @@ describe('GraphView', () => {
         );
       });
 
-      // 28-03: two comboboxes; existingLabelHint hydrates the RelationCombobox
-      // (display label). Disambiguate by placeholder.
-      await screen.findByRole('heading', { name: 'Create link' });
-      const input = screen.getByPlaceholderText(
-        'e.g. sworn shield since the Sundering',
-      ) as HTMLInputElement;
+      const input = (await screen.findByRole('combobox')) as HTMLInputElement;
       expect(input.value).toBe('knows');
     });
 
@@ -920,12 +879,7 @@ describe('GraphView', () => {
         );
       });
 
-      // 28-03: two comboboxes; existingLabelHint hydrates the display label
-      // (RelationCombobox). Disambiguate by placeholder.
-      await screen.findByRole('heading', { name: 'Create link' });
-      const input = screen.getByPlaceholderText(
-        'e.g. sworn shield since the Sundering',
-      ) as HTMLInputElement;
+      const input = (await screen.findByRole('combobox')) as HTMLInputElement;
       expect(input.value).toBe('knows');
       // Clear and type new label
       await user.clear(input);
@@ -976,9 +930,7 @@ describe('GraphView', () => {
         );
       });
 
-      // 28-03: two comboboxes; target the display label (RelationCombobox) by placeholder
-      await screen.findByRole('heading', { name: 'Create link' });
-      const input = screen.getByPlaceholderText('e.g. sworn shield since the Sundering');
+      const input = await screen.findByRole('combobox');
       await user.click(input);
       await user.type(input, 'knows');
       await user.click(screen.getByRole('button', { name: 'Create link' }));

@@ -353,9 +353,6 @@ export async function commitIngest(
           sourceEntryId: sourceId,
           targetEntryId: targetId,
           label: l.label,
-          // Phase 28: direction is required NOT NULL; ingest always creates directed links
-          // (bidirectional was never part of ingest schema; link_type is not exposed in ingest)
-          direction: 'directed' as const,
         });
       }
     }

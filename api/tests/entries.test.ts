@@ -3,6 +3,8 @@ import { createApp } from '../src/index.js';
 import { createTestDb, cleanDb, createTestUser, authHeader, type TestDbHandle } from './helpers.js';
 import { issueAccessToken } from '../src/services/auth.js';
 import { setTestDb } from '../src/db/client.js';
+import { eq, and } from 'drizzle-orm';
+import { entryTemplates } from '../src/db/schema.js';
 
 describe('entry routes (ENT-01..06)', () => {
   let handle: TestDbHandle;
@@ -45,8 +47,7 @@ describe('entry routes (ENT-01..06)', () => {
 
   /** Create a universe and return its id */
   async function createUniverse(hdrs: Record<string, string>, name = 'TestWorld') {
-    // Rule 1 fix: /api prefix required (per 28-02-SUMMARY CIDEBT-02 fix pattern).
-    const res = await req('POST', '/api/universes', { headers: hdrs, body: { name } });
+    const res = await req('POST', '/universes', { headers: hdrs, body: { name } });
     const body = await json(res);
     return body;
   }
@@ -56,7 +57,7 @@ describe('entry routes (ENT-01..06)', () => {
     const { hdrs } = await userWithToken('a@test.com');
     const universe = await createUniverse(hdrs);
 
-    const res = await req('POST', `/api/universes/${universe.id}/entries`, {
+    const res = await req('POST', `/universes/${universe.id}/entries`, {
       headers: hdrs,
       body: {
         title: 'The Sundering',
@@ -89,7 +90,7 @@ describe('entry routes (ENT-01..06)', () => {
     const { hdrs } = await userWithToken('b@test.com');
     const universe = await createUniverse(hdrs);
 
-    const res = await req('POST', `/api/universes/${universe.id}/entries`, {
+    const res = await req('POST', `/universes/${universe.id}/entries`, {
       headers: hdrs,
       body: { title: 'Minimal Entry', entryType: 'concept' },
     });
@@ -107,7 +108,7 @@ describe('entry routes (ENT-01..06)', () => {
     const { hdrs } = await userWithToken('c@test.com');
     const universe = await createUniverse(hdrs);
 
-    const res = await req('POST', `/api/universes/${universe.id}/entries`, {
+    const res = await req('POST', `/universes/${universe.id}/entries`, {
       headers: hdrs,
       body: { entryType: 'concept' },
     });
@@ -119,7 +120,7 @@ describe('entry routes (ENT-01..06)', () => {
     const { hdrs } = await userWithToken('d@test.com');
     const universe = await createUniverse(hdrs);
 
-    const res = await req('POST', `/api/universes/${universe.id}/entries`, {
+    const res = await req('POST', `/universes/${universe.id}/entries`, {
       headers: hdrs,
       body: { title: 'Bad Type', entryType: 'nonexistent_type' },
     });
@@ -134,7 +135,7 @@ describe('entry routes (ENT-01..06)', () => {
     const universe = await createUniverse(hdrs);
 
     // Create two entries with a small delay to ensure different updatedAt
-    await req('POST', `/api/universes/${universe.id}/entries`, {
+    await req('POST', `/universes/${universe.id}/entries`, {
       headers: hdrs,
       body: { title: 'First Entry', entryType: 'concept', body: 'body1' },
     });
@@ -142,12 +143,12 @@ describe('entry routes (ENT-01..06)', () => {
     // Brief delay to differentiate timestamps
     await new Promise(r => setTimeout(r, 50));
 
-    await req('POST', `/api/universes/${universe.id}/entries`, {
+    await req('POST', `/universes/${universe.id}/entries`, {
       headers: hdrs,
       body: { title: 'Second Entry', entryType: 'entity', body: 'body2' },
     });
 
-    const res = await req('GET', `/api/universes/${universe.id}/entries`, { headers: hdrs });
+    const res = await req('GET', `/universes/${universe.id}/entries`, { headers: hdrs });
     expect(res.status).toBe(200);
     const list = await json(res);
     expect(list).toHaveLength(2);
@@ -166,13 +167,13 @@ describe('entry routes (ENT-01..06)', () => {
     const { hdrs } = await userWithToken('f@test.com');
     const universe = await createUniverse(hdrs);
 
-    const createRes = await req('POST', `/api/universes/${universe.id}/entries`, {
+    const createRes = await req('POST', `/universes/${universe.id}/entries`, {
       headers: hdrs,
       body: { title: 'Detailed Entry', entryType: 'location', body: '# My Location\n\nA beautiful place.' },
     });
     const created = await json(createRes);
 
-    const res = await req('GET', `/api/universes/${universe.id}/entries/${created.id}`, { headers: hdrs });
+    const res = await req('GET', `/universes/${universe.id}/entries/${created.id}`, { headers: hdrs });
     expect(res.status).toBe(200);
     const entry = await json(res);
     expect(entry.title).toBe('Detailed Entry');
@@ -184,7 +185,7 @@ describe('entry routes (ENT-01..06)', () => {
     const { hdrs } = await userWithToken('g@test.com');
     const universe = await createUniverse(hdrs);
 
-    const res = await req('GET', `/api/universes/${universe.id}/entries/00000000-0000-0000-0000-000000000000`, { headers: hdrs });
+    const res = await req('GET', `/universes/${universe.id}/entries/00000000-0000-0000-0000-000000000000`, { headers: hdrs });
     expect(res.status).toBe(404);
   });
 
@@ -193,13 +194,13 @@ describe('entry routes (ENT-01..06)', () => {
     const { hdrs } = await userWithToken('h@test.com');
     const universe = await createUniverse(hdrs);
 
-    const createRes = await req('POST', `/api/universes/${universe.id}/entries`, {
+    const createRes = await req('POST', `/universes/${universe.id}/entries`, {
       headers: hdrs,
       body: { title: 'Original', entryType: 'concept', summary: 'Old summary' },
     });
     const created = await json(createRes);
 
-    const res = await req('PATCH', `/api/universes/${universe.id}/entries/${created.id}`, {
+    const res = await req('PATCH', `/universes/${universe.id}/entries/${created.id}`, {
       headers: hdrs,
       body: { title: 'Updated', summary: 'New summary' },
     });
@@ -215,16 +216,16 @@ describe('entry routes (ENT-01..06)', () => {
     const { hdrs } = await userWithToken('i@test.com');
     const universe = await createUniverse(hdrs);
 
-    const createRes = await req('POST', `/api/universes/${universe.id}/entries`, {
+    const createRes = await req('POST', `/universes/${universe.id}/entries`, {
       headers: hdrs,
       body: { title: 'Doomed', entryType: 'artifact' },
     });
     const created = await json(createRes);
 
-    const delRes = await req('DELETE', `/api/universes/${universe.id}/entries/${created.id}`, { headers: hdrs });
+    const delRes = await req('DELETE', `/universes/${universe.id}/entries/${created.id}`, { headers: hdrs });
     expect(delRes.status).toBe(204);
 
-    const getRes = await req('GET', `/api/universes/${universe.id}/entries/${created.id}`, { headers: hdrs });
+    const getRes = await req('GET', `/universes/${universe.id}/entries/${created.id}`, { headers: hdrs });
     expect(getRes.status).toBe(404);
   });
 
@@ -235,43 +236,43 @@ describe('entry routes (ENT-01..06)', () => {
     const universe = await createUniverse(a.hdrs);
 
     // Create entry as owner
-    const createRes = await req('POST', `/api/universes/${universe.id}/entries`, {
+    const createRes = await req('POST', `/universes/${universe.id}/entries`, {
       headers: a.hdrs,
       body: { title: 'Private', entryType: 'concept' },
     });
     const created = await json(createRes);
 
     // Stranger tries list
-    const listRes = await req('GET', `/api/universes/${universe.id}/entries`, { headers: b.hdrs });
+    const listRes = await req('GET', `/universes/${universe.id}/entries`, { headers: b.hdrs });
     expect(listRes.status).toBe(403);
 
     // Stranger tries get detail
-    const getRes = await req('GET', `/api/universes/${universe.id}/entries/${created.id}`, { headers: b.hdrs });
+    const getRes = await req('GET', `/universes/${universe.id}/entries/${created.id}`, { headers: b.hdrs });
     expect(getRes.status).toBe(403);
 
     // Stranger tries create
-    const postRes = await req('POST', `/api/universes/${universe.id}/entries`, {
+    const postRes = await req('POST', `/universes/${universe.id}/entries`, {
       headers: b.hdrs,
       body: { title: 'Hijack', entryType: 'concept' },
     });
     expect(postRes.status).toBe(403);
 
     // Stranger tries update
-    const patchRes = await req('PATCH', `/api/universes/${universe.id}/entries/${created.id}`, {
+    const patchRes = await req('PATCH', `/universes/${universe.id}/entries/${created.id}`, {
       headers: b.hdrs,
       body: { title: 'Hijacked' },
     });
     expect(patchRes.status).toBe(403);
 
     // Stranger tries delete
-    const deleteRes = await req('DELETE', `/api/universes/${universe.id}/entries/${created.id}`, { headers: b.hdrs });
+    const deleteRes = await req('DELETE', `/universes/${universe.id}/entries/${created.id}`, { headers: b.hdrs });
     expect(deleteRes.status).toBe(403);
   });
 
   // Nonexistent universe returns 404
   it('nonexistent universe returns 404', async () => {
     const { hdrs } = await userWithToken('j@test.com');
-    const res = await req('GET', '/api/universes/00000000-0000-0000-0000-000000000000/entries', { headers: hdrs });
+    const res = await req('GET', '/universes/00000000-0000-0000-0000-000000000000/entries', { headers: hdrs });
     expect(res.status).toBe(404);
   });
 
@@ -279,7 +280,7 @@ describe('entry routes (ENT-01..06)', () => {
 
   async function createEntry(uid: string, hdrs: Record<string, string>, overrides: Record<string, unknown> = {}) {
     const defaults = { title: 'Test Entry', entryType: 'concept' };
-    const res = await req('POST', `/api/universes/${uid}/entries`, {
+    const res = await req('POST', `/universes/${uid}/entries`, {
       headers: hdrs,
       body: { ...defaults, ...overrides },
     });
@@ -287,7 +288,7 @@ describe('entry routes (ENT-01..06)', () => {
   }
 
   async function createLink(uid: string, hdrs: Record<string, string>, body: Record<string, unknown>) {
-    const res = await req('POST', `/api/universes/${uid}/links`, {
+    const res = await req('POST', `/universes/${uid}/links`, {
       headers: hdrs,
       body,
     });
@@ -307,7 +308,7 @@ describe('entry routes (ENT-01..06)', () => {
       label: 'created by',
     });
 
-    const res = await req('GET', `/api/universes/${universe.id}/entries/${entryA.id}`, { headers: hdrs });
+    const res = await req('GET', `/universes/${universe.id}/entries/${entryA.id}`, { headers: hdrs });
     expect(res.status).toBe(200);
     const detail = await json(res);
 
@@ -316,8 +317,7 @@ describe('entry routes (ENT-01..06)', () => {
     expect(detail.outboundLinks[0].targetTitle).toBe('Entry B');
     expect(detail.outboundLinks[0].targetIcon).toBe('B');
     expect(detail.outboundLinks[0].label).toBe('created by');
-    // Phase 28 REL-01: bidirectional replaced by direction ('directed'|'undirected')
-    expect(detail.outboundLinks[0].direction).toBe('directed');
+    expect(detail.outboundLinks[0].bidirectional).toBe(false);
     expect(detail.outboundLinks[0].id).toBeTruthy();
   });
 
@@ -335,7 +335,7 @@ describe('entry routes (ENT-01..06)', () => {
     });
 
     // B should have a backlink from A
-    const res = await req('GET', `/api/universes/${universe.id}/entries/${entryB.id}`, { headers: hdrs });
+    const res = await req('GET', `/universes/${universe.id}/entries/${entryB.id}`, { headers: hdrs });
     expect(res.status).toBe(200);
     const detail = await json(res);
 
@@ -344,13 +344,11 @@ describe('entry routes (ENT-01..06)', () => {
     expect(detail.backlinks[0].sourceTitle).toBe('Entry A');
     expect(detail.backlinks[0].sourceIcon).toBe('A');
     expect(detail.backlinks[0].label).toBe('created by');
-    // Phase 28 REL-01: bidirectional replaced by direction ('directed'|'undirected')
-    expect(detail.backlinks[0].direction).toBe('directed');
+    expect(detail.backlinks[0].bidirectional).toBe(false);
   });
 
-  // LINK-02/04/05: undirected link shows direction=undirected in both directions
-  // Phase 28 REL-01: bidirectional bool replaced by direction enum ('directed'|'undirected')
-  it('undirected link shows direction=undirected in both outbound and backlink', async () => {
+  // LINK-02/04/05: bidirectional link shows in both directions
+  it('bidirectional link shows bidirectional=true in both outbound and backlink', async () => {
     const { hdrs } = await userWithToken('link3@test.com');
     const universe = await createUniverse(hdrs);
     const entryA = await createEntry(universe.id, hdrs, { title: 'Entry A' });
@@ -360,20 +358,20 @@ describe('entry routes (ENT-01..06)', () => {
       sourceEntryId: entryA.id,
       targetEntryId: entryB.id,
       label: 'allied with',
-      direction: 'undirected',
+      bidirectional: true,
     });
 
-    // A's outbound should show direction=undirected
-    const resA = await req('GET', `/api/universes/${universe.id}/entries/${entryA.id}`, { headers: hdrs });
+    // A's outbound should show bidirectional=true
+    const resA = await req('GET', `/universes/${universe.id}/entries/${entryA.id}`, { headers: hdrs });
     const detailA = await json(resA);
     expect(detailA.outboundLinks).toHaveLength(1);
-    expect(detailA.outboundLinks[0].direction).toBe('undirected');
+    expect(detailA.outboundLinks[0].bidirectional).toBe(true);
 
-    // B's backlinks should show direction=undirected
-    const resB = await req('GET', `/api/universes/${universe.id}/entries/${entryB.id}`, { headers: hdrs });
+    // B's backlinks should show bidirectional=true
+    const resB = await req('GET', `/universes/${universe.id}/entries/${entryB.id}`, { headers: hdrs });
     const detailB = await json(resB);
     expect(detailB.backlinks).toHaveLength(1);
-    expect(detailB.backlinks[0].direction).toBe('undirected');
+    expect(detailB.backlinks[0].bidirectional).toBe(true);
   });
 
   // LINK-06: cascade delete removes links
@@ -390,16 +388,16 @@ describe('entry routes (ENT-01..06)', () => {
     });
 
     // Delete entry A
-    const delRes = await req('DELETE', `/api/universes/${universe.id}/entries/${entryA.id}`, { headers: hdrs });
+    const delRes = await req('DELETE', `/universes/${universe.id}/entries/${entryA.id}`, { headers: hdrs });
     expect(delRes.status).toBe(204);
 
     // B should now have no backlinks from A
-    const resB = await req('GET', `/api/universes/${universe.id}/entries/${entryB.id}`, { headers: hdrs });
+    const resB = await req('GET', `/universes/${universe.id}/entries/${entryB.id}`, { headers: hdrs });
     const detailB = await json(resB);
     expect(detailB.backlinks).toHaveLength(0);
 
     // Links list should be empty
-    const linksRes = await req('GET', `/api/universes/${universe.id}/links`, { headers: hdrs });
+    const linksRes = await req('GET', `/universes/${universe.id}/links`, { headers: hdrs });
     const linksList = await json(linksRes);
     expect(linksList).toHaveLength(0);
   });
@@ -407,7 +405,7 @@ describe('entry routes (ENT-01..06)', () => {
   // --- CAT-02: category assignment on entries ---
 
   async function createCategory(uid: string, hdrs: Record<string, string>, body: Record<string, unknown>) {
-    const res = await req('POST', `/api/universes/${uid}/categories`, { headers: hdrs, body });
+    const res = await req('POST', `/universes/${uid}/categories`, { headers: hdrs, body });
     return json(res);
   }
 
@@ -416,7 +414,7 @@ describe('entry routes (ENT-01..06)', () => {
     const universe = await createUniverse(hdrs);
     const cat = await createCategory(universe.id, hdrs, { label: 'Factions' });
 
-    const res = await req('POST', `/api/universes/${universe.id}/entries`, {
+    const res = await req('POST', `/universes/${universe.id}/entries`, {
       headers: hdrs,
       body: { title: 'Guild', entryType: 'faction', categoryId: cat.id },
     });
@@ -431,7 +429,7 @@ describe('entry routes (ENT-01..06)', () => {
     const uniB = await createUniverse(hdrs, 'B');
     const catB = await createCategory(uniB.id, hdrs, { label: 'InB' });
 
-    const res = await req('POST', `/api/universes/${uniA.id}/entries`, {
+    const res = await req('POST', `/universes/${uniA.id}/entries`, {
       headers: hdrs,
       body: { title: 'X', entryType: 'concept', categoryId: catB.id },
     });
@@ -444,13 +442,13 @@ describe('entry routes (ENT-01..06)', () => {
     const cat = await createCategory(universe.id, hdrs, { label: 'Locations' });
     const created = await createEntry(universe.id, hdrs, { title: 'Citadel' });
 
-    const patchRes = await req('PATCH', `/api/universes/${universe.id}/entries/${created.id}`, {
+    const patchRes = await req('PATCH', `/universes/${universe.id}/entries/${created.id}`, {
       headers: hdrs,
       body: { categoryId: cat.id },
     });
     expect(patchRes.status).toBe(200);
 
-    const getRes = await req('GET', `/api/universes/${universe.id}/entries/${created.id}`, { headers: hdrs });
+    const getRes = await req('GET', `/universes/${universe.id}/entries/${created.id}`, { headers: hdrs });
     const entry = await json(getRes);
     expect(entry.categoryId).toBe(cat.id);
   });
@@ -461,11 +459,11 @@ describe('entry routes (ENT-01..06)', () => {
     const cat = await createCategory(universe.id, hdrs, { label: 'Locations' });
     const created = await createEntry(universe.id, hdrs, { title: 'Citadel' });
 
-    await req('PATCH', `/api/universes/${universe.id}/entries/${created.id}`, {
+    await req('PATCH', `/universes/${universe.id}/entries/${created.id}`, {
       headers: hdrs,
       body: { categoryId: cat.id },
     });
-    const patchRes = await req('PATCH', `/api/universes/${universe.id}/entries/${created.id}`, {
+    const patchRes = await req('PATCH', `/universes/${universe.id}/entries/${created.id}`, {
       headers: hdrs,
       body: { categoryId: null },
     });
@@ -481,7 +479,7 @@ describe('entry routes (ENT-01..06)', () => {
     const catB = await createCategory(uniB.id, hdrs, { label: 'InB' });
     const entryA = await createEntry(uniA.id, hdrs, { title: 'In A' });
 
-    const res = await req('PATCH', `/api/universes/${uniA.id}/entries/${entryA.id}`, {
+    const res = await req('PATCH', `/universes/${uniA.id}/entries/${entryA.id}`, {
       headers: hdrs,
       body: { categoryId: catB.id },
     });
@@ -511,21 +509,21 @@ describe('entry routes (ENT-01..06)', () => {
     });
 
     // Delete A -- should cascade both links
-    const delRes = await req('DELETE', `/api/universes/${universe.id}/entries/${entryA.id}`, { headers: hdrs });
+    const delRes = await req('DELETE', `/universes/${universe.id}/entries/${entryA.id}`, { headers: hdrs });
     expect(delRes.status).toBe(204);
 
     // B should have no backlinks from A
-    const resB = await req('GET', `/api/universes/${universe.id}/entries/${entryB.id}`, { headers: hdrs });
+    const resB = await req('GET', `/universes/${universe.id}/entries/${entryB.id}`, { headers: hdrs });
     const detailB = await json(resB);
     expect(detailB.backlinks).toHaveLength(0);
 
     // C should have no outbound to A
-    const resC = await req('GET', `/api/universes/${universe.id}/entries/${entryC.id}`, { headers: hdrs });
+    const resC = await req('GET', `/universes/${universe.id}/entries/${entryC.id}`, { headers: hdrs });
     const detailC = await json(resC);
     expect(detailC.outboundLinks).toHaveLength(0);
 
     // Links list should be empty
-    const linksRes = await req('GET', `/api/universes/${universe.id}/links`, { headers: hdrs });
+    const linksRes = await req('GET', `/universes/${universe.id}/links`, { headers: hdrs });
     const linksList = await json(linksRes);
     expect(linksList).toHaveLength(0);
   });
@@ -533,12 +531,12 @@ describe('entry routes (ENT-01..06)', () => {
   // --- ISS-06: GET /:id includes open issues ---
 
   async function createIssue(uid: string, hdrs: Record<string, string>, body: Record<string, unknown>) {
-    const res = await req('POST', `/api/universes/${uid}/issues`, { headers: hdrs, body });
+    const res = await req('POST', `/universes/${uid}/issues`, { headers: hdrs, body });
     return json(res);
   }
 
   async function patchIssue(uid: string, issueId: string, hdrs: Record<string, string>, body: Record<string, unknown>) {
-    const res = await req('PATCH', `/api/universes/${uid}/issues/${issueId}`, { headers: hdrs, body });
+    const res = await req('PATCH', `/universes/${uid}/issues/${issueId}`, { headers: hdrs, body });
     return json(res);
   }
 
@@ -554,7 +552,7 @@ describe('entry routes (ENT-01..06)', () => {
         entryIds: [entry.id],
       });
 
-      const res = await req('GET', `/api/universes/${universe.id}/entries/${entry.id}`, { headers: hdrs });
+      const res = await req('GET', `/universes/${universe.id}/entries/${entry.id}`, { headers: hdrs });
       expect(res.status).toBe(200);
       const detail = await json(res);
       expect(Array.isArray(detail.issues)).toBe(true);
@@ -578,7 +576,7 @@ describe('entry routes (ENT-01..06)', () => {
       });
       await patchIssue(universe.id, issue.id, hdrs, { resolved: true });
 
-      const res = await req('GET', `/api/universes/${universe.id}/entries/${entry.id}`, { headers: hdrs });
+      const res = await req('GET', `/universes/${universe.id}/entries/${entry.id}`, { headers: hdrs });
       const detail = await json(res);
       expect(detail.issues).toEqual([]);
     });
@@ -588,7 +586,7 @@ describe('entry routes (ENT-01..06)', () => {
       const universe = await createUniverse(hdrs);
       const entry = await createEntry(universe.id, hdrs, { title: 'Clean' });
 
-      const res = await req('GET', `/api/universes/${universe.id}/entries/${entry.id}`, { headers: hdrs });
+      const res = await req('GET', `/universes/${universe.id}/entries/${entry.id}`, { headers: hdrs });
       const detail = await json(res);
       expect(detail.issues).toEqual([]);
     });
@@ -605,120 +603,178 @@ describe('entry routes (ENT-01..06)', () => {
         entryIds: [entryA.id],
       });
 
-      const resA = await req('GET', `/api/universes/${universe.id}/entries/${entryA.id}`, { headers: hdrs });
+      const resA = await req('GET', `/universes/${universe.id}/entries/${entryA.id}`, { headers: hdrs });
       const detailA = await json(resA);
       expect(detailA.issues).toHaveLength(1);
 
-      const resB = await req('GET', `/api/universes/${universe.id}/entries/${entryB.id}`, { headers: hdrs });
+      const resB = await req('GET', `/universes/${universe.id}/entries/${entryB.id}`, { headers: hdrs });
       const detailB = await json(resB);
       expect(detailB.issues).toEqual([]);
     });
   });
 
-  // --- Phase 29 DATA-03: WIP flag + filter ---
+  // ─── D-16: POST /entries — template last_used_at stamping ───────────────────
 
-  // DATA-03-01: PATCH wip=true persists and subsequent GET returns wip=true
-  it('PATCH entry with wip:true persists and GET detail shows wip true', async () => {
-    const { hdrs } = await userWithToken('t29-wip-01@test.com');
-    const universe = await createUniverse(hdrs);
-    const created = await createEntry(universe.id, hdrs, { title: 'Draft Entry', entryType: 'concept' });
+  describe('POST /universes/:universeId/entries — template last_used_at stamping (D-16)', () => {
+    // Shared helpers scoped to this describe block
+    async function insertTemplate(
+      handle: TestDbHandle,
+      userId: string,
+      overrides: Partial<{
+        name: string;
+        entryType: string;
+        lastUsedAt: Date | null;
+      }> = {}
+    ) {
+      const [row] = await handle.db
+        .insert(entryTemplates)
+        .values({
+          userId,
+          name: overrides.name ?? 'Test Template',
+          entryType: overrides.entryType ?? 'entity',
+          summary: '',
+          body: '',
+          meta: [],
+          lastUsedAt: overrides.lastUsedAt ?? null,
+        })
+        .returning();
+      return row;
+    }
 
-    const patchRes = await req('PATCH', `/api/universes/${universe.id}/entries/${created.id}`, {
-      headers: hdrs,
-      body: { wip: true },
+    // Test 1 — stamp happens: templateId in body → last_used_at is set
+    it('stamps last_used_at on the template when entry is created with templateId', async () => {
+      const { user, hdrs } = await userWithToken('d16-stamp@test.com');
+      const universe = await createUniverse(hdrs);
+
+      // Insert template with lastUsedAt null
+      const tmpl = await insertTemplate(handle, user.id);
+      expect(tmpl.lastUsedAt).toBeNull();
+
+      const res = await req('POST', `/universes/${universe.id}/entries`, {
+        headers: hdrs,
+        body: {
+          title: 'Hero Character',
+          entryType: 'entity',
+          templateId: tmpl.id,
+        },
+      });
+      expect(res.status).toBe(201);
+
+      // Re-SELECT the template row and assert last_used_at was stamped
+      const [updated] = await handle.db
+        .select()
+        .from(entryTemplates)
+        .where(eq(entryTemplates.id, tmpl.id));
+      expect(updated.lastUsedAt).not.toBeNull();
+      expect(Date.now() - updated.lastUsedAt!.getTime()).toBeLessThan(5000);
     });
-    expect(patchRes.status).toBe(200);
-    const patched = await json(patchRes);
-    expect(patched.wip).toBe(true);
 
-    const getRes = await req('GET', `/api/universes/${universe.id}/entries/${created.id}`, { headers: hdrs });
-    expect(getRes.status).toBe(200);
-    const detail = await json(getRes);
-    expect(detail.wip).toBe(true);
-  });
+    // Test 2 — no templateId → no-op on existing templates
+    it('does not modify any template last_used_at when entry is created without templateId', async () => {
+      const { user, hdrs } = await userWithToken('d16-noop@test.com');
+      const universe = await createUniverse(hdrs);
 
-  // DATA-03-02: three-state wip filter
-  it('GET entries ?wip=true returns only wip entries, ?wip=false only non-wip, no param returns all', async () => {
-    const { hdrs } = await userWithToken('t29-wip-02@test.com');
-    const universe = await createUniverse(hdrs);
+      // Pre-existing template with lastUsedAt null
+      const tmpl = await insertTemplate(handle, user.id, { name: 'Existing Template' });
 
-    // Create two entries: one WIP, one not
-    const wipEntry = await createEntry(universe.id, hdrs, { title: 'WIP Entry', entryType: 'concept' });
-    const normalEntry = await createEntry(universe.id, hdrs, { title: 'Normal Entry', entryType: 'concept' });
+      const res = await req('POST', `/universes/${universe.id}/entries`, {
+        headers: hdrs,
+        body: {
+          title: 'Blank Entry',
+          entryType: 'entity',
+          // no templateId
+        },
+      });
+      expect(res.status).toBe(201);
 
-    // Set wipEntry.wip = true
-    await req('PATCH', `/api/universes/${universe.id}/entries/${wipEntry.id}`, {
-      headers: hdrs,
-      body: { wip: true },
+      // Template should still have lastUsedAt null
+      const [unchanged] = await handle.db
+        .select()
+        .from(entryTemplates)
+        .where(eq(entryTemplates.id, tmpl.id));
+      expect(unchanged.lastUsedAt).toBeNull();
     });
 
-    // ?wip=true should return only the WIP entry
-    const wipRes = await req('GET', `/api/universes/${universe.id}/entries?wip=true`, { headers: hdrs });
-    expect(wipRes.status).toBe(200);
-    const wipList = await json(wipRes);
-    expect(wipList.every((e: any) => e.wip === true)).toBe(true);
-    expect(wipList.some((e: any) => e.id === wipEntry.id)).toBe(true);
-    expect(wipList.some((e: any) => e.id === normalEntry.id)).toBe(false);
+    // Test 3 — foreign templateId → entry created, but no stamp on other user's template
+    it('creates the entry but does not stamp a template owned by another user (foreign templateId)', async () => {
+      const userA = await userWithToken('d16-owner@test.com');
+      const userB = await userWithToken('d16-thief@test.com');
 
-    // ?wip=false should return only non-wip entries
-    const notWipRes = await req('GET', `/api/universes/${universe.id}/entries?wip=false`, { headers: hdrs });
-    expect(notWipRes.status).toBe(200);
-    const notWipList = await json(notWipRes);
-    expect(notWipList.some((e: any) => e.id === normalEntry.id)).toBe(true);
-    expect(notWipList.some((e: any) => e.id === wipEntry.id)).toBe(false);
+      // User A creates a universe and a template
+      const universeA = await createUniverse(userA.hdrs, 'World A');
+      // User B creates their own universe to post an entry into
+      const universeB = await createUniverse(userB.hdrs, 'World B');
 
-    // No wip param should return both
-    const allRes = await req('GET', `/api/universes/${universe.id}/entries`, { headers: hdrs });
-    const allList = await json(allRes);
-    expect(allList).toHaveLength(2);
-  });
+      const tmplA = await insertTemplate(handle, userA.user.id, { name: 'Template A' });
+      expect(tmplA.lastUsedAt).toBeNull();
 
-  // --- Phase 29 DATA-04: meta-field exact-match filter ---
+      // User B POSTs an entry with user A's templateId
+      const res = await req('POST', `/universes/${universeB.id}/entries`, {
+        headers: userB.hdrs,
+        body: {
+          title: 'B Entry using A template',
+          entryType: 'entity',
+          templateId: tmplA.id,  // foreign templateId
+        },
+      });
+      // Entry must still be created (best-effort — D-16)
+      expect(res.status).toBe(201);
 
-  // DATA-04-01: ?field.Region=North returns only matching entries
-  it('GET entries ?field.Region=North returns only entries whose meta.Region equals North', async () => {
-    const { hdrs } = await userWithToken('t29-mf-01@test.com');
-    const universe = await createUniverse(hdrs);
+      // User A's template must NOT have been stamped (ownership WHERE returned 0 rows)
+      const [row] = await handle.db
+        .select()
+        .from(entryTemplates)
+        .where(eq(entryTemplates.id, tmplA.id));
+      expect(row.lastUsedAt).toBeNull();
+    });
 
-    await createEntry(universe.id, hdrs, { title: 'North Kingdom', entryType: 'location', meta: { Region: 'North' } });
-    await createEntry(universe.id, hdrs, { title: 'South Kingdom', entryType: 'location', meta: { Region: 'South' } });
-    await createEntry(universe.id, hdrs, { title: 'No Region', entryType: 'location', meta: {} });
+    // Test 4 — deleted template between picker and create → no throw, entry still created
+    it('creates the entry and does not throw when templateId references a deleted template', async () => {
+      const { user, hdrs } = await userWithToken('d16-stale@test.com');
+      const universe = await createUniverse(hdrs);
 
-    const res = await req('GET', `/api/universes/${universe.id}/entries?field.Region=North`, { headers: hdrs });
-    expect(res.status).toBe(200);
-    const list = await json(res);
-    expect(list).toHaveLength(1);
-    expect(list[0].title).toBe('North Kingdom');
-  });
+      // Insert then delete the template
+      const tmpl = await insertTemplate(handle, user.id, { name: 'Stale Template' });
+      await handle.db
+        .delete(entryTemplates)
+        .where(eq(entryTemplates.id, tmpl.id));
 
-  // DATA-04-02: AND semantics — multiple field filters
-  it('GET entries with multiple field filters returns only entries matching ALL conditions', async () => {
-    const { hdrs } = await userWithToken('t29-mf-02@test.com');
-    const universe = await createUniverse(hdrs);
+      // POST entry with the now-stale templateId — must return 201 (silent try/catch per D-16)
+      const res = await req('POST', `/universes/${universe.id}/entries`, {
+        headers: hdrs,
+        body: {
+          title: 'Entry with stale template',
+          entryType: 'entity',
+          templateId: tmpl.id,
+        },
+      });
+      expect(res.status).toBe(201);
+      const entry = await json(res);
+      expect(entry.title).toBe('Entry with stale template');
+    });
 
-    await createEntry(universe.id, hdrs, { title: 'Northlands First Age', entryType: 'location', meta: { Region: 'North', Era: 'First' } });
-    await createEntry(universe.id, hdrs, { title: 'Northlands Second Age', entryType: 'location', meta: { Region: 'North', Era: 'Second' } });
-    await createEntry(universe.id, hdrs, { title: 'Southlands First Age', entryType: 'location', meta: { Region: 'South', Era: 'First' } });
+    // Test 5 — regression: existing non-template create flow still returns 201
+    it('existing entry-create flow (no templateId) is unchanged', async () => {
+      const { hdrs } = await userWithToken('d16-regression@test.com');
+      const universe = await createUniverse(hdrs);
 
-    const res = await req('GET', `/api/universes/${universe.id}/entries?field.Region=North&field.Era=First`, { headers: hdrs });
-    expect(res.status).toBe(200);
-    const list = await json(res);
-    expect(list).toHaveLength(1);
-    expect(list[0].title).toBe('Northlands First Age');
-  });
-
-  // DATA-04-03: field filter on absent key excludes entries without that key
-  it('GET entries field filter on absent meta key excludes entry', async () => {
-    const { hdrs } = await userWithToken('t29-mf-03@test.com');
-    const universe = await createUniverse(hdrs);
-
-    await createEntry(universe.id, hdrs, { title: 'With Region', entryType: 'location', meta: { Region: 'East' } });
-    await createEntry(universe.id, hdrs, { title: 'Without Region', entryType: 'location', meta: { Era: 'Third' } });
-
-    const res = await req('GET', `/api/universes/${universe.id}/entries?field.Region=East`, { headers: hdrs });
-    expect(res.status).toBe(200);
-    const list = await json(res);
-    expect(list).toHaveLength(1);
-    expect(list[0].title).toBe('With Region');
+      const res = await req('POST', `/universes/${universe.id}/entries`, {
+        headers: hdrs,
+        body: {
+          title: 'Regression Entry',
+          entryType: 'concept',
+          summary: 'still works',
+          body: 'body text',
+          tags: ['tag1'],
+          meta: { key: 'value' },
+          icon: '🔥',
+        },
+      });
+      expect(res.status).toBe(201);
+      const entry = await json(res);
+      expect(entry.title).toBe('Regression Entry');
+      expect(entry.summary).toBe('still works');
+      expect(entry.tags).toEqual(['tag1']);
+    });
   });
 });

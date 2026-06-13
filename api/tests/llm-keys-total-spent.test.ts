@@ -102,7 +102,6 @@ describe('GET /api/llm-keys totalSpentUsd (Phase 26 Plan 08 Task 3 / D-14)', () 
     userId: string,
     provider: 'anthropic' | 'openai',
     costUsd: string,
-    costUnknown = false,
   ) {
     // audit_runs.universe_id is NOT NULL — create a throwaway universe owned by the user.
     const [uni] = await handle.db
@@ -120,7 +119,6 @@ describe('GET /api/llm-keys totalSpentUsd (Phase 26 Plan 08 Task 3 / D-14)', () 
         status: 'succeeded',
         triggerSource: 'manual',
         costUsd,
-        costUnknown,
       })
       .returning();
     return run;
@@ -204,41 +202,5 @@ describe('GET /api/llm-keys totalSpentUsd (Phase 26 Plan 08 Task 3 / D-14)', () 
     expect(body).toHaveLength(1);
     expect(typeof body[0].totalSpentUsd).toBe('string');
     expect(body[0].totalSpentUsd).toBe('1.2345');
-  });
-
-  // --- 5. Phase 27 D-06 SUM exclusion: cost_unknown rows excluded from totalSpentUsd ----
-
-  it('Phase 27 D-06: totalSpentUsd excludes cost_unknown=true rows; unknownCount=1', async () => {
-    const user = await userWithToken('llm-spent-unknown@test.com');
-    await postKey(user.hdrs, 'anthropic');
-
-    // Priced run: cost_usd=0.0050, cost_unknown=false → INCLUDED in SUM
-    await seedRun(user.user.id, 'anthropic', '0.0050', false);
-    // Unpriced run: cost_usd=0.0000, cost_unknown=true → EXCLUDED from SUM, counted in unknownCount
-    await seedRun(user.user.id, 'anthropic', '0.0000', true);
-
-    const res = await req('GET', '/api/llm-keys', { headers: user.hdrs });
-    expect(res.status).toBe(200);
-    const body = await json(res);
-    expect(body).toHaveLength(1);
-
-    const row = body[0];
-    // totalSpentUsd must equal ONLY the priced run's cost
-    expect(row.totalSpentUsd).toBe('0.0050');
-    // unknownCount must be 1 (the unpriced run)
-    expect(row.unknownCount).toBe(1);
-  });
-
-  it('Phase 27 D-06: unknownCount=0 when no cost_unknown runs exist', async () => {
-    const user = await userWithToken('llm-spent-no-unknown@test.com');
-    await postKey(user.hdrs, 'anthropic');
-    await seedRun(user.user.id, 'anthropic', '0.0100', false);
-
-    const res = await req('GET', '/api/llm-keys', { headers: user.hdrs });
-    expect(res.status).toBe(200);
-    const body = await json(res);
-    expect(body).toHaveLength(1);
-    expect(body[0].unknownCount).toBe(0);
-    expect(body[0].totalSpentUsd).toBe('0.0100');
   });
 });

@@ -1,5 +1,5 @@
 import { OpenAPIHono, createRoute, z } from '@hono/zod-openapi';
-import { and, eq, desc, asc, count, isNotNull } from 'drizzle-orm';
+import { and, eq, desc, asc, count } from 'drizzle-orm';
 import { HTTPException } from 'hono/http-exception';
 import { db } from '../db/client.js';
 import { entries, links } from '../db/schema.js';
@@ -18,15 +18,8 @@ const uidAndIdParams = z.object({ uid: z.string().uuid(), id: z.string().uuid() 
 const createLinkSchema = z.object({
   sourceEntryId: z.string().uuid(),
   targetEntryId: z.string().uuid(),
-  label: z.string().max(100).optional(),
-  linkType: z.string().max(100).nullable().optional(),
-  direction: z.enum(['directed', 'undirected']).optional().default('directed'),
-});
-
-const patchLinkSchema = z.object({
-  label: z.string().max(100).nullable().optional(),
-  linkType: z.string().max(100).nullable().optional(),
-  direction: z.enum(['directed', 'undirected']).optional(),
+  label: z.string().max(100),
+  bidirectional: z.boolean().optional().default(false),
 });
 
 const linkSchema = z.object({
@@ -34,15 +27,9 @@ const linkSchema = z.object({
   universeId: z.string(),
   sourceEntryId: z.string(),
   targetEntryId: z.string(),
-  label: z.string().nullable(),
-  linkType: z.string().nullable(),
-  direction: z.string(),
+  label: z.string(),
+  bidirectional: z.boolean(),
   createdAt: z.string().or(z.date()),
-});
-
-const linkTypeCountSchema = z.object({
-  linkType: z.string(),
-  count: z.number(),
 });
 
 const relationSchema = z.object({
@@ -152,47 +139,6 @@ const deleteLinkRoute = createRoute({
   },
 });
 
-const patchLinkRoute = createRoute({
-  method: 'patch',
-  path: '/{id}',
-  tags: ['Links'],
-  summary: 'Update a link (typed-link partial patch)',
-  security: [{ bearerAuth: [] }],
-  request: {
-    params: uidAndIdParams,
-    body: {
-      content: {
-        'application/json': {
-          schema: patchLinkSchema,
-        },
-      },
-      required: true,
-    },
-  },
-  responses: {
-    200: {
-      content: { 'application/json': { schema: linkSchema } },
-      description: 'Link updated',
-    },
-    400: {
-      content: { 'application/json': { schema: errorSchema } },
-      description: 'Validation error',
-    },
-    401: {
-      content: { 'application/json': { schema: errorSchema } },
-      description: 'Unauthorized',
-    },
-    404: {
-      content: { 'application/json': { schema: errorSchema } },
-      description: 'Link not found',
-    },
-    500: {
-      content: { 'application/json': { schema: errorSchema } },
-      description: 'Internal error',
-    },
-  },
-});
-
 // ─── linkRoutes router ────────────────────────────────────────────────────────
 
 export const linkRoutes = new OpenAPIHono<AppEnv>()
@@ -230,9 +176,8 @@ export const linkRoutes = new OpenAPIHono<AppEnv>()
         universeId: uid,
         sourceEntryId: data.sourceEntryId,
         targetEntryId: data.targetEntryId,
-        label: data.label ?? null,
-        linkType: data.linkType ?? null,
-        direction: data.direction,
+        label: data.label,
+        bidirectional: data.bidirectional,
       })
       .returning();
 
@@ -270,32 +215,6 @@ export const linkRoutes = new OpenAPIHono<AppEnv>()
     }
 
     return c.body(null, 204);
-  })
-
-  // PATCH /:id -- partial update link (typed-link patch)
-  .openapi(patchLinkRoute, async (c) => {
-    const { uid, id: linkId } = c.req.valid('param');
-    const userId = c.var.userId;
-    await requireUniverse(uid, userId);
-    const validated = c.req.valid('json');
-
-    // Strip undefined-valued keys so a missing field never writes NULL onto the
-    // NOT NULL + CHECK `direction` column (T-28-02-02 mitigation).
-    const patch = Object.fromEntries(
-      Object.entries(validated).filter(([, v]) => v !== undefined)
-    );
-
-    const updated = await db()
-      .update(links)
-      .set(patch)
-      .where(and(eq(links.id, linkId), eq(links.universeId, uid)))
-      .returning();
-
-    if (updated.length === 0) {
-      return c.json({ error: 'Link not found' }, 404);
-    }
-
-    return c.json(updated[0] as any, 200);
   });
 
 // ─── relationRoutes route definitions ────────────────────────────────────────
@@ -350,63 +269,6 @@ export const relationRoutes = new OpenAPIHono<AppEnv>()
       .where(eq(links.universeId, uid))
       .groupBy(links.label)
       .orderBy(desc(count()), asc(links.label));
-
-    return c.json(rows as any, 200);
-  });
-
-// ─── linkTypeRoutes route definitions ────────────────────────────────────────
-
-/**
- * Phase 28 REL-01: link-type autocomplete
- * Mounted at /universes/:uid/link-types
- * Returns [{ linkType, count }] for distinct non-null in-use link types,
- * sorted by count DESC, then linkType ASC for deterministic tiebreak.
- */
-const listLinkTypesRoute = createRoute({
-  method: 'get',
-  path: '/',
-  tags: ['Links'],
-  summary: 'List distinct in-use link types with usage counts',
-  description:
-    'Returns all distinct non-null link types used in the universe, with their usage count. Sorted by count DESC, then linkType ASC.',
-  security: [{ bearerAuth: [] }],
-  request: {
-    params: uidParams,
-  },
-  responses: {
-    200: {
-      content: { 'application/json': { schema: z.array(linkTypeCountSchema) } },
-      description: 'Link types with counts',
-    },
-    401: {
-      content: { 'application/json': { schema: errorSchema } },
-      description: 'Unauthorized',
-    },
-    404: {
-      content: { 'application/json': { schema: errorSchema } },
-      description: 'Universe not found',
-    },
-    500: {
-      content: { 'application/json': { schema: errorSchema } },
-      description: 'Internal error',
-    },
-  },
-});
-
-// ─── linkTypeRoutes router ────────────────────────────────────────────────────
-
-export const linkTypeRoutes = new OpenAPIHono<AppEnv>()
-  .openapi(listLinkTypesRoute, async (c) => {
-    const { uid } = c.req.valid('param');
-    const userId = c.var.userId;
-    await requireUniverse(uid, userId);
-
-    const rows = await db()
-      .select({ linkType: links.linkType, count: count() })
-      .from(links)
-      .where(and(eq(links.universeId, uid), isNotNull(links.linkType)))
-      .groupBy(links.linkType)
-      .orderBy(desc(count()), asc(links.linkType));
 
     return c.json(rows as any, 200);
   });

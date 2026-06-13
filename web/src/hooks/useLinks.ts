@@ -6,9 +6,8 @@ export interface Link {
   universeId: string;
   sourceEntryId: string;
   targetEntryId: string;
-  label: string | null;
-  linkType: string | null;
-  direction: string;
+  label: string;
+  bidirectional: boolean;
   createdAt: string;
 }
 
@@ -17,23 +16,11 @@ export interface RelationCount {
   count: number;
 }
 
-export interface LinkTypeCount {
-  linkType: string;
-  count: number;
-}
-
 export type CreateLinkInput = {
   sourceEntryId: string;
   targetEntryId: string;
-  label?: string | null;
-  linkType?: string | null;
-  direction?: 'directed' | 'undirected';
-};
-
-export type PatchLinkInput = {
-  label?: string | null;
-  linkType?: string | null;
-  direction?: 'directed' | 'undirected';
+  label: string;
+  bidirectional?: boolean;
 };
 
 export function useCreateLink(universeId: string) {
@@ -54,9 +41,6 @@ export function useCreateLink(universeId: string) {
       // not refetch after a new link is created (matches useGraphPositions
       // canonical pattern at useGraphPositions.ts:31-33).
       qc.invalidateQueries({ queryKey: ['graph-data', universeId] });
-      // Invalidate link-types so the LinkTypeSelect combobox reflects the
-      // newly used type in its autocomplete suggestions.
-      qc.invalidateQueries({ queryKey: ['link-types', universeId] });
     },
   });
 }
@@ -78,21 +62,6 @@ export function useDeleteLink(universeId: string) {
   });
 }
 
-export function usePatchLink(universeId: string) {
-  const qc = useQueryClient();
-  return useMutation({
-    mutationFn: ({ linkId, ...body }: { linkId: string } & PatchLinkInput) =>
-      api<Link>(`/universes/${universeId}/links/${linkId}`, {
-        method: 'PATCH',
-        body: JSON.stringify(body),
-      }),
-    onSuccess: () => {
-      qc.invalidateQueries({ queryKey: ['entry', universeId] });
-      qc.invalidateQueries({ queryKey: ['graph-data', universeId] });
-    },
-  });
-}
-
 /**
  * Fetches relation labels with their usage counts for a universe.
  * Backend (Plan 05-03) returns the array sorted by count DESC, label ASC.
@@ -102,19 +71,6 @@ export function useRelations(universeId: string) {
   return useQuery({
     queryKey: ['relations', universeId],
     queryFn: () => api<RelationCount[]>(`/universes/${universeId}/relations`),
-    enabled: !!universeId,
-  });
-}
-
-/**
- * Fetches link types with their usage counts for a universe.
- * Returns all previously-used link types sorted by count DESC.
- * Consumed by LinkTypeSelect combobox for autocomplete suggestions.
- */
-export function useLinkTypes(universeId: string) {
-  return useQuery({
-    queryKey: ['link-types', universeId],
-    queryFn: () => api<LinkTypeCount[]>(`/universes/${universeId}/link-types`),
     enabled: !!universeId,
   });
 }

@@ -7,11 +7,17 @@ import { HTTPException } from 'hono/http-exception';
 import { env, type Env } from './config.js';
 import { authRoutes } from './routes/auth.js';
 import { tokenRoutes } from './routes/tokens.js';
+import { templates } from './routes/templates.js';
 import { inviteRoutes } from './routes/invites.js';
+// Phase 29 D-02 — share-CRUD owner-facing router (JWT-only via per-route requireJwtAuth)
+import { shareCrudRoutes } from './routes/shares.js';
+// Phase 29 SHARE-02/03 — visitor share-read router (share-token via per-route requireShareToken)
+import { shareRoutes } from './routes/share.js';
 import { llmKeyRoutes } from './routes/llm-keys.js';
+import { llmModelsRoutes } from './routes/llm-models.js';
 import { universeRoutes } from './routes/universes.js';
 import { entryRoutes } from './routes/entries.js';
-import { linkRoutes, relationRoutes, linkTypeRoutes } from './routes/links.js';
+import { linkRoutes, relationRoutes } from './routes/links.js';
 import { categoryRoutes } from './routes/categories.js';
 import { issueRoutes } from './routes/issues.js';
 import { graphRoutes, graphPositionRoutes } from './routes/graph.js';
@@ -20,7 +26,8 @@ import { importRoutes } from './routes/import.js';
 import { ingestRoutes } from './routes/ingest.js';
 import { timelinePinRoutes, timelineListRoutes } from './routes/timeline.js';
 import { auditRoutes, auditCrossUniverseRoutes } from './routes/audits.js';
-import { statsRoutes } from './routes/stats.js';
+import { diagramsRouter } from './routes/diagrams.js';
+import { dictionaryRoutes } from './routes/dictionary.js';
 import { recoverOrphanAuditRuns } from './services/audit-recovery.js';
 import { wireSigtermDrain } from './services/audit-shutdown.js';
 import { requireAuth } from './middleware/auth.js';
@@ -44,6 +51,7 @@ const cfg = env();
  *   - sk-ant-* and sk-* keys, anchored on {32,} (WR-05) so universe slugs
  *     like "sk-foo-uid" are not false-positive scrubbed
  *   - wbn_pat_* and wbn_inv_* tokens
+ *   - wbn_share_* tokens (Phase 29 — share-link plaintext URLs)
  */
 function scrubLogLine(msg: string): string {
   return msg
@@ -51,7 +59,8 @@ function scrubLogLine(msg: string): string {
     .replace(/sk-ant-[A-Za-z0-9_-]{32,}/g, '[REDACTED]')
     .replace(/sk-[A-Za-z0-9_-]{32,}/g, '[REDACTED]')
     .replace(/wbn_pat_[A-Za-z0-9_-]+/g, '[REDACTED]')
-    .replace(/wbn_inv_[A-Za-z0-9_-]+/g, '[REDACTED]');
+    .replace(/wbn_inv_[A-Za-z0-9_-]+/g, '[REDACTED]')
+    .replace(/wbn_share_[A-Za-z0-9_-]+/g, '[REDACTED]');
 }
 
 export function createApp() {
@@ -78,9 +87,21 @@ export function createApp() {
   app.use('*', forwarded);
   const apiR = createApiRouter();
   apiR.route('/auth/tokens', tokenRoutes);
+  apiR.route('/templates', templates);
   apiR.route('/llm-keys', llmKeyRoutes);
+  // Phase 27 Plan 03 Task 2 — GET /api/llm/models?provider= (model-catalog cache).
+  // Mounted at the bare /api prefix; the createRoute path '/llm/models' resolves
+  // to the full /api/llm/models URL. JWT-only via the route's own requireJwtAuth
+  // middleware — no apiR.use() needed (mirrors llmKeyRoutes' per-route gate).
+  apiR.route('/', llmModelsRoutes);
   apiR.route('/auth/invites', inviteRoutes);
   apiR.route('/auth', authRoutes);
+  // Phase 29 D-02 / D-13 — owner-facing share CRUD (POST mint, GET list, PATCH rename,
+  // DELETE revoke). Mounted BEFORE the `requireAuth` gate below because each route in
+  // shareCrudRoutes carries its own `requireJwtAuth` per-route middleware (D-13: PAT
+  // cannot mint or revoke share tokens). Keeping it outside the global `requireAuth`
+  // ensures the global gate never interferes with per-route auth semantics.
+  apiR.route('/shares', shareCrudRoutes);
   apiR.use('/universes/*', requireAuth);
   // Phase 26 Plan 03 — D-06 cross-universe in-flight rollup.
   // Mounted at root /api prefix (NOT under /universes/:uid) because it
@@ -92,23 +113,31 @@ export function createApp() {
   // 11-03: mount /universes/:uid/ingest BEFORE the bare /universes mount so
   // the more-specific path wins, mirroring the /universes/import precedence.
   apiR.route('/universes/:uid/ingest', ingestRoutes);
-  // Phase 29 DATA-05: universe statistics aggregate endpoint.
-  // statsRoutes uses path '/{id}/stats' internally, so it mounts under /universes.
-  // Mount BEFORE universeRoutes so '/{id}/stats' is more-specific than universeRoutes' '/{id}'.
-  apiR.route('/universes', statsRoutes);
   apiR.route('/universes', universeRoutes);
   apiR.route('/universes/:uid/entries', entryRoutes);
   apiR.route('/universes/:uid/entries', timelinePinRoutes);
   apiR.route('/universes/:uid/links', linkRoutes);
   apiR.route('/universes/:uid/relations', relationRoutes);
-  apiR.route('/universes/:uid/link-types', linkTypeRoutes);
   apiR.route('/universes/:uid/categories', categoryRoutes);
   apiR.route('/universes/:uid/issues', issueRoutes);
   apiR.route('/universes/:uid', auditRoutes);
+  apiR.route('/universes/:uid/diagrams', diagramsRouter);
+  // Phase 32 CONLANG-01/02: dictionary CRUD + FTS + CSV import.
+  // requireAuth already applies via apiR.use('/universes/*', requireAuth) at ln 104 —
+  // PAT parity (T-32-06) and share-boundary coverage (T-32-07) come for free.
+  apiR.route('/universes/:uid/dictionary', dictionaryRoutes);
   apiR.route('/universes/:uid/graph-data', graphRoutes);
   apiR.route('/universes/:uid/graph-positions', graphPositionRoutes);
   apiR.route('/universes/:uid/export', exportRoutes);
   apiR.route('/universes/:uid', timelineListRoutes);
+  // Phase 29 D-02 / T-29-20 / SHARE-03 — visitor read namespace mounted on `app`
+  // (a SIBLING of `apiR`), so requests to `/api/share/*` NEVER traverse the apiR
+  // mount tree at all. The `apiR.use('/universes/*', requireAuth)` gate never sees
+  // share requests; the share-token credential domain stays strictly separate from
+  // the JWT/PAT bearer domain (T-29-04 elevation-of-privilege mitigation). The
+  // singular `/api/share` (read) vs plural `/api/shares` (CRUD) namespace split is
+  // the URL contract per D-02.
+  app.route('/api/share', shareRoutes);
   app.route('/api', apiR);
   // D-08: OpenAPI schema at /api/openapi.json
   // D-07: Scalar docs at /api/docs — Hono-mounted so SPA fallback never intercepts

@@ -1,14 +1,18 @@
-import { useState, useEffect } from 'react';
+import { useState, useEffect, useRef } from 'react';
 import { useParams, useNavigate, Link, useLocation } from 'react-router-dom';
 import { useForm } from 'react-hook-form';
 import { zodResolver } from '@hookform/resolvers/zod';
 import { z } from 'zod';
+import * as DropdownMenu from '@radix-ui/react-dropdown-menu';
 import { useEntry, useCreateEntry, useUpdateEntry } from '../hooks/useEntries';
 import { useUniverse } from '../hooks/useUniverse';
 import { TagInput } from '../components/TagInput';
 import { MetaEditor } from '../components/MetaEditor';
 import { EntryCategoryPicker } from '../components/EntryCategoryPicker';
+import SaveAsTemplateDialog from '../components/SaveAsTemplateDialog';
+import { Toast } from '../components/Toast';
 import { Toggle } from '../components/Toggle';
+import { metaArrayToRecord } from '../lib/entryTemplates';
 import type { Entry } from '../hooks/useEntries';
 import type { EntryTemplate } from '../lib/entryTemplates';
 
@@ -37,13 +41,22 @@ export function EntryEditor() {
   const [meta, setMeta] = useState<Record<string, string>>({});
   const [categoryId, setCategoryId] = useState<string | null>(null);
   const [metaValid, setMetaValid] = useState(true);
-  // Phase 29 DATA-03: WIP toggle state.
-  const [wip, setWip] = useState(false);
+  const [saveAsOpen, setSaveAsOpen] = useState(false);
+  const [toast, setToast] = useState<{ message: string; variant: 'success' | 'error' } | null>(null);
+  // Phase 29 SHARE-04 / UI-SPEC §B / D-10 — Public toggle state. Default
+  // false on new entries; seeded from existingEntry.isPublic on edit.
+  const [isPublic, setIsPublic] = useState(false);
+  // CR-03: gate the create-mode template prefill so it runs at most once per
+  // navigation. Without this, every refetch of `universe` (window focus,
+  // stale-time expiry) re-runs the prefill effect and silently wipes any
+  // content the user has typed into the form.
+  const prefilledRef = useRef(false);
 
   const {
     register,
     handleSubmit,
     reset,
+    getValues,
     formState: { errors },
   } = useForm<EntryFormValues>({
     resolver: zodResolver(entryFormSchema),
@@ -69,29 +82,36 @@ export function EntryEditor() {
       setTags(existingEntry.tags ?? []);
       setMeta((existingEntry.meta as Record<string, string>) ?? {});
       setCategoryId(existingEntry.categoryId ?? null);
-      // Phase 29 DATA-03: restore wip flag from existing entry.
-      setWip((existingEntry as Entry & { wip?: boolean }).wip ?? false);
+      // Phase 29 SHARE-04 — seed the Public toggle from the loaded entry.
+      setIsPublic(existingEntry.isPublic ?? false);
       return;
     }
-    // Create mode: optionally pre-fill from template state passed via
-    // location.state (set by TemplatePicker on /entries/new navigation).
-    const template = (location.state as { template?: EntryTemplate } | null)
-      ?.template;
-    if (template) {
-      reset({
-        title: '',
-        entryType: template.entryType,
-        summary: '',
-        body: template.body,
-        icon: '',
-      });
-      setMeta(template.meta);
-      setTags([]);
-      setCategoryId(null);
+    // Create mode: prefill from location.state.template ONCE per navigation.
+    // CR-03 fix — prefilledRef gates re-runs so a TanStack Query refetch of
+    // `universe` (window focus, stale-time expiry) does NOT silently wipe
+    // the user's typed content. `universe?.entryTypes` stays in the deps so the
+    // effect re-fires once universe loads — the entryType <select>'s options
+    // must be mounted before react-hook-form's reset() can apply the templated
+    // value to the DOM; the ref-guard then makes every subsequent refetch a
+    // no-op so user-typed content is preserved.
+    if (!prefilledRef.current && universe?.entryTypes) {
+      const template = (location.state as { template?: EntryTemplate } | null)
+        ?.template;
+      if (template) {
+        reset({
+          title: '',
+          entryType: template.entryType,
+          summary: '',
+          body: template.body,
+          icon: '',
+        });
+        // D-10: transform array meta blueprint to Record for the editor's state shape
+        setMeta(metaArrayToRecord(template.meta));
+        setTags([]);
+        setCategoryId(null);
+      }
+      prefilledRef.current = true;
     }
-    // No template state: useForm() defaultValues apply (empty form).
-    // Note: depending on universe?.entryTypes too so the native <select>
-    // value is re-applied once options are mounted (race avoidance).
   }, [isEditMode, existingEntry, reset, location.state, universe?.entryTypes]);
 
   if (isEditMode && entryLoading) {
@@ -99,6 +119,12 @@ export function EntryEditor() {
   }
 
   const onSubmit = handleSubmit(async (values) => {
+    // D-16: read templateId from location.state and forward to POST /entries
+    // Treated as opaque — no shape parsing/branching
+    const stateTemplateId = (
+      location.state as { template?: EntryTemplate; templateId?: string } | null
+    )?.templateId ?? null;
+
     const payload = {
       title: values.title,
       entryType: values.entryType,
@@ -108,8 +134,9 @@ export function EntryEditor() {
       tags,
       meta,
       categoryId,
-      // Phase 29 DATA-03: persist wip flag via Plan 01 PATCH/POST support.
-      wip,
+      // Phase 29 SHARE-04 — Plan 03 surface accepts isPublic on POST + PATCH.
+      isPublic,
+      ...(stateTemplateId ? { templateId: stateTemplateId } : {}),
     };
 
     if (isEditMode) {
@@ -144,19 +171,6 @@ export function EntryEditor() {
           {errors.title && (
             <p className="text-sm text-red-500 mt-1">{errors.title.message}</p>
           )}
-        </div>
-
-        {/* WIP toggle — Phase 29 DATA-03; placed below Title, above Icon/Body/Meta */}
-        <div className="flex items-center gap-3">
-          <div className="flex flex-col">
-            <span id="wip-toggle-label" className="text-sm">Mark as WIP</span>
-            <span className="text-xs text-neutral-500">Flag this entry as a work in progress.</span>
-          </div>
-          <Toggle
-            checked={wip}
-            onChange={setWip}
-            labelId="wip-toggle-label"
-          />
         </div>
 
         {/* Icon */}
@@ -249,13 +263,15 @@ export function EntryEditor() {
             value={meta}
             onChange={setMeta}
             onValidityChange={setMetaValid}
-            registeredFields={universe?.fieldRegistry ?? []}
-            universeId={uid}
           />
         </div>
 
-        {/* Form actions */}
-        <div className="flex justify-between items-center mt-8 pt-6 border-t border-neutral-200 dark:border-neutral-800">
+        {/* Form actions.
+            Phase 29 UI-SPEC §B order (left-to-right):
+              [Discard / Cancel] ... [Kebab] [Public toggle + label] [Save]
+            flex-wrap on the parent lets the right cluster wrap below the
+            Discard/Cancel link on narrow viewports (< 480px). */}
+        <div className="flex flex-wrap justify-between items-center gap-y-2 mt-8 pt-6 border-t border-neutral-200 dark:border-neutral-800">
           <Link
             to={
               isEditMode
@@ -266,6 +282,74 @@ export function EntryEditor() {
           >
             {isEditMode ? 'Discard changes' : 'Cancel'}
           </Link>
+
+          {/* Right cluster — UI-SPEC §B: [Kebab] [Public toggle + label] [Save]. */}
+          <div className="flex items-center gap-3">
+
+          {/* Kebab overflow menu — D-14 / UI-SPEC §B */}
+          <DropdownMenu.Root>
+            <DropdownMenu.Trigger asChild>
+              <button
+                type="button"
+                aria-label="Entry actions"
+                className="inline-flex items-center justify-center h-8 w-8 rounded-md text-neutral-500 dark:text-neutral-400 bg-transparent hover:text-neutral-900 dark:hover:text-neutral-100 hover:bg-neutral-100 dark:hover:bg-neutral-800 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-[color:var(--color-accent)] focus-visible:ring-offset-2 focus-visible:ring-offset-white dark:focus-visible:ring-offset-neutral-900 data-[state=open]:bg-neutral-100 dark:data-[state=open]:bg-neutral-800 data-[state=open]:text-neutral-900 dark:data-[state=open]:text-neutral-100"
+              >
+                <svg
+                  viewBox="0 0 16 16"
+                  width="16"
+                  height="16"
+                  fill="currentColor"
+                  aria-hidden="true"
+                  focusable="false"
+                >
+                  <circle cx="8" cy="3" r="1.5" />
+                  <circle cx="8" cy="8" r="1.5" />
+                  <circle cx="8" cy="13" r="1.5" />
+                </svg>
+              </button>
+            </DropdownMenu.Trigger>
+            <DropdownMenu.Portal>
+              <DropdownMenu.Content
+                align="end"
+                sideOffset={4}
+                className="min-w-[160px] rounded-md border border-neutral-200 dark:border-neutral-800 bg-white dark:bg-neutral-900 p-1 shadow-lg z-50 data-[state=open]:animate-popover-in data-[state=closed]:animate-popover-out"
+              >
+                <DropdownMenu.Item
+                  onSelect={() => setSaveAsOpen(true)}
+                  className="px-3 py-2 text-sm rounded-sm cursor-pointer outline-none data-[highlighted]:bg-neutral-100 dark:data-[highlighted]:bg-neutral-800"
+                >
+                  Save as template…
+                </DropdownMenu.Item>
+              </DropdownMenu.Content>
+            </DropdownMenu.Portal>
+          </DropdownMenu.Root>
+
+          {/* Phase 29 UI-SPEC §B — Public toggle group BETWEEN kebab and
+              Save. Toggle + visible "Public" label, flex items-center
+              gap-2. Tooltip text swaps per UI-SPEC §B states. */}
+          <div className="flex items-center gap-2">
+            <Toggle
+              checked={isPublic}
+              onChange={setIsPublic}
+              labelId={`public-label-${entryId ?? 'new'}`}
+              title={
+                isPublic
+                  ? 'This entry is visible in shared views'
+                  : 'Make this entry visible in shared views'
+              }
+            />
+            <span
+              id={`public-label-${entryId ?? 'new'}`}
+              className={`text-sm ${
+                isPublic
+                  ? 'text-neutral-900 dark:text-neutral-100'
+                  : 'text-neutral-500 dark:text-neutral-400'
+              }`}
+            >
+              Public
+            </span>
+          </div>
+
           <button
             type="submit"
             disabled={isPending || !metaValid}
@@ -277,8 +361,36 @@ export function EntryEditor() {
                 ? 'Save changes'
                 : 'Create entry'}
           </button>
+          </div>
         </div>
       </form>
+
+      {/* Save-as-template dialog — D-15 */}
+      <SaveAsTemplateDialog
+        open={saveAsOpen}
+        onOpenChange={setSaveAsOpen}
+        entryType={getValues('entryType')}
+        captureSnapshot={() => ({
+          summary: getValues('summary'),
+          body: getValues('body'),
+          // D-15 write-path: Record<string,string> → Array<{name, default_value}>
+          // Object.entries is correct because meta is Record (NOT tuple array)
+          meta: Object.entries(meta).map(([name, default_value]) => ({ name, default_value })),
+        })}
+        onSuccess={() => setToast({ message: 'Template saved.', variant: 'success' })}
+        onGenericError={() =>
+          setToast({ message: "Couldn't save the template. Try again.", variant: 'error' })
+        }
+      />
+
+      {/* Toast notifications */}
+      {toast && (
+        <Toast
+          message={toast.message}
+          variant={toast.variant}
+          onDismiss={() => setToast(null)}
+        />
+      )}
     </div>
   );
 }

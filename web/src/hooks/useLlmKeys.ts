@@ -42,10 +42,14 @@ export interface LlmKey {
    */
   totalSpentUsd: string;
   /**
-   * Phase 27 D-06: count of audit_runs with cost_unknown=true for this
-   * provider+user. 0 when no unpriced runs exist. Excluded from totalSpentUsd.
+   * Phase 27 D-06: count of audit runs against this key's provider for this
+   * user that were charged against an unpriced model (`audit_runs.cost_unknown
+   * = true`). These rows are excluded from `totalSpentUsd` (the SUM); the
+   * LlmKeys view renders a neutral footnote `(plus N runs with unknown
+   * pricing)` when the count is > 0. Optional for backward-compatibility with
+   * older cached payloads; treat absence as `0`.
    */
-  unknownCount: number;
+  costUnknownCount?: number;
 }
 
 export interface LlmConsentState {
@@ -64,11 +68,20 @@ export interface RevalidateResult {
 const LLM_KEYS_QUERY_KEY = ['llm-keys'] as const;
 const LLM_CONSENT_QUERY_KEY = ['llm-consent'] as const;
 
-/** List the caller's LLM provider keys (masked). */
+/**
+ * List the caller's LLM provider keys (masked).
+ *
+ * `staleTime: 60_000` so a second subscriber that mounts within a minute of
+ * the first one (e.g. PricingTable mounting under LlmKeys, or UniverseSettings
+ * navigating in shortly after) reads the cached value instead of refetching.
+ * The mutations in this file all `invalidateQueries(LLM_KEYS_QUERY_KEY)` after
+ * success, so user-initiated changes still surface immediately.
+ */
 export function useLlmKeys() {
   return useQuery({
     queryKey: LLM_KEYS_QUERY_KEY,
     queryFn: () => api<LlmKey[]>('/llm-keys'),
+    staleTime: 60_000,
   });
 }
 

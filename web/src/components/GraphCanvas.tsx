@@ -13,7 +13,6 @@ import { select } from 'd3-selection';
 import { zoom, type ZoomBehavior } from 'd3-zoom';
 import type { GraphEdge, GraphNode, GraphPosition } from '../hooks/useGraphData';
 import { entryTypeHexColor } from '../lib/entryTypeColor';
-import { getLinkTypeColor, type LinkTypeRegistry } from '../lib/linkTypeColor';
 
 export interface GraphCanvasProps {
   nodes: GraphNode[];
@@ -60,13 +59,6 @@ export interface GraphCanvasProps {
    * Never both fire for a single drag; never zero. Not invoked in view mode.
    */
   onDragSourceChange?: (sourceId: string | null) => void;
-  /**
-   * Phase 28 REL-02: per-universe link-type color/direction registry.
-   * Passed to getLinkTypeColor() for each edge stroke; an empty record
-   * falls back to the preset palette / hash for unknown types.
-   * Defaults to {} (no overrides) so existing callers do not need to pass it.
-   */
-  linkTypeRegistry?: LinkTypeRegistry;
 }
 
 // d3 mutates the node objects in-place, adding x/y/vx/vy and fx/fy. We keep
@@ -79,9 +71,7 @@ interface SimEdge {
   id: string;
   source: SimNode | string;
   target: SimNode | string;
-  label: string | null;
-  linkType: string | null;
-  direction: string;
+  label: string;
 }
 
 const NODE_RADIUS = 14;
@@ -99,7 +89,6 @@ export function GraphCanvas({
   editMode,
   onLinkDragEnd,
   onDragSourceChange,
-  linkTypeRegistry = {},
 }: GraphCanvasProps) {
   const svgRef = useRef<SVGSVGElement>(null);
   // Latest callback refs so the useEffect doesn't need to re-run when the
@@ -156,8 +145,6 @@ export function GraphCanvas({
       source: e.source,
       target: e.target,
       label: e.label,
-      linkType: e.linkType,
-      direction: e.direction,
     }));
     const pinnedIds = new Set(positions.map((p) => p.entryId));
 
@@ -175,10 +162,10 @@ export function GraphCanvas({
           enter
             .append('line')
             .attr('data-edge-id', (d) => d.id)
-            .attr('stroke', (d) => getLinkTypeColor(d.linkType, linkTypeRegistry))
+            .attr('stroke', '#6b7280')
             .attr('stroke-opacity', 0.7)
             .attr('stroke-width', 1.25),
-        (update) => update.attr('stroke', (d) => getLinkTypeColor(d.linkType, linkTypeRegistry)),
+        (update) => update,
         (exit) => exit.remove(),
       );
 
@@ -188,7 +175,7 @@ export function GraphCanvas({
       .select<SVGGElement>('g.edge-labels')
       .selectAll<SVGTextElement, SimEdge>('text.edge-label')
       .data(
-        simEdges.filter((e) => e.label != null && e.label.length > 0),
+        simEdges.filter((e) => e.label && e.label.length > 0),
         (d) => d.id,
       )
       .join(
@@ -200,8 +187,8 @@ export function GraphCanvas({
             .attr('fill', '#9ca3af')
             .attr('text-anchor', 'middle')
             .attr('pointer-events', 'none')
-            .text((d) => d.label ?? ''),
-        (update) => update.text((d) => d.label ?? ''),
+            .text((d) => d.label),
+        (update) => update.text((d) => d.label),
         (exit) => exit.remove(),
       );
 
@@ -397,7 +384,7 @@ export function GraphCanvas({
       nodeSel.on('.drag', null);
     };
     // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [nodes, edges, positions, width, height, editMode, linkTypeRegistry]);
+  }, [nodes, edges, positions, width, height, editMode]);
 
   // Mid-drag Esc cancel — window keydown listener installed only while a
   // drag is in flight. Removes the preview-edge, sets the cancelled flag so

@@ -37,43 +37,10 @@ import type {
   InFlightAuditSummary,
   AuditHistoryRow,
   AuditScope,
+  ListingsResult,
+  ModelListing,
+  ModelListingWithCoverage,
 } from '../types/audit';
-
-// ─── Phase 27 useListModels types ──────────────────────────────────────────
-
-/**
- * Per-model pricing info (subset of the api/ ModelPricing shape).
- * Only present when hasPricing is true.
- */
-export interface ModelPricing {
-  inputUsdPer1M: number;
-  outputUsdPer1M: number;
-  cachedInputUsdPer1M?: number;
-  cachedWriteUsdPer1M?: number;
-  contextWindow: number;
-}
-
-/**
- * Single model entry from the live /llm-keys/models endpoint.
- * hasPricing=false means the model is live but has no rate card in PRICING —
- * selecting it will produce cost_unknown=true audit runs (D-05).
- */
-export interface LiveModel {
-  id: string;
-  hasPricing: boolean;
-  pricing?: ModelPricing;
-}
-
-/**
- * Phase 27: response shape from GET /api/llm-keys/models?provider=…
- * source indicates whether the list came from the live API, a stale cache,
- * or the PRICING fallback (D-02).
- */
-export interface ModelsResponse {
-  models: LiveModel[];
-  source: 'live' | 'cache_stale' | 'pricing_fallback';
-  fetchedAt: string;
-}
 
 // Re-export wire-shape types for consumer convenience — Plan 05 components
 // import everything they need from this module.
@@ -83,6 +50,9 @@ export type {
   InFlightAuditSummary,
   AuditHistoryRow,
   AuditScope,
+  ListingsResult,
+  ModelListing,
+  ModelListingWithCoverage,
 };
 
 /**
@@ -106,8 +76,14 @@ export interface AuditRun {
   cachedTokens: number;
   toolCallCount: number;
   costUsd: string;
-  /** Phase 27 D-06: true when the run used a live-but-unpriced model; cost_usd stays "0.0000". */
-  costUnknown: boolean;
+  /**
+   * Phase 27 D-06: `true` when the run used a model absent from
+   * `PRICING[provider]`. The engine pins `costUsd` to `'0.0000'` in that
+   * branch and the UI renders a `cost unknown` amber chip (see
+   * AuditCompletionBanner). Optional for backward-compatibility with older
+   * cached payloads; treat absence as `false`.
+   */
+  costUnknown?: boolean;
   error: string | null;
   startedAt: string;
   finishedAt: string | null;
@@ -293,31 +269,36 @@ export function useEstimateAudit(
 }
 
 /**
- * Phase 27 D-01/D-05: fetch the live model catalog for a provider via the
- * per-key server-side route (GET /api/llm-keys/models?provider=…).
+ * Phase 27 D-01 — live model catalog for the active provider.
  *
- * - queryKey: ['llm-models', provider] — per-provider cache bucket
- * - staleTime: 1800_000 (30 min) — aligned to the backend 30-min TTL (D-01)
- * - enabled: !!provider — skip when no provider is selected
- * - retry: 1 — single retry before surfacing error; backend falls back to
- *   stale-cache or PRICING anyway (D-02), so a hard failure from the hook
- *   means both tiers are down
+ * Fetches GET /api/llm/models?provider=… which wraps the backend's in-memory
+ * `model-catalog.ts` cache (30-min TTL, stale fallback, PRICING fallback).
+ * Returns the `ListingsResult` envelope with `models[]` plus a `source`
+ * discriminator the UI can use to surface "live list unavailable".
  *
- * D-05: the returned models include hasPricing=false entries — these are
- * live-but-unpriced models that render with a ⚠ no pricing badge and produce
- * cost_unknown=true audit runs (tracked in D-06).
+ * - `staleTime: 1_800_000` (30 min) — aligned to the backend D-01 cache TTL
+ *   so the frontend does not re-issue a fetch the backend would also serve
+ *   from its hot cache. After 30 min the next render triggers a refetch
+ *   which is itself a cache hit on the backend if it ran sooner.
+ * - `enabled: !!provider` — `undefined` provider (no provider selected in
+ *   UniverseSettings) suppresses the fetch.
+ * - `retry: 1` — the backend never throws (D-02 stale + PRICING fallback);
+ *   a single retry covers transient transport hiccups, then surface the
+ *   error so the UI can render an explicit empty state.
  *
- * T-27-05-01: hook sends only `provider`; keyId is resolved server-side.
+ * keyId is NOT in the query parameters: each user has at most one key per
+ * provider (Phase 22 schema constraint), so the backend resolves the active
+ * `keyId` from the authenticated user (see api/src/routes/llm-models.ts).
  */
 export function useListModels(
-  provider?: 'anthropic' | 'openai',
-): UseQueryResult<ModelsResponse> {
+  provider: 'anthropic' | 'openai' | undefined,
+): UseQueryResult<ListingsResult> {
   return useQuery({
     queryKey: ['llm-models', provider],
     queryFn: () =>
-      api<ModelsResponse>(`/llm-keys/models?provider=${provider}`),
+      api<ListingsResult>(`/llm/models?provider=${provider}`),
     enabled: !!provider,
-    staleTime: 1800_000,
+    staleTime: 1_800_000, // 30 min — Phase 27 D-01 aligned to backend cache TTL
     retry: 1,
   });
 }

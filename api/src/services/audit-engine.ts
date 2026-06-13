@@ -55,6 +55,7 @@
  *   - T-24-04-03: gap_key always engine-computed; never LLM-emitted
  */
 
+import { z } from 'zod';
 import { eq, sql, inArray } from 'drizzle-orm';
 import { db } from '../db/client.js';
 import { auditRuns, issues, issueEntries, universes } from '../db/schema.js';
@@ -150,56 +151,38 @@ const getEntryBodyTool = {
 };
 
 // ---------------------------------------------------------------------------
-// Tool definition for emit_findings (Phase 27 D-12: forced on terminal turn)
+// emit_findings tool (Phase 27 D-09/D-10/D-12)
 // ---------------------------------------------------------------------------
 //
-// Hand-written JSON Schema mirroring AuditOutputStrictSchema — no zod-to-json-schema
-// dependency (RESEARCH §"Don't Hand-Roll"; mirrors getEntryBodyTool pattern above).
-// Tool name is literally `emit_findings` (snake_case; matches existing fixture refs).
-// The description instructs the model to call this exactly ONCE with all findings
-// and emit no prose — forced via tool_choice:{type:'tool'} on the terminal turn.
-
+// emit_findings is the canonical structured-output mechanism for the FINAL
+// turn. The model "invokes" the tool to deliver its complete list of audit
+// findings; the SDK delivers a pre-parsed JSON object inside `tool_use.input`.
+// The engine then Zod-parses `tool_use.input` via AuditOutputStrictSchema
+// (the same strict envelope Phase 24 BL-02 added) — invariant preserved, just
+// applied to tool_use.input instead of the prior prose-text JSON parse.
+//
+// Per D-10: prose text in the final turn is a contract violation — the engine
+// fails fast with INVALID_OUTPUT (the prior three-fallback extractor is GONE).
+// Per D-12: a single emit_findings invocation returns `suggestions: [...]`.
+//
+// The tool name is literally `emit_findings` (snake_case) — both
+// llm-provider-contract.test.ts (coverage point #4) and the Phase 23 OpenAI
+// adapter's synthetic toolUse[] entry already assume this name; Phase 27
+// makes the engine's tool definition match.
+//
+// input_schema is derived from the canonical AuditOutputStrictSchema via
+// zod 4's built-in z.toJSONSchema() — single source of truth (D-09).
+// IMPORTANT: tools are sent to the LLM as a structured-output contract; the
+// engine NEVER executes emit_findings server-side (it's not a function call;
+// the model's invocation IS the answer).
 const emitFindingsTool = {
   name: 'emit_findings',
   description:
-    'Deliver your final audit findings. Call this exactly once when your analysis is ' +
-    'complete. Do not respond with prose — every finding must be a structured suggestion ' +
-    'in this call.',
-  input_schema: {
-    type: 'object',
-    properties: {
-      suggestions: {
-        type: 'array',
-        items: {
-          type: 'object',
-          properties: {
-            category: {
-              type: 'string',
-              enum: [
-                'underdeveloped',
-                'missing-link',
-                'contradiction',
-                'timeline-inconsistency',
-                'dangling-thread',
-              ],
-            },
-            title: { type: 'string' },
-            body: { type: 'string' },
-            referenced_entry_ids: {
-              type: 'array',
-              items: { type: 'string' },
-            },
-            confidence: {
-              type: 'string',
-              enum: ['high', 'medium', 'low'],
-            },
-          },
-          required: ['category', 'title', 'body', 'referenced_entry_ids', 'confidence'],
-        },
-      },
-    },
-    required: ['suggestions'],
-  },
+    'Call this tool exactly once when you are ready to deliver your complete list ' +
+    'of audit findings. The `suggestions` array MUST conform to the schema; the ' +
+    'engine validates with AuditOutputStrictSchema (strict mode — extra fields ' +
+    'are rejected). Do not emit findings as prose text — they will be rejected.',
+  input_schema: z.toJSONSchema(AuditOutputStrictSchema),
 };
 
 // ---------------------------------------------------------------------------
@@ -364,6 +347,37 @@ export async function runAudit(runId: string, deps?: AuditEngineDeps): Promise<v
   }
 
   // ---------------------------------------------------------------------------
+  // Phase 27 D-06: cost_unknown determination.
+  //
+  // Consult the provider's PRICING table once before the multi-turn loop. When
+  // `pricing(model)` returns undefined, the engine flags `cost_unknown=true` on
+  // every UPDATE that touches `cost_usd` (the per-turn telemetry UPDATE, the
+  // terminal-success UPDATE, and the partial-INVALID_OUTPUT-success UPDATE).
+  //
+  // Why a single pre-loop lookup (not per-turn): the (provider, model) pair is
+  // fixed for the entire run row. The PRICING table is in-process data — there
+  // is no I/O cost. A single read keeps the per-turn UPDATE shape minimal and
+  // avoids re-reading the same constant N times.
+  //
+  // SUM-math safety (D-06): when cost_unknown=true, the per-turn provider call
+  // already returns costUsd=0 (post-Phase-27 provider behavior); the engine
+  // explicitly writes `cost_usd: '0.0000'` on the terminal UPDATE so the
+  // llm-keys totalSpentUsd SUM excluding cost_unknown=true rows is consistent
+  // with arithmetic-equivalence on the kept rows.
+  //
+  // Diagnostic stderr (T-24-04-09 / Phase 27 threat T-27-03-03): when the flag
+  // flips on, emit ONE safe-metadata-only log so operators know the unpriced
+  // path was exercised. The log is gated by `costUnknownLogged` so a multi-turn
+  // run never spams. No apiKey, no err.message — only { runId, model, provider }.
+  const priced = _getProvider(provider as LlmProvider).pricing(model);
+  const costUnknown: boolean = priced === undefined;
+  let costUnknownLogged = false;
+  if (costUnknown && !costUnknownLogged) {
+    console.error('[audit-engine] cost_unknown set for model:', { runId, model, provider });
+    costUnknownLogged = true;
+  }
+
+  // ---------------------------------------------------------------------------
   // Step 2.5: Dismissed-set query (Phase 25 D-11, AISSUE-05) — MUST run before
   // cheap-finds AND before structural-digest build so the gap_key set is
   // available to both the cheap-finds pre-pass and the LLM-output validation
@@ -468,14 +482,14 @@ Scope: ${run.scope}${run.scopeEntryId ? ` (entry: ${run.scopeEntryId})` : ''}
 Universe ID: ${universeId}
 Requested at: ${new Date().toISOString()}
 
-Identify narrative gaps in this universe. For each gap, output a JSON object with:
+Identify narrative gaps in this universe. For each gap, the structured findings include:
   - category: one of underdeveloped | missing-link | contradiction | timeline-inconsistency | dangling-thread
   - title: short title (1–500 chars)
   - body: rationale and evidence (1–5000 chars)
   - referenced_entry_ids: array of 1–20 entry UUIDs that are relevant
   - confidence: high | medium | low
 
-When done, return your findings as JSON: { "suggestions": [...] }`;
+When you are ready to deliver your complete list of findings, call the \`emit_findings\` tool exactly once with a single argument \`{ "suggestions": [...] }\`. DO NOT emit findings as prose text — only the \`emit_findings\` tool invocation will be accepted.`;
 
   // Message types accepted by provider.runAudit
   type Msg = { role: 'system' | 'user' | 'assistant' | 'tool'; content: string };
@@ -558,15 +572,6 @@ When done, return your findings as JSON: { "suggestions": [...] }`;
       costUsd: number;
     };
 
-    // Phase 27 D-12: force emit_findings on the terminal turn (when one more tool call
-    // would hit the cap, or when cost/token budget is exhausted). Intermediate turns use
-    // tool_choice:auto — the model naturally chooses between getEntryBody and emit_findings.
-    // Anti-Pattern: do NOT force emit_findings on every turn (blocks getEntryBody investigation).
-    const isTerminalTurn = toolCalls + 1 >= maxToolCalls;
-    const forceTool: { type: 'tool'; name: string } | undefined = isTerminalTurn
-      ? { type: 'tool', name: 'emit_findings' }
-      : undefined;
-
     // BL-04 (Phase 24-10): race the provider call against the remaining wall-clock budget.
     // A single hung provider call (e.g., network stall, model server timeout) cannot
     // exceed the wall-clock cap — the timeout sentinel resolves the race first and
@@ -579,8 +584,13 @@ When done, return your findings as JSON: { "suggestions": [...] }`;
         apiKey,
         messages,
         model,
+        // Phase 27 D-10/D-12: both tools flow on every turn.
+        //   - getEntryBody: real local tool — engine executes it server-side
+        //     and feeds tool_result back.
+        //   - emit_findings: structured-output mechanism — model "invokes" it
+        //     to deliver the final answer; engine NEVER executes it locally,
+        //     parses `tool_use.input` via AuditOutputStrictSchema.
         tools: [getEntryBodyTool, emitFindingsTool],
-        ...(forceTool ? { forceTool } : {}),
       });
       const timeoutPromise = new Promise<never>((_, reject) => {
         timeoutHandle = setTimeout(() => reject(PER_TURN_TIMEOUT), remainingMs);
@@ -617,6 +627,13 @@ When done, return your findings as JSON: { "suggestions": [...] }`;
       result.usage.cacheCreationInputTokens +
       result.usage.cacheReadInputTokens;
 
+    // Phase 27 D-06: when costUnknown is true, pin cost_usd at '0.0000' (the
+    // provider already returns 0 in this branch; the explicit overwrite is
+    // belt-and-suspenders against any future drift in the provider's
+    // unpriced-cost contract). When false, the per-turn cost accumulates as
+    // before. costUnknown is set unconditionally on every UPDATE so the
+    // boolean column reflects the run's final flag value even if the loop
+    // bails out before the terminal UPDATE.
     await _db()
       .update(auditRuns)
       .set({
@@ -624,7 +641,10 @@ When done, return your findings as JSON: { "suggestions": [...] }`;
         completionTokens: sql`${auditRuns.completionTokens} + ${turnCompletionTokens}`,
         cachedTokens: sql`${auditRuns.cachedTokens} + ${turnCachedTokens}`,
         toolCallCount: sql`${auditRuns.toolCallCount} + ${turnToolCalls}`,
-        costUsd: sql`${auditRuns.costUsd} + ${result.costUsd}`,
+        costUsd: costUnknown
+          ? sql`'0.0000'::numeric(10,4)`
+          : sql`${auditRuns.costUsd} + ${result.costUsd}`,
+        costUnknown,
       })
       .where(eq(auditRuns.id, runId));
 
@@ -656,12 +676,30 @@ When done, return your findings as JSON: { "suggestions": [...] }`;
     }
 
     // -------------------------------------------------------------------------
-    // Tool-use branch: dispatch getEntryBody calls; detect emit_findings (terminal)
+    // emit_findings branch (Phase 27 D-09/D-10/D-12): the model's invocation
+    // of the emit_findings tool IS the final answer. The SDK has already
+    // delivered a pre-parsed JSON object inside `tool_use.input`. We hand it
+    // down to the final-turn parse-and-persist block below by capturing the
+    // input here; the parse block then Zod-validates `emitFindingsInput`
+    // against AuditOutputStrictSchema (same invariant Phase 24 BL-02 added —
+    // just applied to tool_use.input instead of the prior prose-text path).
+    //
+    // The engine NEVER executes emit_findings server-side — it's a structured-
+    // output trick. If emit_findings appears alongside getEntryBody calls in
+    // the same turn, emit_findings takes precedence (model decided it has
+    // enough info; we honor the final-answer signal).
+    const emitFindingsCall = result.toolUse.find((t) => t.name === 'emit_findings');
+    let emitFindingsInput: unknown = undefined;
+    if (emitFindingsCall !== undefined) {
+      emitFindingsInput = emitFindingsCall.input;
+      // Fall through to the final-turn parse path below.
+    }
+
     // -------------------------------------------------------------------------
-    // Phase 27 D-12: if the model called emit_findings, fall through to the final
-    // parse block (do NOT continue the loop). Only getEntryBody tool calls continue.
-    const hasEmitFindings = result.toolUse.some((t) => t.name === 'emit_findings');
-    if (result.toolUse.length > 0 && !hasEmitFindings) {
+    // Tool-use branch: dispatch each getEntryBody call and feed back as tool_result.
+    // Skipped when emit_findings is present (the model gave its final answer).
+    // -------------------------------------------------------------------------
+    if (emitFindingsCall === undefined && result.toolUse.length > 0) {
       // Append the assistant's tool-use turn
       messages = [
         ...messages,
@@ -670,6 +708,12 @@ When done, return your findings as JSON: { "suggestions": [...] }`;
 
       const toolResults: Msg[] = [];
       for (const toolCall of result.toolUse) {
+        if (toolCall.name === 'emit_findings') {
+          // Defense-in-depth: should never reach here (the emit_findings
+          // branch above catches it). If a future change moves the branch,
+          // skip emit_findings here too — it is NEVER server-executed.
+          continue;
+        }
         if (toolCall.name === 'getEntryBody') {
           const entryId = toolCall.input.entryId as string | undefined;
           if (entryId) {
@@ -721,12 +765,17 @@ When done, return your findings as JSON: { "suggestions": [...] }`;
 
     // -------------------------------------------------------------------------
     // Final structured-output branch: parse + validate + persist
+    //
+    // Phase 27 D-09/D-10: the engine's final-turn answer comes from
+    // emit_findings tool_use.input (a pre-parsed JSON object), NOT from prose
+    // text. The prior three-fallback prose-JSON extractor
+    // has been DELETED — prose text in the final turn is a contract violation
+    // that fails fast with INVALID_OUTPUT (no recovery fallback). The Zod
+    // strict-parse via AuditOutputStrictSchema is the boundary check (Phase 24
+    // BL-02 invariant) — preserved here, just applied to tool_use.input.
     // -------------------------------------------------------------------------
 
-    // Phase 27 D-10: parse findings from emit_findings tool_use.input directly.
-    // No string extraction — `input` is already-parsed JSON from the SDK.
-    // If no emit_findings call is present (e.g., prose-only forced turn), throw
-    // so the existing INVALID_OUTPUT catch fires loudly. D-10: no new error tag.
+    // Try to parse the final answer
     let parsed: { suggestions: Array<{
       category: string;
       title: string;
@@ -736,40 +785,39 @@ When done, return your findings as JSON: { "suggestions": [...] }`;
     }> } | null = null;
 
     try {
-      // BL-02 / T-24-04-03: strict-mode parse is the ONLY parse — rejects LLM-smuggled
-      // extra fields (e.g., gap_key) at both the envelope and suggestion levels.
-      // A Zod throw here is caught immediately below and mapped to INVALID_OUTPUT.
-      //
-      // Phase 27 D-10 / D-12: find the emit_findings tool call in toolUse; if absent
-      // (model returned prose only on the forced turn), throw → INVALID_OUTPUT.
-      // input is already-parsed JSON — no string extraction needed (D-10).
-      const findingsCall = result.toolUse.find((t) => t.name === 'emit_findings');
-      if (!findingsCall) {
-        throw new Error('no emit_findings tool call on final turn');
+      if (emitFindingsCall === undefined) {
+        // No emit_findings tool_use in the final turn — contract violation.
+        // Throw a synthetic error that the catch block surfaces as
+        // INVALID_OUTPUT (per D-10 fail-fast posture). The error message is
+        // structured so the diagnostic stderr below can include the safe
+        // metadata (block types seen, not the raw text).
+        throw new Error('emit_findings tool_use missing in final turn');
       }
-      parsed = AuditOutputStrictSchema.parse(findingsCall.input);
+      // BL-02 / T-24-04-03: strict-mode parse is the ONLY parse — rejects
+      // LLM-smuggled extra fields (e.g., gap_key) at both the envelope and
+      // suggestion levels. Now applied to tool_use.input (Phase 27 D-09);
+      // the same invariant as before, just on a different source.
+      parsed = AuditOutputStrictSchema.parse(emitFindingsInput);
     } catch (parseErr) {
-      // DIAGNOSTIC SURFACE — KEEP. Matches the anthropic provider pattern.
-      // Without this, INVALID_OUTPUT is a black hole — operators can't tell
-      // whether the model returned prose, wrapped JSON in fences, smuggled
-      // extra fields, or returned empty text. T-24-04-09 forbids persisting
-      // raw text to the DB; stderr is the appropriate diagnostic channel.
-      // The Claude 4.x prose-+-fences regression on 2026-05-26 was undetectable
-      // without this log — see project documentation §Defect 4.
-      const textPreview =
-        result.text === undefined || result.text === null
-          ? '(no text in final turn)'
-          : result.text.length > 800
-            ? `${result.text.slice(0, 800)}…(truncated, total ${result.text.length} chars)`
-            : result.text;
+      // DIAGNOSTIC SURFACE — KEEP (post-2026-05-26 hotfix; preserved per
+      // Phase 27 plan must_have "diagnostic stderr STAYS"). Updated message
+      // distinguishes the new failure mode: "emit_findings tool_use missing"
+      // (no tool invocation at all) vs Zod parse failure (input present but
+      // shape-invalid). T-24-04-09 forbids persisting raw text to the DB;
+      // stderr is the appropriate diagnostic channel. Safe-metadata only:
+      // { runId, model, provider, blockTypes } — NEVER the raw text or the
+      // tool_use input payload (which could contain smuggled content per
+      // Phase 24 BL-02 / T-24-04-04).
+      const blockTypes: string[] = result.toolUse.map((t) => `tool_use:${t.name}`);
+      if ((result.text ?? '').length > 0) blockTypes.push('text');
       const errMsg =
         parseErr instanceof Error
           ? `${parseErr.constructor.name}: ${parseErr.message}`
           : String(parseErr);
       console.error(
-        `[audit-engine] INVALID_OUTPUT run=${runId} parseErr=${errMsg} resultText=${JSON.stringify(textPreview)}`,
+        `[audit-engine] INVALID_OUTPUT run=${runId} parseErr=${errMsg} blockTypes=${JSON.stringify(blockTypes)} model=${model} provider=${provider}`,
       );
-      // Zod parse failure or JSON parse failure
+      // Zod parse failure or missing emit_findings tool_use
       if (!anyValidSuggestions) {
         await markFailed(runId, ENGINE_ERROR.INVALID_OUTPUT);
       } else {
@@ -907,13 +955,9 @@ When done, return your findings as JSON: { "suggestions": [...] }`;
     `);
 
     // Terminal success
-    // Phase 27 D-06: compute cost_unknown flag — true when the model used for this
-    // run is live-but-not-in-PRICING. pricing(model) returns undefined for unpriced
-    // models; cost_usd stays 0.0000 per turn (keeps SUM math safe, Pitfall #4/#5).
-    const costUnknown = _getProvider(provider as LlmProvider).pricing(model) === undefined;
     await _db()
       .update(auditRuns)
-      .set({ status: 'succeeded', finishedAt: new Date(), costUnknown })
+      .set({ status: 'succeeded', finishedAt: new Date() })
       .where(eq(auditRuns.id, runId));
 
     return;

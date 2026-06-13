@@ -266,14 +266,15 @@ const RUN_ID = 'aaaaaaaa-aaaa-4aaa-8aaa-aaaaaaaaaaaa';
 const UNIVERSE_ID = 'bbbbbbbb-bbbb-4bbb-8bbb-bbbbbbbbbbbb';
 const VALID_ENTRY_ID = 'cccccccc-cccc-4ccc-8ccc-cccccccccccc';
 
-// Phase 27 D-12: VALID_SUGGESTION_OUTPUT uses emit_findings tool_use (not text-JSON).
-// The engine now reads findings from toolUse[{name:'emit_findings'}].input directly;
-// text is empty (Pitfall #1: forced tool-call suppresses preamble text).
+// Phase 27 D-09/D-10/D-12: the final-turn answer is delivered via the
+// emit_findings tool_use block (NOT prose text). The engine's parse path
+// looks for toolUse.find(t => t.name === 'emit_findings') and Zod-parses
+// `input` via AuditOutputStrictSchema.
 const VALID_SUGGESTION_OUTPUT = {
   text: '',
   toolUse: [
     {
-      id: 'tool-emit',
+      id: 'tu_emit_findings',
       name: 'emit_findings',
       input: {
         suggestions: [
@@ -629,12 +630,11 @@ describe('audit-engine runAudit (Phase 24-04)', () => {
   // Test 5: Invalid output — legacy category 'influence-gap'
   // =========================================================================
   it("invalid output: category='influence-gap' fails Zod parse → status=failed, error=invalid_output", async () => {
-    // Phase 27 D-12: invalid output via emit_findings tool_use (extractor deleted)
     mockRunAudit.mockResolvedValue({
       text: '',
       toolUse: [
         {
-          id: 'tool-emit-invalid',
+          id: 'tu_invalid_cat',
           name: 'emit_findings',
           input: {
             suggestions: [
@@ -688,12 +688,14 @@ describe('audit-engine runAudit (Phase 24-04)', () => {
       // structurally undetectable. With AuditOutputStrictSchema (BL-02), the
       // strict envelope + strict suggestion rejects the whole payload,
       // triggering the engine's INVALID_OUTPUT fall-through.
-      // Phase 27 D-12: BL-02 test via emit_findings tool_use (extractor deleted)
+      // Phase 27 D-09: smuggled gap_key now arrives inside emit_findings
+      // tool_use.input — the strict Zod parse still rejects it (BL-02
+      // invariant preserved, just applied to tool_use.input).
       mockRunAudit.mockResolvedValue({
         text: '',
         toolUse: [
           {
-            id: 'tool-emit-smuggled',
+            id: 'tu_smuggled_gap',
             name: 'emit_findings',
             input: {
               suggestions: [
@@ -759,12 +761,11 @@ describe('audit-engine runAudit (Phase 24-04)', () => {
         droppedIds: [HALLUCINATED_UUID],
       } as any);
 
-      // Phase 27 D-12: hallucinated entry via emit_findings tool_use (extractor deleted)
       mockRunAudit.mockResolvedValue({
         text: '',
         toolUse: [
           {
-            id: 'tool-emit-hall',
+            id: 'tu_hallucinated',
             name: 'emit_findings',
             input: {
               suggestions: [
@@ -1282,12 +1283,11 @@ describe('Phase 25 dismissed-set filter (AISSUE-04, AISSUE-05)', () => {
         .mockReturnValueOnce(DISMISSED_GAP_KEY)
         .mockReturnValueOnce(FRESH_KEY);
 
-      // Phase 27 D-12: emit_findings tool_use format (extractor deleted)
       mockRunAudit.mockResolvedValue({
         text: '',
         toolUse: [
           {
-            id: 'tool-emit-dismiss',
+            id: 'tu_dismissed_test',
             name: 'emit_findings',
             input: {
               suggestions: [

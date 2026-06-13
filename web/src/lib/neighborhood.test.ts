@@ -2,8 +2,8 @@ import { describe, it, expect } from 'vitest';
 import { neighborhood } from './neighborhood';
 import type { GraphEdge } from '../hooks/useGraphData';
 
-function edge(id: string, source: string, target: string, direction: string = 'directed'): GraphEdge {
-  return { id, source, target, label: null, linkType: null, direction };
+function edge(id: string, source: string, target: string, bidirectional = false): GraphEdge {
+  return { id, source, target, label: '', bidirectional };
 }
 
 describe('neighborhood', () => {
@@ -49,16 +49,16 @@ describe('neighborhood', () => {
     expect(Array.from(result).sort()).toEqual(['A', 'B', 'C']);
   });
 
-  it('treats directed and undirected edges identically for neighborhood traversal', () => {
-    // Directed A -> B and undirected C <-> B; starting at B should see both A and C at hop 1
+  it('treats directional and bidirectional edges identically for neighborhood traversal', () => {
+    // Directional A -> B and bidirectional C <-> B; starting at B should see both A and C at hop 1
     const edgesDirectional: GraphEdge[] = [
-      edge('e1', 'A', 'B', 'directed'),
-      edge('e2', 'C', 'B', 'undirected'),
+      edge('e1', 'A', 'B', false),
+      edge('e2', 'C', 'B', true),
     ];
     const result = neighborhood(edgesDirectional, 'B', 1);
     expect(Array.from(result).sort()).toEqual(['A', 'B', 'C']);
 
-    // Also: A can still reach B even though edge is A -> B (directed)
+    // Also: A can still reach B even though edge is A -> B (directional)
     const fromA = neighborhood(edgesDirectional, 'A', 1);
     expect(Array.from(fromA).sort()).toEqual(['A', 'B']);
   });

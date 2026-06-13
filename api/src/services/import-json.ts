@@ -22,9 +22,6 @@ export const importSchema = z.object({
       .nullable()
       .optional()
       .default(null),
-    // Phase 28 D-10/D-11: optional with default for backward-compat (old exports lack these).
-    linkTypes: z.record(z.string(), z.any()).optional().default({}),
-    entryTemplates: z.array(z.any()).optional().default([]),
   }),
   categories: z
     .array(
@@ -56,19 +53,9 @@ export const importSchema = z.object({
     id: z.string().uuid(),
     sourceEntryId: z.string().uuid(),
     targetEntryId: z.string().uuid(),
-    // Phase 28 backward-compat: label is now nullable; old exports have required string
-    label: z.string().nullable().optional().default(null),
-    // Phase 28 backward-compat: bidirectional kept for old exports; derive direction from it
-    bidirectional: z.boolean().optional(),
-    // Phase 28 new fields: snake_case JSON key matches export/json.ts output
-    link_type: z.string().nullable().optional().default(null),
-    direction: z.enum(['directed', 'undirected']).optional(),
-  })).transform((links) => links.map((l) => ({
-    ...l,
-    // D-05: derive direction from bidirectional if direction not present
-    direction: l.direction ?? (l.bidirectional ? 'undirected' : 'directed'),
-    link_type: l.link_type ?? null,
-  }))),
+    label: z.string(),
+    bidirectional: z.boolean().optional().default(false),
+  })),
   issues: z
     .array(
       z.object({
@@ -126,10 +113,6 @@ export async function importUniverseJson(userId: string, rawData: unknown) {
         // Phase 20 D-01: round-trip the per-universe timeline window;
         // schema default(null) covers pre-Phase-20 exports.
         timelineWindow: data.universe.timelineWindow,
-        // Phase 28 D-10/D-11: round-trip link-type registry + entry templates;
-        // defaults ({} and []) cover pre-Phase-28 exports.
-        linkTypes: data.universe.linkTypes as any,
-        entryTemplates: data.universe.entryTemplates as any,
       })
       .returning();
 
@@ -187,10 +170,7 @@ export async function importUniverseJson(userId: string, rawData: unknown) {
         sourceEntryId: sourceId,
         targetEntryId: targetId,
         label: link.label,
-        // Phase 28: link_type from snake_case JSON → camelCase Drizzle column
-        linkType: link.link_type,
-        // Phase 28: direction derived by .transform() from bidirectional if absent
-        direction: link.direction,
+        bidirectional: link.bidirectional,
       });
     }
 

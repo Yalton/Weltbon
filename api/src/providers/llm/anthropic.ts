@@ -516,27 +516,27 @@ export class AnthropicProvider implements LLMProvider {
    * extraction. Refusals are HTTP-200 success responses, not thrown SDK
    * exceptions — this is the ONLY place a `stop_reason` can produce an
    * exception in this method.
+   *
+   * Phase 27 D-09 — tools array flows through unchanged:
+   * The engine passes `[getEntryBodyTool, emitFindingsTool]` on every turn
+   * (see audit-engine.ts). Anthropic's SDK accepts the engine-shape `{name,
+   * description, input_schema}` tool definition directly — no wire translation
+   * needed. emit_findings is a structured-output mechanism (the model's
+   * invocation IS the final answer); the engine consumes the tool_use block
+   * via the extractor below (preserves `name + input`) and Zod-parses
+   * `tool_use.input` via AuditOutputStrictSchema. The Anthropic provider
+   * NEVER executes emit_findings locally — it's a wire-only construct.
    */
   async runAudit(opts: RunAuditOpts): Promise<RunAuditResult> {
     const model = opts.model ?? defaultModel;
     const pricing = (PRICING.anthropic as Record<string, AnthropicModelPricing>)[model];
-    // Phase 27 D-05/D-06 guard split (T-23-03-05 revised):
-    //
-    // BEFORE: this guard threw ModelNotAvailable for ANY model absent from PRICING.
-    // AFTER: only throw for genuine provider 404/422 (model does not exist on the live
-    //        API). A live-but-unpriced model is selectable per D-05; its cost contribution
-    //        is 0 per turn (costUsd = 0.0000, keeps SUM math safe per Pitfall #4/#5) and
-    //        the engine writes cost_unknown=true on the run row (D-06).
-    //
-    // The genuine-404/422 path is unchanged — it already fires via mapAnthropicError
-    // when the SDK receives a 404/422 from the provider (line ~602 catch block below).
-    // This guard only prevents NaN: unpriced-but-live models should proceed, not throw.
-    //
-    // If `pricing` is undefined here it means the model is not in PRICING but the user
-    // selected it via the live catalog (Phase 27 makes this legal). We allow the run
-    // and set costUsd=0 for every turn; the engine detects pricing===undefined and sets
-    // cost_unknown=true on the audit_runs row at terminal success (audit-engine.ts).
-    const isUnpriced = !pricing;
+    // Phase 27 D-05/D-06: unpriced models are now first-class. The engine writes
+    // cost_unknown=true + cost_usd=0.0000 when the model is absent from PRICING
+    // (it consults provider.pricing(model) once on entry and propagates the
+    // flag on every UPDATE site). The provider must no longer throw — that
+    // would prevent the run from ever reaching the engine's cost_unknown path.
+    // costUsd is reported as 0 when pricing is unavailable; this matches the
+    // engine's D-06 invariant ("SUM math safe; flag carries the truth").
 
     // Wire-adapter discipline (D-01): extract system BEFORE calling estimate so
     // both the token count and the messages.create call receive the correct shapes.
@@ -606,10 +606,6 @@ export class AnthropicProvider implements LLMProvider {
         messages: anthropicMessages, // shape adapter ran once above; see toAnthropicMessages.
         ...(systemParam ? { system: systemParam } : {}),
         ...(opts.tools ? { tools: opts.tools as Tool[] } : {}),
-        // Phase 27 D-12: force named tool on terminal turn; undefined ⇒ auto.
-        // Pitfall #2: tool_choice change invalidates message-block cache (system stays cached) —
-        // one final turn only, acceptable. Do NOT add extended thinking (incompatible → 400).
-        ...(opts.forceTool ? { tool_choice: { type: 'tool' as const, name: opts.forceTool.name } } : {}),
       };
       response = await client.messages.create(createParams);
     } catch (err) {
@@ -665,10 +661,11 @@ export class AnthropicProvider implements LLMProvider {
       .map((b) => b.text)
       .join('');
 
-    // Phase 27 D-06: for unpriced-but-live models, costUsd is 0.0000 per turn
-    // (isUnpriced = true when pricing is undefined). computeAnthropicCost would
-    // produce NaN without a pricing row — avoid that by gating on isUnpriced.
-    const costUsd = isUnpriced ? 0 : computeAnthropicCost(response.usage, pricing!);
+    // Phase 27 D-06: when pricing is undefined (unpriced new release), report
+    // costUsd=0 and let the engine flag cost_unknown=true on the audit_runs
+    // row. The numeric math returns 0 by construction; the engine's parallel
+    // pricing() lookup is the source of truth for the boolean flag.
+    const costUsd = pricing !== undefined ? computeAnthropicCost(response.usage, pricing) : 0;
 
     return {
       text,
@@ -679,29 +676,10 @@ export class AnthropicProvider implements LLMProvider {
   }
 
   /**
-   * Phase 27: live model IDs from the Anthropic API.
-   * Async, network I/O, constructs a fresh client per call (Pitfall #6).
-   * Returns a flat array of raw model IDs; no PRICING merge, no filtering.
-   * Throws LLMProviderError on failure (caller falls back per D-02).
-   */
-  async liveListModels(apiKey: string): Promise<string[]> {
-    const client = new Anthropic({ apiKey });
-    const ids: string[] = [];
-    try {
-      for await (const m of client.models.list({ limit: 100 })) {
-        ids.push(m.id);
-      }
-    } catch (err) {
-      throw mapAnthropicError(err);
-    }
-    return ids;
-  }
-
-  /**
    * Synchronous offline lookup of every Anthropic model in `PRICING.anthropic`.
-   * Phase 27 D-04 revised: this is a fallback primitive — the live catalog
-   * is `liveListModels()`. Adding/removing a model in `pricing.ts` is the
-   * ONLY way to change what this fallback returns.
+   * Per D-04: this is the source of truth for the UI dropdown — never any
+   * network I/O. Adding/removing a model in `pricing.ts` is the ONLY way to
+   * change what `listModels()` returns.
    */
   listModels(): ModelListing[] {
     return Object.keys(PRICING.anthropic).map((id) => {

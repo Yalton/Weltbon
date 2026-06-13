@@ -90,7 +90,7 @@ describe('EXP-02: markdown ZIP exporter — full integration', () => {
     const token = await issueAccessToken(user.id);
     const hdrs = authHeader(token);
 
-    const createUniverseRes = await app.request('http://localhost/api/universes', {
+    const createUniverseRes = await app.request('http://localhost/universes', {
       method: 'POST',
       headers: { ...hdrs, 'Content-Type': 'application/json' },
       body: JSON.stringify({ name: 'Markdown Test World' }),
@@ -196,7 +196,7 @@ describe('EXP-02: markdown ZIP exporter — full integration', () => {
         sourceEntryId: entryA.id,
         targetEntryId: entryB.id,
         label: 'knows',
-        direction: 'directed' as const,
+        bidirectional: false,
       });
     await db()
       .insert(linksTable)
@@ -205,7 +205,7 @@ describe('EXP-02: markdown ZIP exporter — full integration', () => {
         sourceEntryId: entryA.id,
         targetEntryId: entryC.id,
         label: 'located in',
-        direction: 'undirected' as const,
+        bidirectional: true,
       });
     await db()
       .insert(linksTable)
@@ -214,7 +214,7 @@ describe('EXP-02: markdown ZIP exporter — full integration', () => {
         sourceEntryId: entryD.id,
         targetEntryId: entryE.id,
         label: 'owns',
-        direction: 'directed' as const,
+        bidirectional: false,
       });
     await db()
       .insert(linksTable)
@@ -223,7 +223,7 @@ describe('EXP-02: markdown ZIP exporter — full integration', () => {
         sourceEntryId: entryA.id,
         targetEntryId: entryD.id,
         label: 'knows',
-        direction: 'directed' as const,
+        bidirectional: false,
       });
 
     // ---------- seed 2 issues: 1 open on A (CRITICAL), 1 resolved on B ----------
@@ -257,7 +257,7 @@ describe('EXP-02: markdown ZIP exporter — full integration', () => {
 
     // ---------- export markdown ----------
     const res = await app.request(
-      `http://localhost/api/universes/${universe.id}/export?format=markdown`,
+      `http://localhost/universes/${universe.id}/export?format=markdown`,
       { headers: hdrs },
     );
     expect(res.status).toBe(200);
@@ -364,7 +364,7 @@ describe('EXP-02: markdown ZIP exporter — full integration', () => {
 
     // Re-export idempotency — second export shouldn't crash or mutate state.
     const res2 = await app.request(
-      `http://localhost/api/universes/${universe.id}/export?format=markdown`,
+      `http://localhost/universes/${universe.id}/export?format=markdown`,
       { headers: hdrs },
     );
     expect(res2.status).toBe(200);

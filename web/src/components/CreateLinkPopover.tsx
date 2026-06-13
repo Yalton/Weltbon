@@ -1,7 +1,6 @@
 import { useState } from 'react';
 import * as Popover from '@radix-ui/react-popover';
 import { RelationCombobox } from './RelationCombobox';
-import { LinkTypeSelect } from './LinkTypeSelect';
 import { useCreateLink } from '../hooks/useLinks';
 import type { GraphNode } from '../hooks/useGraphData';
 
@@ -31,21 +30,21 @@ export interface CreateLinkPopoverProps {
 /**
  * Radix Popover anchored at arbitrary drop coordinates via an invisible 1×1
  * Popover.Anchor div (UI-SPEC §E + 19-RESEARCH §"Pattern 2"). Hosts a
- * `LinkTypeSelect` combobox + direction toggle above the demoted optional
- * "Display label" `RelationCombobox`. Submission calls
+ * `RelationCombobox` reused as-is for the label input. Submission calls
  * `useCreateLink.mutateAsync` and closes on success; failure renders an
  * inline error AND fires the `onError` callback (parent surfaces Toast).
  *
- * Locked copywriting (UI-SPEC §Surface 1 + §"Copywriting Contract"):
- *  - Title: "Create link" (unchanged)
- *  - Type field label: "Type"
- *  - Type combobox placeholder: "Search or enter a type..."
- *  - Direction toggle label: "Direction"
- *  - Direction options: "A → B" (directed) / "A ↔ B" (undirected)
- *  - Label field label: "Display label (optional)"
- *  - Label field placeholder: "e.g. sworn shield since the Sundering"
- *  - Primary CTA: "Create link" / "Creating..."
- *  - Inline error: "Couldn't create link. Try again."
+ * Locked copywriting (UI-SPEC §"Copywriting Contract"):
+ *  - Title: "Create link"
+ *  - From/To row captions: "From" / "To"
+ *  - Input placeholder: "Relation label (optional)"
+ *  - Buttons: "Cancel" / "Create link"
+ *  - Pending button label: "Creating..." (ASCII three dots — grep parity with UniverseList.tsx)
+ *  - Inline error: "Couldn't create link. Try again." (ASCII apostrophe)
+ *
+ * Wiring to GraphView happens in Plan 19-04. This component does NOT depend
+ * on any global toast provider; error surfacing is via the `onError` prop
+ * that the parent bridges to its own per-view Toast state.
  */
 export function CreateLinkPopover({
   universeId,
@@ -59,8 +58,6 @@ export function CreateLinkPopover({
   onError,
 }: CreateLinkPopoverProps) {
   const [label, setLabel] = useState<string>(existingLabelHint ?? '');
-  const [linkType, setLinkType] = useState<string>('');
-  const [direction, setDirection] = useState<'directed' | 'undirected'>('directed');
   const [error, setError] = useState<unknown>(null);
   const createLink = useCreateLink(universeId);
   const pending = createLink.isPending;
@@ -71,9 +68,7 @@ export function CreateLinkPopover({
       await createLink.mutateAsync({
         sourceEntryId: from.id,
         targetEntryId: to.id,
-        label: label.trim() || null,
-        linkType: linkType || null,
-        direction,
+        label: label.trim(),
       });
       onOpenChange(false);
     } catch (err) {
@@ -103,7 +98,7 @@ export function CreateLinkPopover({
           align="center"
           sideOffset={12}
           collisionPadding={8}
-          // Prevent FocusScope from auto-focusing the LinkTypeSelect
+          // Prevent FocusScope from auto-focusing the RelationCombobox
           // input on open — its `onFocus={() => setOpen(true)}` would
           // immediately open the inner suggestions popover, capturing the
           // user's first Esc (Rule 2: UX correctness — UI-SPEC §E expects
@@ -142,63 +137,12 @@ export function CreateLinkPopover({
             </span>
           </div>
 
-          {/* Link type (above display label) */}
-          <div className="space-y-3">
-            <div>
-              <label className="block text-sm text-neutral-400 mb-1">Type</label>
-              <LinkTypeSelect
-                universeId={universeId}
-                value={linkType}
-                onChange={setLinkType}
-                onDirectionChange={setDirection}
-                placeholder="Search or enter a type..."
-              />
-            </div>
-
-            {/* Direction toggle pill group (UI-SPEC Surface 2) */}
-            <div>
-              <label className="block text-sm text-neutral-400 mb-1">Direction</label>
-              <div className="flex gap-1 mt-1" role="group" aria-label="Direction">
-                <button
-                  type="button"
-                  aria-pressed={direction === 'directed'}
-                  onClick={() => setDirection('directed')}
-                  className={`rounded-md border px-3 py-1 text-sm cursor-pointer ${
-                    direction === 'directed'
-                      ? 'border-[color:var(--color-accent)] bg-[color:var(--color-accent-soft)] text-[color:var(--color-accent)]'
-                      : 'border-neutral-300 dark:border-neutral-700 text-neutral-600 dark:text-neutral-400'
-                  }`}
-                >
-                  A → B
-                </button>
-                <button
-                  type="button"
-                  aria-pressed={direction === 'undirected'}
-                  onClick={() => setDirection('undirected')}
-                  className={`rounded-md border px-3 py-1 text-sm cursor-pointer ${
-                    direction === 'undirected'
-                      ? 'border-[color:var(--color-accent)] bg-[color:var(--color-accent-soft)] text-[color:var(--color-accent)]'
-                      : 'border-neutral-300 dark:border-neutral-700 text-neutral-600 dark:text-neutral-400'
-                  }`}
-                >
-                  A ↔ B
-                </button>
-              </div>
-            </div>
-
-            {/* Display label (optional — demoted from primary position) */}
-            <div>
-              <label className="block text-sm text-neutral-400 mb-1">
-                Display label (optional)
-              </label>
-              <RelationCombobox
-                universeId={universeId}
-                value={label}
-                onChange={setLabel}
-                placeholder="e.g. sworn shield since the Sundering"
-              />
-            </div>
-          </div>
+          <RelationCombobox
+            universeId={universeId}
+            value={label}
+            onChange={setLabel}
+            placeholder="Relation label (optional)"
+          />
 
           {error != null && (
             <p className="mt-2 text-xs text-red-500">
@@ -210,10 +154,9 @@ export function CreateLinkPopover({
             <button
               type="button"
               onClick={() => onOpenChange(false)}
-              aria-label="Discard link"
               className="rounded-md border border-neutral-300 dark:border-neutral-700 px-3 py-1.5 text-sm"
             >
-              &times;
+              Cancel
             </button>
             <button
               type="button"

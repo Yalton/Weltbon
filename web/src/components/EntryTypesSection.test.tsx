@@ -29,11 +29,6 @@ const UNIVERSE: Universe = {
   auditEnabled: false,
   auditProvider: null,
   auditModel: null,
-  // Phase 28 D-11/REL-02: persisted templates + link-type registry.
-  entryTemplates: [],
-  linkTypes: {},
-  // Phase 29 DATA-02: field registry (empty for this test fixture).
-  fieldRegistry: [],
 };
 
 function renderSection(universe: Universe = UNIVERSE) {

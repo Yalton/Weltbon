@@ -24,9 +24,6 @@ export async function exportUniverseJson(universeId: string) {
       entryTypes: p.universe.entryTypes,
       // Phase 20 D-01: round-trip the per-universe horizontal timeline window.
       timelineWindow: p.universe.timelineWindow,
-      // Phase 28 D-10/D-11: link-type registry + entry templates.
-      linkTypes: p.universe.linkTypes,
-      entryTemplates: p.universe.entryTemplates,
     },
     categories: p.categories.map((c) => ({
       id: c.id,
@@ -56,8 +53,7 @@ export async function exportUniverseJson(universeId: string) {
       sourceEntryId: l.sourceEntryId,
       targetEntryId: l.targetEntryId,
       label: l.label,
-      link_type: l.linkType,
-      direction: l.direction,
+      bidirectional: l.bidirectional,
       createdAt: l.createdAt.toISOString(),
     })),
     issues: p.fullIssues.map((i) => ({

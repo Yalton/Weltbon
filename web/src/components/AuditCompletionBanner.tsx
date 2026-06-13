@@ -164,19 +164,20 @@ export function AuditCompletionBanner({
         )}
 
         <div className="text-sm tabular-nums text-neutral-600 dark:text-neutral-400 mt-2">
-          {/* Phase 27 D-06: render "cost unknown" chip for unpriced-model runs */}
-          Cost:{' '}
+          {/* Phase 27 D-06 — render an amber "cost unknown" chip in place of
+              "Cost: $X.XXXX" when the run used an unpriced model. Copy is
+              lowercase, no $ sign (CONTEXT line 173). Amber palette matches
+              the partial-coverage chip below (Phase 26 D-08 visual language). */}
           {run.costUnknown ? (
             <span
-              className="ml-3 inline-flex items-center gap-2 text-xs text-amber-700 dark:text-amber-400 bg-amber-50 dark:bg-amber-950/30 border border-amber-300 dark:border-amber-800 rounded px-2 py-1"
-              aria-label="Cost unknown: this run used a model without published pricing."
+              className="inline-flex items-center text-xs text-amber-700 dark:text-amber-400 bg-amber-50 dark:bg-amber-950/30 border border-amber-300 dark:border-amber-800 rounded px-2 py-1"
+              aria-label="Cost unknown — the model used has no published rates"
             >
               cost unknown
             </span>
           ) : (
-            `$${run.costUsd}`
-          )}{' '}
-          · Tokens: {run.promptTokens.toLocaleString()} /{' '}
+            <>Cost: ${run.costUsd}</>
+          )}{' '}· Tokens: {run.promptTokens.toLocaleString()} /{' '}
           {run.completionTokens.toLocaleString()} / {run.cachedTokens.toLocaleString()}{' '}
           (prompt / output / cached)
         </div>
