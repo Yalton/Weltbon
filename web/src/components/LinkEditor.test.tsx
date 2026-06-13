@@ -86,8 +86,12 @@ describe('LinkEditor', () => {
     renderEditor();
 
     await user.click(screen.getByRole('button', { name: /open link editor/i }));
-    const combobox = await screen.findByRole('combobox');
-    expect(combobox).toHaveAttribute('placeholder', expect.stringMatching(/created by/i));
+    // 28-03: two comboboxes now exist (LinkTypeSelect + RelationCombobox).
+    // Assert the display label (RelationCombobox) by its distinctive placeholder.
+    const labelInput = await screen.findByPlaceholderText('e.g. sworn shield since the Sundering');
+    expect(labelInput).toBeInTheDocument();
+    // And the type combobox by its placeholder
+    expect(screen.getByPlaceholderText('Search or enter a type...')).toBeInTheDocument();
   });
 
   it('clicking a relation suggestion + Add link calls useCreateLink with that label', async () => {
@@ -101,7 +105,8 @@ describe('LinkEditor', () => {
     await user.type(search, 'Aragorn');
     await user.click(await screen.findByText('Aragorn'));
 
-    const combobox = screen.getByRole('combobox');
+    // 28-03: two comboboxes; target the display label (RelationCombobox) by placeholder
+    const combobox = screen.getByPlaceholderText('e.g. sworn shield since the Sundering');
     await user.click(combobox);
     await user.click(await screen.findByText('created by'));
 
@@ -124,7 +129,8 @@ describe('LinkEditor', () => {
     await user.type(search, 'Aragorn');
     await user.click(await screen.findByText('Aragorn'));
 
-    const combobox = screen.getByRole('combobox');
+    // 28-03: two comboboxes; target the display label (RelationCombobox) by placeholder
+    const combobox = screen.getByPlaceholderText('e.g. sworn shield since the Sundering');
     await user.click(combobox);
     await user.type(combobox, 'invented label');
     await user.keyboard('{Enter}');
@@ -137,8 +143,10 @@ describe('LinkEditor', () => {
     expect(createdBody!.label).toBe('invented label');
   });
 
-  it('bidirectional checkbox state flows into the create payload', async () => {
-    let createdBody: { bidirectional?: boolean; label?: string } | null = null;
+  it('direction toggle state flows into the create payload', async () => {
+    // 28-03: bidirectional checkbox removed; direction is now a toggle pill
+    // group ("A → B" / "A ↔ B"). Assert `direction: 'undirected'` in payload.
+    let createdBody: { direction?: string; label?: string } | null = null;
     setupApiMock({ onCreate: (b) => { createdBody = b as typeof createdBody; } });
     const user = userEvent.setup();
     renderEditor();
@@ -148,20 +156,22 @@ describe('LinkEditor', () => {
     await user.type(search, 'Aragorn');
     await user.click(await screen.findByText('Aragorn'));
 
-    const combobox = screen.getByRole('combobox');
+    // 28-03: two comboboxes; target the display label (RelationCombobox) by placeholder
+    const combobox = screen.getByPlaceholderText('e.g. sworn shield since the Sundering');
     await user.click(combobox);
     await user.type(combobox, 'companion');
     await user.keyboard('{Enter}');
 
-    const bidir = screen.getByRole('checkbox');
-    await user.click(bidir);
+    // 28-03: click the "A ↔ B" (undirected) toggle button
+    const undirectedBtn = screen.getByRole('button', { name: 'A ↔ B' });
+    await user.click(undirectedBtn);
 
     await user.click(screen.getByRole('button', { name: /^add link$/i }));
 
     await waitFor(() => {
       expect(createdBody).not.toBeNull();
     });
-    expect(createdBody!.bidirectional).toBe(true);
+    expect(createdBody!.direction).toBe('undirected');
   });
 
   it('invalidates the relations cache after a successful create', async () => {
@@ -175,7 +185,8 @@ describe('LinkEditor', () => {
     await user.type(search, 'Aragorn');
     await user.click(await screen.findByText('Aragorn'));
 
-    const combobox = screen.getByRole('combobox');
+    // 28-03: two comboboxes; target the display label (RelationCombobox) by placeholder
+    const combobox = screen.getByPlaceholderText('e.g. sworn shield since the Sundering');
     await user.click(combobox);
     await user.click(await screen.findByText('created by'));
 

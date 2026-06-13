@@ -103,6 +103,7 @@ export function Sidebar({ universeId }: { universeId: string }) {
         <SidebarNavLink to={`/universes/${universeId}/diagrams`}>Diagrams</SidebarNavLink>
         <SidebarNavLink to={`/universes/${universeId}/dictionary`}>Dictionary</SidebarNavLink>
         <SidebarNavLink to={`/universes/${universeId}/issues`}>Issues</SidebarNavLink>
+        <SidebarNavLink to={`/universes/${universeId}/stats`}>Stats</SidebarNavLink>
       </div>
 
       <div className="mt-4 px-3">

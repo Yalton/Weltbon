@@ -105,11 +105,9 @@
  */
 
 import OpenAI from 'openai';
+import { zodResponseFormat } from 'openai/helpers/zod';
 import { getEncoding } from 'js-tiktoken';
-import type {
-  ChatCompletionMessageParam,
-  ChatCompletionTool,
-} from 'openai/resources/chat/completions';
+import type { ChatCompletionMessageParam } from 'openai/resources/chat/completions';
 
 import {
   LLMError,
@@ -121,6 +119,10 @@ import {
   type RunAuditResult,
 } from './interface.js';
 import { PRICING, type OpenAIModelPricing } from './pricing.js';
+// Phase 24: shared Zod schema extracted to audit-schema.ts (non-functional refactor).
+// Both the OpenAI provider (zodResponseFormat call site) and the audit engine
+// (Plan 04 — AuditSuggestionStrictSchema for Zod validation) import from here.
+import { AuditOutputSchema } from '../../services/audit-schema.js';
 
 // ---------------------------------------------------------------------------
 // Module-scope defaults
@@ -384,81 +386,53 @@ export class OpenAIProvider implements LLMProvider {
   }
 
   /**
-   * Single-turn wire adapter (D-01). One `chat.completions.create` call in;
+   * Single-turn wire adapter (D-01). One `chat.completions.parse` call in;
    * one assistant turn out as `{ text, toolUse, usage, costUsd }`.
    *
-   * Phase 27 D-09 — function-tool structured output (symmetric with Anthropic):
-   * The engine sends `[getEntryBodyTool, emitFindingsTool]` on every turn.
-   * Each engine tool is wire-translated to OpenAI's function-tool shape
-   * (`{ type: 'function', function: { name, description, parameters } }`).
-   * The model "invokes" emit_findings to deliver its final-turn answer; the
-   * SDK delivers the JSON object as a string in `tool_calls[i].function.arguments`,
-   * which we `JSON.parse` and surface to the engine in the canonical
-   * `{ id, name, input }` shape — IDENTICAL to Anthropic's tool_use block.
-   *
-   * Single shared Zod schema, per-provider wire wrapper (Phase 27 D-09):
-   * the engine drives the structural-output contract via its own
-   * AuditOutputStrictSchema parse on `tool_use.input`; the provider's job is
-   * to round-trip the `{name, input}` pair without per-provider branching.
-   *
-   * Replaces the prior `chat.completions.parse` + `zodResponseFormat` path
-   * (Phase 23) which used OpenAI's response_format JSON-schema mechanism.
-   * Both mechanisms produce structured output — Phase 27 chose function-tool
-   * for symmetry with Anthropic's tool_use, locking the contract test's
-   * "identical wire shape from identical fixtures" invariant (PROVIDER-04).
+   * Structured output (RESEARCH Pattern 5): `response_format` is set to
+   * `zodResponseFormat(AuditOutputSchema, 'audit_output')`. The SDK auto-
+   * parses the JSON into the schema-typed object accessible at
+   * `choices[0].message.parsed`. We wrap the parsed `suggestions` into a
+   * synthetic single-element `toolUse[]` array — `{ id: 'parsed', name:
+   * 'emit_findings', input: { suggestions } }` — so the contract test
+   * (Plan 23-05) can assert identical shape across both providers without
+   * per-provider branching.
    *
    * Post-call response checks (T-23-04-03 / RESEARCH Pattern 5):
    *   (a) `choices[0].finish_reason === 'content_filter'` — OpenAI content-
    *       moderation block. Throws ContentBlockedBySafetyFilter.
    *   (b) `choices[0].message.refusal != null` — GPT-5 refusal pattern.
    *       Throws ContentBlockedBySafetyFilter.
-   *   (c) finish_reason `'length'` — token-limit truncation. The model was
-   *       cut off mid-tool_call; arguments may be incomplete JSON. This
-   *       guard throws UnknownProviderError BEFORE callers see a partial
-   *       tool_calls array (T-23-08-02 / CR-02 closure).
-   * All three checks happen BEFORE tool_calls are extracted.
+   *   (c) finish_reason `'length'` — token-limit truncation.
+   *       The structured output is incomplete; `message.parsed` is typically
+   *       null. The `parsed ?? { suggestions: [] }` fallback would silently
+   *       return an empty suggestions array as a "successful" audit — the
+   *       exact spoofing failure mode SC-3 targets. This guard throws
+   *       UnknownProviderError BEFORE the fallback so incomplete audits can
+   *       never masquerade as successes. (T-23-08-02 / CR-02 closure.)
+   * All three checks happen BEFORE parsed content flows to the caller.
    */
   async runAudit(opts: RunAuditOpts): Promise<RunAuditResult> {
     const model = opts.model ?? defaultModel;
     const pricing = (PRICING.openai as Record<string, OpenAIModelPricing>)[model];
-    // Phase 27 D-05/D-06: unpriced models are now first-class. The engine writes
-    // cost_unknown=true + cost_usd=0.0000 when the model is absent from PRICING.
-    // The provider must not throw — that would block the engine's cost_unknown
-    // path. costUsd is reported as 0 when pricing is unavailable.
-
-    // Phase 27 D-09: translate engine-shape tools to OpenAI function-tool
-    // wire shape. Each tool's `name` + `description` + `input_schema` flow
-    // through unchanged (the engine emits JSON schemas via z.toJSONSchema(),
-    // and OpenAI's `parameters` field accepts the same JSON Schema dialect).
-    // The engine NEVER expects the provider to execute emit_findings server-
-    // side — the model's invocation IS the answer; the provider's job is to
-    // round-trip the tool_call.
-    const openaiTools: ChatCompletionTool[] | undefined =
-      opts.tools && opts.tools.length > 0
-        ? opts.tools.map((t) => {
-            const engineTool = t as {
-              name: string;
-              description: string;
-              input_schema: Record<string, unknown>;
-            };
-            return {
-              type: 'function' as const,
-              function: {
-                name: engineTool.name,
-                description: engineTool.description,
-                parameters: engineTool.input_schema,
-              },
-            };
-          })
-        : undefined;
+    // Phase 27 D-05/D-06 guard split (T-23-04-05 revised — symmetric with Anthropic):
+    //
+    // BEFORE: this guard threw ModelNotAvailable for ANY model absent from PRICING.
+    // AFTER: only throw for genuine provider 400/404 (model does not exist on the
+    //        live API). A live-but-unpriced model is selectable per D-05; its cost
+    //        contribution is 0 per turn (keeps SUM math safe per Pitfall #4/#5).
+    //
+    // The genuine-error path is unchanged — it fires via mapOpenAIError when the
+    // SDK receives a 400/404 from the provider. This guard only prevents NaN.
+    const isUnpriced = !pricing;
 
     const client = new OpenAI({ apiKey: opts.apiKey });
     let completion;
     try {
-      completion = await client.chat.completions.create({
+      completion = await client.chat.completions.parse({
         model,
         messages: opts.messages as ChatCompletionMessageParam[],
-        ...(openaiTools ? { tools: openaiTools } : {}),
+        response_format: zodResponseFormat(AuditOutputSchema, 'audit_output'),
       });
     } catch (err) {
       throw mapOpenAIError(err);
@@ -474,7 +448,7 @@ export class OpenAIProvider implements LLMProvider {
 
     // T-23-04-03 / RESEARCH Pattern 5: post-call response checks BEFORE content
     // extraction. Any of these paths masquerading as success would silently
-    // produce empty or incomplete tool_calls.
+    // produce empty or incomplete suggestions.
     if (choice.finish_reason === 'content_filter') {
       throw new LLMProviderError(
         LLMError.ContentBlockedBySafetyFilter,
@@ -488,10 +462,11 @@ export class OpenAIProvider implements LLMProvider {
       );
     }
     // T-23-08-02 / CR-02 truncation guard: finish_reason 'length' means the
-    // response was cut off at the token limit. tool_calls (if any) may have
-    // incomplete arguments JSON. This guard MUST sit BEFORE tool_call
-    // extraction so a truncated response never reaches the engine as a
-    // success.
+    // response was cut off at the token limit. message.parsed is typically
+    // null on truncation; the fallback `parsed ?? { suggestions: [] }` would
+    // return an empty suggestions array as a "successful" audit — the exact
+    // spoofing failure mode SC-3 targets. This guard MUST sit BEFORE the
+    // fallback so a truncated null-parsed response never reaches callers.
     if (choice.finish_reason === 'length') {
       throw new LLMProviderError(
         LLMError.UnknownProviderError,
@@ -499,32 +474,19 @@ export class OpenAIProvider implements LLMProvider {
       );
     }
 
-    // Phase 27 D-09: extract tool_calls and normalize to the engine-facing
-    // `{ id, name, input }` shape — IDENTICAL to Anthropic's tool_use blocks.
-    // `function.arguments` is a JSON string per OpenAI spec; JSON.parse here
-    // so the engine consumes the same parsed-object shape both providers
-    // produce. A malformed JSON throw bubbles as UnknownProviderError; the
-    // engine's downstream Zod parse on `tool_use.input` is the authoritative
-    // shape guard (AuditOutputStrictSchema — Phase 24 BL-02).
-    const toolCalls = choice.message.tool_calls ?? [];
-    const toolUse: RunAuditResult['toolUse'] = toolCalls
-      .filter((tc): tc is Extract<typeof tc, { type: 'function' }> => tc.type === 'function')
-      .map((tc) => {
-        let parsedArgs: Record<string, unknown>;
-        try {
-          parsedArgs = JSON.parse(tc.function.arguments) as Record<string, unknown>;
-        } catch (err) {
-          throw new LLMProviderError(
-            LLMError.UnknownProviderError,
-            `OpenAI tool_call arguments are not valid JSON (function=${tc.function.name})`,
-          );
-        }
-        return {
-          id: tc.id,
-          name: tc.function.name,
-          input: parsedArgs,
-        };
-      });
+    const parsed = choice.message.parsed ?? { suggestions: [] };
+    const suggestions = parsed.suggestions ?? [];
+
+    // Synthesize a single tool_use-shaped entry so the Plan 23-05 contract
+    // test can compare `result.toolUse[0].input.suggestions` to Anthropic's
+    // tool_use block without per-provider branching.
+    const toolUse: RunAuditResult['toolUse'] = [
+      {
+        id: 'parsed',
+        name: 'emit_findings',
+        input: { suggestions },
+      },
+    ];
 
     const text = choice.message.content ?? '';
 
@@ -535,8 +497,10 @@ export class OpenAIProvider implements LLMProvider {
       );
     }
 
-    // Phase 27 D-06: when pricing is undefined, return 0; engine flags cost_unknown.
-    const costUsd = pricing !== undefined ? computeOpenAICost(completion.usage, pricing) : 0;
+    // Phase 27 D-06: for unpriced-but-live models, costUsd is 0.0000 per turn
+    // (isUnpriced = true when pricing is undefined). computeOpenAICost would
+    // produce NaN without a pricing row — avoid that by gating on isUnpriced.
+    const costUsd = isUnpriced ? 0 : computeOpenAICost(completion.usage, pricing!);
 
     return {
       text,
@@ -547,10 +511,34 @@ export class OpenAIProvider implements LLMProvider {
   }
 
   /**
+   * Phase 27: live model IDs from the OpenAI API.
+   * Async, network I/O, constructs a fresh client per call (Pitfall #6).
+   * Returns a flat array of raw model IDs; no PRICING merge, no filtering —
+   * the catalog layer (model-catalog.ts) applies the OpenAI chat-capable filter.
+   * Throws LLMProviderError on failure (caller falls back per D-02).
+   *
+   * Note: OpenAI's models.list() returns ALL org-accessible models including
+   * embeddings/whisper/dall-e/tts/legacy — the chat-capable filter lives in
+   * model-catalog.ts so the rule stays in one place (Assumption A3).
+   */
+  async liveListModels(apiKey: string): Promise<string[]> {
+    const client = new OpenAI({ apiKey });
+    const ids: string[] = [];
+    try {
+      for await (const m of client.models.list()) {
+        ids.push(m.id);
+      }
+    } catch (err) {
+      throw mapOpenAIError(err);
+    }
+    return ids;
+  }
+
+  /**
    * Synchronous offline lookup of every OpenAI model in `PRICING.openai`.
-   * Per D-04: this is the source of truth for the UI dropdown — never any
-   * network I/O. Adding/removing a model in `pricing.ts` is the ONLY way to
-   * change what `listModels()` returns.
+   * Phase 27 D-04 revised: this is a fallback primitive — the live catalog
+   * is `liveListModels()`. Adding/removing a model in `pricing.ts` is the
+   * ONLY way to change what this fallback returns.
    *
    * `cacheWriteUsdPer1M` is omitted (undefined) for every OpenAI listing
    * because OpenAI does not bill cache writes separately — the

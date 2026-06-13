@@ -2,7 +2,7 @@ import { OpenAPIHono, createRoute, z } from '@hono/zod-openapi';
 import { and, eq, desc, isNull, sql, arrayContains, type SQL } from 'drizzle-orm';
 import { HTTPException } from 'hono/http-exception';
 import { db } from '../db/client.js';
-import { entries, links, categories, issues, issueEntries, entryTemplates } from '../db/schema.js';
+import { entries, links, categories, issues, issueEntries } from '../db/schema.js';
 import { requireUniverse } from '../utils/ownership.js';
 import type { AuthVariables } from '../middleware/auth.js';
 
@@ -24,10 +24,8 @@ const createEntrySchema = z.object({
   meta: z.record(z.string(), z.unknown()).optional().default({}),
   icon: z.string().max(10).optional().default(''),
   categoryId: z.string().uuid().nullable().optional(),
-  // Phase 29 D-10 / SHARE-04: per-entry public flag for share-link visibility.
-  // `.default(false)` ensures omitting on POST yields `false` server-side (default-private).
-  isPublic: z.boolean().optional().default(false),
-  templateId: z.string().uuid().nullable().optional(),   // D-16 — optional best-effort stamp target
+  // Phase 29 DATA-03: WIP/draft flag
+  wip: z.boolean().optional(),
 });
 
 const patchEntrySchema = z.object({
@@ -39,9 +37,8 @@ const patchEntrySchema = z.object({
   meta: z.record(z.string(), z.unknown()).optional(),
   icon: z.string().max(10).optional(),
   categoryId: z.string().uuid().nullable().optional(),
-  // Phase 29 SHARE-04: optional with NO default — omitting on PATCH must NOT flip the
-  // existing column value (PATCH is non-destructive for unset fields).
-  isPublic: z.boolean().optional(),
+  // Phase 29 DATA-03: WIP/draft flag
+  wip: z.boolean().optional(),
 }).refine((v) => Object.values(v).some((val) => val !== undefined), {
   message: 'At least one field is required',
 });
@@ -58,11 +55,10 @@ const entrySchema = z.object({
   meta: z.record(z.string(), z.unknown()),
   icon: z.string(),
   categoryId: z.string().nullable(),
-  // Phase 29 D-10 / SHARE-04: surfaces the per-entry public flag so EntryEditor + EntryDetail
-  // can render the toggle + chip (UI-SPEC §B/§C); owner sees this on every read.
-  isPublic: z.boolean(),
   createdAt: z.string(),
   updatedAt: z.string(),
+  // Phase 29 DATA-03: WIP/draft flag
+  wip: z.boolean().optional(),
 });
 
 const entryDetailSchema = entrySchema.extend({
@@ -72,16 +68,18 @@ const entryDetailSchema = entrySchema.extend({
     targetEntryId: z.string(),
     targetTitle: z.string(),
     targetIcon: z.string(),
-    label: z.string(),
-    bidirectional: z.boolean(),
+    label: z.string().nullable(),
+    linkType: z.string().nullable(),
+    direction: z.string(),
   })),
   backlinks: z.array(z.object({
     id: z.string(),
     sourceEntryId: z.string(),
     sourceTitle: z.string(),
     sourceIcon: z.string(),
-    label: z.string(),
-    bidirectional: z.boolean(),
+    label: z.string().nullable(),
+    linkType: z.string().nullable(),
+    direction: z.string(),
   })),
   issues: z.array(z.object({
     id: z.string(),
@@ -107,7 +105,7 @@ const listRoute = createRoute({
   path: '/',
   tags: ['Entries'],
   summary: 'List entries in a universe',
-  description: 'Returns entries for the given universe. Supports optional filters: ?type=, ?tag=, ?category=, ?q= (FTS).',
+  description: 'Returns entries for the given universe. Supports optional filters: ?type=, ?tag=, ?category=, ?q= (FTS), ?wip=true|false (three-state), ?field.{name}={value} (AND exact-match).',
   security: [{ bearerAuth: [] }],
   request: {
     params: uidParams,
@@ -116,6 +114,8 @@ const listRoute = createRoute({
       tag: z.union([z.string(), z.array(z.string())]).optional(),
       category: z.string().optional(),
       q: z.string().optional(),
+      // Phase 29 DATA-03: three-state WIP filter (true/false/absent = all)
+      wip: z.enum(['true', 'false']).optional(),
     }),
   },
   responses: {
@@ -313,6 +313,8 @@ export const entryRoutes = new OpenAPIHono<AppEnv>()
     const category = c.req.query('category')?.trim() || undefined;
     const rawQ = c.req.query('q')?.trim() || '';
     const q = rawQ.length > 0 ? rawQ : undefined;
+    // Phase 29 DATA-03: three-state WIP filter
+    const wip = c.req.query('wip');
 
     if (category && category !== 'uncategorized' && !/^[0-9a-f-]{36}$/i.test(category)) {
       return c.json({ error: 'Invalid category id' }, 400);
@@ -324,6 +326,21 @@ export const entryRoutes = new OpenAPIHono<AppEnv>()
     if (category === 'uncategorized') conditions.push(isNull(entries.categoryId));
     else if (category) conditions.push(eq(entries.categoryId, category));
     if (q) conditions.push(sql`search_vector @@ websearch_to_tsquery('english', ${q})`);
+    // Phase 29 DATA-03: three-state wip filter (D-08: absent = all, true/false = filter)
+    if (wip === 'true') conditions.push(eq(entries.wip, true));
+    else if (wip === 'false') conditions.push(eq(entries.wip, false));
+
+    // Phase 29 DATA-04: meta-field exact-match filter (T-29-01-MF: parameterized SQL, no injection)
+    // Collect ?field.{key}={value} params from raw URL searchParams (AND semantics per D-11).
+    const rawUrl = c.req.url;
+    const searchParams = new URL(rawUrl).searchParams;
+    for (const [paramKey, paramVal] of searchParams.entries()) {
+      if (paramKey.startsWith('field.')) {
+        const metaKey = paramKey.slice('field.'.length);
+        // Parameterized ->> operator: key and value are bound params, never string-concatenated.
+        conditions.push(sql`${entries.meta} ->> ${metaKey} = ${paramVal}`);
+      }
+    }
 
     const baseShape = {
       id: entries.id,
@@ -335,11 +352,10 @@ export const entryRoutes = new OpenAPIHono<AppEnv>()
       meta: entries.meta,
       icon: entries.icon,
       categoryId: entries.categoryId,
-      // Phase 29 SHARE-04: projected so list responses surface isPublic for the EntryEditor
-      // toggle + EntryDetail chip (Plan 07 wiring). Owner sees every entry's flag.
-      isPublic: entries.isPublic,
       createdAt: entries.createdAt,
       updatedAt: entries.updatedAt,
+      // Phase 29 DATA-03: include wip in list responses
+      wip: entries.wip,
     };
 
     if (q) {
@@ -392,25 +408,10 @@ export const entryRoutes = new OpenAPIHono<AppEnv>()
         meta: data.meta,
         icon: data.icon,
         categoryId: data.categoryId ?? null,
-        // Phase 29 D-10 / SHARE-04: zod default already converts undefined → false,
-        // so omitting on POST yields private (safer-default).
-        isPublic: data.isPublic,
+        // Phase 29 DATA-03: persist wip flag (default false if not supplied)
+        wip: data.wip ?? false,
       })
       .returning();
-
-    // D-16: best-effort last_used_at stamp on the referenced template.
-    // Runs AFTER the entry insert resolves, in its own implicit autocommit.
-    // Failure does NOT roll back the entry create — the entry is the source of truth.
-    if (data.templateId) {
-      try {
-        await db()
-          .update(entryTemplates)
-          .set({ lastUsedAt: new Date() })
-          .where(and(eq(entryTemplates.id, data.templateId), eq(entryTemplates.userId, userId)));
-      } catch {
-        // D-16 — silent: the entry is the source of truth; last_used_at is observability metadata.
-      }
-    }
 
     return c.json(created as any, 201);
   })
@@ -437,7 +438,8 @@ export const entryRoutes = new OpenAPIHono<AppEnv>()
         targetTitle: entries.title,
         targetIcon: entries.icon,
         label: links.label,
-        bidirectional: links.bidirectional,
+        linkType: links.linkType,
+        direction: links.direction,
       })
       .from(links)
       .innerJoin(entries, eq(links.targetEntryId, entries.id))
@@ -450,7 +452,8 @@ export const entryRoutes = new OpenAPIHono<AppEnv>()
         sourceTitle: entries.title,
         sourceIcon: entries.icon,
         label: links.label,
-        bidirectional: links.bidirectional,
+        linkType: links.linkType,
+        direction: links.direction,
       })
       .from(links)
       .innerJoin(entries, eq(links.sourceEntryId, entries.id))

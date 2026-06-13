@@ -17,7 +17,6 @@
 import { useState } from 'react';
 import { PRICING, PRICING_AS_OF } from '../data/pricing';
 import { useListModels } from '../hooks/useAudits';
-import { useLlmKeys } from '../hooks/useLlmKeys';
 
 const PROVIDER_LABELS: Record<'anthropic' | 'openai', string> = {
   anthropic: 'Anthropic',
@@ -43,30 +42,21 @@ export function PricingTable() {
   >;
   const openaiRows = Object.entries(PRICING.openai) as Array<[string, AnyRow]>;
 
-  // Phase 27 D-07: overflow caption — count live models absent from PRICING
-  // across both providers. PricingTable is provider-agnostic at the mount
-  // site (web/src/views/LlmKeys.tsx) so we sum the counts.
-  //
-  // CR-01 fix (2026-05-28): gate the per-provider `useListModels` call on
-  // whether the caller has a key for that provider. Without this, a fresh
-  // visit by a keyless user issues two 404s (`no_key_for_provider`) — and
-  // the resulting `liveOnlyCount` stays 0 anyway, so the D-07 caption is
-  // structurally unreachable for that population. Passing `undefined` keeps
-  // `enabled: !!provider` off in `useListModels`, so no request fires.
-  const { data: llmKeys } = useLlmKeys();
-  const hasAnthropicKey = llmKeys?.some((k) => k.provider === 'anthropic') ?? false;
-  const hasOpenAIKey = llmKeys?.some((k) => k.provider === 'openai') ?? false;
-  const { data: anthropicListing } = useListModels(
-    hasAnthropicKey ? 'anthropic' : undefined,
-  );
-  const { data: openaiListing } = useListModels(
-    hasOpenAIKey ? 'openai' : undefined,
-  );
-  const liveOnlyAnthropic =
-    anthropicListing?.models.filter((m) => !m.hasPricing).length ?? 0;
-  const liveOnlyOpenAI =
-    openaiListing?.models.filter((m) => !m.hasPricing).length ?? 0;
-  const liveOnlyCount = liveOnlyAnthropic + liveOnlyOpenAI;
+  // Phase 27 D-07: fetch live model counts to compute how many models are
+  // available without published rates (live list minus PRICING keys).
+  // Hooks always called (Rules of Hooks); data only meaningful when open.
+  const { data: anthropicModels } = useListModels('anthropic');
+  const { data: openaiModels } = useListModels('openai');
+
+  const anthropicLiveCount = anthropicModels?.models.length ?? 0;
+  const openaiLiveCount = openaiModels?.models.length ?? 0;
+  const anthropicPricedCount = anthropicRows.length;
+  const openaiPricedCount = openaiRows.length;
+  // N = total live models across both providers minus priced models shown in the table.
+  // We sum both providers since the PricingTable shows all providers together.
+  const totalLive = anthropicLiveCount + openaiLiveCount;
+  const totalPriced = anthropicPricedCount + openaiPricedCount;
+  const unpricedCount = Math.max(0, totalLive - totalPriced);
 
   return (
     <details
@@ -187,17 +177,13 @@ export function PricingTable() {
             ))}
           </tbody>
         </table>
-        {/* Phase 27 D-07 — overflow caption. Rendered only when the live
-            listings have returned AND have at least one model absent from
-            PRICING for either provider. Never shown when both queries are
-            still pending (no flicker of "0 additional models …") because
-            we count only via resolved `data`. */}
-        {liveOnlyCount > 0 && (
-          <p className="text-xs text-neutral-500 mt-2">
-            {liveOnlyCount} additional models available without published rates — see model picker in universe settings.
-          </p>
-        )}
       </div>
+      {/* Phase 27 D-07: overflow caption — only when live list exceeds PRICING */}
+      {unpricedCount > 0 && (
+        <p className="mt-2 text-xs text-neutral-500">
+          {unpricedCount} additional model{unpricedCount === 1 ? '' : 's'} available without published rates — see model picker in universe settings.
+        </p>
+      )}
     </details>
   );
 }

@@ -243,7 +243,7 @@ function buildOutbound(payload: ExportPayload): Map<string, ExportPayloadLink[]>
   const map = new Map<string, ExportPayloadLink[]>();
   for (const link of payload.links) {
     push(map, link.sourceEntryId, link);
-    if (link.bidirectional) push(map, link.targetEntryId, link);
+    if (link.direction === 'undirected') push(map, link.targetEntryId, link);
   }
   return map;
 }

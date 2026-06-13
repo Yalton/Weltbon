@@ -40,9 +40,11 @@ import {
 } from '../services/llm-key.js';
 import {
   getProvider,
+  getModels,
   LLMProviderError,
   LLMError,
 } from '../providers/llm/index.js';
+import type { ModelPricing } from '../providers/llm/index.js';
 import { env } from '../config.js';
 
 type AppEnv = { Variables: AuthVariables };
@@ -81,10 +83,16 @@ const maskedKeySchema = z.object({
 
 /**
  * Phase 26 Plan 08 Task 3 (D-14) — masked row + per-provider cumulative cost.
+ * Phase 27 Plan 03 (D-06) — adds unknownCount: runs with cost_unknown=true are
+ * excluded from totalSpentUsd SUM; their count is reported separately.
  *
- * `totalSpentUsd` is `SUM(audit_runs.cost_usd) WHERE user_id = caller AND
- * provider = key.provider`, formatted as a 4-decimal string (cost-as-string
- * convention; NEVER a number). Always a string — '0.0000' when no runs match.
+ * `totalSpentUsd` is `SUM(audit_runs.cost_usd) FILTER (WHERE cost_unknown = false)
+ * WHERE user_id = caller AND provider = key.provider`, formatted as a 4-decimal
+ * string (cost-as-string convention; NEVER a number). Always a string — '0.0000'
+ * when no runs match.
+ *
+ * `unknownCount` is the count of runs with cost_unknown=true for this
+ * (provider, user_id) pairing. Defaults to 0 when no such runs exist.
  *
  * Approximation: joined by (provider, user_id), not byok_key_id. If a user
  * has multiple keys for the same provider, all rows show the same total
@@ -92,22 +100,49 @@ const maskedKeySchema = z.object({
  */
 const maskedKeyWithSpentSchema = maskedKeySchema.extend({
   /**
-   * Sum of audit_runs.cost_usd matched by (provider, user_id). Approximation:
-   * not joined by byok_key_id — if the user has multiple keys for the same
-   * provider, all rows show the same total. Per D-14.
-   *
-   * Phase 27 D-06: the SUM now excludes rows with `cost_unknown=true` so a
-   * stale-PRICING run does not contribute a guessed $0.00 to the displayed
-   * total. The count of excluded rows surfaces in `costUnknownCount` below.
+   * Sum of audit_runs.cost_usd (cost_unknown=false only) matched by
+   * (provider, user_id). Per D-14/D-06.
    */
   totalSpentUsd: z.string(),
   /**
-   * Phase 27 D-06: count of audit_runs rows for this (provider, user) where
-   * `cost_unknown = true`. The UI renders this as a footnote — e.g.
-   * "$0.0042 (plus 3 runs with unknown pricing)" — when > 0. Always an int
-   * ≥ 0; '0' (not omitted) when no unpriced runs exist.
+   * Count of runs with cost_unknown=true for this (provider, user_id).
+   * Phase 27 D-06 SUM-safe rollup: unpriced runs excluded from totalSpentUsd.
    */
-  costUnknownCount: z.number().int().nonnegative(),
+  unknownCount: z.number().int().nonnegative(),
+});
+
+// ─── Phase 27 Plan 03 Task 1 — /models response schema ──────────────────────
+
+/**
+ * ModelPricing-compatible Zod schema for the wire shape.
+ * Matches the ModelPricing type from pricing.ts (both providers share the same
+ * numeric field set except cacheWriteUsdPer1M which is Anthropic-only).
+ */
+// Mirrors the ModelListing shape that getModels() actually emits (via
+// provider.pricing()): id lives at the ModelEntry level, cache fields are
+// Anthropic-only/optional, and there is no contextWindow on the wire.
+const modelPricingSchema = z.object({
+  inputUsdPer1M: z.number(),
+  outputUsdPer1M: z.number(),
+  cachedInputUsdPer1M: z.number().optional(),
+  cacheWriteUsdPer1M: z.number().optional(),
+});
+
+/**
+ * Phase 27 Plan 03 — GET /models response wire shape.
+ * `{ models: [{id, hasPricing, pricing?}], source, fetchedAt }`
+ * Per CONTEXT §Specifics + 27-03-PLAN.md Task 1.
+ */
+const modelsResponseSchema = z.object({
+  models: z.array(
+    z.object({
+      id: z.string(),
+      hasPricing: z.boolean(),
+      pricing: modelPricingSchema.optional(),
+    }),
+  ),
+  source: z.enum(['live', 'cache_stale', 'pricing_fallback']),
+  fetchedAt: z.string(),
 });
 
 const revalidateResponseSchema = z.object({
@@ -318,6 +353,60 @@ const getConsentRoute = createRoute({
   },
 });
 
+/**
+ * Phase 27 Plan 03 Task 1 — GET /api/llm-keys/models
+ *
+ * JWT-only (requireJwtAuth — D-13 mirror; PAT bearer 401).
+ * Returns the hybrid model catalog for the caller's own key for the given provider.
+ *
+ * Security:
+ *   T-27-03-01: keyId resolved server-side from JWT subject — NEVER from client.
+ *   T-27-03-02: requireJwtAuth blocks PAT bearers (401).
+ *   T-27-03-04: providerEnum validates + rejects unknown providers.
+ *   T-27-03-03: env-gate 503 when LLM_KEY_ENCRYPTION_KEY unset.
+ */
+const getModelsRoute = createRoute({
+  method: 'get',
+  path: '/models',
+  tags: ['LLM API Keys'],
+  summary: 'List live models for a provider key (hybrid catalog)',
+  description:
+    'Returns the hybrid model catalog for the caller\'s own key for the requested provider. ' +
+    'JWT auth required (PAT bearer → 401). keyId is resolved server-side from the authenticated ' +
+    'user; the client never supplies a keyId (T-27-03-01 / V4 access control). ' +
+    'Calls getModels(provider, keyId, apiKey) which implements the 3-tier fallback (D-01/D-02): ' +
+    '(1) live provider.models.list() with 30-min TTL cache; (2) stale cache on live-fail; ' +
+    '(3) PRICING keys as last resort. Returns 404 when the user has no key for the provider. ' +
+    'Returns 503 when LLM_KEY_ENCRYPTION_KEY is unset.',
+  security: [{ bearerJwtAuth: [] }],
+  middleware: [requireJwtAuth] as const,
+  request: {
+    query: z.object({ provider: providerEnum }),
+  },
+  responses: {
+    200: {
+      content: { 'application/json': { schema: modelsResponseSchema } },
+      description: 'Hybrid model catalog — list of model entries with pricing metadata.',
+    },
+    401: {
+      content: { 'application/json': { schema: errorSchema } },
+      description: 'Missing or invalid JWT bearer token (or PAT — LLMKEY-06 / T-27-03-02).',
+    },
+    404: {
+      content: { 'application/json': { schema: errorSchema } },
+      description: 'No key configured for the requested provider.',
+    },
+    422: {
+      content: { 'application/json': { schema: errorSchema } },
+      description: 'Provider rejected the key.',
+    },
+    503: {
+      content: { 'application/json': { schema: errorSchema } },
+      description: 'Server not configured (LLM_KEY_ENCRYPTION_KEY unset) or provider transient failure.',
+    },
+  },
+});
+
 const postConsentRoute = createRoute({
   method: 'post',
   path: '/consent',
@@ -440,58 +529,42 @@ export const llmKeyRoutes = new OpenAPIHono<AppEnv>()
     // Approximation: joined by (provider, user_id), not byok_key_id — if user
     // has multiple keys per provider, they all show the same total.
     // NUMERIC(10,4) is preserved as a string (cost-as-string convention).
-    //
-    // Phase 27 D-06: the SUM excludes rows with cost_unknown=true. A second
-    // parallel COUNT query computes costUnknownCount per provider so the UI
-    // can render the "(plus N runs with unknown pricing)" footnote. Two
-    // separate queries (rather than a CASE-aggregation in one query) keep the
-    // SQL simple and the row-level filtering legible — both queries scan the
-    // same predicate index (user_id, provider) so the duplication is cheap.
+    // Phase 27 Plan 03 (D-06 / Pitfall #5): SUM excludes cost_unknown=true rows;
+    // unknownCount is reported separately so the UI can render the footnote.
+    // T-27-03-05: FILTER (WHERE cost_unknown = false) on SUM is the load-bearing guard.
     const spentRows = await getDb()
       .select({
         provider: auditRuns.provider,
-        // COALESCE → '0' when GROUP BY yields no rows for the provider; toFixed(4)
-        // below normalizes to the 4-decimal wire shape.
-        total: sql<string>`COALESCE(SUM(${auditRuns.costUsd}), 0)::text`,
+        // Phase 27 D-06: SUM only priced runs (cost_unknown=false).
+        // COALESCE → '0' when GROUP BY yields no rows for the provider.
+        total: sql<string>`COALESCE(SUM(${auditRuns.costUsd}) FILTER (WHERE ${auditRuns.costUnknown} = false), 0)::text`,
+        // Phase 27 D-06: count of unpriced runs for the "(N runs unknown pricing)" footnote.
+        unknownCount: sql<number>`COUNT(*) FILTER (WHERE ${auditRuns.costUnknown} = true)`,
       })
       .from(auditRuns)
-      .where(and(eq(auditRuns.userId, userId), eq(auditRuns.costUnknown, false)))
+      .where(eq(auditRuns.userId, userId))
       .groupBy(auditRuns.provider);
 
-    const spentByProvider = new Map<string, string>();
+    const spentByProvider = new Map<string, { total: string; unknownCount: number }>();
     for (const r of spentRows) {
       // Normalize to 4-decimal string. Parsing as Number then toFixed preserves
       // precision for sums within audit_runs.cost_usd's NUMERIC(10,4) range
       // (~$1,000,000 max) without losing the trailing zeros required by the UI.
-      spentByProvider.set(r.provider, Number(r.total).toFixed(4));
-    }
-
-    // Phase 27 D-06: parallel count of cost_unknown=true rows per provider for
-    // this user. Surfaced as `costUnknownCount` in the response; defaults to 0
-    // when the provider has no unpriced runs.
-    const unknownCountRows = await getDb()
-      .select({
-        provider: auditRuns.provider,
-        n: sql<number>`COUNT(*)::int`,
-      })
-      .from(auditRuns)
-      .where(and(eq(auditRuns.userId, userId), eq(auditRuns.costUnknown, true)))
-      .groupBy(auditRuns.provider);
-
-    const unknownByProvider = new Map<string, number>();
-    for (const r of unknownCountRows) {
-      // sql returns the COUNT cast to int but Drizzle types it as `number`
-      // (the `::int` cast guarantees a JS-safe value). Defensive Number()
-      // mirrors the spentByProvider normalization.
-      unknownByProvider.set(r.provider, Number(r.n));
+      spentByProvider.set(r.provider, {
+        total: Number(r.total).toFixed(4),
+        unknownCount: Number(r.unknownCount),
+      });
     }
 
     return c.json(
-      rows.map((r) => ({
-        ...toMaskedRow(r),
-        totalSpentUsd: spentByProvider.get(r.provider) ?? '0.0000',
-        costUnknownCount: unknownByProvider.get(r.provider) ?? 0,
-      })),
+      rows.map((r) => {
+        const spent = spentByProvider.get(r.provider);
+        return {
+          ...toMaskedRow(r),
+          totalSpentUsd: spent?.total ?? '0.0000',
+          unknownCount: spent?.unknownCount ?? 0,
+        };
+      }),
       200,
     );
   })
@@ -663,6 +736,65 @@ export const llmKeyRoutes = new OpenAPIHono<AppEnv>()
       },
       200,
     );
+  })
+
+  .openapi(getModelsRoute, async (c) => {
+    // T-27-03-03 env-gate: decrypt requires the encryption key
+    const cfg = env();
+    if (!cfg.llmKeyEncryptionKey) {
+      return c.json(
+        {
+          error:
+            'Server is not configured for LLM key encryption. ' +
+            'Operator must set LLM_KEY_ENCRYPTION_KEY (see README ## Self-Host).',
+        },
+        503,
+      );
+    }
+
+    const userId = c.var.userId;
+    const { provider } = c.req.valid('query');
+
+    // T-27-03-01 / V4: resolve keyId server-side from (userId, provider).
+    // NEVER accept keyId from the client — cross-tenant enumeration risk (Pitfall #6).
+    const keyRows = await getDb()
+      .select({ id: llmApiKeys.id })
+      .from(llmApiKeys)
+      .where(and(eq(llmApiKeys.userId, userId), eq(llmApiKeys.provider, provider)))
+      .limit(1);
+
+    if (keyRows.length === 0) {
+      return c.json({ error: `No key configured for provider ${provider}` }, 404);
+    }
+    const keyId = keyRows[0].id;
+
+    // Decrypt the stored key (null collapses decrypt-fail / missing-env / version-mismatch)
+    const plaintext = await getDecryptedKey(userId, provider as LlmProvider, cfg.llmKeyEncryptionKey);
+    if (plaintext === null) {
+      return c.json(
+        {
+          error:
+            'Server cannot decrypt the stored key. ' +
+            'Operator must verify LLM_KEY_ENCRYPTION_KEY (see README ## Self-Host).',
+        },
+        503,
+      );
+    }
+
+    // Call getModels — 3-tier fallback (live → stale cache → PRICING keys)
+    // T-27-03-03: map LLMProviderError variants → status; never log plaintext
+    try {
+      const result = await getModels(provider as LlmProvider, keyId, plaintext);
+      return c.json(result, 200);
+    } catch (err) {
+      if (err instanceof LLMProviderError) {
+        if (err.variant === LLMError.InvalidApiKey) {
+          return c.json({ error: err.message }, 422);
+        }
+        return c.json({ error: err.message }, 503);
+      }
+      throw err;
+    }
   })
 
   .openapi(postConsentRoute, async (c) => {

@@ -1,6 +1,14 @@
 import { useMutation, useQuery, useQueryClient } from '@tanstack/react-query';
-import { api, getShareToken } from '../api/client';
-import type { Calendar } from '../lib/calendarFormat';
+import { api } from '../api/client';
+import type { EntryTemplate } from '../lib/entryTemplates';
+
+// Phase 29 DATA-02: universe-scoped typed custom-field registry.
+// Never per-entry-type (T1 line to hold). Globally applied to every entry editor.
+export interface FieldRegistryEntry {
+  name: string;
+  type: 'text' | 'number' | 'boolean' | 'url' | 'entry-ref';
+  hint?: string;
+}
 
 export interface Universe {
   id: string;
@@ -9,9 +17,6 @@ export interface Universe {
   description: string;
   entryTypes: string[];
   timelineWindow: { start: number; end: number } | null;
-  // Phase 30 CALENDAR-01: per-universe fictional calendar (nullable JSONB).
-  // null = no calendar defined; timeline positions display as raw numbers (CALENDAR-03).
-  calendar: Calendar | null;
   createdAt: string;
   updatedAt: string;
   // Phase 24 AUDIT-03 / Phase 26 LLMUI-08: per-universe AI Gap Auditor opt-in.
@@ -19,6 +24,13 @@ export interface Universe {
   auditEnabled: boolean;
   auditProvider: 'anthropic' | 'openai' | null;
   auditModel: string | null;
+  // Phase 28 D-11/D-12: per-universe persisted entry templates (DB-backed).
+  // Built-in TEMPLATES/TEMPLATE_GROUPS are additive and unmodified.
+  entryTemplates: EntryTemplate[];
+  // Phase 28 REL-02: link-type color/direction registry consumed by GraphCanvas + RelationLegend.
+  linkTypes: Record<string, { color?: string; directionDefault?: 'directed' | 'undirected'; inverseLabel?: string }>;
+  // Phase 29 DATA-02: custom-field registry (universe-scoped, globally typed — D-01..D-03).
+  fieldRegistry: FieldRegistryEntry[];
 }
 
 export function useUniverses() {
@@ -29,16 +41,10 @@ export function useUniverses() {
 }
 
 export function useUniverse(id: string | undefined) {
-  // HALF (b) — share-token-keyed cache + enabled gate (Gap 1 race fix):
-  // Read from the module seam, not useShareMode(), so the gate tracks the
-  // exact value whose readiness is the bug. In authenticated mode shareToken
-  // is null (stable constant), so the owner cache key is unchanged.
-  const shareToken = getShareToken();
-  const shareMode = shareToken !== null;
   return useQuery({
-    queryKey: ['universe', id, shareToken],
+    queryKey: ['universe', id],
     queryFn: () => api<Universe>(`/universes/${id}`),
-    enabled: !!id && (!shareMode || shareToken !== null),
+    enabled: !!id,
   });
 }
 
@@ -58,14 +64,17 @@ export function useUpdateUniverse(id: string) {
       name?: string;
       description?: string;
       timelineWindow?: { start: number; end: number } | null;
-      // Phase 30 CALENDAR-01: per-universe fictional calendar (nullable JSONB).
-      // Pass `null` to remove (CALENDAR-03 raw-numeric revert).
-      calendar?: Calendar | null;
       // Phase 26 LLMUI-08: audit opt-in patch fields (server enforces invariant
       // that auditEnabled=true → provider+model non-null).
       auditEnabled?: boolean;
       auditProvider?: 'anthropic' | 'openai' | null;
       auditModel?: string | null;
+      // Phase 28 D-11: full entryTemplates array replace (max 50 server-enforced).
+      entryTemplates?: EntryTemplate[];
+      // Phase 28 REL-02: link-type registry patch.
+      linkTypes?: Record<string, { color?: string; directionDefault?: 'directed' | 'undirected'; inverseLabel?: string }>;
+      // Phase 29 DATA-02: field registry full-array replace (mirrors entryTemplates pattern).
+      fieldRegistry?: FieldRegistryEntry[];
     }) =>
       api<Universe>(`/universes/${id}`, { method: 'PATCH', body: JSON.stringify(body) }),
     onSuccess: () => {

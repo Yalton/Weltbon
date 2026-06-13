@@ -1,40 +1,22 @@
-# Weltbon PR + master CI (Phase 27 PROV-FOLLOWUP-03).
+# Two-lane PR / master CI.
 #
-# Two lanes per locked Phase 27 decisions:
-#   - Lane 1 (unit, ~30 sec):   pnpm test (api unit project, no DB) + web vitest
-#   - Lane 2 (integration, ~3 min): postgres:16-alpine service container; runs
-#     drizzle migrations then `pnpm test:integration` (the DB-gated suites
-#     registered in api/vitest.config.ts DB_GATED_TESTS, including the 8
-#     suites named in Phase 27 SC3).
+# Trigger: every pull_request push (any base) + every push to master (D-15).
+# No path filter — keep the mental model simple (project documentation PRs cost ~30s for
+# the unit lane to produce a green tick).
 #
-# Triggers per D-15: every pull_request (any base) + every push to master.
-# No path filter — see CONTEXT.md <deferred> for rationale.
+# Lane 1 — unit (~30s): no live DB required.
+# Lane 2 — integration (~3min): postgres:16-alpine service container (D-14).
 #
-# Branch protection (D-16) is an operator action: GitHub -> Repo Settings ->
-# Branches -> master -> Branch protection rules -> Require status checks to
-# pass before merging -> mark `ci / unit` AND `ci / integration` as required.
-# Documented in the phase SUMMARY.
-#
-# Test-only postgres creds (weltbon/weltbon/weltbon) are scoped to the
-# ephemeral service container and mirror docker-compose.yml verbatim per D-14.
-# Per the phase threat model (T-27-01-01), this workflow MUST NOT reference
-# any repository-secret context for provider API keys; cross-AI smoke against
-# real provider keys is explicitly out of scope and routed to a future
-# hardening phase.
+# Both lanes must be green to merge to master (D-16 — operator-configured branch
+# protection; see GitHub repo → Settings → Branches → master protection rule).
 
 name: ci
 
 on:
-  pull_request:
+  pull_request: {}
   push:
-    branches: [master]
-
-permissions:
-  contents: read
-
-concurrency:
-  group: ${{ github.workflow }}-${{ github.ref }}
-  cancel-in-progress: true
+    branches:
+      - master
 
 jobs:
   unit:
@@ -44,22 +26,23 @@ jobs:
       - name: Checkout
         uses: actions/checkout@v4
 
-      - name: Set up pnpm
+      - name: Setup pnpm
         uses: pnpm/action-setup@v4
+        with:
+          version: 9.15.0
 
-      - name: Set up Node.js
+      - name: Setup Node
         uses: actions/setup-node@v4
         with:
           node-version: 22
-          cache: pnpm
 
       - name: Install dependencies
         run: pnpm install --frozen-lockfile
 
-      - name: Run api unit tests
-        run: cd api && pnpm test
+      - name: Run API unit tests
+        run: pnpm --filter @weltbon/api test
 
-      - name: Run web tests
+      - name: Run web unit tests
         run: cd web && pnpm exec vitest run
 
   integration:
@@ -69,13 +52,13 @@ jobs:
       postgres:
         image: postgres:16-alpine
         env:
-          POSTGRES_DB: weltbon
           POSTGRES_USER: weltbon
           POSTGRES_PASSWORD: weltbon
+          POSTGRES_DB: weltbon
         ports:
-          - 5432:5432
+          - '5432:5432'
         options: >-
-          --health-cmd "pg_isready -U weltbon -d weltbon"
+          --health-cmd pg_isready
           --health-interval 10s
           --health-timeout 5s
           --health-retries 5
@@ -85,20 +68,21 @@ jobs:
       - name: Checkout
         uses: actions/checkout@v4
 
-      - name: Set up pnpm
+      - name: Setup pnpm
         uses: pnpm/action-setup@v4
+        with:
+          version: 9.15.0
 
-      - name: Set up Node.js
+      - name: Setup Node
         uses: actions/setup-node@v4
         with:
           node-version: 22
-          cache: pnpm
 
       - name: Install dependencies
         run: pnpm install --frozen-lockfile
 
-      - name: Apply database migrations
-        run: cd api && pnpm db:migrate
+      - name: Run DB migrations
+        run: pnpm --filter @weltbon/api db:migrate
 
-      - name: Run api integration tests
-        run: cd api && pnpm test:integration
+      - name: Run API integration tests
+        run: pnpm --filter @weltbon/api test:integration

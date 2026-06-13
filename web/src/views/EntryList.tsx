@@ -56,7 +56,12 @@ export function EntryList() {
   }, []);
 
   const hasActiveFilters =
-    !!filters.q || !!filters.type || filters.tags.length > 0 || !!filters.category;
+    !!filters.q ||
+    !!filters.type ||
+    filters.tags.length > 0 ||
+    !!filters.category ||
+    filters.wip !== null ||
+    Object.keys(filters.fieldFilters).length > 0;
 
   const isEmpty = !entries || entries.length === 0;
 
@@ -132,7 +137,7 @@ export function EntryList() {
             <button
               type="button"
               onClick={() =>
-                updateFilters({ q: '', type: null, tags: [], category: null })
+                updateFilters({ q: '', type: null, tags: [], category: null, wip: null, fieldFilters: {} })
               }
               className="bg-[color:var(--color-accent)] text-white text-sm font-medium px-4 py-2 rounded-md hover:opacity-90 focus:outline-none focus:ring-2 focus:ring-[color:var(--color-accent)] focus:ring-offset-2"
             >
@@ -193,6 +198,7 @@ export function EntryList() {
         open={pickerOpen}
         onOpenChange={setPickerOpen}
         universeId={uid!}
+        persistedTemplates={universe?.entryTemplates ?? []}
       />
 
       {/* Audit cost / progress dialog — opened by ⚖ Audit gaps button.

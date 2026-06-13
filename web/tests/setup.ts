@@ -15,6 +15,27 @@ if (typeof globalThis.ResizeObserver === 'undefined') {
   (globalThis as unknown as { ResizeObserver: typeof ResizeObserverShim }).ResizeObserver = ResizeObserverShim;
 }
 
+// jsdom doesn't implement window.matchMedia. AppBackground.tsx (and any
+// prefers-reduced-motion / responsive logic) calls window.matchMedia(...)
+// unguarded, so every test that mounts the app shell (UniverseLayout, IssuesView,
+// ...) throws "window.matchMedia is not a function" without this stub. Provide a
+// no-op MediaQueryList that defaults to no-match and supports both the modern
+// addEventListener/removeEventListener and the legacy addListener/removeListener
+// APIs. Individual tests can vi.stubGlobal('matchMedia', ...) to force matches.
+if (typeof window !== 'undefined' && typeof window.matchMedia !== 'function') {
+  window.matchMedia = (query: string): MediaQueryList =>
+    ({
+      matches: false,
+      media: query,
+      onchange: null,
+      addEventListener: () => {},
+      removeEventListener: () => {},
+      addListener: () => {},
+      removeListener: () => {},
+      dispatchEvent: () => false,
+    }) as unknown as MediaQueryList;
+}
+
 // jsdom doesn't implement PointerEvent capture APIs that Radix uses for its
 // trigger/dismissable-layer logic. Stub them on Element.prototype.
 if (typeof Element !== 'undefined') {

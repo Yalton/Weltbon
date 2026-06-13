@@ -151,7 +151,7 @@ describe('PAT parity round-trip (API-04)', () => {
         sourceEntryId: entryAId,
         targetEntryId: entryBId,
         label: 'caused by',
-        bidirectional: false,
+        direction: 'directed',
       },
       headers: patHdr,
     });

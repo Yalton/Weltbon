@@ -2,6 +2,48 @@ import { pgTable, uuid, text, timestamp, jsonb, boolean, integer, doublePrecisio
 import { relations, sql } from 'drizzle-orm';
 
 /**
+ * Phase 29 DATA-02: per-universe typed custom-field registry entry shape.
+ * Stored as universes.field_registry jsonb (FieldRegistryEntry[]).
+ * Universe-scoped; globally typed — never per-entry-type rendering (D-06).
+ */
+export interface FieldRegistryEntry {
+  name: string;
+  type: 'text' | 'number' | 'boolean' | 'url' | 'entry-ref';
+  hint?: string;
+}
+
+export type FieldRegistry = FieldRegistryEntry[];
+
+/**
+ * Phase 28 D-10: per-universe link-type registry entry shape.
+ * Stored as universes.link_types jsonb (Record<string, LinkTypeRegistryEntry>).
+ * Preset link types are seeded from code constants; the registry stores custom
+ * types + user overrides.
+ */
+export interface LinkTypeRegistryEntry {
+  color?: string;
+  directionDefault?: 'directed' | 'undirected';
+  inverseLabel?: string;
+}
+
+export type LinkTypeRegistry = Record<string, LinkTypeRegistryEntry>;
+
+/**
+ * Phase 28 D-11/D-13: per-universe entry template shape.
+ * Mirrors web/src/lib/entryTemplates.ts EntryTemplate exactly — field names are
+ * the cross-package contract for export/import round-trips.
+ */
+export interface EntryTemplate {
+  id: string;
+  label: string;
+  entryType: string;
+  category: 'Setting' | 'People' | 'Things' | 'Time' | 'Other';
+  body: string;
+  meta: Record<string, string>;
+  description?: string;
+}
+
+/**
  * Phase 20 D-01: per-universe horizontal timeline window persisted as JSONB
  * on `universes.timeline_window`. `null` (the default for any pre-Phase-20
  * row) triggers the first-visit "Configure range" dialog (D-02).
@@ -9,45 +51,6 @@ import { relations, sql } from 'drizzle-orm';
 export interface TimelineWindow {
   start: number;
   end: number;
-}
-
-/**
- * Phase 30 CALENDAR-01: per-universe fictional calendar definition persisted as
- * JSONB on `universes.calendar`. `null` (the default for existing rows) means
- * "no calendar defined" — positions render as raw abstract numerics everywhere
- * (CALENDAR-03 backwards-compat). Non-null value unlocks the position→date
- * renderer (`formatCalendar`) for all display surfaces.
- */
-export interface CalendarEra {
-  name: string;
-  abbr: string;
-  /** Absolute day-number position where this era begins (D-05). */
-  startPosition: number;
-}
-
-export interface CalendarMonth {
-  name: string;
-  /** Fixed number of days in this month (no leap years in v1, D-04). */
-  lengthDays: number;
-}
-
-export interface CalendarMoon {
-  name: string;
-  /** Orbital cycle in days; moon phase = dayIndex mod cycleDays (D-04). */
-  cycleDays: number;
-}
-
-export interface Calendar {
-  /** Ordered list of eras; must have >= 1 entry. startPosition values must be strictly increasing. */
-  eras: CalendarEra[];
-  /** Ordered list of months in a year; must have >= 1 entry. */
-  months: CalendarMonth[];
-  /** Optional weekday names in cycle order; empty = no weekday display. */
-  weekdays: string[];
-  /** Optional moons; empty = no moon-phase display. */
-  moons: CalendarMoon[];
-  /** Abbreviation for pre-epoch dates (e.g. "BE" for "Before Era"). Used as the era-abbr for positions before the earliest era's startPosition (D-08). */
-  beforeEraAbbr: string;
 }
 
 export const users = pgTable('users', {
@@ -68,14 +71,10 @@ export const universes = pgTable('universes', {
   description:  text('description').default('').notNull(),
   entryTypes:   text('entry_types').array().default([
     'concept','entity','location','event','faction',
-    'artifact','species','culture','thread','language'  // Phase 32 D-08: 'language' as 10th element
+    'artifact','species','culture','thread'
   ]).notNull(),
   // Phase 20 D-01: nullable JSONB; `null` = "first visit, configure range".
   timelineWindow: jsonb('timeline_window').$type<TimelineWindow | null>(),
-  // Phase 30 CALENDAR-01: nullable JSONB; `null` = "no calendar" → raw numeric
-  // fallback everywhere (CALENDAR-03 backwards-compat). Non-null unlocks the
-  // formatCalendar renderer for all position-display surfaces.
-  calendar: jsonb('calendar').$type<Calendar | null>(),
   createdAt:    timestamp('created_at').defaultNow().notNull(),
   updatedAt:    timestamp('updated_at').defaultNow().notNull(),
   // Phase 24 AUDIT-03: per-universe LLM audit opt-in (default OFF).
@@ -83,6 +82,13 @@ export const universes = pgTable('universes', {
   auditEnabled: boolean('audit_enabled').default(false).notNull(),
   auditProvider: text('audit_provider'),
   auditModel: text('audit_model'),
+  // Phase 28 D-10: per-universe link-type registry; presets seeded from code, registry stores custom + overrides.
+  linkTypes:      jsonb('link_types').$type<LinkTypeRegistry>().default({}).notNull(),
+  // Phase 28 D-11: persisted user-defined entry templates; shape mirrors EntryTemplate interface (D-13).
+  entryTemplates: jsonb('entry_templates').$type<EntryTemplate[]>().default([]).notNull(),
+  // Phase 29 DATA-02: per-universe typed custom-field registry (FieldRegistryEntry[]).
+  // DEFAULT '[]' backfills existing rows without a table-rewrite stall.
+  fieldRegistry: jsonb('field_registry').$type<FieldRegistry>().default([]).notNull(),
 });
 
 export const refreshTokens = pgTable('refresh_tokens', {
@@ -150,77 +156,6 @@ export const inviteCodesRelations = relations(inviteCodes, ({ one }) => ({
   consumedBy:  one(users, { fields: [inviteCodes.consumedByUserId], references: [users.id], relationName: 'invite_consumer' }),
 }));
 
-/**
- * Phase 29 D-15: Per-(user, universe) share-token credentials for unauthenticated
- * read-only /share/:token routes. Combines personalAccessTokens (hash/body_suffix/
- * lastUsedAt pattern) + inviteCodes (revokedAt soft-delete) + per-token expiry +
- * access tracking + scope columns.
- *
- * - `scope` ships ready for v3.3 single-entry sharing (CHECK constraint in raw SQL
- *   migration restricts to 'universe' | 'entry'); the v1 router rejects scope !== 'universe'.
- * - `scopeEntryId` is nullable and FK-cascades on entries; left as a plain FK (no
- *   Drizzle relation declaration) until v3.3 single-entry-scope work surfaces a
- *   `with: { scopeEntry }` use case.
- * - `hash` is SHA-256 hex of the `wbn_share_<base64url(32)>` token string — D-08 hash-only at rest.
- *   The UNIQUE constraint name `share_tokens_hash_unique` is load-bearing for the
- *   23505 collision catch in Plan 02 routes/shares.ts.
- * - `bodySuffix` is the last 4 chars of the body (UI-SPEC §D 4-char `••••••ABCD` mask;
- *   deliberate divergence from PAT's 3-char suffix).
- * - `lastAccessedAt` + `accessCount` are fire-and-forget telemetry written on every
- *   /api/share/* hit by recordShareAccess (D-09; T-29-06).
- */
-export const shareTokens = pgTable('share_tokens', {
-  id:             uuid('id').primaryKey().defaultRandom(),
-  userId:         uuid('user_id').references(() => users.id, { onDelete: 'cascade' }).notNull(),
-  universeId:     uuid('universe_id').references(() => universes.id, { onDelete: 'cascade' }).notNull(),
-  scope:          text('scope').default('universe').notNull(),
-  scopeEntryId:   uuid('scope_entry_id').references(() => entries.id, { onDelete: 'cascade' }),
-  label:          text('label').default('').notNull(),
-  hash:           text('hash').notNull().unique(),
-  bodySuffix:     text('body_suffix').notNull(),
-  expiresAt:      timestamp('expires_at', { withTimezone: true }),
-  revokedAt:      timestamp('revoked_at', { withTimezone: true }),
-  lastAccessedAt: timestamp('last_accessed_at', { withTimezone: true }),
-  accessCount:    integer('access_count').default(0).notNull(),
-  createdAt:      timestamp('created_at', { withTimezone: true }).defaultNow().notNull(),
-});
-
-export const shareTokensRelations = relations(shareTokens, ({ one }) => ({
-  user:     one(users, { fields: [shareTokens.userId], references: [users.id], relationName: 'share_owner' }),
-  universe: one(universes, { fields: [shareTokens.universeId], references: [universes.id], relationName: 'share_universe' }),
-}));
-
-/**
- * Phase 28 TEMPLATES-01/03: Per-user entry templates.
- *
- * - Templates are user-scoped (no universe_id per D-05); they travel with the author
- *   across all universes.
- * - `meta` stores an ordered array of `{name, default_value}` blueprint fields as JSONB
- *   (D-09 — array shape, NOT Record). Contrast with `entries.meta` which is `{}` (Record shape).
- * - `cloned_from` is a nullable text field (NOT a FK) referencing an in-tree default
- *   template id string (D-02). Enables future "reset to default" without a schema change.
- * - `last_used_at` is stamped when the template scaffolds a real entry create (D-16).
- * - UNIQUE(user_id, entry_type, name) enforces per-user, per-type name uniqueness (D-04).
- *   The constraint name `entry_templates_user_id_entry_type_name_unique` is load-bearing
- *   for the 23505 catch in the /templates router.
- * - No per-user hide list column per D-03 — defaults always render in the picker.
- */
-export const entryTemplates = pgTable('entry_templates', {
-  id:          uuid('id').primaryKey().defaultRandom(),
-  userId:      uuid('user_id').references(() => users.id, { onDelete: 'cascade' }).notNull(),
-  name:        text('name').notNull(),
-  entryType:   text('entry_type').notNull(),
-  summary:     text('summary').default('').notNull(),
-  body:        text('body').default('').notNull(),
-  meta:        jsonb('meta').default([]).notNull(),     // D-09 — ordered array [{name, default_value}]
-  clonedFrom:  text('cloned_from'),                     // D-02 — nullable; references in-tree default id string (NOT a FK)
-  lastUsedAt:  timestamp('last_used_at', { withTimezone: true }),
-  createdAt:   timestamp('created_at', { withTimezone: true }).defaultNow().notNull(),
-  updatedAt:   timestamp('updated_at', { withTimezone: true }).defaultNow().notNull(),
-}, (t) => ({
-  userTypeNameUnique: unique('entry_templates_user_id_entry_type_name_unique').on(t.userId, t.entryType, t.name),  // D-04
-}));
-
 export const categories = pgTable('categories', {
   id:         uuid('id').primaryKey().defaultRandom(),
   universeId: uuid('universe_id').references(() => universes.id, { onDelete: 'cascade' }).notNull(),
@@ -244,10 +179,8 @@ export const entries = pgTable('entries', {
   categoryId:   uuid('category_id').references(() => categories.id, { onDelete: 'set null' }),
   createdAt:    timestamp('created_at').defaultNow().notNull(),
   updatedAt:    timestamp('updated_at').defaultNow().notNull(),
-  // Phase 29 D-10: per-entry public flag for share-link visibility (default OFF).
-  // Backfilled to false for every existing row by 0014_phase29_entries_is_public.sql.
-  // Mirrors universes.auditEnabled (line ~40) pattern: boolean opt-in with safer-by-default.
-  isPublic: boolean('is_public').default(false).notNull(),
+  // Phase 29 DATA-03: WIP/draft flag — default false; user sets to true for in-progress entries.
+  wip:          boolean('wip').default(false).notNull(),
 });
 
 export const links = pgTable('links', {
@@ -255,16 +188,13 @@ export const links = pgTable('links', {
   universeId:    uuid('universe_id').references(() => universes.id, { onDelete: 'cascade' }).notNull(),
   sourceEntryId: uuid('source_entry_id').references(() => entries.id, { onDelete: 'cascade' }).notNull(),
   targetEntryId: uuid('target_entry_id').references(() => entries.id, { onDelete: 'cascade' }).notNull(),
-  label:         text('label').notNull(),
-  bidirectional: boolean('bidirectional').default(false).notNull(),
+  // Phase 28 D-04: label is now nullable (optional display override; link_type is the semantic carrier)
+  label:         text('label'),
+  // Phase 28 REL-01: link_type replaces the semantic role of label; nullable = untyped link
+  linkType:      text('link_type'),
+  // Phase 28 D-07: direction replaces bidirectional; CHECK constraint in migration SQL
+  direction:     text('direction').notNull(),
   createdAt:     timestamp('created_at').defaultNow().notNull(),
-  // Phase 31 DIAGRAM-02: diagram back-reference + edge styling write-through.
-  // diagramId is nullable so a link with no diagram_id still renders in the force graph.
-  // lineStyle + color are constrained server-side (solid/dashed/dotted; fixed palette).
-  // eslint-disable-next-line @typescript-eslint/no-use-before-define
-  diagramId:     uuid('diagram_id').references((): any => diagrams.id, { onDelete: 'set null' }),
-  lineStyle:     text('line_style'),
-  color:         text('color'),
 });
 
 /**
@@ -317,12 +247,8 @@ export const auditRuns = pgTable('audit_runs', {
   // budget caps, or early-termination signal). DEFAULT 0 backfills pre-Phase-26 rows
   // (they report zero analyzed entries — a known historical gap, not a regression).
   analyzedEntries: integer('analyzed_entries').default(0).notNull(),
-  // Phase 27 D-06: set TRUE by the engine when the selected model is not in PRICING
-  // (newly-released live-list model the dropdown surfaced via the D-05 unpriced UX path).
-  // When TRUE, cost_usd is persisted as 0 (keeps SUM math safe) and surfaces in the UI as
-  // a "cost unknown" amber chip on AuditCompletionBanner + AuditHistoryTable, and is
-  // excluded from llm-keys totalSpent SUM (with parallel COUNT footnote). DEFAULT false
-  // backfills every pre-Phase-27 row at metadata-only ALTER speed (PostgreSQL 11+).
+  // Phase 27 D-06: true when the run used a live-but-unpriced model; cost_usd stays 0.0000.
+  // Excluded from totalSpentUsd SUM; surfaces "cost unknown" chip + "(N runs unknown pricing)" footnote.
   costUnknown: boolean('cost_unknown').default(false).notNull(),
 }, (t) => ({
   // BL-01: partial unique index closing the TOCTOU race window in routes/audits.ts
@@ -391,70 +317,4 @@ export const timelinePins = pgTable('timeline_pins', {
   label:     text('label').notNull(),
   position:  doublePrecision('position').notNull(),
   precision: text('precision').default('exact').notNull(),
-});
-
-/**
- * Phase 31 DIAGRAM-01: Named diagram definitions scoped to a universe.
- *
- * A diagram is a named, manual-layout canvas (family tree, org chart, etc.)
- * that lives alongside the force-directed Graph view. Nodes (entries) and
- * edges (links) are added explicitly — no auto-population.
- */
-export const diagrams = pgTable('diagrams', {
-  id:          uuid('id').primaryKey().defaultRandom(),
-  universeId:  uuid('universe_id').references(() => universes.id, { onDelete: 'cascade' }).notNull(),
-  name:        text('name').notNull(),
-  description: text('description'),
-  createdAt:   timestamp('created_at').defaultNow().notNull(),
-});
-
-/**
- * Phase 31 DIAGRAM-01: Positioned entry nodes within a named diagram.
- *
- * Mirrors graphPositions but scoped to a diagram rather than the whole universe.
- * The unique index on (diagramId, entryId) prevents the same entry from appearing
- * twice in one diagram. Deleting a node row NEVER touches the underlying entries row.
- */
-export const diagramNodes = pgTable('diagram_nodes', {
-  id:        uuid('id').primaryKey().defaultRandom(),
-  diagramId: uuid('diagram_id').references(() => diagrams.id, { onDelete: 'cascade' }).notNull(),
-  entryId:   uuid('entry_id').references(() => entries.id, { onDelete: 'cascade' }).notNull(),
-  x:         doublePrecision('x').notNull(),
-  y:         doublePrecision('y').notNull(),
-}, (t) => ({
-  diagramNodesUniqueIdx: uniqueIndex('diagram_nodes_unique_idx').on(t.diagramId, t.entryId),
-}));
-
-/**
- * Phase 32 CONLANG-01: Per-universe conlang dictionary words.
- *
- * - `universeId` scopes words to a universe; FK cascades on universe delete.
- * - `languageEntryId` is NULLABLE: when null the word belongs to a universe-level
- *   fallback dictionary (D-06). When set, the word belongs to the language entry's
- *   specific dictionary.
- * - `searchVector` is declared as plain text() (GENERATED in raw SQL migration 0018)
- *   — same convention as entries.searchVector (line ~243). The actual tsvector type
- *   and GENERATED ALWAYS AS expression live in 0018_phase32_dictionary.sql.
- * - Scope-unique index: (universe_id, COALESCE(language_entry_id, sentinel), lower(word))
- *   lives in the migration only — Drizzle TS uniqueIndex() cannot express COALESCE
- *   sentinel or lower() expressions (same caveat as diagram_nodes_unique_idx).
- * - `etymology` is a markdown field (D-11); rendered via MarkdownRenderer.
- * - The 'simple' regconfig for word/ipa prevents English stemming from corrupting
- *   invented conlang words (T-32-02 / Pitfall 2 in RESEARCH.md).
- */
-export const dictionaryWords = pgTable('dictionary_words', {
-  id:              uuid('id').primaryKey().defaultRandom(),
-  universeId:      uuid('universe_id').references(() => universes.id, { onDelete: 'cascade' }).notNull(),
-  languageEntryId: uuid('language_entry_id').references(() => entries.id, { onDelete: 'cascade' }),  // nullable = universe-level fallback (D-06)
-  word:            text('word').notNull(),
-  ipa:             text('ipa').default('').notNull(),
-  partOfSpeech:    text('part_of_speech').default('').notNull(),
-  gloss:           text('gloss').notNull(),
-  etymology:       text('etymology').default('').notNull(),  // markdown field (D-11)
-  tags:            text('tags').array().default([]).notNull(),
-  searchVector:    text('search_vector'),  // GENERATED in SQL migration (same as entries.searchVector ln ~243)
-  createdAt:       timestamp('created_at').defaultNow().notNull(),
-  updatedAt:       timestamp('updated_at').defaultNow().notNull(),
-  // NOTE: scope-unique index with lower(word) + COALESCE sentinel lives in migration 0018 only —
-  // Drizzle TS uniqueIndex() cannot express COALESCE-sentinel or lower() expressions.
 });

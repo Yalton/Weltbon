@@ -676,4 +676,133 @@ describe('AnthropicProvider (PROVIDER-02 + PROVIDER-05 + PROVIDER-07)', () => {
     const p = getProvider('anthropic').pricing('claude-fake');
     expect(p).toBeUndefined();
   });
+
+  // -----------------------------------------------------------------------
+  // Phase 27 D-05/D-06: unpriced-model guard split (T-23-03-05 revised)
+  // -----------------------------------------------------------------------
+
+  it('runAudit does NOT throw ModelNotAvailable for live-but-unpriced model; yields costUsd=0 (Phase 27 D-06)', async () => {
+    // Use a model ID that is NOT in PRICING.anthropic — simulates a new live release.
+    mockCountTokens.mockResolvedValueOnce({ input_tokens: 100 });
+    mockCreate.mockResolvedValueOnce(HAPPY_PATH_RESPONSE);
+
+    const { getProvider } = await import('../src/providers/llm/index.js');
+
+    // Must NOT throw — unpriced-but-live model should proceed
+    const result = await getProvider('anthropic').runAudit({
+      apiKey: 'k',
+      messages: [{ role: 'user', content: 'find gaps' }],
+      model: 'claude-nova-future-unpriced',  // not in PRICING
+    });
+
+    // costUsd must be 0 (safe for SUM math — keeps audit_runs.cost_usd at 0.0000)
+    expect(result.costUsd).toBe(0);
+    // Usage is still returned (engine still records token counts for observability)
+    expect(result.usage.inputTokens).toBe(100);
+    expect(result.usage.outputTokens).toBe(50);
+    // The run completed with toolUse output
+    expect(result.toolUse).toHaveLength(1);
+  });
+
+  // -----------------------------------------------------------------------
+  // Phase 27 D-12: forceTool / tool_choice wiring (Task 1)
+  // -----------------------------------------------------------------------
+
+  it('runAudit sends tool_choice:{type:"tool",name} when forceTool is set (Phase 27 D-12)', async () => {
+    // Below MIN_CACHEABLE_TOKENS to skip cache branch — test focuses on tool_choice.
+    mockCountTokens.mockResolvedValueOnce({ input_tokens: 50 });
+    mockCreate.mockResolvedValueOnce(HAPPY_PATH_RESPONSE);
+
+    const { getProvider } = await import('../src/providers/llm/index.js');
+
+    await getProvider('anthropic').runAudit({
+      apiKey: 'k',
+      messages: [{ role: 'user', content: 'find gaps' }],
+      model: 'claude-haiku-4-5-20251001',
+      forceTool: { type: 'tool', name: 'emit_findings' },
+    });
+
+    const createArgs = mockCreate.mock.calls[0]?.[0];
+    // The provider MUST pass tool_choice to messages.create when forceTool is set.
+    expect(createArgs.tool_choice).toEqual({ type: 'tool', name: 'emit_findings' });
+  });
+
+  it('runAudit does NOT send tool_choice when forceTool is unset (Phase 27 D-12)', async () => {
+    // Without forceTool, tool_choice must be absent (auto).
+    mockCountTokens.mockResolvedValueOnce({ input_tokens: 50 });
+    mockCreate.mockResolvedValueOnce(HAPPY_PATH_RESPONSE);
+
+    const { getProvider } = await import('../src/providers/llm/index.js');
+
+    await getProvider('anthropic').runAudit({
+      apiKey: 'k',
+      messages: [{ role: 'user', content: 'find gaps' }],
+      model: 'claude-haiku-4-5-20251001',
+      // forceTool intentionally absent
+    });
+
+    const createArgs = mockCreate.mock.calls[0]?.[0];
+    // No tool_choice key when forceTool is absent — auto is the default.
+    expect(createArgs.tool_choice).toBeUndefined();
+  });
+
+  it('runAudit parses emit_findings tool_use.input into toolUse[0] when forceTool used (Phase 27 D-12)', async () => {
+    mockCountTokens.mockResolvedValueOnce({ input_tokens: 50 });
+    // emit_findings response with structured findings in tool_use.input
+    const emitFindingsResponse = {
+      id: 'msg_emit',
+      role: 'assistant' as const,
+      content: [
+        {
+          type: 'tool_use' as const,
+          id: 'tu_emit',
+          name: 'emit_findings',
+          input: {
+            suggestions: [
+              {
+                category: 'missing-link',
+                title: 'Missing connection',
+                body: 'No link between A and B.',
+                referenced_entry_ids: ['entry-a', 'entry-b'],
+                confidence: 'high',
+              },
+            ],
+          },
+        },
+      ],
+      stop_reason: 'tool_use' as const,
+      usage: {
+        input_tokens: 50,
+        output_tokens: 20,
+        cache_creation_input_tokens: 0,
+        cache_read_input_tokens: 0,
+      },
+    };
+    mockCreate.mockResolvedValueOnce(emitFindingsResponse);
+
+    const { getProvider } = await import('../src/providers/llm/index.js');
+
+    const result = await getProvider('anthropic').runAudit({
+      apiKey: 'k',
+      messages: [{ role: 'user', content: 'find gaps' }],
+      model: 'claude-haiku-4-5-20251001',
+      forceTool: { type: 'tool', name: 'emit_findings' },
+    });
+
+    // The emit_findings tool call must appear in result.toolUse
+    expect(result.toolUse).toHaveLength(1);
+    expect(result.toolUse[0]?.name).toBe('emit_findings');
+    // input is the already-parsed object — no string extraction
+    expect(result.toolUse[0]?.input).toEqual({
+      suggestions: [
+        {
+          category: 'missing-link',
+          title: 'Missing connection',
+          body: 'No link between A and B.',
+          referenced_entry_ids: ['entry-a', 'entry-b'],
+          confidence: 'high',
+        },
+      ],
+    });
+  });
 });

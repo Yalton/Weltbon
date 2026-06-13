@@ -1,125 +1,199 @@
 /**
- * Phase 27 Plan 04 Task 3 — AuditHistoryTable cost-unknown chip tests.
+ * Phase 27 follow-up — automated tests for AuditHistoryTable
+ * "cost unknown" affordance (D-06).
  *
- * Pins:
- *   - Test 3: a row with `costUnknown===true` renders the amber `cost
- *     unknown` chip in the cost cell — neither `$0.0000` nor `—`.
- *   - Test 4: a row with `costUnknown===false, status==='failed',
- *     costUsd==='0.0000'` still renders the `—` placeholder (existing
- *     failed-zero branch preserved).
- *   - Test 5: a row with `costUnknown===false, costUsd==='0.0123'`
- *     renders `$0.0123`.
+ * Mocks useAuditHistory so no real API key or network is required.
+ *
+ * Coverage:
+ *   3. When a row's costUnknown=true the "cost unknown" chip renders in the
+ *      Cost cell instead of a dollar amount.
  */
 
 import { describe, it, expect, vi, beforeEach } from 'vitest';
 import { render, screen } from '@testing-library/react';
 import { MemoryRouter } from 'react-router-dom';
 import { QueryClient, QueryClientProvider } from '@tanstack/react-query';
-import type { ReactNode } from 'react';
-import type { AuditHistoryRow } from '../types/audit';
+
+// ─── Module mock ──────────────────────────────────────────────────────────────
 
 vi.mock('../hooks/useAudits', async () => {
   const actual = await vi.importActual<typeof import('../hooks/useAudits')>('../hooks/useAudits');
-  return {
-    ...actual,
-    useAuditHistory: vi.fn(),
-  };
+  return { ...actual, useAuditHistory: vi.fn() };
 });
 
 import { useAuditHistory } from '../hooks/useAudits';
+import type { AuditHistoryRow } from '../hooks/useAudits';
 import { AuditHistoryTable } from './AuditHistoryTable';
 
-function Wrapper({ children }: { children: ReactNode }) {
-  const qc = new QueryClient({
-    defaultOptions: { queries: { retry: false }, mutations: { retry: false } },
-  });
-  return (
-    <QueryClientProvider client={qc}>
-      <MemoryRouter>{children}</MemoryRouter>
-    </QueryClientProvider>
-  );
-}
+// ─── Helpers ──────────────────────────────────────────────────────────────────
 
-function baseRow(overrides: Partial<AuditHistoryRow>): AuditHistoryRow {
+function makeRow(overrides: Partial<AuditHistoryRow> = {}): AuditHistoryRow {
   return {
-    id: '00000000-0000-0000-0000-000000000001',
+    id: 'row-1',
     scope: 'universe',
     scopeEntryId: null,
     scopeEntryTitle: null,
     provider: 'anthropic',
-    model: 'claude-haiku-4-5-20251001',
+    model: 'claude-new-20260101',
     status: 'succeeded',
-    costUsd: '0.0042',
+    costUsd: '0.0000',
     costUnknown: false,
-    startedAt: '2026-05-26T00:00:00.000Z',
-    finishedAt: '2026-05-26T00:01:00.000Z',
+    startedAt: new Date(Date.now() - 3_600_000).toISOString(),
+    finishedAt: new Date().toISOString(),
     suggestionsByCategory: {},
     analyzedEntries: 5,
-    totalEntries: 5,
+    totalEntries: 10,
     ...overrides,
   };
 }
 
-function renderWithRows(rows: AuditHistoryRow[]) {
-  vi.mocked(useAuditHistory).mockReturnValue({
-    data: { rows, total: rows.length, hasMore: false },
-    isPending: false,
-    error: null,
-  } as never);
-  return render(<AuditHistoryTable universeId="U1" />, { wrapper: Wrapper });
+function renderTable(universeId = 'U1') {
+  const qc = new QueryClient({
+    defaultOptions: { queries: { retry: false }, mutations: { retry: false } },
+  });
+  return render(
+    <QueryClientProvider client={qc}>
+      <MemoryRouter>
+        <AuditHistoryTable universeId={universeId} />
+      </MemoryRouter>
+    </QueryClientProvider>,
+  );
 }
 
-describe('AuditHistoryTable — Phase 27 D-06 cost_unknown chip in cost cell', () => {
+// ─── Tests ────────────────────────────────────────────────────────────────────
+
+describe('AuditHistoryTable — cost unknown chip (Phase 27 D-06)', () => {
   beforeEach(() => {
     vi.mocked(useAuditHistory).mockReset();
   });
 
-  it('Test 3 — costUnknown=true renders amber chip, NOT $0.0000 or —', () => {
-    renderWithRows([
-      baseRow({
-        id: 'aaaaaaaa-0000-0000-0000-000000000001',
-        costUnknown: true,
-        costUsd: '0.0000',
-      }),
-    ]);
+  it('3a: renders "cost unknown" chip in the Cost cell when row.costUnknown is true', () => {
+    vi.mocked(useAuditHistory).mockReturnValue({
+      data: {
+        rows: [makeRow({ costUnknown: true, costUsd: '0.0000' })],
+        total: 1,
+        hasMore: false,
+      },
+      isPending: false,
+      isLoading: false,
+      isFetching: false,
+      isSuccess: true,
+      isError: false,
+      error: null,
+    } as ReturnType<typeof useAuditHistory>);
 
-    const chip = screen.getByText(/cost unknown/i);
-    expect(chip).toBeInTheDocument();
-    expect(chip.className).toMatch(/text-amber-700/);
-    // The cell must not render the dollar amount or the em-dash placeholder
-    // for this row.
-    expect(screen.queryByText(/\$0\.0000/)).not.toBeInTheDocument();
+    renderTable();
+
+    expect(screen.getByText('cost unknown')).toBeInTheDocument();
   });
 
-  it('Test 4 — costUnknown=false + status=failed + costUsd=0.0000 still renders the em-dash', () => {
-    renderWithRows([
-      baseRow({
-        id: 'bbbbbbbb-0000-0000-0000-000000000002',
-        costUnknown: false,
-        status: 'failed',
-        costUsd: '0.0000',
-      }),
-    ]);
+  it('3b: a dollar amount does NOT appear in the Cost cell when costUnknown is true', () => {
+    vi.mocked(useAuditHistory).mockReturnValue({
+      data: {
+        rows: [makeRow({ costUnknown: true, costUsd: '0.0000' })],
+        total: 1,
+        hasMore: false,
+      },
+      isPending: false,
+      isLoading: false,
+      isFetching: false,
+      isSuccess: true,
+      isError: false,
+      error: null,
+    } as ReturnType<typeof useAuditHistory>);
 
-    // Both the cost cell (failed-zero) and the findings cell (no findings)
-    // render "—" for this row; assert at least one (the cost cell). The
-    // important assertion is the absence of the cost-unknown chip and the
-    // absence of a dollar amount.
-    expect(screen.getAllByText('—').length).toBeGreaterThanOrEqual(1);
-    expect(screen.queryByText(/cost unknown/i)).not.toBeInTheDocument();
-    expect(screen.queryByText(/\$/)).not.toBeInTheDocument();
+    renderTable();
+
+    expect(screen.queryByText('$0.0000')).toBeNull();
   });
 
-  it('Test 5 — costUnknown=false + costUsd=0.0123 renders $0.0123 unchanged', () => {
-    renderWithRows([
-      baseRow({
-        id: 'cccccccc-0000-0000-0000-000000000003',
-        costUnknown: false,
-        costUsd: '0.0123',
-      }),
-    ]);
+  it('3c: the chip has the expected aria-label for screen readers', () => {
+    vi.mocked(useAuditHistory).mockReturnValue({
+      data: {
+        rows: [makeRow({ costUnknown: true, costUsd: '0.0000' })],
+        total: 1,
+        hasMore: false,
+      },
+      isPending: false,
+      isLoading: false,
+      isFetching: false,
+      isSuccess: true,
+      isError: false,
+      error: null,
+    } as ReturnType<typeof useAuditHistory>);
 
+    renderTable();
+
+    expect(
+      screen.getByLabelText(/Cost unknown: this run used a model without published pricing/i),
+    ).toBeInTheDocument();
+  });
+
+  it('3d: renders dollar amount normally when costUnknown is false', () => {
+    vi.mocked(useAuditHistory).mockReturnValue({
+      data: {
+        rows: [makeRow({ costUnknown: false, costUsd: '0.0123' })],
+        total: 1,
+        hasMore: false,
+      },
+      isPending: false,
+      isLoading: false,
+      isFetching: false,
+      isSuccess: true,
+      isError: false,
+      error: null,
+    } as ReturnType<typeof useAuditHistory>);
+
+    renderTable();
+
+    expect(screen.queryByText('cost unknown')).toBeNull();
     expect(screen.getByText('$0.0123')).toBeInTheDocument();
-    expect(screen.queryByText(/cost unknown/i)).not.toBeInTheDocument();
+  });
+
+  it('3e: multiple rows — each with costUnknown shows its own chip', () => {
+    vi.mocked(useAuditHistory).mockReturnValue({
+      data: {
+        rows: [
+          makeRow({ id: 'row-1', costUnknown: true, costUsd: '0.0000' }),
+          makeRow({ id: 'row-2', costUnknown: true, costUsd: '0.0000' }),
+        ],
+        total: 2,
+        hasMore: false,
+      },
+      isPending: false,
+      isLoading: false,
+      isFetching: false,
+      isSuccess: true,
+      isError: false,
+      error: null,
+    } as ReturnType<typeof useAuditHistory>);
+
+    renderTable();
+
+    expect(screen.getAllByText('cost unknown')).toHaveLength(2);
+  });
+
+  it('3f: mixed rows — only the costUnknown row shows the chip', () => {
+    vi.mocked(useAuditHistory).mockReturnValue({
+      data: {
+        rows: [
+          makeRow({ id: 'row-1', costUnknown: true, costUsd: '0.0000' }),
+          makeRow({ id: 'row-2', costUnknown: false, costUsd: '0.0050' }),
+        ],
+        total: 2,
+        hasMore: false,
+      },
+      isPending: false,
+      isLoading: false,
+      isFetching: false,
+      isSuccess: true,
+      isError: false,
+      error: null,
+    } as ReturnType<typeof useAuditHistory>);
+
+    renderTable();
+
+    expect(screen.getAllByText('cost unknown')).toHaveLength(1);
+    expect(screen.getByText('$0.0050')).toBeInTheDocument();
   });
 });

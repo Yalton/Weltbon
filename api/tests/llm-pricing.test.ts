@@ -14,10 +14,8 @@
  *   5. gpt-5-mini baseline pricing values are exactly the documented numbers.
  *   6. getProvider('anthropic' | 'openai') returns LLMProvider-conforming
  *      instances with working listModels() / pricing().
- *   7. PRICING is a SUBSET of listModels() — Phase 27 D-04 revision:
- *      every PRICING id appears in the live/offline list as `hasPricing: true`;
- *      the reverse direction is no longer asserted (live can contain models
- *      PRICING doesn't yet have rates for — D-05 unpriced-but-selectable case).
+ *   7. PRICING is the source-of-truth for listModels() — D-04 invariant:
+ *      listModels().map(.id) === Object.keys(PRICING[provider]).
  *   8. getProvider returns the SAME singleton instance per provider name
  *      across multiple calls (lazy-singleton invariant — RESEARCH Pitfall #6
  *      lift).
@@ -111,29 +109,21 @@ describe('PRICING constants (PROVIDER-06)', () => {
     }
   });
 
-  it('PRICING is a subset of live listModels() (Phase 27 D-04 revision)', async () => {
-    // Phase 27 D-04 revision: PRICING is the cost lookup, not the catalog;
-    // live `models.list()` from the provider drives the catalog (see
-    // api/src/providers/llm/model-catalog.ts D-01). Live can contain models
-    // PRICING doesn't yet have rates for (D-05 unpriced-but-selectable case),
-    // so the assertion has been relaxed from bidirectional equality to
-    // one-way subset: every PRICING id must be reachable via listModels().
-    //
-    // The synchronous listModels() retains its PRICING-derived offline semantics
-    // (it powers PricingTable and the D-02 pricing-fallback path); the live
-    // dropdown catalog is `getModels(provider, keyId, apiKey)` exposed from
-    // `./index.js`. This test exercises listModels() — for which the new
-    // contract is PRICING ⊆ returned ids (subset, not equality).
+  it('listModels() is derived from PRICING keys (fallback primitive — Phase 27 D-04 revision)', async () => {
+    // Phase 27 D-04 revision: PRICING is now the COST LOOKUP, not the catalog.
+    // The live liveListModels() (cached in model-catalog.ts) is the authoritative
+    // catalog. listModels() remains a fallback primitive (Tier 3 of the 3-tier
+    // fallback) — it must still be derived from PRICING keys so Tier 3 works.
+    // This test preserves the Tier-3 correctness guarantee while removing the
+    // now-incorrect claim that PRICING *is* the catalog.
     const { getProvider } = await import('../src/providers/llm/index.js');
     const { PRICING } = await import('../src/providers/llm/pricing.js');
     for (const name of ['anthropic', 'openai'] as const) {
       const p = getProvider(name);
-      const listedIds = p.listModels().map((m) => m.id);
-      const pricingIds = Object.keys(PRICING[name]);
-      // One-way subset assertion — every PRICING id must be in the listing.
-      // The reverse direction (every listed id is in PRICING) is no longer
-      // asserted; live API can introduce models before PRICING is bumped.
-      expect(pricingIds.every((id) => listedIds.includes(id))).toBe(true);
+      const listedIds = p.listModels().map((m) => m.id).sort();
+      const pricingIds = Object.keys(PRICING[name]).sort();
+      // listModels() fallback primitive is still derived from PRICING keys.
+      expect(listedIds).toEqual(pricingIds);
     }
   });
 

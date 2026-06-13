@@ -5,7 +5,7 @@ import { defineConfig } from 'vitest/config';
  *
  * Two named projects:
  *   - `unit`         No live Postgres required. Default `pnpm test` target.
- *                    Includes everything under tests/ except the 26 DB-gated
+ *                    Includes everything under tests/ except the 37 DB-gated
  *                    files listed in the integration project below.
  *   - `integration`  DB-gated. Explicit opt-in via `pnpm test:integration`.
  *                    Preserves pool:'forks' + singleFork:true (the existing
@@ -13,7 +13,7 @@ import { defineConfig } from 'vitest/config';
  *                    schemas managed by createTestDb).
  *
  * D-17-02: Files are partitioned by the canonical marker — every DB-gated
- * test imports `createTestDb` or `setTestDb` from `./helpers.ts`. The 26-file
+ * test imports `createTestDb` or `setTestDb` from `./helpers.ts`. The 37-file
  * list below was derived via:
  *   grep -l 'createTestDb\|setTestDb' tests/*.test.ts
  * If a new DB-gated test is added, append its path to the integration project's
@@ -23,7 +23,6 @@ import { defineConfig } from 'vitest/config';
 
 // Single source of truth for the DB-gated file list.
 const DB_GATED_TESTS = [
-  'tests/audit-engine-cost-unknown.test.ts',
   'tests/audit-recovery.test.ts',
   'tests/audit-routes.test.ts',
   'tests/audits-estimate.test.ts',
@@ -38,40 +37,32 @@ const DB_GATED_TESTS = [
   'tests/export-markdown.test.ts',
   'tests/export-pdf.test.ts',
   'tests/export-streaming.test.ts',
-  'tests/graph-positions.test.ts',
   'tests/graph.test.ts',
+  'tests/graph-positions.test.ts',
   'tests/index.test.ts',
   'tests/ingest-commit.test.ts',
   'tests/ingest-endpoint.test.ts',
   'tests/invites.test.ts',
-  'tests/issues-audit-run-id-filter.test.ts',
-  'tests/issues-dismiss.test.ts',
   'tests/issues.test.ts',
+  'tests/issues-audit-run-id-filter.test.ts',
   'tests/links.test.ts',
-  'tests/llm-keys-total-spent.test.ts',
   'tests/llm-keys.test.ts',
-  'tests/llm-models-cache.test.ts',
+  'tests/llm-keys-total-spent.test.ts',
   'tests/pat-parity.test.ts',
   'tests/pat-service.test.ts',
   'tests/requireAuth-pat.test.ts',
   'tests/seedInviteCode.test.ts',
-  'tests/templates.test.ts',
+  'tests/timeline.test.ts',
   'tests/timeline-perf.test.ts',
   'tests/timeline-window.test.ts',
-  'tests/timeline.test.ts',
   'tests/tokens.test.ts',
   'tests/universe-types.test.ts',
   'tests/universes.test.ts',
-  // Phase 29 Plan 05 — share-token security boundary + share-view privacy
-  // invariants. Both files use createTestDb/setTestDb (DB-gated lane required).
-  'tests/share-boundary.test.ts',
-  'tests/share-views.test.ts',
-  // Phase 31 Plan 01 — diagram CRUD + node + edge write-through integration tests.
-  'tests/diagrams.test.ts',
-  // Phase 32 Plan 02 — dictionary CRUD + FTS + CSV import + share read integration tests.
-  'tests/dictionary-routes.test.ts',
-  'tests/dictionary-fts.test.ts',
-  'tests/dictionary-import.test.ts',
+  'tests/issues-dismiss.test.ts',
+  // Phase 27 Plan 03 Task 3: hybrid model catalog endpoint integration tests
+  'tests/llm-models.test.ts',
+  // Phase 29 Plan 01 Task 5: universe stats aggregate endpoint
+  'tests/stats.test.ts',
 ];
 
 export default defineConfig({

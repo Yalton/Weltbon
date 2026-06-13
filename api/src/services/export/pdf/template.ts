@@ -234,7 +234,7 @@ interface EntryRenderIndex {
   entryById: Map<string, ExportPayloadEntry>;
   outboundBySource: Map<
     string,
-    Array<{ relation: string; otherEntryId: string }>
+    Array<{ relation: string | null; otherEntryId: string }>
   >;
   openIssuesByEntry: Map<string, ExportPayloadIssue[]>;
 }
@@ -269,10 +269,11 @@ async function renderEntry(
   if (outbound && outbound.length > 0) {
     const byRelation = new Map<string, Set<string>>();
     for (const o of outbound) {
-      let set = byRelation.get(o.relation);
+      const relationKey = o.relation ?? '(untyped)';
+      let set = byRelation.get(relationKey);
       if (!set) {
         set = new Set();
-        byRelation.set(o.relation, set);
+        byRelation.set(relationKey, set);
       }
       set.add(o.otherEntryId);
     }
@@ -329,16 +330,16 @@ function groupEntriesByCategory(
 
 function buildOutboundIndex(
   payload: ExportPayload,
-): Map<string, Array<{ relation: string; otherEntryId: string }>> {
-  const out = new Map<string, Array<{ relation: string; otherEntryId: string }>>();
-  const push = (k: string, v: { relation: string; otherEntryId: string }) => {
+): Map<string, Array<{ relation: string | null; otherEntryId: string }>> {
+  const out = new Map<string, Array<{ relation: string | null; otherEntryId: string }>>();
+  const push = (k: string, v: { relation: string | null; otherEntryId: string }) => {
     const list = out.get(k);
     if (list) list.push(v);
     else out.set(k, [v]);
   };
   for (const l of payload.links) {
     push(l.sourceEntryId, { relation: l.label, otherEntryId: l.targetEntryId });
-    if (l.bidirectional) {
+    if (l.direction === 'undirected') {
       push(l.targetEntryId, { relation: l.label, otherEntryId: l.sourceEntryId });
     }
   }

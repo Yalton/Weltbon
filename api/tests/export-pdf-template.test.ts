@@ -32,6 +32,9 @@ function buildFixturePayload(): ExportPayload {
       name: 'Pdf Test Universe',
       description: 'A short subtitle',
       entryTypes: ['entity', 'concept'],
+      timelineWindow: null,
+      linkTypes: {},
+      entryTemplates: [],
     },
     categories: [
       { id: 'c1', label: 'People', icon: '', sortOrder: 0 },
@@ -87,7 +90,8 @@ function buildFixturePayload(): ExportPayload {
         sourceEntryId: 'e1',
         targetEntryId: 'e2',
         label: 'knows',
-        bidirectional: true,
+        linkType: null,
+        direction: 'undirected',
         createdAt: new Date(),
       },
     ],
@@ -104,6 +108,7 @@ function buildFixturePayload(): ExportPayload {
     ],
     fullIssues: [],
     graphPositions: [],
+    timelinePins: [],
     entrySlugMap: slugMap,
   };
 }

@@ -19,7 +19,8 @@ const fixtureLink: Link = {
   sourceEntryId: 'A',
   targetEntryId: 'B',
   label: 'knows',
-  bidirectional: false,
+  linkType: null,
+  direction: 'directed',
   createdAt: '2026-05-16T00:00:00Z',
 };
 

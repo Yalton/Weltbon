@@ -29,68 +29,55 @@ export const timelineWindowSchema = z
   })
   .nullable();
 
-// Phase 30 CALENDAR-01: strict Zod schema for the per-universe fictional calendar.
-// Uses `.strict()` on every nested object to reject undeclared keys (T-30-01).
-// `.max()` bounds on all arrays block pathological payloads (T-30-01).
-// `.refine` guards prevent division-by-zero / empty-month yearLen (T-30-02)
-// and enforce monotonic era start positions (correctness requirement D-05).
-// `null` (literal) is accepted and clears the calendar (CALENDAR-03 opt-in).
-export const calendarSchema = z
+// Phase 29 DATA-02 / T-29-01-FR: per-universe typed custom-field registry entry.
+// .strict() rejects unknown keys; type enum allowlist prevents free-form injection;
+// name max 50 and hint max 200 bound jsonb growth; array .max(50) mirrors T-28-02-04 DoS guard.
+// Case-insensitive duplicate name check prevents confusingly similar fields.
+const fieldRegistryEntrySchema = z
   .object({
-    eras: z
-      .array(
-        z
-          .object({
-            name: z.string().min(1).max(120),
-            abbr: z.string().min(1).max(16),
-            startPosition: z.number().finite(),
-          })
-          .strict(),
-      )
-      .min(1)
-      .max(1000),
-    months: z
-      .array(
-        z
-          .object({
-            name: z.string().min(1).max(120),
-            lengthDays: z.number().int().positive().max(100000),
-          })
-          .strict(),
-      )
-      .min(1)
-      .max(1000),
-    weekdays: z.array(z.string().min(1).max(120)).max(1000),
-    moons: z
-      .array(
-        z
-          .object({
-            name: z.string().min(1).max(120),
-            cycleDays: z.number().int().positive().max(1000000),
-          })
-          .strict(),
-      )
-      .max(1000),
-    beforeEraAbbr: z.string().min(1).max(16),
+    name: z.string().min(1).max(50),
+    type: z.enum(['text', 'number', 'boolean', 'url', 'entry-ref']),
+    hint: z.string().max(200).optional(),
   })
-  .strict()
-  .refine((v) => v.months.length >= 1, {
-    message: 'Calendar must have at least one month (prevents yearLen=0 division by zero)',
-  })
-  .refine((v) => v.eras.length >= 1, {
-    message: 'Calendar must have at least one era',
-  })
+  .strict();
+
+const fieldRegistrySchema = z
+  .array(fieldRegistryEntrySchema)
+  .max(50, { message: 'too many field registry entries (max 50)' })
   .refine(
-    (v) => {
-      // Era startPositions must be strictly increasing (D-05 monotonic constraint).
-      for (let i = 1; i < v.eras.length; i++) {
-        if (v.eras[i].startPosition <= v.eras[i - 1].startPosition) return false;
+    (arr) => {
+      const seen = new Set<string>();
+      for (const entry of arr) {
+        const key = entry.name.toLowerCase();
+        if (seen.has(key)) return false;
+        seen.add(key);
       }
       return true;
     },
-    { message: 'Era startPosition values must be strictly increasing' },
-  )
-  .nullable();
+    { message: 'field registry names must be unique (case-insensitive)' },
+  );
+
+// Phase 28 CR-02 / T-28-02-04: bound and validate the link-type registry to
+// prevent oversized-jsonb DoS and CSS/SVG injection via `color` (it flows into
+// graph edge `stroke` and legend swatches). Mirrors LinkTypeRegistryEntry; the
+// color is restricted to a hex literal so no `url(...)`/`expression(...)` can
+// reach the DOM, and the key count is capped.
+const linkTypeEntrySchema = z
+  .object({
+    color: z
+      .string()
+      .regex(/^#[0-9a-fA-F]{3,8}$/, 'color must be a hex value (e.g. #3b82f6)')
+      .optional(),
+    directionDefault: z.enum(['directed', 'undirected']).optional(),
+    inverseLabel: z.string().max(80).optional(),
+  })
+  .strict();
+
+const linkTypesSchema = z
+  .record(z.string().min(1).max(64), linkTypeEntrySchema)
+  .refine((r) => Object.keys(r).length <= 100, {
+    message: 'too many link types (max 100)',
+  });
 
 export const patchSchema = z
   .object({
@@ -102,8 +89,13 @@ export const patchSchema = z
     auditEnabled: z.boolean().optional(),
     auditProvider: z.enum(['anthropic', 'openai']).nullable().optional(),
     auditModel: z.string().nullable().optional(),
-    // Phase 30 CALENDAR-01: per-universe fictional calendar (nullable = clear).
-    calendar: calendarSchema.optional(),
+    // Phase 28 D-10/D-11: per-universe link-type registry + entry templates.
+    // T-28-02-04 / CR-02: both bounded — linkTypes via linkTypesSchema (key cap +
+    // hex-only color), entryTemplates via .max(50) — to prevent oversized jsonb DoS.
+    linkTypes: linkTypesSchema.optional(),
+    entryTemplates: z.array(z.any()).max(50).optional(),
+    // Phase 29 DATA-02 / T-29-01-FR: typed custom-field registry (bounded, enum-typed, unique names).
+    fieldRegistry: fieldRegistrySchema.optional(),
   })
   .refine(
     (v) =>
@@ -113,7 +105,9 @@ export const patchSchema = z
       v.auditEnabled !== undefined ||
       v.auditProvider !== undefined ||
       v.auditModel !== undefined ||
-      v.calendar !== undefined,
+      v.linkTypes !== undefined ||
+      v.entryTemplates !== undefined ||
+      v.fieldRegistry !== undefined,
     { message: 'At least one of name, description, or timelineWindow is required' },
   )
   .refine(
@@ -146,10 +140,13 @@ const universeSchema = z.object({
   timelineWindow: z
     .object({ start: z.number(), end: z.number() })
     .nullable(),
-  // Phase 30 CALENDAR-01: nullable per-universe fictional calendar.
-  calendar: calendarSchema,
   createdAt: z.string(),
   updatedAt: z.string(),
+  // Phase 28 D-10/D-11: link-type registry + entry templates.
+  linkTypes: z.record(z.string(), z.any()).optional(),
+  entryTemplates: z.array(z.any()).optional(),
+  // Phase 29 DATA-02: typed custom-field registry.
+  fieldRegistry: z.array(z.any()).optional(),
 });
 
 const errorSchema = z.object({ error: z.string() });

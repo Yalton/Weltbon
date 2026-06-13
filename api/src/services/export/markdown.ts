@@ -64,24 +64,29 @@ export function buildMarkdownZip(payload: ExportPayload): ReadableStream<Uint8Ar
     Array<{ relation: string; otherEntryId: string }>
   >();
   for (const l of payload.links) {
+    // Phase 28 CR-01: typed links may have a null label (linkType carries the
+    // semantics). Fall back to the link type, then a generic 'related', so the
+    // relation key is never null — the `sortedRelations` localeCompare below
+    // crashes on a null key and would abort the entire ZIP export.
+    const relation = l.label ?? l.linkType ?? 'related';
     push(outboundBySource, l.sourceEntryId, {
-      relation: l.label,
+      relation,
       otherEntryId: l.targetEntryId,
     });
-    if (l.bidirectional) {
+    if (l.direction === 'undirected') {
       push(outboundBySource, l.targetEntryId, {
-        relation: l.label,
+        relation,
         otherEntryId: l.sourceEntryId,
       });
     }
   }
 
-  // Backlinks index: target -> [sourceId]. Bidirectional links are NOT
+  // Backlinks index: target -> [sourceId]. Undirected links are NOT
   // mirrored here — they already show up on both sides as outbound, and
   // doubling them as backlinks would clutter the file with redundant info.
   const backlinksByTarget = new Map<string, string[]>();
   for (const l of payload.links) {
-    if (l.bidirectional) continue;
+    if (l.direction === 'undirected') continue;
     push(backlinksByTarget, l.targetEntryId, l.sourceEntryId);
   }
 

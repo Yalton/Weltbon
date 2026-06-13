@@ -81,11 +81,6 @@ export interface InFlightAuditSummary {
  *
  * analyzedEntries powers the partial-coverage chip (AUDIT-07 / D-08) when the
  * row is rendered in the AuditHistoryTable Findings column.
- *
- * Phase 27 D-06: `costUnknown` is `true` when the audit run used a model absent
- * from `PRICING[provider]`. The engine pins `costUsd` to `'0.0000'` in that
- * branch and the UI renders a "cost unknown" chip in place of the dollar
- * amount (see AuditHistoryTable + AuditCompletionBanner).
  */
 export interface AuditHistoryRow {
   id: string;
@@ -97,7 +92,7 @@ export interface AuditHistoryRow {
   status: AuditRunStatus;
   /** Drizzle NUMERIC(10,4) → string. */
   costUsd: string;
-  /** Phase 27 D-06: model used for the run had no pricing row; UI renders the "cost unknown" amber chip. */
+  /** Phase 27 D-06: true when the run used a live-but-unpriced model; cost_usd stays "0.0000". */
   costUnknown: boolean;
   startedAt: string;
   finishedAt: string | null;
@@ -107,63 +102,4 @@ export interface AuditHistoryRow {
   analyzedEntries: number;
   /** Universe total entry count at run time. `null` for entry-scoped runs. */
   totalEntries: number | null;
-}
-
-// ─── Phase 27 Plan 04 — Live model catalog (D-01..D-05) ────────────────────
-
-/**
- * Phase 27 web-mirror of `api/src/providers/llm/interface.ts ModelListing`.
- *
- * Per-model pricing row. `cachedInputUsdPer1M` and `cacheWriteUsdPer1M` are
- * Anthropic-only — undefined for OpenAI rows.
- */
-export interface ModelListing {
-  id: string;
-  inputUsdPer1M: number;
-  outputUsdPer1M: number;
-  /** Anthropic only — cost per 1M tokens read from prompt cache. */
-  cachedInputUsdPer1M?: number;
-  /** Anthropic only — cost per 1M tokens written into prompt cache. */
-  cacheWriteUsdPer1M?: number;
-}
-
-/**
- * Phase 27 D-05 — single entry in the live-list response.
- *
- * `id` is the provider-emitted model id. `hasPricing` reflects whether the id
- * is present in `PRICING[provider]`; when true, `pricing` is the full
- * `ModelListing` row. When false, `pricing` is undefined and the UI renders a
- * `⚠ no pricing` chip next to the id (the model is still selectable).
- *
- * Web mirror of `api/src/providers/llm/interface.ts ModelListingWithCoverage`.
- */
-export interface ModelListingWithCoverage {
-  id: string;
-  hasPricing: boolean;
-  pricing?: ModelListing;
-}
-
-/**
- * Phase 27 D-01/D-02 — cache + fallback envelope returned by
- * GET /api/llm/models?provider=… (see api/src/routes/llm-models.ts).
- *
- * `source` discriminates which path produced the listing:
- *   - 'live'             — fresh provider response (cache miss + success) OR
- *                          a still-fresh cached entry (within 30-min TTL).
- *   - 'cache_stale'      — provider SDK threw AND a cached entry existed for
- *                          this `(provider, keyId)`; returned regardless of TTL.
- *   - 'pricing_fallback' — provider SDK threw AND no cached entry existed;
- *                          synthesized from `Object.keys(PRICING[provider])`.
- *
- * `fetchedAt` is an ISO8601 UTC string; for fallback paths it is the timestamp
- * of the cached entry (cache_stale) or `new Date().toISOString()` at synthesis
- * time (pricing_fallback). The frontend may surface `source` as an optional
- * "live list unavailable" indicator; `fetchedAt` powers debug surfaces only.
- *
- * Web mirror of `api/src/providers/llm/interface.ts ListingsResult`.
- */
-export interface ListingsResult {
-  models: ModelListingWithCoverage[];
-  source: 'live' | 'cache_stale' | 'pricing_fallback';
-  fetchedAt: string;
 }

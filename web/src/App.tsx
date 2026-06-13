@@ -12,6 +12,7 @@ import { EntryEditor } from './views/EntryEditor';
 import { GraphView } from './views/GraphView';
 import { IngestImport } from './views/IngestImport';
 import { IssuesView } from './views/IssuesView';
+import { StatsView } from './views/StatsView';
 import { TimelineView } from './views/TimelineView';
 import { CalendarEditor } from './views/CalendarEditor';
 import { EventsView } from './views/EventsView';
@@ -66,6 +67,7 @@ export default function App() {
           <Route path="/universes/:uid/dictionary" element={<Dictionary />} />
           <Route path="/universes/:uid/languages/:lid/dictionary" element={<Dictionary />} />
           <Route path="/universes/:uid/issues" element={<IssuesView />} />
+          <Route path="/universes/:uid/stats" element={<StatsView />} />
           <Route path="/universes/:uid/import" element={<IngestImport />} />
         </Route>
       </Route>

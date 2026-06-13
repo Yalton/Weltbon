@@ -113,14 +113,6 @@ const auditRunStateSchema = z.object({
   cachedTokens: z.number().int(),
   toolCallCount: z.number().int(),
   costUsd: z.string(), // NUMERIC(10,4) comes back as string from pg
-  // Phase 27 D-06 — true when the run used a model absent from PRICING; the
-  // engine pins costUsd to '0.0000' in that branch and AuditCompletionBanner
-  // renders the "cost unknown" amber chip instead of "Cost: $0.0000".
-  // Plan 04 Rule 2: the single-run wire shape did not expose this field when
-  // 27-03 shipped (only auditHistoryRowSchema did); the banner reads
-  // useAuditRun() so the field has to surface here as well or the chip never
-  // renders. Documented as a Rule 2 deviation in 27-04-SUMMARY.md.
-  costUnknown: z.boolean(),
   triggerSource: z.string(),
   error: z.string().nullable(),
   startedAt: z.string().or(z.date()),
@@ -144,10 +136,6 @@ const auditHistoryRowSchema = z.object({
   status: z.enum(['pending', 'running', 'succeeded', 'failed']),
   // NUMERIC(10,4) → string (string preserves decimal precision)
   costUsd: z.string(),
-  // Phase 27 D-06: true when the run used a model absent from PRICING; the
-  // engine pins costUsd to '0.0000' in that branch and the UI renders a
-  // "cost unknown" chip in place of the dollar amount.
-  costUnknown: z.boolean(),
   startedAt: z.string().or(z.date()),
   finishedAt: z.string().or(z.date()).nullable(),
   // Categories with zero counts are omitted; null-category issues are excluded.
@@ -159,6 +147,9 @@ const auditHistoryRowSchema = z.object({
   analyzedEntries: z.number().int(),
   // null for entry-scoped runs (per AuditHistoryRow JSDoc)
   totalEntries: z.number().int().nullable(),
+  // Phase 27 D-06: true when the run used a live-but-unpriced model.
+  // UI renders a "cost unknown" chip instead of $0.0000 when this is true.
+  costUnknown: z.boolean(),
 });
 
 const auditHistoryResponseSchema = z.object({
@@ -503,8 +494,6 @@ export const auditRoutes = new OpenAPIHono<AppEnv>()
         model: auditRuns.model,
         status: auditRuns.status,
         costUsd: auditRuns.costUsd,
-        // Phase 27 D-06: surface cost_unknown so the UI can render a chip
-        // instead of a $0.0000 dollar amount.
         costUnknown: auditRuns.costUnknown,
         startedAt: auditRuns.startedAt,
         finishedAt: auditRuns.finishedAt,
@@ -578,7 +567,8 @@ export const auditRoutes = new OpenAPIHono<AppEnv>()
       model: r.model,
       status: r.status as 'pending' | 'running' | 'succeeded' | 'failed',
       costUsd: r.costUsd, // string from NUMERIC(10,4)
-      costUnknown: r.costUnknown, // Phase 27 D-06
+      // Phase 27 D-06: carry cost_unknown so UI can render "cost unknown" chip.
+      costUnknown: r.costUnknown,
       startedAt: r.startedAt,
       finishedAt: r.finishedAt,
       suggestionsByCategory: byRunCategory.get(r.id) ?? {},
@@ -693,9 +683,6 @@ export const auditRoutes = new OpenAPIHono<AppEnv>()
         cachedTokens: run.cachedTokens,
         toolCallCount: run.toolCallCount,
         costUsd: run.costUsd,
-        // Phase 27 D-06 — surface cost_unknown so AuditCompletionBanner can
-        // render the amber chip when it polls via useAuditRun().
-        costUnknown: run.costUnknown,
         triggerSource: run.triggerSource,
         error: run.error,
         startedAt: run.startedAt,
