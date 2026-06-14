@@ -71,7 +71,7 @@ interface SimEdge {
   id: string;
   source: SimNode | string;
   target: SimNode | string;
-  label: string;
+  label: string | null;
 }
 
 const NODE_RADIUS = 14;

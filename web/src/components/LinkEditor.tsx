@@ -4,6 +4,7 @@ import { useEntries, type Entry } from '../hooks/useEntries';
 import { useCreateLink } from '../hooks/useLinks';
 import { TypeBadge } from './TypeBadge';
 import { RelationCombobox } from './RelationCombobox';
+import { LinkTypeSelect } from './LinkTypeSelect';
 
 interface Props {
   universeId: string;
@@ -17,7 +18,8 @@ export function LinkEditor({ universeId, entryId, onLinkCreated, children }: Pro
   const [search, setSearch] = useState('');
   const [selectedEntry, setSelectedEntry] = useState<Entry | null>(null);
   const [label, setLabel] = useState('');
-  const [bidirectional, setBidirectional] = useState(false);
+  const [linkType, setLinkType] = useState('');
+  const [direction, setDirection] = useState<'directed' | 'undirected'>('directed');
   const [showDropdown, setShowDropdown] = useState(false);
   const inputRef = useRef<HTMLInputElement>(null);
 
@@ -30,13 +32,15 @@ export function LinkEditor({ universeId, entryId, onLinkCreated, children }: Pro
     .filter((e) => e.title.toLowerCase().includes(search.toLowerCase()))
     .slice(0, 8);
 
-  const canSubmit = selectedEntry !== null && label.trim().length > 0;
+  // canSubmit: only requires a target entry (label and type are optional per D-04)
+  const canSubmit = selectedEntry !== null;
 
   const reset = () => {
     setSearch('');
     setSelectedEntry(null);
     setLabel('');
-    setBidirectional(false);
+    setLinkType('');
+    setDirection('directed');
     setShowDropdown(false);
   };
 
@@ -45,8 +49,9 @@ export function LinkEditor({ universeId, entryId, onLinkCreated, children }: Pro
     await createLink.mutateAsync({
       sourceEntryId: entryId,
       targetEntryId: selectedEntry.id,
-      label: label.trim(),
-      bidirectional,
+      label: label.trim() || null,
+      linkType: linkType || null,
+      direction,
     });
     reset();
     setOpen(false);
@@ -109,30 +114,61 @@ export function LinkEditor({ universeId, entryId, onLinkCreated, children }: Pro
               )}
             </div>
 
-            {/* Relation label */}
+            {/* Link type selection */}
             <div>
-              <label className="block text-sm text-neutral-400 mb-1">Relation</label>
+              <label className="block text-sm text-neutral-400 mb-1">Type</label>
+              <LinkTypeSelect
+                universeId={universeId}
+                value={linkType}
+                onChange={setLinkType}
+                onDirectionChange={setDirection}
+                placeholder="Search or enter a type..."
+              />
+            </div>
+
+            {/* Direction toggle pill group (UI-SPEC Surface 2) */}
+            <div>
+              <label className="block text-sm text-neutral-400 mb-1">Direction</label>
+              <div className="flex gap-1 mt-1" role="group" aria-label="Direction">
+                <button
+                  type="button"
+                  aria-pressed={direction === 'directed'}
+                  onClick={() => setDirection('directed')}
+                  className={`rounded-md border px-3 py-1 text-sm cursor-pointer ${
+                    direction === 'directed'
+                      ? 'border-[color:var(--color-accent)] bg-[color:var(--color-accent-soft)] text-[color:var(--color-accent)]'
+                      : 'border-neutral-300 dark:border-neutral-700 text-neutral-600 dark:text-neutral-400'
+                  }`}
+                >
+                  A &rarr; B
+                </button>
+                <button
+                  type="button"
+                  aria-pressed={direction === 'undirected'}
+                  onClick={() => setDirection('undirected')}
+                  className={`rounded-md border px-3 py-1 text-sm cursor-pointer ${
+                    direction === 'undirected'
+                      ? 'border-[color:var(--color-accent)] bg-[color:var(--color-accent-soft)] text-[color:var(--color-accent)]'
+                      : 'border-neutral-300 dark:border-neutral-700 text-neutral-600 dark:text-neutral-400'
+                  }`}
+                >
+                  A &harr; B
+                </button>
+              </div>
+            </div>
+
+            {/* Display label (optional — demoted from required primary position) */}
+            <div>
+              <label className="block text-sm text-neutral-400 mb-1">
+                Display label (optional)
+              </label>
               <RelationCombobox
                 universeId={universeId}
                 value={label}
                 onChange={setLabel}
-                placeholder='e.g. "created by"'
+                placeholder="e.g. sworn shield since the Sundering"
               />
             </div>
-
-            {/* Bidirectional toggle */}
-            <label className="flex items-start gap-2 cursor-pointer">
-              <input
-                type="checkbox"
-                checked={bidirectional}
-                onChange={(e) => setBidirectional(e.target.checked)}
-                className="mt-0.5"
-              />
-              <div>
-                <span className="text-sm">Bidirectional</span>
-                <p className="text-xs text-neutral-400">Both entries will show this link</p>
-              </div>
-            </label>
 
             {/* Actions */}
             <div className="flex justify-end gap-2 pt-1">

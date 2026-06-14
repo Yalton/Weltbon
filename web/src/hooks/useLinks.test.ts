@@ -19,7 +19,8 @@ const fixtureLink: Link = {
   sourceEntryId: 'A',
   targetEntryId: 'B',
   label: 'knows',
-  bidirectional: false,
+  linkType: null,
+  direction: 'directed',
   createdAt: '2026-05-16T00:00:00Z',
 };
 
@@ -53,6 +54,37 @@ describe('useCreateLink', () => {
     expect(invalidatedKeys).toContain(JSON.stringify(['entry', 'U1']));
     expect(invalidatedKeys).toContain(JSON.stringify(['relations', 'U1']));
     expect(invalidatedKeys).toContain(JSON.stringify(['graph-data', 'U1']));
+    // Phase 35 REL-01: also invalidates link-types for the combobox
+    expect(invalidatedKeys).toContain(JSON.stringify(['link-types', 'U1']));
+  });
+
+  it('sends linkType + direction in the create payload (Phase 35 REL-01)', async () => {
+    vi.mocked(api).mockResolvedValue({ ...fixtureLink, linkType: 'parent_of', direction: 'directed' });
+    const qc = new QueryClient({
+      defaultOptions: { queries: { retry: false }, mutations: { retry: false } },
+    });
+
+    const { result } = renderHook(() => useCreateLink('U1'), {
+      wrapper: wrapperFactory(qc),
+    });
+
+    await act(async () => {
+      await result.current.mutateAsync({
+        sourceEntryId: 'A',
+        targetEntryId: 'B',
+        label: null,
+        linkType: 'parent_of',
+        direction: 'directed',
+      });
+    });
+
+    const postCall = vi.mocked(api).mock.calls.find(
+      ([, init]) => (init as RequestInit | undefined)?.method === 'POST',
+    );
+    expect(postCall).toBeTruthy();
+    const body = JSON.parse((postCall![1] as RequestInit).body as string);
+    expect(body.linkType).toBe('parent_of');
+    expect(body.direction).toBe('directed');
   });
 });
 

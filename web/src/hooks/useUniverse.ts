@@ -19,6 +19,9 @@ export interface Universe {
   auditEnabled: boolean;
   auditProvider: 'anthropic' | 'openai' | null;
   auditModel: string | null;
+  // Phase 35 REL-01: per-universe link-type registry (nullable until migration runs).
+  // Absent on pre-migration rows → treat as empty record.
+  linkTypes?: Record<string, { color?: string; directionDefault?: 'directed' | 'undirected'; inverseLabel?: string }>;
 }
 
 export function useUniverses() {
@@ -66,6 +69,8 @@ export function useUpdateUniverse(id: string) {
       auditEnabled?: boolean;
       auditProvider?: 'anthropic' | 'openai' | null;
       auditModel?: string | null;
+      // Phase 35 REL-01: link-type registry patch (color overrides per D-03 deferred UI).
+      linkTypes?: Record<string, { color?: string; directionDefault?: 'directed' | 'undirected'; inverseLabel?: string }>;
     }) =>
       api<Universe>(`/universes/${id}`, { method: 'PATCH', body: JSON.stringify(body) }),
     onSuccess: () => {

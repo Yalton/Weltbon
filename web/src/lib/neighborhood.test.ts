@@ -2,8 +2,9 @@ import { describe, it, expect } from 'vitest';
 import { neighborhood } from './neighborhood';
 import type { GraphEdge } from '../hooks/useGraphData';
 
-function edge(id: string, source: string, target: string, bidirectional = false): GraphEdge {
-  return { id, source, target, label: '', bidirectional };
+function edge(id: string, source: string, target: string, _bidirectional = false): GraphEdge {
+  // Phase 35 REL-01: bidirectional replaced by direction; undirected edges use direction='undirected'
+  return { id, source, target, label: null, linkType: null, direction: _bidirectional ? 'undirected' : 'directed' };
 }
 
 describe('neighborhood', () => {

@@ -15,8 +15,8 @@ function makeNode(overrides: Partial<GraphNode> & { id: string }): GraphNode {
   };
 }
 
-function makeEdge(id: string, source: string, target: string, label = ''): GraphEdge {
-  return { id, source, target, label, bidirectional: false };
+function makeEdge(id: string, source: string, target: string, label: string | null = null): GraphEdge {
+  return { id, source, target, label, linkType: null, direction: 'directed' };
 }
 
 function tinyGraph() {

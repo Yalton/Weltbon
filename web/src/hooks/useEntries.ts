@@ -30,8 +30,9 @@ export interface OutboundLink {
   targetEntryId: string;
   targetTitle: string;
   targetIcon: string;
-  label: string;
-  bidirectional: boolean;
+  label: string | null;
+  linkType: string | null;
+  direction: string;
 }
 
 export interface Backlink {
@@ -39,8 +40,9 @@ export interface Backlink {
   sourceEntryId: string;
   sourceTitle: string;
   sourceIcon: string;
-  label: string;
-  bidirectional: boolean;
+  label: string | null;
+  linkType: string | null;
+  direction: string;
 }
 
 export interface EntryIssueRef {

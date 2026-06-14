@@ -87,9 +87,9 @@ function makeEdge(
   id: string,
   source: string,
   target: string,
-  label = '',
+  label: string | null = null,
 ): GraphEdge {
-  return { id, source, target, label, bidirectional: false };
+  return { id, source, target, label, linkType: null, direction: 'directed' };
 }
 
 function renderGraphView(universeId = 'UNI') {

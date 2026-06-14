@@ -2,6 +2,8 @@ import { useState } from 'react';
 import { Link, useParams } from 'react-router-dom';
 import type { OutboundLink, Backlink } from '../hooks/useEntries';
 import { useDeleteLink } from '../hooks/useLinks';
+import { getInverseLabel, formatLinkType } from '../lib/linkTypeColor';
+import type { LinkTypeRegistry } from '../lib/linkTypeColor';
 import { ConfirmDialog } from './ConfirmDialog';
 import { EmptyState } from './EmptyState';
 import { LinkEditor } from './LinkEditor';
@@ -13,9 +15,22 @@ interface Props {
   universeId: string;
   entryId: string;
   onLinkCreated: () => void;
+  /**
+   * Per-universe link type registry for color/inverse overrides.
+   * Passed as {} when the universe data is not yet loaded — preset
+   * inverses from PRESET_LINK_TYPES are still applied (safe default).
+   */
+  linkTypeRegistry?: LinkTypeRegistry;
 }
 
-export function LinkSection({ outboundLinks, backlinks, universeId, entryId, onLinkCreated }: Props) {
+export function LinkSection({
+  outboundLinks,
+  backlinks,
+  universeId,
+  entryId,
+  onLinkCreated,
+  linkTypeRegistry = {},
+}: Props) {
   const deleteLink = useDeleteLink(universeId);
   const [deletingLinkId, setDeletingLinkId] = useState<string | null>(null);
   // Phase 29 — read share-mode flag + share token from route params so the
@@ -31,18 +46,19 @@ export function LinkSection({ outboundLinks, backlinks, universeId, entryId, onL
       ? `/share/${token ?? ''}/entries/${targetId}`
       : `/universes/${universeId}/entries/${targetId}`;
 
-  // Group outbound links by label
+  // Group outbound links by linkType, falling back to label, then 'untyped'
   const grouped = outboundLinks.reduce<Record<string, OutboundLink[]>>((acc, link) => {
-    const key = link.label;
+    const key = link.linkType ?? link.label ?? 'untyped';
     if (!acc[key]) acc[key] = [];
     acc[key].push(link);
     return acc;
   }, {});
 
-  // Filter out backlinks where bidirectional=true AND the same link.id appears in outboundLinks
+  // Filter out backlinks for undirected links that already appear in outbound
+  // (an undirected link appears on both sides; dedup by id to avoid duplicate display)
   const outboundIds = new Set(outboundLinks.map((l) => l.id));
   const filteredBacklinks = backlinks.filter(
-    (bl) => !(bl.bidirectional && outboundIds.has(bl.id)),
+    (bl) => !(bl.direction === 'undirected' && outboundIds.has(bl.id)),
   );
 
   const handleDeleteLink = async () => {
@@ -74,9 +90,18 @@ export function LinkSection({ outboundLinks, backlinks, universeId, entryId, onL
 
         {hasOutbound ? (
           <div className="mt-4 space-y-4">
-            {Object.entries(grouped).map(([label, links]) => (
-              <div key={label}>
-                <p className="text-sm text-neutral-400 uppercase tracking-wide">{label}</p>
+            {Object.entries(grouped).map(([linkTypeKey, links]) => (
+              <div key={linkTypeKey}>
+                {/* Group heading (UI-SPEC Surface 2 + "New Surfaces — typed group heading") */}
+                <p className="text-xs text-neutral-400 uppercase tracking-wide">
+                  {linkTypeKey === 'untyped'
+                    ? (links[0]?.label ?? 'Linked')
+                    : formatLinkType(linkTypeKey)}
+                  {/* Append freeform label as secondary if different from the type key */}
+                  {links[0]?.label && linkTypeKey !== 'untyped' && linkTypeKey !== links[0].label
+                    ? <span className="text-neutral-500 italic ml-1">— {links[0].label}</span>
+                    : null}
+                </p>
                 <ul className="mt-1 space-y-1">
                   {links.map((link) => (
                     <li key={link.id} className="flex items-center gap-2 group">
@@ -86,9 +111,6 @@ export function LinkSection({ outboundLinks, backlinks, universeId, entryId, onL
                       >
                         {link.targetIcon && <span>{link.targetIcon}</span>}
                         {link.targetTitle}
-                        {link.bidirectional && (
-                          <span className="text-neutral-400 ml-1">&lt;-&gt;</span>
-                        )}
                       </Link>
                       {/* Phase 29 D-18 — per-link delete is owner-only. */}
                       {!isShareMode && (
@@ -145,7 +167,10 @@ export function LinkSection({ outboundLinks, backlinks, universeId, entryId, onL
                   {bl.sourceIcon && <span>{bl.sourceIcon}</span>}
                   {bl.sourceTitle}
                 </Link>
-                <span className="text-sm text-neutral-400 ml-2">{bl.label}</span>
+                {/* Backlink inverse label: derived from linkType if preset; falls back to freeform label */}
+                <span className="text-xs text-neutral-400 ml-2">
+                  {getInverseLabel(bl.linkType, linkTypeRegistry) ?? bl.label ?? ''}
+                </span>
               </li>
             ))}
           </ul>
