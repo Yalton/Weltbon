@@ -77,6 +77,11 @@ const createEdgeSchema = z.object({
   label: z.string().max(100),
   lineStyle: z.enum(LINE_STYLES).optional().default('solid'),
   color: z.string().max(50).optional(),
+  // Phase 35 REL-01: DIAGRAM-02 keeps `bidirectional` on the diagram-edge API
+  // surface (the editor toggle is a diagram concept) but maps it to
+  // links.direction at the write-through boundary:
+  //   bidirectional=true  → direction='undirected'
+  //   bidirectional=false → direction='directed'
   bidirectional: z.boolean().optional().default(false),
 });
 
@@ -85,8 +90,13 @@ const edgeSchema = z.object({
   universeId: z.string(),
   sourceEntryId: z.string(),
   targetEntryId: z.string(),
-  label: z.string(),
-  bidirectional: z.boolean(),
+  label: z.string().nullable(),
+  // Phase 35 REL-01: diagram edges expose `direction` (the links column value)
+  // instead of `bidirectional`. The diagram editor (Plan 04) derives the toggle
+  // from `direction === 'undirected'`. Callers who previously read
+  // `bidirectional` must now read `direction`.
+  direction: z.string(),
+  linkType: z.string().nullable(),
   diagramId: z.string().nullable(),
   lineStyle: z.string().nullable(),
   color: z.string().nullable(),
@@ -515,7 +525,11 @@ export const diagramsRouter = new OpenAPIHono<AppEnv>()
         .returning();
       row = updated;
     } else {
-      // Create new link with diagram metadata
+      // Create new link with diagram metadata.
+      // Phase 35 REL-01 DIAGRAM-02: map the diagram-edge bidirectional toggle
+      // to links.direction at the write-through boundary. Diagram edges are
+      // untyped (linkType: null). Plan 04 derives the editor toggle from
+      // `direction === 'undirected'` on read.
       const [created] = await db()
         .insert(links)
         .values({
@@ -523,7 +537,8 @@ export const diagramsRouter = new OpenAPIHono<AppEnv>()
           sourceEntryId: data.sourceEntryId,
           targetEntryId: data.targetEntryId,
           label: data.label,
-          bidirectional: data.bidirectional,
+          linkType: null,
+          direction: data.bidirectional ? 'undirected' : 'directed',
           diagramId: did,
           lineStyle: data.lineStyle,
           color: data.color ?? null,

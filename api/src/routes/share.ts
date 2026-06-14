@@ -153,8 +153,10 @@ const publicEntryDetailResponseSchema = z.object({
       targetEntryId: z.string(),
       targetTitle: z.string(),
       targetIcon: z.string(),
-      label: z.string(),
-      bidirectional: z.boolean(),
+      label: z.string().nullable(),
+      // Phase 35 REL-01: replaced bidirectional with linkType + direction
+      linkType: z.string().nullable(),
+      direction: z.string(),
     }),
   ),
   backlinks: z.array(
@@ -163,8 +165,10 @@ const publicEntryDetailResponseSchema = z.object({
       sourceEntryId: z.string(),
       sourceTitle: z.string(),
       sourceIcon: z.string(),
-      label: z.string(),
-      bidirectional: z.boolean(),
+      label: z.string().nullable(),
+      // Phase 35 REL-01: replaced bidirectional with linkType + direction
+      linkType: z.string().nullable(),
+      direction: z.string(),
     }),
   ),
 });
@@ -180,8 +184,10 @@ const publicGraphEdgeSchema = z.object({
   id: z.string(),
   source: z.string(),
   target: z.string(),
-  label: z.string(),
-  bidirectional: z.boolean(),
+  label: z.string().nullable(),
+  // Phase 35 REL-01: replaced bidirectional with linkType + direction
+  linkType: z.string().nullable(),
+  direction: z.string(),
 });
 const publicGraphPositionSchema = z.object({
   entryId: z.string(),

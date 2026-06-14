@@ -155,7 +155,9 @@ export async function getPublicEntryById(universeId: string, entryId: string) {
       sourceTitle: sourceEntries.title,
       sourceIcon: sourceEntries.icon,
       label: links.label,
-      bidirectional: links.bidirectional,
+      // Phase 35 REL-01: replaced bidirectional with linkType + direction
+      linkType: links.linkType,
+      direction: links.direction,
     })
     .from(links)
     .innerJoin(sourceEntries, eq(links.sourceEntryId, sourceEntries.id))
@@ -178,7 +180,9 @@ export async function getPublicEntryById(universeId: string, entryId: string) {
       targetTitle: targetEntries.title,
       targetIcon: targetEntries.icon,
       label: links.label,
-      bidirectional: links.bidirectional,
+      // Phase 35 REL-01: replaced bidirectional with linkType + direction
+      linkType: links.linkType,
+      direction: links.direction,
     })
     .from(links)
     .innerJoin(targetEntries, eq(links.targetEntryId, targetEntries.id))
@@ -256,7 +260,9 @@ export async function getPublicGraph(universeId: string) {
       source: links.sourceEntryId,
       target: links.targetEntryId,
       label: links.label,
-      bidirectional: links.bidirectional,
+      // Phase 35 REL-01: replaced bidirectional with linkType + direction
+      linkType: links.linkType,
+      direction: links.direction,
     })
     .from(links)
     .where(
