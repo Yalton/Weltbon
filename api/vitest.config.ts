@@ -46,6 +46,8 @@ const DB_GATED_TESTS = [
   'tests/invites.test.ts',
   'tests/issues-audit-run-id-filter.test.ts',
   'tests/issues-dismiss.test.ts',
+  // Phase 34 FIX-01 — gap_key nulls-distinct uniqueness regression (DB-gated).
+  'tests/issues-fix01-nulls-distinct.test.ts',
   'tests/issues.test.ts',
   'tests/links.test.ts',
   'tests/llm-keys-total-spent.test.ts',
