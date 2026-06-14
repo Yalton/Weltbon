@@ -44,6 +44,11 @@ describe('issues FIX-01: gap_key nulls-distinct uniqueness', () => {
     return app.request(url, init);
   }
 
+  // eslint-disable-next-line @typescript-eslint/no-explicit-any
+  async function json(res: Response): Promise<any> {
+    return res.json();
+  }
+
   // NOTE: API routes are mounted under the `/api` prefix (api/src/index.ts:141
   // `app.route('/api', apiR)`). The older issues.test.ts / universes.test.ts post
   // to bare `/universes` and 404 as a result (the documented "position 4" baseline
@@ -51,7 +56,7 @@ describe('issues FIX-01: gap_key nulls-distinct uniqueness', () => {
   // the routes and proves FIX-01. No production route/type/schema is modified (D-03).
   async function createUniverse(hdrs: Record<string, string>, name = 'TestWorld') {
     const res = await req('POST', '/api/universes', { headers: hdrs, body: { name } });
-    return res.json();
+    return json(res);
   }
 
   /** Seed an issue row directly (bypasses the HTTP layer) so we can set gap_key. */
@@ -87,8 +92,8 @@ describe('issues FIX-01: gap_key nulls-distinct uniqueness', () => {
     });
     expect(second.status).toBe(201);
 
-    const firstBody = await first.json();
-    const secondBody = await second.json();
+    const firstBody = await json(first);
+    const secondBody = await json(second);
     expect(firstBody.id).not.toBe(secondBody.id);
   });
 
