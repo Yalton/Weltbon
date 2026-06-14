@@ -17,7 +17,7 @@ import { llmKeyRoutes } from './routes/llm-keys.js';
 import { llmModelsRoutes } from './routes/llm-models.js';
 import { universeRoutes } from './routes/universes.js';
 import { entryRoutes } from './routes/entries.js';
-import { linkRoutes, relationRoutes } from './routes/links.js';
+import { linkRoutes, relationRoutes, linkTypeRoutes } from './routes/links.js';
 import { categoryRoutes } from './routes/categories.js';
 import { issueRoutes } from './routes/issues.js';
 import { graphRoutes, graphPositionRoutes } from './routes/graph.js';
@@ -118,6 +118,8 @@ export function createApp() {
   apiR.route('/universes/:uid/entries', timelinePinRoutes);
   apiR.route('/universes/:uid/links', linkRoutes);
   apiR.route('/universes/:uid/relations', relationRoutes);
+  // Phase 35 REL-01: link-type autocomplete (mounted after relations, before categories)
+  apiR.route('/universes/:uid/link-types', linkTypeRoutes);
   apiR.route('/universes/:uid/categories', categoryRoutes);
   apiR.route('/universes/:uid/issues', issueRoutes);
   apiR.route('/universes/:uid', auditRoutes);

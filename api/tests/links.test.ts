@@ -43,32 +43,33 @@ describe('link routes (LINK-01..06)', () => {
   }
 
   async function createUniverse(hdrs: Record<string, string>, name = 'TestWorld') {
-    const res = await req('POST', '/universes', { headers: hdrs, body: { name } });
+    const res = await req('POST', '/api/universes', { headers: hdrs, body: { name } });
     return json(res);
   }
 
   async function createEntry(uid: string, hdrs: Record<string, string>, overrides: Record<string, unknown> = {}) {
     const defaults = { title: 'Test Entry', entryType: 'concept' };
-    const res = await req('POST', `/universes/${uid}/entries`, {
+    const res = await req('POST', `/api/universes/${uid}/entries`, {
       headers: hdrs,
       body: { ...defaults, ...overrides },
     });
     return json(res);
   }
 
-  // LINK-01: create directional link
-  it('POST /universes/:uid/links creates a directional link', async () => {
+  // LINK-01: create typed directed link
+  it('POST /universes/:uid/links with linkType+direction creates typed link', async () => {
     const { hdrs } = await userWithToken('a@test.com');
     const universe = await createUniverse(hdrs);
     const entryA = await createEntry(universe.id, hdrs, { title: 'Entry A' });
     const entryB = await createEntry(universe.id, hdrs, { title: 'Entry B' });
 
-    const res = await req('POST', `/universes/${universe.id}/links`, {
+    const res = await req('POST', `/api/universes/${universe.id}/links`, {
       headers: hdrs,
       body: {
         sourceEntryId: entryA.id,
         targetEntryId: entryB.id,
-        label: 'created by',
+        linkType: 'member_of',
+        direction: 'directed',
       },
     });
 
@@ -78,31 +79,218 @@ describe('link routes (LINK-01..06)', () => {
     expect(link.universeId).toBe(universe.id);
     expect(link.sourceEntryId).toBe(entryA.id);
     expect(link.targetEntryId).toBe(entryB.id);
-    expect(link.label).toBe('created by');
-    expect(link.bidirectional).toBe(false);
+    expect(link.linkType).toBe('member_of');
+    expect(link.direction).toBe('directed');
+    expect(link.label).toBeNull();
     expect(link.createdAt).toBeTruthy();
   });
 
-  // LINK-02: create bidirectional link
-  it('POST /universes/:uid/links creates a bidirectional link', async () => {
+  // LINK-02: create untyped link (no linkType, no label) — direction defaults to 'directed'
+  it('POST /universes/:uid/links with only sourceEntryId+targetEntryId creates untyped link', async () => {
     const { hdrs } = await userWithToken('b@test.com');
     const universe = await createUniverse(hdrs);
     const entryA = await createEntry(universe.id, hdrs, { title: 'Entry A' });
     const entryB = await createEntry(universe.id, hdrs, { title: 'Entry B' });
 
-    const res = await req('POST', `/universes/${universe.id}/links`, {
+    const res = await req('POST', `/api/universes/${universe.id}/links`, {
       headers: hdrs,
       body: {
         sourceEntryId: entryA.id,
         targetEntryId: entryB.id,
-        label: 'allied with',
-        bidirectional: true,
       },
     });
 
     expect(res.status).toBe(201);
     const link = await json(res);
-    expect(link.bidirectional).toBe(true);
+    expect(link.linkType).toBeNull();
+    expect(link.direction).toBe('directed'); // default
+    expect(link.label).toBeNull();
+  });
+
+  // direction validation: rejects invalid direction enum value
+  it('POST /universes/:uid/links with invalid direction returns 400', async () => {
+    const { hdrs } = await userWithToken('b2@test.com');
+    const universe = await createUniverse(hdrs);
+    const entryA = await createEntry(universe.id, hdrs, { title: 'A' });
+    const entryB = await createEntry(universe.id, hdrs, { title: 'B' });
+
+    const res = await req('POST', `/api/universes/${universe.id}/links`, {
+      headers: hdrs,
+      body: {
+        sourceEntryId: entryA.id,
+        targetEntryId: entryB.id,
+        direction: 'lateral', // invalid — not in enum ['directed', 'undirected']
+      },
+    });
+
+    expect(res.status).toBe(400);
+  });
+
+  // linkType max 100 chars enforcement
+  it('POST /universes/:uid/links with linkType > 100 chars returns 400', async () => {
+    const { hdrs } = await userWithToken('b3@test.com');
+    const universe = await createUniverse(hdrs);
+    const entryA = await createEntry(universe.id, hdrs, { title: 'A' });
+    const entryB = await createEntry(universe.id, hdrs, { title: 'B' });
+
+    const res = await req('POST', `/api/universes/${universe.id}/links`, {
+      headers: hdrs,
+      body: {
+        sourceEntryId: entryA.id,
+        targetEntryId: entryB.id,
+        linkType: 'x'.repeat(101),
+      },
+    });
+
+    expect(res.status).toBe(400);
+  });
+
+  // PATCH link — update linkType and direction
+  it('PATCH /universes/:uid/links/:id updates linkType and direction preserving id+createdAt', async () => {
+    const { hdrs } = await userWithToken('patch1@test.com');
+    const universe = await createUniverse(hdrs);
+    const entryA = await createEntry(universe.id, hdrs, { title: 'A' });
+    const entryB = await createEntry(universe.id, hdrs, { title: 'B' });
+
+    const createRes = await req('POST', `/api/universes/${universe.id}/links`, {
+      headers: hdrs,
+      body: {
+        sourceEntryId: entryA.id,
+        targetEntryId: entryB.id,
+        linkType: 'related_to',
+        direction: 'directed',
+      },
+    });
+    const created = await json(createRes);
+
+    const patchRes = await req('PATCH', `/api/universes/${universe.id}/links/${created.id}`, {
+      headers: hdrs,
+      body: { linkType: 'ally_of', direction: 'undirected' },
+    });
+
+    expect(patchRes.status).toBe(200);
+    const updated = await json(patchRes);
+    expect(updated.id).toBe(created.id);
+    expect(updated.createdAt).toBe(created.createdAt);
+    expect(updated.linkType).toBe('ally_of');
+    expect(updated.direction).toBe('undirected');
+  });
+
+  // PATCH link — partial patch: only label sent, direction must remain unchanged (undefined-stripping)
+  it('PATCH /universes/:uid/links/:id with only label leaves direction unchanged', async () => {
+    const { hdrs } = await userWithToken('patch2@test.com');
+    const universe = await createUniverse(hdrs);
+    const entryA = await createEntry(universe.id, hdrs, { title: 'A' });
+    const entryB = await createEntry(universe.id, hdrs, { title: 'B' });
+
+    const createRes = await req('POST', `/api/universes/${universe.id}/links`, {
+      headers: hdrs,
+      body: {
+        sourceEntryId: entryA.id,
+        targetEntryId: entryB.id,
+        direction: 'undirected',
+      },
+    });
+    const created = await json(createRes);
+    expect(created.direction).toBe('undirected');
+
+    const patchRes = await req('PATCH', `/api/universes/${universe.id}/links/${created.id}`, {
+      headers: hdrs,
+      body: { label: 'note' },
+    });
+
+    expect(patchRes.status).toBe(200);
+    const updated = await json(patchRes);
+    expect(updated.direction).toBe('undirected'); // NOT overwritten
+    expect(updated.label).toBe('note');
+  });
+
+  // PATCH link in another user's universe returns 404 (via requireUniverse scoping)
+  it('PATCH /universes/:uid/links/:id in another user universe returns 404', async () => {
+    const owner = await userWithToken('patch-owner@test.com');
+    const stranger = await userWithToken('patch-stranger@test.com');
+    const universe = await createUniverse(owner.hdrs);
+    const entryA = await createEntry(universe.id, owner.hdrs, { title: 'A' });
+    const entryB = await createEntry(universe.id, owner.hdrs, { title: 'B' });
+
+    const createRes = await req('POST', `/api/universes/${universe.id}/links`, {
+      headers: owner.hdrs,
+      body: { sourceEntryId: entryA.id, targetEntryId: entryB.id },
+    });
+    const link = await json(createRes);
+
+    // Stranger tries to patch the link via their own universe id — requireUniverse 403s them
+    const strangerUniverse = await createUniverse(stranger.hdrs, 'Stranger World');
+    const patchRes = await req('PATCH', `/api/universes/${strangerUniverse.id}/links/${link.id}`, {
+      headers: stranger.hdrs,
+      body: { label: 'hack' },
+    });
+    // The link doesn't exist in strangerUniverse → 404
+    expect(patchRes.status).toBe(404);
+  });
+
+  // GET /link-types returns distinct non-null types with counts, sorted count DESC
+  it('GET /universes/:uid/link-types returns { linkType, count } for non-null types', async () => {
+    const { hdrs } = await userWithToken('lt1@test.com');
+    const universe = await createUniverse(hdrs);
+    const entryA = await createEntry(universe.id, hdrs, { title: 'A' });
+    const entryB = await createEntry(universe.id, hdrs, { title: 'B' });
+    const entryC = await createEntry(universe.id, hdrs, { title: 'C' });
+
+    await req('POST', `/api/universes/${universe.id}/links`, {
+      headers: hdrs,
+      body: { sourceEntryId: entryA.id, targetEntryId: entryB.id, linkType: 'ally_of' },
+    });
+    await req('POST', `/api/universes/${universe.id}/links`, {
+      headers: hdrs,
+      body: { sourceEntryId: entryB.id, targetEntryId: entryC.id, linkType: 'ally_of' },
+    });
+    await req('POST', `/api/universes/${universe.id}/links`, {
+      headers: hdrs,
+      body: { sourceEntryId: entryA.id, targetEntryId: entryC.id, linkType: 'enemy_of' },
+    });
+    // Untyped link — should NOT appear in link-types output
+    await req('POST', `/api/universes/${universe.id}/links`, {
+      headers: hdrs,
+      body: { sourceEntryId: entryC.id, targetEntryId: entryA.id },
+    });
+
+    const res = await req('GET', `/api/universes/${universe.id}/link-types`, { headers: hdrs });
+    expect(res.status).toBe(200);
+    const rows = await json(res);
+    // ally_of x2 (count DESC), enemy_of x1
+    expect(rows).toEqual([
+      { linkType: 'ally_of', count: 2 },
+      { linkType: 'enemy_of', count: 1 },
+    ]);
+  });
+
+  // GET /link-types returns [] when no typed links exist
+  it('GET /universes/:uid/link-types returns [] when no typed links exist', async () => {
+    const { hdrs } = await userWithToken('lt-empty@test.com');
+    const universe = await createUniverse(hdrs);
+    const res = await req('GET', `/api/universes/${universe.id}/link-types`, { headers: hdrs });
+    expect(res.status).toBe(200);
+    const rows = await json(res);
+    expect(rows).toEqual([]);
+  });
+
+  // Backfill shape: link created without linkType has direction set and link_type NULL
+  it('link created without linkType has direction="directed" and link_type=null (backfill shape)', async () => {
+    const { hdrs } = await userWithToken('backfill@test.com');
+    const universe = await createUniverse(hdrs);
+    const entryA = await createEntry(universe.id, hdrs, { title: 'A' });
+    const entryB = await createEntry(universe.id, hdrs, { title: 'B' });
+
+    const res = await req('POST', `/api/universes/${universe.id}/links`, {
+      headers: hdrs,
+      body: { sourceEntryId: entryA.id, targetEntryId: entryB.id },
+    });
+    expect(res.status).toBe(201);
+    const link = await json(res);
+    // After migration: direction is set (NOT NULL column), link_type is null
+    expect(link.direction).toBe('directed');
+    expect(link.linkType).toBeNull();
   });
 
   // Self-link prevention
@@ -111,12 +299,11 @@ describe('link routes (LINK-01..06)', () => {
     const universe = await createUniverse(hdrs);
     const entry = await createEntry(universe.id, hdrs, { title: 'Self Referrer' });
 
-    const res = await req('POST', `/universes/${universe.id}/links`, {
+    const res = await req('POST', `/api/universes/${universe.id}/links`, {
       headers: hdrs,
       body: {
         sourceEntryId: entry.id,
         targetEntryId: entry.id,
-        label: 'is self',
       },
     });
 
@@ -133,12 +320,11 @@ describe('link routes (LINK-01..06)', () => {
     const entryA = await createEntry(universeA.id, hdrs, { title: 'Entry in A' });
     const entryB = await createEntry(universeB.id, hdrs, { title: 'Entry in B' });
 
-    const res = await req('POST', `/universes/${universeA.id}/links`, {
+    const res = await req('POST', `/api/universes/${universeA.id}/links`, {
       headers: hdrs,
       body: {
         sourceEntryId: entryA.id,
         targetEntryId: entryB.id,
-        label: 'cross-universe',
       },
     });
 
@@ -154,7 +340,7 @@ describe('link routes (LINK-01..06)', () => {
     const entryA = await createEntry(universe.id, hdrs, { title: 'Entry A' });
     const entryB = await createEntry(universe.id, hdrs, { title: 'Entry B' });
 
-    const createRes = await req('POST', `/universes/${universe.id}/links`, {
+    const createRes = await req('POST', `/api/universes/${universe.id}/links`, {
       headers: hdrs,
       body: {
         sourceEntryId: entryA.id,
@@ -164,11 +350,11 @@ describe('link routes (LINK-01..06)', () => {
     });
     const link = await json(createRes);
 
-    const delRes = await req('DELETE', `/universes/${universe.id}/links/${link.id}`, { headers: hdrs });
+    const delRes = await req('DELETE', `/api/universes/${universe.id}/links/${link.id}`, { headers: hdrs });
     expect(delRes.status).toBe(204);
 
     // Verify it's gone from list
-    const listRes = await req('GET', `/universes/${universe.id}/links`, { headers: hdrs });
+    const listRes = await req('GET', `/api/universes/${universe.id}/links`, { headers: hdrs });
     const list = await json(listRes);
     expect(list.find((l: any) => l.id === link.id)).toBeUndefined();
   });
@@ -178,7 +364,7 @@ describe('link routes (LINK-01..06)', () => {
     const { hdrs } = await userWithToken('f@test.com');
     const universe = await createUniverse(hdrs);
 
-    const res = await req('DELETE', `/universes/${universe.id}/links/00000000-0000-0000-0000-000000000000`, { headers: hdrs });
+    const res = await req('DELETE', `/api/universes/${universe.id}/links/00000000-0000-0000-0000-000000000000`, { headers: hdrs });
     expect(res.status).toBe(404);
   });
 
@@ -190,16 +376,16 @@ describe('link routes (LINK-01..06)', () => {
     const entryB = await createEntry(universe.id, hdrs, { title: 'B' });
     const entryC = await createEntry(universe.id, hdrs, { title: 'C' });
 
-    await req('POST', `/universes/${universe.id}/links`, {
+    await req('POST', `/api/universes/${universe.id}/links`, {
       headers: hdrs,
       body: { sourceEntryId: entryA.id, targetEntryId: entryB.id, label: 'link1' },
     });
-    await req('POST', `/universes/${universe.id}/links`, {
+    await req('POST', `/api/universes/${universe.id}/links`, {
       headers: hdrs,
       body: { sourceEntryId: entryB.id, targetEntryId: entryC.id, label: 'link2' },
     });
 
-    const res = await req('GET', `/universes/${universe.id}/links`, { headers: hdrs });
+    const res = await req('GET', `/api/universes/${universe.id}/links`, { headers: hdrs });
     expect(res.status).toBe(200);
     const list = await json(res);
     expect(list).toHaveLength(2);
@@ -214,20 +400,20 @@ describe('link routes (LINK-01..06)', () => {
     const entryC = await createEntry(universe.id, hdrs, { title: 'C' });
 
     // 'created by' x2, 'located in' x1
-    await req('POST', `/universes/${universe.id}/links`, {
+    await req('POST', `/api/universes/${universe.id}/links`, {
       headers: hdrs,
       body: { sourceEntryId: entryA.id, targetEntryId: entryB.id, label: 'created by' },
     });
-    await req('POST', `/universes/${universe.id}/links`, {
+    await req('POST', `/api/universes/${universe.id}/links`, {
       headers: hdrs,
       body: { sourceEntryId: entryB.id, targetEntryId: entryC.id, label: 'located in' },
     });
-    await req('POST', `/universes/${universe.id}/links`, {
+    await req('POST', `/api/universes/${universe.id}/links`, {
       headers: hdrs,
       body: { sourceEntryId: entryA.id, targetEntryId: entryC.id, label: 'created by' },
     });
 
-    const res = await req('GET', `/universes/${universe.id}/relations`, { headers: hdrs });
+    const res = await req('GET', `/api/universes/${universe.id}/relations`, { headers: hdrs });
     expect(res.status).toBe(200);
     const rows = await json(res);
     expect(rows).toEqual([
@@ -244,20 +430,20 @@ describe('link routes (LINK-01..06)', () => {
     const entryC = await createEntry(universe.id, hdrs, { title: 'C' });
 
     // Each label used exactly once -> tiebreak by label ASC
-    await req('POST', `/universes/${universe.id}/links`, {
+    await req('POST', `/api/universes/${universe.id}/links`, {
       headers: hdrs,
       body: { sourceEntryId: entryA.id, targetEntryId: entryB.id, label: 'zeta' },
     });
-    await req('POST', `/universes/${universe.id}/links`, {
+    await req('POST', `/api/universes/${universe.id}/links`, {
       headers: hdrs,
       body: { sourceEntryId: entryB.id, targetEntryId: entryC.id, label: 'alpha' },
     });
-    await req('POST', `/universes/${universe.id}/links`, {
+    await req('POST', `/api/universes/${universe.id}/links`, {
       headers: hdrs,
       body: { sourceEntryId: entryA.id, targetEntryId: entryC.id, label: 'mu' },
     });
 
-    const res = await req('GET', `/universes/${universe.id}/relations`, { headers: hdrs });
+    const res = await req('GET', `/api/universes/${universe.id}/relations`, { headers: hdrs });
     const rows = await json(res);
     expect(rows.map((r: { label: string }) => r.label)).toEqual(['alpha', 'mu', 'zeta']);
     expect(rows.every((r: { count: number }) => r.count === 1)).toBe(true);
@@ -266,7 +452,7 @@ describe('link routes (LINK-01..06)', () => {
   it('GET /relations returns [] for a universe with no links', async () => {
     const { hdrs } = await userWithToken('h-empty@test.com');
     const universe = await createUniverse(hdrs);
-    const res = await req('GET', `/universes/${universe.id}/relations`, { headers: hdrs });
+    const res = await req('GET', `/api/universes/${universe.id}/relations`, { headers: hdrs });
     expect(res.status).toBe(200);
     const rows = await json(res);
     expect(rows).toEqual([]);
@@ -281,18 +467,18 @@ describe('link routes (LINK-01..06)', () => {
     const entryB = await createEntry(universe.id, owner.hdrs, { title: 'B' });
 
     // Stranger tries to create a link
-    const createRes = await req('POST', `/universes/${universe.id}/links`, {
+    const createRes = await req('POST', `/api/universes/${universe.id}/links`, {
       headers: stranger.hdrs,
-      body: { sourceEntryId: entryA.id, targetEntryId: entryB.id, label: 'hack' },
+      body: { sourceEntryId: entryA.id, targetEntryId: entryB.id },
     });
     expect(createRes.status).toBe(403);
 
     // Stranger tries to list links
-    const listRes = await req('GET', `/universes/${universe.id}/links`, { headers: stranger.hdrs });
+    const listRes = await req('GET', `/api/universes/${universe.id}/links`, { headers: stranger.hdrs });
     expect(listRes.status).toBe(403);
 
     // Stranger tries to get relations
-    const relRes = await req('GET', `/universes/${universe.id}/relations`, { headers: stranger.hdrs });
+    const relRes = await req('GET', `/api/universes/${universe.id}/relations`, { headers: stranger.hdrs });
     expect(relRes.status).toBe(403);
   });
 });
