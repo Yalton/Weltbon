@@ -50,6 +50,20 @@ export interface Calendar {
   beforeEraAbbr: string;
 }
 
+/**
+ * Phase 35 REL-01: per-universe link-type registry entry shape.
+ * Stored as universes.link_types jsonb (Record<string, LinkTypeRegistryEntry>).
+ * Preset link types are seeded from code constants; the registry stores custom
+ * types + user overrides. The `color` field is deferred for UI editing (Phase 35 D-03).
+ */
+export interface LinkTypeRegistryEntry {
+  color?: string;
+  directionDefault?: 'directed' | 'undirected';
+  inverseLabel?: string;
+}
+
+export type LinkTypeRegistry = Record<string, LinkTypeRegistryEntry>;
+
 export const users = pgTable('users', {
   id:               uuid('id').primaryKey().defaultRandom(),
   email:            text('email').notNull().unique(),
@@ -83,6 +97,8 @@ export const universes = pgTable('universes', {
   auditEnabled: boolean('audit_enabled').default(false).notNull(),
   auditProvider: text('audit_provider'),
   auditModel: text('audit_model'),
+  // Phase 35 REL-01: per-universe link-type registry; presets seeded from code, registry stores custom + overrides.
+  linkTypes: jsonb('link_types').$type<LinkTypeRegistry>().default({}).notNull(),
 });
 
 export const refreshTokens = pgTable('refresh_tokens', {
@@ -255,8 +271,12 @@ export const links = pgTable('links', {
   universeId:    uuid('universe_id').references(() => universes.id, { onDelete: 'cascade' }).notNull(),
   sourceEntryId: uuid('source_entry_id').references(() => entries.id, { onDelete: 'cascade' }).notNull(),
   targetEntryId: uuid('target_entry_id').references(() => entries.id, { onDelete: 'cascade' }).notNull(),
-  label:         text('label').notNull(),
-  bidirectional: boolean('bidirectional').default(false).notNull(),
+  // Phase 28 D-04 (ported): label is now nullable (optional display override)
+  label:         text('label'),
+  // Phase 35 REL-01 (ported from 9b82f27 Phase 28): typed link semantic carrier
+  linkType:      text('link_type'),
+  // Phase 35 REL-01: direction replaces bidirectional; CHECK constraint in migration SQL
+  direction:     text('direction').notNull(),
   createdAt:     timestamp('created_at').defaultNow().notNull(),
   // Phase 31 DIAGRAM-02: diagram back-reference + edge styling write-through.
   // diagramId is nullable so a link with no diagram_id still renders in the force graph.
