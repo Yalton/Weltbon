@@ -152,7 +152,8 @@ export async function renderUniverseDocx(payload: ExportPayload): Promise<Uint8A
             children: [new TextRun('Links')],
           }),
         );
-        const byRelation = groupBy(outbound, (l) => l.label || 'related');
+        // Phase 35 REL-01: label is now nullable; fall back to linkType then 'related'
+        const byRelation = groupBy(outbound, (l) => l.label ?? l.linkType ?? 'related');
         for (const [rel, linksInRel] of byRelation) {
           children.push(
             new Paragraph({
@@ -243,7 +244,8 @@ function buildOutbound(payload: ExportPayload): Map<string, ExportPayloadLink[]>
   const map = new Map<string, ExportPayloadLink[]>();
   for (const link of payload.links) {
     push(map, link.sourceEntryId, link);
-    if (link.bidirectional) push(map, link.targetEntryId, link);
+    // Phase 35 REL-01: was `if (link.bidirectional)` — undirected links appear on both sides
+    if (link.direction === 'undirected') push(map, link.targetEntryId, link);
   }
   return map;
 }

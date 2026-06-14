@@ -22,6 +22,9 @@ export const importSchema = z.object({
       .nullable()
       .optional()
       .default(null),
+    // Phase 35 REL-01: round-trip the per-universe link-type registry;
+    // pre-Phase-35 exports lack this field — default to {} (empty registry).
+    linkTypes: z.record(z.string(), z.any()).optional().default({}),
   }),
   categories: z
     .array(
@@ -53,8 +56,15 @@ export const importSchema = z.object({
     id: z.string().uuid(),
     sourceEntryId: z.string().uuid(),
     targetEntryId: z.string().uuid(),
-    label: z.string(),
-    bidirectional: z.boolean().optional().default(false),
+    label: z.string().nullable().optional().default(null),
+    // Phase 35 REL-01 backward-compat: keep bidirectional for legacy exports
+    // (pre-Phase-35 exports carry bidirectional; direction is derived from it).
+    // New exports carry direction + link_type (JSON export uses snake_case keys).
+    bidirectional: z.boolean().optional(),
+    linkType: z.string().nullable().optional(),
+    // JSON export uses snake_case 'link_type' key — accept both camelCase and snake_case
+    link_type: z.string().nullable().optional(),
+    direction: z.enum(['directed', 'undirected']).optional(),
   })),
   issues: z
     .array(
@@ -113,6 +123,9 @@ export async function importUniverseJson(userId: string, rawData: unknown) {
         // Phase 20 D-01: round-trip the per-universe timeline window;
         // schema default(null) covers pre-Phase-20 exports.
         timelineWindow: data.universe.timelineWindow,
+        // Phase 35 REL-01: round-trip the per-universe link-type registry;
+        // pre-Phase-35 exports default to {} (no custom types).
+        linkTypes: data.universe.linkTypes ?? {},
       })
       .returning();
 
@@ -169,8 +182,12 @@ export async function importUniverseJson(userId: string, rawData: unknown) {
         universeId: universe.id,
         sourceEntryId: sourceId,
         targetEntryId: targetId,
-        label: link.label,
-        bidirectional: link.bidirectional,
+        label: link.label ?? null,
+        // Phase 35 REL-01 backward-compat: derive direction from legacy
+        // bidirectional when direction is absent (9b82f27 pattern).
+        // Accept both camelCase (linkType) and snake_case (link_type) from JSON exports.
+        direction: link.direction ?? (link.bidirectional ? 'undirected' : 'directed'),
+        linkType: link.linkType ?? link.link_type ?? null,
       });
     }
 

@@ -90,7 +90,7 @@ describe('EXP-02: markdown ZIP exporter — full integration', () => {
     const token = await issueAccessToken(user.id);
     const hdrs = authHeader(token);
 
-    const createUniverseRes = await app.request('http://localhost/universes', {
+    const createUniverseRes = await app.request('http://localhost/api/universes', {
       method: 'POST',
       headers: { ...hdrs, 'Content-Type': 'application/json' },
       body: JSON.stringify({ name: 'Markdown Test World' }),
@@ -187,7 +187,7 @@ describe('EXP-02: markdown ZIP exporter — full integration', () => {
       .returning();
 
     // ---------- seed 4 links ----------
-    // A → B "knows", A → C "located in" (bidirectional), D → E "owns",
+    // A → B "knows", A → C "located in" (undirected), D → E "owns",
     // A → D "knows" (same relation as A→B; both should land under one ### knows heading).
     await db()
       .insert(linksTable)
@@ -196,7 +196,8 @@ describe('EXP-02: markdown ZIP exporter — full integration', () => {
         sourceEntryId: entryA.id,
         targetEntryId: entryB.id,
         label: 'knows',
-        bidirectional: false,
+        // Phase 35 REL-01: direction replaces bidirectional
+        direction: 'directed',
       });
     await db()
       .insert(linksTable)
@@ -205,7 +206,8 @@ describe('EXP-02: markdown ZIP exporter — full integration', () => {
         sourceEntryId: entryA.id,
         targetEntryId: entryC.id,
         label: 'located in',
-        bidirectional: true,
+        // Phase 35 REL-01: bidirectional=true → direction='undirected'
+        direction: 'undirected',
       });
     await db()
       .insert(linksTable)
@@ -214,7 +216,8 @@ describe('EXP-02: markdown ZIP exporter — full integration', () => {
         sourceEntryId: entryD.id,
         targetEntryId: entryE.id,
         label: 'owns',
-        bidirectional: false,
+        // Phase 35 REL-01: direction replaces bidirectional
+        direction: 'directed',
       });
     await db()
       .insert(linksTable)
@@ -223,7 +226,8 @@ describe('EXP-02: markdown ZIP exporter — full integration', () => {
         sourceEntryId: entryA.id,
         targetEntryId: entryD.id,
         label: 'knows',
-        bidirectional: false,
+        // Phase 35 REL-01: direction replaces bidirectional
+        direction: 'directed',
       });
 
     // ---------- seed 2 issues: 1 open on A (CRITICAL), 1 resolved on B ----------
@@ -257,7 +261,7 @@ describe('EXP-02: markdown ZIP exporter — full integration', () => {
 
     // ---------- export markdown ----------
     const res = await app.request(
-      `http://localhost/universes/${universe.id}/export?format=markdown`,
+      `http://localhost/api/universes/${universe.id}/export?format=markdown`,
       { headers: hdrs },
     );
     expect(res.status).toBe(200);
@@ -364,7 +368,7 @@ describe('EXP-02: markdown ZIP exporter — full integration', () => {
 
     // Re-export idempotency — second export shouldn't crash or mutate state.
     const res2 = await app.request(
-      `http://localhost/universes/${universe.id}/export?format=markdown`,
+      `http://localhost/api/universes/${universe.id}/export?format=markdown`,
       { headers: hdrs },
     );
     expect(res2.status).toBe(200);

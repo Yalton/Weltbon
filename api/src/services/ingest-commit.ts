@@ -353,6 +353,9 @@ export async function commitIngest(
           sourceEntryId: sourceId,
           targetEntryId: targetId,
           label: l.label,
+          // Phase 35 REL-01: direction is NOT NULL; ingested links are always
+          // directed by default (no bidirectional concept in wikilink ingest).
+          direction: 'directed' as const,
         });
       }
     }

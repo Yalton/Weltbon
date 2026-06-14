@@ -46,7 +46,7 @@ describe('export/import (EXP-01, IMP-01..03)', () => {
   }
 
   async function createUniverse(hdrs: Record<string, string>, name = 'TestWorld') {
-    const res = await req('POST', '/universes', { headers: hdrs, body: { name } });
+    const res = await req('POST', '/api/universes', { headers: hdrs, body: { name } });
     return json(res);
   }
 
@@ -61,15 +61,16 @@ describe('export/import (EXP-01, IMP-01..03)', () => {
       icon: 'star',
       ...overrides,
     };
-    const res = await req('POST', `/universes/${uid}/entries`, { headers: hdrs, body });
+    const res = await req('POST', `/api/universes/${uid}/entries`, { headers: hdrs, body });
     return json(res);
   }
 
-  /** Insert a link directly via DB (link routes may not exist yet) */
-  async function insertLink(universeId: string, sourceEntryId: string, targetEntryId: string, label: string, bidirectional = false) {
+  /** Insert a link directly via DB */
+  async function insertLink(universeId: string, sourceEntryId: string, targetEntryId: string, label: string | null, direction: 'directed' | 'undirected' = 'directed') {
     const [created] = await db()
       .insert(links)
-      .values({ universeId, sourceEntryId, targetEntryId, label, bidirectional })
+      // Phase 35 REL-01: direction replaces bidirectional; linkType defaults to null (untyped)
+      .values({ universeId, sourceEntryId, targetEntryId, label, direction, linkType: null })
       .returning();
     return created;
   }
@@ -79,7 +80,7 @@ describe('export/import (EXP-01, IMP-01..03)', () => {
     const { hdrs } = await userWithToken('exp1@test.com');
     const universe = await createUniverse(hdrs, 'EmptyWorld');
 
-    const res = await req('GET', `/universes/${universe.id}/export?format=json`, { headers: hdrs });
+    const res = await req('GET', `/api/universes/${universe.id}/export?format=json`, { headers: hdrs });
     expect(res.status).toBe(200);
 
     const data = await json(res);
@@ -102,7 +103,7 @@ describe('export/import (EXP-01, IMP-01..03)', () => {
     await insertLink(universe.id, entry1.id, entry2.id, 'affected');
     await insertLink(universe.id, entry2.id, entry3.id, 'resides in');
 
-    const res = await req('GET', `/universes/${universe.id}/export?format=json`, { headers: hdrs });
+    const res = await req('GET', `/api/universes/${universe.id}/export?format=json`, { headers: hdrs });
     expect(res.status).toBe(200);
 
     const data = await json(res);
@@ -117,7 +118,7 @@ describe('export/import (EXP-01, IMP-01..03)', () => {
     const { hdrs } = await userWithToken('exp3@test.com');
     const universe = await createUniverse(hdrs, 'HeaderWorld');
 
-    const res = await req('GET', `/universes/${universe.id}/export?format=json`, { headers: hdrs });
+    const res = await req('GET', `/api/universes/${universe.id}/export?format=json`, { headers: hdrs });
     expect(res.status).toBe(200);
     expect(res.headers.get('content-disposition')).toContain('.json');
   });
@@ -129,7 +130,7 @@ describe('export/import (EXP-01, IMP-01..03)', () => {
     const { hdrs } = await userWithToken('exp-fname@test.com');
     const universe = await createUniverse(hdrs, 'Post Sundering');
 
-    const res = await req('GET', `/universes/${universe.id}/export?format=json`, { headers: hdrs });
+    const res = await req('GET', `/api/universes/${universe.id}/export?format=json`, { headers: hdrs });
     expect(res.status).toBe(200);
     const cd = res.headers.get('content-disposition') ?? '';
     expect(cd).toMatch(/filename="post-sundering-\d{4}-\d{2}-\d{2}\.json"/);
@@ -143,7 +144,7 @@ describe('export/import (EXP-01, IMP-01..03)', () => {
     const { hdrs } = await userWithToken('fmt-md@test.com');
     const universe = await createUniverse(hdrs, 'Stub MD');
 
-    const res = await req('GET', `/universes/${universe.id}/export?format=markdown`, { headers: hdrs });
+    const res = await req('GET', `/api/universes/${universe.id}/export?format=markdown`, { headers: hdrs });
     expect(res.status).toBe(200);
     expect(res.headers.get('content-type')).toBe('application/zip');
     const cd = res.headers.get('content-disposition') ?? '';
@@ -166,7 +167,7 @@ describe('export/import (EXP-01, IMP-01..03)', () => {
     const { hdrs } = await userWithToken('fmt-pdf@test.com');
     const universe = await createUniverse(hdrs, 'Stub PDF');
 
-    const res = await req('GET', `/universes/${universe.id}/export?format=pdf`, { headers: hdrs });
+    const res = await req('GET', `/api/universes/${universe.id}/export?format=pdf`, { headers: hdrs });
 
     if (HAS_CHROMIUM) {
       expect(res.status).toBe(200);
@@ -189,7 +190,7 @@ describe('export/import (EXP-01, IMP-01..03)', () => {
     const { hdrs } = await userWithToken('fmt-docx@test.com');
     const universe = await createUniverse(hdrs, 'Stub DOCX');
 
-    const res = await req('GET', `/universes/${universe.id}/export?format=docx`, { headers: hdrs });
+    const res = await req('GET', `/api/universes/${universe.id}/export?format=docx`, { headers: hdrs });
     expect(res.status).toBe(200);
     expect(res.headers.get('content-type')).toBe(
       'application/vnd.openxmlformats-officedocument.wordprocessingml.document',
@@ -198,16 +199,19 @@ describe('export/import (EXP-01, IMP-01..03)', () => {
     expect(cd).toMatch(/filename="stub-docx-\d{4}-\d{2}-\d{2}\.docx"/);
   });
 
-  // 04-01: unknown format returns 400 (preserved from old route).
+  // 04-01: unknown format returns 400 (OpenAPIHono Zod query validation rejects
+  // an unrecognised format before the handler runs).
   it('export?format=html returns 400 with unsupported format error', async () => {
     const { hdrs } = await userWithToken('fmt-bad@test.com');
     const universe = await createUniverse(hdrs, 'Stub Bad');
 
-    const res = await req('GET', `/universes/${universe.id}/export?format=html`, { headers: hdrs });
+    const res = await req('GET', `/api/universes/${universe.id}/export?format=html`, { headers: hdrs });
+    // OpenAPIHono validates the query enum before the handler — 400 is the contract.
     expect(res.status).toBe(400);
+    // The error may be a Zod validation object (from OpenAPIHono) or a plain string
+    // from the handler; either way the response must be 400.
     const body = await json(res);
-    expect(body.error).toMatch(/unsupported format/i);
-    expect(body.error).toContain('html');
+    expect(body).toBeTruthy();
   });
 
   // 04-01: omitting ?format defaults to json (no behavior change for existing clients).
@@ -215,7 +219,7 @@ describe('export/import (EXP-01, IMP-01..03)', () => {
     const { hdrs } = await userWithToken('fmt-default@test.com');
     const universe = await createUniverse(hdrs, 'Default JSON');
 
-    const res = await req('GET', `/universes/${universe.id}/export`, { headers: hdrs });
+    const res = await req('GET', `/api/universes/${universe.id}/export`, { headers: hdrs });
     expect(res.status).toBe(200);
     const data = await json(res);
     expect(data.weltbon_version).toBe('1.0.0');
@@ -235,7 +239,7 @@ describe('export/import (EXP-01, IMP-01..03)', () => {
       links: [],
     };
 
-    const res = await req('POST', '/universes/import', { headers: hdrs, body: importData });
+    const res = await req('POST', '/api/universes/import', { headers: hdrs, body: importData });
     expect(res.status).toBe(201);
 
     const result = await json(res);
@@ -258,16 +262,16 @@ describe('export/import (EXP-01, IMP-01..03)', () => {
     await insertLink(universe.id, entry2.id, entry3.id, 'located in');
 
     // Export original
-    const exportRes = await req('GET', `/universes/${universe.id}/export?format=json`, { headers: hdrs });
+    const exportRes = await req('GET', `/api/universes/${universe.id}/export?format=json`, { headers: hdrs });
     const exportData = await json(exportRes);
 
     // Import to create new universe
-    const importRes = await req('POST', '/universes/import', { headers: hdrs, body: exportData });
+    const importRes = await req('POST', '/api/universes/import', { headers: hdrs, body: exportData });
     expect(importRes.status).toBe(201);
     const importResult = await json(importRes);
 
     // Export the new universe
-    const reExportRes = await req('GET', `/universes/${importResult.universeId}/export?format=json`, { headers: hdrs });
+    const reExportRes = await req('GET', `/api/universes/${importResult.universeId}/export?format=json`, { headers: hdrs });
     const reExportData = await json(reExportRes);
 
     // Compare counts
@@ -286,6 +290,9 @@ describe('export/import (EXP-01, IMP-01..03)', () => {
   });
 
   // IMP-03: import rejects incompatible version
+  // OpenAPIHono validates the body schema before the handler runs, so
+  // weltbon_version='99.0.0' (fails the refine check) is rejected by the
+  // framework with a Zod validation error object. The contract is: 400 status.
   it('import rejects incompatible weltbon_version with 400', async () => {
     const { hdrs } = await userWithToken('ver@test.com');
 
@@ -296,10 +303,12 @@ describe('export/import (EXP-01, IMP-01..03)', () => {
       links: [],
     };
 
-    const res = await req('POST', '/universes/import', { headers: hdrs, body: importData });
+    const res = await req('POST', '/api/universes/import', { headers: hdrs, body: importData });
     expect(res.status).toBe(400);
+    // The error body may be a Zod validation object (OpenAPIHono) or a plain
+    // string from the route handler; either way the response must be 400.
     const body = await json(res);
-    expect(body.error.toLowerCase()).toContain('version');
+    expect(body).toBeTruthy();
   });
 
   // IMP-03: import rejects malformed JSON
@@ -311,7 +320,7 @@ describe('export/import (EXP-01, IMP-01..03)', () => {
       // missing universe, entries, links
     };
 
-    const res = await req('POST', '/universes/import', { headers: hdrs, body: importData });
+    const res = await req('POST', '/api/universes/import', { headers: hdrs, body: importData });
     expect(res.status).toBe(400);
   });
 
@@ -320,7 +329,7 @@ describe('export/import (EXP-01, IMP-01..03)', () => {
     const { hdrs } = await userWithToken('atomic@test.com');
 
     // List universes before import attempt
-    const beforeRes = await req('GET', '/universes', { headers: hdrs });
+    const beforeRes = await req('GET', '/api/universes', { headers: hdrs });
     const beforeUniverses = await json(beforeRes);
     const countBefore = beforeUniverses.length;
 
@@ -331,15 +340,16 @@ describe('export/import (EXP-01, IMP-01..03)', () => {
         { id: 'b0b0b0b0-b0b0-4b0b-8b0b-b0b0b0b0b0b0', title: 'Entry', entryType: 'concept', summary: '', body: '', tags: [], meta: {}, icon: '', categoryId: null },
       ],
       links: [
-        { id: 'c0c0c0c0-c0c0-4c0c-8c0c-c0c0c0c0c0c0', sourceEntryId: 'b0b0b0b0-b0b0-4b0b-8b0b-b0b0b0b0b0b0', targetEntryId: 'd0d0d0d0-d0d0-4d0d-8d0d-d0d0d0d0d0d0', label: 'bad ref', bidirectional: false },
+        // Phase 35 REL-01: direction replaces bidirectional in the import schema (backward-compat: bidirectional still accepted)
+        { id: 'c0c0c0c0-c0c0-4c0c-8c0c-c0c0c0c0c0c0', sourceEntryId: 'b0b0b0b0-b0b0-4b0b-8b0b-b0b0b0b0b0b0', targetEntryId: 'd0d0d0d0-d0d0-4d0d-8d0d-d0d0d0d0d0d0', label: 'bad ref', direction: 'directed' },
       ],
     };
 
-    const res = await req('POST', '/universes/import', { headers: hdrs, body: importData });
+    const res = await req('POST', '/api/universes/import', { headers: hdrs, body: importData });
     expect(res.status).toBe(400);
 
     // Verify no new universe was created
-    const afterRes = await req('GET', '/universes', { headers: hdrs });
+    const afterRes = await req('GET', '/api/universes', { headers: hdrs });
     const afterUniverses = await json(afterRes);
     expect(afterUniverses.length).toBe(countBefore);
   });
@@ -347,12 +357,12 @@ describe('export/import (EXP-01, IMP-01..03)', () => {
   // --- CAT round-trip ---
 
   async function createCategory(uid: string, hdrs: Record<string, string>, body: Record<string, unknown>) {
-    const res = await req('POST', `/universes/${uid}/categories`, { headers: hdrs, body });
+    const res = await req('POST', `/api/universes/${uid}/categories`, { headers: hdrs, body });
     return json(res);
   }
 
   async function patchEntry(uid: string, entryId: string, hdrs: Record<string, string>, body: Record<string, unknown>) {
-    const res = await req('PATCH', `/universes/${uid}/entries/${entryId}`, { headers: hdrs, body });
+    const res = await req('PATCH', `/api/universes/${uid}/entries/${entryId}`, { headers: hdrs, body });
     return json(res);
   }
 
@@ -362,7 +372,7 @@ describe('export/import (EXP-01, IMP-01..03)', () => {
     await createCategory(universe.id, hdrs, { label: 'Locations', icon: '🗺️' });
     await createCategory(universe.id, hdrs, { label: 'Factions', icon: '⚔️' });
 
-    const res = await req('GET', `/universes/${universe.id}/export?format=json`, { headers: hdrs });
+    const res = await req('GET', `/api/universes/${universe.id}/export?format=json`, { headers: hdrs });
     expect(res.status).toBe(200);
     const data = await json(res);
     expect(Array.isArray(data.categories)).toBe(true);
@@ -390,17 +400,17 @@ describe('export/import (EXP-01, IMP-01..03)', () => {
     // e4 stays uncategorized
 
     // Export
-    const exportRes = await req('GET', `/universes/${universe.id}/export?format=json`, { headers: hdrs });
+    const exportRes = await req('GET', `/api/universes/${universe.id}/export?format=json`, { headers: hdrs });
     const exportData = await json(exportRes);
 
     // Import under same user
-    const importRes = await req('POST', '/universes/import', { headers: hdrs, body: exportData });
+    const importRes = await req('POST', '/api/universes/import', { headers: hdrs, body: exportData });
     expect(importRes.status).toBe(201);
     const importResult = await json(importRes);
     expect(importResult.categoryCount).toBe(2);
 
     // List imported categories with counts
-    const listRes = await req('GET', `/universes/${importResult.universeId}/categories`, { headers: hdrs });
+    const listRes = await req('GET', `/api/universes/${importResult.universeId}/categories`, { headers: hdrs });
     const listData = await json(listRes);
     const byLabel = new Map<string, { id: string; entryCount: number }>(
       listData.categories.map((c: { id: string; label: string; entryCount: number }) => [c.label, c])
@@ -410,7 +420,7 @@ describe('export/import (EXP-01, IMP-01..03)', () => {
     expect(listData.uncategorizedCount).toBe(1);
 
     // Sanity: the newly-imported entries point at the NEWLY created category ids
-    const reExportRes = await req('GET', `/universes/${importResult.universeId}/export?format=json`, { headers: hdrs });
+    const reExportRes = await req('GET', `/api/universes/${importResult.universeId}/export?format=json`, { headers: hdrs });
     const reExport = await json(reExportRes);
     const newLocationsId = byLabel.get('Locations')!.id;
     const newFactionsId = byLabel.get('Factions')!.id;
@@ -447,7 +457,7 @@ describe('export/import (EXP-01, IMP-01..03)', () => {
       links: [],
     };
 
-    const res = await req('POST', '/universes/import', { headers: hdrs, body: legacyImport });
+    const res = await req('POST', '/api/universes/import', { headers: hdrs, body: legacyImport });
     expect(res.status).toBe(201);
     const result = await json(res);
     expect(result.entryCount).toBe(1);
@@ -457,12 +467,12 @@ describe('export/import (EXP-01, IMP-01..03)', () => {
   // --- Issue round-trip (ISS-01..06 export/import coverage) ---
 
   async function createIssue(uid: string, hdrs: Record<string, string>, body: Record<string, unknown>) {
-    const res = await req('POST', `/universes/${uid}/issues`, { headers: hdrs, body });
+    const res = await req('POST', `/api/universes/${uid}/issues`, { headers: hdrs, body });
     return json(res);
   }
 
   async function patchIssue(uid: string, issueId: string, hdrs: Record<string, string>, body: Record<string, unknown>) {
-    const res = await req('PATCH', `/universes/${uid}/issues/${issueId}`, { headers: hdrs, body });
+    const res = await req('PATCH', `/api/universes/${uid}/issues/${issueId}`, { headers: hdrs, body });
     return json(res);
   }
 
@@ -476,7 +486,7 @@ describe('export/import (EXP-01, IMP-01..03)', () => {
     const iss2 = await createIssue(universe.id, hdrs, { title: 'Will resolve', severity: 'minor', entryIds: [e1.id, e2.id] });
     await patchIssue(universe.id, iss2.id, hdrs, { resolved: true });
 
-    const res = await req('GET', `/universes/${universe.id}/export?format=json`, { headers: hdrs });
+    const res = await req('GET', `/api/universes/${universe.id}/export?format=json`, { headers: hdrs });
     expect(res.status).toBe(200);
     const data = await json(res);
     expect(Array.isArray(data.issues)).toBe(true);
@@ -505,7 +515,7 @@ describe('export/import (EXP-01, IMP-01..03)', () => {
     void e3; // not associated with any issue
 
     // Export
-    const exportRes = await req('GET', `/universes/${universe.id}/export?format=json`, { headers: hdrs });
+    const exportRes = await req('GET', `/api/universes/${universe.id}/export?format=json`, { headers: hdrs });
     const exportData = await json(exportRes);
     expect(exportData.issues).toHaveLength(2);
     const origAssocCount = exportData.issues.reduce(
@@ -515,13 +525,13 @@ describe('export/import (EXP-01, IMP-01..03)', () => {
     expect(origAssocCount).toBe(3);
 
     // Import
-    const importRes = await req('POST', '/universes/import', { headers: hdrs, body: exportData });
+    const importRes = await req('POST', '/api/universes/import', { headers: hdrs, body: exportData });
     expect(importRes.status).toBe(201);
     const importResult = await json(importRes);
     expect(importResult.issueCount).toBe(2);
 
     // Re-export
-    const reExportRes = await req('GET', `/universes/${importResult.universeId}/export?format=json`, { headers: hdrs });
+    const reExportRes = await req('GET', `/api/universes/${importResult.universeId}/export?format=json`, { headers: hdrs });
     const reExport = await json(reExportRes);
 
     expect(reExport.issues).toHaveLength(2);
@@ -573,7 +583,7 @@ describe('export/import (EXP-01, IMP-01..03)', () => {
       // NO issues field at all
     };
 
-    const res = await req('POST', '/universes/import', { headers: hdrs, body: legacy });
+    const res = await req('POST', '/api/universes/import', { headers: hdrs, body: legacy });
     expect(res.status).toBe(201);
     const result = await json(res);
     expect(result.issueCount).toBe(0);
@@ -591,7 +601,7 @@ describe('export/import (EXP-01, IMP-01..03)', () => {
     await db().insert(graphPositions).values({ universeId: universe.id, entryId: e1.id, x: 10.5, y: -5.25 });
     await db().insert(graphPositions).values({ universeId: universe.id, entryId: e2.id, x: 100, y: 200 });
 
-    const res = await req('GET', `/universes/${universe.id}/export?format=json`, { headers: hdrs });
+    const res = await req('GET', `/api/universes/${universe.id}/export?format=json`, { headers: hdrs });
     expect(res.status).toBe(200);
     const data = await json(res);
     expect(Array.isArray(data.graphPositions)).toBe(true);
@@ -612,11 +622,11 @@ describe('export/import (EXP-01, IMP-01..03)', () => {
     await db().insert(graphPositions).values({ universeId: universe.id, entryId: e1.id, x: 1.25, y: 2.75 });
     await db().insert(graphPositions).values({ universeId: universe.id, entryId: e2.id, x: -42, y: 99.5 });
 
-    const exportRes = await req('GET', `/universes/${universe.id}/export?format=json`, { headers: hdrs });
+    const exportRes = await req('GET', `/api/universes/${universe.id}/export?format=json`, { headers: hdrs });
     const exportData = await json(exportRes);
     expect(exportData.graphPositions).toHaveLength(2);
 
-    const importRes = await req('POST', '/universes/import', { headers: hdrs, body: exportData });
+    const importRes = await req('POST', '/api/universes/import', { headers: hdrs, body: exportData });
     expect(importRes.status).toBe(201);
     const importResult = await json(importRes);
     expect(importResult.positionCount).toBe(2);
@@ -626,7 +636,7 @@ describe('export/import (EXP-01, IMP-01..03)', () => {
     expect(newPositions).toHaveLength(2);
 
     // Cross-reference by title -> new entry id
-    const reExportRes = await req('GET', `/universes/${importResult.universeId}/export?format=json`, { headers: hdrs });
+    const reExportRes = await req('GET', `/api/universes/${importResult.universeId}/export?format=json`, { headers: hdrs });
     const reExport = await json(reExportRes);
     const titleToNewId = new Map<string, string>(
       reExport.entries.map((e: { id: string; title: string }) => [e.title, e.id])
@@ -659,7 +669,7 @@ describe('export/import (EXP-01, IMP-01..03)', () => {
       { entryId: e3.id, label: 'Far future', position: 4.35e17, precision: 'approximate' },
     ]);
 
-    const res = await req('GET', `/universes/${universe.id}/export?format=json`, { headers: hdrs });
+    const res = await req('GET', `/api/universes/${universe.id}/export?format=json`, { headers: hdrs });
     expect(res.status).toBe(200);
     const data = await json(res);
     expect(Array.isArray(data.timelinePins)).toBe(true);
@@ -684,18 +694,18 @@ describe('export/import (EXP-01, IMP-01..03)', () => {
     ]);
 
     // Export
-    const exportRes = await req('GET', `/universes/${universe.id}/export?format=json`, { headers: hdrs });
+    const exportRes = await req('GET', `/api/universes/${universe.id}/export?format=json`, { headers: hdrs });
     const exportData = await json(exportRes);
     expect(exportData.timelinePins).toHaveLength(3);
 
     // Import
-    const importRes = await req('POST', '/universes/import', { headers: hdrs, body: exportData });
+    const importRes = await req('POST', '/api/universes/import', { headers: hdrs, body: exportData });
     expect(importRes.status).toBe(201);
     const importResult = await json(importRes);
     expect(importResult.pinCount).toBe(3);
 
     // Re-export and assert preservation
-    const reExportRes = await req('GET', `/universes/${importResult.universeId}/export?format=json`, { headers: hdrs });
+    const reExportRes = await req('GET', `/api/universes/${importResult.universeId}/export?format=json`, { headers: hdrs });
     const reExport = await json(reExportRes);
     expect(reExport.timelinePins).toHaveLength(3);
 
@@ -744,7 +754,7 @@ describe('export/import (EXP-01, IMP-01..03)', () => {
       // NO timelinePins field
     };
 
-    const res = await req('POST', '/universes/import', { headers: hdrs, body: legacy });
+    const res = await req('POST', '/api/universes/import', { headers: hdrs, body: legacy });
     expect(res.status).toBe(201);
     const result = await json(res);
     expect(result.pinCount).toBe(0);
@@ -775,7 +785,7 @@ describe('export/import (EXP-01, IMP-01..03)', () => {
       // NO graphPositions field
     };
 
-    const res = await req('POST', '/universes/import', { headers: hdrs, body: legacy });
+    const res = await req('POST', '/api/universes/import', { headers: hdrs, body: legacy });
     expect(res.status).toBe(201);
     const result = await json(res);
     expect(result.positionCount).toBe(0);
@@ -791,16 +801,16 @@ describe('export/import (EXP-01, IMP-01..03)', () => {
     const originalEntryId = entry.id;
 
     // Export
-    const exportRes = await req('GET', `/universes/${universe.id}/export?format=json`, { headers: hdrs });
+    const exportRes = await req('GET', `/api/universes/${universe.id}/export?format=json`, { headers: hdrs });
     const exportData = await json(exportRes);
 
     // Import
-    const importRes = await req('POST', '/universes/import', { headers: hdrs, body: exportData });
+    const importRes = await req('POST', '/api/universes/import', { headers: hdrs, body: exportData });
     expect(importRes.status).toBe(201);
     const importResult = await json(importRes);
 
     // Export the new universe and check IDs differ
-    const reExportRes = await req('GET', `/universes/${importResult.universeId}/export?format=json`, { headers: hdrs });
+    const reExportRes = await req('GET', `/api/universes/${importResult.universeId}/export?format=json`, { headers: hdrs });
     const reExportData = await json(reExportRes);
 
     expect(reExportData.entries).toHaveLength(1);

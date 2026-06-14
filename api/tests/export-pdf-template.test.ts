@@ -32,6 +32,9 @@ function buildFixturePayload(): ExportPayload {
       name: 'Pdf Test Universe',
       description: 'A short subtitle',
       entryTypes: ['entity', 'concept'],
+      // Phase 20 D-01 + Phase 35 REL-01: required fields on ExportPayloadUniverse
+      timelineWindow: null,
+      linkTypes: {},
     },
     categories: [
       { id: 'c1', label: 'People', icon: '', sortOrder: 0 },
@@ -87,7 +90,9 @@ function buildFixturePayload(): ExportPayload {
         sourceEntryId: 'e1',
         targetEntryId: 'e2',
         label: 'knows',
-        bidirectional: true,
+        // Phase 35 REL-01: direction replaces bidirectional; 'undirected' = was bidirectional=true
+        direction: 'undirected',
+        linkType: null,
         createdAt: new Date(),
       },
     ],

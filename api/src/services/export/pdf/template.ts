@@ -337,9 +337,11 @@ function buildOutboundIndex(
     else out.set(k, [v]);
   };
   for (const l of payload.links) {
-    push(l.sourceEntryId, { relation: l.label, otherEntryId: l.targetEntryId });
-    if (l.bidirectional) {
-      push(l.targetEntryId, { relation: l.label, otherEntryId: l.sourceEntryId });
+    // Phase 35 REL-01: label is now nullable; fall back to linkType then 'related'
+    push(l.sourceEntryId, { relation: l.label ?? l.linkType ?? 'related', otherEntryId: l.targetEntryId });
+    // Phase 35 REL-01: was `if (l.bidirectional)` — undirected links appear on both sides
+    if (l.direction === 'undirected') {
+      push(l.targetEntryId, { relation: l.label ?? l.linkType ?? 'related', otherEntryId: l.sourceEntryId });
     }
   }
   return out;

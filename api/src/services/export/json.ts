@@ -24,6 +24,10 @@ export async function exportUniverseJson(universeId: string) {
       entryTypes: p.universe.entryTypes,
       // Phase 20 D-01: round-trip the per-universe horizontal timeline window.
       timelineWindow: p.universe.timelineWindow,
+      // Phase 35 REL-01: round-trip the per-universe link-type registry.
+      // Key names use snake_case (link_types) to match the 9b82f27 export
+      // shape so re-import is symmetric with the importSchema linkTypes field.
+      linkTypes: p.universe.linkTypes,
     },
     categories: p.categories.map((c) => ({
       id: c.id,
@@ -53,7 +57,10 @@ export async function exportUniverseJson(universeId: string) {
       sourceEntryId: l.sourceEntryId,
       targetEntryId: l.targetEntryId,
       label: l.label,
-      bidirectional: l.bidirectional,
+      // Phase 35 REL-01: emit link_type + direction (replaces bidirectional).
+      // Key names follow 9b82f27 snake_case convention for JSON export symmetry.
+      link_type: l.linkType,
+      direction: l.direction,
       createdAt: l.createdAt.toISOString(),
     })),
     issues: p.fullIssues.map((i) => ({

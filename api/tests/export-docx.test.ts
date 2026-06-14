@@ -80,7 +80,7 @@ describe('EXP-04: DOCX exporter — full integration', () => {
     const token = await issueAccessToken(user.id);
     const hdrs = authHeader(token);
 
-    const createUniverseRes = await app.request('http://localhost/universes', {
+    const createUniverseRes = await app.request('http://localhost/api/universes', {
       method: 'POST',
       headers: { ...hdrs, 'Content-Type': 'application/json' },
       body: JSON.stringify({ name: 'Docx Test World', description: 'A small world' }),
@@ -153,7 +153,8 @@ describe('EXP-04: DOCX exporter — full integration', () => {
         sourceEntryId: entryA.id,
         targetEntryId: entryC.id,
         label: 'knows',
-        bidirectional: false,
+        // Phase 35 REL-01: direction replaces bidirectional
+        direction: 'directed',
       });
 
     // 1 open issue on A (CRITICAL), 1 resolved issue on B
@@ -187,7 +188,7 @@ describe('EXP-04: DOCX exporter — full integration', () => {
 
     // ---------- export docx ----------
     const res = await app.request(
-      `http://localhost/universes/${universe.id}/export?format=docx`,
+      `http://localhost/api/universes/${universe.id}/export?format=docx`,
       { headers: hdrs },
     );
     expect(res.status).toBe(200);
