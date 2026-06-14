@@ -46,6 +46,9 @@ function setupApiMock(opts: { onCreate?: (body: unknown) => void } = {}) {
     if (path.includes('/relations')) {
       return RELATIONS as unknown as never;
     }
+    if (path.includes('/link-types')) {
+      return [] as unknown as never;
+    }
     if (path.includes('/links') && init?.method === 'POST') {
       opts.onCreate?.(JSON.parse(String(init.body)));
       return {
@@ -54,7 +57,8 @@ function setupApiMock(opts: { onCreate?: (body: unknown) => void } = {}) {
         sourceEntryId: 'E1',
         targetEntryId: 'E2',
         label: 'created by',
-        bidirectional: false,
+        linkType: null,
+        direction: 'directed',
         createdAt: '',
       } as unknown as never;
     }
@@ -80,19 +84,31 @@ describe('LinkEditor', () => {
     expect(screen.queryByText('Boromir')).toBeNull();
   });
 
-  it('renders the relation field as a RelationCombobox (role=combobox)', async () => {
+  it('renders the display label field as a RelationCombobox (role=combobox placeholder=sworn shield)', async () => {
     setupApiMock();
     const user = userEvent.setup();
     renderEditor();
 
     await user.click(screen.getByRole('button', { name: /open link editor/i }));
-    const combobox = await screen.findByRole('combobox');
-    expect(combobox).toHaveAttribute('placeholder', expect.stringMatching(/created by/i));
+    // The display-label RelationCombobox has the "sworn shield" placeholder
+    const labelCombobox = await screen.findByPlaceholderText(/sworn shield/i);
+    expect(labelCombobox).toHaveAttribute('role', 'combobox');
+  });
+
+  it('renders the link-type selector with combobox role (Phase 35 REL-01)', async () => {
+    setupApiMock();
+    const user = userEvent.setup();
+    renderEditor();
+
+    await user.click(screen.getByRole('button', { name: /open link editor/i }));
+    // LinkTypeSelect has placeholder "Search or enter a type..."
+    const typeCombobox = await screen.findByPlaceholderText(/search or enter a type/i);
+    expect(typeCombobox).toHaveAttribute('role', 'combobox');
   });
 
   it('clicking a relation suggestion + Add link calls useCreateLink with that label', async () => {
-    let createdBody: { label?: string } | null = null;
-    setupApiMock({ onCreate: (b) => { createdBody = b as { label?: string }; } });
+    let createdBody: { label?: string | null } | null = null;
+    setupApiMock({ onCreate: (b) => { createdBody = b as { label?: string | null }; } });
     const user = userEvent.setup();
     renderEditor();
 
@@ -101,8 +117,9 @@ describe('LinkEditor', () => {
     await user.type(search, 'Aragorn');
     await user.click(await screen.findByText('Aragorn'));
 
-    const combobox = screen.getByRole('combobox');
-    await user.click(combobox);
+    // Type into the display-label combobox ("sworn shield" placeholder)
+    const labelCombobox = screen.getByPlaceholderText(/sworn shield/i);
+    await user.click(labelCombobox);
     await user.click(await screen.findByText('created by'));
 
     await user.click(screen.getByRole('button', { name: /^add link$/i }));
@@ -114,7 +131,7 @@ describe('LinkEditor', () => {
   });
 
   it('free-entry: typing a novel label + Add link still submits the typed string', async () => {
-    let createdBody: { label?: string; bidirectional?: boolean } | null = null;
+    let createdBody: { label?: string | null } | null = null;
     setupApiMock({ onCreate: (b) => { createdBody = b as typeof createdBody; } });
     const user = userEvent.setup();
     renderEditor();
@@ -124,9 +141,9 @@ describe('LinkEditor', () => {
     await user.type(search, 'Aragorn');
     await user.click(await screen.findByText('Aragorn'));
 
-    const combobox = screen.getByRole('combobox');
-    await user.click(combobox);
-    await user.type(combobox, 'invented label');
+    const labelCombobox = screen.getByPlaceholderText(/sworn shield/i);
+    await user.click(labelCombobox);
+    await user.type(labelCombobox, 'invented label');
     await user.keyboard('{Enter}');
 
     await user.click(screen.getByRole('button', { name: /^add link$/i }));
@@ -137,8 +154,8 @@ describe('LinkEditor', () => {
     expect(createdBody!.label).toBe('invented label');
   });
 
-  it('bidirectional checkbox state flows into the create payload', async () => {
-    let createdBody: { bidirectional?: boolean; label?: string } | null = null;
+  it('direction toggle flows into the create payload (Phase 35 REL-01, replaces bidirectional)', async () => {
+    let createdBody: { direction?: string; label?: string | null } | null = null;
     setupApiMock({ onCreate: (b) => { createdBody = b as typeof createdBody; } });
     const user = userEvent.setup();
     renderEditor();
@@ -148,20 +165,18 @@ describe('LinkEditor', () => {
     await user.type(search, 'Aragorn');
     await user.click(await screen.findByText('Aragorn'));
 
-    const combobox = screen.getByRole('combobox');
-    await user.click(combobox);
-    await user.type(combobox, 'companion');
-    await user.keyboard('{Enter}');
-
-    const bidir = screen.getByRole('checkbox');
-    await user.click(bidir);
+    // Find direction buttons via the group; second button is undirected (A ↔ B)
+    const directionGroup = await screen.findByRole('group', { name: /direction/i });
+    const buttons = directionGroup.querySelectorAll('button');
+    // Second button is undirected (A ↔ B)
+    await user.click(buttons[1]);
 
     await user.click(screen.getByRole('button', { name: /^add link$/i }));
 
     await waitFor(() => {
       expect(createdBody).not.toBeNull();
     });
-    expect(createdBody!.bidirectional).toBe(true);
+    expect(createdBody!.direction).toBe('undirected');
   });
 
   it('invalidates the relations cache after a successful create', async () => {
@@ -175,15 +190,32 @@ describe('LinkEditor', () => {
     await user.type(search, 'Aragorn');
     await user.click(await screen.findByText('Aragorn'));
 
-    const combobox = screen.getByRole('combobox');
-    await user.click(combobox);
-    await user.click(await screen.findByText('created by'));
-
+    // Click Add link — no label required (canSubmit = target only)
     await user.click(screen.getByRole('button', { name: /^add link$/i }));
 
     await waitFor(() => {
       const invalidated = spy.mock.calls.map((c) => (c[0] as { queryKey?: unknown[] })?.queryKey?.[0]);
       expect(invalidated).toContain('relations');
     });
+  });
+
+  it('canSubmit requires only a target entry — no label needed (Phase 35 D-04)', async () => {
+    let createdBody: unknown = null;
+    setupApiMock({ onCreate: (b) => { createdBody = b; } });
+    const user = userEvent.setup();
+    renderEditor();
+
+    await user.click(screen.getByRole('button', { name: /open link editor/i }));
+    const search = await screen.findByPlaceholderText(/search entries/i);
+    await user.type(search, 'Aragorn');
+    await user.click(await screen.findByText('Aragorn'));
+
+    // Click Add link without any label — should succeed
+    await user.click(screen.getByRole('button', { name: /^add link$/i }));
+
+    await waitFor(() => {
+      expect(createdBody).not.toBeNull();
+    });
+    expect((createdBody as { label?: unknown }).label).toBeNull();
   });
 });
