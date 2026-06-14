@@ -4,6 +4,7 @@ import { act } from 'react';
 import { select } from 'd3-selection';
 import { GraphCanvas } from './GraphCanvas';
 import type { GraphNode, GraphEdge, GraphPosition } from '../hooks/useGraphData';
+import { NEUTRAL_EDGE_COLOR } from '../lib/linkTypeColor';
 
 function makeNode(overrides: Partial<GraphNode> & { id: string }): GraphNode {
   return {
@@ -173,6 +174,57 @@ describe('GraphCanvas', () => {
     const labels = Array.from(container.querySelectorAll('text.edge-label'));
     expect(labels.map((n) => n.textContent)).toContain('lives-in');
     expect(labels).toHaveLength(1);
+  });
+
+  it('strokes untyped edges with NEUTRAL_EDGE_COLOR (SC#3 backward-compat)', () => {
+    const { nodes, edges, positions } = tinyGraph();
+    const { container } = render(
+      <GraphCanvas
+        nodes={nodes}
+        edges={edges}
+        positions={positions}
+        width={600}
+        height={400}
+        onNodeClick={vi.fn()}
+        onPinNode={vi.fn()}
+        editMode={false}
+        onLinkDragEnd={vi.fn()}
+        // no linkTypeRegistry → defaults to {} → untyped edges → NEUTRAL_EDGE_COLOR
+      />,
+    );
+    const lines = Array.from(container.querySelectorAll('g.links line'));
+    expect(lines.length).toBeGreaterThan(0);
+    // All edges in tinyGraph are untyped (linkType: null) — must resolve to NEUTRAL_EDGE_COLOR
+    for (const line of lines) {
+      expect(line.getAttribute('stroke')).toBe(NEUTRAL_EDGE_COLOR);
+    }
+  });
+
+  it('strokes a typed edge with the preset/hash color from getLinkTypeColor', () => {
+    const nodes = [
+      { id: 'A', title: 'A', entryType: 'concept', summary: '', icon: '' } as GraphNode,
+      { id: 'B', title: 'B', entryType: 'location', summary: '', icon: '' } as GraphNode,
+    ];
+    const edges: GraphEdge[] = [
+      { id: 'e1', source: 'A', target: 'B', label: null, linkType: 'ally_of', direction: 'undirected' },
+    ];
+    const { container } = render(
+      <GraphCanvas
+        nodes={nodes}
+        edges={edges}
+        positions={[]}
+        width={600}
+        height={400}
+        onNodeClick={vi.fn()}
+        onPinNode={vi.fn()}
+        editMode={false}
+        onLinkDragEnd={vi.fn()}
+      />,
+    );
+    const line = container.querySelector('g.links line') as SVGLineElement;
+    expect(line).toBeTruthy();
+    // 'ally_of' preset color is '#06b6d4'
+    expect(line.getAttribute('stroke')).toBe('#06b6d4');
   });
 
   it('fires onNodeClick when a node is clicked without modifier', () => {

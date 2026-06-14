@@ -13,7 +13,8 @@ vi.mock('react-router-dom', async () => {
 });
 
 // Mock api client — GraphView uses useGraphData (GET) and two mutations.
-vi.mock('../api/client', () => ({ api: vi.fn() }));
+// getShareToken is needed by useUniverse (added in Plan 05).
+vi.mock('../api/client', () => ({ api: vi.fn(), getShareToken: () => null }));
 
 // Mock GraphCanvas for the orchestration-state tests (Tests 4-11). The
 // mock exposes the props as data attributes so behaviour assertions can
@@ -66,6 +67,18 @@ vi.mock('../components/GraphCanvas', () => ({
       />
     );
   },
+}));
+
+// Mock RelationLegend — renders a stub so tests can assert it mounts.
+// The pointer-events-none wrapper + legend behavior are covered by RelationLegend.test.tsx.
+vi.mock('../components/RelationLegend', () => ({
+  RelationLegend: (props: { visible: boolean; edges: Array<{ linkType: string | null }> }) => (
+    <div
+      data-testid="relation-legend-stub"
+      data-visible={String(props.visible)}
+      data-edge-count={String(props.edges.length)}
+    />
+  ),
 }));
 
 import { api } from '../api/client';
@@ -361,7 +374,8 @@ describe('GraphView', () => {
       expect(screen.getByText('Node A')).toBeInTheDocument();
       expect(screen.getByText('Node B')).toBeInTheDocument();
       // No existing edge A→B → label input starts empty
-      const input = screen.getByRole('combobox') as HTMLInputElement;
+      // The relation (label) combobox — identified by its placeholder
+      const input = screen.getByPlaceholderText(/sworn shield/i) as HTMLInputElement;
       expect(input.value).toBe('');
     });
 
@@ -387,7 +401,7 @@ describe('GraphView', () => {
         captured.onLinkDragEnd?.(nodeA, nodeB, 200, 150);
       });
 
-      const input = (await screen.findByRole('combobox')) as HTMLInputElement;
+      const input = (await screen.findByPlaceholderText(/sworn shield/i)) as HTMLInputElement;
       expect(input.value).toBe('knows');
     });
   });
@@ -588,9 +602,10 @@ describe('GraphView', () => {
       expect(screen.getByText('To')).toBeInTheDocument();
       expect(screen.getByText('Alpha')).toBeInTheDocument();
       expect(screen.getByText('Beta')).toBeInTheDocument();
-      expect(screen.getByRole('combobox')).toBeInTheDocument();
+      // CreateLinkPopover now has two comboboxes: LinkTypeSelect + relation label
+      expect(screen.getAllByRole('combobox').length).toBeGreaterThanOrEqual(1);
       expect(screen.getByRole('button', { name: 'Create link' })).toBeInTheDocument();
-      expect(screen.getByRole('button', { name: 'Cancel' })).toBeInTheDocument();
+      expect(screen.getByRole('button', { name: /discard link/i })).toBeInTheDocument();
     });
 
     it('Test 2 (integration): confirm POSTs /universes/U1/links with the typed label and closes popover; editMode persists', async () => {
@@ -616,7 +631,8 @@ describe('GraphView', () => {
         );
       });
 
-      const input = await screen.findByRole('combobox');
+      // Target the relation label combobox (not the link type combobox)
+      const input = await screen.findByPlaceholderText(/sworn shield/i);
       await user.click(input);
       await user.type(input, 'knows');
       await user.click(screen.getByRole('button', { name: 'Create link' }));
@@ -673,7 +689,8 @@ describe('GraphView', () => {
         );
       });
 
-      const input = await screen.findByRole('combobox');
+      // Target the relation label combobox (not the link type combobox)
+      const input = await screen.findByPlaceholderText(/sworn shield/i);
       await user.click(input);
       await user.type(input, 'knows');
       await user.click(screen.getByRole('button', { name: 'Create link' }));
@@ -710,7 +727,8 @@ describe('GraphView', () => {
         );
       });
 
-      const input = await screen.findByRole('combobox');
+      // Target the relation label combobox (not the link type combobox)
+      const input = await screen.findByPlaceholderText(/sworn shield/i);
       await user.click(input);
       await user.type(input, 'bogus');
       await user.click(screen.getByRole('button', { name: 'Create link' }));
@@ -804,7 +822,7 @@ describe('GraphView', () => {
         );
       });
 
-      const cancelBtn = await screen.findByRole('button', { name: 'Cancel' });
+      const cancelBtn = await screen.findByRole('button', { name: /discard link/i });
       await user.click(cancelBtn);
 
       await waitFor(() => {
@@ -841,7 +859,7 @@ describe('GraphView', () => {
         );
       });
 
-      const input = (await screen.findByRole('combobox')) as HTMLInputElement;
+      const input = (await screen.findByPlaceholderText(/sworn shield/i)) as HTMLInputElement;
       expect(input.value).toBe('knows');
     });
 
@@ -879,7 +897,7 @@ describe('GraphView', () => {
         );
       });
 
-      const input = (await screen.findByRole('combobox')) as HTMLInputElement;
+      const input = (await screen.findByPlaceholderText(/sworn shield/i)) as HTMLInputElement;
       expect(input.value).toBe('knows');
       // Clear and type new label
       await user.clear(input);
@@ -930,7 +948,8 @@ describe('GraphView', () => {
         );
       });
 
-      const input = await screen.findByRole('combobox');
+      // Target the relation label combobox (not the link type combobox)
+      const input = await screen.findByPlaceholderText(/sworn shield/i);
       await user.click(input);
       await user.type(input, 'knows');
       await user.click(screen.getByRole('button', { name: 'Create link' }));
@@ -966,6 +985,51 @@ describe('GraphView', () => {
       // After click, aria-pressed flips even though canvas isn't mounted
       const toggleOn = await screen.findByRole('button', { name: /exit edit mode/i });
       expect(toggleOn.getAttribute('aria-pressed')).toBe('true');
+    });
+  });
+
+  describe('Phase 28 REL-02 — RelationLegend overlay', () => {
+    it('renders the RelationLegend stub when nodes + edges are present', async () => {
+      vi.mocked(api).mockResolvedValue({
+        nodes: [makeNode('A'), makeNode('B')],
+        edges: [makeEdge('e1', 'A', 'B')],
+        positions: [],
+      } as GraphDataResponse);
+
+      renderGraphView();
+
+      const legend = await screen.findByTestId('relation-legend-stub');
+      expect(legend).toBeInTheDocument();
+      // Default visibility is true (localStorage empty → default true)
+      expect(legend.getAttribute('data-visible')).toBe('true');
+      // Edge count matches the graph data
+      expect(legend.getAttribute('data-edge-count')).toBe('1');
+    });
+
+    it('toggles legend visibility when the Show/Hide legend button is clicked', async () => {
+      vi.mocked(api).mockResolvedValue({
+        nodes: [makeNode('A'), makeNode('B')],
+        edges: [makeEdge('e1', 'A', 'B')],
+        positions: [],
+      } as GraphDataResponse);
+
+      renderGraphView();
+
+      // Wait for the legend to appear (data resolved)
+      await screen.findByTestId('relation-legend-stub');
+
+      // Legend toggle button shows 'Hide legend' (default visible=true)
+      const toggleBtn = await screen.findByRole('button', { name: /hide relation legend/i });
+      expect(toggleBtn).toBeInTheDocument();
+
+      await userEvent.click(toggleBtn);
+
+      // After toggle, visible becomes false
+      const legend = screen.getByTestId('relation-legend-stub');
+      expect(legend.getAttribute('data-visible')).toBe('false');
+
+      // Button copy flips to 'Show legend'
+      expect(screen.getByRole('button', { name: /show relation legend/i })).toBeInTheDocument();
     });
   });
 });
