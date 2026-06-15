@@ -64,6 +64,23 @@ export interface LinkTypeRegistryEntry {
 
 export type LinkTypeRegistry = Record<string, LinkTypeRegistryEntry>;
 
+/**
+ * Phase 36 DATA-02: universe-scoped typed custom-field registry entry shape.
+ * Stored as universes.field_registry jsonb (FieldRegistryEntry[] — an array, NOT a Record;
+ * contrast Phase 35's link_types Record). Ported verbatim from 9b82f27:web/src/types/fieldRegistry.ts.
+ * The web-side copy is (re)created in Plan 05 (web/src/types/fieldRegistry.ts).
+ */
+export type FieldType = 'text' | 'number' | 'boolean' | 'url' | 'entry-ref';
+
+export interface FieldRegistryEntry {
+  /** Field name — unique within the registry (case-insensitive check on server) */
+  name: string;
+  /** Data type governing the typed input rendered in MetaEditor + filter value inputs */
+  type: FieldType;
+  /** Optional hint text displayed below the input in MetaEditor */
+  hint?: string;
+}
+
 export const users = pgTable('users', {
   id:               uuid('id').primaryKey().defaultRandom(),
   email:            text('email').notNull().unique(),
@@ -99,6 +116,9 @@ export const universes = pgTable('universes', {
   auditModel: text('audit_model'),
   // Phase 35 REL-01: per-universe link-type registry; presets seeded from code, registry stores custom + overrides.
   linkTypes: jsonb('link_types').$type<LinkTypeRegistry>().default({}).notNull(),
+  // Phase 36 DATA-02: per-universe typed custom-field registry. Array (FieldRegistryEntry[]),
+  // DEFAULT '[]' — backfilled by 0021_phase36_field_registry.sql. Contrast link_types Record DEFAULT '{}'.
+  fieldRegistry: jsonb('field_registry').$type<FieldRegistryEntry[]>().default([]).notNull(),
 });
 
 export const refreshTokens = pgTable('refresh_tokens', {
@@ -264,6 +284,9 @@ export const entries = pgTable('entries', {
   // Backfilled to false for every existing row by 0014_phase29_entries_is_public.sql.
   // Mirrors universes.auditEnabled (line ~40) pattern: boolean opt-in with safer-by-default.
   isPublic: boolean('is_public').default(false).notNull(),
+  // Phase 36 DATA-03: per-entry WIP/draft flag (default OFF). Backfilled to false for every
+  // existing row by 0022_phase36_entries_wip.sql. Mirrors the is_public boolean idiom.
+  wip: boolean('wip').default(false).notNull(),
 });
 
 export const links = pgTable('links', {
