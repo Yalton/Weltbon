@@ -1,5 +1,7 @@
 import { OpenAPIHono, createRoute, z } from '@hono/zod-openapi';
+import { createMiddleware } from 'hono/factory';
 import { setCookie, getCookie, deleteCookie } from 'hono/cookie';
+import { HTTPException } from 'hono/http-exception';
 import { and, eq, isNull } from 'drizzle-orm';
 import { db as getDb } from '../db/client.js';
 import { users, inviteCodes } from '../db/schema.js';
@@ -17,6 +19,24 @@ import {
 import { hashInviteToken } from '../services/invite.js';
 
 type AppEnv = { Variables: AuthVariables };
+
+// ─── Share-token rejection guard ─────────────────────────────────────────────
+// T-29-22 (SHARE-03): The /api/share/* namespace is the SINGLE auditable
+// surface that accepts the `share-token` credential. Public routes like
+// /auth/register and /auth/login do NOT require bearer auth, so Hono's Zod
+// body validator would otherwise fire BEFORE any auth check and return 400 on
+// an empty body. Adding this middleware (which fires BEFORE body validation via
+// the `createRoute({ middleware })` slot) ensures that any request carrying a
+// share-token header but no Authorization bearer is rejected with 401 —
+// matching the boundary contract the SHARE-03 integration test enforces.
+const rejectShareToken = createMiddleware(async (c, next) => {
+  const hasShareToken = Boolean(c.req.header('share-token'));
+  const hasBearer = c.req.header('Authorization')?.startsWith('Bearer ');
+  if (hasShareToken && !hasBearer) {
+    throw new HTTPException(401, { message: 'share-token is not accepted on this endpoint' });
+  }
+  await next();
+});
 
 // ─── Zod schemas ────────────────────────────────────────────────────────────
 
@@ -89,6 +109,7 @@ const registerRoute = createRoute({
   summary: 'Register a new user',
   description: 'Creates a new user account. Requires a valid invite code.',
   security: [],
+  middleware: [rejectShareToken] as const,
   request: {
     body: {
       content: {
@@ -126,6 +147,7 @@ const loginRoute = createRoute({
   summary: 'Log in',
   description: 'Authenticates a user. Returns a JWT access token and sets a refresh token cookie.',
   security: [],
+  middleware: [rejectShareToken] as const,
   request: {
     body: {
       content: {
@@ -163,6 +185,7 @@ const refreshRoute = createRoute({
   summary: 'Refresh access token',
   description: 'Exchanges a valid refresh token cookie for a new JWT access token. Rotates the refresh token (single-use).',
   security: [],
+  middleware: [rejectShareToken] as const,
   responses: {
     200: {
       content: {
@@ -190,6 +213,7 @@ const logoutRoute = createRoute({
   summary: 'Log out',
   description: 'Revokes the refresh token cookie and clears it. No bearer token required.',
   security: [],
+  middleware: [rejectShareToken] as const,
   responses: {
     204: {
       description: 'Logged out; refresh token revoked',
