@@ -26,6 +26,7 @@ import { importRoutes } from './routes/import.js';
 import { ingestRoutes } from './routes/ingest.js';
 import { timelinePinRoutes, timelineListRoutes } from './routes/timeline.js';
 import { auditRoutes, auditCrossUniverseRoutes } from './routes/audits.js';
+import { statsRoutes } from './routes/stats.js';
 import { diagramsRouter } from './routes/diagrams.js';
 import { dictionaryRoutes } from './routes/dictionary.js';
 import { recoverOrphanAuditRuns } from './services/audit-recovery.js';
@@ -123,6 +124,12 @@ export function createApp() {
   apiR.route('/universes/:uid/categories', categoryRoutes);
   apiR.route('/universes/:uid/issues', issueRoutes);
   apiR.route('/universes/:uid', auditRoutes);
+  // Phase 36 DATA-05: universe statistics aggregate. The route's internal path is
+  // '/{id}/stats', so mounting at the bare '/universes' prefix resolves it to
+  // GET /api/universes/:id/stats (distinct sub-path — no collision with the bare
+  // /universes universeRoutes mount above). requireAuth already applies via
+  // apiR.use('/universes/*', requireAuth) at the top of this block.
+  apiR.route('/universes', statsRoutes);
   apiR.route('/universes/:uid/diagrams', diagramsRouter);
   // Phase 32 CONLANG-01/02: dictionary CRUD + FTS + CSV import.
   // requireAuth already applies via apiR.use('/universes/*', requireAuth) at ln 104 —
