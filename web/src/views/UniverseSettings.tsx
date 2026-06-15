@@ -3,6 +3,7 @@ import { Link, useParams, useNavigate, useSearchParams } from 'react-router-dom'
 import { useUniverse, useUpdateUniverse, useDeleteUniverse } from '../hooks/useUniverse';
 import { ConfirmDialog } from '../components/ConfirmDialog';
 import { EntryTypesSection } from '../components/EntryTypesSection';
+import { FieldRegistrySection } from '../components/FieldRegistrySection';
 import { ShareLinksSection } from '../components/ShareLinksSection';
 import { SettingsTabBar } from '../components/SettingsTabBar';
 import { Toggle } from '../components/Toggle';
@@ -37,6 +38,8 @@ import type { ModelListingWithCoverage } from '../types/audit';
 const TABS = [
   { id: 'general', label: 'General' },
   { id: 'entry-types', label: 'Entry types' },
+  // Phase 36 DATA-02 — Fields tab: per-universe typed custom-field registry.
+  { id: 'fields', label: 'Fields' },
   // Phase 29 D-20 / UI-SPEC §D — Share Links tab between Entry types and AI
   // Gap Auditor: a universe-level concept adjacent to configuration.
   { id: 'share-links', label: 'Share Links' },
@@ -220,6 +223,20 @@ export function UniverseSettings() {
               Removing a type used by entries will prompt for a fallback.
             </p>
             <EntryTypesSection universe={data} />
+          </div>
+        )}
+
+        {/* ─── Fields tab ──────────────────────────────────────────── */}
+        {/* Phase 36 DATA-02 — typed custom-field registry editor. */}
+        {safeTab === 'fields' && data && (
+          <div>
+            <h2 className="text-lg font-medium mb-2">Custom fields</h2>
+            <p className="text-sm text-neutral-500 mb-3">
+              Define typed data slots that appear in the meta editor of every entry.
+              Field names are unique per universe; editing or removing a field never
+              deletes the values already stored on your entries.
+            </p>
+            <FieldRegistrySection universe={data} />
           </div>
         )}
 
