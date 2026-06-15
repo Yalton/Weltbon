@@ -6,6 +6,7 @@ import { useTimelinePins } from '../hooks/useTimelinePins';
 import { useCalendar } from '../hooks/useCalendar';
 import { formatCalendar } from '../lib/calendarFormat';
 import { TypeBadge } from '../components/TypeBadge';
+import { WipPill } from '../components/WipPill';
 import { MarkdownRenderer } from '../components/MarkdownRenderer';
 import type { WikilinkResolutionData } from '../components/MarkdownRenderer';
 import { ConfirmDialog } from '../components/ConfirmDialog';
@@ -164,6 +165,9 @@ export function EntryDetail() {
         </div>
         <div className="mt-1 flex items-center gap-2">
           <TypeBadge type={entry.entryType} />
+          {/* Phase 36 DATA-03 — non-interactive WIP badge next to the
+              TypeBadge / Public chip when entry.wip === true. */}
+          {entry.wip && <WipPill wip />}
           {/*
             Phase 29 SHARE-04 / UI-SPEC §C / D-16 — accent-tint Public chip
             rendered next to TypeBadge ONLY when entry.isPublic === true.

@@ -12,6 +12,7 @@ import { EntryCategoryPicker } from '../components/EntryCategoryPicker';
 import SaveAsTemplateDialog from '../components/SaveAsTemplateDialog';
 import { Toast } from '../components/Toast';
 import { Toggle } from '../components/Toggle';
+import { WipPill } from '../components/WipPill';
 import { metaArrayToRecord } from '../lib/entryTemplates';
 import type { Entry } from '../hooks/useEntries';
 import type { EntryTemplate } from '../lib/entryTemplates';
@@ -46,6 +47,9 @@ export function EntryEditor() {
   // Phase 29 SHARE-04 / UI-SPEC §B / D-10 — Public toggle state. Default
   // false on new entries; seeded from existingEntry.isPublic on edit.
   const [isPublic, setIsPublic] = useState(false);
+  // Phase 36 DATA-03 — WIP/draft toggle state. Default false on new entries;
+  // seeded from existingEntry.wip on edit. Independent of isPublic (T-36-06-01).
+  const [wip, setWip] = useState(false);
   // CR-03: gate the create-mode template prefill so it runs at most once per
   // navigation. Without this, every refetch of `universe` (window focus,
   // stale-time expiry) re-runs the prefill effect and silently wipes any
@@ -84,6 +88,8 @@ export function EntryEditor() {
       setCategoryId(existingEntry.categoryId ?? null);
       // Phase 29 SHARE-04 — seed the Public toggle from the loaded entry.
       setIsPublic(existingEntry.isPublic ?? false);
+      // Phase 36 DATA-03 — seed the WIP toggle from the loaded entry.
+      setWip(existingEntry.wip ?? false);
       return;
     }
     // Create mode: prefill from location.state.template ONCE per navigation.
@@ -136,6 +142,8 @@ export function EntryEditor() {
       categoryId,
       // Phase 29 SHARE-04 — Plan 03 surface accepts isPublic on POST + PATCH.
       isPublic,
+      // Phase 36 DATA-03 — Plan 03 surface accepts wip on POST + PATCH.
+      wip,
       ...(stateTemplateId ? { templateId: stateTemplateId } : {}),
     };
 
@@ -263,6 +271,8 @@ export function EntryEditor() {
             value={meta}
             onChange={setMeta}
             onValidityChange={setMetaValid}
+            registeredFields={universe?.fieldRegistry ?? []}
+            universeId={uid}
           />
         </div>
 
@@ -347,6 +357,24 @@ export function EntryEditor() {
               }`}
             >
               Public
+            </span>
+          </div>
+
+          {/* Phase 36 DATA-03 — WIP/draft toggle. Independent of the Public
+              toggle (T-36-06-01): its own useState + payload key, neither
+              references the other. Interactive WipPill (button role="switch")
+              with a visible "Mark as WIP" label. */}
+          <div className="flex items-center gap-2">
+            <WipPill wip={wip} onToggle={() => setWip(!wip)} />
+            <span
+              id={`wip-label-${entryId ?? 'new'}`}
+              className={`text-sm ${
+                wip
+                  ? 'text-amber-600 dark:text-amber-400'
+                  : 'text-neutral-500 dark:text-neutral-400'
+              }`}
+            >
+              Mark as WIP
             </span>
           </div>
 
