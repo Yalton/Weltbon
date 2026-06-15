@@ -5,15 +5,25 @@ import { FilterChip } from './FilterChip';
 import { AddFilterChip } from './AddFilterChip';
 
 /**
- * Chip row showing every active filter (type, each tag, category) plus the
- * "+ Filter" trigger. Resolves the category uuid back to its display label
- * via useCategories so the chip reads "Category: Nobles" not the raw id.
- * The special sentinel 'uncategorized' renders as "Category: Uncategorized".
+ * Chip row showing every active filter (type, each tag, category, wip, field
+ * filters) plus the "+ Filter" trigger. Resolves the category uuid back to its
+ * display label via useCategories so the chip reads "Category: Nobles" not the
+ * raw id. The special sentinel 'uncategorized' renders as "Category:
+ * Uncategorized".
+ *
+ * Phase 36 DATA-04 additions:
+ *  - wip chip: "WIP: yes" when wip=true, "WIP: no" when wip=false; remove → wip null
+ *  - field-filter chips: "{name}: {value}" per fieldFilters entry; remove → omit that key
+ *  - passes universe.fieldRegistry (or []) into AddFilterChip as registeredFields
  */
 export function FilterChipRow({ universeId }: { universeId: string }) {
   const [filters, updateFilters] = useFilterParams();
   const { data: universe } = useUniverse(universeId);
   const { data: cats } = useCategories(universeId);
+
+  // Universe.fieldRegistry is typed from Plan 36-05; absent on pre-migration
+  // rows → treat as [].
+  const registeredFields = universe?.fieldRegistry ?? [];
 
   const chips: { key: string; label: string; onRemove: () => void }[] = [];
   if (filters.type) {
@@ -43,6 +53,28 @@ export function FilterChipRow({ universeId }: { universeId: string }) {
     });
   }
 
+  // WIP chip — shown only when wip is an explicit boolean (null = no chip).
+  if (typeof filters.wip === 'boolean') {
+    chips.push({
+      key: 'wip',
+      label: filters.wip ? 'WIP: yes' : 'WIP: no',
+      onRemove: () => updateFilters({ wip: null }),
+    });
+  }
+
+  // Field-filter chips — one per active fieldFilters entry.
+  Object.entries(filters.fieldFilters ?? {}).forEach(([name, value]) => {
+    chips.push({
+      key: `field:${name}`,
+      label: `${name}: ${value}`,
+      onRemove: () => {
+        const rest = { ...filters.fieldFilters };
+        delete rest[name];
+        updateFilters({ fieldFilters: rest });
+      },
+    });
+  });
+
   return (
     <div
       className="flex flex-wrap gap-2 items-center"
@@ -57,6 +89,7 @@ export function FilterChipRow({ universeId }: { universeId: string }) {
         updateFilters={updateFilters}
         types={universe?.entryTypes ?? []}
         categories={cats?.categories ?? []}
+        registeredFields={registeredFields}
       />
     </div>
   );
