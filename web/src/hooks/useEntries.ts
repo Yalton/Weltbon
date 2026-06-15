@@ -21,6 +21,14 @@ export interface Entry {
    * on every response — never optional.
    */
   isPublic: boolean;
+  /**
+   * Phase 36 — DATA-03 / Plan 03 surface.
+   * `false` by default; `true` marks the entry as a work-in-progress / draft.
+   * Surfaced as an amber WIP pill on EntryDetail and each entry-list card, and
+   * as a toggle in EntryEditor. The DB column is NOT NULL (Plan 03 schema), so
+   * the field is always present on every response — never optional on read.
+   */
+  wip: boolean;
   createdAt: string;
   updatedAt: string;
 }
@@ -70,6 +78,8 @@ export type CreateEntryInput = {
   categoryId?: string | null;
   /** Phase 29 SHARE-04 — defaults to false server-side; explicit on the wire so PATCH non-destructive. */
   isPublic?: boolean;
+  /** Phase 36 DATA-03 — defaults to false server-side; explicit on the wire so PATCH non-destructive. */
+  wip?: boolean;
 };
 
 export type UpdateEntryInput = Partial<CreateEntryInput>;

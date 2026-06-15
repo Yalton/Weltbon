@@ -193,6 +193,7 @@ function makeEntries(count: number): Entry[] {
     icon: '',
     categoryId: null,
     isPublic: false,
+    wip: false,
     createdAt: '2026-01-01T00:00:00Z',
     updatedAt: '2026-01-01T00:00:00Z',
   }));

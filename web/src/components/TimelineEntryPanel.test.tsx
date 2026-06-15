@@ -26,6 +26,8 @@ function makeEntry(id: string, title: string, overrides: Partial<Entry> = {}): E
     categoryId: null,
     // Phase 29 SHARE-04 — Entry interface now requires isPublic (default false).
     isPublic: false,
+    // Phase 36 DATA-03 — Entry interface now requires wip (default false).
+    wip: false,
     createdAt: '2026-01-01T00:00:00.000Z',
     updatedAt: '2026-01-01T00:00:00.000Z',
     ...overrides,
