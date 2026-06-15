@@ -1,6 +1,11 @@
 import { useMutation, useQuery, useQueryClient } from '@tanstack/react-query';
 import { api, getShareToken } from '../api/client';
 import type { Calendar } from '../lib/calendarFormat';
+import type { FieldRegistryEntry } from '../types/fieldRegistry';
+
+// Phase 36 DATA-02: re-export the canonical field-registry types from the hook
+// so FieldRegistrySection / MetaEditor can import them alongside Universe.
+export type { FieldType, FieldRegistryEntry } from '../types/fieldRegistry';
 
 export interface Universe {
   id: string;
@@ -22,6 +27,9 @@ export interface Universe {
   // Phase 35 REL-01: per-universe link-type registry (nullable until migration runs).
   // Absent on pre-migration rows → treat as empty record.
   linkTypes?: Record<string, { color?: string; directionDefault?: 'directed' | 'undirected'; inverseLabel?: string }>;
+  // Phase 36 DATA-02: per-universe typed custom-field registry (nullable until migration runs).
+  // Absent on pre-migration rows → treat as empty array.
+  fieldRegistry?: FieldRegistryEntry[];
 }
 
 export function useUniverses() {
@@ -71,6 +79,8 @@ export function useUpdateUniverse(id: string) {
       auditModel?: string | null;
       // Phase 35 REL-01: link-type registry patch (color overrides per D-03 deferred UI).
       linkTypes?: Record<string, { color?: string; directionDefault?: 'directed' | 'undirected'; inverseLabel?: string }>;
+      // Phase 36 DATA-02: full-array field-registry replace (D-03 non-destructive to entries.meta).
+      fieldRegistry?: FieldRegistryEntry[];
     }) =>
       api<Universe>(`/universes/${id}`, { method: 'PATCH', body: JSON.stringify(body) }),
     onSuccess: () => {
