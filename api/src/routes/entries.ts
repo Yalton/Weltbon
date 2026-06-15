@@ -327,6 +327,8 @@ export const entryRoutes = new OpenAPIHono<AppEnv>()
     const category = c.req.query('category')?.trim() || undefined;
     const rawQ = c.req.query('q')?.trim() || '';
     const q = rawQ.length > 0 ? rawQ : undefined;
+    // Phase 36 DATA-03: three-state WIP filter — 'true'/'false' filter, absent = all (D-08).
+    const wip = c.req.query('wip');
 
     if (category && category !== 'uncategorized' && !/^[0-9a-f-]{36}$/i.test(category)) {
       return c.json({ error: 'Invalid category id' }, 400);
@@ -338,6 +340,22 @@ export const entryRoutes = new OpenAPIHono<AppEnv>()
     if (category === 'uncategorized') conditions.push(isNull(entries.categoryId));
     else if (category) conditions.push(eq(entries.categoryId, category));
     if (q) conditions.push(sql`search_vector @@ websearch_to_tsquery('english', ${q})`);
+    // Phase 36 DATA-03: three-state wip filter (absent = all, true/false = filter).
+    if (wip === 'true') conditions.push(eq(entries.wip, true));
+    else if (wip === 'false') conditions.push(eq(entries.wip, false));
+
+    // Phase 36 DATA-04: per-field exact-match meta filter. Scan raw ?field.{name}={value} params
+    // (dot-notation keys aren't first-class in zod-openapi). T-36-03-01: the meta key and value are
+    // bound as drizzle `sql` template params (->> operator), NEVER string-concatenated into the SQL
+    // text — so a value like `' OR '1'='1` is matched literally (normal no-match, no injection).
+    // Multiple field.* params AND together via the shared conditions array (D-08).
+    const searchParams = new URL(c.req.url).searchParams;
+    for (const [paramKey, paramVal] of searchParams.entries()) {
+      if (paramKey.startsWith('field.')) {
+        const metaKey = paramKey.slice('field.'.length);
+        conditions.push(sql`${entries.meta} ->> ${metaKey} = ${paramVal}`);
+      }
+    }
 
     const baseShape = {
       id: entries.id,

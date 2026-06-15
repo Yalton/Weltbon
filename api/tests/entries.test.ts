@@ -780,4 +780,170 @@ describe('entry routes (ENT-01..06)', () => {
       expect(entry.tags).toEqual(['tag1']);
     });
   });
+
+  // ─── DATA-03: WIP flag + three-state filter ──────────────────────────────────
+  describe('wip flag + three-state filter (DATA-03)', () => {
+    it('POST defaults wip to false when omitted; create/read round-trip wip=true', async () => {
+      const { hdrs } = await userWithToken('wip-create@test.com');
+      const universe = await createUniverse(hdrs);
+
+      const defaulted = await createEntry(universe.id, hdrs, { title: 'No WIP field' });
+      expect(defaulted.wip).toBe(false);
+
+      const wipEntry = await createEntry(universe.id, hdrs, { title: 'Drafty', wip: true });
+      expect(wipEntry.wip).toBe(true);
+
+      // list surfaces wip
+      const listRes = await req('GET', `/api/universes/${universe.id}/entries`, { headers: hdrs });
+      const list = await json(listRes);
+      const listed = list.find((e: any) => e.id === wipEntry.id);
+      expect(listed.wip).toBe(true);
+
+      // detail surfaces wip
+      const detailRes = await req('GET', `/api/universes/${universe.id}/entries/${wipEntry.id}`, { headers: hdrs });
+      const detail = await json(detailRes);
+      expect(detail.wip).toBe(true);
+    });
+
+    it('PATCH sets wip; omitting wip on PATCH leaves the column unchanged (non-destructive)', async () => {
+      const { hdrs } = await userWithToken('wip-patch@test.com');
+      const universe = await createUniverse(hdrs);
+
+      const created = await createEntry(universe.id, hdrs, { title: 'Patchable', wip: true });
+      expect(created.wip).toBe(true);
+
+      // PATCH without wip must NOT flip the stored value (T-36-03-04)
+      const patchRes = await req('PATCH', `/api/universes/${universe.id}/entries/${created.id}`, {
+        headers: hdrs,
+        body: { summary: 'unrelated change' },
+      });
+      const patched = await json(patchRes);
+      expect(patched.wip).toBe(true);
+
+      // PATCH with wip=false flips it
+      const flipRes = await req('PATCH', `/api/universes/${universe.id}/entries/${created.id}`, {
+        headers: hdrs,
+        body: { wip: false },
+      });
+      const flipped = await json(flipRes);
+      expect(flipped.wip).toBe(false);
+    });
+
+    it('?wip=true / ?wip=false / absent return the correct subsets (three-state)', async () => {
+      const { hdrs } = await userWithToken('wip-filter@test.com');
+      const universe = await createUniverse(hdrs);
+
+      const draft = await createEntry(universe.id, hdrs, { title: 'WIP One', wip: true });
+      const done = await createEntry(universe.id, hdrs, { title: 'Finished One', wip: false });
+
+      const allRes = await req('GET', `/api/universes/${universe.id}/entries`, { headers: hdrs });
+      const all = await json(allRes);
+      const allIds = all.map((e: any) => e.id);
+      expect(allIds).toContain(draft.id);
+      expect(allIds).toContain(done.id);
+
+      const wipOnlyRes = await req('GET', `/api/universes/${universe.id}/entries?wip=true`, { headers: hdrs });
+      const wipOnly = await json(wipOnlyRes);
+      const wipIds = wipOnly.map((e: any) => e.id);
+      expect(wipIds).toContain(draft.id);
+      expect(wipIds).not.toContain(done.id);
+
+      const finishedRes = await req('GET', `/api/universes/${universe.id}/entries?wip=false`, { headers: hdrs });
+      const finished = await json(finishedRes);
+      const finishedIds = finished.map((e: any) => e.id);
+      expect(finishedIds).toContain(done.id);
+      expect(finishedIds).not.toContain(draft.id);
+    });
+  });
+
+  // ─── DATA-04: server-side field.* exact-match filters ────────────────────────
+  describe('field.* exact-match meta filters (DATA-04)', () => {
+    it('?field.Status=Complete returns only entries whose meta Status matches', async () => {
+      const { hdrs } = await userWithToken('field-single@test.com');
+      const universe = await createUniverse(hdrs);
+
+      const complete = await createEntry(universe.id, hdrs, { title: 'Done Thing', meta: { Status: 'Complete' } });
+      const inProgress = await createEntry(universe.id, hdrs, { title: 'WIP Thing', meta: { Status: 'InProgress' } });
+
+      const res = await req('GET', `/api/universes/${universe.id}/entries?field.Status=Complete`, { headers: hdrs });
+      const list = await json(res);
+      const ids = list.map((e: any) => e.id);
+      expect(ids).toContain(complete.id);
+      expect(ids).not.toContain(inProgress.id);
+    });
+
+    it('multiple field.* params AND together', async () => {
+      const { hdrs } = await userWithToken('field-multi@test.com');
+      const universe = await createUniverse(hdrs);
+
+      const match = await createEntry(universe.id, hdrs, {
+        title: 'Both Match',
+        meta: { Status: 'Complete', Importance: 'High' },
+      });
+      const partial = await createEntry(universe.id, hdrs, {
+        title: 'Partial Match',
+        meta: { Status: 'Complete', Importance: 'Low' },
+      });
+
+      const res = await req(
+        'GET',
+        `/api/universes/${universe.id}/entries?field.Status=Complete&field.Importance=High`,
+        { headers: hdrs },
+      );
+      const list = await json(res);
+      const ids = list.map((e: any) => e.id);
+      expect(ids).toContain(match.id);
+      expect(ids).not.toContain(partial.id);
+    });
+
+    it('field.* layers on top of ?type=', async () => {
+      const { hdrs } = await userWithToken('field-layer@test.com');
+      const universe = await createUniverse(hdrs);
+
+      const wanted = await createEntry(universe.id, hdrs, {
+        title: 'Concept Complete',
+        entryType: 'concept',
+        meta: { Status: 'Complete' },
+      });
+      // same meta, different type — excluded by ?type=concept
+      const otherType = await createEntry(universe.id, hdrs, {
+        title: 'Entity Complete',
+        entryType: 'entity',
+        meta: { Status: 'Complete' },
+      });
+
+      const res = await req(
+        'GET',
+        `/api/universes/${universe.id}/entries?type=concept&field.Status=Complete`,
+        { headers: hdrs },
+      );
+      const list = await json(res);
+      const ids = list.map((e: any) => e.id);
+      expect(ids).toContain(wanted.id);
+      expect(ids).not.toContain(otherType.id);
+    });
+
+    it('an injection-shaped field value is matched literally — normal no-match, no error/leak (T-36-03-01)', async () => {
+      const { hdrs } = await userWithToken('field-injection@test.com');
+      const universe = await createUniverse(hdrs);
+
+      // Seed two real entries so a successful injection would over-return.
+      const a = await createEntry(universe.id, hdrs, { title: 'Alpha', meta: { Status: 'Complete' } });
+      const b = await createEntry(universe.id, hdrs, { title: 'Beta', meta: { Status: 'InProgress' } });
+
+      const injection = `' OR '1'='1`;
+      const res = await req(
+        'GET',
+        `/api/universes/${universe.id}/entries?field.Status=${encodeURIComponent(injection)}`,
+        { headers: hdrs },
+      );
+      // Parameterized binding → the value is matched as a literal, so no row has Status === injection.
+      expect(res.status).toBe(200);
+      const list = await json(res);
+      const ids = list.map((e: any) => e.id);
+      expect(list).toHaveLength(0);
+      expect(ids).not.toContain(a.id);
+      expect(ids).not.toContain(b.id);
+    });
+  });
 });
