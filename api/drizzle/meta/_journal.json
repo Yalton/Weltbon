@@ -148,6 +148,20 @@
       "when": 1780700000000,
       "tag": "0020_phase35_typed_links",
       "breakpoints": true
+    },
+    {
+      "idx": 21,
+      "version": "7",
+      "when": 1780800000000,
+      "tag": "0021_phase36_field_registry",
+      "breakpoints": true
+    },
+    {
+      "idx": 22,
+      "version": "7",
+      "when": 1780900000000,
+      "tag": "0022_phase36_entries_wip",
+      "breakpoints": true
     }
   ]
 }
