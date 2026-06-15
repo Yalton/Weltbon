@@ -51,14 +51,14 @@ describe('universe routes (UNIV-01..06)', () => {
 
   // Unauth path
   it('GET /universes without Authorization returns 401', async () => {
-    const res = await req('GET', '/universes');
+    const res = await req('GET', '/api/universes');
     expect(res.status).toBe(401);
   });
 
   // UNIV-01: create
   it('POST /universes creates universe owned by caller with default entryTypes', async () => {
     const { user, hdrs } = await userWithToken('a@test.com');
-    const res = await req('POST', '/universes', { headers: hdrs, body: { name: 'Post-Sundering' } });
+    const res = await req('POST', '/api/universes', { headers: hdrs, body: { name: 'Post-Sundering' } });
     expect(res.status).toBe(201);
     const body = await json(res);
     expect(body.name).toBe('Post-Sundering');
@@ -73,7 +73,7 @@ describe('universe routes (UNIV-01..06)', () => {
 
   it('POST /universes rejects empty name with 400', async () => {
     const { hdrs } = await userWithToken('a2@test.com');
-    const res = await req('POST', '/universes', { headers: hdrs, body: { name: '' } });
+    const res = await req('POST', '/api/universes', { headers: hdrs, body: { name: '' } });
     expect(res.status).toBe(400);
   });
 
@@ -81,17 +81,17 @@ describe('universe routes (UNIV-01..06)', () => {
   it("GET /universes returns only caller's universes (cross-tenant invisible)", async () => {
     const a = await userWithToken('a3@test.com');
     const b = await userWithToken('b3@test.com');
-    await req('POST', '/universes', { headers: a.hdrs, body: { name: 'A1' } });
-    await req('POST', '/universes', { headers: a.hdrs, body: { name: 'A2' } });
-    await req('POST', '/universes', { headers: b.hdrs, body: { name: 'B1' } });
+    await req('POST', '/api/universes', { headers: a.hdrs, body: { name: 'A1' } });
+    await req('POST', '/api/universes', { headers: a.hdrs, body: { name: 'A2' } });
+    await req('POST', '/api/universes', { headers: b.hdrs, body: { name: 'B1' } });
 
-    const aList = await req('GET', '/universes', { headers: a.hdrs });
+    const aList = await req('GET', '/api/universes', { headers: a.hdrs });
     expect(aList.status).toBe(200);
     const aBody = await json(aList);
     expect(aBody).toHaveLength(2);
     expect(aBody.every((u: any) => u.userId === a.user.id)).toBe(true);
 
-    const bList = await req('GET', '/universes', { headers: b.hdrs });
+    const bList = await req('GET', '/api/universes', { headers: b.hdrs });
     const bBody = await json(bList);
     expect(bBody).toHaveLength(1);
     expect(bBody[0].name).toBe('B1');
@@ -100,9 +100,9 @@ describe('universe routes (UNIV-01..06)', () => {
   // UNIV-03: get owned
   it('GET /universes/:id returns universe when owned', async () => {
     const a = await userWithToken('a4@test.com');
-    const createRes = await req('POST', '/universes', { headers: a.hdrs, body: { name: 'Mine' } });
+    const createRes = await req('POST', '/api/universes', { headers: a.hdrs, body: { name: 'Mine' } });
     const created = await json(createRes);
-    const res = await req('GET', `/universes/${created.id}`, { headers: a.hdrs });
+    const res = await req('GET', `/api/universes/${created.id}`, { headers: a.hdrs });
     expect(res.status).toBe(200);
     const body = await json(res);
     expect(body.name).toBe('Mine');
@@ -111,16 +111,16 @@ describe('universe routes (UNIV-01..06)', () => {
   // 404 when universe doesn't exist at all
   it('GET /universes/:id returns 404 for a nonexistent universe id', async () => {
     const a = await userWithToken('a5@test.com');
-    const res = await req('GET', '/universes/00000000-0000-0000-0000-000000000000', { headers: a.hdrs });
+    const res = await req('GET', '/api/universes/00000000-0000-0000-0000-000000000000', { headers: a.hdrs });
     expect(res.status).toBe(404);
   });
 
   // UNIV-04: patch
   it('PATCH /universes/:id updates name', async () => {
     const a = await userWithToken('a6@test.com');
-    const createRes = await req('POST', '/universes', { headers: a.hdrs, body: { name: 'Old' } });
+    const createRes = await req('POST', '/api/universes', { headers: a.hdrs, body: { name: 'Old' } });
     const created = await json(createRes);
-    const res = await req('PATCH', `/universes/${created.id}`, { headers: a.hdrs, body: { name: 'New' } });
+    const res = await req('PATCH', `/api/universes/${created.id}`, { headers: a.hdrs, body: { name: 'New' } });
     expect(res.status).toBe(200);
     const body = await json(res);
     expect(body.name).toBe('New');
@@ -128,9 +128,9 @@ describe('universe routes (UNIV-01..06)', () => {
 
   it('PATCH /universes/:id updates description independently', async () => {
     const a = await userWithToken('a7@test.com');
-    const createRes = await req('POST', '/universes', { headers: a.hdrs, body: { name: 'Keep' } });
+    const createRes = await req('POST', '/api/universes', { headers: a.hdrs, body: { name: 'Keep' } });
     const created = await json(createRes);
-    const res = await req('PATCH', `/universes/${created.id}`, { headers: a.hdrs, body: { description: 'Added later' } });
+    const res = await req('PATCH', `/api/universes/${created.id}`, { headers: a.hdrs, body: { description: 'Added later' } });
     expect(res.status).toBe(200);
     const body = await json(res);
     expect(body.name).toBe('Keep');
@@ -139,18 +139,18 @@ describe('universe routes (UNIV-01..06)', () => {
 
   it('PATCH /universes/:id rejects empty body with 400', async () => {
     const a = await userWithToken('a8@test.com');
-    const createRes = await req('POST', '/universes', { headers: a.hdrs, body: { name: 'X' } });
+    const createRes = await req('POST', '/api/universes', { headers: a.hdrs, body: { name: 'X' } });
     const created = await json(createRes);
-    const res = await req('PATCH', `/universes/${created.id}`, { headers: a.hdrs, body: {} });
+    const res = await req('PATCH', `/api/universes/${created.id}`, { headers: a.hdrs, body: {} });
     expect(res.status).toBe(400);
   });
 
   // UNIV-05: delete
   it('DELETE /universes/:id removes the row', async () => {
     const a = await userWithToken('a9@test.com');
-    const createRes = await req('POST', '/universes', { headers: a.hdrs, body: { name: 'Doomed' } });
+    const createRes = await req('POST', '/api/universes', { headers: a.hdrs, body: { name: 'Doomed' } });
     const created = await json(createRes);
-    const del = await req('DELETE', `/universes/${created.id}`, { headers: a.hdrs });
+    const del = await req('DELETE', `/api/universes/${created.id}`, { headers: a.hdrs });
     expect(del.status).toBe(204);
     const after = await handle.db.select().from(universes).where(eq(universes.id, created.id));
     expect(after).toHaveLength(0);
@@ -160,18 +160,18 @@ describe('universe routes (UNIV-01..06)', () => {
   it('cross-tenant GET /universes/:id returns 403', async () => {
     const a = await userWithToken('owner@test.com');
     const b = await userWithToken('stranger@test.com');
-    const createRes = await req('POST', '/universes', { headers: a.hdrs, body: { name: 'Private' } });
+    const createRes = await req('POST', '/api/universes', { headers: a.hdrs, body: { name: 'Private' } });
     const created = await json(createRes);
-    const peek = await req('GET', `/universes/${created.id}`, { headers: b.hdrs });
+    const peek = await req('GET', `/api/universes/${created.id}`, { headers: b.hdrs });
     expect(peek.status).toBe(403);
   });
 
   it('cross-tenant PATCH /universes/:id returns 403', async () => {
     const a = await userWithToken('owner2@test.com');
     const b = await userWithToken('stranger2@test.com');
-    const createRes = await req('POST', '/universes', { headers: a.hdrs, body: { name: 'Locked' } });
+    const createRes = await req('POST', '/api/universes', { headers: a.hdrs, body: { name: 'Locked' } });
     const created = await json(createRes);
-    const attack = await req('PATCH', `/universes/${created.id}`, { headers: b.hdrs, body: { name: 'Hijacked' } });
+    const attack = await req('PATCH', `/api/universes/${created.id}`, { headers: b.hdrs, body: { name: 'Hijacked' } });
     expect(attack.status).toBe(403);
     // And the row is unchanged
     const row = await handle.db.query.universes.findFirst({ where: eq(universes.id, created.id) });
@@ -181,11 +181,105 @@ describe('universe routes (UNIV-01..06)', () => {
   it('cross-tenant DELETE /universes/:id returns 403 and row survives', async () => {
     const a = await userWithToken('owner3@test.com');
     const b = await userWithToken('stranger3@test.com');
-    const createRes = await req('POST', '/universes', { headers: a.hdrs, body: { name: 'Safe' } });
+    const createRes = await req('POST', '/api/universes', { headers: a.hdrs, body: { name: 'Safe' } });
     const created = await json(createRes);
-    const attack = await req('DELETE', `/universes/${created.id}`, { headers: b.hdrs });
+    const attack = await req('DELETE', `/api/universes/${created.id}`, { headers: b.hdrs });
     expect(attack.status).toBe(403);
     const row = await handle.db.query.universes.findFirst({ where: eq(universes.id, created.id) });
     expect(row).toBeTruthy();
+  });
+
+  // ─── Phase 36 DATA-02 / INT-04: fieldRegistry CRUD + validation ───────────────
+  // Reconciled from 9b82f27:api/tests/universes.test.ts onto v3.2's PATCH-based
+  // CRUD (full-array replace through the existing PATCH; no sub-resource route).
+
+  // DATA-02-01: PATCH fieldRegistry with a valid entry persists; GET round-trips it.
+  it('PATCH /universes/:id with fieldRegistry persists and GET returns it', async () => {
+    const { hdrs } = await userWithToken('fr-01@test.com');
+    const created = await json(await req('POST', '/api/universes', { headers: hdrs, body: { name: 'FieldRegistryWorld' } }));
+
+    const fieldRegistry = [{ name: 'Born in year', type: 'number' }];
+    const patchRes = await req('PATCH', `/api/universes/${created.id}`, { headers: hdrs, body: { fieldRegistry } });
+    expect(patchRes.status).toBe(200);
+    const patched = await json(patchRes);
+    expect(Array.isArray(patched.fieldRegistry)).toBe(true);
+    expect(patched.fieldRegistry).toHaveLength(1);
+    expect(patched.fieldRegistry[0].name).toBe('Born in year');
+    expect(patched.fieldRegistry[0].type).toBe('number');
+
+    // GET round-trip: the registry is returned on the standalone fetch too.
+    const got = await json(await req('GET', `/api/universes/${created.id}`, { headers: hdrs }));
+    expect(got.fieldRegistry).toHaveLength(1);
+    expect(got.fieldRegistry[0].name).toBe('Born in year');
+  });
+
+  // DATA-02-02: an out-of-enum type is rejected (allowlist).
+  it('PATCH /universes/:id rejects a fieldRegistry entry with an out-of-enum type', async () => {
+    const { hdrs } = await userWithToken('fr-02@test.com');
+    const created = await json(await req('POST', '/api/universes', { headers: hdrs, body: { name: 'BadTypeWorld' } }));
+    const patchRes = await req('PATCH', `/api/universes/${created.id}`, {
+      headers: hdrs,
+      body: { fieldRegistry: [{ name: 'Weapon class', type: 'dropdown' }] },
+    });
+    expect(patchRes.status).toBe(400);
+  });
+
+  // DATA-02-03: an unknown key inside an entry is rejected (.strict()).
+  it('PATCH /universes/:id rejects a fieldRegistry entry with an unknown key (.strict)', async () => {
+    const { hdrs } = await userWithToken('fr-03@test.com');
+    const created = await json(await req('POST', '/api/universes', { headers: hdrs, body: { name: 'StrictWorld' } }));
+    const patchRes = await req('PATCH', `/api/universes/${created.id}`, {
+      headers: hdrs,
+      body: { fieldRegistry: [{ name: 'Status', type: 'text', extra: 1 }] },
+    });
+    expect(patchRes.status).toBe(400);
+  });
+
+  // DATA-02-04: two names colliding case-insensitively are rejected (D-04 refine).
+  it('PATCH /universes/:id rejects case-insensitive duplicate field names', async () => {
+    const { hdrs } = await userWithToken('fr-04@test.com');
+    const created = await json(await req('POST', '/api/universes', { headers: hdrs, body: { name: 'DupNameWorld' } }));
+    const patchRes = await req('PATCH', `/api/universes/${created.id}`, {
+      headers: hdrs,
+      body: { fieldRegistry: [{ name: 'Status', type: 'text' }, { name: 'status', type: 'text' }] },
+    });
+    expect(patchRes.status).toBe(400);
+  });
+
+  // DATA-02-05: more than 50 entries is rejected (DoS bound).
+  it('PATCH /universes/:id rejects a fieldRegistry with more than 50 entries', async () => {
+    const { hdrs } = await userWithToken('fr-05@test.com');
+    const created = await json(await req('POST', '/api/universes', { headers: hdrs, body: { name: 'TooManyFieldsWorld' } }));
+    const tooMany = Array.from({ length: 51 }, (_, i) => ({ name: `field${i}`, type: 'text' }));
+    const patchRes = await req('PATCH', `/api/universes/${created.id}`, { headers: hdrs, body: { fieldRegistry: tooMany } });
+    expect(patchRes.status).toBe(400);
+  });
+
+  // DATA-02-06 (T-36-02-02): a non-owner cannot PATCH the fieldRegistry (ownership gate).
+  it('cross-tenant PATCH /universes/:id fieldRegistry returns 403 and registry is unchanged', async () => {
+    const a = await userWithToken('fr-owner@test.com');
+    const b = await userWithToken('fr-stranger@test.com');
+    const created = await json(await req('POST', '/api/universes', { headers: a.hdrs, body: { name: 'OwnedRegistry' } }));
+    const attack = await req('PATCH', `/api/universes/${created.id}`, {
+      headers: b.hdrs,
+      body: { fieldRegistry: [{ name: 'Injected', type: 'text' }] },
+    });
+    expect(attack.status).toBe(403);
+    const row = await handle.db.query.universes.findFirst({ where: eq(universes.id, created.id) });
+    expect(row!.fieldRegistry).toEqual([]);
+  });
+
+  // DATA-02-07: omitting fieldRegistry on a partial PATCH leaves it unchanged (non-wipe).
+  it('PATCH omitting fieldRegistry leaves the existing registry unchanged', async () => {
+    const { hdrs } = await userWithToken('fr-07@test.com');
+    const created = await json(await req('POST', '/api/universes', { headers: hdrs, body: { name: 'PartialPatchFR' } }));
+    await req('PATCH', `/api/universes/${created.id}`, {
+      headers: hdrs,
+      body: { fieldRegistry: [{ name: 'Region', type: 'text', hint: 'Geographic region' }] },
+    });
+    const patched = await json(await req('PATCH', `/api/universes/${created.id}`, { headers: hdrs, body: { name: 'UpdatedName' } }));
+    expect(patched.name).toBe('UpdatedName');
+    expect(patched.fieldRegistry).toHaveLength(1);
+    expect(patched.fieldRegistry[0].name).toBe('Region');
   });
 });
