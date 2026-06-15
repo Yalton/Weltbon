@@ -27,6 +27,9 @@ const createEntrySchema = z.object({
   // Phase 29 D-10 / SHARE-04: per-entry public flag for share-link visibility.
   // `.default(false)` ensures omitting on POST yields `false` server-side (default-private).
   isPublic: z.boolean().optional().default(false),
+  // Phase 36 DATA-03: WIP/draft flag. `.default(false)` mirrors isPublic — omitting on POST
+  // yields a finished (non-WIP) entry server-side.
+  wip: z.boolean().optional().default(false),
   templateId: z.string().uuid().nullable().optional(),   // D-16 — optional best-effort stamp target
 });
 
@@ -42,6 +45,9 @@ const patchEntrySchema = z.object({
   // Phase 29 SHARE-04: optional with NO default — omitting on PATCH must NOT flip the
   // existing column value (PATCH is non-destructive for unset fields).
   isPublic: z.boolean().optional(),
+  // Phase 36 DATA-03: optional with NO default — omitting on PATCH must NOT flip the
+  // existing wip column value (PATCH non-destructive, mirrors isPublic).
+  wip: z.boolean().optional(),
 }).refine((v) => Object.values(v).some((val) => val !== undefined), {
   message: 'At least one field is required',
 });
@@ -61,6 +67,9 @@ const entrySchema = z.object({
   // Phase 29 D-10 / SHARE-04: surfaces the per-entry public flag so EntryEditor + EntryDetail
   // can render the toggle + chip (UI-SPEC §B/§C); owner sees this on every read.
   isPublic: z.boolean(),
+  // Phase 36 DATA-03: surfaces the per-entry WIP flag so EntryEditor + EntryCard can render
+  // the WipPill toggle/badge (Plan 06 wiring). Owner sees this on every read.
+  wip: z.boolean(),
   createdAt: z.string(),
   updatedAt: z.string(),
 });
@@ -109,7 +118,7 @@ const listRoute = createRoute({
   path: '/',
   tags: ['Entries'],
   summary: 'List entries in a universe',
-  description: 'Returns entries for the given universe. Supports optional filters: ?type=, ?tag=, ?category=, ?q= (FTS).',
+  description: 'Returns entries for the given universe. Supports optional filters: ?type=, ?tag=, ?category=, ?q= (FTS), ?wip=true|false (three-state), ?field.{name}={value} (AND exact-match).',
   security: [{ bearerAuth: [] }],
   request: {
     params: uidParams,
@@ -118,6 +127,9 @@ const listRoute = createRoute({
       tag: z.union([z.string(), z.array(z.string())]).optional(),
       category: z.string().optional(),
       q: z.string().optional(),
+      // Phase 36 DATA-03: three-state WIP filter (true = WIP only, false = finished only,
+      // absent = all). field.* dot-keys are read raw in the handler, not declared here.
+      wip: z.enum(['true', 'false']).optional(),
     }),
   },
   responses: {
@@ -340,6 +352,8 @@ export const entryRoutes = new OpenAPIHono<AppEnv>()
       // Phase 29 SHARE-04: projected so list responses surface isPublic for the EntryEditor
       // toggle + EntryDetail chip (Plan 07 wiring). Owner sees every entry's flag.
       isPublic: entries.isPublic,
+      // Phase 36 DATA-03: projected so list responses surface wip for the WipPill badge.
+      wip: entries.wip,
       createdAt: entries.createdAt,
       updatedAt: entries.updatedAt,
     };
@@ -397,6 +411,9 @@ export const entryRoutes = new OpenAPIHono<AppEnv>()
         // Phase 29 D-10 / SHARE-04: zod default already converts undefined → false,
         // so omitting on POST yields private (safer-default).
         isPublic: data.isPublic,
+        // Phase 36 DATA-03: persist the WIP flag. zod default converts undefined → false,
+        // and the ?? false is a belt-and-suspenders guard, so omitting on POST yields finished.
+        wip: data.wip ?? false,
       })
       .returning();
 
