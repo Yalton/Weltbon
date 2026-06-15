@@ -3,6 +3,18 @@ import { render, screen } from '@testing-library/react';
 import userEvent from '@testing-library/user-event';
 import { useState } from 'react';
 import { MetaEditor } from './MetaEditor';
+import type { FieldRegistryEntry } from '../types/fieldRegistry';
+
+// Phase 36 DATA-02: EntryRefInput consumes useEntries(universeId) as its
+// title-substring suggestion source. Mock it so the typed-row + D-02 tests run
+// without a QueryClient. The mock returns a stable universe-scoped entry list.
+const MOCK_ENTRIES = [
+  { id: 'uuid-arwen', universeId: 'u1', title: 'Arwen', entryType: 'character', meta: {} },
+  { id: 'uuid-rivendell', universeId: 'u1', title: 'Rivendell', entryType: 'place', meta: {} },
+];
+vi.mock('../hooks/useEntries', () => ({
+  useEntries: () => ({ data: MOCK_ENTRIES }),
+}));
 
 /**
  * Wrapper harness that lets MetaEditor manage rows internally and surfaces
@@ -12,10 +24,14 @@ function Harness({
   initial = {},
   onChangeSpy,
   onValiditySpy,
+  registeredFields,
+  universeId,
 }: {
   initial?: Record<string, string>;
   onChangeSpy?: (v: Record<string, string>) => void;
   onValiditySpy?: (v: boolean) => void;
+  registeredFields?: FieldRegistryEntry[];
+  universeId?: string;
 }) {
   const [meta, setMeta] = useState<Record<string, string>>(initial);
   return (
@@ -26,6 +42,8 @@ function Harness({
         onChangeSpy?.(v);
       }}
       onValidityChange={onValiditySpy}
+      registeredFields={registeredFields}
+      universeId={universeId}
     />
   );
 }
@@ -161,5 +179,91 @@ describe('MetaEditor', () => {
     expect(
       screen.queryByText(/two or more fields share a key/i),
     ).not.toBeInTheDocument();
+  });
+});
+
+describe('MetaEditor — typed registered fields (DATA-02)', () => {
+  it('renders one typed row per registered field above the freeform rows', () => {
+    const fields: FieldRegistryEntry[] = [
+      { name: 'Height', type: 'number', hint: 'in cm' },
+      { name: 'Homepage', type: 'url' },
+      { name: 'Alive', type: 'boolean' },
+      { name: 'Capital', type: 'entry-ref' },
+      { name: 'Nickname', type: 'text' },
+    ];
+    render(<Harness registeredFields={fields} universeId="u1" />);
+
+    // Section headers present
+    expect(screen.getByText(/custom fields/i)).toBeInTheDocument();
+    expect(screen.getByText(/additional fields/i)).toBeInTheDocument();
+
+    // Number row → number input
+    const height = screen.getByLabelText('Height') as HTMLInputElement;
+    expect(height.type).toBe('number');
+    // Hint rendered
+    expect(screen.getByText('in cm')).toBeInTheDocument();
+    // URL row → url input
+    expect((screen.getByLabelText('Homepage') as HTMLInputElement).type).toBe('url');
+    // Boolean row → Yes/No/— tri-toggle group
+    expect(screen.getByRole('group', { name: 'Alive' })).toBeInTheDocument();
+    // entry-ref row → combobox
+    expect(screen.getByRole('combobox', { name: 'Capital' })).toBeInTheDocument();
+    // text row
+    expect((screen.getByLabelText('Nickname') as HTMLInputElement).type).toBe('text');
+  });
+
+  it('D-02: an entry-ref with a UUID that matches no entry shows a deleted/missing placeholder and preserves the UUID', () => {
+    const fields: FieldRegistryEntry[] = [{ name: 'Capital', type: 'entry-ref' }];
+    render(
+      <Harness
+        initial={{ Capital: 'uuid-does-not-exist' }}
+        registeredFields={fields}
+        universeId="u1"
+      />,
+    );
+
+    // Explicit "deleted/missing entry" placeholder, not a silent blank.
+    expect(
+      screen.getByText(/deleted or missing entry/i),
+    ).toBeInTheDocument();
+
+    // A MATCHING UUID by contrast resolves to the target title.
+    render(
+      <Harness
+        initial={{ Capital: 'uuid-rivendell' }}
+        registeredFields={fields}
+        universeId="u1"
+      />,
+    );
+    const matched = screen
+      .getAllByRole('combobox', { name: 'Capital' })
+      .find((el) => (el as HTMLInputElement).value === 'Rivendell');
+    expect(matched).toBeDefined();
+  });
+
+  it('D-04: a registry field merges an entry pre-existing free-form value of the same case-folded name', async () => {
+    const onChangeSpy = vi.fn();
+    const fields: FieldRegistryEntry[] = [{ name: 'Status', type: 'text' }];
+    render(
+      <Harness
+        initial={{ status: 'alive' }}
+        registeredFields={fields}
+        universeId="u1"
+        onChangeSpy={onChangeSpy}
+      />,
+    );
+
+    // The free-form 'status' value is adopted by the typed 'Status' row...
+    const statusInput = screen.getByLabelText('Status') as HTMLInputElement;
+    expect(statusInput.value).toBe('alive');
+
+    // ...and is NOT also rendered as a freeform row.
+    expect(screen.queryByPlaceholderText('Key')).not.toBeInTheDocument();
+
+    // Editing the typed row writes back under the original case-folded meta key.
+    await userEvent.clear(statusInput);
+    await userEvent.type(statusInput, 'dead');
+    const lastCall = onChangeSpy.mock.calls.at(-1);
+    expect(lastCall?.[0]).toEqual({ status: 'dead' });
   });
 });
