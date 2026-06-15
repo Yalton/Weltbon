@@ -29,6 +29,36 @@ export const timelineWindowSchema = z
   })
   .nullable();
 
+// Phase 36 DATA-02 / T-36-02-01: per-universe typed custom-field registry entry.
+// Ported verbatim from 9b82f27:api/src/routes/universes.ts (lines 36–59).
+// .strict() rejects unknown keys; the type enum allowlist prevents free-form
+// injection; name max 50 + hint max 200 + array .max(50) bound jsonb growth (DoS).
+// The case-insensitive duplicate-name refine (D-04) prevents confusingly similar
+// fields so the MetaEditor collision-merge has exactly one row per case-folded name.
+const fieldRegistryEntrySchema = z
+  .object({
+    name: z.string().min(1).max(50),
+    type: z.enum(['text', 'number', 'boolean', 'url', 'entry-ref']),
+    hint: z.string().max(200).optional(),
+  })
+  .strict();
+
+const fieldRegistrySchema = z
+  .array(fieldRegistryEntrySchema)
+  .max(50, { message: 'too many field registry entries (max 50)' })
+  .refine(
+    (arr) => {
+      const seen = new Set<string>();
+      for (const entry of arr) {
+        const key = entry.name.toLowerCase();
+        if (seen.has(key)) return false;
+        seen.add(key);
+      }
+      return true;
+    },
+    { message: 'field registry names must be unique (case-insensitive)' },
+  );
+
 // Phase 30 CALENDAR-01: strict Zod schema for the per-universe fictional calendar.
 // Uses `.strict()` on every nested object to reject undeclared keys (T-30-01).
 // `.max()` bounds on all arrays block pathological payloads (T-30-01).
@@ -104,6 +134,8 @@ export const patchSchema = z
     auditModel: z.string().nullable().optional(),
     // Phase 30 CALENDAR-01: per-universe fictional calendar (nullable = clear).
     calendar: calendarSchema.optional(),
+    // Phase 36 DATA-02: per-universe typed custom-field registry (full-array replace).
+    fieldRegistry: fieldRegistrySchema.optional(),
   })
   .refine(
     (v) =>
@@ -113,7 +145,8 @@ export const patchSchema = z
       v.auditEnabled !== undefined ||
       v.auditProvider !== undefined ||
       v.auditModel !== undefined ||
-      v.calendar !== undefined,
+      v.calendar !== undefined ||
+      v.fieldRegistry !== undefined,
     { message: 'At least one of name, description, or timelineWindow is required' },
   )
   .refine(
@@ -148,6 +181,8 @@ const universeSchema = z.object({
     .nullable(),
   // Phase 30 CALENDAR-01: nullable per-universe fictional calendar.
   calendar: calendarSchema,
+  // Phase 36 DATA-02: per-universe typed custom-field registry (returned on GET).
+  fieldRegistry: z.array(fieldRegistryEntrySchema),
   createdAt: z.string(),
   updatedAt: z.string(),
 });
