@@ -64,7 +64,7 @@ describe('diagram routes (DIAGRAM-01 + DIAGRAM-02)', () => {
   }
 
   async function createUniverse(hdrs: Record<string, string>, name = 'TestWorld') {
-    const res = await req('POST', '/universes', { headers: hdrs, body: { name } });
+    const res = await req('POST', '/api/universes', { headers: hdrs, body: { name } });
     return json(res);
   }
 
@@ -74,7 +74,7 @@ describe('diagram routes (DIAGRAM-01 + DIAGRAM-02)', () => {
     overrides: Record<string, unknown> = {}
   ) {
     const defaults = { title: 'Test Entry', entryType: 'concept' };
-    const res = await req('POST', `/universes/${uid}/entries`, {
+    const res = await req('POST', `/api/universes/${uid}/entries`, {
       headers: hdrs,
       body: { ...defaults, ...overrides },
     });
@@ -86,17 +86,17 @@ describe('diagram routes (DIAGRAM-01 + DIAGRAM-02)', () => {
     hdrs: Record<string, string>,
     body: { name: string; description?: string } = { name: 'My Diagram' }
   ) {
-    const res = await req('POST', `/universes/${uid}/diagrams`, { headers: hdrs, body });
+    const res = await req('POST', `/api/universes/${uid}/diagrams`, { headers: hdrs, body });
     return json(res);
   }
 
   // ─── DIAGRAM-01: diagram CRUD ──────────────────────────────────────────────
 
-  it('POST /universes/:uid/diagrams creates a diagram', async () => {
+  it('POST /api/universes/:uid/diagrams creates a diagram', async () => {
     const { hdrs } = await userWithToken('a@test.com');
     const universe = await createUniverse(hdrs);
 
-    const res = await req('POST', `/universes/${universe.id}/diagrams`, {
+    const res = await req('POST', `/api/universes/${universe.id}/diagrams`, {
       headers: hdrs,
       body: { name: 'Family Tree', description: 'The royal bloodline' },
     });
@@ -110,13 +110,13 @@ describe('diagram routes (DIAGRAM-01 + DIAGRAM-02)', () => {
     expect(diagram.createdAt).toBeTruthy();
   });
 
-  it('GET /universes/:uid/diagrams lists diagrams for the universe', async () => {
+  it('GET /api/universes/:uid/diagrams lists diagrams for the universe', async () => {
     const { hdrs } = await userWithToken('b@test.com');
     const universe = await createUniverse(hdrs);
     await createDiagram(universe.id, hdrs, { name: 'Diagram A' });
     await createDiagram(universe.id, hdrs, { name: 'Diagram B' });
 
-    const res = await req('GET', `/universes/${universe.id}/diagrams`, { headers: hdrs });
+    const res = await req('GET', `/api/universes/${universe.id}/diagrams`, { headers: hdrs });
     expect(res.status).toBe(200);
     const list = await json(res);
     expect(Array.isArray(list)).toBe(true);
@@ -126,48 +126,48 @@ describe('diagram routes (DIAGRAM-01 + DIAGRAM-02)', () => {
     expect(names).toContain('Diagram B');
   });
 
-  it('DELETE /universes/:uid/diagrams/:did deletes the diagram', async () => {
+  it('DELETE /api/universes/:uid/diagrams/:did deletes the diagram', async () => {
     const { hdrs } = await userWithToken('c@test.com');
     const universe = await createUniverse(hdrs);
     const diagram = await createDiagram(universe.id, hdrs, { name: 'To Delete' });
 
-    const delRes = await req('DELETE', `/universes/${universe.id}/diagrams/${diagram.id}`, {
+    const delRes = await req('DELETE', `/api/universes/${universe.id}/diagrams/${diagram.id}`, {
       headers: hdrs,
     });
     expect(delRes.status).toBe(204);
 
     // Verify it's gone
-    const listRes = await req('GET', `/universes/${universe.id}/diagrams`, { headers: hdrs });
+    const listRes = await req('GET', `/api/universes/${universe.id}/diagrams`, { headers: hdrs });
     const list = await json(listRes);
     expect(list.length).toBe(0);
   });
 
-  it('GET /universes/:uid/diagrams returns 401 without token', async () => {
+  it('GET /api/universes/:uid/diagrams returns 401 without token', async () => {
     const { hdrs } = await userWithToken('d@test.com');
     const universe = await createUniverse(hdrs);
 
-    const res = await req('GET', `/universes/${universe.id}/diagrams`);
+    const res = await req('GET', `/api/universes/${universe.id}/diagrams`);
     expect(res.status).toBe(401);
   });
 
-  it('GET /universes/:uid/diagrams returns 403 for cross-tenant access', async () => {
+  it('GET /api/universes/:uid/diagrams returns 403 for cross-tenant access', async () => {
     const { hdrs: hdrs1 } = await userWithToken('owner@test.com');
     const { hdrs: hdrs2 } = await userWithToken('attacker@test.com');
     const universe = await createUniverse(hdrs1);
 
-    const res = await req('GET', `/universes/${universe.id}/diagrams`, { headers: hdrs2 });
+    const res = await req('GET', `/api/universes/${universe.id}/diagrams`, { headers: hdrs2 });
     expect(res.status).toBe(403);
   });
 
   // ─── DIAGRAM-01: node CRUD ─────────────────────────────────────────────────
 
-  it('POST /universes/:uid/diagrams/:did/nodes adds a node to the diagram', async () => {
+  it('POST /api/universes/:uid/diagrams/:did/nodes adds a node to the diagram', async () => {
     const { hdrs } = await userWithToken('e@test.com');
     const universe = await createUniverse(hdrs);
     const entry = await createEntry(universe.id, hdrs, { title: 'King Aldric' });
     const diagram = await createDiagram(universe.id, hdrs);
 
-    const res = await req('POST', `/universes/${universe.id}/diagrams/${diagram.id}/nodes`, {
+    const res = await req('POST', `/api/universes/${universe.id}/diagrams/${diagram.id}/nodes`, {
       headers: hdrs,
       body: { entryId: entry.id, x: 100, y: 200 },
     });
@@ -181,20 +181,20 @@ describe('diagram routes (DIAGRAM-01 + DIAGRAM-02)', () => {
     expect(node.y).toBe(200);
   });
 
-  it('POST /universes/:uid/diagrams/:did/nodes enforces (diagramId, entryId) uniqueness', async () => {
+  it('POST /api/universes/:uid/diagrams/:did/nodes enforces (diagramId, entryId) uniqueness', async () => {
     const { hdrs } = await userWithToken('f@test.com');
     const universe = await createUniverse(hdrs);
     const entry = await createEntry(universe.id, hdrs, { title: 'Queen Elena' });
     const diagram = await createDiagram(universe.id, hdrs);
 
     // First add succeeds
-    await req('POST', `/universes/${universe.id}/diagrams/${diagram.id}/nodes`, {
+    await req('POST', `/api/universes/${universe.id}/diagrams/${diagram.id}/nodes`, {
       headers: hdrs,
       body: { entryId: entry.id, x: 0, y: 0 },
     });
 
     // Second add of the same entry → conflict
-    const res = await req('POST', `/universes/${universe.id}/diagrams/${diagram.id}/nodes`, {
+    const res = await req('POST', `/api/universes/${universe.id}/diagrams/${diagram.id}/nodes`, {
       headers: hdrs,
       body: { entryId: entry.id, x: 50, y: 50 },
     });
@@ -209,7 +209,7 @@ describe('diagram routes (DIAGRAM-01 + DIAGRAM-02)', () => {
     const diagram = await createDiagram(universe.id, hdrs);
 
     // Add node
-    const addRes = await req('POST', `/universes/${universe.id}/diagrams/${diagram.id}/nodes`, {
+    const addRes = await req('POST', `/api/universes/${universe.id}/diagrams/${diagram.id}/nodes`, {
       headers: hdrs,
       body: { entryId: entry.id, x: 10, y: 20 },
     });
@@ -218,13 +218,13 @@ describe('diagram routes (DIAGRAM-01 + DIAGRAM-02)', () => {
     // Delete node
     const delRes = await req(
       'DELETE',
-      `/universes/${universe.id}/diagrams/${diagram.id}/nodes/${node.id}`,
+      `/api/universes/${universe.id}/diagrams/${diagram.id}/nodes/${node.id}`,
       { headers: hdrs }
     );
     expect(delRes.status).toBe(204);
 
     // Entry must still exist
-    const entryRes = await req('GET', `/universes/${universe.id}/entries/${entry.id}`, {
+    const entryRes = await req('GET', `/api/universes/${universe.id}/entries/${entry.id}`, {
       headers: hdrs,
     });
     expect(entryRes.status).toBe(200);
@@ -240,7 +240,7 @@ describe('diagram routes (DIAGRAM-01 + DIAGRAM-02)', () => {
     const diagram = await createDiagram(universe.id, hdrs);
 
     // Add node
-    await req('POST', `/universes/${universe.id}/diagrams/${diagram.id}/nodes`, {
+    await req('POST', `/api/universes/${universe.id}/diagrams/${diagram.id}/nodes`, {
       headers: hdrs,
       body: { entryId: entry.id, x: 0, y: 0 },
     });
@@ -248,7 +248,7 @@ describe('diagram routes (DIAGRAM-01 + DIAGRAM-02)', () => {
     // Update position via PATCH
     const patchRes = await req(
       'PATCH',
-      `/universes/${universe.id}/diagrams/${diagram.id}/nodes`,
+      `/api/universes/${universe.id}/diagrams/${diagram.id}/nodes`,
       {
         headers: hdrs,
         body: { entryId: entry.id, x: 300, y: 400 },
@@ -271,7 +271,7 @@ describe('diagram routes (DIAGRAM-01 + DIAGRAM-02)', () => {
     const entryB = await createEntry(universe.id, hdrs, { title: 'Son' });
     const diagram = await createDiagram(universe.id, hdrs);
 
-    const res = await req('POST', `/universes/${universe.id}/diagrams/${diagram.id}/edges`, {
+    const res = await req('POST', `/api/universes/${universe.id}/diagrams/${diagram.id}/edges`, {
       headers: hdrs,
       body: {
         sourceEntryId: entryA.id,
@@ -309,14 +309,14 @@ describe('diagram routes (DIAGRAM-01 + DIAGRAM-02)', () => {
     };
 
     // First create
-    const first = await req('POST', `/universes/${universe.id}/diagrams/${diagram.id}/edges`, {
+    const first = await req('POST', `/api/universes/${universe.id}/diagrams/${diagram.id}/edges`, {
       headers: hdrs,
       body,
     });
     expect(first.status).toBe(201);
 
     // Duplicate — must not 500
-    const second = await req('POST', `/universes/${universe.id}/diagrams/${diagram.id}/edges`, {
+    const second = await req('POST', `/api/universes/${universe.id}/diagrams/${diagram.id}/edges`, {
       headers: hdrs,
       body,
     });
@@ -332,7 +332,7 @@ describe('diagram routes (DIAGRAM-01 + DIAGRAM-02)', () => {
 
     const edgeRes = await req(
       'POST',
-      `/universes/${universe.id}/diagrams/${diagram.id}/edges`,
+      `/api/universes/${universe.id}/diagrams/${diagram.id}/edges`,
       {
         headers: hdrs,
         body: {
@@ -348,7 +348,7 @@ describe('diagram routes (DIAGRAM-01 + DIAGRAM-02)', () => {
 
     const delRes = await req(
       'DELETE',
-      `/universes/${universe.id}/diagrams/${diagram.id}/edges/${edge.id}`,
+      `/api/universes/${universe.id}/diagrams/${diagram.id}/edges/${edge.id}`,
       { headers: hdrs }
     );
     expect(delRes.status).toBe(204);
@@ -356,7 +356,7 @@ describe('diagram routes (DIAGRAM-01 + DIAGRAM-02)', () => {
 
   // ─── GET diagram detail ────────────────────────────────────────────────────
 
-  it('GET /universes/:uid/diagrams/:did returns nodes + edges for this diagram', async () => {
+  it('GET /api/universes/:uid/diagrams/:did returns nodes + edges for this diagram', async () => {
     const { hdrs } = await userWithToken('l@test.com');
     const universe = await createUniverse(hdrs);
     const entryA = await createEntry(universe.id, hdrs, { title: 'Empress' });
@@ -364,17 +364,17 @@ describe('diagram routes (DIAGRAM-01 + DIAGRAM-02)', () => {
     const diagram = await createDiagram(universe.id, hdrs, { name: 'Org Chart' });
 
     // Add nodes
-    await req('POST', `/universes/${universe.id}/diagrams/${diagram.id}/nodes`, {
+    await req('POST', `/api/universes/${universe.id}/diagrams/${diagram.id}/nodes`, {
       headers: hdrs,
       body: { entryId: entryA.id, x: 0, y: 0 },
     });
-    await req('POST', `/universes/${universe.id}/diagrams/${diagram.id}/nodes`, {
+    await req('POST', `/api/universes/${universe.id}/diagrams/${diagram.id}/nodes`, {
       headers: hdrs,
       body: { entryId: entryB.id, x: 100, y: 100 },
     });
 
     // Add edge
-    await req('POST', `/universes/${universe.id}/diagrams/${diagram.id}/edges`, {
+    await req('POST', `/api/universes/${universe.id}/diagrams/${diagram.id}/edges`, {
       headers: hdrs,
       body: {
         sourceEntryId: entryA.id,
@@ -385,7 +385,7 @@ describe('diagram routes (DIAGRAM-01 + DIAGRAM-02)', () => {
       },
     });
 
-    const res = await req('GET', `/universes/${universe.id}/diagrams/${diagram.id}`, {
+    const res = await req('GET', `/api/universes/${universe.id}/diagrams/${diagram.id}`, {
       headers: hdrs,
     });
 
@@ -412,7 +412,7 @@ describe('diagram routes (DIAGRAM-01 + DIAGRAM-02)', () => {
     const entry = await createEntry(universe.id, hdrs, { title: 'Infinite One' });
     const diagram = await createDiagram(universe.id, hdrs);
 
-    const res = await req('POST', `/universes/${universe.id}/diagrams/${diagram.id}/nodes`, {
+    const res = await req('POST', `/api/universes/${universe.id}/diagrams/${diagram.id}/nodes`, {
       headers: hdrs,
       body: { entryId: entry.id, x: Infinity, y: 0 },
     });
@@ -424,7 +424,7 @@ describe('diagram routes (DIAGRAM-01 + DIAGRAM-02)', () => {
     const { hdrs } = await userWithToken('n@test.com');
     const universe = await createUniverse(hdrs);
 
-    const res = await req('POST', `/universes/${universe.id}/diagrams`, {
+    const res = await req('POST', `/api/universes/${universe.id}/diagrams`, {
       headers: hdrs,
       body: { name: '' },
     });
@@ -441,7 +441,7 @@ describe('diagram routes (DIAGRAM-01 + DIAGRAM-02)', () => {
     const entryB = await createEntry(universe.id, hdrs, { title: 'Y' });
     const diagram = await createDiagram(universe.id, hdrs);
 
-    const res = await req('POST', `/universes/${universe.id}/diagrams/${diagram.id}/edges`, {
+    const res = await req('POST', `/api/universes/${universe.id}/diagrams/${diagram.id}/edges`, {
       headers: hdrs,
       body: {
         sourceEntryId: entryA.id,
@@ -465,7 +465,7 @@ describe('diagram routes (DIAGRAM-01 + DIAGRAM-02)', () => {
     const diagram = await createDiagram(universe.id, hdrs);
 
     // Create edge
-    const edgeRes = await req('POST', `/universes/${universe.id}/diagrams/${diagram.id}/edges`, {
+    const edgeRes = await req('POST', `/api/universes/${universe.id}/diagrams/${diagram.id}/edges`, {
       headers: hdrs,
       body: {
         sourceEntryId: entryA.id,
@@ -481,7 +481,7 @@ describe('diagram routes (DIAGRAM-01 + DIAGRAM-02)', () => {
     // PATCH edge
     const patchRes = await req(
       'PATCH',
-      `/universes/${universe.id}/diagrams/${diagram.id}/edges/${edge.id}`,
+      `/api/universes/${universe.id}/diagrams/${diagram.id}/edges/${edge.id}`,
       {
         headers: hdrs,
         body: { label: 'enemies', lineStyle: 'dotted', color: '#f43f5e' },
@@ -494,7 +494,7 @@ describe('diagram routes (DIAGRAM-01 + DIAGRAM-02)', () => {
     expect(updated.color).toBe('#f43f5e');
 
     // GET detail reflects the new values
-    const detailRes = await req('GET', `/universes/${universe.id}/diagrams/${diagram.id}`, {
+    const detailRes = await req('GET', `/api/universes/${universe.id}/diagrams/${diagram.id}`, {
       headers: hdrs,
     });
     const detail = await json(detailRes);
@@ -512,7 +512,7 @@ describe('diagram routes (DIAGRAM-01 + DIAGRAM-02)', () => {
     const entryB = await createEntry(universe.id, hdrs, { title: 'B' });
     const diagram = await createDiagram(universe.id, hdrs);
 
-    const edgeRes = await req('POST', `/universes/${universe.id}/diagrams/${diagram.id}/edges`, {
+    const edgeRes = await req('POST', `/api/universes/${universe.id}/diagrams/${diagram.id}/edges`, {
       headers: hdrs,
       body: {
         sourceEntryId: entryA.id,
@@ -526,7 +526,7 @@ describe('diagram routes (DIAGRAM-01 + DIAGRAM-02)', () => {
 
     const patchRes = await req(
       'PATCH',
-      `/universes/${universe.id}/diagrams/${diagram.id}/edges/${edge.id}`,
+      `/api/universes/${universe.id}/diagrams/${diagram.id}/edges/${edge.id}`,
       {
         headers: hdrs,
         body: { lineStyle: 'invalid_style' },
@@ -536,7 +536,7 @@ describe('diagram routes (DIAGRAM-01 + DIAGRAM-02)', () => {
     expect(patchRes.status).toBeLessThan(500);
 
     // Row must be unchanged
-    const detailRes = await req('GET', `/universes/${universe.id}/diagrams/${diagram.id}`, {
+    const detailRes = await req('GET', `/api/universes/${universe.id}/diagrams/${diagram.id}`, {
       headers: hdrs,
     });
     const detail = await json(detailRes);
@@ -554,7 +554,7 @@ describe('diagram routes (DIAGRAM-01 + DIAGRAM-02)', () => {
     const diagram = await createDiagram(ownerUniverse.id, ownerHdrs);
     const edgeRes = await req(
       'POST',
-      `/universes/${ownerUniverse.id}/diagrams/${diagram.id}/edges`,
+      `/api/universes/${ownerUniverse.id}/diagrams/${diagram.id}/edges`,
       {
         headers: ownerHdrs,
         body: {
@@ -571,7 +571,7 @@ describe('diagram routes (DIAGRAM-01 + DIAGRAM-02)', () => {
     // Attacker has their own universe — attacker targets owner's edge via owner's UID/DID
     const attackRes = await req(
       'PATCH',
-      `/universes/${ownerUniverse.id}/diagrams/${diagram.id}/edges/${edge.id}`,
+      `/api/universes/${ownerUniverse.id}/diagrams/${diagram.id}/edges/${edge.id}`,
       {
         headers: attackerHdrs,
         body: { label: 'hacked' },
@@ -581,7 +581,7 @@ describe('diagram routes (DIAGRAM-01 + DIAGRAM-02)', () => {
     expect(attackRes.status === 403 || attackRes.status === 404).toBe(true);
 
     // Edge label must be unchanged
-    const detailRes = await req('GET', `/universes/${ownerUniverse.id}/diagrams/${diagram.id}`, {
+    const detailRes = await req('GET', `/api/universes/${ownerUniverse.id}/diagrams/${diagram.id}`, {
       headers: ownerHdrs,
     });
     const detail = await json(detailRes);
@@ -595,7 +595,7 @@ describe('diagram routes (DIAGRAM-01 + DIAGRAM-02)', () => {
     const entryA = await createEntry(universe.id, hdrs, { title: 'A' });
     const entryB = await createEntry(universe.id, hdrs, { title: 'B' });
     const diagram = await createDiagram(universe.id, hdrs);
-    const edgeRes = await req('POST', `/universes/${universe.id}/diagrams/${diagram.id}/edges`, {
+    const edgeRes = await req('POST', `/api/universes/${universe.id}/diagrams/${diagram.id}/edges`, {
       headers: hdrs,
       body: {
         sourceEntryId: entryA.id,
@@ -609,7 +609,7 @@ describe('diagram routes (DIAGRAM-01 + DIAGRAM-02)', () => {
 
     const patchRes = await req(
       'PATCH',
-      `/universes/${universe.id}/diagrams/${diagram.id}/edges/${edge.id}`,
+      `/api/universes/${universe.id}/diagrams/${diagram.id}/edges/${edge.id}`,
       { body: { label: 'no-auth' } }
     );
     expect(patchRes.status).toBe(401);
