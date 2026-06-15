@@ -131,14 +131,14 @@ d('EXP-03: PDF exporter — full integration', () => {
       sourceEntryId: entryA.id,
       targetEntryId: entryB.id,
       label: 'knows',
-      bidirectional: false,
+      direction: 'directed',
     });
     await db().insert(linksTable).values({
       universeId: universe.id,
       sourceEntryId: entryA.id,
       targetEntryId: entryC.id,
       label: 'lives in',
-      bidirectional: true,
+      direction: 'undirected',
     });
 
     const [openIssue] = await db()

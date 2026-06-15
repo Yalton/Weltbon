@@ -130,6 +130,7 @@ async function seedLink(opts: { sourceEntryId: string; targetEntryId: string; la
       sourceEntryId: opts.sourceEntryId,
       targetEntryId: opts.targetEntryId,
       label: opts.label ?? 'links-to',
+      direction: 'directed',
     })
     .returning();
   return row!;
