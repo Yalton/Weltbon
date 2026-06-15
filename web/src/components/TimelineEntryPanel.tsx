@@ -36,6 +36,13 @@ interface PanelFilters {
   type: string | null;
   tags: string[];
   category: string | null;
+  // Phase 36 DATA-04 — useFilteredEntries' EntryFilters now requires the
+  // three-state wip + fieldFilters keys. The timeline panel does not surface
+  // those controls, so they stay inert (null / {}) here; we keep the local
+  // PanelFilters shape (zero coupling to the URL-bound EntryFilters module per
+  // §Pitfall 3) but mirror its structural contract so the call typechecks.
+  wip: boolean | null;
+  fieldFilters: Record<string, string>;
 }
 
 export interface TimelineEntryPanelProps {
@@ -50,6 +57,8 @@ const EMPTY_FILTERS: PanelFilters = {
   type: null,
   tags: [],
   category: null,
+  wip: null,
+  fieldFilters: {},
 };
 
 function hasActiveFilter(f: PanelFilters): boolean {

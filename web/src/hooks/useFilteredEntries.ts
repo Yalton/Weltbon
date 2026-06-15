@@ -15,6 +15,10 @@ export function buildEntriesQueryString(f: EntryFilters): string {
   if (f.type) p.set('type', f.type);
   f.tags.forEach((t) => p.append('tag', t));
   if (f.category) p.set('category', f.category);
+  // Three-state wip: only add param when non-null
+  if (f.wip !== null && f.wip !== undefined) p.set('wip', String(f.wip));
+  // Field filters: ?field.{name}={value} for each entry (AND semantics)
+  Object.entries(f.fieldFilters ?? {}).forEach(([k, v]) => p.set(`field.${k}`, v));
   const s = p.toString();
   return s ? `?${s}` : '';
 }
