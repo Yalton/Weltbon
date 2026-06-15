@@ -61,7 +61,7 @@ d('EXP-03: PDF exporter — full integration', () => {
     const token = await issueAccessToken(user.id);
     const hdrs = authHeader(token);
 
-    const createUniverseRes = await app.request('http://localhost/universes', {
+    const createUniverseRes = await app.request('http://localhost/api/universes', {
       method: 'POST',
       headers: { ...hdrs, 'Content-Type': 'application/json' },
       body: JSON.stringify({ name: 'Pdf Test World' }),
@@ -163,7 +163,7 @@ d('EXP-03: PDF exporter — full integration', () => {
     const { hdrs, universe } = await seedFixture();
 
     const res = await app.request(
-      `http://localhost/universes/${universe.id}/export?format=pdf`,
+      `http://localhost/api/universes/${universe.id}/export?format=pdf`,
       { headers: hdrs },
     );
 
@@ -199,7 +199,7 @@ d('EXP-03: PDF exporter — full integration', () => {
   it('footer universe-name appears (page-2-onward) — heuristic: pdf-parse text contains the name MORE than once (title page + at least one footer instance)', async () => {
     const { hdrs, universe } = await seedFixture();
     const res = await app.request(
-      `http://localhost/universes/${universe.id}/export?format=pdf`,
+      `http://localhost/api/universes/${universe.id}/export?format=pdf`,
       { headers: hdrs },
     );
     const buf = Buffer.from(await res.arrayBuffer());
@@ -279,7 +279,7 @@ describe('EXP-05: PDF browser-leak (mock-based; no Chromium required)', () => {
       });
       const token = await issueAccessToken(user.id);
       const hdrs = authHeader(token);
-      const ures = await app.request('http://localhost/universes', {
+      const ures = await app.request('http://localhost/api/universes', {
         method: 'POST',
         headers: { ...hdrs, 'Content-Type': 'application/json' },
         body: JSON.stringify({ name: 'Leak Test' }),
@@ -287,7 +287,7 @@ describe('EXP-05: PDF browser-leak (mock-based; no Chromium required)', () => {
       const u = (await ures.json()) as { id: string };
 
       const res = await app.request(
-        `http://localhost/universes/${u.id}/export?format=pdf`,
+        `http://localhost/api/universes/${u.id}/export?format=pdf`,
         { headers: hdrs },
       );
       expect(res.status).toBe(200);
