@@ -74,6 +74,8 @@ const DB_GATED_TESTS = [
   'tests/dictionary-routes.test.ts',
   'tests/dictionary-fts.test.ts',
   'tests/dictionary-import.test.ts',
+  // Phase 36 Plan 04 — DATA-05 universe statistics aggregate (DB-gated).
+  'tests/stats.test.ts',
 ];
 
 export default defineConfig({
