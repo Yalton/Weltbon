@@ -146,7 +146,7 @@ export function EntryRefInput({
   onChange: (v: string) => void;
   universeId?: string;
 }) {
-  const { data: entries = [] } = useEntries(universeId ?? '');
+  const { data: entries = [], isFetched } = useEntries(universeId ?? '');
   const [open, setOpen] = useState(false);
   const [query, setQuery] = useState('');
   const inputRef = useRef<HTMLInputElement>(null);
@@ -158,9 +158,10 @@ export function EntryRefInput({
   );
 
   // D-02: a stored UUID with no matching entry is a dangling reference (target
-  // deleted, or not yet loaded). Distinguish "nothing stored" from "stored but
-  // unresolved" so we can render an explicit placeholder while preserving the UUID.
-  const isDangling = !!value && !storedEntry;
+  // deleted). Gate on `isFetched` so a valid ref does NOT flash the placeholder
+  // while useEntries is still loading (entries defaults to [] mid-fetch); only
+  // treat it as dangling once the entry list has actually resolved.
+  const isDangling = !!value && !storedEntry && isFetched;
 
   // Sync query when value is cleared externally (e.g. from form reset).
   useEffect(() => {

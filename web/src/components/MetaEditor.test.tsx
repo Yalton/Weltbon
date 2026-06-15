@@ -12,8 +12,11 @@ const MOCK_ENTRIES = [
   { id: 'uuid-arwen', universeId: 'u1', title: 'Arwen', entryType: 'character', meta: {} },
   { id: 'uuid-rivendell', universeId: 'u1', title: 'Rivendell', entryType: 'place', meta: {} },
 ];
+// isFetched: true models a resolved query — EntryRefInput only treats an
+// unresolved UUID as dangling (D-02) once the entry list has actually fetched,
+// so a valid ref does not flash the placeholder mid-load.
 vi.mock('../hooks/useEntries', () => ({
-  useEntries: () => ({ data: MOCK_ENTRIES }),
+  useEntries: () => ({ data: MOCK_ENTRIES, isFetched: true }),
 }));
 
 /**

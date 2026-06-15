@@ -1,6 +1,7 @@
 import { useFilterParams } from '../hooks/useFilterParams';
 import { useUniverse } from '../hooks/useUniverse';
 import { useCategories } from '../hooks/useCategories';
+import { useEntries } from '../hooks/useEntries';
 import { FilterChip } from './FilterChip';
 import { AddFilterChip } from './AddFilterChip';
 
@@ -20,6 +21,7 @@ export function FilterChipRow({ universeId }: { universeId: string }) {
   const [filters, updateFilters] = useFilterParams();
   const { data: universe } = useUniverse(universeId);
   const { data: cats } = useCategories(universeId);
+  const { data: entries = [], isFetched: entriesFetched } = useEntries(universeId);
 
   // Universe.fieldRegistry is typed from Plan 36-05; absent on pre-migration
   // rows → treat as [].
@@ -62,11 +64,23 @@ export function FilterChipRow({ universeId }: { universeId: string }) {
     });
   }
 
-  // Field-filter chips — one per active fieldFilters entry.
+  // Field-filter chips — one per active fieldFilters entry. For entry-ref fields
+  // the stored value is the target entry's UUID (D-01); resolve it back to the
+  // title so the chip never leaks a raw UUID into the UI (D-07). Fall back to a
+  // neutral placeholder when the target is gone, and to '…' while entries load
+  // (never the UUID).
   Object.entries(filters.fieldFilters ?? {}).forEach(([name, value]) => {
+    const field = registeredFields.find(
+      (f) => f.name.toLowerCase() === name.toLowerCase(),
+    );
+    let display = value;
+    if (field?.type === 'entry-ref') {
+      const target = entries.find((e) => e.id === value);
+      display = target ? target.title : entriesFetched ? 'Deleted entry' : '…';
+    }
     chips.push({
       key: `field:${name}`,
-      label: `${name}: ${value}`,
+      label: `${name}: ${display}`,
       onRemove: () => {
         const rest = { ...filters.fieldFilters };
         delete rest[name];
