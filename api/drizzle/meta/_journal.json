@@ -162,6 +162,13 @@
       "when": 1780900000000,
       "tag": "0022_phase36_entries_wip",
       "breakpoints": true
+    },
+    {
+      "idx": 23,
+      "version": "7",
+      "when": 1781000000000,
+      "tag": "0023_share_public_by_default",
+      "breakpoints": true
     }
   ]
 }

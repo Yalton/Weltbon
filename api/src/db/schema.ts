@@ -280,10 +280,12 @@ export const entries = pgTable('entries', {
   categoryId:   uuid('category_id').references(() => categories.id, { onDelete: 'set null' }),
   createdAt:    timestamp('created_at').defaultNow().notNull(),
   updatedAt:    timestamp('updated_at').defaultNow().notNull(),
-  // Phase 29 D-10: per-entry public flag for share-link visibility (default OFF).
-  // Backfilled to false for every existing row by 0014_phase29_entries_is_public.sql.
-  // Mirrors universes.auditEnabled (line ~40) pattern: boolean opt-in with safer-by-default.
-  isPublic: boolean('is_public').default(false).notNull(),
+  // Phase 29 D-10: per-entry public flag for share-link visibility.
+  // Default flipped to TRUE by 0023_share_public_by_default.sql — sharing a universe
+  // shows every entry without manual per-entry toggling. The flag is now an opt-OUT:
+  // set false to hide a specific entry from share links. The server-side share filter
+  // (entries.isPublic = true in share-views.ts) is unchanged — only the default flips.
+  isPublic: boolean('is_public').default(true).notNull(),
   // Phase 36 DATA-03: per-entry WIP/draft flag (default OFF). Backfilled to false for every
   // existing row by 0022_phase36_entries_wip.sql. Mirrors the is_public boolean idiom.
   wip: boolean('wip').default(false).notNull(),

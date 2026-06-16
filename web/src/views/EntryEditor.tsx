@@ -44,9 +44,9 @@ export function EntryEditor() {
   const [metaValid, setMetaValid] = useState(true);
   const [saveAsOpen, setSaveAsOpen] = useState(false);
   const [toast, setToast] = useState<{ message: string; variant: 'success' | 'error' } | null>(null);
-  // Phase 29 SHARE-04 / UI-SPEC §B / D-10 — Public toggle state. Default
-  // false on new entries; seeded from existingEntry.isPublic on edit.
-  const [isPublic, setIsPublic] = useState(false);
+  // Phase 29 SHARE-04 / UI-SPEC §B / D-10 — Public toggle state. Default TRUE on
+  // new entries (0023 share-public-by-default); seeded from existingEntry.isPublic on edit.
+  const [isPublic, setIsPublic] = useState(true);
   // Phase 36 DATA-03 — WIP/draft toggle state. Default false on new entries;
   // seeded from existingEntry.wip on edit. Independent of isPublic (T-36-06-01).
   const [wip, setWip] = useState(false);
@@ -87,7 +87,8 @@ export function EntryEditor() {
       setMeta((existingEntry.meta as Record<string, string>) ?? {});
       setCategoryId(existingEntry.categoryId ?? null);
       // Phase 29 SHARE-04 — seed the Public toggle from the loaded entry.
-      setIsPublic(existingEntry.isPublic ?? false);
+      // Fallback true (0023 share-public-by-default) for the no-value edge case.
+      setIsPublic(existingEntry.isPublic ?? true);
       // Phase 36 DATA-03 — seed the WIP toggle from the loaded entry.
       setWip(existingEntry.wip ?? false);
       return;
