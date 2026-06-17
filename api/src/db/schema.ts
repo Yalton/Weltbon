@@ -289,6 +289,12 @@ export const entries = pgTable('entries', {
   // Phase 36 DATA-03: per-entry WIP/draft flag (default OFF). Backfilled to false for every
   // existing row by 0022_phase36_entries_wip.sql. Mirrors the is_public boolean idiom.
   wip: boolean('wip').default(false).notNull(),
+  // Phase 38 MEDIA-04 (D-06): optional cover image FK. Nullable — most entries have no
+  // cover. ON DELETE SET NULL so deleting an asset auto-nulls the reference (D-12).
+  // Lazy reference ((): any => assets.id) mirrors links.diagramId (line 310) because
+  // `assets` is declared AFTER `entries` in this file — forward-reference gotcha.
+  // eslint-disable-next-line @typescript-eslint/no-use-before-define
+  coverImageId: uuid('cover_image_id').references((): any => assets.id, { onDelete: 'set null' }),
 });
 
 export const links = pgTable('links', {
@@ -487,6 +493,31 @@ export const diagramNodes = pgTable('diagram_nodes', {
  * - The 'simple' regconfig for word/ipa prevents English stemming from corrupting
  *   invented conlang words (T-32-02 / Pitfall 2 in RESEARCH.md).
  */
+/**
+ * Phase 38 MEDIA-01 (D-01, D-02): Per-universe image asset registry.
+ *
+ * - `id` is the storage key (UUID) — also used as the `asset://uuid` embed ref.
+ * - `universeId` FK cascades on universe delete (all assets destroyed with universe).
+ * - `filename` is the original user-provided filename (display only).
+ * - `mimeType` is the sniffed mime type (not client-claimed Content-Type).
+ * - `extension` is derived from mimeType at upload time (for ZIP export filenames).
+ * - `sizeBytes` is the safe-re-encoded original file size.
+ * - `thumbSizeBytes` is the ~400px thumbnail size.
+ * - `altText` is an optional user-editable alt-text string (nullable, D-05 accessibility).
+ */
+export const assets = pgTable('assets', {
+  id:             uuid('id').primaryKey().defaultRandom(),
+  universeId:     uuid('universe_id').references(() => universes.id, { onDelete: 'cascade' }).notNull(),
+  filename:       text('filename').notNull(),
+  mimeType:       text('mime_type').notNull(),
+  extension:      text('extension').notNull(),
+  sizeBytes:      integer('size_bytes').notNull(),
+  thumbSizeBytes: integer('thumb_size_bytes').notNull(),
+  altText:        text('alt_text'),
+  createdAt:      timestamp('created_at', { withTimezone: true }).defaultNow().notNull(),
+  updatedAt:      timestamp('updated_at', { withTimezone: true }).defaultNow().notNull(),
+});
+
 export const dictionaryWords = pgTable('dictionary_words', {
   id:              uuid('id').primaryKey().defaultRandom(),
   universeId:      uuid('universe_id').references(() => universes.id, { onDelete: 'cascade' }).notNull(),

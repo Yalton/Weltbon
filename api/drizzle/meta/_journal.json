@@ -169,6 +169,13 @@
       "when": 1781000000000,
       "tag": "0023_share_public_by_default",
       "breakpoints": true
+    },
+    {
+      "idx": 24,
+      "version": "7",
+      "when": 1782000000000,
+      "tag": "0024_phase38_assets",
+      "breakpoints": true
     }
   ]
 }
