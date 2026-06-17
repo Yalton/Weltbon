@@ -4,8 +4,10 @@ import remarkGfm from 'remark-gfm';
 import remarkRehype from 'remark-rehype';
 import rehypeStringify from 'rehype-stringify';
 import { buildFontFaceBlock } from './fonts.js';
+import { storageBackend } from '../../storage/local.js';
 import type {
   ExportPayload,
+  ExportPayloadAsset,
   ExportPayloadEntry,
   ExportPayloadIssue,
 } from '../payload.js';
@@ -107,14 +109,56 @@ export async function renderUniverseHtml(payload: ExportPayload): Promise<string
   const fontBlock = await buildFontFaceBlock();
   const cssRules = buildCssRules();
 
+  // Phase 38 MEDIA-06 (D-08): build asset map for data-URI injection.
+  const assetMap = new Map(payload.assets.map((a) => [a.id, a] as const));
+
   const titlePage = renderTitlePage(payload);
   const toc = renderToc(payload);
-  const body = await renderBody(payload);
+  const body = await renderBody(payload, assetMap);
 
   return `<!DOCTYPE html><html><head><meta charset="utf-8"><style>${fontBlock}\n${cssRules}</style></head><body>${titlePage}${toc}${body}</body></html>`;
 }
 
 // ---------- private helpers ----------
+
+/**
+ * Phase 38 MEDIA-06 (D-08): Load asset bytes from StorageBackend and convert to
+ * a data URI string for embedding in Chromium-rendered HTML (avoids cross-origin fetch).
+ * Returns null if the asset is not found.
+ */
+async function assetToDataUri(assetId: string, mimeType: string): Promise<string | null> {
+  const bytes = await storageBackend.get(assetId);
+  if (!bytes) return null;
+  return `data:${mimeType};base64,${bytes.toString('base64')}`;
+}
+
+/**
+ * Phase 38 MEDIA-06 (D-08): Rewrite `asset://uuid` image refs in HTML body content
+ * to data URIs so Chromium embeds them without any network fetch.
+ */
+async function rewriteAssetDataUris(
+  html: string,
+  assetMap: Map<string, ExportPayloadAsset>,
+): Promise<string> {
+  // Replace src="asset://uuid" produced by remark-rehype's img handling.
+  // The regex matches both single and double-quoted src attributes.
+  const ASSET_SRC_RE = /src=["']asset:\/\/([a-f0-9-]+)["']/gi;
+  const matches: Array<{ full: string; uuid: string }> = [];
+  let m: RegExpExecArray | null;
+  ASSET_SRC_RE.lastIndex = 0;
+  while ((m = ASSET_SRC_RE.exec(html)) !== null) {
+    matches.push({ full: m[0], uuid: m[1] });
+  }
+  let result = html;
+  for (const match of matches) {
+    const asset = assetMap.get(match.uuid);
+    if (!asset) continue;
+    const dataUri = await assetToDataUri(match.uuid, asset.mimeType);
+    if (!dataUri) continue;
+    result = result.replaceAll(match.full, `src="${dataUri}"`);
+  }
+  return result;
+}
 
 function buildCssRules(): string {
   // `@page :first { margin: 0 ... }` collapses the title page's bottom
@@ -192,7 +236,10 @@ function renderToc(payload: ExportPayload): string {
   return parts.join('');
 }
 
-async function renderBody(payload: ExportPayload): Promise<string> {
+async function renderBody(
+  payload: ExportPayload,
+  assetMap: Map<string, ExportPayloadAsset>,
+): Promise<string> {
   const entriesByCategory = groupEntriesByCategory(payload.entries);
   const outboundBySource = buildOutboundIndex(payload);
   const openIssuesByEntry = buildOpenIssuesIndex(payload);
@@ -208,7 +255,7 @@ async function renderBody(payload: ExportPayload): Promise<string> {
     );
     for (const entry of [...list].sort((a, b) => a.title.localeCompare(b.title))) {
       parts.push(
-        await renderEntry(entry, { entryById, outboundBySource, openIssuesByEntry }),
+        await renderEntry(entry, { entryById, outboundBySource, openIssuesByEntry }, assetMap),
       );
     }
   }
@@ -222,7 +269,7 @@ async function renderBody(payload: ExportPayload): Promise<string> {
       a.title.localeCompare(b.title),
     )) {
       parts.push(
-        await renderEntry(entry, { entryById, outboundBySource, openIssuesByEntry }),
+        await renderEntry(entry, { entryById, outboundBySource, openIssuesByEntry }, assetMap),
       );
     }
   }
@@ -242,6 +289,7 @@ interface EntryRenderIndex {
 async function renderEntry(
   entry: ExportPayloadEntry,
   idx: EntryRenderIndex,
+  assetMap: Map<string, ExportPayloadAsset>,
 ): Promise<string> {
   const parts: string[] = [];
   parts.push(`<section class="entry">`);
@@ -254,12 +302,27 @@ async function renderEntry(
     `<p class="meta">Type: ${escapeHtml(entry.entryType)} · Tags: ${escapeHtml(tags)}</p>`,
   );
 
+  // Phase 38 MEDIA-06 (D-08): cover image as data URI (no cross-origin fetch in Chromium).
+  if (entry.coverImageId) {
+    const coverAsset = assetMap.get(entry.coverImageId);
+    if (coverAsset) {
+      const dataUri = await assetToDataUri(entry.coverImageId, coverAsset.mimeType);
+      if (dataUri) {
+        parts.push(
+          `<div class="cover-image"><img src="${dataUri}" alt="Cover image for ${escapeHtml(entry.title)}" style="max-width:100%;border-radius:4px;margin:0.5em 0;"></div>`,
+        );
+      }
+    }
+  }
+
   const summary = entry.summary?.trim() ?? '';
   if (summary) {
     parts.push(`<blockquote class="summary">${escapeHtml(summary)}</blockquote>`);
   }
 
-  const bodyHtml = await renderBodyHtml(entry.body ?? '');
+  // Phase 38 MEDIA-06 (D-08): rewrite asset:// refs in body HTML to data URIs.
+  const rawBodyHtml = await renderBodyHtml(entry.body ?? '');
+  const bodyHtml = rawBodyHtml ? await rewriteAssetDataUris(rawBodyHtml, assetMap) : '';
   if (bodyHtml) {
     parts.push(`<div class="entry-body">${bodyHtml}</div>`);
   }

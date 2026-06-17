@@ -1,11 +1,12 @@
 import { z } from 'zod';
 import { db } from '../db/client.js';
-import { universes, entries, links, categories, issues, issueEntries, graphPositions, timelinePins } from '../db/schema.js';
+import { universes, entries, links, categories, issues, issueEntries, graphPositions, timelinePins, assets } from '../db/schema.js';
+import { storageBackend } from './storage/local.js';
 
 export const importSchema = z.object({
   weltbon_version: z.string().refine(
-    (v) => v === '1.0.0',
-    { message: 'Incompatible export version. Expected 1.0.0' }
+    (v) => v === '1.0.0' || v === '2.0.0',
+    { message: 'Incompatible export version. Expected 1.0.0 or 2.0.0' }
   ),
   exported_at: z.string().optional(),
   universe: z.object({
@@ -51,6 +52,8 @@ export const importSchema = z.object({
     // imported entry). Users flip entries public via the toggle after import.
     isPublic: z.boolean().optional().default(false),
     categoryId: z.string().uuid().nullable().optional().default(null),
+    // Phase 38 MEDIA-06 (D-07): cover image asset ID reference (may be null).
+    coverImageId: z.string().uuid().nullable().optional().default(null),
   })),
   links: z.array(z.object({
     id: z.string().uuid(),
@@ -101,6 +104,22 @@ export const importSchema = z.object({
     )
     .optional()
     .default([]),
+  // Phase 38 MEDIA-06 (D-07): asset registry from ZIP exports (weltbon_version 2.0.0).
+  // Backward-compat: legacy 1.0.0 plain-JSON exports lack this field → defaults to [],
+  // so no asset restoration is attempted and the existing transaction is unchanged.
+  assets: z
+    .array(
+      z.object({
+        id: z.string().uuid(),
+        filename: z.string(),
+        mimeType: z.string(),
+        extension: z.string(),
+        sizeBytes: z.number(),
+        usedAsCoverByEntryId: z.string().uuid().nullable().optional().default(null),
+      })
+    )
+    .optional()
+    .default([]),
 });
 
 const DEFAULT_ENTRY_TYPES = [
@@ -108,7 +127,20 @@ const DEFAULT_ENTRY_TYPES = [
   'artifact', 'species', 'culture', 'thread',
 ];
 
-export async function importUniverseJson(userId: string, rawData: unknown) {
+/**
+ * Import a universe from a parsed and validated payload.
+ *
+ * @param userId - The authenticated user who will own the new universe.
+ * @param rawData - Raw JSON payload (plain 1.0.0 or manifest from 2.0.0 ZIP).
+ * @param assetBytesMap - Map of old asset UUID → Buffer (from ZIP extraction).
+ *   Pass an empty Map (or omit) for legacy plain-JSON imports where no asset
+ *   bytes are available. Defaults to an empty Map for backward-compat.
+ */
+export async function importUniverseJson(
+  userId: string,
+  rawData: unknown,
+  assetBytesMap: Map<string, Buffer> = new Map(),
+) {
   const data = importSchema.parse(rawData);
 
   return await db().transaction(async (tx) => {
@@ -144,12 +176,63 @@ export async function importUniverseJson(userId: string, rawData: unknown) {
       categoryIdMap.set(cat.id, created.id);
     }
 
-    // 3. Build old-UUID -> new-UUID map for entries; remap categoryId via categoryIdMap
+    // 3. Phase 38 MEDIA-06 (D-07): restore assets before entries (entries FK into assets).
+    //    Build assetIdMap: old UUID → new UUID (remapped on import).
+    //    Each asset's bytes are retrieved from assetBytesMap (provided by ZIP import path).
+    //    For legacy JSON imports (assetBytesMap is empty), this loop is a no-op.
+    const assetIdMap = new Map<string, string>();
+    for (const asset of data.assets) {
+      const bytes = assetBytesMap.get(asset.id);
+      if (!bytes) {
+        // Asset declared in manifest but bytes not in ZIP (e.g. skipped large file).
+        // Create the metadata row with a new ID so references in entries can still
+        // be remapped; bytes will be missing from storage (graceful missing-image).
+        const newId = crypto.randomUUID();
+        await tx.insert(assets).values({
+          id: newId,
+          universeId: universe.id,
+          filename: asset.filename,
+          mimeType: asset.mimeType,
+          extension: asset.extension,
+          sizeBytes: asset.sizeBytes,
+          thumbSizeBytes: 0,
+        });
+        assetIdMap.set(asset.id, newId);
+        continue;
+      }
+      const newId = crypto.randomUUID();
+      // Restore bytes to StorageBackend with the new ID BEFORE inserting the row
+      // so that if put() throws, the transaction rolls back cleanly.
+      await storageBackend.put(newId, bytes);
+      await tx.insert(assets).values({
+        id: newId,
+        universeId: universe.id,
+        filename: asset.filename,
+        mimeType: asset.mimeType,
+        extension: asset.extension,
+        sizeBytes: asset.sizeBytes,
+        thumbSizeBytes: 0, // thumbnail not preserved in import (re-generate on next access if needed)
+      });
+      assetIdMap.set(asset.id, newId);
+    }
+
+    // 4. Build old-UUID -> new-UUID map for entries; remap categoryId via categoryIdMap
     const entryIdMap = new Map<string, string>();
     for (const entry of data.entries) {
       const mappedCategoryId = entry.categoryId
         ? categoryIdMap.get(entry.categoryId) ?? null
         : null;
+      // Phase 38 MEDIA-06 (D-07): remap coverImageId through assetIdMap.
+      const mappedCoverImageId = entry.coverImageId
+        ? assetIdMap.get(entry.coverImageId) ?? null
+        : null;
+      // Rewrite inline asset://oldId → asset://newId in entry body.
+      let body = entry.body;
+      if (body && assetIdMap.size > 0) {
+        for (const [oldId, newId] of assetIdMap) {
+          body = body.replaceAll(`asset://${oldId}`, `asset://${newId}`);
+        }
+      }
       const [created] = await tx
         .insert(entries)
         .values({
@@ -157,7 +240,7 @@ export async function importUniverseJson(userId: string, rawData: unknown) {
           title: entry.title,
           entryType: entry.entryType,
           summary: entry.summary,
-          body: entry.body,
+          body,
           tags: entry.tags,
           meta: entry.meta,
           icon: entry.icon,
@@ -166,6 +249,7 @@ export async function importUniverseJson(userId: string, rawData: unknown) {
           // missing → false; the `?? false` survives schema-coupling drift if the
           // zod default is ever changed.
           isPublic: entry.isPublic ?? false,
+          coverImageId: mappedCoverImageId,
         })
         .returning({ id: entries.id });
       entryIdMap.set(entry.id, created.id);
@@ -251,6 +335,7 @@ export async function importUniverseJson(userId: string, rawData: unknown) {
       issueCount: data.issues.length,
       positionCount: data.graphPositions.length,
       pinCount: data.timelinePins.length,
+      assetCount: data.assets.length,
     };
   });
 }

@@ -7,6 +7,7 @@ import {
   AlignmentType,
   TableOfContents,
   PageBreak,
+  ImageRun,
   type Table,
   type ParagraphChild,
 } from 'docx';
@@ -16,8 +17,10 @@ import remarkGfm from 'remark-gfm';
 import type { Root } from 'mdast';
 import { mdastToDocx } from './walker.js';
 import { docxStyles, docxNumbering } from './styles.js';
+import { storageBackend } from '../../storage/local.js';
 import type {
   ExportPayload,
+  ExportPayloadAsset,
   ExportPayloadEntry,
   ExportPayloadIssue,
   ExportPayloadLink,
@@ -43,8 +46,87 @@ import type {
 
 const md = unified().use(remarkParse).use(remarkGfm);
 
+/**
+ * Phase 38 MEDIA-06 (D-08): Build an ImageRun paragraph for a stored asset.
+ * Returns null if the asset bytes are not found in storage (graceful skip).
+ */
+async function buildCoverParagraph(assetId: string): Promise<Paragraph | null> {
+  const bytes = await storageBackend.get(assetId);
+  if (!bytes) return null;
+  return new Paragraph({
+    children: [
+      new ImageRun({
+        type: 'png',
+        data: bytes,
+        transformation: { width: 400, height: 300 },
+        altText: { name: 'cover', description: 'Cover image', title: 'Cover image' },
+      }),
+    ],
+  });
+}
+
+/**
+ * Phase 38 MEDIA-06 (D-08): Rewrite asset://uuid refs in markdown body to
+ * embedded ImageRun paragraphs. Returns array of Paragraphs to splice into the
+ * document in place of where the image would appear.
+ *
+ * Strategy: split the body on asset:// image patterns, process each segment.
+ */
+async function resolveInlineAssets(
+  body: string,
+  assetMap: Map<string, ExportPayloadAsset>,
+): Promise<Array<Paragraph | Table>> {
+  const IMAGE_RE = /!\[([^\]]*)\]\(asset:\/\/([a-f0-9-]+)\)/gi;
+  const parts: Array<{ type: 'text'; text: string } | { type: 'image'; uuid: string; alt: string }> = [];
+  let lastIndex = 0;
+  let m: RegExpExecArray | null;
+  IMAGE_RE.lastIndex = 0;
+  while ((m = IMAGE_RE.exec(body)) !== null) {
+    if (m.index > lastIndex) {
+      parts.push({ type: 'text', text: body.slice(lastIndex, m.index) });
+    }
+    parts.push({ type: 'image', uuid: m[2], alt: m[1] });
+    lastIndex = m.index + m[0].length;
+  }
+  if (lastIndex < body.length) {
+    parts.push({ type: 'text', text: body.slice(lastIndex) });
+  }
+
+  const result: Array<Paragraph | Table> = [];
+  for (const part of parts) {
+    if (part.type === 'text') {
+      if (part.text.trim()) {
+        // Render text segment through the existing markdown parser.
+        const md = unified().use(remarkParse).use(remarkGfm);
+        const root = md.parse(part.text) as Root;
+        result.push(...mdastToDocx(root, 3));
+      }
+    } else {
+      const asset = assetMap.get(part.uuid);
+      if (!asset) continue;
+      const bytes = await storageBackend.get(part.uuid);
+      if (!bytes) continue;
+      result.push(
+        new Paragraph({
+          children: [
+            new ImageRun({
+              type: 'png',
+              data: bytes,
+              transformation: { width: 400, height: 300 },
+              altText: { name: part.uuid, description: part.alt || 'Image', title: part.alt || 'Image' },
+            }),
+          ],
+        }),
+      );
+    }
+  }
+  return result;
+}
+
 export async function renderUniverseDocx(payload: ExportPayload): Promise<Uint8Array> {
   const children: Array<Paragraph | Table | TableOfContents> = [];
+  // Phase 38 MEDIA-06 (D-08): build asset map for inline embed resolution.
+  const assetMap = new Map(payload.assets.map((a) => [a.id, a] as const));
 
   // ---- Title page ----
   children.push(
@@ -127,6 +209,12 @@ export async function renderUniverseDocx(payload: ExportPayload): Promise<Uint8A
         }),
       );
 
+      // Phase 38 MEDIA-06 (D-08): cover image — between heading and summary.
+      if (entry.coverImageId) {
+        const coverPara = await buildCoverParagraph(entry.coverImageId);
+        if (coverPara) children.push(coverPara);
+      }
+
       // Summary callout (Quote style)
       if (entry.summary) {
         children.push(
@@ -137,10 +225,16 @@ export async function renderUniverseDocx(payload: ExportPayload): Promise<Uint8A
         );
       }
 
-      // Body — markdown via walker
+      // Body — markdown via walker; resolve asset:// inline embeds (D-08).
       if (entry.body.trim()) {
-        const root = md.parse(entry.body) as Root;
-        children.push(...mdastToDocx(root, 3));
+        const bodyHasAssets = /asset:\/\//i.test(entry.body);
+        if (bodyHasAssets) {
+          const inlineParagraphs = await resolveInlineAssets(entry.body, assetMap);
+          children.push(...inlineParagraphs);
+        } else {
+          const root = md.parse(entry.body) as Root;
+          children.push(...mdastToDocx(root, 3));
+        }
       }
 
       // Links section (outbound, grouped by relation label)
