@@ -465,6 +465,9 @@ export const assetsRouter = new OpenAPIHono<AppEnv>()
       return c.json({ error: 'Asset bytes not found' }, 404);
     }
 
+    // WR-03: nosniff prevents browsers from MIME-sniffing the response away from
+    // the declared Content-Type, defending against stored-XSS on the import path.
+    c.header('X-Content-Type-Options', 'nosniff');
     c.header('Content-Type', rows[0].mimeType);
     c.header('Cache-Control', 'public, max-age=31536000, immutable');
     c.header('Content-Disposition', 'inline');
@@ -489,6 +492,9 @@ export const assetsRouter = new OpenAPIHono<AppEnv>()
       return c.json({ error: 'Thumbnail bytes not found' }, 404);
     }
 
+    // WR-03: nosniff prevents browsers from MIME-sniffing the response away from
+    // the declared Content-Type, defending against stored-XSS on the import path.
+    c.header('X-Content-Type-Options', 'nosniff');
     c.header('Content-Type', rows[0].mimeType);
     c.header('Cache-Control', 'public, max-age=31536000, immutable');
     c.header('Content-Disposition', 'inline');

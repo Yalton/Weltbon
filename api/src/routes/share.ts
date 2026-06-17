@@ -548,6 +548,9 @@ export const shareRoutes = router
     const bytes = await storageBackend.get(id);
     if (!bytes) return c.json({ error: 'Asset not found' }, 404);
 
+    // WR-03: nosniff prevents browsers from MIME-sniffing the response away from
+    // the declared Content-Type, defending against stored-XSS on the public share seam.
+    c.header('X-Content-Type-Options', 'nosniff');
     c.header('Content-Type', asset.mimeType);
     c.header('Cache-Control', 'public, max-age=31536000, immutable');
     c.header('Content-Disposition', 'inline');
@@ -563,6 +566,9 @@ export const shareRoutes = router
     const bytes = await storageBackend.get(`${id}_thumb`);
     if (!bytes) return c.json({ error: 'Asset not found' }, 404);
 
+    // WR-03: nosniff prevents browsers from MIME-sniffing the response away from
+    // the declared Content-Type, defending against stored-XSS on the public share seam.
+    c.header('X-Content-Type-Options', 'nosniff');
     c.header('Content-Type', asset.mimeType);
     c.header('Cache-Control', 'public, max-age=31536000, immutable');
     c.header('Content-Disposition', 'inline');
