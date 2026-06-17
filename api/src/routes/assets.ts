@@ -51,11 +51,16 @@ const ALLOWED_MIME = new Set(['image/png', 'image/jpeg', 'image/webp', 'image/gi
 const DEFAULT_MAX_FILE_BYTES = 10 * 1024 * 1024;
 const DEFAULT_MAX_UNIVERSE_QUOTA = 500 * 1024 * 1024;
 
+// WR-02: parseInt returns NaN for empty strings or non-numeric values (e.g. "10mb"),
+// which would silently disable the caps. Use Number() + isFinite guard so malformed
+// env vars fall back to the safe default rather than producing NaN.
 function maxFileBytes(): number {
-  return parseInt(process.env.MEDIA_MAX_FILE_BYTES ?? String(DEFAULT_MAX_FILE_BYTES), 10);
+  const n = Number(process.env.MEDIA_MAX_FILE_BYTES);
+  return Number.isFinite(n) && n > 0 ? n : DEFAULT_MAX_FILE_BYTES;
 }
 function maxUniverseQuota(): number {
-  return parseInt(process.env.MEDIA_UNIVERSE_QUOTA_BYTES ?? String(DEFAULT_MAX_UNIVERSE_QUOTA), 10);
+  const n = Number(process.env.MEDIA_UNIVERSE_QUOTA_BYTES);
+  return Number.isFinite(n) && n > 0 ? n : DEFAULT_MAX_UNIVERSE_QUOTA;
 }
 
 // failOn 'truncated' aborts on truncated/corrupt pixel data (T-38-12, D-11);
