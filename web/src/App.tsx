@@ -17,6 +17,7 @@ import { TimelineView } from './views/TimelineView';
 import { CalendarEditor } from './views/CalendarEditor';
 import { EventsView } from './views/EventsView';
 import { DiagramList } from './views/DiagramList';
+import { AssetLibrary } from './views/AssetLibrary';
 import { DiagramEditor } from './views/DiagramEditor';
 import { Dictionary } from './views/Dictionary';
 import Settings from './views/Settings';
@@ -65,6 +66,7 @@ export default function App() {
           <Route path="/universes/:uid/events" element={<EventsView />} />
           <Route path="/universes/:uid/diagrams" element={<DiagramList />} />
           <Route path="/universes/:uid/diagrams/:did" element={<DiagramEditor />} />
+          <Route path="/universes/:uid/assets" element={<AssetLibrary />} />
           <Route path="/universes/:uid/dictionary" element={<Dictionary />} />
           <Route path="/universes/:uid/languages/:lid/dictionary" element={<Dictionary />} />
           <Route path="/universes/:uid/issues" element={<IssuesView />} />
