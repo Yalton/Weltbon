@@ -15,7 +15,8 @@ export interface AssetSummary {
 }
 
 export interface AssetUsage {
-  entries: Array<{ id: string; title: string }>;
+  count: number;
+  references: Array<{ entryId: string; title: string; kind: 'cover' | 'inline' }>;
 }
 
 /**

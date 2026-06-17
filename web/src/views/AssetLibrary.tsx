@@ -127,7 +127,8 @@ export function AssetLibrary() {
 
   // Fetch usage for the delete target only when a target is selected (D-12)
   const { data: usageData } = useAssetUsage(uid!, deleteTarget?.id ?? null);
-  const usageCount = usageData?.entries?.length ?? 0;
+  // WR-01: API returns {count, references} — use .count directly (not .entries?.length).
+  const usageCount = usageData?.count ?? 0;
 
   const handleFileChange = async (e: React.ChangeEvent<HTMLInputElement>) => {
     const file = e.target.files?.[0];
