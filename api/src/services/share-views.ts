@@ -33,6 +33,7 @@ import {
   users,
   type Calendar,
 } from '../db/schema.js';
+import { signShareAssetUrl } from './asset-signing.js';
 
 // ─── Function 1: getPublicUniverseMeta ──────────────────────────────────────
 //
@@ -195,7 +196,25 @@ export async function getPublicEntryById(universeId: string, entryId: string) {
       ),
     );
 
-  return { ...entry, outboundLinks, backlinks };
+  // Phase 38 UAT-fix: compute pre-signed share asset URLs so web <img> tags can
+  // render cover images and inline embeds without needing the share-token header
+  // (which browser <img> tags cannot send). The signature embeds the universe ID.
+  const coverImageUrl = entry.coverImageId
+    ? `/api/share/assets/${entry.coverImageId}/raw${signShareAssetUrl(universeId, entry.coverImageId, 'raw')}`
+    : null;
+
+  const assetUuidRe = /asset:\/\/([0-9a-fA-F-]{36})/g;
+  const assetUrls: Record<string, string> = {};
+  if (entry.body) {
+    for (const m of entry.body.matchAll(assetUuidRe)) {
+      const assetId = m[1];
+      if (!assetUrls[assetId]) {
+        assetUrls[assetId] = `/api/share/assets/${assetId}/raw${signShareAssetUrl(universeId, assetId, 'raw')}`;
+      }
+    }
+  }
+
+  return { ...entry, outboundLinks, backlinks, coverImageUrl, assetUrls };
 }
 
 // ─── Function 4: getPublicGraph ──────────────────────────────────────────────

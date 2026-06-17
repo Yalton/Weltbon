@@ -43,6 +43,8 @@ import {
   getPublicUniverseMeta,
 } from '../services/share-views.js';
 import { storageBackend } from '../services/storage/local.js';
+import { verifyShareAssetSig } from '../services/asset-signing.js';
+import { lookupShareToken, SHARE_TOKEN_PREFIX } from '../services/share-token.js';
 
 type AppEnv = { Variables: ShareVariables };
 
@@ -173,6 +175,9 @@ const publicEntryDetailResponseSchema = z.object({
       direction: z.string(),
     }),
   ),
+  // Phase 38 UAT-fix: pre-signed share asset URLs for <img> rendering.
+  coverImageUrl: z.string().nullable().optional(),
+  assetUrls: z.record(z.string(), z.string()).optional(),
 });
 
 const publicGraphNodeSchema = z.object({
@@ -412,25 +417,34 @@ const dictionaryRoute = createRoute({
 // Phase 38 D-13 / T-38-30 / T-38-31 / T-38-32 — Share-aware asset byte-serving.
 //
 // Two GET-only routes: /assets/:id/raw and /assets/:id/thumb.
-// Universe resolved from c.var.shareUniverseId (set by requireShareToken) —
-// NO :uid path parameter (D-03: visitor never sees the internal universe UUID).
+// Phase 38 UAT-fix: two authorization paths:
+//   1. Share-token header path: requireShareToken (D-03 — visitor never sees uuid).
+//      Universe resolved from c.var.shareUniverseId (set by requireShareToken).
+//   2. Signed-URL path: no share-token header; ?u=<uid>&e=<exp>&s=<sig> from query.
+//      The uid is embedded in the signature — the HMAC message binds uid+id+variant+exp,
+//      so a forged `u` value fails the sig check.
+//      BOTH paths enforce the is_public gate via getPublicAsset (T-38-30).
+//
+// No :uid path parameter in either path (D-03: visitor never sees internal UUID).
 // getPublicAsset enforces server-side is_public=true reference check (T-38-30).
 // No POST/PATCH/DELETE routes in the share namespace (T-38-31 mutation-free).
 const shareRawAssetRoute = createRoute({
   method: 'get',
   path: '/assets/{id}/raw',
   tags: ['Share'],
-  summary: 'Serve original asset bytes via share token (D-13)',
+  summary: 'Serve original asset bytes via share token or signed URL (D-13)',
   description:
     'Returns asset bytes only if the asset is referenced by at least one ' +
     'is_public=true entry in the share-token universe. 404 on private or missing ' +
     'asset — no existence leak (T-38-30). No mutation routes (T-38-31). ' +
-    'Universe from c.var.shareUniverseId only — not a path param (T-38-32).',
+    'Universe from share-token header (c.var.shareUniverseId) OR from ?u= query param ' +
+    'with a valid HMAC-signed URL (Phase 38 UAT-fix: <img> tags cannot send share-token).',
   security: [{ shareToken: [] }],
-  middleware: [requireShareToken] as const,
+  // No middleware: [requireShareToken] here — auth is handled inline to support both paths.
   request: { params: assetIdParams },
   responses: {
     200: { content: { 'application/octet-stream': { schema: z.any() } }, description: 'Image bytes' },
+    401: { content: { 'application/json': { schema: errorSchema } }, description: 'Unauthorized' },
     404: { content: { 'application/json': { schema: errorSchema } }, description: 'Asset not found or not public' },
   },
 });
@@ -439,17 +453,18 @@ const shareThumbAssetRoute = createRoute({
   method: 'get',
   path: '/assets/{id}/thumb',
   tags: ['Share'],
-  summary: 'Serve thumbnail bytes via share token (D-13)',
+  summary: 'Serve thumbnail bytes via share token or signed URL (D-13)',
   description:
     'Returns thumbnail bytes only if the asset is referenced by at least one ' +
     'is_public=true entry in the share-token universe. 404 on private or missing ' +
     'asset — no existence leak (T-38-30). No mutation routes (T-38-31). ' +
-    'Universe from c.var.shareUniverseId only — not a path param (T-38-32).',
+    'Universe from share-token header OR HMAC-signed ?u&e&s query params.',
   security: [{ shareToken: [] }],
-  middleware: [requireShareToken] as const,
+  // No middleware: [requireShareToken] here — auth is handled inline to support both paths.
   request: { params: assetIdParams },
   responses: {
     200: { content: { 'application/octet-stream': { schema: z.any() } }, description: 'Thumbnail bytes' },
+    401: { content: { 'application/json': { schema: errorSchema } }, description: 'Unauthorized' },
     404: { content: { 'application/json': { schema: errorSchema } }, description: 'Asset not found or not public' },
   },
 });
@@ -540,9 +555,40 @@ export const shareRoutes = router
   })
 
   // GET /assets/:id/raw — serve original bytes (D-13, T-38-30, T-38-31, T-38-32)
+  //
+  // Phase 38 UAT-fix: two authorization paths:
+  //   1. Share-token header: resolve universeId from requireShareToken (original path).
+  //   2. Signed-URL (?u&e&s): verify HMAC, extract uid from sig; IS_PUBLIC gate still
+  //      enforced via getPublicAsset — a valid sig cannot bypass the public reference check.
   .openapi(shareRawAssetRoute, async (c) => {
     const { id } = c.req.valid('param');
-    const asset = await getPublicAsset(c.var.shareUniverseId, id);
+
+    // Resolve the universe ID: share-token header path (original) or signed-URL path (new).
+    let universeId: string;
+    const shareTokenHeader = c.req.header('share-token');
+    if (shareTokenHeader) {
+      // Path 1: share-token header — validate and resolve universeId.
+      if (!shareTokenHeader.startsWith(SHARE_TOKEN_PREFIX)) {
+        return c.json({ error: 'Unauthorized' }, 401);
+      }
+      const lookup = await lookupShareToken(shareTokenHeader);
+      if (!lookup) return c.json({ error: 'Unauthorized' }, 401);
+      universeId = lookup.universeId;
+    } else {
+      // Path 2: signed URL (?u=<uid>&e=<exp>&s=<sig>) — no share-token header.
+      const result = verifyShareAssetSig(
+        id,
+        'raw',
+        c.req.query('u'),
+        c.req.query('e'),
+        c.req.query('s'),
+      );
+      if (!result.valid) return c.json({ error: 'Unauthorized' }, 401);
+      universeId = result.uid;
+    }
+
+    // IS_PUBLIC gate always enforced regardless of auth path (T-38-30).
+    const asset = await getPublicAsset(universeId, id);
     if (!asset) return c.json({ error: 'Asset not found' }, 404);
 
     const bytes = await storageBackend.get(id);
@@ -558,9 +604,34 @@ export const shareRoutes = router
   })
 
   // GET /assets/:id/thumb — serve thumbnail bytes (D-13, T-38-30, T-38-31, T-38-32)
+  //
+  // Phase 38 UAT-fix: same two-path authorization as /raw above.
   .openapi(shareThumbAssetRoute, async (c) => {
     const { id } = c.req.valid('param');
-    const asset = await getPublicAsset(c.var.shareUniverseId, id);
+
+    let universeId: string;
+    const shareTokenHeader = c.req.header('share-token');
+    if (shareTokenHeader) {
+      if (!shareTokenHeader.startsWith(SHARE_TOKEN_PREFIX)) {
+        return c.json({ error: 'Unauthorized' }, 401);
+      }
+      const lookup = await lookupShareToken(shareTokenHeader);
+      if (!lookup) return c.json({ error: 'Unauthorized' }, 401);
+      universeId = lookup.universeId;
+    } else {
+      const result = verifyShareAssetSig(
+        id,
+        'thumb',
+        c.req.query('u'),
+        c.req.query('e'),
+        c.req.query('s'),
+      );
+      if (!result.valid) return c.json({ error: 'Unauthorized' }, 401);
+      universeId = result.uid;
+    }
+
+    // IS_PUBLIC gate always enforced regardless of auth path (T-38-30).
+    const asset = await getPublicAsset(universeId, id);
     if (!asset) return c.json({ error: 'Asset not found' }, 404);
 
     const bytes = await storageBackend.get(`${id}_thumb`);
