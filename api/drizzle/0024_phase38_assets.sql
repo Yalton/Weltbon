@@ -17,7 +17,7 @@ CREATE TABLE "assets" (
 );
 --> statement-breakpoint
 DO $$ BEGIN
- ALTER TABLE "assets" ADD CONSTRAINT "assets_universe_id_universes_id_fk" FOREIGN KEY ("universe_id") REFERENCES "public"."universes"("id") ON DELETE cascade ON UPDATE no action;
+ ALTER TABLE "assets" ADD CONSTRAINT "assets_universe_id_universes_id_fk" FOREIGN KEY ("universe_id") REFERENCES "universes"("id") ON DELETE cascade ON UPDATE no action;
 EXCEPTION
  WHEN duplicate_object THEN null;
 END $$;
@@ -25,7 +25,7 @@ END $$;
 ALTER TABLE "entries" ADD COLUMN "cover_image_id" uuid;
 --> statement-breakpoint
 DO $$ BEGIN
- ALTER TABLE "entries" ADD CONSTRAINT "entries_cover_image_id_assets_id_fk" FOREIGN KEY ("cover_image_id") REFERENCES "public"."assets"("id") ON DELETE set null ON UPDATE no action;
+ ALTER TABLE "entries" ADD CONSTRAINT "entries_cover_image_id_assets_id_fk" FOREIGN KEY ("cover_image_id") REFERENCES "assets"("id") ON DELETE set null ON UPDATE no action;
 EXCEPTION
  WHEN duplicate_object THEN null;
 END $$;

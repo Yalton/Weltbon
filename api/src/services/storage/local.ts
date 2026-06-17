@@ -20,7 +20,23 @@ import { join } from 'node:path';
 import type { StorageBackend } from './interface.js';
 
 export class LocalStorageBackend implements StorageBackend {
-  constructor(private readonly basePath: string) {}
+  /**
+   * Optional explicit base directory. When omitted (the singleton case), the
+   * base path is resolved LAZILY from process.env.UPLOADS_DIR at each I/O call
+   * rather than captured at construction time.
+   *
+   * Rationale: ES modules hoist `import` statements above all other top-level
+   * code, so a consumer that sets process.env.UPLOADS_DIR before importing this
+   * module still runs that assignment AFTER this module is evaluated. Capturing
+   * the env var in the constructor would therefore ignore the override (and, in
+   * tests, attempt to mkdir the production `/uploads` mount → EACCES). Reading it
+   * lazily makes the singleton honor UPLOADS_DIR whenever it is set.
+   */
+  constructor(private readonly explicitBasePath?: string) {}
+
+  private get basePath(): string {
+    return this.explicitBasePath ?? process.env.UPLOADS_DIR ?? '/uploads';
+  }
 
   async put(key: string, data: Buffer): Promise<void> {
     const fullPath = this.safeJoin(key);
@@ -70,5 +86,6 @@ export class LocalStorageBackend implements StorageBackend {
   }
 }
 
-const UPLOADS_DIR = process.env.UPLOADS_DIR ?? '/uploads';
-export const storageBackend = new LocalStorageBackend(UPLOADS_DIR);
+// Singleton: no explicit base path → resolves UPLOADS_DIR lazily per I/O call
+// (defaults to the /uploads Docker volume mount). See constructor doc above.
+export const storageBackend = new LocalStorageBackend();

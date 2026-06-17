@@ -42,14 +42,22 @@ type AppEnv = { Variables: AuthVariables };
 // ─── Validation constants (RESEARCH.md Code Examples) ─────────────────────────
 
 const ALLOWED_MIME = new Set(['image/png', 'image/jpeg', 'image/webp', 'image/gif']);
-const MAX_FILE_BYTES = parseInt(
-  process.env.MEDIA_MAX_FILE_BYTES ?? String(10 * 1024 * 1024),
-  10,
-);
-const MAX_UNIVERSE_QUOTA = parseInt(
-  process.env.MEDIA_UNIVERSE_QUOTA_BYTES ?? String(500 * 1024 * 1024),
-  10,
-);
+
+// Caps are env-tunable (D-10) and resolved LAZILY at call time rather than captured
+// as module-level constants. Reason: ES modules hoist `import` above other top-level
+// code, so a consumer (e.g. a test) that sets these env vars before importing this
+// router still runs that assignment AFTER this module evaluates. Reading them lazily
+// makes the overrides take effect.
+const DEFAULT_MAX_FILE_BYTES = 10 * 1024 * 1024;
+const DEFAULT_MAX_UNIVERSE_QUOTA = 500 * 1024 * 1024;
+
+function maxFileBytes(): number {
+  return parseInt(process.env.MEDIA_MAX_FILE_BYTES ?? String(DEFAULT_MAX_FILE_BYTES), 10);
+}
+function maxUniverseQuota(): number {
+  return parseInt(process.env.MEDIA_UNIVERSE_QUOTA_BYTES ?? String(DEFAULT_MAX_UNIVERSE_QUOTA), 10);
+}
+
 // failOn 'truncated' aborts on truncated/corrupt pixel data (T-38-12, D-11);
 // limitInputPixels caps decoded pixel count to defuse decompression/pixel bombs.
 const SHARP_OPTS = { limitInputPixels: 25_000_000, failOn: 'truncated' as const };
@@ -99,10 +107,14 @@ const errorSchema = z.object({ error: z.string() });
 // pre-buffer to defend against OOM. Wired via the route's `middleware: [...]` field
 // (the codebase-idiomatic per-route middleware pattern, e.g. share.ts requireShareToken)
 // rather than a global app.use — so only the upload route is size-capped.
-const uploadSizeLimit: MiddlewareHandler = bodyLimit({
-  maxSize: MAX_FILE_BYTES,
-  onError: (c) => c.json({ error: 'File too large' }, 413),
-});
+// Resolve maxSize lazily per request so MEDIA_MAX_FILE_BYTES overrides set after
+// module load (e.g. in tests) are honored. The bodyLimit factory is rebuilt per
+// invocation — cheap, and keeps the size cap a runtime-tunable config (D-10).
+const uploadSizeLimit: MiddlewareHandler = (c, next) =>
+  bodyLimit({
+    maxSize: maxFileBytes(),
+    onError: (ctx) => ctx.json({ error: 'File too large' }, 413),
+  })(c, next);
 
 // ─── Helpers ───────────────────────────────────────────────────────────────────
 
@@ -325,7 +337,7 @@ export const assetsRouter = new OpenAPIHono<AppEnv>()
         .select({ total: sql<number>`COALESCE(SUM(${assets.sizeBytes}), 0)` })
         .from(assets)
         .where(eq(assets.universeId, uid));
-      if (Number(total) + bytes.length > MAX_UNIVERSE_QUOTA) {
+      if (Number(total) + bytes.length > maxUniverseQuota()) {
         return c.json({ error: 'Universe storage quota exceeded' }, 413);
       }
 

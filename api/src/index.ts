@@ -28,6 +28,7 @@ import { timelinePinRoutes, timelineListRoutes } from './routes/timeline.js';
 import { auditRoutes, auditCrossUniverseRoutes } from './routes/audits.js';
 import { statsRoutes } from './routes/stats.js';
 import { diagramsRouter } from './routes/diagrams.js';
+import { assetsRouter } from './routes/assets.js';
 import { dictionaryRoutes } from './routes/dictionary.js';
 import { recoverOrphanAuditRuns } from './services/audit-recovery.js';
 import { wireSigtermDrain } from './services/audit-shutdown.js';
@@ -131,6 +132,9 @@ export function createApp() {
   // apiR.use('/universes/*', requireAuth) at the top of this block.
   apiR.route('/universes', statsRoutes);
   apiR.route('/universes/:uid/diagrams', diagramsRouter);
+  // Phase 38 MEDIA-01/02/03/04: per-universe image asset upload/serving/CRUD.
+  // requireAuth already applies via apiR.use('/universes/*', requireAuth) above.
+  apiR.route('/universes/:uid/assets', assetsRouter);
   // Phase 32 CONLANG-01/02: dictionary CRUD + FTS + CSV import.
   // requireAuth already applies via apiR.use('/universes/*', requireAuth) at ln 104 —
   // PAT parity (T-32-06) and share-boundary coverage (T-32-07) come for free.
