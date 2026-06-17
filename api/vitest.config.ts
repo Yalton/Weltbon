@@ -78,6 +78,8 @@ const DB_GATED_TESTS = [
   'tests/stats.test.ts',
   // Phase 38 Plan 02 — MEDIA-01/02/03/04 asset upload/serving/CRUD integration tests.
   'tests/assets.test.ts',
+  // Phase 38 Plan 04 — D-13 share asset boundary + privacy integration tests.
+  'tests/share-assets.test.ts',
 ];
 
 export default defineConfig({
