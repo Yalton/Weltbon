@@ -20,9 +20,10 @@
  */
 
 import { alias } from 'drizzle-orm/pg-core';
-import { and, asc, desc, eq, inArray, isNull } from 'drizzle-orm';
+import { and, asc, desc, eq, inArray, isNull, like, or } from 'drizzle-orm';
 import { db as getDb } from '../db/client.js';
 import {
+  assets,
   categories,
   dictionaryWords,
   entries,
@@ -358,4 +359,56 @@ export async function getPublicDictionaryWords(
     .from(dictionaryWords)
     .where(and(eq(dictionaryWords.universeId, universeId), scope))
     .orderBy(asc(dictionaryWords.word));
+}
+
+// ─── Function 8: getPublicAsset ──────────────────────────────────────────────
+//
+// Phase 38 D-13 / T-38-30 — Share-aware asset resolution.
+//
+// Returns `{ id, mimeType }` ONLY when ALL of the following hold:
+//   1. The asset row exists AND belongs to `universeId` (T-38-32 tenant scope).
+//   2. At least one entry in `universeId` with `is_public = true` references the
+//      asset — either via `entries.cover_image_id = assetId` (FK) OR via an
+//      inline `asset://<assetId>` embed stored in `entries.body`.
+//
+// Returns null in any other case (T-38-30: 404, no existence leak).
+//
+// The universe scope is supplied by the CALLER from `c.var.shareUniverseId`
+// (set by `requireShareToken`). This function never receives the universe from
+// a path parameter — that would violate the file-header tenant-scope rule.
+//
+export async function getPublicAsset(
+  universeId: string,
+  assetId: string,
+): Promise<{ id: string; mimeType: string } | null> {
+  // Step 1: Verify the asset belongs to this universe.
+  const assetRows = await getDb()
+    .select({ id: assets.id, mimeType: assets.mimeType })
+    .from(assets)
+    .where(and(eq(assets.id, assetId), eq(assets.universeId, universeId)))
+    .limit(1);
+  if (assetRows.length === 0) return null;
+  const asset = assetRows[0];
+
+  // Step 2: Check that at least one is_public=true entry references this asset
+  //   - via cover_image_id FK, OR
+  //   - via `asset://<assetId>` inline embed in body.
+  // A single SQL query with OR covers both channels (D-13).
+  const refRows = await getDb()
+    .select({ id: entries.id })
+    .from(entries)
+    .where(
+      and(
+        eq(entries.universeId, universeId),
+        eq(entries.isPublic, true),
+        or(
+          eq(entries.coverImageId, assetId),
+          like(entries.body, `%asset://${assetId}%`),
+        ),
+      ),
+    )
+    .limit(1);
+
+  if (refRows.length === 0) return null;
+  return asset;
 }

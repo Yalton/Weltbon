@@ -33,6 +33,7 @@
 import { OpenAPIHono, createRoute, z } from '@hono/zod-openapi';
 import { requireShareToken, type ShareVariables } from '../middleware/share.js';
 import {
+  getPublicAsset,
   getPublicCategories,
   getPublicDictionaryWords,
   getPublicEntries,
@@ -41,6 +42,7 @@ import {
   getPublicTimeline,
   getPublicUniverseMeta,
 } from '../services/share-views.js';
+import { storageBackend } from '../services/storage/local.js';
 
 type AppEnv = { Variables: ShareVariables };
 
@@ -232,6 +234,7 @@ const errorSchema = z.object({ error: z.string() });
 // ─── Path param schemas ──────────────────────────────────────────────────────
 
 const entryIdParams = z.object({ entryId: z.string().uuid() });
+const assetIdParams = z.object({ id: z.string().uuid() });
 
 // ─── createRoute declarations ────────────────────────────────────────────────
 
@@ -406,6 +409,51 @@ const dictionaryRoute = createRoute({
   },
 });
 
+// Phase 38 D-13 / T-38-30 / T-38-31 / T-38-32 — Share-aware asset byte-serving.
+//
+// Two GET-only routes: /assets/:id/raw and /assets/:id/thumb.
+// Universe resolved from c.var.shareUniverseId (set by requireShareToken) —
+// NO :uid path parameter (D-03: visitor never sees the internal universe UUID).
+// getPublicAsset enforces server-side is_public=true reference check (T-38-30).
+// No POST/PATCH/DELETE routes in the share namespace (T-38-31 mutation-free).
+const shareRawAssetRoute = createRoute({
+  method: 'get',
+  path: '/assets/{id}/raw',
+  tags: ['Share'],
+  summary: 'Serve original asset bytes via share token (D-13)',
+  description:
+    'Returns asset bytes only if the asset is referenced by at least one ' +
+    'is_public=true entry in the share-token universe. 404 on private or missing ' +
+    'asset — no existence leak (T-38-30). No mutation routes (T-38-31). ' +
+    'Universe from c.var.shareUniverseId only — not a path param (T-38-32).',
+  security: [{ shareToken: [] }],
+  middleware: [requireShareToken] as const,
+  request: { params: assetIdParams },
+  responses: {
+    200: { content: { 'application/octet-stream': { schema: z.any() } }, description: 'Image bytes' },
+    404: { content: { 'application/json': { schema: errorSchema } }, description: 'Asset not found or not public' },
+  },
+});
+
+const shareThumbAssetRoute = createRoute({
+  method: 'get',
+  path: '/assets/{id}/thumb',
+  tags: ['Share'],
+  summary: 'Serve thumbnail bytes via share token (D-13)',
+  description:
+    'Returns thumbnail bytes only if the asset is referenced by at least one ' +
+    'is_public=true entry in the share-token universe. 404 on private or missing ' +
+    'asset — no existence leak (T-38-30). No mutation routes (T-38-31). ' +
+    'Universe from c.var.shareUniverseId only — not a path param (T-38-32).',
+  security: [{ shareToken: [] }],
+  middleware: [requireShareToken] as const,
+  request: { params: assetIdParams },
+  responses: {
+    200: { content: { 'application/octet-stream': { schema: z.any() } }, description: 'Thumbnail bytes' },
+    404: { content: { 'application/json': { schema: errorSchema } }, description: 'Asset not found or not public' },
+  },
+});
+
 // ─── Router ──────────────────────────────────────────────────────────────────
 
 const router = new OpenAPIHono<AppEnv>();
@@ -489,4 +537,34 @@ export const shareRoutes = router
     const lid = c.req.query('lid')?.trim() || null;
     const words = await getPublicDictionaryWords(c.var.shareUniverseId, lid);
     return c.json(words as any, 200);
+  })
+
+  // GET /assets/:id/raw — serve original bytes (D-13, T-38-30, T-38-31, T-38-32)
+  .openapi(shareRawAssetRoute, async (c) => {
+    const { id } = c.req.valid('param');
+    const asset = await getPublicAsset(c.var.shareUniverseId, id);
+    if (!asset) return c.json({ error: 'Asset not found' }, 404);
+
+    const bytes = await storageBackend.get(id);
+    if (!bytes) return c.json({ error: 'Asset not found' }, 404);
+
+    c.header('Content-Type', asset.mimeType);
+    c.header('Cache-Control', 'public, max-age=31536000, immutable');
+    c.header('Content-Disposition', 'inline');
+    return c.body(bytes);
+  })
+
+  // GET /assets/:id/thumb — serve thumbnail bytes (D-13, T-38-30, T-38-31, T-38-32)
+  .openapi(shareThumbAssetRoute, async (c) => {
+    const { id } = c.req.valid('param');
+    const asset = await getPublicAsset(c.var.shareUniverseId, id);
+    if (!asset) return c.json({ error: 'Asset not found' }, 404);
+
+    const bytes = await storageBackend.get(`${id}_thumb`);
+    if (!bytes) return c.json({ error: 'Asset not found' }, 404);
+
+    c.header('Content-Type', asset.mimeType);
+    c.header('Cache-Control', 'public, max-age=31536000, immutable');
+    c.header('Content-Disposition', 'inline');
+    return c.body(bytes);
   });
