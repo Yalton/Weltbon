@@ -35,6 +35,7 @@ import { db } from '../db/client.js';
 import { assets, entries } from '../db/schema.js';
 import { requireUniverse } from '../utils/ownership.js';
 import { storageBackend } from '../services/storage/local.js';
+import { signAssetUrl, verifyAssetSig } from '../services/asset-signing.js';
 import type { AuthVariables } from '../middleware/auth.js';
 
 type AppEnv = { Variables: AuthVariables };
@@ -123,11 +124,16 @@ const uploadSizeLimit: MiddlewareHandler = (c, next) =>
 
 // ─── Helpers ───────────────────────────────────────────────────────────────────
 
-/** Build the public serving URLs for an asset (D-02 stable URL). */
+/**
+ * Build the public serving URLs for an asset (D-02 stable URL).
+ * Phase 38 UAT-fix: URLs are now HMAC-signed so <img src> can carry the auth
+ * capability without needing an Authorization: Bearer header (which browsers
+ * can't attach to image tags). The signature is embedded in the query string.
+ */
 function assetUrls(uid: string, id: string): { rawUrl: string; thumbUrl: string } {
   return {
-    rawUrl: `/api/universes/${uid}/assets/${id}/raw`,
-    thumbUrl: `/api/universes/${uid}/assets/${id}/thumb`,
+    rawUrl: `/api/universes/${uid}/assets/${id}/raw${signAssetUrl(uid, id, 'raw')}`,
+    thumbUrl: `/api/universes/${uid}/assets/${id}/thumb${signAssetUrl(uid, id, 'thumb')}`,
   };
 }
 
@@ -448,9 +454,26 @@ export const assetsRouter = new OpenAPIHono<AppEnv>()
   })
 
   // GET /universes/:uid/assets/:id/raw — serve original bytes
+  //
+  // Phase 38 UAT-fix: two authorization paths:
+  //   1. Bearer path (c.var.userId set): use the existing requireUniverse ownership check.
+  //   2. Signed-URL path (no bearer, valid ?e&s query params): verify HMAC sig, scope row
+  //      by universeId=uid AND id — the sig IS the capability, no user lookup needed.
+  //      This allows <img src> tags to load images without an Authorization header.
   .openapi(rawAssetRoute, async (c) => {
     const { uid, id } = c.req.valid('param');
-    await requireUniverse(uid, c.var.userId);
+
+    if (c.var.userId) {
+      // Bearer-authenticated path: standard ownership check.
+      await requireUniverse(uid, c.var.userId);
+    } else {
+      // Signed-URL path: verify HMAC signature (bypass requireAuth fired in auth.ts).
+      const e = c.req.query('e');
+      const s = c.req.query('s');
+      if (!verifyAssetSig(uid, id, 'raw', e, s)) {
+        return c.json({ error: 'Unauthorized' }, 401);
+      }
+    }
 
     const rows = await db()
       .select()
@@ -475,9 +498,22 @@ export const assetsRouter = new OpenAPIHono<AppEnv>()
   })
 
   // GET /universes/:uid/assets/:id/thumb — serve thumbnail bytes
+  //
+  // Phase 38 UAT-fix: same two-path authorization as /raw above.
   .openapi(thumbAssetRoute, async (c) => {
     const { uid, id } = c.req.valid('param');
-    await requireUniverse(uid, c.var.userId);
+
+    if (c.var.userId) {
+      // Bearer-authenticated path: standard ownership check.
+      await requireUniverse(uid, c.var.userId);
+    } else {
+      // Signed-URL path: verify HMAC signature.
+      const e = c.req.query('e');
+      const s = c.req.query('s');
+      if (!verifyAssetSig(uid, id, 'thumb', e, s)) {
+        return c.json({ error: 'Unauthorized' }, 401);
+      }
+    }
 
     const rows = await db()
       .select()
