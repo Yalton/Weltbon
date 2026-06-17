@@ -1,7 +1,20 @@
 import { z } from 'zod';
+import sharp from 'sharp';
 import { db } from '../db/client.js';
 import { universes, entries, links, categories, issues, issueEntries, graphPositions, timelinePins, assets } from '../db/schema.js';
 import { storageBackend } from './storage/local.js';
+
+// CR-02: quota enforcement on the import path (same cap as the upload path).
+const DEFAULT_MAX_UNIVERSE_QUOTA = 500 * 1024 * 1024; // 500 MB
+function maxUniverseQuota(): number {
+  const n = Number(process.env.MEDIA_UNIVERSE_QUOTA_BYTES);
+  return Number.isFinite(n) && n > 0 ? n : DEFAULT_MAX_UNIVERSE_QUOTA;
+}
+
+// WR-05: thumbnail generation options (same as upload path, D-11).
+const SHARP_OPTS = { limitInputPixels: 25_000_000, failOn: 'truncated' as const };
+const ALLOWED_MIME = new Set(['image/png', 'image/jpeg', 'image/webp', 'image/gif']);
+const ALLOWED_MIME_LIST = Array.from(ALLOWED_MIME).join(', ');
 
 export const importSchema = z.object({
   weltbon_version: z.string().refine(
@@ -143,7 +156,36 @@ export async function importUniverseJson(
 ) {
   const data = importSchema.parse(rawData);
 
-  return await db().transaction(async (tx) => {
+  // CR-02 (quota pre-check): sum bytes from the assetBytesMap before touching
+  // the DB. We cannot know the per-universe total yet (universe doesn't exist),
+  // so we validate the import payload itself does not exceed the cap. This is
+  // equivalent to what the upload path enforces per-file plus quota SUM; here
+  // the "SUM" is the total payload since the new universe starts at 0 bytes.
+  let importTotalBytes = 0;
+  for (const bytes of assetBytesMap.values()) {
+    importTotalBytes += bytes.length;
+  }
+  if (importTotalBytes > maxUniverseQuota()) {
+    throw new Error(
+      `Import asset bytes (${importTotalBytes}) exceed the per-universe storage quota ` +
+        `(${maxUniverseQuota()}). Reduce asset count or use a larger MEDIA_UNIVERSE_QUOTA_BYTES.`,
+    );
+  }
+
+  // CR-02: collect (newId, bytes, thumbBytes, metadata) pairs during the transaction
+  // so the DB rows are committed BEFORE any storageBackend.put() call. After the
+  // transaction commits, write bytes to storage; track written keys so a storage
+  // failure can issue best-effort cleanup (compensating deletes).
+  type PendingWrite = {
+    key: string;
+    bytes: Buffer;
+    thumbBytes: Buffer | null;
+  };
+  const pendingWrites: PendingWrite[] = [];
+  // Track written keys for compensating cleanup in case of a post-commit storage failure.
+  const writtenKeys: string[] = [];
+
+  const result = await db().transaction(async (tx) => {
     // 1. Create universe
     const [universe] = await tx
       .insert(universes)
@@ -180,8 +222,23 @@ export async function importUniverseJson(
     //    Build assetIdMap: old UUID → new UUID (remapped on import).
     //    Each asset's bytes are retrieved from assetBytesMap (provided by ZIP import path).
     //    For legacy JSON imports (assetBytesMap is empty), this loop is a no-op.
+    //
+    //    CR-02: storageBackend.put() is NO LONGER called here (inside the transaction).
+    //    Instead, we collect the bytes in pendingWrites and commit metadata rows first.
+    //    After the transaction commits, the post-commit loop writes bytes to storage.
+    //
+    //    WR-03: Re-derive mimeType via ALLOWED_MIME allow-list; if the manifest value
+    //    is not in the list, reject the asset row (stored-XSS defense on the share seam).
     const assetIdMap = new Map<string, string>();
     for (const asset of data.assets) {
+      // WR-03: Validate mimeType against the allow-list before writing metadata.
+      if (!ALLOWED_MIME.has(asset.mimeType)) {
+        throw new Error(
+          `Asset "${asset.filename}" has unsupported mimeType "${asset.mimeType}". ` +
+            `Allowed: ${ALLOWED_MIME_LIST}.`,
+        );
+      }
+
       const bytes = assetBytesMap.get(asset.id);
       if (!bytes) {
         // Asset declared in manifest but bytes not in ZIP (e.g. skipped large file).
@@ -200,18 +257,33 @@ export async function importUniverseJson(
         assetIdMap.set(asset.id, newId);
         continue;
       }
+
+      // WR-05: Generate thumbnail at import time via sharp (same as upload path).
+      // This ensures /thumb does not 404 for imported assets.
+      let thumbBytes: Buffer | null = null;
+      try {
+        thumbBytes = await sharp(bytes, SHARP_OPTS)
+          .resize(400, 400, { fit: 'inside', withoutEnlargement: true })
+          .toBuffer();
+      } catch {
+        // If sharp fails (corrupt/unsupported bytes), continue without a thumbnail.
+        // The metadata row is still inserted; /thumb will 404 gracefully.
+        thumbBytes = null;
+      }
+
       const newId = crypto.randomUUID();
-      // Restore bytes to StorageBackend with the new ID BEFORE inserting the row
-      // so that if put() throws, the transaction rolls back cleanly.
-      await storageBackend.put(newId, bytes);
+      // CR-02: Queue the byte write but do NOT call storageBackend.put() here.
+      // The DB row is inserted with the correct sizeBytes so the quota SUM stays
+      // consistent; the actual bytes are written after the transaction commits.
+      pendingWrites.push({ key: newId, bytes, thumbBytes });
       await tx.insert(assets).values({
         id: newId,
         universeId: universe.id,
         filename: asset.filename,
         mimeType: asset.mimeType,
         extension: asset.extension,
-        sizeBytes: asset.sizeBytes,
-        thumbSizeBytes: 0, // thumbnail not preserved in import (re-generate on next access if needed)
+        sizeBytes: bytes.length,
+        thumbSizeBytes: thumbBytes ? thumbBytes.length : 0,
       });
       assetIdMap.set(asset.id, newId);
     }
@@ -338,4 +410,28 @@ export async function importUniverseJson(
       assetCount: data.assets.length,
     };
   });
+
+  // CR-02 / WR-05: Transaction committed. Now write asset bytes to storage.
+  // If any put() fails, issue compensating deletes for keys already written
+  // (best-effort cleanup — storage may be partially unavailable, so individual
+  // delete failures are swallowed).
+  try {
+    for (const { key, bytes, thumbBytes } of pendingWrites) {
+      await storageBackend.put(key, bytes);
+      writtenKeys.push(key);
+      if (thumbBytes) {
+        await storageBackend.put(`${key}_thumb`, thumbBytes);
+        writtenKeys.push(`${key}_thumb`);
+      }
+    }
+  } catch (err) {
+    // Compensating cleanup: best-effort delete any bytes written so far.
+    // Rows were committed to the DB — the universe exists, but some asset bytes
+    // are missing (graceful missing-image behavior). Log and re-throw so the
+    // caller knows the import partially failed.
+    await Promise.all(writtenKeys.map((k) => storageBackend.delete(k).catch(() => {})));
+    throw err;
+  }
+
+  return result;
 }
