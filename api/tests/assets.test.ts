@@ -315,7 +315,7 @@ describe('asset routes (MEDIA-01/02/03/04)', () => {
 
   // ─── MEDIA-04: cover image persistence ──────────────────────────────────────
 
-  it('persists entries.coverImageId set to an uploaded asset', async () => {
+  it('persists entries.coverImageId set via the entries API (CR-01 fix)', async () => {
     const { hdrs } = await userWithToken('f@test.com');
     const universe = await createUniverse(hdrs);
     const png = await makePng();
@@ -326,18 +326,31 @@ describe('asset routes (MEDIA-01/02/03/04)', () => {
         hdrs
       )
     );
-    const entry = await createEntry(universe.id, hdrs, { title: 'Cover Bearer' });
 
-    await handle.db
-      .update(entries)
-      .set({ coverImageId: asset.id })
-      .where(eq(entries.id, entry.id));
+    // Create entry with coverImageId via the API (CR-01: entries API now accepts it).
+    const entry = await createEntry(universe.id, hdrs, {
+      title: 'Cover Bearer API',
+      coverImageId: asset.id,
+    });
+    expect(entry.coverImageId).toBe(asset.id);
 
-    const [row] = await handle.db
-      .select({ coverImageId: entries.coverImageId })
-      .from(entries)
-      .where(eq(entries.id, entry.id));
-    expect(row.coverImageId).toBe(asset.id);
+    // PATCH to clear the cover (explicit null must clear the FK).
+    const patchRes = await jsonReq('PATCH', `/api/universes/${universe.id}/entries/${entry.id}`, {
+      headers: hdrs,
+      body: { coverImageId: null },
+    });
+    expect(patchRes.status).toBe(200);
+    const patched = await json(patchRes);
+    expect(patched.coverImageId).toBeNull();
+
+    // PATCH to set cover again.
+    const patchRes2 = await jsonReq('PATCH', `/api/universes/${universe.id}/entries/${entry.id}`, {
+      headers: hdrs,
+      body: { coverImageId: asset.id },
+    });
+    expect(patchRes2.status).toBe(200);
+    const patched2 = await json(patchRes2);
+    expect(patched2.coverImageId).toBe(asset.id);
   });
 
   // ─── Auth boundary (T-38-14) ────────────────────────────────────────────────

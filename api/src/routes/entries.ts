@@ -31,6 +31,9 @@ const createEntrySchema = z.object({
   // yields a finished (non-WIP) entry server-side.
   wip: z.boolean().optional().default(false),
   templateId: z.string().uuid().nullable().optional(),   // D-16 — optional best-effort stamp target
+  // Phase 38 MEDIA-04 (D-06): cover image for the entry. Nullable so `null` clears the FK.
+  // No default — omitting on POST yields null server-side via the ?? null guard in .values().
+  coverImageId: z.string().uuid().nullable().optional(),
 });
 
 const patchEntrySchema = z.object({
@@ -48,6 +51,9 @@ const patchEntrySchema = z.object({
   // Phase 36 DATA-03: optional with NO default — omitting on PATCH must NOT flip the
   // existing wip column value (PATCH non-destructive, mirrors isPublic).
   wip: z.boolean().optional(),
+  // Phase 38 MEDIA-04 (D-06): optional with NO default — omitting on PATCH must NOT clear
+  // an existing cover ref. Explicit null clears the FK (Drizzle skips undefined keys).
+  coverImageId: z.string().uuid().nullable().optional(),
 }).refine((v) => Object.values(v).some((val) => val !== undefined), {
   message: 'At least one field is required',
 });
@@ -435,6 +441,9 @@ export const entryRoutes = new OpenAPIHono<AppEnv>()
         // Phase 36 DATA-03: persist the WIP flag. zod default converts undefined → false,
         // and the ?? false is a belt-and-suspenders guard, so omitting on POST yields finished.
         wip: data.wip ?? false,
+        // Phase 38 MEDIA-04 (D-06): persist cover image ref. ?? null ensures omission
+        // yields null (no cover) rather than undefined (Drizzle would skip the column).
+        coverImageId: data.coverImageId ?? null,
       })
       .returning();
 
