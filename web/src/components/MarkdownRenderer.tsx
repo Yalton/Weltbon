@@ -61,19 +61,38 @@ export function MarkdownRenderer({
 }: {
   content: string;
   wikis?: WikilinkResolutionData;
-  assets?: { universeId: string; shareToken?: string | null };
+  assets?: {
+    universeId: string;
+    shareToken?: string | null;
+    /**
+     * Phase 38 UAT-fix: pre-signed URL map from the API response.
+     * Keys are asset UUIDs; values are signed /raw URLs that include ?e=&s= HMAC params
+     * (or ?u=&e=&s= for share mode). When present, these are used directly as <img src>
+     * instead of constructing the path — so <img> loads without Authorization: Bearer.
+     */
+    assetUrls?: Record<string, string>;
+  };
 }) {
   // Build the img component override only when `assets` prop is provided.
   const imgComponent = assets
     ? ({ src, alt }: { src?: string; alt?: string }) => {
         if (src?.startsWith('asset://')) {
           const uuid = src.slice('asset://'.length);
-          // Share mode: <img src> is a direct browser fetch, NOT an api() call.
-          // The api() client /universes/<uid> → /api/share rewrite does NOT apply
-          // here. Build the share URL explicitly (Pitfall 4 / T-38-21).
-          const rawUrl = assets.shareToken
-            ? `/api/share/assets/${uuid}/raw`
-            : `/api/universes/${assets.universeId}/assets/${uuid}/raw`;
+          // Phase 38 UAT-fix: prefer pre-signed URL from assetUrls map (server-provided,
+          // includes HMAC sig so <img> can load without Authorization: Bearer header).
+          // Fall back to constructing the URL if the map doesn't have this UUID.
+          let rawUrl: string;
+          if (assets.assetUrls?.[uuid]) {
+            rawUrl = assets.assetUrls[uuid];
+          } else if (assets.shareToken) {
+            // Share mode fallback (Pitfall 4 / T-38-21): build share URL explicitly.
+            rawUrl = `/api/share/assets/${uuid}/raw`;
+          } else {
+            // Authed fallback: bare URL (will 401 in browser without bearer — this path
+            // should not be reached now that the API provides assetUrls, but kept as
+            // belt-and-suspenders so the component degrades gracefully on old API responses).
+            rawUrl = `/api/universes/${assets.universeId}/assets/${uuid}/raw`;
+          }
           return (
             <img
               src={rawUrl}

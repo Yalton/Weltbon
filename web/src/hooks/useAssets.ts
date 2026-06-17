@@ -10,6 +10,10 @@ export interface AssetSummary {
   sizeBytes: number;
   thumbSizeBytes: number;
   altText: string | null;
+  // Phase 38 UAT-fix: pre-signed serving URLs from the API (include ?e=&s= HMAC params
+  // so <img src> can load without Authorization: Bearer header).
+  rawUrl: string;
+  thumbUrl: string;
   createdAt: string;
   updatedAt: string;
 }

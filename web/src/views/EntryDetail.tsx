@@ -285,15 +285,18 @@ export function EntryDetail() {
       )}
 
       {/* Cover image (D-06) — between header block and body markdown (Phase 38 MEDIA-04).
-          Share-aware: <img src> is a direct browser fetch so URL is built explicitly
-          rather than relying on the api() client rewrite seam (Pitfall 4 / T-38-21). */}
-      {entry.coverImageId && (
+          Phase 38 UAT-fix: use the pre-signed coverImageUrl from the API response so
+          <img src> can load without Authorization: Bearer (which browsers can't attach
+          to image tag fetches). Falls back to building the URL from coverImageId for
+          older API responses that don't yet include coverImageUrl. */}
+      {(entry.coverImageUrl ?? entry.coverImageId) && (
         <div className="mt-4 mb-4">
           <img
             src={
-              isShareMode
+              entry.coverImageUrl ??
+              (isShareMode
                 ? `/api/share/assets/${entry.coverImageId}/raw`
-                : `/api/universes/${uid}/assets/${entry.coverImageId}/raw`
+                : `/api/universes/${uid}/assets/${entry.coverImageId}/raw`)
             }
             alt={`Cover image for ${entry.title}`}
             className="max-w-full rounded-lg"
@@ -309,14 +312,15 @@ export function EntryDetail() {
           share branch omits onAddWord (T-32-11 read-only, no mutation surface).
           entryTitles + dictionaryWords are derived from public-scoped data in
           share mode (via the api-client seam → /api/share/entries + /api/share/dictionary).
-          Phase 38 MEDIA-05: assets prop threads universeId + shareToken so the
-          components.img resolver can build the correct authed/share raw URL. */}
+          Phase 38 MEDIA-05: assets prop threads universeId + shareToken + assetUrls so the
+          components.img resolver uses pre-signed URLs from the API response (UAT-fix) and
+          can build the correct authed/share raw URL as fallback. */}
       {entry.body && (
         <div className="mt-6">
           <MarkdownRenderer
             content={entry.body}
             wikis={wikis}
-            assets={{ universeId: uid!, shareToken: token ?? null }}
+            assets={{ universeId: uid!, shareToken: token ?? null, assetUrls: entry.assetUrls }}
           />
         </div>
       )}

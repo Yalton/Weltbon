@@ -73,6 +73,19 @@ export interface EntryDetail extends Entry {
   backlinks: Backlink[];
   /** Open (resolved=false) issues referencing this entry. Added in Plan 03-04 backend / Plan 03-09 UI. */
   issues: EntryIssueRef[];
+  /**
+   * Phase 38 UAT-fix: pre-signed URL for the cover image, or null if no cover.
+   * Use this instead of building a URL from coverImageId — the signed URL can be
+   * used directly as <img src> without Authorization: Bearer (which browsers can't
+   * attach to image tag fetches).
+   */
+  coverImageUrl?: string | null;
+  /**
+   * Phase 38 UAT-fix: map of asset UUID → pre-signed raw URL for every
+   * asset:// embed in this entry's body. Use these in MarkdownRenderer instead
+   * of constructing /api/universes/.../assets/:id/raw paths manually.
+   */
+  assetUrls?: Record<string, string>;
 }
 
 export type CreateEntryInput = {

@@ -128,7 +128,7 @@ export function AssetPickerModal({
                     aria-pressed={selected === asset.id}
                   >
                     <img
-                      src={`/api/universes/${universeId}/assets/${asset.id}/thumb`}
+                      src={asset.thumbUrl}
                       alt={asset.altText ?? asset.filename}
                       className="w-full h-full object-contain bg-neutral-100 dark:bg-neutral-800"
                       onError={(e) => {

@@ -59,7 +59,7 @@ function AssetCard({
       {/* Thumbnail */}
       <div className="aspect-square flex items-center justify-center bg-neutral-100 dark:bg-neutral-800">
         <img
-          src={`/api/universes/${uid}/assets/${asset.id}/thumb`}
+          src={asset.thumbUrl}
           alt={asset.altText ?? asset.filename}
           className="w-full h-full object-contain"
           onError={(e) => {
