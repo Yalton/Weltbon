@@ -4,6 +4,7 @@ import { HTTPException } from 'hono/http-exception';
 import { db } from '../db/client.js';
 import { entries, links, categories, issues, issueEntries, entryTemplates } from '../db/schema.js';
 import { requireUniverse } from '../utils/ownership.js';
+import { signAssetUrl } from '../services/asset-signing.js';
 import type { AuthVariables } from '../middleware/auth.js';
 
 type AppEnv = { Variables: AuthVariables };
@@ -105,6 +106,11 @@ const entryDetailSchema = entrySchema.extend({
     title: z.string(),
     severity: z.string(),
   })),
+  // Phase 38 UAT-fix: pre-signed image URLs so web <img> tags can render without bearer.
+  // coverImageUrl: signed /raw URL for the cover image, or null if no cover.
+  // assetUrls: map of asset UUID → signed /raw URL for every asset:// embed in body.
+  coverImageUrl: z.string().nullable().optional(),
+  assetUrls: z.record(z.string(), z.string()).optional(),
 });
 
 // ─── Helper ──────────────────────────────────────────────────────────────────
@@ -518,7 +524,25 @@ export const entryRoutes = new OpenAPIHono<AppEnv>()
       .where(and(eq(issueEntries.entryId, entryId), eq(issues.resolved, false)))
       .orderBy(issues.createdAt);
 
-    return c.json({ ...entry, outboundLinks, backlinks, issues: entryIssues } as any, 200);
+    // Phase 38 UAT-fix: compute pre-signed URLs so web <img> tags can render
+    // cover images and inline embeds without needing an Authorization: Bearer header.
+    const coverImageUrl = entry.coverImageId
+      ? `/api/universes/${uid}/assets/${entry.coverImageId}/raw${signAssetUrl(uid, entry.coverImageId, 'raw')}`
+      : null;
+
+    // Extract every distinct asset:// UUID from the entry body and sign each one.
+    const assetUuidRe = /asset:\/\/([0-9a-fA-F-]{36})/g;
+    const assetUrls: Record<string, string> = {};
+    if (entry.body) {
+      for (const m of entry.body.matchAll(assetUuidRe)) {
+        const assetId = m[1];
+        if (!assetUrls[assetId]) {
+          assetUrls[assetId] = `/api/universes/${uid}/assets/${assetId}/raw${signAssetUrl(uid, assetId, 'raw')}`;
+        }
+      }
+    }
+
+    return c.json({ ...entry, outboundLinks, backlinks, issues: entryIssues, coverImageUrl, assetUrls } as any, 200);
   })
 
   // PATCH /:id -- update entry
