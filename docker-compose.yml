@@ -9,8 +9,11 @@ services:
     env_file: .env
     environment:
       DATABASE_URL: postgresql://weltbon:${POSTGRES_PASSWORD}@db:5432/weltbon
+      UPLOADS_DIR: /uploads
     ports:
       - "3000:3000"
+    volumes:
+      - uploads:/uploads
     depends_on:
       db:
         condition: service_healthy
@@ -33,3 +36,4 @@ services:
 
 volumes:
   pgdata:
+  uploads:
