@@ -13,6 +13,7 @@ import SaveAsTemplateDialog from '../components/SaveAsTemplateDialog';
 import { Toast } from '../components/Toast';
 import { Toggle } from '../components/Toggle';
 import { WipPill } from '../components/WipPill';
+import { AssetPickerModal } from '../components/AssetPickerModal';
 import { metaArrayToRecord } from '../lib/entryTemplates';
 import type { Entry } from '../hooks/useEntries';
 import type { EntryTemplate } from '../lib/entryTemplates';
@@ -50,6 +51,12 @@ export function EntryEditor() {
   // Phase 36 DATA-03 — WIP/draft toggle state. Default false on new entries;
   // seeded from existingEntry.wip on edit. Independent of isPublic (T-36-06-01).
   const [wip, setWip] = useState(false);
+  // Phase 38 MEDIA-04/05 — cover image + insert-embed picker state.
+  const [coverImageId, setCoverImageId] = useState<string | null>(null);
+  const [pickerOpen, setPickerOpen] = useState(false);
+  const [pickerMode, setPickerMode] = useState<'insert-embed' | 'set-cover'>('insert-embed');
+  // Ref to the body textarea for cursor-position insertion of asset:// embeds.
+  const bodyTextareaRef = useRef<HTMLTextAreaElement | null>(null);
   // CR-03: gate the create-mode template prefill so it runs at most once per
   // navigation. Without this, every refetch of `universe` (window focus,
   // stale-time expiry) re-runs the prefill effect and silently wipes any
@@ -91,6 +98,8 @@ export function EntryEditor() {
       setIsPublic(existingEntry.isPublic ?? true);
       // Phase 36 DATA-03 — seed the WIP toggle from the loaded entry.
       setWip(existingEntry.wip ?? false);
+      // Phase 38 MEDIA-04 — seed coverImageId from the loaded entry.
+      setCoverImageId((existingEntry as Entry & { coverImageId?: string | null }).coverImageId ?? null);
       return;
     }
     // Create mode: prefill from location.state.template ONCE per navigation.
@@ -145,6 +154,8 @@ export function EntryEditor() {
       isPublic,
       // Phase 36 DATA-03 — Plan 03 surface accepts wip on POST + PATCH.
       wip,
+      // Phase 38 MEDIA-04 — forward coverImageId through the entries submit.
+      coverImageId,
       ...(stateTemplateId ? { templateId: stateTemplateId } : {}),
     };
 
@@ -159,6 +170,41 @@ export function EntryEditor() {
 
   const entryTypes = universe?.entryTypes ?? [];
   const isPending = createEntry.isPending || updateEntry.isPending;
+
+  // Phase 38 MEDIA-05: handle picker selection for both modes.
+  const handlePickerSelect = (assetId: string) => {
+    if (pickerMode === 'insert-embed') {
+      // Insert ![alt](asset://uuid) at cursor or append to body textarea
+      const textarea = bodyTextareaRef.current;
+      const embed = `![image](asset://${assetId})`;
+      if (textarea) {
+        const start = textarea.selectionStart ?? 0;
+        const end = textarea.selectionEnd ?? 0;
+        const currentValue = textarea.value;
+        const newValue =
+          currentValue.slice(0, start) + embed + currentValue.slice(end);
+        // Use react-hook-form's setValue via the native input event approach
+        const nativeInputValueSetter = Object.getOwnPropertyDescriptor(
+          window.HTMLTextAreaElement.prototype,
+          'value',
+        )?.set;
+        if (nativeInputValueSetter) {
+          nativeInputValueSetter.call(textarea, newValue);
+          textarea.dispatchEvent(new Event('input', { bubbles: true }));
+        }
+        // Move cursor after the inserted embed
+        setTimeout(() => {
+          textarea.selectionStart = start + embed.length;
+          textarea.selectionEnd = start + embed.length;
+          textarea.focus();
+        }, 0);
+      }
+    } else {
+      // set-cover mode
+      setCoverImageId(assetId);
+    }
+    setPickerOpen(false);
+  };
 
   return (
     <div className="max-w-3xl mx-auto">
@@ -243,18 +289,83 @@ export function EntryEditor() {
           />
         </div>
 
-        {/* Body (Markdown) */}
+        {/* Body (Markdown) + Insert image (D-05) */}
         <div>
-          <label htmlFor="entry-body" className="block text-sm mb-1">
-            Body (Markdown)
-          </label>
+          <div className="flex items-center justify-between mb-1">
+            <label htmlFor="entry-body" className="block text-sm">
+              Body (Markdown)
+            </label>
+            <button
+              type="button"
+              onClick={() => {
+                setPickerMode('insert-embed');
+                setPickerOpen(true);
+              }}
+              className="text-xs text-[color:var(--color-accent)] hover:underline"
+            >
+              Insert image
+            </button>
+          </div>
           <textarea
             id="entry-body"
             rows={12}
             {...register('body')}
+            ref={(el) => {
+              // Merge react-hook-form ref + our bodyTextareaRef
+              const { ref: rhfRef } = register('body');
+              if (typeof rhfRef === 'function') rhfRef(el);
+              bodyTextareaRef.current = el;
+            }}
             placeholder="Write in Markdown..."
             className="w-full rounded-md border border-neutral-300 dark:border-neutral-700 bg-transparent px-3 py-2 text-sm font-mono"
           />
+        </div>
+
+        {/* Cover image (D-04/D-05) */}
+        <div>
+          <label className="block text-sm mb-1">Cover image</label>
+          {coverImageId ? (
+            <div className="flex items-start gap-3">
+              <img
+                src={`/api/universes/${uid}/assets/${coverImageId}/thumb`}
+                alt="Cover image preview"
+                className="w-24 h-24 object-contain rounded border border-neutral-200 dark:border-neutral-700 bg-neutral-100 dark:bg-neutral-800"
+                onError={(e) => {
+                  (e.target as HTMLImageElement).style.display = 'none';
+                }}
+              />
+              <div className="flex flex-col gap-2">
+                <button
+                  type="button"
+                  onClick={() => {
+                    setPickerMode('set-cover');
+                    setPickerOpen(true);
+                  }}
+                  className="text-xs rounded-md border border-neutral-300 dark:border-neutral-700 px-3 py-1.5 hover:bg-neutral-50 dark:hover:bg-neutral-800"
+                >
+                  Change cover
+                </button>
+                <button
+                  type="button"
+                  onClick={() => setCoverImageId(null)}
+                  className="text-xs text-red-500 hover:text-red-700"
+                >
+                  Remove cover
+                </button>
+              </div>
+            </div>
+          ) : (
+            <button
+              type="button"
+              onClick={() => {
+                setPickerMode('set-cover');
+                setPickerOpen(true);
+              }}
+              className="text-sm rounded-md border border-neutral-300 dark:border-neutral-700 px-3 py-1.5 hover:bg-neutral-50 dark:hover:bg-neutral-800"
+            >
+              Set cover image
+            </button>
+          )}
         </div>
 
         {/* Tags */}
@@ -393,6 +504,17 @@ export function EntryEditor() {
           </div>
         </div>
       </form>
+
+      {/* Asset picker modal — Phase 38 MEDIA-04/05 (D-05) */}
+      {uid && (
+        <AssetPickerModal
+          open={pickerOpen}
+          onOpenChange={setPickerOpen}
+          universeId={uid}
+          mode={pickerMode}
+          onSelect={handlePickerSelect}
+        />
+      )}
 
       {/* Save-as-template dialog — D-15 */}
       <SaveAsTemplateDialog

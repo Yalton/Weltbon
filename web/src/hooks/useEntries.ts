@@ -29,6 +29,14 @@ export interface Entry {
    * the field is always present on every response — never optional on read.
    */
   wip: boolean;
+  /**
+   * Phase 38 — MEDIA-04 / D-06.
+   * Nullable FK to the assets table. When set, the cover image renders between
+   * the header block and the body markdown on EntryDetail (D-06). Null means no
+   * cover image. Automatically nulled by the DB when the referenced asset is
+   * deleted (ON DELETE SET NULL).
+   */
+  coverImageId?: string | null;
   createdAt: string;
   updatedAt: string;
 }
@@ -80,6 +88,8 @@ export type CreateEntryInput = {
   isPublic?: boolean;
   /** Phase 36 DATA-03 — defaults to false server-side; explicit on the wire so PATCH non-destructive. */
   wip?: boolean;
+  /** Phase 38 MEDIA-04 — nullable cover image asset id; null clears the cover. */
+  coverImageId?: string | null;
 };
 
 export type UpdateEntryInput = Partial<CreateEntryInput>;
