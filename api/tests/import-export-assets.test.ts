@@ -24,6 +24,7 @@ process.env.UPLOADS_DIR = UPLOADS_TMP;
 
 import { describe, it, expect, beforeAll, afterAll, beforeEach } from 'vitest';
 import sharp from 'sharp';
+import { eq } from 'drizzle-orm';
 import { createApp } from '../src/index.js';
 import {
   createTestDb,
@@ -33,7 +34,8 @@ import {
   type TestDbHandle,
 } from './helpers.js';
 import { issueAccessToken } from '../src/services/auth.js';
-import { setTestDb } from '../src/db/client.js';
+import { setTestDb, db } from '../src/db/client.js';
+import { entries } from '../src/db/schema.js';
 import { storageBackend } from '../src/services/storage/local.js';
 
 describe('import-export-assets (MEDIA-06)', () => {
@@ -124,23 +126,15 @@ describe('import-export-assets (MEDIA-06)', () => {
       headers: { ...hdrs },
       body: fd,
     });
-    expect(res.status, `upload failed: ${await res.text()}`).toBe(201);
+    if (res.status !== 201) {
+      throw new Error(`upload failed with status ${res.status}: ${await res.text()}`);
+    }
     return json(res);
   }
 
-  /** Set an entry's coverImageId via PATCH. */
-  async function setCover(
-    uid: string,
-    entryId: string,
-    assetId: string,
-    hdrs: Record<string, string>,
-  ) {
-    const res = await jsonReq('PATCH', `/api/universes/${uid}/entries/${entryId}`, {
-      headers: hdrs,
-      body: { coverImageId: assetId },
-    });
-    expect(res.status, `setCover failed: ${await res.text()}`).toBe(200);
-    return json(res);
+  /** Set an entry's coverImageId directly via the database (for test setup). */
+  async function setCover(entryId: string, assetId: string) {
+    await db().update(entries).set({ coverImageId: assetId }).where(eq(entries.id, entryId));
   }
 
   /**
@@ -152,7 +146,9 @@ describe('import-export-assets (MEDIA-06)', () => {
       `http://localhost/api/universes/${uid}/export?format=json`,
       { headers: hdrs },
     );
-    expect(res.status, 'export failed').toBe(200);
+    if (res.status !== 200) {
+      throw new Error(`export failed with status ${res.status}: ${await res.text()}`);
+    }
     expect(res.headers.get('content-type')).toBe('application/zip');
     return Buffer.from(await res.arrayBuffer());
   }
@@ -188,7 +184,7 @@ describe('import-export-assets (MEDIA-06)', () => {
       title: 'Entry With Cover',
       body: '',
     });
-    await setCover(universe.id, coverEntry.id, coverAsset.id, hdrs);
+    await setCover(coverEntry.id, coverAsset.id);
 
     const inlineEntry = await createEntry(universe.id, hdrs, {
       title: 'Entry With Inline',
@@ -202,36 +198,46 @@ describe('import-export-assets (MEDIA-06)', () => {
     // 4. Import the ZIP (creates a new universe with new UUIDs).
     const { status, body: importResult } = await importZip(zipBytes, hdrs);
     expect(status, `import failed: ${JSON.stringify(importResult)}`).toBe(201);
+    // eslint-disable-next-line @typescript-eslint/no-explicit-any
     expect(importResult.assetCount).toBe(2);
     expect(importResult.entryCount).toBe(2);
 
     const newUniverseId: string = importResult.universeId;
 
-    // 5. List entries in the new universe.
+    // 5. List entries in the new universe (list response includes coverImageId but not body).
     const entriesRes = await jsonReq('GET', `/api/universes/${newUniverseId}/entries`, {
       headers: hdrs,
     });
     expect(entriesRes.status).toBe(200);
     const entriesList = await json(entriesRes);
 
-    const newCoverEntry = entriesList.find((e: any) => e.title === 'Entry With Cover');
-    const newInlineEntry = entriesList.find((e: any) => e.title === 'Entry With Inline');
-    expect(newCoverEntry, 'cover entry not found in new universe').toBeTruthy();
-    expect(newInlineEntry, 'inline entry not found in new universe').toBeTruthy();
+    const newCoverEntryStub = entriesList.find((e: any) => e.title === 'Entry With Cover');
+    const newInlineEntryStub = entriesList.find((e: any) => e.title === 'Entry With Inline');
+    expect(newCoverEntryStub, 'cover entry not found in new universe').toBeTruthy();
+    expect(newInlineEntryStub, 'inline entry not found in new universe').toBeTruthy();
 
     // 6. Assert cover entry has a new (remapped) coverImageId that is not the original.
-    expect(newCoverEntry.coverImageId, 'imported entry should have coverImageId').toBeTruthy();
-    expect(newCoverEntry.coverImageId).not.toBe(coverAsset.id); // remapped to new UUID
+    expect(newCoverEntryStub.coverImageId, 'imported entry should have coverImageId').toBeTruthy();
+    expect(newCoverEntryStub.coverImageId).not.toBe(coverAsset.id); // remapped to new UUID
 
     // 7. Assert the cover asset's bytes are retrievable in the new universe.
     const rawRes = await app.request(
-      `http://localhost/api/universes/${newUniverseId}/assets/${newCoverEntry.coverImageId}/raw`,
+      `http://localhost/api/universes/${newUniverseId}/assets/${newCoverEntryStub.coverImageId}/raw`,
       { headers: hdrs },
     );
     expect(rawRes.status, 'cover asset bytes not retrievable after import').toBe(200);
     expect(rawRes.headers.get('content-type')).toBe('image/png');
 
-    // 8. Assert the inline body ref was remapped: asset://oldId → asset://newId.
+    // 8. Fetch the inline entry individually to get the body field (list omits body for size).
+    const inlineEntryRes = await jsonReq(
+      'GET',
+      `/api/universes/${newUniverseId}/entries/${newInlineEntryStub.id}`,
+      { headers: hdrs },
+    );
+    expect(inlineEntryRes.status).toBe(200);
+    const newInlineEntry = await json(inlineEntryRes);
+
+    // Assert the inline body ref was remapped: asset://oldId → asset://newId.
     const inlineBody: string = newInlineEntry.body;
     expect(inlineBody, 'body should contain asset:// ref').toMatch(/asset:\/\//);
     // Must NOT reference the original asset ID.
@@ -261,7 +267,7 @@ describe('import-export-assets (MEDIA-06)', () => {
 
     // 11. The cover asset's bytes in StorageBackend are identical to the original.
     const origBytes = await storageBackend.get(coverAsset.id);
-    const restoredBytes = await storageBackend.get(newCoverEntry.coverImageId);
+    const restoredBytes = await storageBackend.get(newCoverEntryStub.coverImageId);
     expect(origBytes).not.toBeNull();
     expect(restoredBytes).not.toBeNull();
     expect(restoredBytes!.length).toBe(origBytes!.length);

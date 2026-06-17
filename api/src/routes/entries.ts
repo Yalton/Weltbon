@@ -372,6 +372,9 @@ export const entryRoutes = new OpenAPIHono<AppEnv>()
       isPublic: entries.isPublic,
       // Phase 36 DATA-03: projected so list responses surface wip for the WipPill badge.
       wip: entries.wip,
+      // Phase 38 MEDIA-04 (D-06): surface coverImageId so the UI can render cover images
+      // on list cards and so the import round-trip test can verify remapping.
+      coverImageId: entries.coverImageId,
       createdAt: entries.createdAt,
       updatedAt: entries.updatedAt,
     };

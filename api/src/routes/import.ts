@@ -1,8 +1,7 @@
-import { OpenAPIHono, createRoute, z } from '@hono/zod-openapi';
+import { OpenAPIHono, z } from '@hono/zod-openapi';
 import { importUniverseJson, importSchema } from '../services/import-json.js';
 import type { AuthVariables } from '../middleware/auth.js';
 import { ZodError } from 'zod';
-import { bodyLimit } from 'hono/body-limit';
 import yauzl from 'yauzl';
 
 type AppEnv = { Variables: AuthVariables };
@@ -139,72 +138,39 @@ function unpackImportZip(buffer: Buffer): Promise<Map<string, Buffer>> {
   });
 }
 
-// ─── Route definitions ───────────────────────────────────────────────────────
+// ─── Shared error handler ─────────────────────────────────────────────────────
 
-const importRoute = createRoute({
-  method: 'post',
-  path: '/',
-  tags: ['Import'],
-  summary: 'Import a universe from JSON or ZIP',
-  description:
-    'Creates a new universe from a Weltbon export file. ' +
-    'Accepts application/json (version 1.0.0 legacy) or multipart/form-data ZIP ' +
-    '(version 2.0.0 — manifest.json + asset bytes). Remaps all IDs atomically.',
-  security: [{ bearerAuth: [] }],
-  request: {
-    body: {
-      content: {
-        'application/json': {
-          schema: importSchema,
-        },
-        'multipart/form-data': {
-          schema: z.any(),
-        },
-      },
-      required: true,
-    },
-  },
-  responses: {
-    201: {
-      content: {
-        'application/json': {
-          schema: importResultSchema,
-        },
-      },
-      description: 'Universe imported successfully',
-    },
-    400: {
-      content: { 'application/json': { schema: errorSchema } },
-      description: 'Invalid import format, incompatible version, or unknown referenced IDs',
-    },
-    401: {
-      content: { 'application/json': { schema: errorSchema } },
-      description: 'Unauthorized',
-    },
-    413: {
-      content: { 'application/json': { schema: errorSchema } },
-      description: 'ZIP too large',
-    },
-    500: {
-      content: { 'application/json': { schema: errorSchema } },
-      description: 'Internal error (transactional failure)',
-    },
-  },
-});
+function handleImportError(err: unknown): { status: 400 | 500; body: object } {
+  if (err instanceof ZodError) {
+    const issues = err.issues as Array<{ path: Array<string | number>; message: string }>;
+    const versionError = issues.find((e) => e.path.includes('weltbon_version'));
+    if (versionError) {
+      return { status: 400, body: { error: 'Incompatible export version. Expected 1.0.0 or 2.0.0' } };
+    }
+    return { status: 400, body: { error: 'Invalid import format', details: issues } };
+  }
+  if (err instanceof Error && err.message.includes('unknown entry ID')) {
+    return { status: 400, body: { error: err.message } };
+  }
+  throw err;
+}
 
 // ─── Router ──────────────────────────────────────────────────────────────────
 
 export const importRoutes = new OpenAPIHono<AppEnv>()
 
-  .openapi(importRoute, async (c) => {
+  // Phase 38 MEDIA-06 (D-07): Plain .post() registered BEFORE the .openapi() route.
+  // This intercepts ALL POST / requests before OpenAPIHono's body validator runs,
+  // which is critical for multipart/form-data (ZIP) requests — the openapi() validator
+  // would validate the body as application/json (getting undefined) and return 400
+  // before our handler logic ever executes. The plain .post() bypasses that entirely.
+  .post('/', async (c) => {
     const userId = c.var.userId;
     const contentType = c.req.header('content-type') ?? '';
 
     try {
       if (contentType.includes('multipart/form-data')) {
         // ── ZIP import path (Phase 38 MEDIA-06 D-07) ──
-        // Body size enforcement happens via bodyLimit or we trust the route host to
-        // handle oversized requests. Parse the multipart body to get the ZIP file.
         const body = await c.req.parseBody();
         const zipFile = body['file'];
         if (!(zipFile instanceof File)) {
@@ -250,23 +216,19 @@ export const importRoutes = new OpenAPIHono<AppEnv>()
         return c.json(result, 201);
 
       } else {
-        // ── Legacy JSON path (unchanged) ──
-        const rawBody = c.req.valid('json');
+        // ── Legacy JSON path ──
+        let rawBody: unknown;
+        try {
+          rawBody = await c.req.json();
+        } catch {
+          return c.json({ error: 'Request body must be valid JSON or multipart/form-data ZIP' }, 400);
+        }
         const result = await importUniverseJson(userId, rawBody);
         return c.json(result, 201);
       }
     } catch (err) {
-      if (err instanceof ZodError) {
-        const issues = err.issues as Array<{ path: Array<string | number>; message: string }>;
-        const versionError = issues.find((e) => e.path.includes('weltbon_version'));
-        if (versionError) {
-          return c.json({ error: 'Incompatible export version. Expected 1.0.0 or 2.0.0' }, 400);
-        }
-        return c.json({ error: 'Invalid import format', details: issues } as any, 400);
-      }
-      if (err instanceof Error && err.message.includes('unknown entry ID')) {
-        return c.json({ error: err.message }, 400);
-      }
-      throw err;
+      const { status, body } = handleImportError(err);
+      return c.json(body as any, status);
     }
-  });
+  })
+
