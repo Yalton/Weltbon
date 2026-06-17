@@ -2,14 +2,17 @@
  * Phase 38 MEDIA-05: MarkdownRenderer asset:// img resolver tests.
  *
  * Asserts:
- * 1. Authenticated URL: asset://uuid → /api/universes/u1/assets/uuid/raw
- * 2. Share URL: asset://uuid + shareToken → /api/share/assets/uuid/raw
- * 3. Non-asset src passes through unchanged
- * 4. img onError hides the element (sets display:none) — no /missing-image.svg
+ * 1. Authenticated URL (no assetUrls map): asset://uuid → /api/universes/u1/assets/uuid/raw
+ * 2. Share URL (no assetUrls map): asset://uuid + shareToken → /api/share/assets/uuid/raw
+ * 3. Pre-signed assetUrls map (authed): asset://uuid resolved from provided map (UAT-fix)
+ * 4. Pre-signed assetUrls map (share): asset://uuid resolved from provided map (UAT-fix)
+ * 5. Non-asset src passes through unchanged
+ * 6. img onError hides the element (sets display:none) — no /missing-image.svg
  *
  * T-38-20: uuid is concatenated into a URL path, never dangerouslySetInnerHTML.
  * T-38-21: share mode uses /api/share/assets/:id/raw explicitly (Pitfall 4).
  * T-38-22: onError hides the broken img (no /missing-image.svg exists).
+ * Phase 38 UAT-fix: when assetUrls map is provided, use the pre-signed URL directly.
  */
 
 import { describe, it, expect } from 'vitest';
@@ -21,7 +24,9 @@ const ASSET_UUID = 'abc-123-def-456';
 const SHARE_TOKEN = 'share-tok';
 
 describe('MarkdownRenderer — asset:// img resolver (MEDIA-05)', () => {
-  it('renders asset:// src as authed /api/universes/:uid/assets/:id/raw URL', () => {
+  // ─── Fallback paths (no assetUrls map) ──────────────────────────────────────
+
+  it('renders asset:// src as authed /api/universes/:uid/assets/:id/raw URL (no assetUrls map)', () => {
     const content = `![pic](asset://${ASSET_UUID})`;
     render(
       <MarkdownRenderer
@@ -37,7 +42,7 @@ describe('MarkdownRenderer — asset:// img resolver (MEDIA-05)', () => {
     );
   });
 
-  it('renders asset:// src as share /api/share/assets/:id/raw URL when shareToken present', () => {
+  it('renders asset:// src as share /api/share/assets/:id/raw URL when shareToken present (no assetUrls map)', () => {
     const content = `![cover](asset://${ASSET_UUID})`;
     render(
       <MarkdownRenderer
@@ -54,6 +59,70 @@ describe('MarkdownRenderer — asset:// img resolver (MEDIA-05)', () => {
     );
     expect(img.getAttribute('src')).not.toContain('/universes/');
   });
+
+  // ─── Pre-signed assetUrls map paths (Phase 38 UAT-fix) ──────────────────────
+
+  it('uses pre-signed URL from assetUrls map (authed path)', () => {
+    const signedUrl = `/api/universes/${UNIVERSE_ID}/assets/${ASSET_UUID}/raw?e=9999999999&s=deadbeef`;
+    const content = `![signed](asset://${ASSET_UUID})`;
+    render(
+      <MarkdownRenderer
+        content={content}
+        assets={{
+          universeId: UNIVERSE_ID,
+          assetUrls: { [ASSET_UUID]: signedUrl },
+        }}
+      />,
+    );
+
+    const img = screen.getByRole('img', { name: 'signed' });
+    expect(img.getAttribute('src')).toBe(signedUrl);
+    // Must use the map URL, not the unsigned fallback
+    expect(img.getAttribute('src')).toContain('?e=');
+    expect(img.getAttribute('src')).toContain('&s=');
+  });
+
+  it('uses pre-signed URL from assetUrls map (share path)', () => {
+    const signedShareUrl = `/api/share/assets/${ASSET_UUID}/raw?u=${UNIVERSE_ID}&e=9999999999&s=deadbeef`;
+    const content = `![share-signed](asset://${ASSET_UUID})`;
+    render(
+      <MarkdownRenderer
+        content={content}
+        assets={{
+          universeId: UNIVERSE_ID,
+          shareToken: SHARE_TOKEN,
+          assetUrls: { [ASSET_UUID]: signedShareUrl },
+        }}
+      />,
+    );
+
+    const img = screen.getByRole('img', { name: 'share-signed' });
+    expect(img.getAttribute('src')).toBe(signedShareUrl);
+    expect(img.getAttribute('src')).toContain('/api/share/assets/');
+    expect(img.getAttribute('src')).toContain('?u=');
+  });
+
+  it('falls back to constructing URL for uuids not in assetUrls map', () => {
+    const OTHER_UUID = 'other-uuid-not-in-map';
+    const content = `![fallback](asset://${OTHER_UUID})`;
+    render(
+      <MarkdownRenderer
+        content={content}
+        assets={{
+          universeId: UNIVERSE_ID,
+          assetUrls: { [ASSET_UUID]: '/api/universes/u1/assets/abc/raw?e=1&s=2' },
+        }}
+      />,
+    );
+
+    const img = screen.getByRole('img', { name: 'fallback' });
+    // UUID not in map → falls back to plain URL construction
+    expect(img.getAttribute('src')).toBe(
+      `/api/universes/${UNIVERSE_ID}/assets/${OTHER_UUID}/raw`,
+    );
+  });
+
+  // ─── Passthrough and error behavior ─────────────────────────────────────────
 
   it('passes through non-asset:// src unchanged', () => {
     const content = `![external](https://example.com/photo.png)`;

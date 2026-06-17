@@ -158,8 +158,13 @@ describe('asset routes (MEDIA-01/02/03/04)', () => {
     expect(asset.filename).toBe('hero.png');
     expect(asset.sizeBytes).toBeGreaterThan(0);
     expect(asset.thumbSizeBytes).toBeGreaterThan(0);
-    expect(asset.rawUrl).toBe(`/api/universes/${universe.id}/assets/${asset.id}/raw`);
-    expect(asset.thumbUrl).toBe(`/api/universes/${universe.id}/assets/${asset.id}/thumb`);
+    // Phase 38 UAT-fix: rawUrl/thumbUrl now include HMAC-signed ?e=&s= query params.
+    expect(asset.rawUrl).toContain(`/api/universes/${universe.id}/assets/${asset.id}/raw`);
+    expect(asset.rawUrl).toContain('?e=');
+    expect(asset.rawUrl).toContain('&s=');
+    expect(asset.thumbUrl).toContain(`/api/universes/${universe.id}/assets/${asset.id}/thumb`);
+    expect(asset.thumbUrl).toContain('?e=');
+    expect(asset.thumbUrl).toContain('&s=');
 
     // GET /raw → 200 image bytes with the stored mimeType
     const rawRes = await app.request(`http://localhost${asset.rawUrl}`, { headers: hdrs });
@@ -372,5 +377,177 @@ describe('asset routes (MEDIA-01/02/03/04)', () => {
 
     const res = await jsonReq('GET', `/api/universes/${universe.id}/assets`);
     expect(res.status).toBe(401);
+  });
+
+  // ─── Phase 38 UAT-fix: HMAC-signed URL regression (signed-asset-url) ────────
+
+  it('GET /raw with NO Authorization header but a VALID signature → 200 + correct Content-Type', async () => {
+    const { hdrs } = await userWithToken('signed-url-a@test.com');
+    const universe = await createUniverse(hdrs);
+    const png = await makePng();
+    const asset = await json(
+      await uploadReq(
+        `/api/universes/${universe.id}/assets`,
+        { bytes: png, filename: 'signed.png', mime: 'image/png' },
+        hdrs
+      )
+    );
+    // The upload response rawUrl now includes ?e=&s= query params.
+    expect(asset.rawUrl).toContain('?e=');
+    expect(asset.rawUrl).toContain('&s=');
+
+    // Fetch the signed rawUrl WITHOUT any Authorization header — should be 200.
+    const res = await app.request(`http://localhost${asset.rawUrl}`);
+    expect(res.status).toBe(200);
+    expect(res.headers.get('content-type')).toBe('image/png');
+    const bytes = Buffer.from(await res.arrayBuffer());
+    expect(bytes.length).toBe(asset.sizeBytes);
+  });
+
+  it('GET /raw with a tampered signature → 401', async () => {
+    const { hdrs } = await userWithToken('signed-url-b@test.com');
+    const universe = await createUniverse(hdrs);
+    const png = await makePng();
+    const asset = await json(
+      await uploadReq(
+        `/api/universes/${universe.id}/assets`,
+        { bytes: png, filename: 'tamper.png', mime: 'image/png' },
+        hdrs
+      )
+    );
+    // Build a tampered URL by replacing the signature with junk.
+    const tamperedUrl = asset.rawUrl.replace(/s=[^&]+/, 's=0000000000000000000000000000000000000000000000000000000000000000');
+    const res = await app.request(`http://localhost${tamperedUrl}`);
+    expect(res.status).toBe(401);
+  });
+
+  it('GET /raw with an expired signature → 401', async () => {
+    const { hdrs } = await userWithToken('signed-url-c@test.com');
+    const universe = await createUniverse(hdrs);
+    const png = await makePng();
+    const asset = await json(
+      await uploadReq(
+        `/api/universes/${universe.id}/assets`,
+        { bytes: png, filename: 'expired.png', mime: 'image/png' },
+        hdrs
+      )
+    );
+    // Build an expired URL: set e= to a past epoch (1 second before now).
+    const expiredEpoch = Math.floor(Date.now() / 1000) - 1;
+    const expiredUrl = asset.rawUrl.replace(/e=\d+/, `e=${expiredEpoch}`);
+    // The sig is now invalid for the new e= value too — but expiry alone should reject.
+    const res = await app.request(`http://localhost${expiredUrl}`);
+    expect(res.status).toBe(401);
+  });
+
+  it('GET /thumb with valid signature → 200 (thumb serving also works without bearer)', async () => {
+    const { hdrs } = await userWithToken('signed-url-d@test.com');
+    const universe = await createUniverse(hdrs);
+    const png = await makePng();
+    const asset = await json(
+      await uploadReq(
+        `/api/universes/${universe.id}/assets`,
+        { bytes: png, filename: 'sig-thumb.png', mime: 'image/png' },
+        hdrs
+      )
+    );
+    expect(asset.thumbUrl).toContain('?e=');
+    expect(asset.thumbUrl).toContain('&s=');
+
+    const res = await app.request(`http://localhost${asset.thumbUrl}`);
+    expect(res.status).toBe(200);
+    expect(res.headers.get('content-type')).toBe('image/png');
+  });
+
+  it('upload response and list rawUrl/thumbUrl contain ?e= and &s= signed params', async () => {
+    const { hdrs } = await userWithToken('signed-url-e@test.com');
+    const universe = await createUniverse(hdrs);
+    const png = await makePng();
+
+    // Upload: response rawUrl/thumbUrl should be signed.
+    const asset = await json(
+      await uploadReq(
+        `/api/universes/${universe.id}/assets`,
+        { bytes: png, filename: 'list-signed.png', mime: 'image/png' },
+        hdrs
+      )
+    );
+    expect(asset.rawUrl).toContain('?e=');
+    expect(asset.rawUrl).toContain('&s=');
+    expect(asset.thumbUrl).toContain('?e=');
+    expect(asset.thumbUrl).toContain('&s=');
+
+    // List: array items should also include signed rawUrl/thumbUrl.
+    const listRes = await jsonReq('GET', `/api/universes/${universe.id}/assets`, { headers: hdrs });
+    const list = await json(listRes);
+    expect(list.length).toBe(1);
+    expect(list[0].rawUrl).toContain('?e=');
+    expect(list[0].rawUrl).toContain('&s=');
+    expect(list[0].thumbUrl).toContain('?e=');
+    expect(list[0].thumbUrl).toContain('&s=');
+  });
+
+  it('entry detail coverImageUrl is a signed URL when entry has a cover image', async () => {
+    const { hdrs } = await userWithToken('signed-url-f@test.com');
+    const universe = await createUniverse(hdrs);
+    const png = await makePng();
+    const asset = await json(
+      await uploadReq(
+        `/api/universes/${universe.id}/assets`,
+        { bytes: png, filename: 'cover-signed.png', mime: 'image/png' },
+        hdrs
+      )
+    );
+
+    // Create entry with cover image.
+    const entry = await createEntry(universe.id, hdrs, {
+      title: 'Cover Entry',
+      coverImageId: asset.id,
+    });
+
+    // Fetch entry detail.
+    const detailRes = await jsonReq('GET', `/api/universes/${universe.id}/entries/${entry.id}`, {
+      headers: hdrs,
+    });
+    expect(detailRes.status).toBe(200);
+    const detail = await json(detailRes);
+    expect(detail.coverImageUrl).toBeTruthy();
+    expect(detail.coverImageUrl).toContain(asset.id);
+    expect(detail.coverImageUrl).toContain('?e=');
+    expect(detail.coverImageUrl).toContain('&s=');
+    // Verify the signed coverImageUrl works without bearer.
+    const imgRes = await app.request(`http://localhost${detail.coverImageUrl}`);
+    expect(imgRes.status).toBe(200);
+  });
+
+  it('entry detail assetUrls map contains signed URLs for asset:// embeds in body', async () => {
+    const { hdrs } = await userWithToken('signed-url-g@test.com');
+    const universe = await createUniverse(hdrs);
+    const png = await makePng();
+    const asset = await json(
+      await uploadReq(
+        `/api/universes/${universe.id}/assets`,
+        { bytes: png, filename: 'embed.png', mime: 'image/png' },
+        hdrs
+      )
+    );
+
+    const entry = await createEntry(universe.id, hdrs, {
+      title: 'Inline Entry',
+      body: `Look: ![pic](asset://${asset.id})`,
+    });
+
+    const detailRes = await jsonReq('GET', `/api/universes/${universe.id}/entries/${entry.id}`, {
+      headers: hdrs,
+    });
+    expect(detailRes.status).toBe(200);
+    const detail = await json(detailRes);
+    expect(detail.assetUrls).toBeDefined();
+    expect(detail.assetUrls[asset.id]).toBeTruthy();
+    expect(detail.assetUrls[asset.id]).toContain('?e=');
+    expect(detail.assetUrls[asset.id]).toContain('&s=');
+    // Verify the signed embed URL works without bearer.
+    const imgRes = await app.request(`http://localhost${detail.assetUrls[asset.id]}`);
+    expect(imgRes.status).toBe(200);
   });
 });

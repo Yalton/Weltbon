@@ -339,4 +339,62 @@ describe('D-13 share asset boundary (T-38-30 / T-38-31 / T-38-32)', () => {
     // Bare-array contract: public entries list (the public entry seeded in beforeEach).
     expect(Array.isArray(body)).toBe(true);
   });
+
+  // ─── Phase 38 UAT-fix: signed share asset URL regression ─────────────────
+
+  it('GET /api/share/assets/:id/raw with valid signed URL (?u&e&s) → 200 (no share-token header)', async () => {
+    // Mint a signed URL for the public asset the same way the server does.
+    const { signShareAssetUrl } = await import('../src/services/asset-signing.js');
+    const qs = signShareAssetUrl(universeId, assetId, 'raw');
+    const url = `http://localhost/api/share/assets/${assetId}/raw${qs}`;
+
+    const res = await app.fetch(
+      new Request(url, {
+        method: 'GET',
+        // NO share-token header — this is the <img> tag path
+      }),
+    );
+    expect(res.status).toBe(200);
+    expect(res.headers.get('content-type')).toBe('image/png');
+    const bytes = Buffer.from(await res.arrayBuffer());
+    expect(bytes.length).toBeGreaterThan(0);
+  });
+
+  it('GET /api/share/assets/:id/thumb with valid signed URL (?u&e&s) → 200 (no share-token header)', async () => {
+    const { signShareAssetUrl } = await import('../src/services/asset-signing.js');
+    const qs = signShareAssetUrl(universeId, assetId, 'thumb');
+    const url = `http://localhost/api/share/assets/${assetId}/thumb${qs}`;
+
+    const res = await app.fetch(
+      new Request(url, { method: 'GET' }),
+    );
+    expect(res.status).toBe(200);
+    expect(res.headers.get('content-type')).toBe('image/png');
+  });
+
+  it('GET /api/share/assets/:id/raw with tampered signed URL → 401 (no share-token header)', async () => {
+    const { signShareAssetUrl } = await import('../src/services/asset-signing.js');
+    const qs = signShareAssetUrl(universeId, assetId, 'raw');
+    // Tamper the signature.
+    const tamperedQs = qs.replace(/s=[^&]+/, 's=0000000000000000000000000000000000000000000000000000000000000000');
+    const url = `http://localhost/api/share/assets/${assetId}/raw${tamperedQs}`;
+
+    const res = await app.fetch(
+      new Request(url, { method: 'GET' }),
+    );
+    expect(res.status).toBe(401);
+  });
+
+  it('signed share URL for private asset → 404 (is_public gate enforced even with valid sig)', async () => {
+    // Even a valid signature cannot bypass the is_public check (T-38-30).
+    const { signShareAssetUrl } = await import('../src/services/asset-signing.js');
+    const qs = signShareAssetUrl(universeId, privateAssetId, 'raw');
+    const url = `http://localhost/api/share/assets/${privateAssetId}/raw${qs}`;
+
+    const res = await app.fetch(
+      new Request(url, { method: 'GET' }),
+    );
+    // Must be 404 (not 200) — signature does not grant access to private assets.
+    expect(res.status).toBe(404);
+  });
 });
