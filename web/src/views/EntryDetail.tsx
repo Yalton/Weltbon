@@ -284,14 +284,40 @@ export function EntryDetail() {
         </div>
       )}
 
+      {/* Cover image (D-06) — between header block and body markdown (Phase 38 MEDIA-04).
+          Share-aware: <img src> is a direct browser fetch so URL is built explicitly
+          rather than relying on the api() client rewrite seam (Pitfall 4 / T-38-21). */}
+      {entry.coverImageId && (
+        <div className="mt-4 mb-4">
+          <img
+            src={
+              isShareMode
+                ? `/api/share/assets/${entry.coverImageId}/raw`
+                : `/api/universes/${uid}/assets/${entry.coverImageId}/raw`
+            }
+            alt={`Cover image for ${entry.title}`}
+            className="max-w-full rounded-lg"
+            onError={(e) => {
+              (e.target as HTMLImageElement).style.display = 'none';
+            }}
+          />
+        </div>
+      )}
+
       {/* Body (Markdown) — Phase 32 Plan 04 D-01/D-02/D-03/D-04 [[word]] resolution.
           wikis is always provided: authenticated branch includes onAddWord;
           share branch omits onAddWord (T-32-11 read-only, no mutation surface).
           entryTitles + dictionaryWords are derived from public-scoped data in
-          share mode (via the api-client seam → /api/share/entries + /api/share/dictionary). */}
+          share mode (via the api-client seam → /api/share/entries + /api/share/dictionary).
+          Phase 38 MEDIA-05: assets prop threads universeId + shareToken so the
+          components.img resolver can build the correct authed/share raw URL. */}
       {entry.body && (
         <div className="mt-6">
-          <MarkdownRenderer content={entry.body} wikis={wikis} />
+          <MarkdownRenderer
+            content={entry.body}
+            wikis={wikis}
+            assets={{ universeId: uid!, shareToken: token ?? null }}
+          />
         </div>
       )}
 
