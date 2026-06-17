@@ -68,6 +68,13 @@ COPY --from=build --chown=node:node /repo/web/dist          ./web-dist
 COPY --chown=node:node docker-entrypoint.sh                 ./docker-entrypoint.sh
 RUN chmod +x ./docker-entrypoint.sh
 
+# Asset upload volume mountpoint (Phase 38 StorageBackend). Create it owned by
+# `node` BEFORE declaring USER node so the docker-compose `uploads:/uploads`
+# named volume inherits node:node on first mount. Without this the fresh volume
+# is created root:root and the non-root `node` process gets EACCES writing
+# uploaded asset bytes (caught in Phase 38 UAT).
+RUN mkdir -p /uploads && chown node:node /uploads
+
 USER node
 EXPOSE 3000
 
