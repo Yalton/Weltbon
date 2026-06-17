@@ -1,41 +1,52 @@
+import archiver from 'archiver';
+import { Readable } from 'node:stream';
 import { loadUniverseExportPayload } from './payload.js';
+import { storageBackend } from '../storage/local.js';
 
 /**
- * JSON exporter. Wraps `loadUniverseExportPayload` and emits the existing
- * weltbon_version=1.0.0 shape byte-for-byte (modulo new dated filename in
- * the route layer). Round-trip with the import endpoint MUST stay green —
- * see api/tests/export-import.test.ts.
+ * JSON exporter (Phase 38 MEDIA-06 — D-07).
+ *
+ * Produces a ZIP stream containing:
+ *   - manifest.json  — full universe payload at weltbon_version '2.0.0', including
+ *                      an `assets[]` array with entry↔asset reference metadata.
+ *   - assets/<uuid>.<ext>  — raw bytes for each asset in the universe.
+ *
+ * Legacy plain-JSON import (weltbon_version '1.0.0') is still accepted by the
+ * import route and importUniverseJson service — this ZIP format is additive.
  *
  * Date columns: payload returns Date objects; we coerce to ISO strings here
- * so each format-specific exporter is free to format dates as it wishes
- * (markdown frontmatter dates, PDF cover-page dates, etc.).
+ * so each format-specific exporter is free to format dates as it wishes.
  *
  * The full issue list (resolved + open) is exported, NOT just openIssues —
  * round-trip import would silently drop resolved-issue history otherwise.
  */
-export async function exportUniverseJson(universeId: string) {
-  const p = await loadUniverseExportPayload(universeId);
-  return {
-    weltbon_version: '1.0.0' as const,
+export function exportUniverseJsonAsZip(
+  payload: Awaited<ReturnType<typeof loadUniverseExportPayload>>,
+): ReadableStream<Uint8Array> {
+  const archive = archiver('zip', { zlib: { level: 6 } });
+
+  // Attach error listener before finalize (mirrors buildMarkdownZip pattern).
+  archive.on('error', (err) => {
+    archive.destroy(err);
+  });
+
+  const manifest = {
+    weltbon_version: '2.0.0' as const,
     exported_at: new Date().toISOString(),
     universe: {
-      name: p.universe.name,
-      description: p.universe.description,
-      entryTypes: p.universe.entryTypes,
-      // Phase 20 D-01: round-trip the per-universe horizontal timeline window.
-      timelineWindow: p.universe.timelineWindow,
-      // Phase 35 REL-01: round-trip the per-universe link-type registry.
-      // Key names use snake_case (link_types) to match the 9b82f27 export
-      // shape so re-import is symmetric with the importSchema linkTypes field.
-      linkTypes: p.universe.linkTypes,
+      name: payload.universe.name,
+      description: payload.universe.description,
+      entryTypes: payload.universe.entryTypes,
+      timelineWindow: payload.universe.timelineWindow,
+      linkTypes: payload.universe.linkTypes,
     },
-    categories: p.categories.map((c) => ({
+    categories: payload.categories.map((c) => ({
       id: c.id,
       label: c.label,
       icon: c.icon,
       sortOrder: c.sortOrder,
     })),
-    entries: p.entries.map((e) => ({
+    entries: payload.entries.map((e) => ({
       id: e.id,
       title: e.title,
       entryType: e.entryType,
@@ -44,26 +55,23 @@ export async function exportUniverseJson(universeId: string) {
       tags: e.tags,
       meta: e.meta,
       icon: e.icon,
-      // Phase 29 D-11 / SHARE-04: round-trip the per-entry public flag through
-      // JSON export/import. Additive — no weltbon_version bump (older importers
-      // ignore the field; this importer defaults missing isPublic to false).
       isPublic: e.isPublic,
       categoryId: e.categoryId,
+      // Phase 38 MEDIA-06: cover image reference (may be null).
+      coverImageId: e.coverImageId ?? null,
       createdAt: e.createdAt.toISOString(),
       updatedAt: e.updatedAt.toISOString(),
     })),
-    links: p.links.map((l) => ({
+    links: payload.links.map((l) => ({
       id: l.id,
       sourceEntryId: l.sourceEntryId,
       targetEntryId: l.targetEntryId,
       label: l.label,
-      // Phase 35 REL-01: emit link_type + direction (replaces bidirectional).
-      // Key names follow 9b82f27 snake_case convention for JSON export symmetry.
       link_type: l.linkType,
       direction: l.direction,
       createdAt: l.createdAt.toISOString(),
     })),
-    issues: p.fullIssues.map((i) => ({
+    issues: payload.fullIssues.map((i) => ({
       id: i.id,
       title: i.title,
       description: i.description,
@@ -72,17 +80,52 @@ export async function exportUniverseJson(universeId: string) {
       createdAt: i.createdAt.toISOString(),
       entryIds: i.entryIds,
     })),
-    graphPositions: p.graphPositions.map((g) => ({
+    graphPositions: payload.graphPositions.map((g) => ({
       entryId: g.entryId,
       x: g.x,
       y: g.y,
     })),
-    timelinePins: p.timelinePins.map((t) => ({
+    timelinePins: payload.timelinePins.map((t) => ({
       id: t.id,
       entryId: t.entryId,
       label: t.label,
       position: t.position,
       precision: t.precision,
     })),
+    // Phase 38 MEDIA-06 (D-07): asset registry with entry↔asset references.
+    assets: payload.assets.map((a) => ({
+      id: a.id,
+      filename: a.filename,
+      mimeType: a.mimeType,
+      extension: a.extension,
+      sizeBytes: a.sizeBytes,
+      usedAsCoverByEntryId: a.usedAsCoverByEntryId,
+    })),
   };
+
+  archive.append(JSON.stringify(manifest, null, 2), { name: 'manifest.json' });
+
+  // Asset bytes are appended asynchronously; archiver buffers the pipe internally.
+  // We append synchronously within the promise chain before finalize is called.
+  // Use a self-invoking async IIFE so we can await storageBackend.get inside.
+  (async () => {
+    for (const asset of payload.assets) {
+      const bytes = await storageBackend.get(asset.id);
+      if (bytes) {
+        archive.append(bytes, { name: `assets/${asset.id}.${asset.extension}` });
+      }
+    }
+    archive.finalize();
+  })().catch((err) => archive.destroy(err));
+
+  return Readable.toWeb(archive) as unknown as ReadableStream<Uint8Array>;
+}
+
+/**
+ * Convenience wrapper that loads the payload then streams the ZIP.
+ * Used by the export route (format=json).
+ */
+export async function exportUniverseJson(universeId: string): Promise<ReadableStream<Uint8Array>> {
+  const payload = await loadUniverseExportPayload(universeId);
+  return exportUniverseJsonAsZip(payload);
 }

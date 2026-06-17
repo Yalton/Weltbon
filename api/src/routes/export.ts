@@ -98,12 +98,15 @@ export const exportRoutes = new OpenAPIHono<AppEnv>().openapi(exportRoute, async
   const format = c.req.valid('query').format ?? c.req.query('format') ?? 'json';
 
   if (format === 'json') {
-    const data = await exportUniverseJson(uid);
+    // Phase 38 MEDIA-06 (D-07): JSON export is now a ZIP (manifest.json + assets/).
+    // The filename changes from .json to .zip; Content-Type is application/zip.
+    const stream = await exportUniverseJson(uid);
+    c.header('Content-Type', 'application/zip');
     c.header(
       'Content-Disposition',
-      `attachment; filename="${exportFilename(universe.name, 'json')}"`,
+      `attachment; filename="${exportFilename(universe.name, 'zip')}"`,
     );
-    return c.json(data);
+    return c.body(stream);
   }
   if (format === 'markdown') {
     const payload = await loadUniverseExportPayload(uid);

@@ -9,6 +9,7 @@ import {
   issueEntries,
   graphPositions,
   timelinePins,
+  assets,
 } from '../../db/schema.js';
 import { buildSlugMap } from './slug.js';
 
@@ -53,8 +54,22 @@ export interface ExportPayloadEntry {
   categoryId: string | null;
   /** Phase 29 D-11 / SHARE-04: round-trips through universe JSON export/import. */
   isPublic: boolean;
+  /** Phase 38 MEDIA-04 (D-06): optional cover image asset ID. */
+  coverImageId: string | null;
   createdAt: Date;
   updatedAt: Date;
+}
+
+/** Phase 38 MEDIA-06 (D-07): asset metadata exported alongside the universe payload. */
+export interface ExportPayloadAsset {
+  id: string;
+  universeId: string;
+  filename: string;
+  mimeType: string;
+  extension: string;
+  sizeBytes: number;
+  /** Entry ID that uses this asset as its cover image (null if not a cover). */
+  usedAsCoverByEntryId: string | null;
 }
 
 export interface ExportPayloadCategory {
@@ -115,6 +130,8 @@ export interface ExportPayload {
   timelinePins: ExportPayloadTimelinePin[];
   /** entryId → unique filename slug, computed once via buildSlugMap. */
   entrySlugMap: Map<string, string>;
+  /** Phase 38 MEDIA-06 (D-07): all assets belonging to this universe. */
+  assets: ExportPayloadAsset[];
 }
 
 /**
@@ -200,6 +217,19 @@ export async function loadUniverseExportPayload(universeId: string): Promise<Exp
     entryIds: assocByIssue.get(i.id) ?? [],
   }));
 
+  // Phase 38 MEDIA-06 (D-07): load all assets for this universe.
+  const assetRows = await db()
+    .select()
+    .from(assets)
+    .where(eq(assets.universeId, universeId));
+
+  // Build cover-image reverse map: assetId → entryId (for usedAsCoverByEntryId).
+  // Only the first matching entry per asset is recorded (covers are 1:1 in practice).
+  const coverByAssetId = new Map<string, string>();
+  for (const e of entryRows) {
+    if (e.coverImageId) coverByAssetId.set(e.coverImageId, e.id);
+  }
+
   const entryPayloads: ExportPayloadEntry[] = entryRows.map((e) => ({
     id: e.id,
     title: e.title,
@@ -212,6 +242,8 @@ export async function loadUniverseExportPayload(universeId: string): Promise<Exp
     categoryId: e.categoryId,
     // Phase 29 SHARE-04 — round-trips through JSON export/import (D-11).
     isPublic: e.isPublic,
+    // Phase 38 MEDIA-04 (D-06): cover image FK.
+    coverImageId: e.coverImageId ?? null,
     createdAt: e.createdAt,
     updatedAt: e.updatedAt,
   }));
@@ -262,5 +294,15 @@ export async function loadUniverseExportPayload(universeId: string): Promise<Exp
       precision: p.precision,
     })),
     entrySlugMap,
+    // Phase 38 MEDIA-06 (D-07): asset list with entry↔asset references.
+    assets: assetRows.map((a) => ({
+      id: a.id,
+      universeId: a.universeId,
+      filename: a.filename,
+      mimeType: a.mimeType,
+      extension: a.extension,
+      sizeBytes: a.sizeBytes,
+      usedAsCoverByEntryId: coverByAssetId.get(a.id) ?? null,
+    })),
   };
 }

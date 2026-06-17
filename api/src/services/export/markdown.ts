@@ -2,8 +2,10 @@ import archiver from 'archiver';
 import { Readable } from 'node:stream';
 import yaml from 'yaml';
 import { asciiSlug } from './slug.js';
+import { storageBackend } from '../storage/local.js';
 import type {
   ExportPayload,
+  ExportPayloadAsset,
   ExportPayloadEntry,
   ExportPayloadIssue,
 } from './payload.js';
@@ -36,6 +38,23 @@ import type {
  * Resolved issues are absent: we read from `payload.openIssues`, which
  * the loader has already filtered to `resolved=false`.
  */
+/**
+ * Rewrite `asset://uuid` refs in an entry body to relative paths within the ZIP.
+ *
+ * Pattern D-08: `![alt](asset://<uuid>)` → `![alt](../../assets/<uuid>.<ext>)`
+ * (entries live at `{universe}/{folder}/{slug}.md`; assets live at `assets/<uuid>.<ext>`
+ * at the ZIP root alongside the universe folder — hence two levels of `..`).
+ *
+ * Missing assets (bytes not in payload) get a `"missing"` title attribute.
+ */
+function rewriteAssetRefs(body: string, assetMap: Map<string, ExportPayloadAsset>): string {
+  return body.replace(/!\[([^\]]*)\]\(asset:\/\/([a-f0-9-]+)\)/gi, (_, alt, uuid) => {
+    const asset = assetMap.get(uuid);
+    if (!asset) return `![${alt}](../../assets/${uuid} "missing")`;
+    return `![${alt}](../../assets/${uuid}.${asset.extension})`;
+  });
+}
+
 export function buildMarkdownZip(payload: ExportPayload): ReadableStream<Uint8Array> {
   const archive = archiver('zip', { zlib: { level: 6 } });
 
@@ -50,6 +69,8 @@ export function buildMarkdownZip(payload: ExportPayload): ReadableStream<Uint8Ar
   const slugMap = payload.entrySlugMap;
   const categoryById = new Map(payload.categories.map((c) => [c.id, c] as const));
   const entryById = new Map(payload.entries.map((e) => [e.id, e] as const));
+  // Phase 38 MEDIA-06 (D-08): asset map for rewriting inline refs.
+  const assetMap = new Map(payload.assets.map((a) => [a.id, a] as const));
 
   const folderForCategoryId = (catId: string | null): string => {
     if (!catId) return 'Uncategorized';
@@ -115,11 +136,22 @@ export function buildMarkdownZip(payload: ExportPayload): ReadableStream<Uint8Ar
       backlinksByTarget,
       openIssuesByEntry,
       thisFolder: folder,
+      assetMap,
     });
     archive.append(md, { name: `${universeFolder}/${folder}/${slug}.md` });
   }
 
-  archive.finalize();
+  // Phase 38 MEDIA-06 (D-08): append asset bytes into the ZIP under assets/ at root.
+  // Use async IIFE so we can await storageBackend.get; finalize after all appends.
+  (async () => {
+    for (const asset of payload.assets) {
+      const bytes = await storageBackend.get(asset.id);
+      if (bytes) {
+        archive.append(bytes, { name: `assets/${asset.id}.${asset.extension}` });
+      }
+    }
+    archive.finalize();
+  })().catch((err) => archive.destroy(err));
 
   return Readable.toWeb(archive) as unknown as ReadableStream<Uint8Array>;
 }
@@ -222,6 +254,8 @@ interface EntryRenderIndex {
   backlinksByTarget: Map<string, string[]>;
   openIssuesByEntry: Map<string, ExportPayloadIssue[]>;
   thisFolder: string;
+  /** Phase 38 MEDIA-06 (D-08): used to rewrite asset:// refs to relative paths. */
+  assetMap: Map<string, ExportPayloadAsset>;
 }
 
 function buildEntryMd(entry: ExportPayloadEntry, idx: EntryRenderIndex): string {
@@ -252,7 +286,9 @@ function buildEntryMd(entry: ExportPayloadEntry, idx: EntryRenderIndex): string 
     parts.push('');
   }
 
-  const body = entry.body?.trimEnd() ?? '';
+  // Phase 38 MEDIA-06 (D-08): rewrite asset://uuid refs to relative paths.
+  const rawBody = entry.body?.trimEnd() ?? '';
+  const body = rawBody ? rewriteAssetRefs(rawBody, idx.assetMap) : '';
   if (body) {
     parts.push(body);
     parts.push('');
