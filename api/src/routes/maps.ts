@@ -1,0 +1,513 @@
+/**
+ * Phase 39 MAPS-01/02/03: Map CRUD + pin CRUD.
+ *
+ * Auth: every route applies requireAuth (via apiR.use('/universes/*', requireAuth)
+ *   at the app level) + requireUniverse (inline per-handler, the established pattern).
+ *
+ * T-39-01: requireUniverse rejects cross-tenant access (404) before any DB mutation.
+ * T-39-02: POST/PATCH imageAssetId validated as belonging to the universe (404 if not).
+ * T-39-03: POST/PATCH pins entryId validated as belonging to the universe (404 if not).
+ * T-39-04: Pin x/y bounded 0..1 via Zod (finite().min(0).max(1)).
+ * T-39-06: Map name length capped at max(200) by Zod.
+ *
+ * List endpoint returns a BARE ARRAY (share-seam contract — memory share-seam-bare-array-contract).
+ * Detail endpoint returns a wrapped object with a `pins` array (bare map_pins rows;
+ * web joins entry title/type, mirroring diagrams nodes — no entry join in this API).
+ *
+ * D-11: NO duplicate-pin guard — multiple pins per entry on one map are allowed.
+ */
+
+import { OpenAPIHono, createRoute, z } from '@hono/zod-openapi';
+import { and, eq } from 'drizzle-orm';
+import { HTTPException } from 'hono/http-exception';
+import { db } from '../db/client.js';
+import { maps, mapPins, entries, assets } from '../db/schema.js';
+import { requireUniverse } from '../utils/ownership.js';
+import { signAssetUrl } from '../services/asset-signing.js';
+import type { AuthVariables } from '../middleware/auth.js';
+
+type AppEnv = { Variables: AuthVariables };
+
+// ─── Signed URL helper (mirrors assets.ts assetUrls) ─────────────────────────
+
+/**
+ * Build HMAC-signed serving URLs for a map's image asset.
+ * Mirrors assetUrls() in api/src/routes/assets.ts (Phase 38 UAT-fix).
+ * Returns null urls when imageAssetId is null (map has no image).
+ */
+function mapImageUrls(
+  uid: string,
+  imageAssetId: string | null,
+): { rawUrl: string | null; thumbUrl: string | null } {
+  if (!imageAssetId) {
+    return { rawUrl: null, thumbUrl: null };
+  }
+  return {
+    rawUrl: `/api/universes/${uid}/assets/${imageAssetId}/raw${signAssetUrl(uid, imageAssetId, 'raw')}`,
+    thumbUrl: `/api/universes/${uid}/assets/${imageAssetId}/thumb${signAssetUrl(uid, imageAssetId, 'thumb')}`,
+  };
+}
+
+// ─── Shared param schemas ─────────────────────────────────────────────────────
+
+const uidParams = z.object({ uid: z.string().uuid() });
+const uidAndMidParams = z.object({ uid: z.string().uuid(), mid: z.string().uuid() });
+const uidMidPinParams = z.object({ uid: z.string().uuid(), mid: z.string().uuid(), pinId: z.string().uuid() });
+
+// ─── Zod schemas ──────────────────────────────────────────────────────────────
+
+const createMapSchema = z.object({
+  name: z.string().min(1).max(200),
+  imageAssetId: z.string().uuid(), // required at create-time (D-02)
+});
+
+const updateMapSchema = z.object({
+  name: z.string().min(1).max(200).optional(),
+  imageAssetId: z.string().uuid().optional(),
+}).refine((data) => data.name !== undefined || data.imageAssetId !== undefined, {
+  message: 'At least one of name or imageAssetId must be provided',
+});
+
+const mapSchema = z.object({
+  id: z.string(),
+  universeId: z.string(),
+  name: z.string(),
+  imageAssetId: z.string().nullable(),
+  createdAt: z.string().or(z.date()),
+  rawUrl: z.string().nullable(),
+  thumbUrl: z.string().nullable(),
+});
+
+const pinSchema = z.object({
+  id: z.string(),
+  mapId: z.string(),
+  entryId: z.string(),
+  x: z.number(),
+  y: z.number(),
+});
+
+const mapDetailSchema = z.object({
+  id: z.string(),
+  universeId: z.string(),
+  name: z.string(),
+  imageAssetId: z.string().nullable(),
+  createdAt: z.string().or(z.date()),
+  rawUrl: z.string().nullable(),
+  thumbUrl: z.string().nullable(),
+  pins: z.array(pinSchema),
+});
+
+const createPinSchema = z.object({
+  entryId: z.string().uuid(),
+  x: z.number().finite().min(0).max(1), // normalized 0..1 (D-10)
+  y: z.number().finite().min(0).max(1),
+});
+
+const movePinSchema = z.object({
+  x: z.number().finite().min(0).max(1),
+  y: z.number().finite().min(0).max(1),
+});
+
+const relinkPinSchema = z.object({
+  entryId: z.string().uuid(),
+});
+
+const errorSchema = z.object({ error: z.string() });
+
+// ─── Route definitions ────────────────────────────────────────────────────────
+
+const listMapsRoute = createRoute({
+  method: 'get',
+  path: '/',
+  tags: ['Maps'],
+  summary: 'List maps for a universe',
+  security: [{ bearerAuth: [] }],
+  request: { params: uidParams },
+  responses: {
+    200: {
+      content: { 'application/json': { schema: z.array(mapSchema) } },
+      description: 'List of maps (bare array)',
+    },
+    401: { content: { 'application/json': { schema: errorSchema } }, description: 'Unauthorized' },
+    403: { content: { 'application/json': { schema: errorSchema } }, description: 'Forbidden' },
+    404: { content: { 'application/json': { schema: errorSchema } }, description: 'Universe not found' },
+  },
+});
+
+const createMapRoute = createRoute({
+  method: 'post',
+  path: '/',
+  tags: ['Maps'],
+  summary: 'Create a map (name + imageAssetId required)',
+  security: [{ bearerAuth: [] }],
+  request: {
+    params: uidParams,
+    body: { content: { 'application/json': { schema: createMapSchema } }, required: true },
+  },
+  responses: {
+    201: {
+      content: { 'application/json': { schema: mapSchema } },
+      description: 'Map created',
+    },
+    400: { content: { 'application/json': { schema: errorSchema } }, description: 'Validation error' },
+    401: { content: { 'application/json': { schema: errorSchema } }, description: 'Unauthorized' },
+    403: { content: { 'application/json': { schema: errorSchema } }, description: 'Forbidden' },
+    404: { content: { 'application/json': { schema: errorSchema } }, description: 'Universe or asset not found' },
+  },
+});
+
+const getMapRoute = createRoute({
+  method: 'get',
+  path: '/{mid}',
+  tags: ['Maps'],
+  summary: 'Get map detail with pins',
+  security: [{ bearerAuth: [] }],
+  request: { params: uidAndMidParams },
+  responses: {
+    200: {
+      content: { 'application/json': { schema: mapDetailSchema } },
+      description: 'Map detail with pins',
+    },
+    401: { content: { 'application/json': { schema: errorSchema } }, description: 'Unauthorized' },
+    403: { content: { 'application/json': { schema: errorSchema } }, description: 'Forbidden' },
+    404: { content: { 'application/json': { schema: errorSchema } }, description: 'Not found' },
+  },
+});
+
+const updateMapRoute = createRoute({
+  method: 'patch',
+  path: '/{mid}',
+  tags: ['Maps'],
+  summary: 'Update a map (rename and/or change image)',
+  security: [{ bearerAuth: [] }],
+  request: {
+    params: uidAndMidParams,
+    body: { content: { 'application/json': { schema: updateMapSchema } }, required: true },
+  },
+  responses: {
+    200: {
+      content: { 'application/json': { schema: mapSchema } },
+      description: 'Map updated',
+    },
+    400: { content: { 'application/json': { schema: errorSchema } }, description: 'Validation error' },
+    401: { content: { 'application/json': { schema: errorSchema } }, description: 'Unauthorized' },
+    403: { content: { 'application/json': { schema: errorSchema } }, description: 'Forbidden' },
+    404: { content: { 'application/json': { schema: errorSchema } }, description: 'Not found' },
+  },
+});
+
+const deleteMapRoute = createRoute({
+  method: 'delete',
+  path: '/{mid}',
+  tags: ['Maps'],
+  summary: 'Delete a map (cascades to pins)',
+  security: [{ bearerAuth: [] }],
+  request: { params: uidAndMidParams },
+  responses: {
+    204: { description: 'Map deleted' },
+    401: { content: { 'application/json': { schema: errorSchema } }, description: 'Unauthorized' },
+    403: { content: { 'application/json': { schema: errorSchema } }, description: 'Forbidden' },
+    404: { content: { 'application/json': { schema: errorSchema } }, description: 'Not found' },
+  },
+});
+
+const addPinRoute = createRoute({
+  method: 'post',
+  path: '/{mid}/pins',
+  tags: ['Maps'],
+  summary: 'Add an entry-linked pin to a map',
+  security: [{ bearerAuth: [] }],
+  request: {
+    params: uidAndMidParams,
+    body: { content: { 'application/json': { schema: createPinSchema } }, required: true },
+  },
+  responses: {
+    201: {
+      content: { 'application/json': { schema: pinSchema } },
+      description: 'Pin added',
+    },
+    400: { content: { 'application/json': { schema: errorSchema } }, description: 'Validation error' },
+    401: { content: { 'application/json': { schema: errorSchema } }, description: 'Unauthorized' },
+    403: { content: { 'application/json': { schema: errorSchema } }, description: 'Forbidden' },
+    404: { content: { 'application/json': { schema: errorSchema } }, description: 'Not found' },
+  },
+});
+
+const movePinRoute = createRoute({
+  method: 'patch',
+  path: '/{mid}/pins/{pinId}',
+  tags: ['Maps'],
+  summary: 'Move a pin to new normalized coordinates',
+  security: [{ bearerAuth: [] }],
+  request: {
+    params: uidMidPinParams,
+    body: { content: { 'application/json': { schema: movePinSchema } }, required: true },
+  },
+  responses: {
+    200: {
+      content: { 'application/json': { schema: pinSchema } },
+      description: 'Pin moved',
+    },
+    400: { content: { 'application/json': { schema: errorSchema } }, description: 'Validation error' },
+    401: { content: { 'application/json': { schema: errorSchema } }, description: 'Unauthorized' },
+    403: { content: { 'application/json': { schema: errorSchema } }, description: 'Forbidden' },
+    404: { content: { 'application/json': { schema: errorSchema } }, description: 'Pin not found' },
+  },
+});
+
+const relinkPinRoute = createRoute({
+  method: 'patch',
+  path: '/{mid}/pins/{pinId}/relink',
+  tags: ['Maps'],
+  summary: 'Relink a pin to a different entry',
+  security: [{ bearerAuth: [] }],
+  request: {
+    params: uidMidPinParams,
+    body: { content: { 'application/json': { schema: relinkPinSchema } }, required: true },
+  },
+  responses: {
+    200: {
+      content: { 'application/json': { schema: pinSchema } },
+      description: 'Pin relinked',
+    },
+    400: { content: { 'application/json': { schema: errorSchema } }, description: 'Validation error' },
+    401: { content: { 'application/json': { schema: errorSchema } }, description: 'Unauthorized' },
+    403: { content: { 'application/json': { schema: errorSchema } }, description: 'Forbidden' },
+    404: { content: { 'application/json': { schema: errorSchema } }, description: 'Not found' },
+  },
+});
+
+const deletePinRoute = createRoute({
+  method: 'delete',
+  path: '/{mid}/pins/{pinId}',
+  tags: ['Maps'],
+  summary: 'Delete a pin (linked entry is not affected)',
+  security: [{ bearerAuth: [] }],
+  request: { params: uidMidPinParams },
+  responses: {
+    204: { description: 'Pin deleted' },
+    401: { content: { 'application/json': { schema: errorSchema } }, description: 'Unauthorized' },
+    403: { content: { 'application/json': { schema: errorSchema } }, description: 'Forbidden' },
+    404: { content: { 'application/json': { schema: errorSchema } }, description: 'Pin not found' },
+  },
+});
+
+// ─── Helper ───────────────────────────────────────────────────────────────────
+
+/**
+ * Fetch map, verify it belongs to the universe. Returns 404 if not found.
+ * Mirrors requireDiagram in diagrams.ts.
+ */
+async function requireMap(mapId: string, universeId: string) {
+  const rows = await db()
+    .select()
+    .from(maps)
+    .where(and(eq(maps.id, mapId), eq(maps.universeId, universeId)));
+  if (rows.length === 0) {
+    throw new HTTPException(404, { message: 'Map not found' });
+  }
+  return rows[0];
+}
+
+// ─── Router ───────────────────────────────────────────────────────────────────
+
+export const mapsRouter = new OpenAPIHono<AppEnv>()
+
+  // GET /universes/:uid/maps — list maps (bare array per share-seam contract)
+  .openapi(listMapsRoute, async (c) => {
+    const { uid } = c.req.valid('param');
+    await requireUniverse(uid, c.var.userId);
+
+    const rows = await db()
+      .select()
+      .from(maps)
+      .where(eq(maps.universeId, uid));
+
+    // Inject signed image URLs for each map (null imageAssetId → null urls)
+    const withUrls = rows.map((row) => ({
+      ...row,
+      ...mapImageUrls(uid, row.imageAssetId ?? null),
+    }));
+
+    return c.json(withUrls as any, 200);
+  })
+
+  // POST /universes/:uid/maps — create map (name + imageAssetId required, D-02)
+  .openapi(createMapRoute, async (c) => {
+    const { uid } = c.req.valid('param');
+    await requireUniverse(uid, c.var.userId);
+    const data = c.req.valid('json');
+
+    // T-39-02: validate the asset belongs to this universe
+    const assetRows = await db()
+      .select({ id: assets.id })
+      .from(assets)
+      .where(and(eq(assets.id, data.imageAssetId), eq(assets.universeId, uid)));
+    if (assetRows.length === 0) {
+      return c.json({ error: 'Image not found in this universe' }, 404);
+    }
+
+    const [row] = await db()
+      .insert(maps)
+      .values({ universeId: uid, name: data.name, imageAssetId: data.imageAssetId })
+      .returning();
+
+    return c.json({ ...row, ...mapImageUrls(uid, row.imageAssetId ?? null) } as any, 201);
+  })
+
+  // GET /universes/:uid/maps/:mid — map detail with pins (wrapped object, bare pin rows)
+  .openapi(getMapRoute, async (c) => {
+    const { uid, mid } = c.req.valid('param');
+    await requireUniverse(uid, c.var.userId);
+    const map = await requireMap(mid, uid);
+
+    const pinRows = await db()
+      .select()
+      .from(mapPins)
+      .where(eq(mapPins.mapId, mid));
+
+    return c.json({
+      ...map,
+      ...mapImageUrls(uid, map.imageAssetId ?? null),
+      pins: pinRows,
+    } as any, 200);
+  })
+
+  // PATCH /universes/:uid/maps/:mid — update map (rename and/or change image, D-03)
+  .openapi(updateMapRoute, async (c) => {
+    const { uid, mid } = c.req.valid('param');
+    await requireUniverse(uid, c.var.userId);
+    await requireMap(mid, uid);
+    const data = c.req.valid('json');
+
+    const updates: { name?: string; imageAssetId?: string } = {};
+
+    if (data.name !== undefined) {
+      updates.name = data.name;
+    }
+
+    if (data.imageAssetId !== undefined) {
+      // T-39-02: validate the new asset belongs to this universe
+      const assetRows = await db()
+        .select({ id: assets.id })
+        .from(assets)
+        .where(and(eq(assets.id, data.imageAssetId), eq(assets.universeId, uid)));
+      if (assetRows.length === 0) {
+        return c.json({ error: 'Image not found in this universe' }, 404);
+      }
+      updates.imageAssetId = data.imageAssetId;
+    }
+
+    const [updated] = await db()
+      .update(maps)
+      .set(updates)
+      .where(and(eq(maps.id, mid), eq(maps.universeId, uid)))
+      .returning();
+
+    return c.json({ ...updated, ...mapImageUrls(uid, updated.imageAssetId ?? null) } as any, 200);
+  })
+
+  // DELETE /universes/:uid/maps/:mid — delete map (cascades to pins via FK)
+  .openapi(deleteMapRoute, async (c) => {
+    const { uid, mid } = c.req.valid('param');
+    await requireUniverse(uid, c.var.userId);
+    await requireMap(mid, uid);
+
+    await db()
+      .delete(maps)
+      .where(and(eq(maps.id, mid), eq(maps.universeId, uid)));
+
+    return c.body(null, 204);
+  })
+
+  // POST /universes/:uid/maps/:mid/pins — add pin (no duplicate guard per D-11)
+  .openapi(addPinRoute, async (c) => {
+    const { uid, mid } = c.req.valid('param');
+    await requireUniverse(uid, c.var.userId);
+    await requireMap(mid, uid);
+    const data = c.req.valid('json');
+
+    // T-39-03: validate the entry belongs to this universe
+    const entryRows = await db()
+      .select({ id: entries.id })
+      .from(entries)
+      .where(and(eq(entries.id, data.entryId), eq(entries.universeId, uid)));
+    if (entryRows.length === 0) {
+      return c.json({ error: 'Entry not found in this universe' }, 404);
+    }
+
+    // D-11: NO 409 duplicate guard — multiple pins per entry are allowed
+    const [row] = await db()
+      .insert(mapPins)
+      .values({ mapId: mid, entryId: data.entryId, x: data.x, y: data.y })
+      .returning();
+
+    return c.json(row as any, 201);
+  })
+
+  // PATCH /universes/:uid/maps/:mid/pins/:pinId — move pin by pinId (T-39-04)
+  .openapi(movePinRoute, async (c) => {
+    const { uid, mid, pinId } = c.req.valid('param');
+    await requireUniverse(uid, c.var.userId);
+    await requireMap(mid, uid);
+    const data = c.req.valid('json');
+
+    const [updated] = await db()
+      .update(mapPins)
+      .set({ x: data.x, y: data.y })
+      .where(and(eq(mapPins.id, pinId), eq(mapPins.mapId, mid)))
+      .returning();
+
+    if (!updated) {
+      return c.json({ error: 'Pin not found' }, 404);
+    }
+
+    return c.json(updated as any, 200);
+  })
+
+  // PATCH /universes/:uid/maps/:mid/pins/:pinId/relink — relink pin to a different entry
+  .openapi(relinkPinRoute, async (c) => {
+    const { uid, mid, pinId } = c.req.valid('param');
+    await requireUniverse(uid, c.var.userId);
+    await requireMap(mid, uid);
+    const data = c.req.valid('json');
+
+    // T-39-03: validate the new entry belongs to this universe
+    const entryRows = await db()
+      .select({ id: entries.id })
+      .from(entries)
+      .where(and(eq(entries.id, data.entryId), eq(entries.universeId, uid)));
+    if (entryRows.length === 0) {
+      return c.json({ error: 'Entry not found in this universe' }, 404);
+    }
+
+    const [updated] = await db()
+      .update(mapPins)
+      .set({ entryId: data.entryId })
+      .where(and(eq(mapPins.id, pinId), eq(mapPins.mapId, mid)))
+      .returning();
+
+    if (!updated) {
+      return c.json({ error: 'Pin not found' }, 404);
+    }
+
+    return c.json(updated as any, 200);
+  })
+
+  // DELETE /universes/:uid/maps/:mid/pins/:pinId — delete pin (linked entry untouched)
+  .openapi(deletePinRoute, async (c) => {
+    const { uid, mid, pinId } = c.req.valid('param');
+    await requireUniverse(uid, c.var.userId);
+    await requireMap(mid, uid);
+
+    const deleted = await db()
+      .delete(mapPins)
+      .where(and(eq(mapPins.id, pinId), eq(mapPins.mapId, mid)))
+      .returning();
+
+    if (deleted.length === 0) {
+      return c.json({ error: 'Pin not found' }, 404);
+    }
+
+    return c.body(null, 204);
+  });
