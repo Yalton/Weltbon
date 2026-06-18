@@ -28,6 +28,7 @@ import { timelinePinRoutes, timelineListRoutes } from './routes/timeline.js';
 import { auditRoutes, auditCrossUniverseRoutes } from './routes/audits.js';
 import { statsRoutes } from './routes/stats.js';
 import { diagramsRouter } from './routes/diagrams.js';
+import { mapsRouter } from './routes/maps.js';
 import { assetsRouter } from './routes/assets.js';
 import { dictionaryRoutes } from './routes/dictionary.js';
 import { recoverOrphanAuditRuns } from './services/audit-recovery.js';
@@ -132,6 +133,9 @@ export function createApp() {
   // apiR.use('/universes/*', requireAuth) at the top of this block.
   apiR.route('/universes', statsRoutes);
   apiR.route('/universes/:uid/diagrams', diagramsRouter);
+  // Phase 39 MAPS-01/02/03: per-universe image-backed maps + entry-linked pins.
+  // requireAuth already applies via apiR.use('/universes/*', requireAuth) above.
+  apiR.route('/universes/:uid/maps', mapsRouter);
   // Phase 38 MEDIA-01/02/03/04: per-universe image asset upload/serving/CRUD.
   // requireAuth already applies via apiR.use('/universes/*', requireAuth) above.
   apiR.route('/universes/:uid/assets', assetsRouter);

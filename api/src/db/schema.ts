@@ -534,3 +534,39 @@ export const dictionaryWords = pgTable('dictionary_words', {
   // NOTE: scope-unique index with lower(word) + COALESCE sentinel lives in migration 0018 only —
   // Drizzle TS uniqueIndex() cannot express COALESCE-sentinel or lower() expressions.
 });
+
+/**
+ * Phase 39 MAPS-01 (D-01, D-02, D-03): Per-universe image-backed map definitions.
+ *
+ * - `imageAssetId` is nullable in the DB (ON DELETE SET NULL on asset delete per D-03)
+ *   but the API requires it at create-time (D-02 — cannot create a map without an image).
+ * - Lazy reference `(): any => assets.id` mirrors entries.coverImageId (line ~297)
+ *   because `assets` is declared AFTER `entries` in this file.
+ * - No description column — maps are identified by name + image, not text.
+ */
+export const maps = pgTable('maps', {
+  id:           uuid('id').primaryKey().defaultRandom(),
+  universeId:   uuid('universe_id').references(() => universes.id, { onDelete: 'cascade' }).notNull(),
+  name:         text('name').notNull(),
+  // eslint-disable-next-line @typescript-eslint/no-use-before-define
+  imageAssetId: uuid('image_asset_id').references((): any => assets.id, { onDelete: 'set null' }),
+  createdAt:    timestamp('created_at').defaultNow().notNull(),
+});
+
+/**
+ * Phase 39 MAPS-02/MAPS-03 (D-10, D-11): Entry-linked pins within a map.
+ *
+ * - `x` and `y` are normalized 0..1 fractions of image width/height (D-10).
+ *   Stored as doublePrecision; Zod route validation enforces min(0).max(1) bounds.
+ * - NO uniqueIndex on (mapId, entryId) — multiple pins per entry are allowed (D-11).
+ *   This is a deliberate deviation from diagramNodes which has a unique constraint.
+ * - ON DELETE CASCADE on both mapId and entryId FKs: deleting a map removes all its
+ *   pins; deleting an entry removes pins that link to it (pin ≠ entry).
+ */
+export const mapPins = pgTable('map_pins', {
+  id:      uuid('id').primaryKey().defaultRandom(),
+  mapId:   uuid('map_id').references(() => maps.id, { onDelete: 'cascade' }).notNull(),
+  entryId: uuid('entry_id').references(() => entries.id, { onDelete: 'cascade' }).notNull(),
+  x:       doublePrecision('x').notNull(),
+  y:       doublePrecision('y').notNull(),
+});
