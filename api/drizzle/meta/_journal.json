@@ -183,6 +183,13 @@
       "when": 1783000000000,
       "tag": "0025_phase39_maps",
       "breakpoints": true
+    },
+    {
+      "idx": 26,
+      "version": "7",
+      "when": 1784000000000,
+      "tag": "0026_phase40_regions_styling",
+      "breakpoints": true
     }
   ]
 }
