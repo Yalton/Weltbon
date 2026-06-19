@@ -28,11 +28,14 @@ export interface MapLayer {
 
 // ─── Layer query ──────────────────────────────────────────────────────────────
 
-export function useMapLayers(universeId: string) {
+export function useMapLayers(universeId: string, options?: { enabled?: boolean }) {
   return useQuery({
     queryKey: ['map-layers', universeId],
     queryFn: () => api<MapLayer[]>(`/universes/${universeId}/map-layers`),
-    enabled: !!universeId,
+    // Gate on the caller's `enabled` so a permanently-mounted-but-hidden panel
+    // (e.g. in share mode, where MapEditor mounts LayersPanel with visible=false)
+    // does not fire a doomed GET /api/share/map-layers → 404 (WR-03).
+    enabled: !!universeId && (options?.enabled ?? true),
   });
 }
 

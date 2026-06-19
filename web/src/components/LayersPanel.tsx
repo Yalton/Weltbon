@@ -59,7 +59,9 @@ export function LayersPanel({
   onToggle,
   onRequestColorPick,
 }: LayersPanelProps) {
-  const { data: layers = [] } = useMapLayers(universeId);
+  // Only fetch when the panel is actually shown — in share mode the editor mounts
+  // this panel with visible=false, and fetching there 404s on the share seam (WR-03).
+  const { data: layers = [] } = useMapLayers(universeId, { enabled: visible });
 
   const createLayer = useCreateMapLayer(universeId);
   const updateLayer = useUpdateMapLayer(universeId);

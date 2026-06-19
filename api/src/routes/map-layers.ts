@@ -19,7 +19,7 @@
  */
 
 import { OpenAPIHono, createRoute, z } from '@hono/zod-openapi';
-import { and, eq, inArray } from 'drizzle-orm';
+import { and, eq, inArray, max } from 'drizzle-orm';
 import { HTTPException } from 'hono/http-exception';
 import { db } from '../db/client.js';
 import { mapLayers, terrainTypes } from '../db/schema.js';
@@ -394,9 +394,23 @@ export const mapLayersRouter = new OpenAPIHono<AppEnv>()
     await requireUniverse(uid, c.var.userId);
     const data = c.req.valid('json');
 
+    // Append new layer at the end: next sort_order = max(existing) + 1.
+    // Without this every layer defaults to sort_order=0, so the up/down reorder
+    // swap becomes a 0↔0 no-op and GET-list order is non-deterministic (WR-01).
+    const [{ maxOrder }] = await db()
+      .select({ maxOrder: max(mapLayers.sortOrder) })
+      .from(mapLayers)
+      .where(eq(mapLayers.universeId, uid));
+
     const [row] = await db()
       .insert(mapLayers)
-      .values({ universeId: uid, name: data.name, ordered: data.ordered ?? false, defaultOpacity: 0.6 })
+      .values({
+        universeId: uid,
+        name: data.name,
+        ordered: data.ordered ?? false,
+        defaultOpacity: 0.6,
+        sortOrder: (maxOrder ?? -1) + 1,
+      })
       .returning();
 
     return c.json({ ...row, terrainTypes: [] } as any, 201);
@@ -447,9 +461,22 @@ export const mapLayersRouter = new OpenAPIHono<AppEnv>()
     await requireLayer(layerId, uid);
     const data = c.req.valid('json');
 
+    // Append new terrain type at the end of its layer (WR-02): next sort_order =
+    // max(existing in this layer) + 1, so ordered-layer reorder arrows actually swap.
+    const [{ maxOrder }] = await db()
+      .select({ maxOrder: max(terrainTypes.sortOrder) })
+      .from(terrainTypes)
+      .where(eq(terrainTypes.layerId, layerId));
+
     const [row] = await db()
       .insert(terrainTypes)
-      .values({ layerId, name: data.name, color: data.color, label: data.label ?? null })
+      .values({
+        layerId,
+        name: data.name,
+        color: data.color,
+        label: data.label ?? null,
+        sortOrder: (maxOrder ?? -1) + 1,
+      })
       .returning();
 
     return c.json(row as any, 201);

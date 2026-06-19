@@ -142,6 +142,53 @@ describe('map-layers routes (Phase 42)', () => {
     expect(typeof data.sortOrder).toBe('number');
   });
 
+  it('WR-01/02 regression: manually-created layers & terrain types get incrementing sortOrder so reorder actually swaps', async () => {
+    const { hdrs, uid } = await seedUniverse();
+
+    // Two manually-created layers (no preset) must NOT both land on sort_order=0.
+    const l1 = await json(
+      await req('POST', `/api/universes/${uid}/map-layers`, { headers: hdrs, body: { name: 'First' } }),
+    );
+    const l2 = await json(
+      await req('POST', `/api/universes/${uid}/map-layers`, { headers: hdrs, body: { name: 'Second' } }),
+    );
+    expect(l1.sortOrder).toBe(0);
+    expect(l2.sortOrder).toBe(1);
+
+    // Two manually-created terrain types in an ordered layer get 0,1 too.
+    const layer = await json(
+      await req('POST', `/api/universes/${uid}/map-layers`, { headers: hdrs, body: { name: 'Elevation', ordered: true } }),
+    );
+    const t1 = await json(
+      await req('POST', `/api/universes/${uid}/map-layers/${layer.id}/terrain-types`, {
+        headers: hdrs,
+        body: { name: 'Lowlands', color: '#84cc16' },
+      }),
+    );
+    const t2 = await json(
+      await req('POST', `/api/universes/${uid}/map-layers/${layer.id}/terrain-types`, {
+        headers: hdrs,
+        body: { name: 'Peaks', color: '#94a3b8' },
+      }),
+    );
+    expect(t1.sortOrder).toBe(0);
+    expect(t2.sortOrder).toBe(1);
+
+    // Reorder swap is now meaningful (0<->1), not a 0<->0 no-op.
+    await req('PATCH', `/api/universes/${uid}/map-layers/${layer.id}/terrain-types/${t1.id}`, {
+      headers: hdrs,
+      body: { sortOrder: 1 },
+    });
+    await req('PATCH', `/api/universes/${uid}/map-layers/${layer.id}/terrain-types/${t2.id}`, {
+      headers: hdrs,
+      body: { sortOrder: 0 },
+    });
+
+    const list = await json(await req('GET', `/api/universes/${uid}/map-layers`, { headers: hdrs }));
+    const elevation = list.find((l: any) => l.id === layer.id);
+    expect(elevation.terrainTypes.map((t: any) => t.name)).toEqual(['Peaks', 'Lowlands']);
+  });
+
   it('POST /map-layers with ordered=true returns layer with ordered=true', async () => {
     const { hdrs, uid } = await seedUniverse();
 
