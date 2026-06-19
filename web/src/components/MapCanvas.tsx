@@ -5,6 +5,7 @@ import { useNavigate } from 'react-router-dom';
 import { entryTypeHexColor } from '../lib/entryTypeColor';
 import { GlyphIcon } from '../lib/mapGlyphs';
 import type { MapPin, MapRegion } from '../hooks/useMap';
+import { useShareToken } from '../contexts/ShareModeContext';
 
 // ─── Constants ────────────────────────────────────────────────────────────────
 const NODE_RADIUS = 14;        // matches DiagramCanvas NODE_RADIUS
@@ -325,6 +326,9 @@ export function MapCanvas({
   // Pointer position in image space for rubber-band preview (drawRegionMode).
   const [pointerImgPos, setPointerImgPos] = useState<{ x: number; y: number } | null>(null);
   const navigate = useNavigate();
+  // Share-token-aware navigation (T-40-14 / D-12): when a share token is present,
+  // pin/region left-click navigates within /share/:token to avoid uid leaks.
+  const shareToken = useShareToken();
 
   // Install d3-zoom on the svg element, targeting <g.viewport>.
   // Pins and regions are React-rendered inside this effect's SVG structure but are
@@ -409,8 +413,15 @@ export function MapCanvas({
     if (pos) setPointerImgPos({ x: pos.nx * imageWidth, y: pos.ny * imageHeight });
   };
 
+  // Navigate to entry — share-token-aware (T-40-14).
+  // In share mode: /share/:token/entries/:entryId (no uid leak to visitor).
+  // In authenticated mode: /universes/:uid/entries/:entryId.
   const handleNavigate = (entryId: string) => {
-    navigate(`/universes/${universeId}/entries/${entryId}`);
+    if (shareToken) {
+      navigate(`/share/${shareToken}/entries/${entryId}`);
+    } else {
+      navigate(`/universes/${universeId}/entries/${entryId}`);
+    }
   };
 
   // ── Rubber-band preview helpers ──────────────────────────────────────────────
