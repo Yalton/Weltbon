@@ -65,9 +65,15 @@ const createMapSchema = z.object({
 const updateMapSchema = z.object({
   name: z.string().min(1).max(200).optional(),
   imageAssetId: z.string().uuid().optional(),
-}).refine((data) => data.name !== undefined || data.imageAssetId !== undefined, {
-  message: 'At least one of name or imageAssetId must be provided',
-});
+  // MAPS-05 (D-03): legend caption overrides, serialized JSON; null clears.
+  legendLabels: z.string().max(10_000).nullable().optional(),
+}).refine(
+  (data) =>
+    data.name !== undefined ||
+    data.imageAssetId !== undefined ||
+    data.legendLabels !== undefined,
+  { message: 'At least one of name, imageAssetId, or legendLabels must be provided' },
+);
 
 const mapSchema = z.object({
   id: z.string(),
@@ -127,6 +133,7 @@ const mapDetailSchema = z.object({
   createdAt: z.string().or(z.date()),
   rawUrl: z.string().nullable(),
   thumbUrl: z.string().nullable(),
+  legendLabels: z.string().nullable().optional(), // Phase 40 MAPS-05 (D-03): legend caption overrides
   pins: z.array(pinSchema),
   regions: z.array(regionSchema),   // Phase 40: regions alongside pins
 });
@@ -498,10 +505,14 @@ export const mapsRouter = new OpenAPIHono<AppEnv>()
     await requireMap(mid, uid);
     const data = c.req.valid('json');
 
-    const updates: { name?: string; imageAssetId?: string } = {};
+    const updates: { name?: string; imageAssetId?: string; legendLabels?: string | null } = {};
 
     if (data.name !== undefined) {
       updates.name = data.name;
+    }
+
+    if (data.legendLabels !== undefined) {
+      updates.legendLabels = data.legendLabels;
     }
 
     if (data.imageAssetId !== undefined) {

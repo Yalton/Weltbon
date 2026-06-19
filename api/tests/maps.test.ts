@@ -332,6 +332,48 @@ describe('map routes (MAPS-04/05 regions + pin style)', () => {
     expect(detail.regions[0].name).toBe('Test Region');
   });
 
+  // ─── MAPS-05: Legend label persistence ─────────────────────────────────────
+
+  it('PATCH /maps/:mid persists legendLabels alone and round-trips via GET detail', async () => {
+    const { hdrs, uid, mid } = await seedMap();
+    const labels = JSON.stringify({ '#4caf50:': 'Forests', '#ff5722:star': 'Capitals' });
+
+    // legendLabels must be accepted as the ONLY field (regression: refine
+    // previously required name or imageAssetId, so legend renames 400'd).
+    const patchRes = await req('PATCH', `/api/universes/${uid}/maps/${mid}`, {
+      headers: hdrs,
+      body: { legendLabels: labels },
+    });
+    expect(patchRes.status).toBe(200);
+    const patched = await json(patchRes);
+    expect(patched.legendLabels).toBe(labels);
+
+    // GET detail must return the saved labels (regression: mapDetailSchema
+    // previously omitted legendLabels, stripping it from the response).
+    const detailRes = await req('GET', `/api/universes/${uid}/maps/${mid}`, { headers: hdrs });
+    expect(detailRes.status).toBe(200);
+    const detail = await json(detailRes);
+    expect(detail.legendLabels).toBe(labels);
+  });
+
+  it('PATCH /maps/:mid can clear legendLabels with null', async () => {
+    const { hdrs, uid, mid } = await seedMap();
+    await req('PATCH', `/api/universes/${uid}/maps/${mid}`, {
+      headers: hdrs,
+      body: { legendLabels: JSON.stringify({ '#000:': 'x' }) },
+    });
+
+    const clearRes = await req('PATCH', `/api/universes/${uid}/maps/${mid}`, {
+      headers: hdrs,
+      body: { legendLabels: null },
+    });
+    expect(clearRes.status).toBe(200);
+
+    const detailRes = await req('GET', `/api/universes/${uid}/maps/${mid}`, { headers: hdrs });
+    const detail = await json(detailRes);
+    expect(detail.legendLabels ?? null).toBeNull();
+  });
+
   // ─── MAPS-05: Pin style PATCH ──────────────────────────────────────────────
 
   it('PATCH /pins/:pinId/style sets color and icon on a pin and returns 200', async () => {
