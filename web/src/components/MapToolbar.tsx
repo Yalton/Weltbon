@@ -6,6 +6,7 @@ const COPY = {
   drawRegion: 'Draw region',
   drawingRegion: 'Drawing region...',
   legend: 'Legend',
+  layers: 'Layers',
 } as const;
 
 export interface MapToolbarProps {
@@ -25,6 +26,10 @@ export interface MapToolbarProps {
   legendVisible?: boolean;
   /** Toggle legend panel. */
   onToggleLegend?: () => void;
+  /** Whether the layers panel is visible. */
+  layersPanelVisible?: boolean;
+  /** Toggle layers panel. */
+  onToggleLayersPanel?: () => void;
 }
 
 /**
@@ -50,6 +55,8 @@ export function MapToolbar({
   onChangeImage,
   legendVisible,
   onToggleLegend,
+  layersPanelVisible,
+  onToggleLayersPanel,
 }: MapToolbarProps) {
   return (
     <div className="absolute left-4 top-4 z-10 flex items-center gap-2 rounded-md border border-neutral-200 dark:border-neutral-800 bg-white/90 dark:bg-neutral-900/90 backdrop-blur-sm px-3 py-2 shadow-sm">
@@ -116,6 +123,24 @@ export function MapToolbar({
           ].join(' ')}
         >
           {COPY.legend}
+        </button>
+      )}
+
+      {/* Layers toggle — only shown when onToggleLayersPanel is provided */}
+      {onToggleLayersPanel && (
+        <button
+          type="button"
+          onClick={onToggleLayersPanel}
+          aria-pressed={layersPanelVisible}
+          className={[
+            'rounded-md text-sm px-3 py-2',
+            'focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-[color:var(--color-accent)] focus-visible:ring-offset-2',
+            layersPanelVisible
+              ? 'bg-[color:var(--color-accent)] text-white'
+              : 'border border-neutral-300 dark:border-neutral-700 text-neutral-700 dark:text-neutral-300 hover:bg-neutral-50 dark:hover:bg-neutral-800',
+          ].join(' ')}
+        >
+          {COPY.layers}
         </button>
       )}
     </div>
