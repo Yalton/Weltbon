@@ -29,6 +29,7 @@ import { auditRoutes, auditCrossUniverseRoutes } from './routes/audits.js';
 import { statsRoutes } from './routes/stats.js';
 import { diagramsRouter } from './routes/diagrams.js';
 import { mapsRouter } from './routes/maps.js';
+import { mapLayersRouter } from './routes/map-layers.js';
 import { assetsRouter } from './routes/assets.js';
 import { dictionaryRoutes } from './routes/dictionary.js';
 import { recoverOrphanAuditRuns } from './services/audit-recovery.js';
@@ -136,6 +137,9 @@ export function createApp() {
   // Phase 39 MAPS-01/02/03: per-universe image-backed maps + entry-linked pins.
   // requireAuth already applies via apiR.use('/universes/*', requireAuth) above.
   apiR.route('/universes/:uid/maps', mapsRouter);
+  // Phase 42 LAYER-01/02/03: per-universe map layer + terrain-type CRUD.
+  // requireAuth already applies via apiR.use('/universes/*', requireAuth) above.
+  apiR.route('/universes/:uid/map-layers', mapLayersRouter);
   // Phase 38 MEDIA-01/02/03/04: per-universe image asset upload/serving/CRUD.
   // requireAuth already applies via apiR.use('/universes/*', requireAuth) above.
   apiR.route('/universes/:uid/assets', assetsRouter);
