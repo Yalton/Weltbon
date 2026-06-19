@@ -166,6 +166,28 @@ describe('map routes (MAPS-04/05 regions + pin style)', () => {
     expect(data.color).toBe('#4caf50');
   });
 
+  it('POST /regions accepts explicit null entryId and color (UI draw-region payload) and returns 201', async () => {
+    // Regression: MapEditor sends { name: '', points, entryId: null, color: null }
+    // for a standalone region. createRegionSchema previously used .optional()
+    // (no .nullable()), so an explicit null was rejected with 400 — drawing a
+    // standalone region failed in the browser even though the handler and DB
+    // both accept null. The existing "no entryId" test omits the field
+    // (undefined), which never exercised the null path.
+    const { hdrs, uid, mid } = await seedMap();
+    const points = JSON.stringify([{ x: 0.1, y: 0.1 }, { x: 0.5, y: 0.1 }, { x: 0.5, y: 0.5 }]);
+
+    const res = await req('POST', `/api/universes/${uid}/maps/${mid}/regions`, {
+      headers: hdrs,
+      body: { name: '', points, entryId: null, color: null },
+    });
+
+    expect(res.status).toBe(201);
+    const data = await json(res);
+    expect(data.entryId).toBeNull();
+    expect(data.color).toBeNull();
+    expect(data.points).toBe(points);
+  });
+
   it('POST /regions creates a linked region with valid entryId and returns 201', async () => {
     const { hdrs, uid, mid } = await seedMap();
     const entryId = await createEntry(uid, hdrs);

@@ -110,8 +110,12 @@ const regionSchema = z.object({
 const createRegionSchema = z.object({
   name: z.string().max(200).default(''),
   points: z.string().min(1),        // JSON [{x,y}, ...] — min 1 char required
-  entryId: z.string().uuid().optional(),
-  color: z.string().optional(),
+  // entryId/color are .nullable() because the draw-region UI sends explicit
+  // null for a standalone, default-colored region (matches the DB's nullable
+  // columns, the handler's `?? null`, and updateRegionSchema). .optional()
+  // alone rejected null → 400, so standalone regions could not be drawn.
+  entryId: z.string().uuid().nullable().optional(),
+  color: z.string().nullable().optional(),
 });
 
 const updateRegionSchema = z.object({
