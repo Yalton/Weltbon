@@ -3,6 +3,9 @@ const COPY = {
   addPin: 'Add pin',
   addingPins: 'Adding pins...',
   changeImage: 'Change image',
+  drawRegion: 'Draw region',
+  drawingRegion: 'Drawing region...',
+  legend: 'Legend',
 } as const;
 
 export interface MapToolbarProps {
@@ -12,8 +15,16 @@ export interface MapToolbarProps {
   addPinMode: boolean;
   /** Toggle add-pin mode on/off. */
   onToggleAddPinMode: () => void;
+  /** Whether the canvas is in draw-region mode (D-04). */
+  drawRegionMode: boolean;
+  /** Toggle draw-region mode on/off. */
+  onToggleDrawRegionMode: () => void;
   /** Open the Change image picker. */
   onChangeImage: () => void;
+  /** Whether the legend panel is visible. */
+  legendVisible?: boolean;
+  /** Toggle legend panel. */
+  onToggleLegend?: () => void;
 }
 
 /**
@@ -22,7 +33,9 @@ export interface MapToolbarProps {
  * Simplified version of DiagramToolbar — no undo/redo, no align/distribute,
  * no export, no auto-layout. Contains only:
  *   - "Add pin" mode toggle (accent fill when active)
+ *   - "Draw region" mode toggle (accent fill when active) — Phase 40 D-04
  *   - "Change image" action (border style)
+ *   - "Legend" toggle button (border style)
  *   - Read-only map name (text-sm font-semibold)
  *
  * Positioning: absolute left-4 top-4 z-10, mirroring DiagramToolbar's
@@ -32,7 +45,11 @@ export function MapToolbar({
   mapName,
   addPinMode,
   onToggleAddPinMode,
+  drawRegionMode,
+  onToggleDrawRegionMode,
   onChangeImage,
+  legendVisible,
+  onToggleLegend,
 }: MapToolbarProps) {
   return (
     <div className="absolute left-4 top-4 z-10 flex items-center gap-2 rounded-md border border-neutral-200 dark:border-neutral-800 bg-white/90 dark:bg-neutral-900/90 backdrop-blur-sm px-3 py-2 shadow-sm">
@@ -59,6 +76,22 @@ export function MapToolbar({
         {addPinMode ? COPY.addingPins : COPY.addPin}
       </button>
 
+      {/* Draw region mode toggle — Phase 40 D-04 */}
+      <button
+        type="button"
+        onClick={onToggleDrawRegionMode}
+        aria-pressed={drawRegionMode}
+        className={[
+          'rounded-md text-sm px-3 py-2',
+          'focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-[color:var(--color-accent)] focus-visible:ring-offset-2',
+          drawRegionMode
+            ? 'bg-[color:var(--color-accent)] text-white'
+            : 'border border-neutral-300 dark:border-neutral-700 text-neutral-700 dark:text-neutral-300 hover:bg-neutral-50 dark:hover:bg-neutral-800',
+        ].join(' ')}
+      >
+        {drawRegionMode ? COPY.drawingRegion : COPY.drawRegion}
+      </button>
+
       {/* Change image — border style */}
       <button
         type="button"
@@ -67,6 +100,24 @@ export function MapToolbar({
       >
         {COPY.changeImage}
       </button>
+
+      {/* Legend toggle — only shown when onToggleLegend is provided */}
+      {onToggleLegend && (
+        <button
+          type="button"
+          onClick={onToggleLegend}
+          aria-pressed={legendVisible}
+          className={[
+            'rounded-md text-sm px-3 py-2',
+            'focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-[color:var(--color-accent)] focus-visible:ring-offset-2',
+            legendVisible
+              ? 'bg-[color:var(--color-accent)] text-white'
+              : 'border border-neutral-300 dark:border-neutral-700 text-neutral-700 dark:text-neutral-300 hover:bg-neutral-50 dark:hover:bg-neutral-800',
+          ].join(' ')}
+        >
+          {COPY.legend}
+        </button>
+      )}
     </div>
   );
 }

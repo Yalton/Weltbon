@@ -3,13 +3,15 @@ import { select } from 'd3-selection';
 import { zoom, zoomTransform, type ZoomBehavior } from 'd3-zoom';
 import { useNavigate } from 'react-router-dom';
 import { entryTypeHexColor } from '../lib/entryTypeColor';
-import type { MapPin } from '../hooks/useMap';
+import { GlyphIcon } from '../lib/mapGlyphs';
+import type { MapPin, MapRegion } from '../hooks/useMap';
 
 // ─── Constants ────────────────────────────────────────────────────────────────
 const NODE_RADIUS = 14;        // matches DiagramCanvas NODE_RADIUS
 const HIT_RADIUS = 22;         // transparent hit area — 44px diameter touch target
 const SELECTION_RING_R = 18;   // HALO_RADIUS in DiagramCanvas terms
 const DRAG_THRESHOLD_PX = 4;   // pointer movement below this is treated as a click
+const SNAP_DISTANCE_PX = 18;   // first-vertex snap radius in IMAGE pixels (scaled)
 
 /** Clamp a number to [lo, hi]. */
 function clamp(v: number, lo: number, hi: number): number {
@@ -24,20 +26,30 @@ export interface MapCanvasProps {
   imageWidth: number;
   /** Image natural height in pixels. */
   imageHeight: number;
-  /** Pins with optional joined entryTitle/entryType. */
+  /** Pins with optional joined entryTitle/entryType/color/icon. */
   pins: MapPin[];
+  /** Regions for this map. */
+  regions: MapRegion[];
   /** When true, cursor shows crosshair and canvas click emits onCanvasClick. */
   addPinMode: boolean;
+  /** When true, canvas click drops a region vertex. */
+  drawRegionMode: boolean;
+  /** In-progress polygon vertices (normalized 0..1). */
+  pendingVertices: Array<{ x: number; y: number }>;
   /** Currently selected pin id (shows selection ring). Null clears selection. */
   selectedPinId: string | null;
   /** Universe id for same-tab entry navigation. */
   universeId: string;
-  /** Called with normalized [0,1] coords when user clicks canvas in addPinMode. */
+  /** Called with normalized [0,1] coords when user clicks canvas in addPinMode or drawRegionMode. */
   onCanvasClick: (nx: number, ny: number) => void;
   /** Called when a pin drag ends with the new normalized position. */
   onPinDragEnd: (pinId: string, nx: number, ny: number) => void;
   /** Called on pin right-click/contextmenu with client coords. */
   onPinContextMenu: (pin: MapPin, clientX: number, clientY: number) => void;
+  /** Called on region left-click (navigate to linked entry). */
+  onRegionClick: (region: MapRegion) => void;
+  /** Called on region right-click with client coords (context menu). */
+  onRegionContextMenu: (region: MapRegion, clientX: number, clientY: number) => void;
 }
 
 // ─── PinCircle ────────────────────────────────────────────────────────────────
@@ -80,6 +92,9 @@ function PinCircle({
 }: PinCircleProps) {
   const pinX = pin.x * imageWidth;
   const pinY = pin.y * imageHeight;
+
+  // Pin color: explicit override or fallback to entry type color (D-01)
+  const pinColor = pin.color ?? entryTypeHexColor(pin.entryType ?? 'concept');
 
   // Drag state (mutable via ref — no rerender during drag)
   const dragging = useRef(false);
@@ -161,13 +176,26 @@ function PinCircle({
       {/* Transparent hit area — 44px touch target (HIT_RADIUS=22 -> 44px diameter) */}
       <circle r={HIT_RADIUS} fill="transparent" />
 
-      {/* Visible pin circle — identical to DiagramCanvas node style */}
+      {/* Visible pin circle with color override (D-01) */}
       <circle
         r={NODE_RADIUS}
-        fill={entryTypeHexColor(pin.entryType ?? 'concept')}
+        fill={pinColor}
         stroke="#111827"
         strokeWidth={1}
       />
+
+      {/* Glyph icon overlay — rendered when pin.icon is set (D-02) */}
+      {pin.icon && (
+        <foreignObject
+          x={-8}
+          y={-8}
+          width={16}
+          height={16}
+          style={{ pointerEvents: 'none', overflow: 'visible' }}
+        >
+          <GlyphIcon glyph={pin.icon} size={16} color="#fff" />
+        </foreignObject>
+      )}
 
       {/* Selection ring — shown when pin is selected (delete/relink context) */}
       {selected && (
@@ -182,11 +210,82 @@ function PinCircle({
   );
 }
 
+// ─── RegionPolygon ────────────────────────────────────────────────────────────
+/**
+ * React-rendered SVG polygon for a map region (D-07).
+ *
+ * CRITICAL: All interaction uses React event handlers (onClick, onContextMenu).
+ * NEVER use d3 .on(event, (e, d) => ...) on this element — d is undefined on
+ * React-rendered SVG and would throw (T-40-09, memory: timeline-pins-react-rendered-no-d3-datum).
+ *
+ * Translucent fill (fillOpacity 0.18) + solid border (strokeOpacity 1) in the
+ * element color (D-07). Renders BEFORE pins in z-order so pins stay on top (D-07).
+ */
+interface RegionPolygonProps {
+  region: MapRegion;
+  imageWidth: number;
+  imageHeight: number;
+  onRegionClick: (region: MapRegion) => void;
+  onRegionContextMenu: (region: MapRegion, clientX: number, clientY: number) => void;
+}
+
+function RegionPolygon({
+  region,
+  imageWidth,
+  imageHeight,
+  onRegionClick,
+  onRegionContextMenu,
+}: RegionPolygonProps) {
+  // Parse the points JSON string to [{x, y}] normalized 0..1 then convert to image space.
+  let points: Array<{ x: number; y: number }> = [];
+  try {
+    points = JSON.parse(region.points) as Array<{ x: number; y: number }>;
+  } catch {
+    return null;
+  }
+
+  if (points.length < 3) return null;
+
+  // Build SVG polygon points string in image-space coords.
+  const svgPoints = points
+    .map((p) => `${p.x * imageWidth},${p.y * imageHeight}`)
+    .join(' ');
+
+  const color = region.color ?? '#6b7280';
+
+  const handleClick = (e: React.MouseEvent<SVGPolygonElement>) => {
+    e.stopPropagation();
+    onRegionClick(region);
+  };
+
+  const handleContextMenu = (e: React.MouseEvent<SVGPolygonElement>) => {
+    e.preventDefault();
+    e.stopPropagation();
+    onRegionContextMenu(region, e.clientX, e.clientY);
+  };
+
+  return (
+    <polygon
+      points={svgPoints}
+      fill={color}
+      fillOpacity={0.18}
+      stroke={color}
+      strokeWidth={1.5}
+      strokeOpacity={1}
+      style={{ cursor: region.entryId ? 'pointer' : 'default' }}
+      onClick={handleClick}
+      onContextMenu={handleContextMenu}
+    >
+      <title>{region.name || 'Region'}</title>
+    </polygon>
+  );
+}
+
 // ─── MapCanvas ────────────────────────────────────────────────────────────────
 /**
  * SVG canvas with d3-zoom/pan applied to the `<svg>` element only.
- * Pins are React-rendered inside `<g class="pins">` and use React event
- * handlers exclusively — no d3 datum binding on pin elements.
+ * Pins and regions are React-rendered inside `<g class="pins">` / `<g class="regions">`
+ * and use React event handlers exclusively — no d3 datum binding on any element.
  *
  * d3 APIs used:
  *   - d3.zoom() on the <svg> element
@@ -201,25 +300,34 @@ function PinCircle({
  * Using getScreenCTM().inverse() alone (on the svg root) would give SVG-ROOT
  * coords, NOT image coords — pins would persist at the wrong location after
  * any pan or zoom (this is the MAPS-03 correctness bug).
+ *
+ * Z-ORDER (D-07): regions <g> is rendered BEFORE pins <g> so pins stay on top.
  */
 export function MapCanvas({
   imageUrl,
   imageWidth,
   imageHeight,
   pins,
+  regions,
   addPinMode,
+  drawRegionMode,
+  pendingVertices,
   selectedPinId,
   universeId,
   onCanvasClick,
   onPinDragEnd,
   onPinContextMenu,
+  onRegionClick,
+  onRegionContextMenu,
 }: MapCanvasProps) {
   const svgRef = useRef<SVGSVGElement>(null);
   const [currentScale, setCurrentScale] = useState(1);
+  // Pointer position in image space for rubber-band preview (drawRegionMode).
+  const [pointerImgPos, setPointerImgPos] = useState<{ x: number; y: number } | null>(null);
   const navigate = useNavigate();
 
   // Install d3-zoom on the svg element, targeting <g.viewport>.
-  // Pins are React-rendered inside this effect's SVG structure but are
+  // Pins and regions are React-rendered inside this effect's SVG structure but are
   // NOT touched by d3 — d3 only manages the zoom transform on <g.viewport>.
   useEffect(() => {
     if (!svgRef.current || imageWidth <= 0 || imageHeight <= 0) return;
@@ -258,37 +366,79 @@ export function MapCanvas({
     };
   }, [imageWidth, imageHeight]);
 
-  // CANVAS CLICK — COORDINATE CONVERSION (Approach A — two-step).
-  // Only fires when addPinMode is active.
-  const handleSvgClick = (e: React.MouseEvent<SVGSVGElement>) => {
-    if (!addPinMode) return;
-    // Ignore clicks that originated on a pin group (they handle their own events).
-    if ((e.target as Element).closest('g[aria-label]')) return;
-
+  // ── Coordinate conversion helper ─────────────────────────────────────────────
+  // Two-step screen → image space conversion (Approach A).
+  // Used by both handleSvgClick and handleSvgPointerMove.
+  const screenToImage = (clientX: number, clientY: number): { nx: number; ny: number } | null => {
     const svgEl = svgRef.current;
-    if (!svgEl) return;
+    if (!svgEl) return null;
 
     const pt = svgEl.createSVGPoint();
-    pt.x = e.clientX;
-    pt.y = e.clientY;
+    pt.x = clientX;
+    pt.y = clientY;
 
     // Step 1: screen → SVG-ROOT space (NOT yet image space).
     const screenCTM = svgEl.getScreenCTM();
-    if (!screenCTM) return;
+    if (!screenCTM) return null;
     const root = pt.matrixTransform(screenCTM.inverse());
 
     // Step 2: undo the d3 zoom transform (which lives on <g.viewport>) → IMAGE space.
-    // zoomTransform reads the transform stored on the svg element by d3.
     const [imgX, imgY] = zoomTransform(svgEl).invert([root.x, root.y]);
 
     const nx = clamp(imgX / imageWidth, 0, 1);
     const ny = clamp(imgY / imageHeight, 0, 1);
-    onCanvasClick(nx, ny);
+    return { nx, ny };
+  };
+
+  // CANVAS CLICK — COORDINATE CONVERSION (Approach A — two-step).
+  // Fires when addPinMode or drawRegionMode is active.
+  const handleSvgClick = (e: React.MouseEvent<SVGSVGElement>) => {
+    if (!addPinMode && !drawRegionMode) return;
+    // Ignore clicks that originated on a pin group (they handle their own events).
+    if ((e.target as Element).closest('g[aria-label]')) return;
+
+    const pos = screenToImage(e.clientX, e.clientY);
+    if (!pos) return;
+    onCanvasClick(pos.nx, pos.ny);
+  };
+
+  // POINTER MOVE — track cursor in image space for rubber-band preview.
+  const handleSvgPointerMove = (e: React.PointerEvent<SVGSVGElement>) => {
+    if (!drawRegionMode) return;
+    const pos = screenToImage(e.clientX, e.clientY);
+    if (pos) setPointerImgPos({ x: pos.nx * imageWidth, y: pos.ny * imageHeight });
   };
 
   const handleNavigate = (entryId: string) => {
     navigate(`/universes/${universeId}/entries/${entryId}`);
   };
+
+  // ── Rubber-band preview helpers ──────────────────────────────────────────────
+  // Convert pending vertices (normalized) to image-space SVG points string.
+  const pendingPoints = pendingVertices
+    .map((p) => `${p.x * imageWidth},${p.y * imageHeight}`)
+    .join(' ');
+
+  // First-vertex snap affordance — check if pointer is near the first vertex.
+  const isNearFirstVertex =
+    drawRegionMode &&
+    pendingVertices.length >= 3 &&
+    pointerImgPos !== null &&
+    (() => {
+      const fv = pendingVertices[0];
+      const dx = pointerImgPos.x - fv.x * imageWidth;
+      const dy = pointerImgPos.y - fv.y * imageHeight;
+      return Math.sqrt(dx * dx + dy * dy) < SNAP_DISTANCE_PX / currentScale;
+    })();
+
+  // Preview polygon includes the current pointer as a trailing vertex for rubber-band effect.
+  const previewPoints =
+    drawRegionMode && pendingVertices.length > 0 && pointerImgPos
+      ? pendingPoints + ` ${pointerImgPos.x},${pointerImgPos.y}`
+      : pendingPoints;
+
+  // The region draw preview color uses the accent color.
+  const previewColor = 'var(--color-accent, #3b82f6)';
 
   return (
     <svg
@@ -297,11 +447,12 @@ export function MapCanvas({
       aria-label="Map canvas"
       className={[
         'block h-full w-full select-none',
-        addPinMode ? 'cursor-crosshair' : '',
+        addPinMode || drawRegionMode ? 'cursor-crosshair' : '',
       ]
         .filter(Boolean)
         .join(' ')}
       onClick={handleSvgClick}
+      onPointerMove={handleSvgPointerMove}
     >
       <g className="viewport">
         {/* Map background image layer */}
@@ -314,7 +465,58 @@ export function MapCanvas({
           preserveAspectRatio="xMidYMid meet"
         />
 
-        {/* React-rendered pins — NO d3 datum binding here */}
+        {/* ── Regions — rendered BEFORE pins so pins stay on top (D-07) ── */}
+        <g className="regions">
+          {regions.map((region) => (
+            <RegionPolygon
+              key={region.id}
+              region={region}
+              imageWidth={imageWidth}
+              imageHeight={imageHeight}
+              onRegionClick={onRegionClick}
+              onRegionContextMenu={onRegionContextMenu}
+            />
+          ))}
+        </g>
+
+        {/* ── Rubber-band preview polygon (drawRegionMode only) ── */}
+        {/* CRITICAL: React handlers only — NEVER d3 .on(event,(e,d)=>) here */}
+        {drawRegionMode && pendingVertices.length > 0 && (
+          <g className="region-preview">
+            {/* Preview polygon */}
+            <polygon
+              points={previewPoints}
+              fill={previewColor}
+              fillOpacity={0.15}
+              stroke={previewColor}
+              strokeWidth={1.5}
+              strokeDasharray="4 3"
+              style={{ pointerEvents: 'none' }}
+            />
+            {/* Vertex handle circles — React-rendered, React handlers only */}
+            {pendingVertices.map((v, idx) => {
+              const vx = v.x * imageWidth;
+              const vy = v.y * imageHeight;
+              const isFirst = idx === 0;
+              const isSnapped = isFirst && isNearFirstVertex;
+              return (
+                <circle
+                  key={idx}
+                  cx={vx}
+                  cy={vy}
+                  r={isSnapped ? 8 / currentScale : 5 / currentScale}
+                  fill={isSnapped ? previewColor : '#ffffff'}
+                  stroke={previewColor}
+                  strokeWidth={1.5 / currentScale}
+                  style={{ cursor: isFirst && pendingVertices.length >= 3 ? 'pointer' : 'default', pointerEvents: 'none' }}
+                  aria-label={isFirst ? 'Close polygon' : `Vertex ${idx + 1}`}
+                />
+              );
+            })}
+          </g>
+        )}
+
+        {/* ── React-rendered pins — ABOVE regions, NO d3 datum binding ── */}
         <g className="pins">
           {pins.map((pin) => (
             <PinCircle
