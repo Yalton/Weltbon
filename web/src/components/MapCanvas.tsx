@@ -21,8 +21,8 @@ function clamp(v: number, lo: number, hi: number): number {
 
 // ─── Props ────────────────────────────────────────────────────────────────────
 export interface MapCanvasProps {
-  /** Pre-signed full-res URL for the map image. */
-  imageUrl: string;
+  /** Pre-signed full-res URL for the map image. Null when the backing asset was deleted (ON DELETE SET NULL). */
+  imageUrl: string | null;
   /** Image natural width in pixels (used for fit-to-view and coord conversion). */
   imageWidth: number;
   /** Image natural height in pixels. */
@@ -466,15 +466,26 @@ export function MapCanvas({
       onPointerMove={handleSvgPointerMove}
     >
       <g className="viewport">
-        {/* Map background image layer */}
-        <image
-          href={imageUrl}
-          x="0"
-          y="0"
-          width={imageWidth}
-          height={imageHeight}
-          preserveAspectRatio="xMidYMid meet"
-        />
+        {/* Map background image layer — omitted when imageUrl is absent (backing asset deleted). */}
+        {imageUrl ? (
+          <image
+            href={imageUrl}
+            x="0"
+            y="0"
+            width={imageWidth}
+            height={imageHeight}
+            preserveAspectRatio="xMidYMid meet"
+          />
+        ) : (
+          <rect
+            x="0"
+            y="0"
+            width={imageWidth}
+            height={imageHeight}
+            fill="var(--color-surface, #1a1a2e)"
+            opacity={0.4}
+          />
+        )}
 
         {/* ── Regions — rendered BEFORE pins so pins stay on top (D-07) ── */}
         <g className="regions">
