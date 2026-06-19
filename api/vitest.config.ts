@@ -86,6 +86,8 @@ const DB_GATED_TESTS = [
   'tests/maps.test.ts',
   // Phase 40 Plan 02 — MAPS-06 share map privacy filtering + mutation boundary tests.
   'tests/share-maps-boundary.test.ts',
+  // Phase 41 Plan 01 — SC4 maps export→reimport round-trip integration test.
+  'tests/import-export-maps.test.ts',
 ];
 
 export default defineConfig({

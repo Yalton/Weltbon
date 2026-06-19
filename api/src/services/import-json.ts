@@ -1,7 +1,7 @@
 import { z } from 'zod';
 import sharp from 'sharp';
 import { db } from '../db/client.js';
-import { universes, entries, links, categories, issues, issueEntries, graphPositions, timelinePins, assets } from '../db/schema.js';
+import { universes, entries, links, categories, issues, issueEntries, graphPositions, timelinePins, assets, maps, mapPins, mapRegions } from '../db/schema.js';
 import { storageBackend } from './storage/local.js';
 
 // CR-02: quota enforcement on the import path (same cap as the upload path).
@@ -129,6 +129,47 @@ export const importSchema = z.object({
         extension: z.string(),
         sizeBytes: z.number(),
         usedAsCoverByEntryId: z.string().uuid().nullable().optional().default(null),
+      })
+    )
+    .optional()
+    .default([]),
+  // Phase 41 D-01: maps/pins/regions from ZIP exports (weltbon_version 2.0.0).
+  // Backward-compat: pre-maps exports lack these fields → default to [] for zero inserts.
+  maps: z
+    .array(
+      z.object({
+        id: z.string().uuid(),
+        name: z.string().min(1),
+        imageAssetId: z.string().uuid().nullable().optional().default(null),
+        legendLabels: z.string().nullable().optional().default(null),
+        // createdAt not validated — ignored on import (new timestamp assigned by DB)
+      })
+    )
+    .optional()
+    .default([]),
+  mapPins: z
+    .array(
+      z.object({
+        id: z.string().uuid().optional(),
+        mapId: z.string().uuid(),
+        entryId: z.string().uuid(),
+        x: z.number().finite().min(0).max(1),
+        y: z.number().finite().min(0).max(1),
+        color: z.string().nullable().optional().default(null),
+        icon: z.string().nullable().optional().default(null),
+      })
+    )
+    .optional()
+    .default([]),
+  mapRegions: z
+    .array(
+      z.object({
+        id: z.string().uuid().optional(),
+        mapId: z.string().uuid(),
+        entryId: z.string().uuid().nullable().optional().default(null),
+        name: z.string().optional().default(''),
+        points: z.string(),  // raw JSON text, validated as non-empty
+        color: z.string().nullable().optional().default(null),
       })
     )
     .optional()
@@ -288,6 +329,26 @@ export async function importUniverseJson(
       assetIdMap.set(asset.id, newId);
     }
 
+    // 3b. Phase 41 D-01: Insert maps with remapped imageAssetId (through assetIdMap).
+    //     Build mapIdMap: old UUID → new UUID (remapped on import).
+    //     Maps reference assetIdMap (imageAssetId); must come AFTER the asset loop.
+    const mapIdMap = new Map<string, string>();
+    for (const map of data.maps) {
+      const mappedAssetId = map.imageAssetId
+        ? assetIdMap.get(map.imageAssetId) ?? null
+        : null;
+      const [created] = await tx
+        .insert(maps)
+        .values({
+          universeId: universe.id,
+          name: map.name,
+          imageAssetId: mappedAssetId,
+          legendLabels: map.legendLabels ?? null,
+        })
+        .returning({ id: maps.id });
+      mapIdMap.set(map.id, created.id);
+    }
+
     // 4. Build old-UUID -> new-UUID map for entries; remap categoryId via categoryIdMap
     const entryIdMap = new Map<string, string>();
     for (const entry of data.entries) {
@@ -398,6 +459,47 @@ export async function importUniverseJson(
       });
     }
 
+    // 3c. Phase 41 D-01: Insert map_pins with remapped mapId (mapIdMap) + entryId (entryIdMap).
+    //     Orphaned refs throw — same discipline as links/graphPositions.
+    //     Placed here (after step 4 entry inserts) so entryIdMap is fully populated.
+    for (const pin of data.mapPins) {
+      const newMapId = mapIdMap.get(pin.mapId);
+      const newEntryId = entryIdMap.get(pin.entryId);
+      if (!newMapId) throw new Error('Map pin references unknown map ID');
+      if (!newEntryId) throw new Error('Map pin references unknown entry ID');
+      await tx.insert(mapPins).values({
+        mapId: newMapId,
+        entryId: newEntryId,
+        x: pin.x,
+        y: pin.y,
+        color: pin.color ?? null,
+        icon: pin.icon ?? null,
+      });
+    }
+
+    // 3d. Phase 41 D-01: Insert map_regions with remapped mapId + optional entryId.
+    //     entryId is nullable (standalone regions) — only remap when non-null.
+    //     A non-null entryId absent from entryIdMap throws (orphaned-ref discipline).
+    //     A null entryId stays null and does NOT throw (nullable asymmetry vs pins).
+    for (const region of data.mapRegions) {
+      const newMapId = mapIdMap.get(region.mapId);
+      if (!newMapId) throw new Error('Map region references unknown map ID');
+      let newEntryId: string | null = null;
+      if (region.entryId) {
+        newEntryId = entryIdMap.get(region.entryId) ?? null;
+        if (!newEntryId) {
+          throw new Error('Map region references unknown entry ID');
+        }
+      }
+      await tx.insert(mapRegions).values({
+        mapId: newMapId,
+        entryId: newEntryId,
+        name: region.name ?? '',
+        points: region.points,
+        color: region.color ?? null,
+      });
+    }
+
     return {
       universeId: universe.id,
       universeName: universe.name,
@@ -408,6 +510,9 @@ export async function importUniverseJson(
       positionCount: data.graphPositions.length,
       pinCount: data.timelinePins.length,
       assetCount: data.assets.length,
+      mapCount: data.maps.length,
+      mapPinCount: data.mapPins.length,
+      mapRegionCount: data.mapRegions.length,
     };
   });
 
