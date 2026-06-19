@@ -4,6 +4,7 @@ import { useMaps, useDeleteMap } from '../hooks/useMaps';
 import { EmptyState } from '../components/EmptyState';
 import { ConfirmDialog } from '../components/ConfirmDialog';
 import { NewMapDialog } from '../components/NewMapDialog';
+import { useShareMode, useShareToken } from '../contexts/ShareModeContext';
 
 // ─── LOCKED copy strings (UI-SPEC §"Map List" + Copywriting Contract) ────────
 const COPY = {
@@ -23,7 +24,13 @@ const COPY = {
 // ─────────────────────────────────────────────────────────────────────────────
 
 export function MapList() {
-  const { uid } = useParams<{ uid: string }>();
+  // Phase 40 Plan 04 — share-mode awareness.
+  // In share mode there is no :uid param; substitute 'share' so useMaps
+  // fetches /universes/share/maps → /api/share/maps via api/client.ts seam.
+  const { uid: paramUid } = useParams<{ uid: string }>();
+  const isShare = useShareMode();
+  const shareToken = useShareToken();
+  const uid = paramUid ?? (isShare ? 'share' : '');
   const navigate = useNavigate();
   const { data, isLoading, isError } = useMaps(uid!);
   const deleteMap = useDeleteMap(uid!);
@@ -37,18 +44,29 @@ export function MapList() {
     setDeleteTarget(null);
   };
 
+  // Navigate to a map detail — share-token-aware (T-40-14).
+  const navigateToMap = (mapId: string) => {
+    if (shareToken) {
+      navigate(`/share/${shareToken}/maps/${mapId}`);
+    } else {
+      navigate(`/universes/${uid}/maps/${mapId}`);
+    }
+  };
+
   return (
     <div className="max-w-4xl mx-auto">
-      {/* Page heading + New map CTA */}
+      {/* Page heading + New map CTA — CTA suppressed in share mode */}
       <div className="flex items-center justify-between mb-6">
         <h1 className="text-2xl font-semibold tracking-tight">{COPY.heading}</h1>
-        <button
-          type="button"
-          onClick={() => setNewDialogOpen(true)}
-          className="rounded-md bg-[color:var(--color-accent)] text-white text-sm px-3 py-2"
-        >
-          {COPY.ctaNew}
-        </button>
+        {!isShare && (
+          <button
+            type="button"
+            onClick={() => setNewDialogOpen(true)}
+            className="rounded-md bg-[color:var(--color-accent)] text-white text-sm px-3 py-2"
+          >
+            {COPY.ctaNew}
+          </button>
+        )}
       </div>
 
       {/* Content */}
@@ -61,13 +79,15 @@ export function MapList() {
           title={COPY.emptyHeading}
           body={COPY.emptyBody}
           action={
-            <button
-              type="button"
-              onClick={() => setNewDialogOpen(true)}
-              className="bg-[color:var(--color-accent)] text-white text-sm px-4 py-2 rounded-md hover:opacity-90 focus:outline-none focus:ring-2 focus:ring-[color:var(--color-accent)] focus:ring-offset-2"
-            >
-              {COPY.emptyCtaNew}
-            </button>
+            !isShare ? (
+              <button
+                type="button"
+                onClick={() => setNewDialogOpen(true)}
+                className="bg-[color:var(--color-accent)] text-white text-sm px-4 py-2 rounded-md hover:opacity-90 focus:outline-none focus:ring-2 focus:ring-[color:var(--color-accent)] focus:ring-offset-2"
+              >
+                {COPY.emptyCtaNew}
+              </button>
+            ) : undefined
           }
         />
       ) : (
@@ -77,10 +97,10 @@ export function MapList() {
               key={map.id}
               className="rounded-md border border-neutral-200 dark:border-neutral-700 hover:border-neutral-400 dark:hover:border-neutral-500 overflow-hidden transition-colors"
             >
-              {/* Tile image — clickable to navigate to editor */}
+              {/* Tile image — clickable to navigate to map detail */}
               <button
                 type="button"
-                onClick={() => navigate(`/universes/${uid}/maps/${map.id}`)}
+                onClick={() => navigateToMap(map.id)}
                 className="block w-full focus:outline-none focus:ring-2 focus:ring-[color:var(--color-accent)]"
                 aria-label={`Open map ${map.name}`}
               >
@@ -91,48 +111,54 @@ export function MapList() {
                 />
               </button>
 
-              {/* Tile footer: name + delete */}
+              {/* Tile footer: name + delete (delete suppressed in share mode) */}
               <div className="flex items-center justify-between px-2 py-1.5">
                 <button
                   type="button"
-                  onClick={() => navigate(`/universes/${uid}/maps/${map.id}`)}
+                  onClick={() => navigateToMap(map.id)}
                   className="flex-1 min-w-0 text-left focus:outline-none focus:ring-2 focus:ring-[color:var(--color-accent)] rounded"
                 >
                   <p className="text-sm font-semibold truncate">{map.name}</p>
                 </button>
-                <button
-                  type="button"
-                  aria-label={`Delete ${map.name}`}
-                  onClick={() => setDeleteTarget({ id: map.id, name: map.name })}
-                  className="ml-2 shrink-0 text-xs text-red-500 hover:text-red-700"
-                >
-                  Delete
-                </button>
+                {!isShare && (
+                  <button
+                    type="button"
+                    aria-label={`Delete ${map.name}`}
+                    onClick={() => setDeleteTarget({ id: map.id, name: map.name })}
+                    className="ml-2 shrink-0 text-xs text-red-500 hover:text-red-700"
+                  >
+                    Delete
+                  </button>
+                )}
               </div>
             </div>
           ))}
         </div>
       )}
 
-      {/* New map dialog */}
-      <NewMapDialog
-        open={newDialogOpen}
-        onOpenChange={setNewDialogOpen}
-        universeId={uid!}
-      />
+      {/* New map dialog — not rendered in share mode */}
+      {!isShare && (
+        <NewMapDialog
+          open={newDialogOpen}
+          onOpenChange={setNewDialogOpen}
+          universeId={uid!}
+        />
+      )}
 
-      {/* Delete confirm dialog */}
-      <ConfirmDialog
-        open={deleteTarget !== null}
-        onOpenChange={(open) => {
-          if (!open) setDeleteTarget(null);
-        }}
-        title={deleteTarget ? COPY.deleteDialogTitle(deleteTarget.name) : 'Delete map?'}
-        body={COPY.deleteDialogBody}
-        confirmLabel={COPY.deleteConfirmLabel}
-        destructive
-        onConfirm={handleDelete}
-      />
+      {/* Delete confirm dialog — not rendered in share mode */}
+      {!isShare && (
+        <ConfirmDialog
+          open={deleteTarget !== null}
+          onOpenChange={(open) => {
+            if (!open) setDeleteTarget(null);
+          }}
+          title={deleteTarget ? COPY.deleteDialogTitle(deleteTarget.name) : 'Delete map?'}
+          body={COPY.deleteDialogBody}
+          confirmLabel={COPY.deleteConfirmLabel}
+          destructive
+          onConfirm={handleDelete}
+        />
+      )}
     </div>
   );
 }

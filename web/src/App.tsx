@@ -90,6 +90,19 @@ export default function App() {
         <Route path="entries/:entryId" element={<EntryDetail />} />
         <Route path="graph" element={<GraphView />} />
         <Route path="timeline" element={<TimelineView />} />
+        {/*
+          Phase 40 Plan 04 — share-mode map routes. Mounted here (outside
+          ProtectedRoute) so unauthenticated visitors can reach them.
+          Both views adapt via useShareMode() — no Shared* variants needed.
+          MapList renders the maps grid read-only (no New map / Delete affordances
+          when isShare=true); MapEditor renders the canvas read-only (toolbar,
+          draw/add modes, and all mutation affordances suppressed by Task 1).
+          Data flows through the api/client.ts seam:
+            /universes/share/maps  → /api/share/maps
+            /universes/share/maps/:mid → /api/share/maps/:mid
+        */}
+        <Route path="maps" element={<MapList />} />
+        <Route path="maps/:mid" element={<MapEditor />} />
       </Route>
       <Route path="*" element={<Navigate to="/universes" replace />} />
     </Routes>
