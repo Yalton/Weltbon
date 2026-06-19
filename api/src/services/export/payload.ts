@@ -10,6 +10,9 @@ import {
   graphPositions,
   timelinePins,
   assets,
+  maps,
+  mapPins,
+  mapRegions,
 } from '../../db/schema.js';
 import { buildSlugMap } from './slug.js';
 
@@ -72,6 +75,40 @@ export interface ExportPayloadAsset {
   usedAsCoverByEntryId: string | null;
 }
 
+/** Phase 41 D-01: map metadata exported alongside the universe payload. */
+export interface ExportPayloadMap {
+  id: string;
+  universeId: string;
+  name: string;
+  /** Nullable — ON DELETE SET NULL; remapped through assetIdMap on import. */
+  imageAssetId: string | null;
+  /** Nullable JSON string: Record<string, string> legend caption overrides. */
+  legendLabels: string | null;
+  createdAt: Date;
+}
+
+/** Phase 41 D-01: map pin exported alongside the universe payload. */
+export interface ExportPayloadMapPin {
+  id: string;
+  mapId: string;
+  entryId: string;
+  x: number;
+  y: number;
+  color: string | null;
+  icon: string | null;
+}
+
+/** Phase 41 D-01: map region exported alongside the universe payload. */
+export interface ExportPayloadMapRegion {
+  id: string;
+  mapId: string;
+  entryId: string | null;  // nullable — standalone regions have no entry
+  name: string;
+  points: string;  // raw JSON text "[{x,y},...]"
+  color: string | null;
+  createdAt: Date;
+}
+
 export interface ExportPayloadCategory {
   id: string;
   label: string;
@@ -132,6 +169,12 @@ export interface ExportPayload {
   entrySlugMap: Map<string, string>;
   /** Phase 38 MEDIA-06 (D-07): all assets belonging to this universe. */
   assets: ExportPayloadAsset[];
+  /** Phase 41 D-01: all maps belonging to this universe. */
+  maps: ExportPayloadMap[];
+  /** Phase 41 D-01: all map pins scoped to this universe (via maps FK). */
+  mapPins: ExportPayloadMapPin[];
+  /** Phase 41 D-01: all map regions scoped to this universe (via maps FK). */
+  mapRegions: ExportPayloadMapRegion[];
 }
 
 /**
@@ -223,6 +266,44 @@ export async function loadUniverseExportPayload(universeId: string): Promise<Exp
     .from(assets)
     .where(eq(assets.universeId, universeId));
 
+  // Phase 41 D-01: load all maps for this universe.
+  const mapRows = await db()
+    .select()
+    .from(maps)
+    .where(eq(maps.universeId, universeId));
+
+  // Phase 41 D-01: load map pins scoped to this universe via maps FK.
+  // map_pins has no direct universeId — scope through INNER JOIN maps.
+  const mapPinRows = await db()
+    .select({
+      id: mapPins.id,
+      mapId: mapPins.mapId,
+      entryId: mapPins.entryId,
+      x: mapPins.x,
+      y: mapPins.y,
+      color: mapPins.color,
+      icon: mapPins.icon,
+    })
+    .from(mapPins)
+    .innerJoin(maps, eq(maps.id, mapPins.mapId))
+    .where(eq(maps.universeId, universeId));
+
+  // Phase 41 D-01: load map regions scoped to this universe via maps FK.
+  // map_regions has no direct universeId — scope through INNER JOIN maps.
+  const mapRegionRows = await db()
+    .select({
+      id: mapRegions.id,
+      mapId: mapRegions.mapId,
+      entryId: mapRegions.entryId,
+      name: mapRegions.name,
+      points: mapRegions.points,
+      color: mapRegions.color,
+      createdAt: mapRegions.createdAt,
+    })
+    .from(mapRegions)
+    .innerJoin(maps, eq(maps.id, mapRegions.mapId))
+    .where(eq(maps.universeId, universeId));
+
   // Build cover-image reverse map: assetId → entryId (for usedAsCoverByEntryId).
   // Only the first matching entry per asset is recorded (covers are 1:1 in practice).
   const coverByAssetId = new Map<string, string>();
@@ -303,6 +384,33 @@ export async function loadUniverseExportPayload(universeId: string): Promise<Exp
       extension: a.extension,
       sizeBytes: a.sizeBytes,
       usedAsCoverByEntryId: coverByAssetId.get(a.id) ?? null,
+    })),
+    // Phase 41 D-01: maps + pins + regions for the universe.
+    maps: mapRows.map((m) => ({
+      id: m.id,
+      universeId: m.universeId,
+      name: m.name,
+      imageAssetId: m.imageAssetId ?? null,
+      legendLabels: m.legendLabels ?? null,
+      createdAt: m.createdAt,
+    })),
+    mapPins: mapPinRows.map((p) => ({
+      id: p.id,
+      mapId: p.mapId,
+      entryId: p.entryId,
+      x: p.x,
+      y: p.y,
+      color: p.color ?? null,
+      icon: p.icon ?? null,
+    })),
+    mapRegions: mapRegionRows.map((r) => ({
+      id: r.id,
+      mapId: r.mapId,
+      entryId: r.entryId ?? null,
+      name: r.name,
+      points: r.points,
+      color: r.color ?? null,
+      createdAt: r.createdAt,
     })),
   };
 }

@@ -101,6 +101,33 @@ export function exportUniverseJsonAsZip(
       sizeBytes: a.sizeBytes,
       usedAsCoverByEntryId: a.usedAsCoverByEntryId,
     })),
+    // Phase 41 D-01: maps + pins + regions for the universe.
+    maps: payload.maps.map((m) => ({
+      id: m.id,
+      name: m.name,
+      // Carry the asset reference so it can be remapped on import.
+      imageAssetId: m.imageAssetId,
+      legendLabels: m.legendLabels,
+      createdAt: m.createdAt.toISOString(),
+    })),
+    mapPins: payload.mapPins.map((p) => ({
+      id: p.id,
+      mapId: p.mapId,
+      entryId: p.entryId,
+      x: p.x,
+      y: p.y,
+      color: p.color,
+      icon: p.icon,
+    })),
+    mapRegions: payload.mapRegions.map((r) => ({
+      id: r.id,
+      mapId: r.mapId,
+      entryId: r.entryId,
+      name: r.name,
+      points: r.points,
+      color: r.color,
+      createdAt: r.createdAt.toISOString(),
+    })),
   };
 
   archive.append(JSON.stringify(manifest, null, 2), { name: 'manifest.json' });
