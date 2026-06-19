@@ -174,6 +174,9 @@ export function MapEditor() {
   const [regionContextMenu, setRegionContextMenu] = useState<RegionContextMenuState>(null);
   const [deleteRegionTarget, setDeleteRegionTarget] = useState<MapRegion | null>(null);
   const [regionRelinkPickerOpen, setRegionRelinkPickerOpen] = useState(false);
+  // Region whose entry link is being changed. Captured when the relink picker
+  // opens because the context menu (its prior source) is dismissed immediately.
+  const [regionRelinkTarget, setRegionRelinkTarget] = useState<MapRegion | null>(null);
   const [renameRegionTarget, setRenameRegionTarget] = useState<MapRegion | null>(null);
   const [renameRegionDraft, setRenameRegionDraft] = useState('');
   // Color picker state (for pins and regions)
@@ -233,6 +236,7 @@ export function MapEditor() {
         setPendingPinCoords(null);
         setRelinkPickerOpen(false);
         setRegionRelinkPickerOpen(false);
+        setRegionRelinkTarget(null);
         setRenameRegionTarget(null);
       }
     };
@@ -483,6 +487,7 @@ export function MapEditor() {
 
   const handleRegionContextMenuRelink = () => {
     if (!regionContextMenu) return;
+    setRegionRelinkTarget(regionContextMenu.region);
     setRegionRelinkPickerOpen(true);
     setRegionContextMenu(null);
   };
@@ -511,12 +516,10 @@ export function MapEditor() {
   };
 
   const handleRegionRelinkEntry = async (entryId: string) => {
-    const region = regionContextMenu?.region ?? null;
-    if (!region) {
-      setRegionRelinkPickerOpen(false);
-      return;
-    }
+    const region = regionRelinkTarget;
     setRegionRelinkPickerOpen(false);
+    setRegionRelinkTarget(null);
+    if (!region) return;
     try {
       await updateRegion.mutateAsync({ regionId: region.id, entryId });
     } catch {
@@ -774,7 +777,7 @@ export function MapEditor() {
             placedEntryIds={new Set()}
             onAdd={handleRegionRelinkEntry}
             onRemove={() => { /* no-op */ }}
-            onClose={() => setRegionRelinkPickerOpen(false)}
+            onClose={() => { setRegionRelinkPickerOpen(false); setRegionRelinkTarget(null); }}
             open={regionRelinkPickerOpen}
           />
 
