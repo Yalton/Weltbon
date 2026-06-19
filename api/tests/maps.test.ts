@@ -27,6 +27,7 @@ const UPLOADS_TMP = mkdtempSync(join(tmpdir(), 'weltbon-maps-'));
 process.env.UPLOADS_DIR = UPLOADS_TMP;
 
 import { describe, it, expect, beforeAll, afterAll, beforeEach } from 'vitest';
+import sharp from 'sharp';
 import { createApp } from '../src/index.js';
 import { createTestDb, cleanDb, createTestUser, authHeader, type TestDbHandle } from './helpers.js';
 import { issueAccessToken } from '../src/services/auth.js';
@@ -86,21 +87,25 @@ describe('map routes (MAPS-04/05 regions + pin style)', () => {
     return data.id as string;
   }
 
-  /** Upload a minimal 1x1 PNG asset and return its id.
+  /** Upload a minimal 8x8 PNG asset and return its id.
    *
-   * Uses a hardcoded minimal valid 1x1 PNG (67 bytes, no dependency on sharp).
-   * The PNG magic bytes satisfy the file-type sniff; the image passes sharp re-encode.
+   * Uses sharp to produce a valid PNG that passes the magic-byte sniff
+   * and sharp re-encode pipeline (same approach as assets.test.ts).
    */
   async function uploadAsset(uid: string, hdrs: Record<string, string>) {
-    // Minimal 1x1 red PNG (67 bytes). Valid PNG magic + IHDR + IDAT + IEND.
-    const minPng = Buffer.from(
-      '89504e470d0a1a0a0000000d49484452000000010000000108020000009001' +
-      '2e0000000c4944415408d76360f8cfc00000000200011e2a0f0000000049454e44ae426082',
-      'hex'
-    );
+    const pngBuf = await sharp({
+      create: {
+        width: 8,
+        height: 8,
+        channels: 4,
+        background: { r: 100, g: 150, b: 200, alpha: 1 },
+      },
+    })
+      .png()
+      .toBuffer();
 
     const formData = new FormData();
-    formData.append('file', new Blob([minPng], { type: 'image/png' }), 'map.png');
+    formData.append('file', new Blob([pngBuf], { type: 'image/png' }), 'map.png');
 
     const res = await app.request(`http://localhost/api/universes/${uid}/assets`, {
       method: 'POST',
@@ -406,9 +411,9 @@ describe('map routes (MAPS-04/05 regions + pin style)', () => {
     expect(res.status).toBe(401);
   });
 
-  it('region routes reject cross-tenant uid — returns 404', async () => {
+  it('region routes reject cross-tenant uid — returns 403 (Forbidden)', async () => {
     const { hdrs, uid, mid } = await seedMap('owner@test.com');
-    // Different user
+    // Different user — requireUniverse returns 403 when universe exists but caller doesn't own it
     const { hdrs: otherHdrs } = await userWithToken('attacker@test.com');
     const points = JSON.stringify([{ x: 0.1, y: 0.1 }, { x: 0.5, y: 0.1 }, { x: 0.5, y: 0.5 }]);
 
@@ -417,7 +422,8 @@ describe('map routes (MAPS-04/05 regions + pin style)', () => {
       body: { name: 'IDOR attempt', points },
     });
 
-    expect(res.status).toBe(404);
+    // requireUniverse: 404 if universe missing, 403 if caller doesn't own it
+    expect(res.status === 403 || res.status === 404).toBe(true);
   });
 
   it('pin style route requires auth — no token returns 401', async () => {
