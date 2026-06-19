@@ -80,7 +80,7 @@ interface GlyphIconProps {
  * Returns null for unknown glyph keys so callers can safely call without
  * checking the key first.
  */
-export function GlyphIcon({ glyph, size = 16, color = 'currentColor' }: GlyphIconProps): JSX.Element | null {
+export function GlyphIcon({ glyph, size = 16, color = 'currentColor' }: GlyphIconProps) {
   const path = getGlyphPath(glyph);
   if (!path) return null;
   return (
