@@ -20,18 +20,34 @@
  * explicit named regression anchors for the new map surface so a future plan that
  * accidentally mounts a mutation under /share/* is caught at the closest scope.
  *
+ * Phase 41.1-01: MAPS-06 regression test — serve a real map background image
+ *   via the share seam. CRITICAL: process.env.UPLOADS_DIR must be set before
+ *   the schema.js static import below, because schema.js loads the storageBackend
+ *   singleton at module-load time (same pattern as share-assets.test.ts lines 31-37).
+ *
  * Lane: DB-gated (integration). Uses createTestDb + cleanDb for isolation.
  * appRequest helper mirrors share-views.test.ts (no body for GET).
  */
 
+import { mkdtempSync, rmSync } from 'node:fs';
+import { join } from 'node:path';
+import { tmpdir } from 'node:os';
+
+// Bind storage to a temp dir BEFORE any import pulls in the storageBackend singleton.
+// schema.js at the next import line transitively loads storageBackend which reads
+// process.env.UPLOADS_DIR at module-load time — must be set here (Phase 41.1 MAPS-06).
+const UPLOADS_TMP = mkdtempSync(join(tmpdir(), 'weltbon-share-maps-'));
+process.env.UPLOADS_DIR = UPLOADS_TMP;
+
 import { describe, it, expect, beforeAll, afterAll, beforeEach } from 'vitest';
+import sharp from 'sharp';
 import {
   createTestDb,
   cleanDb,
   createTestUser,
   type TestDbHandle,
 } from './helpers.js';
-import { entries, maps, mapPins, mapRegions, shareTokens, universes } from '../src/db/schema.js';
+import { assets, entries, maps, mapPins, mapRegions, shareTokens, universes } from '../src/db/schema.js';
 
 let handle: TestDbHandle;
 // eslint-disable-next-line @typescript-eslint/no-explicit-any
@@ -54,6 +70,7 @@ beforeAll(async () => {
 
 afterAll(async () => {
   await handle.cleanup();
+  rmSync(UPLOADS_TMP, { recursive: true, force: true });
 });
 
 beforeEach(async () => {
@@ -144,6 +161,90 @@ async function seedRegion(mapId: string, entryId: string | null, name = 'Region'
     .returning();
   return row!.id;
 }
+
+/**
+ * Phase 41.1-01: seedMapWithImage — seed a real PNG asset backed by a map in
+ * the given universe and store raw+thumb bytes in the storageBackend.
+ * Returns the assetId (used in GET /api/share/assets/:id/raw).
+ */
+async function seedMapWithImage(targetUniverseId: string): Promise<string> {
+  const { storageBackend } = await import('../src/services/storage/local.js');
+  const pngBytes = await sharp({
+    create: { width: 8, height: 8, channels: 4, background: { r: 80, g: 120, b: 200, alpha: 1 } },
+  }).png().toBuffer();
+
+  const assetId = crypto.randomUUID();
+  await storageBackend.put(assetId, pngBytes);
+  await storageBackend.put(`${assetId}_thumb`, pngBytes);
+
+  await handle.db.insert(assets).values({
+    id: assetId,
+    universeId: targetUniverseId,
+    filename: 'map-bg.png',
+    mimeType: 'image/png',
+    extension: 'png',
+    sizeBytes: pngBytes.length,
+    thumbSizeBytes: pngBytes.length,
+  });
+
+  await handle.db.insert(maps).values({
+    universeId: targetUniverseId,
+    name: 'Test Map With Image',
+    imageAssetId: assetId,
+  });
+
+  return assetId;
+}
+
+// ─── MAPS-06 regression: serve real map background image via share seam ────────
+//
+// Phase 41.1-01: these tests prove that getPublicAsset's new map channel (Step 3)
+// correctly authorizes serving a map-backing asset and correctly denies cross-universe
+// assets. Without the Task-1 fix, both tests would fail (200 → 404, 404 still 404).
+
+describe('MAPS-06: share serves map background image (Phase 41.1 regression)', () => {
+  it('GET /api/share/assets/:mapImageId/raw returns 200 for a map image in the token universe', async () => {
+    const assetId = await seedMapWithImage(universeId);
+
+    const res = await app.fetch(
+      new Request(`http://localhost/api/share/assets/${assetId}/raw`, {
+        method: 'GET',
+        headers: { 'share-token': activeTokenPlaintext },
+      }),
+    );
+
+    expect(res.status).toBe(200);
+    expect(res.headers.get('content-type')).toBe('image/png');
+    const bytes = Buffer.from(await res.arrayBuffer());
+    expect(bytes.length).toBeGreaterThan(0);
+  });
+
+  it('GET /api/share/assets/:mapImageId/raw returns 404 for a map image in a different universe (cross-universe gate)', async () => {
+    // Create a second user + universe + map image. The active share token only covers `universeId`.
+    const otherUser = await createTestUser(handle, {
+      email: `share-maps-cross-${Date.now()}@test.local`,
+      password: 'longenoughpw12',
+      displayName: 'Other Universe Owner',
+    });
+    const [otherUniverse] = await handle.db
+      .insert(universes)
+      .values({ userId: otherUser.id, name: 'Other Universe' })
+      .returning();
+    const otherUniverseId = otherUniverse!.id;
+    const otherAssetId = await seedMapWithImage(otherUniverseId);
+
+    // Use the active token (scoped to `universeId`) to try to fetch the other universe's map image.
+    const res = await app.fetch(
+      new Request(`http://localhost/api/share/assets/${otherAssetId}/raw`, {
+        method: 'GET',
+        headers: { 'share-token': activeTokenPlaintext },
+      }),
+    );
+
+    // Must be 404 — cross-universe asset, no existence leak (T-41.1-01 / T-41.1-03).
+    expect(res.status).toBe(404);
+  });
+});
 
 // ─── MAPS-06: share map privacy filtering ─────────────────────────────────────
 
