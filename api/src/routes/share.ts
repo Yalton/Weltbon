@@ -39,6 +39,8 @@ import {
   getPublicEntries,
   getPublicEntryById,
   getPublicGraph,
+  getPublicMap,
+  getPublicMaps,
   getPublicTimeline,
   getPublicUniverseMeta,
 } from '../services/share-views.js';
@@ -414,6 +416,107 @@ const dictionaryRoute = createRoute({
   },
 });
 
+// Phase 40 MAPS-06 / D-10 / D-11 / D-12 / D-13 — Share-aware map read routes.
+//
+// GET /maps       → bare array of all maps for the share-token universe (D-11:
+//                   all maps visible when universe is shared — maps have no own
+//                   public flag). Image URLs signed via signShareAssetUrl (D-12).
+// GET /maps/{mid} → wrapped detail { ...map, rawUrl, thumbUrl, pins, regions }
+//                   with privacy-filtered pins (inner join entries isPublic=true)
+//                   and regions (standalone entryId-null kept; linked filtered by
+//                   isPublic=true). Matches the authenticated detail shape (D-10).
+//
+// Both routes use requireShareToken — universeId from c.var.shareUniverseId only
+// (D-03: visitor never sees the internal universe UUID; no :uid in URL).
+// No mutation routes in /share/* (T-40-04).
+
+const publicMapSchema = z.object({
+  id: z.string(),
+  universeId: z.string(),
+  name: z.string(),
+  imageAssetId: z.string().nullable(),
+  createdAt: z.string().or(z.date()),
+  legendLabels: z.string().nullable().optional(),
+  rawUrl: z.string().nullable(),
+  thumbUrl: z.string().nullable(),
+});
+
+// Phase 33 bare-array precedent: timeline/dictionary use z.array(...) not a wrapper.
+// share-seam-bare-array-contract: list MUST be a bare array (no {maps:[...]} wrapper).
+const publicMapsResponseSchema = z.array(publicMapSchema);
+
+const publicMapDetailSchema = publicMapSchema.extend({
+  pins: z.array(
+    z.object({
+      id: z.string(),
+      mapId: z.string(),
+      entryId: z.string(),
+      x: z.number(),
+      y: z.number(),
+      color: z.string().nullable(),
+      icon: z.string().nullable(),
+    }),
+  ),
+  regions: z.array(
+    z.object({
+      id: z.string(),
+      mapId: z.string(),
+      entryId: z.string().nullable(),
+      name: z.string(),
+      points: z.string(),
+      color: z.string().nullable(),
+      createdAt: z.string().or(z.date()),
+    }),
+  ),
+});
+
+const mapIdParams = z.object({ mid: z.string().uuid() });
+
+const publicMapsRoute = createRoute({
+  method: 'get',
+  path: '/maps',
+  tags: ['Share'],
+  summary: 'Public maps list for the share-token universe',
+  description:
+    'Returns all maps for the share-token universe as a bare array (D-11: maps ' +
+    'have no own public flag — all maps visible when universe is shared). ' +
+    'Image URLs signed via signShareAssetUrl (D-12). ' +
+    'No :uid in path — universeId from share token only (D-03).',
+  security: [{ shareToken: [] }],
+  middleware: [requireShareToken] as const,
+  responses: {
+    200: {
+      content: { 'application/json': { schema: publicMapsResponseSchema } },
+      description: 'Maps list (bare array — all maps visible when universe is shared, D-11)',
+    },
+  },
+});
+
+const publicMapDetailRoute = createRoute({
+  method: 'get',
+  path: '/maps/{mid}',
+  tags: ['Share'],
+  summary: 'Public map detail with privacy-filtered pins and regions',
+  description:
+    'Returns a wrapped map detail { ...map, rawUrl, thumbUrl, pins, regions } with ' +
+    'server-side privacy filtering: pins whose linked entry is private are dropped ' +
+    '(T-40-05 / D-11); standalone regions (entryId null) always included; linked ' +
+    'regions filtered by isPublic=true. Matches authenticated detail shape (D-10).',
+  security: [{ shareToken: [] }],
+  middleware: [requireShareToken] as const,
+  request: { params: mapIdParams },
+  responses: {
+    200: {
+      content: { 'application/json': { schema: publicMapDetailSchema } },
+      description: 'Map with privacy-filtered pins and regions',
+    },
+    404: {
+      content: { 'application/json': { schema: errorSchema } },
+      description: 'Map not found or universe mismatch',
+    },
+  },
+});
+
 // Phase 38 D-13 / T-38-30 / T-38-31 / T-38-32 — Share-aware asset byte-serving.
 //
 // Two GET-only routes: /assets/:id/raw and /assets/:id/thumb.
@@ -552,6 +655,24 @@ export const shareRoutes = router
     const lid = c.req.query('lid')?.trim() || null;
     const words = await getPublicDictionaryWords(c.var.shareUniverseId, lid);
     return c.json(words as any, 200);
+  })
+
+  // GET /maps — public maps list (Phase 40 MAPS-06 / D-10 / D-11)
+  // Bare array — share-seam-bare-array-contract; universeId from token only (D-03).
+  .openapi(publicMapsRoute, async (c) => {
+    const rows = await getPublicMaps(c.var.shareUniverseId);
+    return c.json(rows as any, 200);
+  })
+
+  // GET /maps/{mid} — public map detail with privacy-filtered pins + regions (Phase 40 MAPS-06)
+  // Wrapped detail matching authenticated shape; null → 404 (universe mismatch or missing).
+  .openapi(publicMapDetailRoute, async (c) => {
+    const { mid } = c.req.valid('param');
+    const result = await getPublicMap(c.var.shareUniverseId, mid);
+    if (!result) {
+      return c.json({ error: 'Map not found' }, 404);
+    }
+    return c.json(result as any, 200);
   })
 
   // GET /assets/:id/raw — serve original bytes (D-13, T-38-30, T-38-31, T-38-32)

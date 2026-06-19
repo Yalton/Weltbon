@@ -28,6 +28,9 @@ import {
   dictionaryWords,
   entries,
   links,
+  mapPins,
+  mapRegions,
+  maps,
   timelinePins,
   universes,
   users,
@@ -430,4 +433,100 @@ export async function getPublicAsset(
 
   if (refRows.length === 0) return null;
   return asset;
+}
+
+// ─── Function 9: getPublicMaps ────────────────────────────────────────────────
+//
+// Public maps list (D-10 / D-11): returns all maps for the universe.
+// Maps have no own public flag — all maps in a shared universe are visible (D-11).
+// Bare-array response matches the authenticated list shape (share-seam-bare-array-contract).
+// Image URLs use signShareAssetUrl (same pattern as getPublicEntryById coverImageUrl).
+//
+export async function getPublicMaps(universeId: string) {
+  const rows = await getDb()
+    .select()
+    .from(maps)
+    .where(eq(maps.universeId, universeId));
+
+  return rows.map((row) => ({
+    ...row,
+    rawUrl: row.imageAssetId
+      ? `/api/share/assets/${row.imageAssetId}/raw${signShareAssetUrl(universeId, row.imageAssetId, 'raw')}`
+      : null,
+    thumbUrl: row.imageAssetId
+      ? `/api/share/assets/${row.imageAssetId}/thumb${signShareAssetUrl(universeId, row.imageAssetId, 'thumb')}`
+      : null,
+  }));
+}
+
+// ─── Function 10: getPublicMap ────────────────────────────────────────────────
+//
+// Public map detail with privacy-filtered pins + regions (D-10 / D-11).
+//
+// Privacy rules (D-11):
+//   - Pins with a private entryId: filtered via INNER JOIN entries WHERE isPublic=true.
+//     A pin whose linked entry is private is dropped silently (no count, no placeholder).
+//   - Regions with a nullable entryId:
+//       - entryId IS NULL (standalone territory) → always included (D-11: no entry to gate on).
+//       - entryId is set → filtered via INNER JOIN entries WHERE isPublic=true.
+//
+// Response shape mirrors the authenticated GET detail: wrapped object with `pins` + `regions`.
+//
+export async function getPublicMap(universeId: string, mapId: string) {
+  // Verify the map belongs to this universe (D-03: no uid in URL; universeId from token)
+  const [map] = await getDb()
+    .select()
+    .from(maps)
+    .where(and(eq(maps.id, mapId), eq(maps.universeId, universeId)))
+    .limit(1);
+  if (!map) return null;
+
+  // Privacy-filtered pins: inner join to entries, isPublic=true filter
+  const pins = await getDb()
+    .select({
+      id: mapPins.id,
+      mapId: mapPins.mapId,
+      entryId: mapPins.entryId,
+      x: mapPins.x,
+      y: mapPins.y,
+      color: mapPins.color,
+      icon: mapPins.icon,
+    })
+    .from(mapPins)
+    .innerJoin(entries, eq(entries.id, mapPins.entryId))
+    .where(and(eq(mapPins.mapId, mapId), eq(entries.isPublic, true)));
+
+  // Privacy-filtered regions: standalone (entryId null) always included;
+  // linked regions filtered via inner join WHERE isPublic=true.
+  // Confirmed-intended (D-11): standalone regions (no entry) ARE public — there
+  // is no privacy owner to gate on.
+  const [linkedRegions, standaloneRegions] = await Promise.all([
+    getDb()
+      .select({
+        id: mapRegions.id,
+        mapId: mapRegions.mapId,
+        entryId: mapRegions.entryId,
+        name: mapRegions.name,
+        points: mapRegions.points,
+        color: mapRegions.color,
+        createdAt: mapRegions.createdAt,
+      })
+      .from(mapRegions)
+      .innerJoin(entries, eq(entries.id, mapRegions.entryId))
+      .where(and(eq(mapRegions.mapId, mapId), eq(entries.isPublic, true))),
+    getDb()
+      .select()
+      .from(mapRegions)
+      .where(and(eq(mapRegions.mapId, mapId), isNull(mapRegions.entryId))),
+  ]);
+  const regions = [...linkedRegions, ...standaloneRegions];
+
+  const rawUrl = map.imageAssetId
+    ? `/api/share/assets/${map.imageAssetId}/raw${signShareAssetUrl(universeId, map.imageAssetId, 'raw')}`
+    : null;
+  const thumbUrl = map.imageAssetId
+    ? `/api/share/assets/${map.imageAssetId}/thumb${signShareAssetUrl(universeId, map.imageAssetId, 'thumb')}`
+    : null;
+
+  return { ...map, rawUrl, thumbUrl, pins, regions };
 }

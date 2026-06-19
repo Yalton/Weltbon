@@ -84,6 +84,8 @@ const DB_GATED_TESTS = [
   'tests/import-export-assets.test.ts',
   // Phase 40 Plan 01 — MAPS-04/05 region CRUD + pin style endpoints integration tests.
   'tests/maps.test.ts',
+  // Phase 40 Plan 02 — MAPS-06 share map privacy filtering + mutation boundary tests.
+  'tests/share-maps-boundary.test.ts',
 ];
 
 export default defineConfig({
