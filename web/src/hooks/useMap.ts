@@ -38,8 +38,8 @@ export interface MapDetail {
   universeId: string;
   name: string;
   imageAssetId: string | null;
-  rawUrl: string; // pre-signed full-res URL
-  thumbUrl: string; // pre-signed thumbnail URL
+  rawUrl: string | null; // pre-signed full-res URL; null when backing asset was deleted (ON DELETE SET NULL)
+  thumbUrl: string | null; // pre-signed thumbnail URL; null when backing asset was deleted (ON DELETE SET NULL)
   createdAt: string;
   legendLabels?: string | null; // JSON: Record<string,string> keyed by "{color}:{icon}"
   pins: MapPin[];
