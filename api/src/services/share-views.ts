@@ -431,7 +431,24 @@ export async function getPublicAsset(
     )
     .limit(1);
 
-  if (refRows.length === 0) return null;
+  if (refRows.length > 0) return asset;
+
+  // Step 3 (additive map channel — Phase 41.1 MAPS-06):
+  // An asset also authorizes when it backs a map image in the token-context universe.
+  // Maps have no own public flag (D-11: all maps in a shared universe are visible).
+  // Universe scope is enforced here — same `universeId` supplied by the caller, never a path param.
+  const mapRows = await getDb()
+    .select({ id: maps.id })
+    .from(maps)
+    .where(
+      and(
+        eq(maps.universeId, universeId),
+        eq(maps.imageAssetId, assetId),
+      ),
+    )
+    .limit(1);
+
+  if (mapRows.length === 0) return null;
   return asset;
 }
 
