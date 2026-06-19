@@ -5,6 +5,7 @@ import { AssetPickerModal } from '../components/AssetPickerModal';
 import { ConfirmDialog } from '../components/ConfirmDialog';
 import { EmptyState } from '../components/EmptyState';
 import { MapCanvas } from '../components/MapCanvas';
+import { LayersPanel } from '../components/LayersPanel';
 import { MapLegend } from '../components/MapLegend';
 import { MapToolbar } from '../components/MapToolbar';
 import { Toast } from '../components/Toast';
@@ -167,6 +168,13 @@ export function MapEditor() {
   const [relinkPickerOpen, setRelinkPickerOpen] = useState(false);
   const [toast, setToast] = useState<ToastState>(null);
   const [legendVisible, setLegendVisible] = useState(false);
+  const [layersPanelVisible, setLayersPanelVisible] = useState(false);
+  // Color picker for LayersPanel terrain-type swatches (onRequestColorPick wiring).
+  // When the LayersPanel requests a color pick, we open this dialog and forward
+  // the selected color to the `layersColorPickerCallback` function.
+  const [layersColorPickerOpen, setLayersColorPickerOpen] = useState(false);
+  const [layersColorPickerCurrent, setLayersColorPickerCurrent] = useState('#000000');
+  const [layersColorPickerCallback, setLayersColorPickerCallback] = useState<((hex: string) => void) | null>(null);
 
   // ── Draw-region mode state ────────────────────────────────────────────────────
   const [drawRegionMode, setDrawRegionMode] = useState(false);
@@ -575,6 +583,18 @@ export function MapEditor() {
     }
   };
 
+  // ── LayersPanel color picker handler (onRequestColorPick wiring) ─────────────
+  // The LayersPanel surfaces an optional onRequestColorPick callback so MapEditor
+  // can open the shared MAP_COLOR_PALETTE picker for terrain-type swatch changes.
+  const handleRequestColorPick = useCallback(
+    (currentColor: string, onPick: (hex: string) => void) => {
+      setLayersColorPickerCurrent(currentColor);
+      setLayersColorPickerCallback(() => onPick);
+      setLayersColorPickerOpen(true);
+    },
+    [],
+  );
+
   // ── Legend rename handler ────────────────────────────────────────────────────
 
   const handleLegendRenameLabel = useCallback(
@@ -653,6 +673,8 @@ export function MapEditor() {
           onChangeImage={() => setChangeImageOpen(true)}
           legendVisible={legendVisible}
           onToggleLegend={() => setLegendVisible((v) => !v)}
+          layersPanelVisible={layersPanelVisible}
+          onToggleLayersPanel={() => setLayersPanelVisible((v) => !v)}
         />
       )}
 
@@ -719,6 +741,15 @@ export function MapEditor() {
         onRenameLabel={isShare ? () => {} : handleLegendRenameLabel}
         visible={legendVisible}
         onToggle={() => setLegendVisible((v) => !v)}
+      />
+
+      {/* Layers panel — suppressed in share mode (T-42-11 / D-42-03).
+          Edit-only surface; share visitors never see the palette manager. */}
+      <LayersPanel
+        universeId={uid}
+        visible={!isShare && layersPanelVisible}
+        onToggle={() => setLayersPanelVisible((v) => !v)}
+        onRequestColorPick={handleRequestColorPick}
       />
 
       {/* No-pins empty state overlay — suppressed in share mode (no mutation CTA) */}
@@ -1082,6 +1113,56 @@ export function MapEditor() {
                 <button
                   type="button"
                   onClick={() => setRegionColorTarget(null)}
+                  className="text-xs text-neutral-400 hover:text-neutral-600 self-end"
+                >
+                  Cancel
+                </button>
+              </div>
+            </div>
+          )}
+
+          {/* Color picker for LayersPanel terrain-type swatches (D-42-07).
+              Opened via onRequestColorPick callback; forwards selection to LayersPanel. */}
+          {layersColorPickerOpen && (
+            <div
+              role="dialog"
+              aria-label="Change terrain type color"
+              className="fixed inset-0 z-50 flex items-center justify-center bg-black/40"
+              onClick={(e) => {
+                if (e.target === e.currentTarget) {
+                  setLayersColorPickerOpen(false);
+                  setLayersColorPickerCallback(null);
+                }
+              }}
+            >
+              <div className="bg-white dark:bg-neutral-900 rounded-lg border border-neutral-200 dark:border-neutral-800 shadow-xl p-5 flex flex-col gap-3">
+                <p className="text-sm font-semibold text-neutral-900 dark:text-neutral-100">Terrain type color</p>
+                <div className="flex flex-wrap gap-2">
+                  {MAP_COLOR_PALETTE.map((color) => (
+                    <button
+                      key={color}
+                      type="button"
+                      onClick={() => {
+                        layersColorPickerCallback?.(color);
+                        setLayersColorPickerOpen(false);
+                        setLayersColorPickerCallback(null);
+                      }}
+                      className="w-7 h-7 rounded-full border-2 border-transparent hover:scale-110 transition-transform focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-[color:var(--color-accent)]"
+                      style={{
+                        backgroundColor: color,
+                        borderColor: layersColorPickerCurrent === color ? '#111827' : 'transparent',
+                      }}
+                      aria-label={color}
+                      title={color}
+                    />
+                  ))}
+                </div>
+                <button
+                  type="button"
+                  onClick={() => {
+                    setLayersColorPickerOpen(false);
+                    setLayersColorPickerCallback(null);
+                  }}
                   className="text-xs text-neutral-400 hover:text-neutral-600 self-end"
                 >
                   Cancel
