@@ -25,6 +25,7 @@ import {
 } from '../hooks/useMap';
 import { MAP_COLOR_PALETTE, MAP_GLYPH_KEYS, getGlyphPath } from '../lib/mapGlyphs';
 import { entryTypeHexColor } from '../lib/entryTypeColor';
+import { useShareMode, useShareToken } from '../contexts/ShareModeContext';
 
 // ─── Constants ────────────────────────────────────────────────────────────────
 
@@ -118,7 +119,13 @@ type RegionContextMenuState = {
  * passing to MapCanvas — the API returns bare map_pins rows without entry join.
  */
 export function MapEditor() {
-  const { uid = '', mid = '' } = useParams<{ uid: string; mid: string }>();
+  // In share mode there is no :uid param — use 'share' placeholder so hooks
+  // interpolate /universes/share/maps/:mid, which the api/client.ts seam
+  // rewrites to /api/share/maps/:mid (strips the /universes/<anything> prefix).
+  const { uid: paramUid, mid = '' } = useParams<{ uid: string; mid: string }>();
+  const isShare = useShareMode();
+  const shareToken = useShareToken();
+  const uid = paramUid ?? (isShare ? 'share' : '');
   const navigate = useNavigate();
 
   // ── Data hooks ───────────────────────────────────────────────────────────────
@@ -451,10 +458,15 @@ export function MapEditor() {
 
   const handleRegionClick = useCallback((region: MapRegion) => {
     // Left-click navigates to linked entry (D-08-click); inert if no entryId.
+    // In share mode stay within /share/:token to avoid uid leaks (T-40-14).
     if (region.entryId) {
-      navigate(`/universes/${uid}/entries/${region.entryId}`);
+      if (shareToken) {
+        navigate(`/share/${shareToken}/entries/${region.entryId}`);
+      } else {
+        navigate(`/universes/${uid}/entries/${region.entryId}`);
+      }
     }
-  }, [navigate, uid]);
+  }, [navigate, shareToken, uid]);
 
   const handleRegionContextMenu = useCallback(
     (region: MapRegion, clientX: number, clientY: number) => {
@@ -620,27 +632,43 @@ export function MapEditor() {
 
   return (
     <div className="relative h-[calc(100vh-7rem)] w-full overflow-hidden">
-      {/* Floating toolbar overlay */}
-      <MapToolbar
-        mapName={map.name}
-        addPinMode={addPinMode}
-        onToggleAddPinMode={() => {
-          setAddPinMode((v) => !v);
-          if (drawRegionMode) setDrawRegionMode(false);
-        }}
-        drawRegionMode={drawRegionMode}
-        onToggleDrawRegionMode={() => {
-          setDrawRegionMode((v) => !v);
-          if (addPinMode) setAddPinMode(false);
-          if (!drawRegionMode) setPendingVertices([]);
-        }}
-        onChangeImage={() => setChangeImageOpen(true)}
-        legendVisible={legendVisible}
-        onToggleLegend={() => setLegendVisible((v) => !v)}
-      />
+      {/* Floating toolbar overlay — suppressed in share mode (T-40-12 / D-12) */}
+      {!isShare && (
+        <MapToolbar
+          mapName={map.name}
+          addPinMode={addPinMode}
+          onToggleAddPinMode={() => {
+            setAddPinMode((v) => !v);
+            if (drawRegionMode) setDrawRegionMode(false);
+          }}
+          drawRegionMode={drawRegionMode}
+          onToggleDrawRegionMode={() => {
+            setDrawRegionMode((v) => !v);
+            if (addPinMode) setAddPinMode(false);
+            if (!drawRegionMode) setPendingVertices([]);
+          }}
+          onChangeImage={() => setChangeImageOpen(true)}
+          legendVisible={legendVisible}
+          onToggleLegend={() => setLegendVisible((v) => !v)}
+        />
+      )}
 
-      {/* Add-pin hint banner */}
-      {addPinMode && !entryPickerOpen && (
+      {/* Share-mode legend toggle button (replaces MapToolbar legend toggle) */}
+      {isShare && (
+        <div className="absolute top-3 right-3 z-10">
+          <button
+            type="button"
+            onClick={() => setLegendVisible((v) => !v)}
+            className="rounded-md border border-neutral-200 dark:border-neutral-800 bg-white dark:bg-neutral-900 shadow-sm px-3 py-1.5 text-xs text-neutral-700 dark:text-neutral-300 hover:bg-neutral-50 dark:hover:bg-neutral-800"
+            aria-label="Toggle legend"
+          >
+            Legend
+          </button>
+        </div>
+      )}
+
+      {/* Add-pin hint banner — suppressed in share mode */}
+      {!isShare && addPinMode && !entryPickerOpen && (
         <div className="pointer-events-none absolute left-1/2 top-14 z-10 -translate-x-1/2 px-3">
           <div className="rounded-full px-3 py-1 text-xs shadow-sm whitespace-nowrap border border-[color:var(--color-accent)] bg-[color:var(--color-accent-soft)] text-[color:var(--color-accent)]">
             {COPY.hintBanner}
@@ -648,8 +676,8 @@ export function MapEditor() {
         </div>
       )}
 
-      {/* Draw-region hint banner */}
-      {drawRegionMode && (
+      {/* Draw-region hint banner — suppressed in share mode */}
+      {!isShare && drawRegionMode && (
         <div className="pointer-events-none absolute left-1/2 top-14 z-10 -translate-x-1/2 px-3">
           <div className="rounded-full px-3 py-1 text-xs shadow-sm whitespace-nowrap border border-[color:var(--color-accent)] bg-[color:var(--color-accent-soft)] text-[color:var(--color-accent)]">
             {COPY.drawRegionBanner}
@@ -658,37 +686,40 @@ export function MapEditor() {
         </div>
       )}
 
-      {/* Map canvas — d3-zoom + React-rendered pins + regions */}
+      {/* Map canvas — d3-zoom + React-rendered pins + regions.
+          In share mode: addPinMode/drawRegionMode forced false; mutation
+          callbacks (context menus) are no-ops (T-40-12). */}
       <MapCanvas
         imageUrl={map.rawUrl}
         imageWidth={imageWidth}
         imageHeight={imageHeight}
         pins={enrichedPins}
         regions={regions}
-        addPinMode={addPinMode}
-        drawRegionMode={drawRegionMode}
-        pendingVertices={pendingVertices}
-        selectedPinId={selectedPinId}
+        addPinMode={isShare ? false : addPinMode}
+        drawRegionMode={isShare ? false : drawRegionMode}
+        pendingVertices={isShare ? [] : pendingVertices}
+        selectedPinId={isShare ? null : selectedPinId}
         universeId={uid}
-        onCanvasClick={handleCanvasClick}
-        onPinDragEnd={handlePinDragEnd}
-        onPinContextMenu={handlePinContextMenu}
+        onCanvasClick={isShare ? () => {} : handleCanvasClick}
+        onPinDragEnd={isShare ? () => {} : handlePinDragEnd}
+        onPinContextMenu={isShare ? () => {} : handlePinContextMenu}
         onRegionClick={handleRegionClick}
-        onRegionContextMenu={handleRegionContextMenu}
+        onRegionContextMenu={isShare ? () => {} : handleRegionContextMenu}
       />
 
-      {/* Map legend (auto-derived, pointer-events-none overlay) */}
+      {/* Map legend (auto-derived, pointer-events-none overlay).
+          In share mode: onRenameLabel is a no-op — captions are not editable. */}
       <MapLegend
         pins={enrichedPins}
         regions={regions}
         legendLabels={legendLabels}
-        onRenameLabel={handleLegendRenameLabel}
+        onRenameLabel={isShare ? () => {} : handleLegendRenameLabel}
         visible={legendVisible}
         onToggle={() => setLegendVisible((v) => !v)}
       />
 
-      {/* No-pins empty state overlay (shown when pins.length === 0 and no regions) */}
-      {enrichedPins.length === 0 && regions.length === 0 && (
+      {/* No-pins empty state overlay — suppressed in share mode (no mutation CTA) */}
+      {!isShare && enrichedPins.length === 0 && regions.length === 0 && (
         <div className="pointer-events-none absolute inset-0 flex items-center justify-center z-10">
           <div className="pointer-events-auto">
             <EmptyState
@@ -708,53 +739,61 @@ export function MapEditor() {
         </div>
       )}
 
-      {/* Entry picker for add-pin */}
-      <AddEntriesPicker
-        entries={universeEntries}
-        placedEntryIds={new Set()}
-        onAdd={handleEntryAdd}
-        onRemove={() => { /* no-op */ }}
-        onClose={() => {
-          setEntryPickerOpen(false);
-          setPendingPinCoords(null);
-        }}
-        open={entryPickerOpen}
-      />
+      {/* Mutation affordances — all suppressed in share mode (T-40-12) */}
+      {!isShare && (
+        <>
+          {/* Entry picker for add-pin */}
+          <AddEntriesPicker
+            entries={universeEntries}
+            placedEntryIds={new Set()}
+            onAdd={handleEntryAdd}
+            onRemove={() => { /* no-op */ }}
+            onClose={() => {
+              setEntryPickerOpen(false);
+              setPendingPinCoords(null);
+            }}
+            open={entryPickerOpen}
+          />
 
-      {/* Entry picker for relink pin */}
-      <AddEntriesPicker
-        entries={universeEntries}
-        placedEntryIds={new Set()}
-        onAdd={handleRelinkEntry}
-        onRemove={() => { /* no-op in relink mode */ }}
-        onClose={() => {
-          setRelinkPickerOpen(false);
-          setSelectedPinId(null);
-        }}
-        open={relinkPickerOpen}
-      />
+          {/* Entry picker for relink pin */}
+          <AddEntriesPicker
+            entries={universeEntries}
+            placedEntryIds={new Set()}
+            onAdd={handleRelinkEntry}
+            onRemove={() => { /* no-op in relink mode */ }}
+            onClose={() => {
+              setRelinkPickerOpen(false);
+              setSelectedPinId(null);
+            }}
+            open={relinkPickerOpen}
+          />
 
-      {/* Entry picker for region relink */}
-      <AddEntriesPicker
-        entries={universeEntries}
-        placedEntryIds={new Set()}
-        onAdd={handleRegionRelinkEntry}
-        onRemove={() => { /* no-op */ }}
-        onClose={() => setRegionRelinkPickerOpen(false)}
-        open={regionRelinkPickerOpen}
-      />
+          {/* Entry picker for region relink */}
+          <AddEntriesPicker
+            entries={universeEntries}
+            placedEntryIds={new Set()}
+            onAdd={handleRegionRelinkEntry}
+            onRemove={() => { /* no-op */ }}
+            onClose={() => setRegionRelinkPickerOpen(false)}
+            open={regionRelinkPickerOpen}
+          />
 
-      {/* Change image picker */}
-      <AssetPickerModal
-        open={changeImageOpen}
-        onOpenChange={setChangeImageOpen}
-        universeId={uid}
-        mode="set-cover"
-        onSelect={handleChangeImageSelect}
-      />
+          {/* Change image picker */}
+          <AssetPickerModal
+            open={changeImageOpen}
+            onOpenChange={setChangeImageOpen}
+            universeId={uid}
+            mode="set-cover"
+            onSelect={handleChangeImageSelect}
+          />
+        </>
+      )}
 
-      {/* Pin context menu */}
-      {contextMenu && (
+      {/* Context menus + confirm dialogs + style pickers — all mutation affordances
+          suppressed in share mode. The no-op context-menu callbacks above mean
+          these will never open, but we also DOM-omit them for defense in depth
+          (T-40-12). */}
+      {!isShare && contextMenu && (
         <div
           id="map-context-menu"
           role="menu"
@@ -797,8 +836,8 @@ export function MapEditor() {
         </div>
       )}
 
-      {/* Region context menu */}
-      {regionContextMenu && (
+      {/* Region context menu — suppressed in share mode */}
+      {!isShare && regionContextMenu && (
         <div
           id="map-region-context-menu"
           role="menu"
@@ -841,210 +880,213 @@ export function MapEditor() {
         </div>
       )}
 
-      {/* Delete pin confirm dialog */}
-      <ConfirmDialog
-        open={deletePinTarget !== null}
-        onOpenChange={(open) => {
-          if (!open) {
-            setDeletePinTarget(null);
-            setSelectedPinId(null);
-          }
-        }}
-        title={COPY.deletePinTitle(
-          enrichedPins.find((p) => p.id === deletePinTarget?.id)?.entryTitle ??
-            deletePinTitle,
-        )}
-        body={COPY.deletePinBody}
-        confirmLabel={COPY.deletePinConfirm}
-        destructive
-        onConfirm={handleDeletePinConfirm}
-      />
+      {/* Delete / rename / color / glyph dialogs — suppressed in share mode */}
+      {!isShare && (
+        <>
+          <ConfirmDialog
+            open={deletePinTarget !== null}
+            onOpenChange={(open) => {
+              if (!open) {
+                setDeletePinTarget(null);
+                setSelectedPinId(null);
+              }
+            }}
+            title={COPY.deletePinTitle(
+              enrichedPins.find((p) => p.id === deletePinTarget?.id)?.entryTitle ??
+                deletePinTitle,
+            )}
+            body={COPY.deletePinBody}
+            confirmLabel={COPY.deletePinConfirm}
+            destructive
+            onConfirm={handleDeletePinConfirm}
+          />
 
-      {/* Delete region confirm dialog */}
-      <ConfirmDialog
-        open={deleteRegionTarget !== null}
-        onOpenChange={(open) => {
-          if (!open) setDeleteRegionTarget(null);
-        }}
-        title={COPY.deleteRegionTitle(deleteRegionTarget?.name || 'this region')}
-        body={COPY.deleteRegionBody}
-        confirmLabel={COPY.deleteRegionConfirm}
-        destructive
-        onConfirm={handleDeleteRegionConfirm}
-      />
+          <ConfirmDialog
+            open={deleteRegionTarget !== null}
+            onOpenChange={(open) => {
+              if (!open) setDeleteRegionTarget(null);
+            }}
+            title={COPY.deleteRegionTitle(deleteRegionTarget?.name || 'this region')}
+            body={COPY.deleteRegionBody}
+            confirmLabel={COPY.deleteRegionConfirm}
+            destructive
+            onConfirm={handleDeleteRegionConfirm}
+          />
 
-      {/* Region rename dialog (inline text box styled as a simple dialog) */}
-      {renameRegionTarget && (
-        <div
-          role="dialog"
-          aria-label="Rename region"
-          className="fixed inset-0 z-50 flex items-center justify-center bg-black/40"
-          onClick={(e) => { if (e.target === e.currentTarget) setRenameRegionTarget(null); }}
-        >
-          <div className="bg-white dark:bg-neutral-900 rounded-lg border border-neutral-200 dark:border-neutral-800 shadow-xl p-5 w-72 flex flex-col gap-3">
-            <p className="text-sm font-semibold text-neutral-900 dark:text-neutral-100">Rename region</p>
-            <input
-              type="text"
-              value={renameRegionDraft}
-              onChange={(e) => setRenameRegionDraft(e.target.value)}
-              onKeyDown={(e) => {
-                if (e.key === 'Enter') handleRegionRenameConfirm();
-                if (e.key === 'Escape') setRenameRegionTarget(null);
-              }}
-              className="rounded-md border border-neutral-300 dark:border-neutral-700 bg-white dark:bg-neutral-800 text-sm px-3 py-2 outline-none focus:ring-2 focus:ring-[color:var(--color-accent)]"
-              autoFocus
-              placeholder="Region name"
-            />
-            <div className="flex justify-end gap-2">
-              <button
-                type="button"
-                onClick={() => setRenameRegionTarget(null)}
-                className="text-sm px-3 py-1.5 rounded-md border border-neutral-300 dark:border-neutral-700 text-neutral-700 dark:text-neutral-300 hover:bg-neutral-50 dark:hover:bg-neutral-800"
-              >
-                Cancel
-              </button>
-              <button
-                type="button"
-                onClick={handleRegionRenameConfirm}
-                className="text-sm px-3 py-1.5 rounded-md bg-[color:var(--color-accent)] text-white hover:opacity-90"
-              >
-                Save
-              </button>
-            </div>
-          </div>
-        </div>
-      )}
-
-      {/* Color picker for pin (MAP_COLOR_PALETTE swatches, D-01) */}
-      {pinColorTarget && (
-        <div
-          role="dialog"
-          aria-label="Change pin color"
-          className="fixed inset-0 z-50 flex items-center justify-center bg-black/40"
-          onClick={(e) => { if (e.target === e.currentTarget) setPinColorTarget(null); }}
-        >
-          <div className="bg-white dark:bg-neutral-900 rounded-lg border border-neutral-200 dark:border-neutral-800 shadow-xl p-5 flex flex-col gap-3">
-            <p className="text-sm font-semibold text-neutral-900 dark:text-neutral-100">Pin color</p>
-            <div className="flex flex-wrap gap-2">
-              {MAP_COLOR_PALETTE.map((color) => (
-                <button
-                  key={color}
-                  type="button"
-                  onClick={() => handlePinColorSelect(color)}
-                  className="w-7 h-7 rounded-full border-2 border-transparent hover:scale-110 transition-transform focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-[color:var(--color-accent)]"
-                  style={{
-                    backgroundColor: color,
-                    borderColor: pinColorTarget.color === color ? '#111827' : 'transparent',
-                  }}
-                  aria-label={color}
-                  title={color}
-                />
-              ))}
-              <button
-                type="button"
-                onClick={() => handlePinColorSelect(entryTypeHexColor(pinColorTarget.entryType ?? 'concept'))}
-                className="text-xs px-2 py-1 rounded border border-neutral-300 dark:border-neutral-700 text-neutral-600 dark:text-neutral-400 hover:bg-neutral-50 dark:hover:bg-neutral-800"
-                title="Reset to entry type color"
-              >
-                Reset
-              </button>
-            </div>
-            <button
-              type="button"
-              onClick={() => setPinColorTarget(null)}
-              className="text-xs text-neutral-400 hover:text-neutral-600 self-end"
+          {/* Region rename dialog */}
+          {renameRegionTarget && (
+            <div
+              role="dialog"
+              aria-label="Rename region"
+              className="fixed inset-0 z-50 flex items-center justify-center bg-black/40"
+              onClick={(e) => { if (e.target === e.currentTarget) setRenameRegionTarget(null); }}
             >
-              Cancel
-            </button>
-          </div>
-        </div>
-      )}
+              <div className="bg-white dark:bg-neutral-900 rounded-lg border border-neutral-200 dark:border-neutral-800 shadow-xl p-5 w-72 flex flex-col gap-3">
+                <p className="text-sm font-semibold text-neutral-900 dark:text-neutral-100">Rename region</p>
+                <input
+                  type="text"
+                  value={renameRegionDraft}
+                  onChange={(e) => setRenameRegionDraft(e.target.value)}
+                  onKeyDown={(e) => {
+                    if (e.key === 'Enter') handleRegionRenameConfirm();
+                    if (e.key === 'Escape') setRenameRegionTarget(null);
+                  }}
+                  className="rounded-md border border-neutral-300 dark:border-neutral-700 bg-white dark:bg-neutral-800 text-sm px-3 py-2 outline-none focus:ring-2 focus:ring-[color:var(--color-accent)]"
+                  autoFocus
+                  placeholder="Region name"
+                />
+                <div className="flex justify-end gap-2">
+                  <button
+                    type="button"
+                    onClick={() => setRenameRegionTarget(null)}
+                    className="text-sm px-3 py-1.5 rounded-md border border-neutral-300 dark:border-neutral-700 text-neutral-700 dark:text-neutral-300 hover:bg-neutral-50 dark:hover:bg-neutral-800"
+                  >
+                    Cancel
+                  </button>
+                  <button
+                    type="button"
+                    onClick={handleRegionRenameConfirm}
+                    className="text-sm px-3 py-1.5 rounded-md bg-[color:var(--color-accent)] text-white hover:opacity-90"
+                  >
+                    Save
+                  </button>
+                </div>
+              </div>
+            </div>
+          )}
 
-      {/* Glyph picker for pin (MAP_GLYPH_KEYS, D-02) */}
-      {glyphPickerTarget && (
-        <div
-          role="dialog"
-          aria-label="Change pin icon"
-          className="fixed inset-0 z-50 flex items-center justify-center bg-black/40"
-          onClick={(e) => { if (e.target === e.currentTarget) setGlyphPickerTarget(null); }}
-        >
-          <div className="bg-white dark:bg-neutral-900 rounded-lg border border-neutral-200 dark:border-neutral-800 shadow-xl p-5 flex flex-col gap-3">
-            <p className="text-sm font-semibold text-neutral-900 dark:text-neutral-100">Pin icon</p>
-            <div className="flex flex-wrap gap-2 max-w-xs">
-              {MAP_GLYPH_KEYS.map((key) => (
+          {/* Color picker for pin (MAP_COLOR_PALETTE swatches, D-01) */}
+          {pinColorTarget && (
+            <div
+              role="dialog"
+              aria-label="Change pin color"
+              className="fixed inset-0 z-50 flex items-center justify-center bg-black/40"
+              onClick={(e) => { if (e.target === e.currentTarget) setPinColorTarget(null); }}
+            >
+              <div className="bg-white dark:bg-neutral-900 rounded-lg border border-neutral-200 dark:border-neutral-800 shadow-xl p-5 flex flex-col gap-3">
+                <p className="text-sm font-semibold text-neutral-900 dark:text-neutral-100">Pin color</p>
+                <div className="flex flex-wrap gap-2">
+                  {MAP_COLOR_PALETTE.map((color) => (
+                    <button
+                      key={color}
+                      type="button"
+                      onClick={() => handlePinColorSelect(color)}
+                      className="w-7 h-7 rounded-full border-2 border-transparent hover:scale-110 transition-transform focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-[color:var(--color-accent)]"
+                      style={{
+                        backgroundColor: color,
+                        borderColor: pinColorTarget.color === color ? '#111827' : 'transparent',
+                      }}
+                      aria-label={color}
+                      title={color}
+                    />
+                  ))}
+                  <button
+                    type="button"
+                    onClick={() => handlePinColorSelect(entryTypeHexColor(pinColorTarget.entryType ?? 'concept'))}
+                    className="text-xs px-2 py-1 rounded border border-neutral-300 dark:border-neutral-700 text-neutral-600 dark:text-neutral-400 hover:bg-neutral-50 dark:hover:bg-neutral-800"
+                    title="Reset to entry type color"
+                  >
+                    Reset
+                  </button>
+                </div>
                 <button
-                  key={key}
                   type="button"
-                  onClick={() => handlePinGlyphSelect(key)}
-                  className={[
-                    'w-9 h-9 rounded-md border flex items-center justify-center hover:bg-neutral-50 dark:hover:bg-neutral-800 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-[color:var(--color-accent)]',
-                    glyphPickerTarget.icon === key
-                      ? 'border-[color:var(--color-accent)] bg-[color:var(--color-accent-soft)]'
-                      : 'border-neutral-300 dark:border-neutral-700',
-                  ].join(' ')}
-                  aria-label={key}
-                  title={key}
+                  onClick={() => setPinColorTarget(null)}
+                  className="text-xs text-neutral-400 hover:text-neutral-600 self-end"
                 >
-                  <svg width={18} height={18} viewBox="0 0 24 24" fill="currentColor" aria-hidden="true">
-                    <g dangerouslySetInnerHTML={{ __html: getGlyphPath(key) ?? '' }} />
-                  </svg>
+                  Cancel
                 </button>
-              ))}
-              <button
-                type="button"
-                onClick={() => handlePinGlyphSelect(null)}
-                className="text-xs px-2 py-1 rounded border border-neutral-300 dark:border-neutral-700 text-neutral-600 dark:text-neutral-400 hover:bg-neutral-50 dark:hover:bg-neutral-800"
-                title="Remove icon"
-              >
-                None
-              </button>
+              </div>
             </div>
-            <button
-              type="button"
-              onClick={() => setGlyphPickerTarget(null)}
-              className="text-xs text-neutral-400 hover:text-neutral-600 self-end"
-            >
-              Cancel
-            </button>
-          </div>
-        </div>
-      )}
+          )}
 
-      {/* Color picker for region (MAP_COLOR_PALETTE swatches, D-01) */}
-      {regionColorTarget && (
-        <div
-          role="dialog"
-          aria-label="Change region color"
-          className="fixed inset-0 z-50 flex items-center justify-center bg-black/40"
-          onClick={(e) => { if (e.target === e.currentTarget) setRegionColorTarget(null); }}
-        >
-          <div className="bg-white dark:bg-neutral-900 rounded-lg border border-neutral-200 dark:border-neutral-800 shadow-xl p-5 flex flex-col gap-3">
-            <p className="text-sm font-semibold text-neutral-900 dark:text-neutral-100">Region color</p>
-            <div className="flex flex-wrap gap-2">
-              {MAP_COLOR_PALETTE.map((color) => (
-                <button
-                  key={color}
-                  type="button"
-                  onClick={() => handleRegionColorSelect(color)}
-                  className="w-7 h-7 rounded-full border-2 border-transparent hover:scale-110 transition-transform focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-[color:var(--color-accent)]"
-                  style={{
-                    backgroundColor: color,
-                    borderColor: regionColorTarget.color === color ? '#111827' : 'transparent',
-                  }}
-                  aria-label={color}
-                  title={color}
-                />
-              ))}
-            </div>
-            <button
-              type="button"
-              onClick={() => setRegionColorTarget(null)}
-              className="text-xs text-neutral-400 hover:text-neutral-600 self-end"
+          {/* Glyph picker for pin (MAP_GLYPH_KEYS, D-02) */}
+          {glyphPickerTarget && (
+            <div
+              role="dialog"
+              aria-label="Change pin icon"
+              className="fixed inset-0 z-50 flex items-center justify-center bg-black/40"
+              onClick={(e) => { if (e.target === e.currentTarget) setGlyphPickerTarget(null); }}
             >
-              Cancel
-            </button>
-          </div>
-        </div>
+              <div className="bg-white dark:bg-neutral-900 rounded-lg border border-neutral-200 dark:border-neutral-800 shadow-xl p-5 flex flex-col gap-3">
+                <p className="text-sm font-semibold text-neutral-900 dark:text-neutral-100">Pin icon</p>
+                <div className="flex flex-wrap gap-2 max-w-xs">
+                  {MAP_GLYPH_KEYS.map((key) => (
+                    <button
+                      key={key}
+                      type="button"
+                      onClick={() => handlePinGlyphSelect(key)}
+                      className={[
+                        'w-9 h-9 rounded-md border flex items-center justify-center hover:bg-neutral-50 dark:hover:bg-neutral-800 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-[color:var(--color-accent)]',
+                        glyphPickerTarget.icon === key
+                          ? 'border-[color:var(--color-accent)] bg-[color:var(--color-accent-soft)]'
+                          : 'border-neutral-300 dark:border-neutral-700',
+                      ].join(' ')}
+                      aria-label={key}
+                      title={key}
+                    >
+                      <svg width={18} height={18} viewBox="0 0 24 24" fill="currentColor" aria-hidden="true">
+                        <g dangerouslySetInnerHTML={{ __html: getGlyphPath(key) ?? '' }} />
+                      </svg>
+                    </button>
+                  ))}
+                  <button
+                    type="button"
+                    onClick={() => handlePinGlyphSelect(null)}
+                    className="text-xs px-2 py-1 rounded border border-neutral-300 dark:border-neutral-700 text-neutral-600 dark:text-neutral-400 hover:bg-neutral-50 dark:hover:bg-neutral-800"
+                    title="Remove icon"
+                  >
+                    None
+                  </button>
+                </div>
+                <button
+                  type="button"
+                  onClick={() => setGlyphPickerTarget(null)}
+                  className="text-xs text-neutral-400 hover:text-neutral-600 self-end"
+                >
+                  Cancel
+                </button>
+              </div>
+            </div>
+          )}
+
+          {/* Color picker for region (MAP_COLOR_PALETTE swatches, D-01) */}
+          {regionColorTarget && (
+            <div
+              role="dialog"
+              aria-label="Change region color"
+              className="fixed inset-0 z-50 flex items-center justify-center bg-black/40"
+              onClick={(e) => { if (e.target === e.currentTarget) setRegionColorTarget(null); }}
+            >
+              <div className="bg-white dark:bg-neutral-900 rounded-lg border border-neutral-200 dark:border-neutral-800 shadow-xl p-5 flex flex-col gap-3">
+                <p className="text-sm font-semibold text-neutral-900 dark:text-neutral-100">Region color</p>
+                <div className="flex flex-wrap gap-2">
+                  {MAP_COLOR_PALETTE.map((color) => (
+                    <button
+                      key={color}
+                      type="button"
+                      onClick={() => handleRegionColorSelect(color)}
+                      className="w-7 h-7 rounded-full border-2 border-transparent hover:scale-110 transition-transform focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-[color:var(--color-accent)]"
+                      style={{
+                        backgroundColor: color,
+                        borderColor: regionColorTarget.color === color ? '#111827' : 'transparent',
+                      }}
+                      aria-label={color}
+                      title={color}
+                    />
+                  ))}
+                </div>
+                <button
+                  type="button"
+                  onClick={() => setRegionColorTarget(null)}
+                  className="text-xs text-neutral-400 hover:text-neutral-600 self-end"
+                >
+                  Cancel
+                </button>
+              </div>
+            </div>
+          )}
+        </>
       )}
 
       {/* Toast for transient errors */}
