@@ -81,6 +81,7 @@ const mapSchema = z.object({
   name: z.string(),
   imageAssetId: z.string().nullable(),
   createdAt: z.string().or(z.date()),
+  legendLabels: z.string().nullable().optional(), // Phase 41.1: parity with publicMapSchema (share-seam-bare-array-contract)
   rawUrl: z.string().nullable(),
   thumbUrl: z.string().nullable(),
 });
