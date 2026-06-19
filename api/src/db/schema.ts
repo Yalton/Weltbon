@@ -589,13 +589,57 @@ export const mapPins = pgTable('map_pins', {
  * - points: JSON array of {x, y} normalized 0..1 fractions (D-09), stored as text.
  * - color: nullable hex string — when null, element renders in entryTypeHexColor (D-01).
  * - NO uniqueIndex on (mapId, entryId) — multiple regions per entry are allowed (D-09).
+ * - Phase 42 LAYER-01/LAYER-02 (D-42): nullable terrain_type_id discriminator.
+ *   When set, this region is a terrain area; its fill layer is derived from
+ *   terrain_type_id → layer_id. ON DELETE SET NULL so deleting a terrain type
+ *   orphans the discriminator rather than cascade-deleting user regions.
  */
 export const mapRegions = pgTable('map_regions', {
+  id:            uuid('id').primaryKey().defaultRandom(),
+  mapId:         uuid('map_id').references(() => maps.id, { onDelete: 'cascade' }).notNull(),
+  entryId:       uuid('entry_id').references(() => entries.id, { onDelete: 'cascade' }),  // nullable (D-05)
+  name:          text('name').notNull().default(''),
+  points:        text('points').notNull(),  // JSON: [{x:number,y:number}, ...]
+  color:         text('color'),             // nullable hex (D-01)
+  createdAt:     timestamp('created_at').defaultNow().notNull(),
+  // eslint-disable-next-line @typescript-eslint/no-use-before-define
+  terrainTypeId: uuid('terrain_type_id').references((): any => terrainTypes.id, { onDelete: 'set null' }),  // nullable discriminator (Phase 42)
+});
+
+/**
+ * Phase 42 LAYER-01/LAYER-02: Universe-scoped terrain layer definitions.
+ *
+ * - `universeId` FK CASCADE: deleting a universe removes all its layers (and
+ *   cascades to terrain_types via terrain_types.layer_id FK CASCADE).
+ * - `ordered` boolean: true → ranked elevation bands; false → flat thematic palette.
+ * - `defaultOpacity` persists the initial opacity for Phase 43 rendering (D-42-08).
+ * - `sortOrder` integer for user-defined display order.
+ */
+export const mapLayers = pgTable('map_layers', {
+  id:             uuid('id').primaryKey().defaultRandom(),
+  universeId:     uuid('universe_id').references(() => universes.id, { onDelete: 'cascade' }).notNull(),
+  name:           text('name').notNull(),
+  ordered:        boolean('ordered').notNull().default(false),
+  defaultOpacity: doublePrecision('default_opacity').notNull().default(0.6),
+  sortOrder:      integer('sort_order').notNull().default(0),
+  createdAt:      timestamp('created_at').defaultNow().notNull(),
+});
+
+/**
+ * Phase 42 LAYER-01/LAYER-03: Terrain type definitions within a layer.
+ *
+ * - `layerId` FK CASCADE: deleting a layer removes all its terrain types (and
+ *   sets map_regions.terrain_type_id = NULL via the SET NULL FK on mapRegions).
+ * - `color` is NOT NULL (auto-assigned at create; never rendered colorless).
+ * - `label` is nullable free-text height-range label for ordered bands (D-42-06).
+ * - `sortOrder` integer for user-defined rank within the layer.
+ */
+export const terrainTypes = pgTable('terrain_types', {
   id:        uuid('id').primaryKey().defaultRandom(),
-  mapId:     uuid('map_id').references(() => maps.id, { onDelete: 'cascade' }).notNull(),
-  entryId:   uuid('entry_id').references(() => entries.id, { onDelete: 'cascade' }),  // nullable (D-05)
-  name:      text('name').notNull().default(''),
-  points:    text('points').notNull(),  // JSON: [{x:number,y:number}, ...]
-  color:     text('color'),             // nullable hex (D-01)
+  layerId:   uuid('layer_id').references(() => mapLayers.id, { onDelete: 'cascade' }).notNull(),
+  name:      text('name').notNull(),
+  color:     text('color').notNull(),   // hex, auto-assigned, never null (D-42-07)
+  label:     text('label'),             // nullable free-text height-range label (D-42-06)
+  sortOrder: integer('sort_order').notNull().default(0),
   createdAt: timestamp('created_at').defaultNow().notNull(),
 });
