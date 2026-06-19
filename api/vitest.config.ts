@@ -82,6 +82,8 @@ const DB_GATED_TESTS = [
   'tests/share-assets.test.ts',
   // Phase 38 Plan 05 — MEDIA-06 export→reimport asset round-trip integration test.
   'tests/import-export-assets.test.ts',
+  // Phase 40 Plan 01 — MAPS-04/05 region CRUD + pin style endpoints integration tests.
+  'tests/maps.test.ts',
 ];
 
 export default defineConfig({

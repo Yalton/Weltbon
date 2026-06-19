@@ -21,7 +21,7 @@ import { OpenAPIHono, createRoute, z } from '@hono/zod-openapi';
 import { and, eq } from 'drizzle-orm';
 import { HTTPException } from 'hono/http-exception';
 import { db } from '../db/client.js';
-import { maps, mapPins, entries, assets } from '../db/schema.js';
+import { maps, mapPins, mapRegions, entries, assets } from '../db/schema.js';
 import { requireUniverse } from '../utils/ownership.js';
 import { signAssetUrl } from '../services/asset-signing.js';
 import type { AuthVariables } from '../middleware/auth.js';
@@ -53,6 +53,7 @@ function mapImageUrls(
 const uidParams = z.object({ uid: z.string().uuid() });
 const uidAndMidParams = z.object({ uid: z.string().uuid(), mid: z.string().uuid() });
 const uidMidPinParams = z.object({ uid: z.string().uuid(), mid: z.string().uuid(), pinId: z.string().uuid() });
+const uidMidRegionParams = z.object({ uid: z.string().uuid(), mid: z.string().uuid(), regionId: z.string().uuid() });
 
 // ─── Zod schemas ──────────────────────────────────────────────────────────────
 
@@ -84,6 +85,38 @@ const pinSchema = z.object({
   entryId: z.string(),
   x: z.number(),
   y: z.number(),
+  color: z.string().nullable().optional(),  // Phase 40 MAPS-05 (D-01)
+  icon: z.string().nullable().optional(),   // Phase 40 MAPS-05 (D-02)
+});
+
+// Phase 40 MAPS-04: Region Zod schemas (D-09)
+const regionSchema = z.object({
+  id: z.string(),
+  mapId: z.string(),
+  entryId: z.string().nullable(),
+  name: z.string(),
+  points: z.string(),               // raw JSON string; web parses to {x,y}[]
+  color: z.string().nullable(),
+  createdAt: z.string().or(z.date()),
+});
+
+const createRegionSchema = z.object({
+  name: z.string().max(200).default(''),
+  points: z.string().min(1),        // JSON [{x,y}, ...] — min 1 char required
+  entryId: z.string().uuid().optional(),
+  color: z.string().optional(),
+});
+
+const updateRegionSchema = z.object({
+  name: z.string().max(200).optional(),
+  color: z.string().nullable().optional(),
+  entryId: z.string().uuid().nullable().optional(),
+});
+
+// Phase 40 MAPS-05: Pin style Zod schema
+const pinStyleSchema = z.object({
+  color: z.string().nullable().optional(),
+  icon: z.string().nullable().optional(),
 });
 
 const mapDetailSchema = z.object({
@@ -95,6 +128,7 @@ const mapDetailSchema = z.object({
   rawUrl: z.string().nullable(),
   thumbUrl: z.string().nullable(),
   pins: z.array(pinSchema),
+  regions: z.array(regionSchema),   // Phase 40: regions alongside pins
 });
 
 const createPinSchema = z.object({
@@ -160,13 +194,13 @@ const getMapRoute = createRoute({
   method: 'get',
   path: '/{mid}',
   tags: ['Maps'],
-  summary: 'Get map detail with pins',
+  summary: 'Get map detail with pins and regions',
   security: [{ bearerAuth: [] }],
   request: { params: uidAndMidParams },
   responses: {
     200: {
       content: { 'application/json': { schema: mapDetailSchema } },
-      description: 'Map detail with pins',
+      description: 'Map detail with pins and regions',
     },
     401: { content: { 'application/json': { schema: errorSchema } }, description: 'Unauthorized' },
     403: { content: { 'application/json': { schema: errorSchema } }, description: 'Forbidden' },
@@ -292,6 +326,89 @@ const deletePinRoute = createRoute({
   },
 });
 
+// Phase 40 MAPS-05: Pin style PATCH route (D-01, D-02)
+const updatePinStyleRoute = createRoute({
+  method: 'patch',
+  path: '/{mid}/pins/{pinId}/style',
+  tags: ['Maps'],
+  summary: 'Set per-pin style overrides (color, icon)',
+  security: [{ bearerAuth: [] }],
+  request: {
+    params: uidMidPinParams,
+    body: { content: { 'application/json': { schema: pinStyleSchema } }, required: true },
+  },
+  responses: {
+    200: {
+      content: { 'application/json': { schema: pinSchema } },
+      description: 'Pin style updated',
+    },
+    400: { content: { 'application/json': { schema: errorSchema } }, description: 'Validation error' },
+    401: { content: { 'application/json': { schema: errorSchema } }, description: 'Unauthorized' },
+    403: { content: { 'application/json': { schema: errorSchema } }, description: 'Forbidden' },
+    404: { content: { 'application/json': { schema: errorSchema } }, description: 'Pin not found' },
+  },
+});
+
+// Phase 40 MAPS-04: Region CRUD routes (D-09)
+const addRegionRoute = createRoute({
+  method: 'post',
+  path: '/{mid}/regions',
+  tags: ['Maps'],
+  summary: 'Add a region polygon to a map (entryId optional)',
+  security: [{ bearerAuth: [] }],
+  request: {
+    params: uidAndMidParams,
+    body: { content: { 'application/json': { schema: createRegionSchema } }, required: true },
+  },
+  responses: {
+    201: {
+      content: { 'application/json': { schema: regionSchema } },
+      description: 'Region created',
+    },
+    400: { content: { 'application/json': { schema: errorSchema } }, description: 'Validation error' },
+    401: { content: { 'application/json': { schema: errorSchema } }, description: 'Unauthorized' },
+    403: { content: { 'application/json': { schema: errorSchema } }, description: 'Forbidden' },
+    404: { content: { 'application/json': { schema: errorSchema } }, description: 'Not found' },
+  },
+});
+
+const updateRegionRoute = createRoute({
+  method: 'patch',
+  path: '/{mid}/regions/{regionId}',
+  tags: ['Maps'],
+  summary: 'Update region name, color, or entry link (entryId can be set to null)',
+  security: [{ bearerAuth: [] }],
+  request: {
+    params: uidMidRegionParams,
+    body: { content: { 'application/json': { schema: updateRegionSchema } }, required: true },
+  },
+  responses: {
+    200: {
+      content: { 'application/json': { schema: regionSchema } },
+      description: 'Region updated',
+    },
+    400: { content: { 'application/json': { schema: errorSchema } }, description: 'Validation error' },
+    401: { content: { 'application/json': { schema: errorSchema } }, description: 'Unauthorized' },
+    403: { content: { 'application/json': { schema: errorSchema } }, description: 'Forbidden' },
+    404: { content: { 'application/json': { schema: errorSchema } }, description: 'Region not found' },
+  },
+});
+
+const deleteRegionRoute = createRoute({
+  method: 'delete',
+  path: '/{mid}/regions/{regionId}',
+  tags: ['Maps'],
+  summary: 'Delete a region (linked entry is not affected)',
+  security: [{ bearerAuth: [] }],
+  request: { params: uidMidRegionParams },
+  responses: {
+    204: { description: 'Region deleted' },
+    401: { content: { 'application/json': { schema: errorSchema } }, description: 'Unauthorized' },
+    403: { content: { 'application/json': { schema: errorSchema } }, description: 'Forbidden' },
+    404: { content: { 'application/json': { schema: errorSchema } }, description: 'Region not found' },
+  },
+});
+
 // ─── Helper ───────────────────────────────────────────────────────────────────
 
 /**
@@ -355,21 +472,22 @@ export const mapsRouter = new OpenAPIHono<AppEnv>()
     return c.json({ ...row, ...mapImageUrls(uid, row.imageAssetId ?? null) } as any, 201);
   })
 
-  // GET /universes/:uid/maps/:mid — map detail with pins (wrapped object, bare pin rows)
+  // GET /universes/:uid/maps/:mid — map detail with pins AND regions (Phase 40)
   .openapi(getMapRoute, async (c) => {
     const { uid, mid } = c.req.valid('param');
     await requireUniverse(uid, c.var.userId);
     const map = await requireMap(mid, uid);
 
-    const pinRows = await db()
-      .select()
-      .from(mapPins)
-      .where(eq(mapPins.mapId, mid));
+    const [pinRows, regionRows] = await Promise.all([
+      db().select().from(mapPins).where(eq(mapPins.mapId, mid)),
+      db().select().from(mapRegions).where(eq(mapRegions.mapId, mid)),
+    ]);
 
     return c.json({
       ...map,
       ...mapImageUrls(uid, map.imageAssetId ?? null),
       pins: pinRows,
+      regions: regionRows,   // Phase 40 addition
     } as any, 200);
   })
 
@@ -507,6 +625,121 @@ export const mapsRouter = new OpenAPIHono<AppEnv>()
 
     if (deleted.length === 0) {
       return c.json({ error: 'Pin not found' }, 404);
+    }
+
+    return c.body(null, 204);
+  })
+
+  // PATCH /universes/:uid/maps/:mid/pins/:pinId/style — set per-pin color + icon (MAPS-05)
+  .openapi(updatePinStyleRoute, async (c) => {
+    const { uid, mid, pinId } = c.req.valid('param');
+    await requireUniverse(uid, c.var.userId);
+    await requireMap(mid, uid);
+    const data = c.req.valid('json');
+
+    // Build update object — only include fields that were provided
+    // null is a valid value (clears the style), undefined means not provided
+    const updates: { color?: string | null; icon?: string | null } = {};
+    if ('color' in data) updates.color = data.color ?? null;
+    if ('icon' in data) updates.icon = data.icon ?? null;
+
+    const [updated] = await db()
+      .update(mapPins)
+      .set(updates)
+      .where(and(eq(mapPins.id, pinId), eq(mapPins.mapId, mid)))
+      .returning();
+
+    if (!updated) {
+      return c.json({ error: 'Pin not found' }, 404);
+    }
+
+    return c.json(updated as any, 200);
+  })
+
+  // POST /universes/:uid/maps/:mid/regions — create region (MAPS-04, D-05, D-09)
+  .openapi(addRegionRoute, async (c) => {
+    const { uid, mid } = c.req.valid('param');
+    await requireUniverse(uid, c.var.userId);
+    await requireMap(mid, uid);
+    const data = c.req.valid('json');
+
+    // T-40-02: Validate optional entryId belongs to this universe (mirrors T-39-03)
+    if (data.entryId) {
+      const entryRows = await db()
+        .select({ id: entries.id })
+        .from(entries)
+        .where(and(eq(entries.id, data.entryId), eq(entries.universeId, uid)));
+      if (entryRows.length === 0) {
+        return c.json({ error: 'Entry not found in this universe' }, 404);
+      }
+    }
+
+    const [row] = await db()
+      .insert(mapRegions)
+      .values({
+        mapId: mid,
+        entryId: data.entryId ?? null,
+        name: data.name ?? '',
+        points: data.points,
+        color: data.color ?? null,
+      })
+      .returning();
+
+    return c.json(row as any, 201);
+  })
+
+  // PATCH /universes/:uid/maps/:mid/regions/:regionId — update region (MAPS-04, D-06)
+  .openapi(updateRegionRoute, async (c) => {
+    const { uid, mid, regionId } = c.req.valid('param');
+    await requireUniverse(uid, c.var.userId);
+    await requireMap(mid, uid);
+    const data = c.req.valid('json');
+
+    // T-40-02: Validate provided non-null entryId belongs to this universe
+    if (data.entryId !== undefined && data.entryId !== null) {
+      const entryRows = await db()
+        .select({ id: entries.id })
+        .from(entries)
+        .where(and(eq(entries.id, data.entryId), eq(entries.universeId, uid)));
+      if (entryRows.length === 0) {
+        return c.json({ error: 'Entry not found in this universe' }, 404);
+      }
+    }
+
+    // Build partial update — only provided fields
+    const updates: { name?: string; color?: string | null; entryId?: string | null } = {};
+    if (data.name !== undefined) updates.name = data.name;
+    if ('color' in data) updates.color = data.color ?? null;
+    if ('entryId' in data) updates.entryId = data.entryId ?? null;
+
+    // T-40-IDOR: scope by both regionId AND mapId
+    const [updated] = await db()
+      .update(mapRegions)
+      .set(updates)
+      .where(and(eq(mapRegions.id, regionId), eq(mapRegions.mapId, mid)))
+      .returning();
+
+    if (!updated) {
+      return c.json({ error: 'Region not found' }, 404);
+    }
+
+    return c.json(updated as any, 200);
+  })
+
+  // DELETE /universes/:uid/maps/:mid/regions/:regionId — delete region (never deletes entry)
+  .openapi(deleteRegionRoute, async (c) => {
+    const { uid, mid, regionId } = c.req.valid('param');
+    await requireUniverse(uid, c.var.userId);
+    await requireMap(mid, uid);
+
+    // T-40-IDOR: scope by both regionId AND mapId
+    const deleted = await db()
+      .delete(mapRegions)
+      .where(and(eq(mapRegions.id, regionId), eq(mapRegions.mapId, mid)))
+      .returning();
+
+    if (deleted.length === 0) {
+      return c.json({ error: 'Region not found' }, 404);
     }
 
     return c.body(null, 204);

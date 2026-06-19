@@ -551,6 +551,9 @@ export const maps = pgTable('maps', {
   // eslint-disable-next-line @typescript-eslint/no-use-before-define
   imageAssetId: uuid('image_asset_id').references((): any => assets.id, { onDelete: 'set null' }),
   createdAt:    timestamp('created_at').defaultNow().notNull(),
+  // Phase 40 MAPS-05 (D-03): nullable JSON legend caption overrides.
+  // A Record<string, string> keyed by color/icon combo stored as text.
+  legendLabels: text('legend_labels'),  // nullable JSON: Record<string, string>
 });
 
 /**
@@ -562,6 +565,9 @@ export const maps = pgTable('maps', {
  *   This is a deliberate deviation from diagramNodes which has a unique constraint.
  * - ON DELETE CASCADE on both mapId and entryId FKs: deleting a map removes all its
  *   pins; deleting an entry removes pins that link to it (pin ≠ entry).
+ * - Phase 40 MAPS-05 (D-01, D-02): nullable color + icon style overrides.
+ *   color: nullable hex string; null → entryTypeHexColor fallback (D-01).
+ *   icon:  nullable glyph key (e.g. 'star', 'skull') from mapGlyphs.ts (D-02).
  */
 export const mapPins = pgTable('map_pins', {
   id:      uuid('id').primaryKey().defaultRandom(),
@@ -569,4 +575,27 @@ export const mapPins = pgTable('map_pins', {
   entryId: uuid('entry_id').references(() => entries.id, { onDelete: 'cascade' }).notNull(),
   x:       doublePrecision('x').notNull(),
   y:       doublePrecision('y').notNull(),
+  color:   text('color'),   // nullable hex; null → entryTypeHexColor fallback (D-01)
+  icon:    text('icon'),    // nullable glyph key (D-02)
+});
+
+/**
+ * Phase 40 MAPS-04 (D-09): Region polygons within a map.
+ *
+ * - `entryId` is nullable: a region may be a standalone territory (D-05).
+ * - ON DELETE CASCADE on mapId: deleting the map removes all its regions.
+ * - ON DELETE CASCADE on entryId (nullable): deleting the linked entry removes
+ *   any regions that reference it (region is not an entry surrogate).
+ * - points: JSON array of {x, y} normalized 0..1 fractions (D-09), stored as text.
+ * - color: nullable hex string — when null, element renders in entryTypeHexColor (D-01).
+ * - NO uniqueIndex on (mapId, entryId) — multiple regions per entry are allowed (D-09).
+ */
+export const mapRegions = pgTable('map_regions', {
+  id:        uuid('id').primaryKey().defaultRandom(),
+  mapId:     uuid('map_id').references(() => maps.id, { onDelete: 'cascade' }).notNull(),
+  entryId:   uuid('entry_id').references(() => entries.id, { onDelete: 'cascade' }),  // nullable (D-05)
+  name:      text('name').notNull().default(''),
+  points:    text('points').notNull(),  // JSON: [{x:number,y:number}, ...]
+  color:     text('color'),             // nullable hex (D-01)
+  createdAt: timestamp('created_at').defaultNow().notNull(),
 });
