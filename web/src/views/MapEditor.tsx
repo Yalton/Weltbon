@@ -386,7 +386,21 @@ export function MapEditor() {
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [drawRegionMode, pendingVertices]);
 
-  // Priority 2c (NEW 43-04): paintTerrainMode + pending vertices → clear vertices first.
+  // Priority 2b-terrain (NEW 43-04): Enter key to close terrain area (≥3 vertices while painting).
+  useEffect(() => {
+    if (!armedTerrainTypeId || pendingVertices.length < 3) return;
+    const handler = (e: KeyboardEvent) => {
+      if (e.key === 'Enter') {
+        e.preventDefault();
+        handleCloseTerrainArea();
+      }
+    };
+    window.addEventListener('keydown', handler);
+    return () => window.removeEventListener('keydown', handler);
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [armedTerrainTypeId, pendingVertices]);
+
+  // Priority 2c (NEW 43-04): paintTerrainMode + pending vertices → clear vertices first (Esc).
   useEffect(() => {
     if (!armedTerrainTypeId || pendingVertices.length === 0) return;
     const handler = (e: KeyboardEvent) => {
