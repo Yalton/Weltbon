@@ -13,6 +13,8 @@ import {
   maps,
   mapPins,
   mapRegions,
+  mapLayers,
+  terrainTypes,
 } from '../../db/schema.js';
 import { buildSlugMap } from './slug.js';
 
@@ -106,6 +108,30 @@ export interface ExportPayloadMapRegion {
   name: string;
   points: string;  // raw JSON text "[{x,y},...]"
   color: string | null;
+  /** Phase 44 GEOSHARE-02: terrain discriminator; null = political/standalone region. */
+  terrainTypeId: string | null;
+  createdAt: Date;
+}
+
+/** Phase 44 GEOSHARE-02: map layer exported as full universe palette (D-44-08). */
+export interface ExportPayloadMapLayer {
+  id: string;
+  universeId: string;
+  name: string;
+  ordered: boolean;
+  defaultOpacity: number;
+  sortOrder: number;
+  createdAt: Date;
+}
+
+/** Phase 44 GEOSHARE-02: terrain type exported as full universe palette (D-44-08). */
+export interface ExportPayloadTerrainType {
+  id: string;
+  layerId: string;
+  name: string;
+  color: string;
+  label: string | null;
+  sortOrder: number;
   createdAt: Date;
 }
 
@@ -175,6 +201,10 @@ export interface ExportPayload {
   mapPins: ExportPayloadMapPin[];
   /** Phase 41 D-01: all map regions scoped to this universe (via maps FK). */
   mapRegions: ExportPayloadMapRegion[];
+  /** Phase 44 GEOSHARE-02 D-44-08: full universe map-layer palette (not filtered to painted). */
+  mapLayersData: ExportPayloadMapLayer[];
+  /** Phase 44 GEOSHARE-02 D-44-08: full universe terrain-type palette (scoped via layers FK). */
+  terrainTypesData: ExportPayloadTerrainType[];
 }
 
 /**
@@ -290,6 +320,7 @@ export async function loadUniverseExportPayload(universeId: string): Promise<Exp
 
   // Phase 41 D-01: load map regions scoped to this universe via maps FK.
   // map_regions has no direct universeId — scope through INNER JOIN maps.
+  // Phase 44 GEOSHARE-02: add terrainTypeId to the select for round-trip.
   const mapRegionRows = await db()
     .select({
       id: mapRegions.id,
@@ -298,11 +329,40 @@ export async function loadUniverseExportPayload(universeId: string): Promise<Exp
       name: mapRegions.name,
       points: mapRegions.points,
       color: mapRegions.color,
+      terrainTypeId: mapRegions.terrainTypeId,
       createdAt: mapRegions.createdAt,
     })
     .from(mapRegions)
     .innerJoin(maps, eq(maps.id, mapRegions.mapId))
     .where(eq(maps.universeId, universeId));
+
+  // Phase 44 GEOSHARE-02 D-44-08: full universe map-layer palette.
+  // map_layers is universe-scoped directly (universeId FK); export ALL layers,
+  // not just those referenced by painted areas (full-palette export, D-44-08).
+  const mapLayerRows = await db()
+    .select()
+    .from(mapLayers)
+    .where(eq(mapLayers.universeId, universeId))
+    .orderBy(mapLayers.sortOrder);
+
+  // Phase 44 GEOSHARE-02 D-44-08: full universe terrain-type palette.
+  // terrain_types has no direct universeId — scope through INNER JOIN mapLayers
+  // (layer_id → universe), mirroring how mapPins/mapRegions scope through INNER JOIN maps.
+  const terrainTypeRows = mapLayerRows.length > 0
+    ? await db()
+        .select({
+          id: terrainTypes.id,
+          layerId: terrainTypes.layerId,
+          name: terrainTypes.name,
+          color: terrainTypes.color,
+          label: terrainTypes.label,
+          sortOrder: terrainTypes.sortOrder,
+          createdAt: terrainTypes.createdAt,
+        })
+        .from(terrainTypes)
+        .innerJoin(mapLayers, eq(mapLayers.id, terrainTypes.layerId))
+        .where(eq(mapLayers.universeId, universeId))
+    : [];
 
   // Build cover-image reverse map: assetId → entryId (for usedAsCoverByEntryId).
   // Only the first matching entry per asset is recorded (covers are 1:1 in practice).
@@ -410,7 +470,28 @@ export async function loadUniverseExportPayload(universeId: string): Promise<Exp
       name: r.name,
       points: r.points,
       color: r.color ?? null,
+      // Phase 44 GEOSHARE-02: terrain discriminator; null = political/standalone.
+      terrainTypeId: r.terrainTypeId ?? null,
       createdAt: r.createdAt,
+    })),
+    // Phase 44 GEOSHARE-02 D-44-08: full palette — export ALL layers/types for the universe.
+    mapLayersData: mapLayerRows.map((l) => ({
+      id: l.id,
+      universeId: l.universeId,
+      name: l.name,
+      ordered: l.ordered,
+      defaultOpacity: l.defaultOpacity,
+      sortOrder: l.sortOrder,
+      createdAt: l.createdAt,
+    })),
+    terrainTypesData: terrainTypeRows.map((t) => ({
+      id: t.id,
+      layerId: t.layerId,
+      name: t.name,
+      color: t.color,
+      label: t.label ?? null,
+      sortOrder: t.sortOrder,
+      createdAt: t.createdAt,
     })),
   };
 }
