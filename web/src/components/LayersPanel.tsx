@@ -31,6 +31,29 @@ export interface LayersPanelProps {
     currentColor: string,
     onPick: (hex: string) => void,
   ) => void;
+  /**
+   * Armed terrain type for paint mode (43-04).
+   * The swatch with this ID shows a highlight ring (aria-pressed=true).
+   */
+  armedTerrainTypeId?: string | null;
+  /**
+   * Callback to arm/disarm a terrain type for painting.
+   * Called with (typeId, layerId) — null typeId means disarm.
+   */
+  onArmTerrainType?: (typeId: string | null, layerId: string) => void;
+  /**
+   * Per-viewer layer visibility/opacity from localStorage (43-04).
+   * When provided, replaces the local hiddenLayerIds state for visibility.
+   */
+  layerViewerState?: Record<string, { visible: boolean; opacity: number }>;
+  /**
+   * Callback to update per-viewer visibility/opacity (43-04).
+   * Writes to localStorage only — no server PATCH.
+   */
+  onLayerViewerStateChange?: (
+    layerId: string,
+    patch: { visible?: boolean; opacity?: number },
+  ) => void;
 }
 
 // ─── LayersPanel ──────────────────────────────────────────────────────────────
@@ -58,6 +81,10 @@ export function LayersPanel({
   visible,
   onToggle,
   onRequestColorPick,
+  armedTerrainTypeId,
+  onArmTerrainType,
+  layerViewerState,
+  onLayerViewerStateChange,
 }: LayersPanelProps) {
   // Only fetch when the panel is actually shown — in share mode the editor mounts
   // this panel with visible=false, and fetching there 404s on the share seam (WR-03).
@@ -292,7 +319,10 @@ export function LayersPanel({
                 .sort((a, b) => a.sortOrder - b.sortOrder)
                 .map((layer) => {
                   const isExpanded = expandedLayerIds.has(layer.id);
-                  const isVisible = !hiddenLayerIds.has(layer.id);
+                  // Visibility: delegate to layerViewerState when wired (43-04), else fall back to local state
+                  const isVisible = layerViewerState
+                    ? (layerViewerState[layer.id]?.visible ?? true)
+                    : !hiddenLayerIds.has(layer.id);
                   const isEditingLayer = editingId === layer.id;
                   const sortedTypes = [...(layer.terrainTypes ?? [])].sort(
                     (a, b) => a.sortOrder - b.sortOrder,
@@ -350,11 +380,17 @@ export function LayersPanel({
                           </div>
                         )}
 
-                        {/* Visibility checkbox (local-only state — NO API call) */}
+                        {/* Visibility checkbox — delegates to layerViewerState when wired (43-04) */}
                         <input
                           type="checkbox"
                           checked={isVisible}
-                          onChange={() => toggleVisibility(layer.id)}
+                          onChange={() => {
+                            if (onLayerViewerStateChange) {
+                              onLayerViewerStateChange(layer.id, { visible: !isVisible });
+                            } else {
+                              toggleVisibility(layer.id);
+                            }
+                          }}
                           aria-label={`Toggle ${layer.name} visibility`}
                           className="focus-visible:ring-2 focus-visible:ring-[color:var(--color-accent)] focus-visible:ring-offset-2 min-h-[44px]"
                           title="Visible"
@@ -377,7 +413,7 @@ export function LayersPanel({
                         </button>
                       </div>
 
-                      {/* Opacity slider (PATCH defaultOpacity on change) */}
+                      {/* Default opacity slider (PATCH defaultOpacity on blur — server-side default, D-10) */}
                       <div className="px-4 pb-2 flex items-center gap-2">
                         <label
                           htmlFor={`opacity-${layer.id}`}
@@ -404,6 +440,34 @@ export function LayersPanel({
                         />
                       </div>
 
+                      {/* Your opacity slider (43-04) — writes localStorage only; NO PATCH (D-10) */}
+                      {layerViewerState && (
+                        <div className="px-4 pb-2 flex items-center gap-2">
+                          <label
+                            htmlFor={`viewer-opacity-${layer.id}`}
+                            className="text-xs text-neutral-500 flex-shrink-0"
+                          >
+                            Your opacity
+                          </label>
+                          <input
+                            id={`viewer-opacity-${layer.id}`}
+                            type="range"
+                            min="0"
+                            max="1"
+                            step="0.05"
+                            value={layerViewerState[layer.id]?.opacity ?? layer.defaultOpacity}
+                            aria-label={`Your opacity for ${layer.name}`}
+                            aria-valuetext={`${Math.round((layerViewerState[layer.id]?.opacity ?? layer.defaultOpacity) * 100)}%`}
+                            onChange={(e) =>
+                              onLayerViewerStateChange?.(layer.id, {
+                                opacity: parseFloat(e.target.value),
+                              })
+                            }
+                            className="w-16 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-[color:var(--color-accent)] focus-visible:ring-offset-2"
+                          />
+                        </div>
+                      )}
+
                       {/* Expanded: terrain type list */}
                       {isExpanded && (
                         <div className="pb-1">
@@ -418,15 +482,45 @@ export function LayersPanel({
                                   key={type.id}
                                   className="flex items-center gap-2 px-4 py-1"
                                 >
-                                  {/* Color swatch (click → color picker via callback) */}
+                                  {/* Color swatch (click → color picker via callback; recolor path unchanged) */}
                                   <button
                                     type="button"
                                     onClick={() => handleSwatchClick(type, layer)}
                                     aria-label={`Change color for ${type.name} — current: ${type.color}`}
                                     title={`Change color for ${type.name}`}
-                                    className="w-4 h-4 rounded-full flex-shrink-0 border border-neutral-300 dark:border-neutral-600 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-[color:var(--color-accent)] focus-visible:ring-offset-2 min-h-[44px] min-w-[44px]"
+                                    className={[
+                                      'w-4 h-4 rounded-full flex-shrink-0 border border-neutral-300 dark:border-neutral-600 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-[color:var(--color-accent)] focus-visible:ring-offset-2 min-h-[44px] min-w-[44px]',
+                                      // Armed highlight ring (43-04) — shows armed state even via color swatch
+                                      armedTerrainTypeId === type.id
+                                        ? 'ring-2 ring-[color:var(--color-accent)] ring-offset-1'
+                                        : '',
+                                    ].join(' ')}
                                     style={{ backgroundColor: type.color }}
+                                    aria-pressed={armedTerrainTypeId === type.id}
                                   />
+
+                                  {/* Arm trigger button (43-04) — arms paint mode for this terrain type */}
+                                  {onArmTerrainType && (
+                                    <button
+                                      type="button"
+                                      onClick={() => onArmTerrainType(type.id, layer.id)}
+                                      aria-pressed={armedTerrainTypeId === type.id}
+                                      aria-label={
+                                        armedTerrainTypeId === type.id
+                                          ? `Painting with ${type.name} — currently armed`
+                                          : `Paint with ${type.name}`
+                                      }
+                                      title={armedTerrainTypeId === type.id ? `Painting with ${type.name}` : `Paint area`}
+                                      className={[
+                                        'flex-shrink-0 text-xs px-1.5 py-0.5 rounded border focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-[color:var(--color-accent)] focus-visible:ring-offset-2',
+                                        armedTerrainTypeId === type.id
+                                          ? 'border-[color:var(--color-accent)] bg-[color:var(--color-accent-soft)] text-[color:var(--color-accent)]'
+                                          : 'border-neutral-200 dark:border-neutral-700 text-neutral-500 hover:text-neutral-700 dark:hover:text-neutral-300 hover:bg-neutral-50 dark:hover:bg-neutral-800',
+                                      ].join(' ')}
+                                    >
+                                      {armedTerrainTypeId === type.id ? '✓' : '✎'}
+                                    </button>
+                                  )}
 
                                   {/* Inline-editable type name */}
                                   {isEditingType ? (

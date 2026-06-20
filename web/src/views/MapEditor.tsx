@@ -23,7 +23,9 @@ import {
   useUpdateRegion,
   type MapPin,
   type MapRegion,
+  type TerrainAreaRegion,
 } from '../hooks/useMap';
+import { useMapLayers } from '../hooks/useMapLayers';
 import { MAP_COLOR_PALETTE, MAP_GLYPH_KEYS, getGlyphPath } from '../lib/mapGlyphs';
 import { entryTypeHexColor } from '../lib/entryTypeColor';
 import { useShareMode, useShareToken } from '../contexts/ShareModeContext';
@@ -64,6 +66,14 @@ const COPY = {
   regionContextMenuRelink: 'Change entry...',
   regionContextMenuRename: 'Rename...',
   regionContextMenuColor: 'Change color...',
+  // Terrain paint copy (43-04)
+  paintTerrainBanner: (name: string) =>
+    `Painting "${name}" · click to add vertices · Enter or first vertex to close · Esc to cancel`,
+  terrainSaveError: "Couldn't save terrain area. Try again.",
+  terrainDeleteError: "Couldn't delete terrain area. Try again.",
+  terrainReclassifyError: "Couldn't reclassify. Try again.",
+  terrainContextMenuDelete: 'Delete area',
+  terrainContextMenuReclassify: 'Reclassify ▸',
 } as const;
 
 // ─── Types ────────────────────────────────────────────────────────────────────
@@ -80,6 +90,13 @@ type ContextMenuState = {
 /** State for the positioned region context menu. */
 type RegionContextMenuState = {
   region: MapRegion;
+  clientX: number;
+  clientY: number;
+} | null;
+
+/** State for the positioned terrain area context menu. */
+type TerrainContextMenuState = {
+  region: TerrainAreaRegion;
   clientX: number;
   clientY: number;
 } | null;
@@ -132,6 +149,7 @@ export function MapEditor() {
   // ── Data hooks ───────────────────────────────────────────────────────────────
   const { data: map, isLoading, isError } = useMap(uid, mid);
   const { data: entriesData } = useEntries(uid);
+  const { data: layers = [] } = useMapLayers(uid, { enabled: !isShare && !!uid });
   const addPin = useAddPin(uid, mid);
   const movePin = useMovePin(uid, mid);
   const deletePin = useDeletePin(uid, mid);
@@ -181,6 +199,19 @@ export function MapEditor() {
   const [pendingVertices, setPendingVertices] = useState<Array<{ x: number; y: number }>>([]);
   const [regionContextMenu, setRegionContextMenu] = useState<RegionContextMenuState>(null);
   const [deleteRegionTarget, setDeleteRegionTarget] = useState<MapRegion | null>(null);
+
+  // ── Terrain paint state (43-04) ───────────────────────────────────────────────
+  // armedTerrainTypeId !== null → paintTerrainMode active; pendingVertices SHARED with drawRegion
+  const [armedTerrainTypeId, setArmedTerrainTypeId] = useState<string | null>(null);
+  const [armedLayerId, setArmedLayerId] = useState<string | null>(null);
+  const [terrainContextMenu, setTerrainContextMenu] = useState<TerrainContextMenuState>(null);
+  const [reclassifySubmenuOpen, setReclassifySubmenuOpen] = useState(false);
+
+  // ── Per-viewer layer visibility/opacity (localStorage, never server) ──────────
+  // Key: `weltbon.mapview.${uid}.${mid}`; shape: Record<layerId, { visible, opacity }>
+  const [layerViewerState, setLayerViewerState] = useState<
+    Record<string, { visible: boolean; opacity: number }>
+  >({});
   const [regionRelinkPickerOpen, setRegionRelinkPickerOpen] = useState(false);
   // Region whose entry link is being changed. Captured when the relink picker
   // opens because the context menu (its prior source) is dismissed immediately.
@@ -212,6 +243,48 @@ export function MapEditor() {
   // ── Regions from map payload ──────────────────────────────────────────────────
   const regions = useMemo<MapRegion[]>(() => map?.regions ?? [], [map?.regions]);
 
+  // ── Client-side terrain areas join (43-04) ────────────────────────────────────
+  // Filter regions to those with a terrainTypeId, then enrich with color/layer from layers data.
+  // This join means recoloring a terrain type propagates automatically on query invalidation.
+  const terrainAreas = useMemo<TerrainAreaRegion[]>(() => {
+    if (!map?.regions || layers.length === 0) return [];
+    // Build a flat map: typeId → { terrainTypeColor, layerId, layerSortOrder }
+    const typeMap = new Map<string, { terrainTypeColor: string; layerId: string; layerSortOrder: number }>();
+    for (const layer of layers) {
+      for (const type of layer.terrainTypes ?? []) {
+        typeMap.set(type.id, {
+          terrainTypeColor: type.color,
+          layerId: layer.id,
+          layerSortOrder: layer.sortOrder,
+        });
+      }
+    }
+    const result: TerrainAreaRegion[] = [];
+    for (const region of map.regions) {
+      if (!region.terrainTypeId) continue;
+      const joined = typeMap.get(region.terrainTypeId);
+      if (!joined) continue; // orphaned (type deleted) — skip
+      result.push({
+        ...region,
+        terrainTypeId: region.terrainTypeId,
+        terrainTypeColor: joined.terrainTypeColor,
+        layerId: joined.layerId,
+        layerSortOrder: joined.layerSortOrder,
+      });
+    }
+    return result;
+  }, [map?.regions, layers]);
+
+  // ── Derive armed type name for paint banner ───────────────────────────────────
+  const armedTypeName = useMemo(() => {
+    if (!armedTerrainTypeId) return '';
+    for (const layer of layers) {
+      const found = (layer.terrainTypes ?? []).find((t) => t.id === armedTerrainTypeId);
+      if (found) return found.name;
+    }
+    return '';
+  }, [armedTerrainTypeId, layers]);
+
   // ── Universe entries for AddEntriesPicker ────────────────────────────────────
   const universeEntries = useMemo(
     () =>
@@ -232,6 +305,43 @@ export function MapEditor() {
       return null;
     }
   }, [map?.legendLabels]);
+
+  // ── localStorage init-on-mount (43-04) ───────────────────────────────────────
+  // Seed per-layer viewer state from localStorage; fall back to defaults on error (D-43-05, T-43-09).
+  useEffect(() => {
+    if (!uid || !mid || layers.length === 0) return;
+    const key = `weltbon.mapview.${uid}.${mid}`;
+    try {
+      const raw = localStorage.getItem(key);
+      const stored = raw
+        ? (JSON.parse(raw) as Record<string, { visible: boolean; opacity: number }>)
+        : {};
+      const init: Record<string, { visible: boolean; opacity: number }> = {};
+      for (const layer of layers) {
+        init[layer.id] = stored[layer.id] ?? { visible: true, opacity: layer.defaultOpacity };
+      }
+      setLayerViewerState(init);
+    } catch {
+      // Malformed JSON → fall back to all-layer defaults
+      const init: Record<string, { visible: boolean; opacity: number }> = {};
+      for (const layer of layers) {
+        init[layer.id] = { visible: true, opacity: layer.defaultOpacity };
+      }
+      setLayerViewerState(init);
+    }
+  }, [uid, mid, layers]); // eslint-disable-line react-hooks/exhaustive-deps
+
+  // ── localStorage persist-on-change (43-04) ────────────────────────────────────
+  // Write full state object to localStorage on any viewer state change (T-43-09, D-10).
+  useEffect(() => {
+    if (!uid || !mid || Object.keys(layerViewerState).length === 0) return;
+    const key = `weltbon.mapview.${uid}.${mid}`;
+    try {
+      localStorage.setItem(key, JSON.stringify(layerViewerState));
+    } catch {
+      // Quota exceeded — ignore silently
+    }
+  }, [uid, mid, layerViewerState]);
 
   // ── Esc priority ladder (layered useEffects, mirrors DiagramEditor) ───────────
 
@@ -276,19 +386,31 @@ export function MapEditor() {
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [drawRegionMode, pendingVertices]);
 
-  // Priority 3: context menu open → close menu (pin or region).
+  // Priority 2c (NEW 43-04): paintTerrainMode + pending vertices → clear vertices first.
   useEffect(() => {
-    if (!contextMenu && !regionContextMenu) return;
+    if (!armedTerrainTypeId || pendingVertices.length === 0) return;
+    const handler = (e: KeyboardEvent) => {
+      if (e.key === 'Escape') setPendingVertices([]);
+    };
+    window.addEventListener('keydown', handler);
+    return () => window.removeEventListener('keydown', handler);
+  }, [armedTerrainTypeId, pendingVertices]);
+
+  // Priority 3: context menu open → close menu (pin or region or terrain).
+  useEffect(() => {
+    if (!contextMenu && !regionContextMenu && !terrainContextMenu) return;
     const handler = (e: KeyboardEvent) => {
       if (e.key === 'Escape') {
         setContextMenu(null);
         setSelectedPinId(null);
         setRegionContextMenu(null);
+        setTerrainContextMenu(null);
+        setReclassifySubmenuOpen(false);
       }
     };
     window.addEventListener('keydown', handler);
     return () => window.removeEventListener('keydown', handler);
-  }, [contextMenu, regionContextMenu]);
+  }, [contextMenu, regionContextMenu, terrainContextMenu]);
 
   // Priority 4: addPinMode / drawRegionMode active (no picker/menu/vertices) → exit mode.
   useEffect(() => {
@@ -309,6 +431,19 @@ export function MapEditor() {
     return () => window.removeEventListener('keydown', handler);
   }, [drawRegionMode, pendingVertices, regionContextMenu]);
 
+  // Priority 4b (NEW 43-04): paintTerrainMode active (no pending vertices, no terrain menu) → disarm.
+  useEffect(() => {
+    if (!armedTerrainTypeId || pendingVertices.length > 0 || terrainContextMenu) return;
+    const handler = (e: KeyboardEvent) => {
+      if (e.key === 'Escape') {
+        setArmedTerrainTypeId(null);
+        setArmedLayerId(null);
+      }
+    };
+    window.addEventListener('keydown', handler);
+    return () => window.removeEventListener('keydown', handler);
+  }, [armedTerrainTypeId, pendingVertices, terrainContextMenu]);
+
   // ── Draw-region close helper ─────────────────────────────────────────────────
 
   const handleCloseRegion = useCallback(async () => {
@@ -328,6 +463,42 @@ export function MapEditor() {
     }
   }, [createRegion, pendingVertices]);
 
+  // ── Terrain paint close helper (43-04) ───────────────────────────────────────
+  // Mirrors handleCloseRegion but passes terrainTypeId; swatch stays armed for multi-paint (D-43-01).
+  const handleCloseTerrainArea = useCallback(async () => {
+    if (pendingVertices.length < 3) return;
+    const pts = [...pendingVertices];
+    setPendingVertices([]);
+    // Do NOT clear armedTerrainTypeId — multi-paint stays armed.
+    try {
+      await createRegion.mutateAsync({
+        name: '',
+        points: JSON.stringify(pts),
+        entryId: null,
+        color: null,
+        terrainTypeId: armedTerrainTypeId,
+      });
+    } catch {
+      setToast({ message: COPY.terrainSaveError, variant: 'error' });
+    }
+  }, [createRegion, pendingVertices, armedTerrainTypeId]);
+
+  // Async version that takes vertex snapshot (avoids stale closure in setState callback).
+  const handleCloseTerrainAreaAsync = useCallback(async (verts: Array<{ x: number; y: number }>) => {
+    if (verts.length < 3) return;
+    try {
+      await createRegion.mutateAsync({
+        name: '',
+        points: JSON.stringify(verts),
+        entryId: null,
+        color: null,
+        terrainTypeId: armedTerrainTypeId,
+      });
+    } catch {
+      setToast({ message: COPY.terrainSaveError, variant: 'error' });
+    }
+  }, [createRegion, armedTerrainTypeId]);
+
   // ── Add-pin flow handlers ────────────────────────────────────────────────────
 
   /**
@@ -336,6 +507,22 @@ export function MapEditor() {
    * In addPinMode: store pending coords and open entry picker.
    */
   const handleCanvasClick = useCallback((nx: number, ny: number) => {
+    // NEW (43-04): paintTerrainMode branch — mirrors drawRegionMode vertex-append logic.
+    if (armedTerrainTypeId) {
+      setPendingVertices((verts) => {
+        if (verts.length >= 3) {
+          const fv = verts[0];
+          const dx = Math.abs(nx - fv.x);
+          const dy = Math.abs(ny - fv.y);
+          if (dx < 0.025 && dy < 0.025) {
+            setTimeout(() => handleCloseTerrainAreaAsync([...verts]), 0);
+            return [];
+          }
+        }
+        return [...verts, { x: nx, y: ny }];
+      });
+      return;
+    }
     if (drawRegionMode) {
       // Check if the click is near the first vertex — close polygon (snap).
       setPendingVertices((verts) => {
@@ -357,7 +544,7 @@ export function MapEditor() {
     // addPinMode:
     setPendingPinCoords({ x: nx, y: ny });
     setEntryPickerOpen(true);
-  }, [drawRegionMode, handleCloseRegion]); // eslint-disable-line react-hooks/exhaustive-deps
+  }, [armedTerrainTypeId, drawRegionMode, handleCloseTerrainAreaAsync, handleCloseRegion]); // eslint-disable-line react-hooks/exhaustive-deps
 
   // Async version that takes a snapshot of vertices (avoids stale closure in setState callback).
   const handleCloseRegionAsync = useCallback(async (verts: Array<{ x: number; y: number }>) => {
@@ -548,6 +735,89 @@ export function MapEditor() {
     setRenameRegionTarget(null);
   };
 
+  // ── Terrain area context menu handlers (43-04) ───────────────────────────────
+
+  const handleTerrainAreaContextMenu = useCallback(
+    (region: TerrainAreaRegion, clientX: number, clientY: number) => {
+      setTerrainContextMenu({ region, clientX, clientY });
+      setReclassifySubmenuOpen(false);
+    },
+    [],
+  );
+
+  const handleTerrainContextMenuDelete = async () => {
+    if (!terrainContextMenu) return;
+    const region = terrainContextMenu.region;
+    setTerrainContextMenu(null);
+    setReclassifySubmenuOpen(false);
+    // Instant delete — no ConfirmDialog (D-43-02)
+    try {
+      await deleteRegion.mutateAsync(region.id);
+    } catch {
+      setToast({ message: COPY.terrainDeleteError, variant: 'error' });
+    }
+  };
+
+  const handleTerrainReclassify = async (newTypeId: string) => {
+    if (!terrainContextMenu) return;
+    const regionId = terrainContextMenu.region.id;
+    setTerrainContextMenu(null);
+    setReclassifySubmenuOpen(false);
+    try {
+      await updateRegion.mutateAsync({ regionId, terrainTypeId: newTypeId });
+    } catch {
+      setToast({ message: COPY.terrainReclassifyError, variant: 'error' });
+    }
+  };
+
+  // ── Arm terrain type handler (43-04) ─────────────────────────────────────────
+
+  const handleArmTerrainType = useCallback(
+    (typeId: string | null, layerId: string) => {
+      // Exit other modes (mode exclusivity)
+      setAddPinMode(false);
+      setDrawRegionMode(false);
+      setPendingVertices([]);
+      if (typeId === armedTerrainTypeId) {
+        // Clicking the same armed swatch while no pending vertices → disarm
+        setArmedTerrainTypeId(null);
+        setArmedLayerId(null);
+      } else {
+        setArmedTerrainTypeId(typeId);
+        setArmedLayerId(layerId);
+        // D-43-07: auto-reveal the layer if hidden
+        if (typeId) {
+          setLayerViewerState((prev) => {
+            const cur = prev[layerId];
+            if (!cur?.visible) {
+              const ownerLayer = layers.find((l) => l.id === layerId);
+              return {
+                ...prev,
+                [layerId]: {
+                  visible: true,
+                  opacity: cur?.opacity ?? ownerLayer?.defaultOpacity ?? 0.6,
+                },
+              };
+            }
+            return prev;
+          });
+        }
+      }
+    },
+    [armedTerrainTypeId, layers],
+  );
+
+  // ── onLayerViewerStateChange helper (43-04) ────────────────────────────────────
+  const handleLayerViewerStateChange = useCallback(
+    (layerId: string, patch: { visible?: boolean; opacity?: number }) => {
+      setLayerViewerState((prev) => ({
+        ...prev,
+        [layerId]: { ...prev[layerId], ...patch },
+      }));
+    },
+    [],
+  );
+
   // ── Color / glyph picker handlers ────────────────────────────────────────────
 
   const handlePinColorSelect = async (color: string) => {
@@ -639,6 +909,20 @@ export function MapEditor() {
     return () => window.removeEventListener('mousedown', handler);
   }, [contextMenu, regionContextMenu]);
 
+  // ── Click-away to close terrain context menu (43-04) ─────────────────────────
+  useEffect(() => {
+    if (!terrainContextMenu) return;
+    const handler = (e: MouseEvent) => {
+      const menu = document.getElementById('map-terrain-context-menu');
+      if (menu && !menu.contains(e.target as Node)) {
+        setTerrainContextMenu(null);
+        setReclassifySubmenuOpen(false);
+      }
+    };
+    window.addEventListener('mousedown', handler);
+    return () => window.removeEventListener('mousedown', handler);
+  }, [terrainContextMenu]);
+
   // ── Render ────────────────────────────────────────────────────────────────────
 
   if (isLoading) {
@@ -663,12 +947,22 @@ export function MapEditor() {
           onToggleAddPinMode={() => {
             setAddPinMode((v) => !v);
             if (drawRegionMode) setDrawRegionMode(false);
+            // Exit terrain paint mode (mode exclusivity)
+            if (armedTerrainTypeId) {
+              setArmedTerrainTypeId(null);
+              setArmedLayerId(null);
+            }
           }}
           drawRegionMode={drawRegionMode}
           onToggleDrawRegionMode={() => {
             setDrawRegionMode((v) => !v);
             if (addPinMode) setAddPinMode(false);
             if (!drawRegionMode) setPendingVertices([]);
+            // Exit terrain paint mode (mode exclusivity)
+            if (armedTerrainTypeId) {
+              setArmedTerrainTypeId(null);
+              setArmedLayerId(null);
+            }
           }}
           onChangeImage={() => setChangeImageOpen(true)}
           legendVisible={legendVisible}
@@ -711,6 +1005,16 @@ export function MapEditor() {
         </div>
       )}
 
+      {/* Terrain paint banner (43-04) — suppressed in share mode and when drawRegionMode active */}
+      {!isShare && armedTerrainTypeId && !drawRegionMode && (
+        <div className="pointer-events-none absolute left-1/2 top-14 z-10 -translate-x-1/2 px-3">
+          <div className="rounded-full px-3 py-1 text-xs shadow-sm whitespace-nowrap border border-[color:var(--color-accent)] bg-[color:var(--color-accent-soft)] text-[color:var(--color-accent)]">
+            {COPY.paintTerrainBanner(armedTypeName)}
+            {pendingVertices.length > 0 && ` (${pendingVertices.length} vertices)`}
+          </div>
+        </div>
+      )}
+
       {/* Map canvas — d3-zoom + React-rendered pins + regions.
           In share mode: addPinMode/drawRegionMode forced false; mutation
           callbacks (context menus) are no-ops (T-40-12). */}
@@ -730,6 +1034,11 @@ export function MapEditor() {
         onPinContextMenu={isShare ? () => {} : handlePinContextMenu}
         onRegionClick={handleRegionClick}
         onRegionContextMenu={isShare ? () => {} : handleRegionContextMenu}
+        terrainAreas={terrainAreas}
+        layers={layers}
+        layerViewerState={layerViewerState}
+        paintTerrainMode={!isShare && !!armedTerrainTypeId}
+        onTerrainAreaContextMenu={isShare ? () => {} : handleTerrainAreaContextMenu}
       />
 
       {/* Map legend (auto-derived, pointer-events-none overlay).
@@ -741,6 +1050,9 @@ export function MapEditor() {
         onRenameLabel={isShare ? () => {} : handleLegendRenameLabel}
         visible={legendVisible}
         onToggle={() => setLegendVisible((v) => !v)}
+        layers={layers}
+        terrainAreas={terrainAreas}
+        layerViewerState={layerViewerState}
       />
 
       {/* Layers panel — suppressed in share mode (T-42-11 / D-42-03).
@@ -750,6 +1062,10 @@ export function MapEditor() {
         visible={!isShare && layersPanelVisible}
         onToggle={() => setLayersPanelVisible((v) => !v)}
         onRequestColorPick={handleRequestColorPick}
+        armedTerrainTypeId={armedTerrainTypeId}
+        onArmTerrainType={handleArmTerrainType}
+        layerViewerState={layerViewerState}
+        onLayerViewerStateChange={handleLayerViewerStateChange}
       />
 
       {/* No-pins empty state overlay — suppressed in share mode (no mutation CTA) */}
@@ -911,6 +1227,87 @@ export function MapEditor() {
           >
             {COPY.regionContextMenuColor}
           </button>
+        </div>
+      )}
+
+      {/* Terrain area context menu (43-04) — distinct from region menu; suppressed in share mode */}
+      {!isShare && terrainContextMenu && (
+        <div
+          id="map-terrain-context-menu"
+          role="menu"
+          aria-label="Terrain area actions"
+          className="fixed z-50 min-w-[140px] rounded-md border border-neutral-200 dark:border-neutral-800 bg-white dark:bg-neutral-900 shadow-lg"
+          style={{ top: terrainContextMenu.clientY, left: terrainContextMenu.clientX }}
+        >
+          {/* Reclassify ▸ — opens grouped submenu */}
+          <button
+            type="button"
+            role="menuitem"
+            onClick={() => setReclassifySubmenuOpen((v) => !v)}
+            className="w-full text-left text-sm px-3 py-2 hover:bg-neutral-50 dark:hover:bg-neutral-800"
+          >
+            {COPY.terrainContextMenuReclassify}
+          </button>
+          {/* Delete area — instant, no ConfirmDialog (D-43-02) */}
+          <button
+            type="button"
+            role="menuitem"
+            aria-label="Delete terrain area"
+            onClick={handleTerrainContextMenuDelete}
+            className="w-full text-left text-sm px-3 py-2 hover:bg-neutral-50 dark:hover:bg-neutral-800 text-red-600 dark:text-red-400"
+          >
+            {COPY.terrainContextMenuDelete}
+          </button>
+          {/* Reclassify submenu — inline expansion (D-43-03) */}
+          {reclassifySubmenuOpen && (
+            <div
+              role="menu"
+              aria-label="Reclassify terrain area"
+              className="border-t border-neutral-100 dark:border-neutral-800"
+            >
+              {[...layers]
+                .sort((a, b) => a.sortOrder - b.sortOrder)
+                .map((layer) => {
+                  const sortedTypes = [...(layer.terrainTypes ?? [])].sort(
+                    (a, b) => a.sortOrder - b.sortOrder,
+                  );
+                  if (sortedTypes.length === 0) return null;
+                  return (
+                    <div key={layer.id}>
+                      {/* Layer group heading (role=presentation per UI-SPEC) */}
+                      <div
+                        role="presentation"
+                        className="text-xs font-semibold uppercase text-neutral-500 px-3 py-1"
+                      >
+                        {layer.name}
+                      </div>
+                      {sortedTypes.map((type) => {
+                        const isCurrent = type.id === terrainContextMenu.region.terrainTypeId;
+                        return (
+                          <button
+                            key={type.id}
+                            type="button"
+                            role="menuitem"
+                            onClick={() => handleTerrainReclassify(type.id)}
+                            className="w-full text-left text-sm px-3 py-1.5 hover:bg-neutral-50 dark:hover:bg-neutral-800 flex items-center gap-2"
+                          >
+                            <span
+                              className="w-3 h-3 rounded-full flex-shrink-0"
+                              style={{ backgroundColor: type.color }}
+                              aria-hidden="true"
+                            />
+                            <span className="text-neutral-700 dark:text-neutral-300">
+                              {isCurrent && <span className="mr-1">✓</span>}
+                              {type.name}
+                            </span>
+                          </button>
+                        );
+                      })}
+                    </div>
+                  );
+                })}
+            </div>
+          )}
         </div>
       )}
 
