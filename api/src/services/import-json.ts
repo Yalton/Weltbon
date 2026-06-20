@@ -1,7 +1,7 @@
 import { z } from 'zod';
 import sharp from 'sharp';
 import { db } from '../db/client.js';
-import { universes, entries, links, categories, issues, issueEntries, graphPositions, timelinePins, assets, maps, mapPins, mapRegions } from '../db/schema.js';
+import { universes, entries, links, categories, issues, issueEntries, graphPositions, timelinePins, assets, maps, mapPins, mapRegions, mapLayers, terrainTypes } from '../db/schema.js';
 import { storageBackend } from './storage/local.js';
 
 // CR-02: quota enforcement on the import path (same cap as the upload path).
@@ -170,6 +170,36 @@ export const importSchema = z.object({
         name: z.string().optional().default(''),
         points: z.string(),  // raw JSON text, validated as non-empty
         color: z.string().nullable().optional().default(null),
+        // Phase 44 GEOSHARE-02: terrain discriminator; null = political/standalone.
+        // Pre-v5.1 exports lack this field → default null (backward-compat, SC2).
+        terrainTypeId: z.string().uuid().nullable().optional().default(null),
+      })
+    )
+    .optional()
+    .default([]),
+  // Phase 44 GEOSHARE-02 D-44-07: map layers + terrain types from v5.1+ exports.
+  // Backward-compat: pre-v5.1 exports lack these fields → default [] for zero inserts.
+  mapLayers: z
+    .array(
+      z.object({
+        id: z.string().uuid(),
+        name: z.string().min(1),
+        ordered: z.boolean().optional().default(false),
+        defaultOpacity: z.number().min(0).max(1).optional().default(0.6),
+        sortOrder: z.number().int().optional().default(0),
+      })
+    )
+    .optional()
+    .default([]),
+  terrainTypes: z
+    .array(
+      z.object({
+        id: z.string().uuid(),
+        layerId: z.string().uuid(),
+        name: z.string().min(1),
+        color: z.string(),           // NOT NULL hex (D-42-07)
+        label: z.string().nullable().optional().default(null),
+        sortOrder: z.number().int().optional().default(0),
       })
     )
     .optional()
@@ -477,10 +507,52 @@ export async function importUniverseJson(
       });
     }
 
+    // 3e. Phase 44 GEOSHARE-02 D-44-07: Insert map_layers (universe-scoped), then
+    //     terrain_types (scoped via layer_id → universe). Must come BEFORE map_regions
+    //     so terrainTypeIdMap is populated when the region loop runs.
+    //     Insertion order: layers → types → regions (D-44-07 dependency order).
+    //
+    //     layer_id FK on terrain_types is NOT NULL → orphaned layerId THROWS.
+    //     terrain_type_id FK on map_regions is ON DELETE SET NULL → orphaned terrainTypeId
+    //     NULLS OUT (D-44-06 lenient asymmetry — intentionally different from entryId/mapId).
+    const layerIdMap = new Map<string, string>();
+    for (const layer of data.mapLayers) {
+      const [created] = await tx.insert(mapLayers)
+        .values({
+          universeId: universe.id,
+          name: layer.name,
+          ordered: layer.ordered,
+          defaultOpacity: layer.defaultOpacity,
+          sortOrder: layer.sortOrder,
+        })
+        .returning({ id: mapLayers.id });
+      layerIdMap.set(layer.id, created.id);
+    }
+
+    const terrainTypeIdMap = new Map<string, string>();
+    for (const tt of data.terrainTypes) {
+      const newLayerId = layerIdMap.get(tt.layerId);
+      if (!newLayerId) {
+        // layer_id FK is NOT NULL — orphaned ref throws (strict discipline, D-44-07).
+        throw new Error('Terrain type references unknown layer ID');
+      }
+      const [created] = await tx.insert(terrainTypes)
+        .values({
+          layerId: newLayerId,
+          name: tt.name,
+          color: tt.color,
+          label: tt.label ?? null,
+          sortOrder: tt.sortOrder,
+        })
+        .returning({ id: terrainTypes.id });
+      terrainTypeIdMap.set(tt.id, created.id);
+    }
+
     // 3d. Phase 41 D-01: Insert map_regions with remapped mapId + optional entryId.
     //     entryId is nullable (standalone regions) — only remap when non-null.
     //     A non-null entryId absent from entryIdMap throws (orphaned-ref discipline).
     //     A null entryId stays null and does NOT throw (nullable asymmetry vs pins).
+    //     Phase 44 GEOSHARE-02 D-44-06: terrainTypeId orphan NULLS OUT (lenient — SET NULL FK).
     for (const region of data.mapRegions) {
       const newMapId = mapIdMap.get(region.mapId);
       if (!newMapId) throw new Error('Map region references unknown map ID');
@@ -491,12 +563,19 @@ export async function importUniverseJson(
           throw new Error('Map region references unknown entry ID');
         }
       }
+      // D-44-06: orphaned terrain_type_id → null out (degrade to plain region), do NOT throw.
+      // Mirrors ON DELETE SET NULL schema semantics — intentionally lenient vs entryId.
+      let newTerrainTypeId: string | null = null;
+      if (region.terrainTypeId) {
+        newTerrainTypeId = terrainTypeIdMap.get(region.terrainTypeId) ?? null;
+      }
       await tx.insert(mapRegions).values({
         mapId: newMapId,
         entryId: newEntryId,
         name: region.name ?? '',
         points: region.points,
         color: region.color ?? null,
+        terrainTypeId: newTerrainTypeId,
       });
     }
 
@@ -513,6 +592,9 @@ export async function importUniverseJson(
       mapCount: data.maps.length,
       mapPinCount: data.mapPins.length,
       mapRegionCount: data.mapRegions.length,
+      // Phase 44 GEOSHARE-02: terrain palette counts for import result.
+      mapLayerCount: data.mapLayers.length,
+      terrainTypeCount: data.terrainTypes.length,
     };
   });
 

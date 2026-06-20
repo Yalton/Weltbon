@@ -126,7 +126,27 @@ export function exportUniverseJsonAsZip(
       name: r.name,
       points: r.points,
       color: r.color,
+      // Phase 44 GEOSHARE-02: terrain discriminator; null = political/standalone.
+      terrainTypeId: r.terrainTypeId,
       createdAt: r.createdAt.toISOString(),
+    })),
+    // Phase 44 GEOSHARE-02 D-44-08: full universe palette — all layers + types.
+    mapLayers: payload.mapLayersData.map((l) => ({
+      id: l.id,
+      name: l.name,
+      ordered: l.ordered,
+      defaultOpacity: l.defaultOpacity,
+      sortOrder: l.sortOrder,
+      createdAt: l.createdAt.toISOString(),
+    })),
+    terrainTypes: payload.terrainTypesData.map((t) => ({
+      id: t.id,
+      layerId: t.layerId,
+      name: t.name,
+      color: t.color,
+      label: t.label,
+      sortOrder: t.sortOrder,
+      createdAt: t.createdAt.toISOString(),
     })),
   };
 
