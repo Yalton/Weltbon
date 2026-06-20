@@ -62,6 +62,11 @@ export interface MapDetail {
   legendLabels?: string | null; // JSON: Record<string,string> keyed by "{color}:{icon}"
   pins: MapPin[];
   regions: MapRegion[]; // Phase 40 MAPS-04: widened payload, key UNCHANGED
+  // Phase 44 GEOSHARE-01: terrain areas pre-enriched by the share seam (D-44-03).
+  // Only populated on share map detail responses; undefined in authenticated responses.
+  // In share mode, the API discriminates terrainTypeId IS NOT NULL rows into this group
+  // and joins terrainTypeColor/layerId/layerSortOrder server-side (no client-side join needed).
+  terrainAreas?: TerrainAreaRegion[];
 }
 
 export function useMap(universeId: string, mapId: string) {

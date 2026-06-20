@@ -149,7 +149,11 @@ export function MapEditor() {
   // ── Data hooks ───────────────────────────────────────────────────────────────
   const { data: map, isLoading, isError } = useMap(uid, mid);
   const { data: entriesData } = useEntries(uid);
-  const { data: layers = [] } = useMapLayers(uid, { enabled: !isShare && !!uid });
+  // Phase 44 GEOSHARE-01: enable the layers query in share mode.
+  // The transparent client seam (api/client.ts) translates
+  // /universes/share/map-layers → /api/share/map-layers, now served by 44-02.
+  // Do NOT re-key queryKey (['map-layers', uid]) — memory react-query-key-change-blast-radius.
+  const { data: layers = [] } = useMapLayers(uid, { enabled: !!uid });
   const addPin = useAddPin(uid, mid);
   const movePin = useMovePin(uid, mid);
   const deletePin = useDeletePin(uid, mid);
@@ -252,9 +256,17 @@ export function MapEditor() {
   // ── Client-side terrain areas join (43-04) ────────────────────────────────────
   // Filter regions to those with a terrainTypeId, then enrich with color/layer from layers data.
   // This join means recoloring a terrain type propagates automatically on query invalidation.
+  //
+  // Phase 44 GEOSHARE-01 (D-44-03): In share mode, the share map detail already carries a
+  // pre-enriched `terrainAreas` array (discriminated + joined server-side by getPublicMap).
+  // Use it directly so no client-side join is required in share mode.
   const terrainAreas = useMemo<TerrainAreaRegion[]>(() => {
+    // Share mode: use pre-enriched terrainAreas from the share map detail (D-44-03).
+    if (isShare && map?.terrainAreas) {
+      return map.terrainAreas;
+    }
     if (!map?.regions || layers.length === 0) return [];
-    // Build a flat map: typeId → { terrainTypeColor, layerId, layerSortOrder }
+    // Auth mode: build a flat map: typeId → { terrainTypeColor, layerId, layerSortOrder }
     const typeMap = new Map<string, { terrainTypeColor: string; layerId: string; layerSortOrder: number }>();
     for (const layer of layers) {
       for (const type of layer.terrainTypes ?? []) {
@@ -279,7 +291,7 @@ export function MapEditor() {
       });
     }
     return result;
-  }, [map?.regions, layers]);
+  }, [isShare, map?.terrainAreas, map?.regions, layers]);
 
   // ── Derive armed type name for paint banner ───────────────────────────────────
   const armedTypeName = useMemo(() => {
@@ -312,9 +324,28 @@ export function MapEditor() {
     }
   }, [map?.legendLabels]);
 
+  // ── Share-mode static layerViewerState (44-03 D-44-01) ────────────────────────
+  // In share mode: build state statically from layers — all visible, each at its
+  // own default_opacity. No localStorage, no toggles, no sliders. Recomputes when
+  // layers data arrives (React Query populates it after the first fetch).
+  const shareLayerViewerState = useMemo<Record<string, { visible: boolean; opacity: number }>>(() => {
+    if (!isShare || layers.length === 0) return {};
+    return Object.fromEntries(
+      layers.map((l) => [l.id, { visible: true, opacity: l.defaultOpacity }]),
+    );
+  }, [isShare, layers]);
+
+  // Apply the share static state when it is computed (layers arrive async).
+  useEffect(() => {
+    if (!isShare || layers.length === 0) return;
+    setLayerViewerState(shareLayerViewerState);
+  }, [isShare, shareLayerViewerState, layers]);
+
   // ── localStorage init-on-mount (43-04) ───────────────────────────────────────
   // Seed per-layer viewer state from localStorage; fall back to defaults on error (D-43-05, T-43-09).
+  // Guarded off in share mode — visitors have no localStorage-backed preferences (D-44-01).
   useEffect(() => {
+    if (isShare) return; // share mode uses shareLayerViewerState above
     if (!uid || !mid || layers.length === 0) return;
     const key = `weltbon.mapview.${uid}.${mid}`;
     try {
@@ -335,11 +366,13 @@ export function MapEditor() {
       }
       setLayerViewerState(init);
     }
-  }, [uid, mid, layers]); // eslint-disable-line react-hooks/exhaustive-deps
+  }, [isShare, uid, mid, layers]); // eslint-disable-line react-hooks/exhaustive-deps
 
   // ── localStorage persist-on-change (43-04) ────────────────────────────────────
   // Write full state object to localStorage on any viewer state change (T-43-09, D-10).
+  // Guarded off in share mode — no localStorage writes for visitors (D-44-01).
   useEffect(() => {
+    if (isShare) return; // share mode is static; no persistence needed
     if (!uid || !mid || Object.keys(layerViewerState).length === 0) return;
     const key = `weltbon.mapview.${uid}.${mid}`;
     try {
@@ -347,7 +380,7 @@ export function MapEditor() {
     } catch {
       // Quota exceeded — ignore silently
     }
-  }, [uid, mid, layerViewerState]);
+  }, [isShare, uid, mid, layerViewerState]);
 
   // ── Esc priority ladder (layered useEffects, mirrors DiagramEditor) ───────────
 
