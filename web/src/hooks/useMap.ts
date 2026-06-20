@@ -23,6 +23,9 @@ export interface MapPin {
 }
 
 // Phase 40 MAPS-04 (D-09): Region polygon within a map.
+// Phase 43 TERRAIN-01: terrainTypeId discriminator added (null = political/standalone; set = terrain area).
+// CRITICAL: Do NOT re-key ['map', universeId, mapId] when widening this type.
+// (memory: react-query-key-change-blast-radius)
 export interface MapRegion {
   id: string;
   mapId: string;
@@ -31,6 +34,21 @@ export interface MapRegion {
   points: string; // JSON: [{x:number, y:number}, ...] normalized 0..1
   color: string | null; // nullable hex — null means neutral fallback
   createdAt: string;
+  // Phase 43: terrain discriminator — null = political/standalone; non-null = terrain area
+  terrainTypeId?: string | null;
+}
+
+/**
+ * Phase 43 TERRAIN-01: Enriched variant of MapRegion for terrain area rendering.
+ * Built client-side in MapEditor by joining MapRegion against useMapLayers data.
+ * NOT returned by the API directly — discriminator is in terrain_type_id column,
+ * color + layerId + layerSortOrder are joined from terrain_types/map_layers.
+ */
+export interface TerrainAreaRegion extends MapRegion {
+  terrainTypeId: string;      // guaranteed non-null (discriminator)
+  terrainTypeColor: string;   // hex — joined from terrain_types.color
+  layerId: string;            // from terrain_types.layer_id
+  layerSortOrder: number;     // from map_layers.sort_order, for bottom-to-top stacking
 }
 
 export interface MapDetail {
@@ -182,12 +200,16 @@ export function useCreateRegion(universeId: string, mapId: string) {
       points: string; // JSON [{x,y}, ...]
       entryId?: string | null;
       color?: string | null;
+      // Phase 43 TERRAIN-01: optional terrain discriminator
+      terrainTypeId?: string | null;
     }) =>
       api<MapRegion>(`/universes/${universeId}/maps/${mapId}/regions`, {
         method: 'POST',
         body: JSON.stringify(input),
       }),
     onSuccess: () => {
+      // CRITICAL: invalidate the EXISTING key — do NOT change the key shape
+      // (memory: react-query-key-change-blast-radius)
       qc.invalidateQueries({ queryKey: ['map', universeId, mapId] });
     },
   });
@@ -205,20 +227,25 @@ export function useUpdateRegion(universeId: string, mapId: string) {
       name,
       color,
       entryId,
+      terrainTypeId,
     }: {
       regionId: string;
       name?: string;
       color?: string | null;
       entryId?: string | null;
+      // Phase 43 TERRAIN-01: for reclassify — sets the terrain area's type (D-43-02/D-43-03)
+      terrainTypeId?: string | null;
     }) =>
       api<MapRegion>(
         `/universes/${universeId}/maps/${mapId}/regions/${regionId}`,
         {
           method: 'PATCH',
-          body: JSON.stringify({ name, color, entryId }),
+          body: JSON.stringify({ name, color, entryId, terrainTypeId }),
         },
       ),
     onSuccess: () => {
+      // CRITICAL: same key — no blast-radius re-key
+      // (memory: react-query-key-change-blast-radius)
       qc.invalidateQueries({ queryKey: ['map', universeId, mapId] });
     },
   });

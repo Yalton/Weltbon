@@ -97,6 +97,7 @@ const pinSchema = z.object({
 });
 
 // Phase 40 MAPS-04: Region Zod schemas (D-09)
+// Phase 43 TERRAIN-01: terrainTypeId discriminator added to all three region schemas.
 const regionSchema = z.object({
   id: z.string(),
   mapId: z.string(),
@@ -105,6 +106,8 @@ const regionSchema = z.object({
   points: z.string(),               // raw JSON string; web parses to {x,y}[]
   color: z.string().nullable(),
   createdAt: z.string().or(z.date()),
+  // Phase 43: terrain discriminator — null = political/standalone; set = terrain area (T-43-01)
+  terrainTypeId: z.string().uuid().nullable().optional(),
 });
 
 const createRegionSchema = z.object({
@@ -116,12 +119,16 @@ const createRegionSchema = z.object({
   // alone rejected null → 400, so standalone regions could not be drawn.
   entryId: z.string().uuid().nullable().optional(),
   color: z.string().nullable().optional(),
+  // Phase 43: terrain discriminator (T-43-01: UUID shape validated; FK constraint handles referential integrity)
+  terrainTypeId: z.string().uuid().nullable().optional(),
 });
 
 const updateRegionSchema = z.object({
   name: z.string().max(200).optional(),
   color: z.string().nullable().optional(),
   entryId: z.string().uuid().nullable().optional(),
+  // Phase 43: reclassify support — use 'terrainTypeId' in data presence check in handler
+  terrainTypeId: z.string().uuid().nullable().optional(),
 });
 
 // Phase 40 MAPS-05: Pin style Zod schema
@@ -698,6 +705,8 @@ export const mapsRouter = new OpenAPIHono<AppEnv>()
         name: data.name ?? '',
         points: data.points,
         color: data.color ?? null,
+        // Phase 43 TERRAIN-01: persist terrain discriminator (T-43-01)
+        terrainTypeId: data.terrainTypeId ?? null,
       })
       .returning();
 
@@ -723,10 +732,13 @@ export const mapsRouter = new OpenAPIHono<AppEnv>()
     }
 
     // Build partial update — only provided fields
-    const updates: { name?: string; color?: string | null; entryId?: string | null } = {};
+    const updates: { name?: string; color?: string | null; entryId?: string | null; terrainTypeId?: string | null } = {};
     if (data.name !== undefined) updates.name = data.name;
     if ('color' in data) updates.color = data.color ?? null;
     if ('entryId' in data) updates.entryId = data.entryId ?? null;
+    // Phase 43 TERRAIN-01: reclassify support — 'key' in data presence check mirrors color/entryId pattern
+    // so an omitted terrainTypeId does NOT overwrite the existing value (T-43-01)
+    if ('terrainTypeId' in data) updates.terrainTypeId = data.terrainTypeId ?? null;
 
     // T-40-IDOR: scope by both regionId AND mapId
     const [updated] = await db()

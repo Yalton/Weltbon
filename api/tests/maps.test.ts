@@ -505,4 +505,120 @@ describe('map routes (MAPS-04/05 regions + pin style)', () => {
 
     expect(res.status).toBe(401);
   });
+
+  // ─── Phase 43 TERRAIN-01/02: terrainTypeId on region create/update/read ───
+
+  /** Create a layer + terrain type for the given universe; returns the terrainTypeId */
+  async function createTerrainType(
+    uid: string,
+    hdrs: Record<string, string>,
+    layerName = 'Biomes',
+    typeName = 'Forest',
+    typeColor = '#4caf50',
+  ) {
+    // Create a layer
+    const layerRes = await req('POST', `/api/universes/${uid}/map-layers`, {
+      headers: hdrs,
+      body: { name: layerName, ordered: false },
+    });
+    expect(layerRes.status).toBe(201);
+    const layer = await json(layerRes);
+
+    // Add a terrain type to the layer
+    const typeRes = await req('POST', `/api/universes/${uid}/map-layers/${layer.id}/terrain-types`, {
+      headers: hdrs,
+      body: { name: typeName, color: typeColor },
+    });
+    expect(typeRes.status).toBe(201);
+    const terrainType = await json(typeRes);
+    return { layerId: layer.id as string, terrainTypeId: terrainType.id as string };
+  }
+
+  it('POST /regions with terrainTypeId returns 201 and round-trips terrainTypeId', async () => {
+    const { hdrs, uid, mid } = await seedMap();
+    const { terrainTypeId } = await createTerrainType(uid, hdrs);
+    const points = JSON.stringify([{ x: 0.1, y: 0.1 }, { x: 0.5, y: 0.1 }, { x: 0.5, y: 0.5 }]);
+
+    const res = await req('POST', `/api/universes/${uid}/maps/${mid}/regions`, {
+      headers: hdrs,
+      body: { name: '', points, entryId: null, color: null, terrainTypeId },
+    });
+
+    expect(res.status).toBe(201);
+    const data = await json(res);
+    expect(data.terrainTypeId).toBe(terrainTypeId);
+    expect(data.entryId).toBeNull();
+
+    // Also verify GET detail returns terrainTypeId on the region row
+    const detailRes = await req('GET', `/api/universes/${uid}/maps/${mid}`, { headers: hdrs });
+    expect(detailRes.status).toBe(200);
+    const detail = await json(detailRes);
+    const created = detail.regions.find((r: { id: string }) => r.id === data.id);
+    expect(created?.terrainTypeId).toBe(terrainTypeId);
+  });
+
+  it('POST /regions without terrainTypeId returns terrainTypeId null (political region)', async () => {
+    const { hdrs, uid, mid } = await seedMap();
+    const points = JSON.stringify([{ x: 0.2, y: 0.2 }, { x: 0.6, y: 0.2 }, { x: 0.6, y: 0.6 }]);
+
+    const res = await req('POST', `/api/universes/${uid}/maps/${mid}/regions`, {
+      headers: hdrs,
+      body: { name: 'Forest', points, color: '#4caf50' },
+    });
+
+    expect(res.status).toBe(201);
+    const data = await json(res);
+    // terrainTypeId should be null when omitted (political/standalone region)
+    expect(data.terrainTypeId ?? null).toBeNull();
+  });
+
+  it('PATCH /regions/:regionId with terrainTypeId reclassifies the area', async () => {
+    const { hdrs, uid, mid } = await seedMap();
+    const { terrainTypeId: typeId1 } = await createTerrainType(uid, hdrs, 'Layer A', 'Grassland', '#90ee90');
+    const { terrainTypeId: typeId2 } = await createTerrainType(uid, hdrs, 'Layer B', 'Desert', '#d2b48c');
+    const points = JSON.stringify([{ x: 0.0, y: 0.0 }, { x: 0.3, y: 0.0 }, { x: 0.3, y: 0.3 }]);
+
+    // Create terrain area with typeId1
+    const createRes = await req('POST', `/api/universes/${uid}/maps/${mid}/regions`, {
+      headers: hdrs,
+      body: { name: '', points, entryId: null, color: null, terrainTypeId: typeId1 },
+    });
+    expect(createRes.status).toBe(201);
+    const region = await json(createRes);
+    expect(region.terrainTypeId).toBe(typeId1);
+
+    // Reclassify to typeId2 via PATCH
+    const patchRes = await req('PATCH', `/api/universes/${uid}/maps/${mid}/regions/${region.id}`, {
+      headers: hdrs,
+      body: { terrainTypeId: typeId2 },
+    });
+
+    expect(patchRes.status).toBe(200);
+    const updated = await json(patchRes);
+    expect(updated.terrainTypeId).toBe(typeId2);
+  });
+
+  it('PATCH /regions/:regionId omitting terrainTypeId leaves it unchanged', async () => {
+    const { hdrs, uid, mid } = await seedMap();
+    const { terrainTypeId } = await createTerrainType(uid, hdrs);
+    const points = JSON.stringify([{ x: 0.1, y: 0.1 }, { x: 0.4, y: 0.1 }, { x: 0.4, y: 0.4 }]);
+
+    const createRes = await req('POST', `/api/universes/${uid}/maps/${mid}/regions`, {
+      headers: hdrs,
+      body: { name: 'Terrain', points, entryId: null, color: null, terrainTypeId },
+    });
+    const region = await json(createRes);
+    expect(region.terrainTypeId).toBe(terrainTypeId);
+
+    // PATCH only the name — terrainTypeId should NOT change
+    const patchRes = await req('PATCH', `/api/universes/${uid}/maps/${mid}/regions/${region.id}`, {
+      headers: hdrs,
+      body: { name: 'Renamed' },
+    });
+
+    expect(patchRes.status).toBe(200);
+    const updated = await json(patchRes);
+    expect(updated.terrainTypeId).toBe(terrainTypeId);
+    expect(updated.name).toBe('Renamed');
+  });
 });
