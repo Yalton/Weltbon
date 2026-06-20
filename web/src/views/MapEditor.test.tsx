@@ -17,9 +17,11 @@ import { QueryClient, QueryClientProvider } from '@tanstack/react-query';
 vi.mock('../api/client', () => ({ api: vi.fn() }));
 
 // Mock ShareModeContext so we can inject share mode without needing a real share route.
+// NOTE: use plain arrow functions (not vi.fn().mockReturnValue) so afterEach vi.clearAllMocks()
+// does not wipe the return values between tests within this file.
 vi.mock('../contexts/ShareModeContext', () => ({
-  useShareMode: vi.fn().mockReturnValue(true),
-  useShareToken: vi.fn().mockReturnValue('test-share-token'),
+  useShareMode: () => true,
+  useShareToken: () => 'test-share-token',
   ShareModeContext: {},
   ShareModeProvider: ({ children }: { children: React.ReactNode }) => <>{children}</>,
 }));
@@ -116,6 +118,7 @@ const TYPE_B1_ID = 'type-b1-uuid';
 const MAP_ID = 'map-uuid';
 const TERRAIN_AREA_1_ID = 'terrain-area-1-uuid';
 const TERRAIN_AREA_2_ID = 'terrain-area-2-uuid';
+const TERRAIN_AREA_3_ID = 'terrain-area-3-uuid';
 
 /**
  * Two mock layers:
@@ -177,8 +180,10 @@ function makeLayers(): MapLayer[] {
 }
 
 /**
- * Map detail with two terrain areas (one per layer), present on the map.
- * terrainTypeId set → terrain area row; regions array includes them.
+ * Map detail simulating the share API response (D-44-03).
+ * - `regions`: political/standalone only (no terrain-tagged rows — discriminated out by share backend)
+ * - `terrainAreas`: pre-enriched terrain areas with terrainTypeColor/layerId/layerSortOrder,
+ *   mirroring what getPublicMap returns after the Phase 44-02 discriminator split.
  */
 function makeMapDetail(): MapDetail {
   return {
@@ -191,7 +196,11 @@ function makeMapDetail(): MapDetail {
     createdAt: '2026-01-01T00:00:00Z',
     legendLabels: null,
     pins: [],
-    regions: [
+    // Political/standalone regions only (no terrain-tagged rows in share response)
+    regions: [],
+    // Pre-enriched terrain areas from the share seam (D-44-03).
+    // Both Elevation types (Lowlands + Highlands) and one Biome (Forest) are present.
+    terrainAreas: [
       {
         id: TERRAIN_AREA_1_ID,
         mapId: MAP_ID,
@@ -204,7 +213,27 @@ function makeMapDetail(): MapDetail {
         ]),
         color: null,
         createdAt: '2026-01-01T00:00:00Z',
-        terrainTypeId: TYPE_A1_ID, // Elevation / Lowlands
+        terrainTypeId: TYPE_A1_ID,          // Elevation / Lowlands (sortOrder 0)
+        terrainTypeColor: '#a8d5a2',
+        layerId: LAYER_A_ID,
+        layerSortOrder: 0,
+      },
+      {
+        id: TERRAIN_AREA_3_ID,
+        mapId: MAP_ID,
+        entryId: null,
+        name: '',
+        points: JSON.stringify([
+          { x: 0.5, y: 0.5 },
+          { x: 0.6, y: 0.5 },
+          { x: 0.6, y: 0.6 },
+        ]),
+        color: null,
+        createdAt: '2026-01-01T00:00:00Z',
+        terrainTypeId: TYPE_A2_ID,          // Elevation / Highlands (sortOrder 1)
+        terrainTypeColor: '#6b8f5e',
+        layerId: LAYER_A_ID,
+        layerSortOrder: 0,
       },
       {
         id: TERRAIN_AREA_2_ID,
@@ -218,7 +247,10 @@ function makeMapDetail(): MapDetail {
         ]),
         color: null,
         createdAt: '2026-01-01T00:00:00Z',
-        terrainTypeId: TYPE_B1_ID, // Biomes / Forest
+        terrainTypeId: TYPE_B1_ID,          // Biomes / Forest
+        terrainTypeColor: '#228b22',
+        layerId: LAYER_B_ID,
+        layerSortOrder: 1,
       },
     ],
   };
@@ -252,7 +284,9 @@ describe('MapEditor share mode (GEOSHARE-01 / 44-03)', () => {
   });
 
   afterEach(() => {
-    vi.restoreAllMocks();
+    // Use clearAllMocks (not restoreAllMocks) so permanent module-level vi.mock() factories
+    // (e.g. useShareMode returning true) are not wiped between tests.
+    vi.clearAllMocks();
   });
 
   it('Test 1: share legend renders terrain types in sortOrder for each layer', async () => {
