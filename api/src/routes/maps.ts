@@ -129,13 +129,23 @@ const updateRegionSchema = z.object({
   entryId: z.string().uuid().nullable().optional(),
   // Phase 43: reclassify support — use 'terrainTypeId' in data presence check in handler
   terrainTypeId: z.string().uuid().nullable().optional(),
-});
+}).refine(
+  (data) =>
+    data.name !== undefined ||
+    data.color !== undefined ||
+    data.entryId !== undefined ||
+    data.terrainTypeId !== undefined,
+  { message: 'At least one field must be provided' },
+);
 
 // Phase 40 MAPS-05: Pin style Zod schema
 const pinStyleSchema = z.object({
   color: z.string().nullable().optional(),
   icon: z.string().nullable().optional(),
-});
+}).refine(
+  (data) => data.color !== undefined || data.icon !== undefined,
+  { message: 'At least one of color or icon must be provided' },
+);
 
 const mapDetailSchema = z.object({
   id: z.string(),
