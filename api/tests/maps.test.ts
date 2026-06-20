@@ -621,4 +621,46 @@ describe('map routes (MAPS-04/05 regions + pin style)', () => {
     expect(updated.terrainTypeId).toBe(terrainTypeId);
     expect(updated.name).toBe('Renamed');
   });
+
+  // ─── WR-04: Cross-universe terrainTypeId IDOR regression tests ────────────
+
+  it('POST /regions with cross-universe terrainTypeId returns 404', async () => {
+    const { hdrs, uid, mid } = await seedMap('a@test.com');
+    // Create a terrain type in a DIFFERENT universe owned by the same user
+    const uid2 = await createUniverse(hdrs, 'OtherWorld');
+    const { terrainTypeId: foreignTypeId } = await createTerrainType(uid2, hdrs);
+    const points = JSON.stringify([{ x: 0.1, y: 0.1 }, { x: 0.5, y: 0.1 }, { x: 0.5, y: 0.5 }]);
+
+    const res = await req('POST', `/api/universes/${uid}/maps/${mid}/regions`, {
+      headers: hdrs,
+      body: { name: '', points, entryId: null, color: null, terrainTypeId: foreignTypeId },
+    });
+
+    expect(res.status).toBe(404);
+  });
+
+  it('PATCH /regions/:regionId with cross-universe terrainTypeId returns 404', async () => {
+    const { hdrs, uid, mid } = await seedMap('a@test.com');
+    const points = JSON.stringify([{ x: 0.1, y: 0.1 }, { x: 0.5, y: 0.1 }, { x: 0.5, y: 0.5 }]);
+
+    // Create a terrain area in the correct universe
+    const { terrainTypeId: ownTypeId } = await createTerrainType(uid, hdrs);
+    const createRes = await req('POST', `/api/universes/${uid}/maps/${mid}/regions`, {
+      headers: hdrs,
+      body: { name: '', points, entryId: null, color: null, terrainTypeId: ownTypeId },
+    });
+    expect(createRes.status).toBe(201);
+    const region = await json(createRes);
+
+    // Attempt to reclassify using a terrain type from a DIFFERENT universe
+    const uid2 = await createUniverse(hdrs, 'OtherWorld');
+    const { terrainTypeId: foreignTypeId } = await createTerrainType(uid2, hdrs);
+
+    const patchRes = await req('PATCH', `/api/universes/${uid}/maps/${mid}/regions/${region.id}`, {
+      headers: hdrs,
+      body: { terrainTypeId: foreignTypeId },
+    });
+
+    expect(patchRes.status).toBe(404);
+  });
 });
