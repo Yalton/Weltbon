@@ -4,7 +4,8 @@ import { zoom, zoomTransform, type ZoomBehavior } from 'd3-zoom';
 import { useNavigate } from 'react-router-dom';
 import { entryTypeHexColor } from '../lib/entryTypeColor';
 import { GlyphIcon } from '../lib/mapGlyphs';
-import type { MapPin, MapRegion } from '../hooks/useMap';
+import type { MapPin, MapRegion, TerrainAreaRegion } from '../hooks/useMap';
+import type { MapLayer } from '../hooks/useMapLayers';
 import { useShareToken } from '../contexts/ShareModeContext';
 
 // ─── Constants ────────────────────────────────────────────────────────────────
@@ -51,6 +52,18 @@ export interface MapCanvasProps {
   onRegionClick: (region: MapRegion) => void;
   /** Called on region right-click with client coords (context menu). */
   onRegionContextMenu: (region: MapRegion, clientX: number, clientY: number) => void;
+
+  // ── Phase 43: terrain area rendering ────────────────────────────────────────
+  /** Terrain areas (MapRegions with non-null terrainTypeId), enriched client-side. */
+  terrainAreas?: TerrainAreaRegion[];
+  /** Per-viewer layer visibility and opacity (client-only, from MapEditor state). */
+  layerViewerState?: Record<string, { visible: boolean; opacity: number }>;
+  /** When true, canvas click drops a terrain-area vertex (reuses draw-region pipeline). */
+  paintTerrainMode?: boolean;
+  /** Called on terrain area right-click with client coords (context menu). */
+  onTerrainAreaContextMenu?: (region: TerrainAreaRegion, clientX: number, clientY: number) => void;
+  /** Map layers for stacking order (sorted ascending by sortOrder). */
+  layers?: MapLayer[];
 }
 
 // ─── PinCircle ────────────────────────────────────────────────────────────────
@@ -282,6 +295,77 @@ function RegionPolygon({
   );
 }
 
+// ─── TerrainAreaPolygon ───────────────────────────────────────────────────────
+/**
+ * React-rendered SVG polygon for a terrain area (TERRAIN-03).
+ *
+ * CRITICAL: All interaction uses React event handlers (onClick, onContextMenu).
+ * NEVER use d3 .on(event, (e, d) => ...) on this element — d is undefined on
+ * React-rendered SVG and would throw (memory: timeline-pins-react-rendered-no-d3-datum).
+ *
+ * Borderless solid fill (stroke="none") in the terrain type's derived color.
+ * Fill opacity is per-viewer (0..1). Left-click is a no-op (passive, stops propagation
+ * to prevent canvas-level draw-vertex from firing). Right-click opens context menu.
+ * Renders BELOW political regions (inside terrain-areas group, before regions group).
+ */
+interface TerrainAreaPolygonProps {
+  region: TerrainAreaRegion;
+  imageWidth: number;
+  imageHeight: number;
+  viewerOpacity: number;
+  onTerrainAreaContextMenu: (region: TerrainAreaRegion, clientX: number, clientY: number) => void;
+}
+
+function TerrainAreaPolygon({
+  region,
+  imageWidth,
+  imageHeight,
+  viewerOpacity,
+  onTerrainAreaContextMenu,
+}: TerrainAreaPolygonProps) {
+  // Parse the points JSON string to [{x, y}] normalized 0..1 then convert to image space.
+  // Wrapped in try/catch — malformed points render nothing rather than throwing (T-43-04).
+  let points: Array<{ x: number; y: number }> = [];
+  try {
+    points = JSON.parse(region.points) as Array<{ x: number; y: number }>;
+  } catch {
+    return null;
+  }
+
+  if (points.length < 3) return null;
+
+  // Build SVG polygon points string in image-space coords (same math as RegionPolygon).
+  const svgPoints = points
+    .map((p) => `${p.x * imageWidth},${p.y * imageHeight}`)
+    .join(' ');
+
+  const handleClick = (e: React.MouseEvent<SVGPolygonElement>) => {
+    // Passive — stops propagation to prevent canvas-level draw-vertex from firing.
+    e.stopPropagation();
+  };
+
+  const handleContextMenu = (e: React.MouseEvent<SVGPolygonElement>) => {
+    e.preventDefault();
+    e.stopPropagation();
+    onTerrainAreaContextMenu(region, e.clientX, e.clientY);
+  };
+
+  return (
+    <polygon
+      points={svgPoints}
+      fill={region.terrainTypeColor}   // derived color — NOT region.color (D-43-04)
+      fillOpacity={viewerOpacity}       // per-viewer, 0..1
+      stroke="none"                     // borderless (D-43-04)
+      strokeWidth={0}
+      style={{ cursor: 'default', pointerEvents: 'auto' }}
+      onClick={handleClick}
+      onContextMenu={handleContextMenu}
+      role="none"
+      aria-hidden="true"
+    />
+  );
+}
+
 // ─── MapCanvas ────────────────────────────────────────────────────────────────
 /**
  * SVG canvas with d3-zoom/pan applied to the `<svg>` element only.
@@ -320,6 +404,11 @@ export function MapCanvas({
   onPinContextMenu,
   onRegionClick,
   onRegionContextMenu,
+  terrainAreas = [],
+  layerViewerState = {},
+  paintTerrainMode = false,
+  onTerrainAreaContextMenu,
+  layers = [],
 }: MapCanvasProps) {
   const svgRef = useRef<SVGSVGElement>(null);
   const [currentScale, setCurrentScale] = useState(1);
@@ -395,9 +484,11 @@ export function MapCanvas({
   };
 
   // CANVAS CLICK — COORDINATE CONVERSION (Approach A — two-step).
-  // Fires when addPinMode or drawRegionMode is active.
+  // Fires when addPinMode, drawRegionMode, or paintTerrainMode is active.
+  // paintTerrainMode reuses the same onCanvasClick vertex-append pipeline as drawRegionMode
+  // (the MapEditor onCanvasClick handler branches on armed state).
   const handleSvgClick = (e: React.MouseEvent<SVGSVGElement>) => {
-    if (!addPinMode && !drawRegionMode) return;
+    if (!addPinMode && !drawRegionMode && !paintTerrainMode) return;
     // Ignore clicks that originated on a pin group (they handle their own events).
     if ((e.target as Element).closest('g[aria-label]')) return;
 
@@ -407,8 +498,9 @@ export function MapCanvas({
   };
 
   // POINTER MOVE — track cursor in image space for rubber-band preview.
+  // Active in drawRegionMode AND paintTerrainMode (shared vertex-snap preview).
   const handleSvgPointerMove = (e: React.PointerEvent<SVGSVGElement>) => {
-    if (!drawRegionMode) return;
+    if (!drawRegionMode && !paintTerrainMode) return;
     const pos = screenToImage(e.clientX, e.clientY);
     if (pos) setPointerImgPos({ x: pos.nx * imageWidth, y: pos.ny * imageHeight });
   };
@@ -431,8 +523,9 @@ export function MapCanvas({
     .join(' ');
 
   // First-vertex snap affordance — check if pointer is near the first vertex.
+  // Active in drawRegionMode and paintTerrainMode (same vertex snap behavior).
   const isNearFirstVertex =
-    drawRegionMode &&
+    (drawRegionMode || paintTerrainMode) &&
     pendingVertices.length >= 3 &&
     pointerImgPos !== null &&
     (() => {
@@ -444,7 +537,7 @@ export function MapCanvas({
 
   // Preview polygon includes the current pointer as a trailing vertex for rubber-band effect.
   const previewPoints =
-    drawRegionMode && pendingVertices.length > 0 && pointerImgPos
+    (drawRegionMode || paintTerrainMode) && pendingVertices.length > 0 && pointerImgPos
       ? pendingPoints + ` ${pointerImgPos.x},${pointerImgPos.y}`
       : pendingPoints;
 
@@ -458,7 +551,7 @@ export function MapCanvas({
       aria-label="Map canvas"
       className={[
         'block h-full w-full select-none',
-        addPinMode || drawRegionMode ? 'cursor-crosshair' : '',
+        addPinMode || drawRegionMode || paintTerrainMode ? 'cursor-crosshair' : '',
       ]
         .filter(Boolean)
         .join(' ')}
@@ -487,6 +580,33 @@ export function MapCanvas({
           />
         )}
 
+        {/* ── Terrain areas — rendered BELOW regions (D-07, TERRAIN-03) ── */}
+        {/* Stacked bottom-to-top by layer sortOrder; hidden layers render nothing. */}
+        {/* CRITICAL: React handlers only — NEVER d3 .on(event,(e,d)=>) here */}
+        <g className="terrain-areas">
+          {[...layers]
+            .sort((a, b) => a.sortOrder - b.sortOrder)
+            .map((layer) => {
+              if (!layerViewerState[layer.id]?.visible) return null;   // hidden layer → render nothing
+              const viewerOpacity = layerViewerState[layer.id]?.opacity ?? 0.6;
+              const layerAreas = terrainAreas.filter((a) => a.layerId === layer.id);
+              return (
+                <g key={layer.id} data-layer-id={layer.id}>
+                  {layerAreas.map((area) => (
+                    <TerrainAreaPolygon
+                      key={area.id}
+                      region={area}
+                      imageWidth={imageWidth}
+                      imageHeight={imageHeight}
+                      viewerOpacity={viewerOpacity}
+                      onTerrainAreaContextMenu={onTerrainAreaContextMenu ?? (() => {})}
+                    />
+                  ))}
+                </g>
+              );
+            })}
+        </g>
+
         {/* ── Regions — rendered BEFORE pins so pins stay on top (D-07) ── */}
         <g className="regions">
           {regions.map((region) => (
@@ -501,9 +621,10 @@ export function MapCanvas({
           ))}
         </g>
 
-        {/* ── Rubber-band preview polygon (drawRegionMode only) ── */}
+        {/* ── Rubber-band preview polygon (drawRegionMode or paintTerrainMode) ── */}
+        {/* Reuse the same vertex snap circles and accent stroke for both modes. */}
         {/* CRITICAL: React handlers only — NEVER d3 .on(event,(e,d)=>) here */}
-        {drawRegionMode && pendingVertices.length > 0 && (
+        {(drawRegionMode || paintTerrainMode) && pendingVertices.length > 0 && (
           <g className="region-preview">
             {/* Preview polygon */}
             <polygon
