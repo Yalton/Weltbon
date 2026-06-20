@@ -47,7 +47,7 @@ import {
   createTestUser,
   type TestDbHandle,
 } from './helpers.js';
-import { assets, entries, maps, mapPins, mapRegions, shareTokens, universes } from '../src/db/schema.js';
+import { assets, entries, maps, mapLayers, mapPins, mapRegions, terrainTypes, shareTokens, universes } from '../src/db/schema.js';
 
 let handle: TestDbHandle;
 // eslint-disable-next-line @typescript-eslint/no-explicit-any
@@ -153,11 +153,33 @@ async function seedPin(mapId: string, entryId: string) {
   return row!.id;
 }
 
-async function seedRegion(mapId: string, entryId: string | null, name = 'Region') {
+async function seedRegion(
+  mapId: string,
+  entryId: string | null,
+  name = 'Region',
+  terrainTypeId: string | null = null,
+) {
   const points = JSON.stringify([{ x: 0.1, y: 0.1 }, { x: 0.5, y: 0.1 }, { x: 0.5, y: 0.5 }]);
   const [row] = await handle.db
     .insert(mapRegions)
-    .values({ mapId, entryId, name, points })
+    .values({ mapId, entryId, name, points, terrainTypeId })
+    .returning();
+  return row!.id;
+}
+
+// D-44-04 / D-44-05 helpers — mirror seedMap/seedRegion for terrain palette seeding
+async function seedLayer(name = 'Test Layer') {
+  const [row] = await handle.db
+    .insert(mapLayers)
+    .values({ universeId, name, ordered: false, defaultOpacity: 0.6, sortOrder: 0 })
+    .returning();
+  return row!.id;
+}
+
+async function seedTerrainType(layerId: string, name = 'Test Type', color = '#ff0000') {
+  const [row] = await handle.db
+    .insert(terrainTypes)
+    .values({ layerId, name, color, sortOrder: 0 })
     .returning();
   return row!.id;
 }
@@ -451,5 +473,195 @@ describe('MAPS-06 / D-13: share mutation boundary (T-40-04)', () => {
     );
 
     expect([401, 403]).toContain(res.status);
+  });
+});
+
+// ─── D-44-05 / T-44-05: share mutation boundary — map-layers / terrain-types ──
+//
+// Proves that all 8 mutation routes on the new terrain-layer tables are sealed
+// against a share-token-only caller. Mirrors the D-13 boundary block above.
+// Routes mounted at /api/universes/:uid/map-layers (api/src/index.ts L142).
+
+describe('D-44-05 / T-44-05: share mutation boundary — map-layers/terrain-types', () => {
+  it('POST /api/universes/:uid/map-layers (create layer) rejects share-token-only caller', async () => {
+    const res = await appRequest(
+      'POST',
+      `/api/universes/${FAKE_UUID}/map-layers`,
+      {
+        headers: {
+          'share-token': activeTokenPlaintext,
+          'content-type': 'application/json',
+        },
+        body: JSON.stringify({ name: 'Attack Layer' }),
+      },
+    );
+
+    expect([401, 403]).toContain(res.status);
+  });
+
+  it('PATCH /api/universes/:uid/map-layers/:layerId (update layer) rejects share-token-only caller', async () => {
+    const res = await appRequest(
+      'PATCH',
+      `/api/universes/${FAKE_UUID}/map-layers/${FAKE_UUID}`,
+      {
+        headers: {
+          'share-token': activeTokenPlaintext,
+          'content-type': 'application/json',
+        },
+        body: JSON.stringify({ name: 'Hacked Layer' }),
+      },
+    );
+
+    expect([401, 403]).toContain(res.status);
+  });
+
+  it('DELETE /api/universes/:uid/map-layers/:layerId (delete layer) rejects share-token-only caller', async () => {
+    const res = await appRequest(
+      'DELETE',
+      `/api/universes/${FAKE_UUID}/map-layers/${FAKE_UUID}`,
+      {
+        headers: { 'share-token': activeTokenPlaintext },
+      },
+    );
+
+    expect([401, 403]).toContain(res.status);
+  });
+
+  it('POST /api/universes/:uid/map-layers/presets/biomes rejects share-token-only caller', async () => {
+    const res = await appRequest(
+      'POST',
+      `/api/universes/${FAKE_UUID}/map-layers/presets/biomes`,
+      {
+        headers: {
+          'share-token': activeTokenPlaintext,
+          'content-type': 'application/json',
+        },
+        body: JSON.stringify({}),
+      },
+    );
+
+    expect([401, 403]).toContain(res.status);
+  });
+
+  it('POST /api/universes/:uid/map-layers/presets/elevation rejects share-token-only caller', async () => {
+    const res = await appRequest(
+      'POST',
+      `/api/universes/${FAKE_UUID}/map-layers/presets/elevation`,
+      {
+        headers: {
+          'share-token': activeTokenPlaintext,
+          'content-type': 'application/json',
+        },
+        body: JSON.stringify({}),
+      },
+    );
+
+    expect([401, 403]).toContain(res.status);
+  });
+
+  it('POST /api/universes/:uid/map-layers/:layerId/terrain-types (create terrain type) rejects share-token-only caller', async () => {
+    const res = await appRequest(
+      'POST',
+      `/api/universes/${FAKE_UUID}/map-layers/${FAKE_UUID}/terrain-types`,
+      {
+        headers: {
+          'share-token': activeTokenPlaintext,
+          'content-type': 'application/json',
+        },
+        body: JSON.stringify({ name: 'Attack Type', color: '#ff0000' }),
+      },
+    );
+
+    expect([401, 403]).toContain(res.status);
+  });
+
+  it('PATCH /api/universes/:uid/map-layers/:layerId/terrain-types/:typeId (update terrain type) rejects share-token-only caller', async () => {
+    const res = await appRequest(
+      'PATCH',
+      `/api/universes/${FAKE_UUID}/map-layers/${FAKE_UUID}/terrain-types/${FAKE_UUID}`,
+      {
+        headers: {
+          'share-token': activeTokenPlaintext,
+          'content-type': 'application/json',
+        },
+        body: JSON.stringify({ name: 'Hacked Type' }),
+      },
+    );
+
+    expect([401, 403]).toContain(res.status);
+  });
+
+  it('DELETE /api/universes/:uid/map-layers/:layerId/terrain-types/:typeId (delete terrain type) rejects share-token-only caller', async () => {
+    const res = await appRequest(
+      'DELETE',
+      `/api/universes/${FAKE_UUID}/map-layers/${FAKE_UUID}/terrain-types/${FAKE_UUID}`,
+      {
+        headers: { 'share-token': activeTokenPlaintext },
+      },
+    );
+
+    expect([401, 403]).toContain(res.status);
+  });
+});
+
+// ─── D-44-03 / D-44-04: terrain-area privacy filter + bare-array contract ─────
+//
+// Proves that:
+//   - A region with terrainTypeId set lands in res.body.terrainAreas (not regions).
+//   - GET /api/share/map-layers returns a bare array (D-44-04 bare-array contract).
+
+describe('D-44-03 / D-44-04: terrain area discrimination + map-layers bare array', () => {
+  it('GET /api/share/maps/:mid puts terrain-tagged region in terrainAreas, not regions (D-44-03)', async () => {
+    const mid = await seedMap();
+    const layerId = await seedLayer('Biomes');
+    const typeId = await seedTerrainType(layerId, 'Forest', '#228b22');
+
+    // Terrain-tagged region (terrainTypeId set) — must land in terrainAreas
+    await seedRegion(mid, null, 'Forest Area', typeId);
+    // Standalone political region (terrainTypeId null) — must stay in regions
+    await seedRegion(mid, null, 'Political Territory', null);
+
+    const res = await appRequest('GET', `/api/share/maps/${mid}`, {
+      headers: { 'share-token': activeTokenPlaintext },
+    });
+
+    expect(res.status).toBe(200);
+
+    // terrainAreas: one entry with terrainTypeId set
+    expect(res.body.terrainAreas).toBeDefined();
+    expect(res.body.terrainAreas.length).toBe(1);
+    expect(res.body.terrainAreas[0].terrainTypeId).toBe(typeId);
+    expect(res.body.terrainAreas[0].name).toBe('Forest Area');
+    expect(res.body.terrainAreas[0].terrainTypeColor).toBe('#228b22');
+    expect(res.body.terrainAreas[0].layerId).toBe(layerId);
+
+    // regions: only the political/standalone region (no terrainTypeId)
+    expect(res.body.regions).toBeDefined();
+    expect(res.body.regions.length).toBe(1);
+    expect(res.body.regions[0].name).toBe('Political Territory');
+    // Confirm the terrain-tagged region did NOT leak into regions
+    const terrainInRegions = res.body.regions.some(
+      (r: { terrainTypeId: string | null }) => r.terrainTypeId != null,
+    );
+    expect(terrainInRegions).toBe(false);
+  });
+
+  it('GET /api/share/map-layers returns a bare array (D-44-04 bare-array contract)', async () => {
+    // Seed one layer so the response is non-empty and Array.isArray is meaningful
+    await seedLayer('Test Layer Alpha');
+
+    const res = await appRequest('GET', '/api/share/map-layers', {
+      headers: { 'share-token': activeTokenPlaintext },
+    });
+
+    expect(res.status).toBe(200);
+    expect(
+      Array.isArray(res.body),
+      `Expected bare array but got: ${JSON.stringify(res.body)?.slice(0, 200)}`,
+    ).toBe(true);
+    expect(res.body.length).toBe(1);
+    expect(res.body[0].name).toBe('Test Layer Alpha');
+    // Each layer carries a nested terrainTypes array (bare-array-of-layers-with-nested-types)
+    expect(Array.isArray(res.body[0].terrainTypes)).toBe(true);
   });
 });
