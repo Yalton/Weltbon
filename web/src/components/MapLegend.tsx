@@ -1,7 +1,8 @@
 import { useState } from 'react';
 import { entryTypeHexColor } from '../lib/entryTypeColor';
 import { GlyphIcon } from '../lib/mapGlyphs';
-import type { MapPin, MapRegion } from '../hooks/useMap';
+import type { MapPin, MapRegion, TerrainAreaRegion } from '../hooks/useMap';
+import type { MapLayer } from '../hooks/useMapLayers';
 
 // ─── Props ────────────────────────────────────────────────────────────────────
 
@@ -21,6 +22,16 @@ export interface MapLegendProps {
   visible: boolean;
   /** Toggle panel open/closed. */
   onToggle: () => void;
+
+  // Phase 43 TERRAIN-05: optional props for per-layer terrain legend blocks.
+  // When all three are present, append a legend block per visible layer that has
+  // at least one terrain area painted on the current map.
+  /** All map layers for this universe (with terrainTypes populated). */
+  layers?: MapLayer[];
+  /** All terrain areas on the current map (terrainTypeId non-null). */
+  terrainAreas?: TerrainAreaRegion[];
+  /** Per-viewer layer visibility/opacity (from localStorage or MapEditor state). */
+  layerViewerState?: Record<string, { visible: boolean; opacity: number }>;
 }
 
 // ─── Row derivation ───────────────────────────────────────────────────────────
@@ -104,6 +115,9 @@ export function MapLegend({
   onRenameLabel,
   visible,
   onToggle,
+  layers,
+  terrainAreas,
+  layerViewerState,
 }: MapLegendProps) {
   const rows = deriveRows(pins, regions);
 
@@ -204,6 +218,69 @@ export function MapLegend({
               })}
             </ul>
           )}
+
+          {/* Phase 43 TERRAIN-05: per-layer terrain legend blocks.
+              Rendered only when all three optional props are provided.
+              Each visible layer with at least one terrain area present on this
+              map renders a block: a heading (layer name) + one row per present
+              type in sort_order (reads as a ranked ramp for ordered layers).
+              Hidden layers and absent types are omitted (D-43-06). */}
+          {layers && terrainAreas && layerViewerState &&
+            [...layers]
+              .sort((a, b) => a.sortOrder - b.sortOrder)
+              .map((layer) => {
+                // Gate: hidden layer drops its block entirely (D-43-06).
+                if (layerViewerState[layer.id]?.visible === false) return null;
+
+                // Derive present type IDs: only terrain types actually used on
+                // THIS map (not the full layer palette).
+                const presentTypeIds = new Set(
+                  terrainAreas
+                    .filter((a) => a.layerId === layer.id)
+                    .map((a) => a.terrainTypeId)
+                );
+
+                // Filtered + sorted terrain types (present on this map only).
+                const presentTypes = (layer.terrainTypes ?? [])
+                  .filter((t) => presentTypeIds.has(t.id))
+                  .sort((a, b) => a.sortOrder - b.sortOrder);
+
+                // Gate: no present types → render nothing for this layer.
+                if (presentTypes.length === 0) return null;
+
+                return (
+                  <div
+                    key={layer.id}
+                    className="border-t border-neutral-100 dark:border-neutral-800 pt-2 pb-1 px-3 mt-2"
+                  >
+                    {/* Block heading — matches the "Legend" heading style (L144). */}
+                    <p className="text-xs font-semibold uppercase tracking-wide text-neutral-500 mb-1">
+                      {layer.name}
+                    </p>
+                    <ul role="list">
+                      {presentTypes.map((type) => (
+                        <li key={type.id} className="flex items-center gap-2 py-0.5">
+                          {/* Passive color swatch — decorative, not interactive. */}
+                          <span
+                            className="w-3 h-3 rounded-full flex-shrink-0"
+                            style={{ backgroundColor: type.color }}
+                            aria-hidden="true"
+                          />
+                          <span className="text-xs text-neutral-700 dark:text-neutral-300">
+                            {type.name}
+                            {/* Ordered layers: append band label in parentheses when set.
+                                sort_order ascending renders as a ranked ramp top-to-bottom. */}
+                            {layer.ordered && type.label && (
+                              <span className="text-neutral-500"> ({type.label})</span>
+                            )}
+                          </span>
+                        </li>
+                      ))}
+                    </ul>
+                  </div>
+                );
+              })
+          }
         </div>
       )}
     </div>
