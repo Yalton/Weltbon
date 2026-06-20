@@ -241,7 +241,13 @@ export function MapEditor() {
   }, [map?.pins, entriesData]);
 
   // ── Regions from map payload ──────────────────────────────────────────────────
-  const regions = useMemo<MapRegion[]>(() => map?.regions ?? [], [map?.regions]);
+  // CR-01 fix: exclude terrain-area rows (those with terrainTypeId set) so they are
+  // not double-rendered as grey RegionPolygons on top of the correct TerrainAreaPolygon.
+  // Terrain-area rows are handled exclusively by the terrainAreas memo below.
+  const regions = useMemo<MapRegion[]>(
+    () => (map?.regions ?? []).filter((r) => !r.terrainTypeId),
+    [map?.regions],
+  );
 
   // ── Client-side terrain areas join (43-04) ────────────────────────────────────
   // Filter regions to those with a terrainTypeId, then enrich with color/layer from layers data.
@@ -1083,7 +1089,7 @@ export function MapEditor() {
       />
 
       {/* No-pins empty state overlay — suppressed in share mode (no mutation CTA) */}
-      {!isShare && enrichedPins.length === 0 && regions.length === 0 && (
+      {!isShare && enrichedPins.length === 0 && regions.length === 0 && terrainAreas.length === 0 && (
         <div className="pointer-events-none absolute inset-0 flex items-center justify-center z-10">
           <div className="pointer-events-auto">
             <EmptyState
