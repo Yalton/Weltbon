@@ -484,9 +484,11 @@ export function MapCanvas({
   };
 
   // CANVAS CLICK — COORDINATE CONVERSION (Approach A — two-step).
-  // Fires when addPinMode or drawRegionMode is active.
+  // Fires when addPinMode, drawRegionMode, or paintTerrainMode is active.
+  // paintTerrainMode reuses the same onCanvasClick vertex-append pipeline as drawRegionMode
+  // (the MapEditor onCanvasClick handler branches on armed state).
   const handleSvgClick = (e: React.MouseEvent<SVGSVGElement>) => {
-    if (!addPinMode && !drawRegionMode) return;
+    if (!addPinMode && !drawRegionMode && !paintTerrainMode) return;
     // Ignore clicks that originated on a pin group (they handle their own events).
     if ((e.target as Element).closest('g[aria-label]')) return;
 
@@ -496,8 +498,9 @@ export function MapCanvas({
   };
 
   // POINTER MOVE — track cursor in image space for rubber-band preview.
+  // Active in drawRegionMode AND paintTerrainMode (shared vertex-snap preview).
   const handleSvgPointerMove = (e: React.PointerEvent<SVGSVGElement>) => {
-    if (!drawRegionMode) return;
+    if (!drawRegionMode && !paintTerrainMode) return;
     const pos = screenToImage(e.clientX, e.clientY);
     if (pos) setPointerImgPos({ x: pos.nx * imageWidth, y: pos.ny * imageHeight });
   };
@@ -520,8 +523,9 @@ export function MapCanvas({
     .join(' ');
 
   // First-vertex snap affordance — check if pointer is near the first vertex.
+  // Active in drawRegionMode and paintTerrainMode (same vertex snap behavior).
   const isNearFirstVertex =
-    drawRegionMode &&
+    (drawRegionMode || paintTerrainMode) &&
     pendingVertices.length >= 3 &&
     pointerImgPos !== null &&
     (() => {
@@ -533,7 +537,7 @@ export function MapCanvas({
 
   // Preview polygon includes the current pointer as a trailing vertex for rubber-band effect.
   const previewPoints =
-    drawRegionMode && pendingVertices.length > 0 && pointerImgPos
+    (drawRegionMode || paintTerrainMode) && pendingVertices.length > 0 && pointerImgPos
       ? pendingPoints + ` ${pointerImgPos.x},${pointerImgPos.y}`
       : pendingPoints;
 
@@ -547,7 +551,7 @@ export function MapCanvas({
       aria-label="Map canvas"
       className={[
         'block h-full w-full select-none',
-        addPinMode || drawRegionMode ? 'cursor-crosshair' : '',
+        addPinMode || drawRegionMode || paintTerrainMode ? 'cursor-crosshair' : '',
       ]
         .filter(Boolean)
         .join(' ')}
@@ -617,9 +621,10 @@ export function MapCanvas({
           ))}
         </g>
 
-        {/* ── Rubber-band preview polygon (drawRegionMode only) ── */}
+        {/* ── Rubber-band preview polygon (drawRegionMode or paintTerrainMode) ── */}
+        {/* Reuse the same vertex snap circles and accent stroke for both modes. */}
         {/* CRITICAL: React handlers only — NEVER d3 .on(event,(e,d)=>) here */}
-        {drawRegionMode && pendingVertices.length > 0 && (
+        {(drawRegionMode || paintTerrainMode) && pendingVertices.length > 0 && (
           <g className="region-preview">
             {/* Preview polygon */}
             <polygon
