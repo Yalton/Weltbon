@@ -626,7 +626,15 @@ export async function getPublicMap(universeId: string, mapId: string) {
       .innerJoin(terrainTypes, eq(terrainTypes.id, mapRegions.terrainTypeId))
       .innerJoin(mapLayers, eq(mapLayers.id, terrainTypes.layerId))
       .where(
-        and(eq(mapRegions.mapId, mapId), isNotNull(mapRegions.terrainTypeId)),
+        // CR-44-01: assert the joined layer belongs to the share token's universe.
+        // Defense-in-depth tenant isolation (D-03 / T-29-17) — without this, a region
+        // carrying a terrainTypeId from a foreign universe would leak that universe's
+        // terrainTypeColor/layerId/layerSortOrder into the share response.
+        and(
+          eq(mapRegions.mapId, mapId),
+          isNotNull(mapRegions.terrainTypeId),
+          eq(mapLayers.universeId, universeId),
+        ),
       ),
   ]);
   const regions = [...linkedRegions, ...standaloneRegions];
