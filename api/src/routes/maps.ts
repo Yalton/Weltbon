@@ -21,7 +21,7 @@ import { OpenAPIHono, createRoute, z } from '@hono/zod-openapi';
 import { and, eq } from 'drizzle-orm';
 import { HTTPException } from 'hono/http-exception';
 import { db } from '../db/client.js';
-import { maps, mapPins, mapRegions, entries, assets } from '../db/schema.js';
+import { maps, mapPins, mapRegions, entries, assets, terrainTypes, mapLayers } from '../db/schema.js';
 import { requireUniverse } from '../utils/ownership.js';
 import { signAssetUrl } from '../services/asset-signing.js';
 import type { AuthVariables } from '../middleware/auth.js';
@@ -697,6 +697,19 @@ export const mapsRouter = new OpenAPIHono<AppEnv>()
       }
     }
 
+    // CR-02: Validate optional terrainTypeId belongs to this universe (IDOR guard).
+    // terrain_types → map_layers; map_layers.universe_id must match uid.
+    if (data.terrainTypeId) {
+      const typeRows = await db()
+        .select({ id: terrainTypes.id })
+        .from(terrainTypes)
+        .innerJoin(mapLayers, eq(terrainTypes.layerId, mapLayers.id))
+        .where(and(eq(terrainTypes.id, data.terrainTypeId), eq(mapLayers.universeId, uid)));
+      if (typeRows.length === 0) {
+        return c.json({ error: 'Terrain type not found in this universe' }, 404);
+      }
+    }
+
     const [row] = await db()
       .insert(mapRegions)
       .values({
@@ -728,6 +741,18 @@ export const mapsRouter = new OpenAPIHono<AppEnv>()
         .where(and(eq(entries.id, data.entryId), eq(entries.universeId, uid)));
       if (entryRows.length === 0) {
         return c.json({ error: 'Entry not found in this universe' }, 404);
+      }
+    }
+
+    // CR-02: Validate provided non-null terrainTypeId belongs to this universe (IDOR guard).
+    if (data.terrainTypeId !== undefined && data.terrainTypeId !== null) {
+      const typeRows = await db()
+        .select({ id: terrainTypes.id })
+        .from(terrainTypes)
+        .innerJoin(mapLayers, eq(terrainTypes.layerId, mapLayers.id))
+        .where(and(eq(terrainTypes.id, data.terrainTypeId), eq(mapLayers.universeId, uid)));
+      if (typeRows.length === 0) {
+        return c.json({ error: 'Terrain type not found in this universe' }, 404);
       }
     }
 
