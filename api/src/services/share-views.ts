@@ -20,7 +20,7 @@
  */
 
 import { alias } from 'drizzle-orm/pg-core';
-import { and, asc, desc, eq, inArray, isNull, like, or } from 'drizzle-orm';
+import { and, asc, desc, eq, inArray, isNotNull, isNull, like, or } from 'drizzle-orm';
 import { db as getDb } from '../db/client.js';
 import {
   assets,
@@ -28,9 +28,11 @@ import {
   dictionaryWords,
   entries,
   links,
+  mapLayers,
   mapPins,
   mapRegions,
   maps,
+  terrainTypes,
   timelinePins,
   universes,
   users,
@@ -452,7 +454,47 @@ export async function getPublicAsset(
   return asset;
 }
 
-// ─── Function 9: getPublicMaps ────────────────────────────────────────────────
+// ─── Function 9: getPublicMapLayers ───────────────────────────────────────────
+//
+// Public terrain palette read (D-44-04 / GEOSHARE-01): returns all map layers
+// for the universe with nested terrainTypes[], ordered by sortOrder.
+// Bare-array response mirrors the authenticated listLayersRoute shape EXACTLY
+// (share-seam-bare-array-contract). universeId comes from the share token,
+// never a URL path param (file-header tenant-scoping contract).
+//
+export async function getPublicMapLayers(universeId: string) {
+  const layerRows = await getDb()
+    .select()
+    .from(mapLayers)
+    .where(eq(mapLayers.universeId, universeId))
+    .orderBy(mapLayers.sortOrder);
+
+  if (layerRows.length === 0) {
+    return [];
+  }
+
+  const layerIds = layerRows.map((l) => l.id);
+  const typeRows = await getDb()
+    .select()
+    .from(terrainTypes)
+    .where(inArray(terrainTypes.layerId, layerIds))
+    .orderBy(terrainTypes.sortOrder);
+
+  // Group terrain types by layerId
+  const typesByLayer = new Map<string, typeof typeRows>();
+  for (const t of typeRows) {
+    const existing = typesByLayer.get(t.layerId) ?? [];
+    existing.push(t);
+    typesByLayer.set(t.layerId, existing);
+  }
+
+  return layerRows.map((layer) => ({
+    ...layer,
+    terrainTypes: typesByLayer.get(layer.id) ?? [],
+  }));
+}
+
+// ─── Function 10: getPublicMaps ────────────────────────────────────────────────
 //
 // Public maps list (D-10 / D-11): returns all maps for the universe.
 // Maps have no own public flag — all maps in a shared universe are visible (D-11).
@@ -513,11 +555,18 @@ export async function getPublicMap(universeId: string, mapId: string) {
     .innerJoin(entries, eq(entries.id, mapPins.entryId))
     .where(and(eq(mapPins.mapId, mapId), eq(entries.isPublic, true)));
 
-  // Privacy-filtered regions: standalone (entryId null) always included;
-  // linked regions filtered via inner join WHERE isPublic=true.
-  // Confirmed-intended (D-11): standalone regions (no entry) ARE public — there
-  // is no privacy owner to gate on.
-  const [linkedRegions, standaloneRegions] = await Promise.all([
+  // Privacy-filtered regions: split on terrainTypeId discriminator (D-44-03).
+  //
+  // Political/standalone regions (terrainTypeId IS NULL):
+  //   - linked (entryId set): filtered via INNER JOIN entries WHERE isPublic=true.
+  //   - standalone (entryId null): always included (D-11).
+  //
+  // Terrain areas (terrainTypeId IS NOT NULL):
+  //   - always public (D-11 / D-44-05: no per-area privacy gate; entryId=null).
+  //   - enriched with terrainTypeColor / layerId / layerSortOrder via JOIN.
+  //
+  const [linkedRegions, standaloneRegions, terrainAreas] = await Promise.all([
+    // Entry-linked political regions (terrainTypeId null, entryId set) — is_public filtered
     getDb()
       .select({
         id: mapRegions.id,
@@ -527,14 +576,58 @@ export async function getPublicMap(universeId: string, mapId: string) {
         points: mapRegions.points,
         color: mapRegions.color,
         createdAt: mapRegions.createdAt,
+        terrainTypeId: mapRegions.terrainTypeId,
       })
       .from(mapRegions)
       .innerJoin(entries, eq(entries.id, mapRegions.entryId))
-      .where(and(eq(mapRegions.mapId, mapId), eq(entries.isPublic, true))),
+      .where(
+        and(
+          eq(mapRegions.mapId, mapId),
+          isNull(mapRegions.terrainTypeId),
+          eq(entries.isPublic, true),
+        ),
+      ),
+    // Standalone political regions (terrainTypeId null, entryId null) — always public
     getDb()
-      .select()
+      .select({
+        id: mapRegions.id,
+        mapId: mapRegions.mapId,
+        entryId: mapRegions.entryId,
+        name: mapRegions.name,
+        points: mapRegions.points,
+        color: mapRegions.color,
+        createdAt: mapRegions.createdAt,
+        terrainTypeId: mapRegions.terrainTypeId,
+      })
       .from(mapRegions)
-      .where(and(eq(mapRegions.mapId, mapId), isNull(mapRegions.entryId))),
+      .where(
+        and(
+          eq(mapRegions.mapId, mapId),
+          isNull(mapRegions.entryId),
+          isNull(mapRegions.terrainTypeId),
+        ),
+      ),
+    // Terrain areas (terrainTypeId IS NOT NULL) — always public; enriched with fill/layer
+    getDb()
+      .select({
+        id: mapRegions.id,
+        mapId: mapRegions.mapId,
+        entryId: mapRegions.entryId,
+        name: mapRegions.name,
+        points: mapRegions.points,
+        color: mapRegions.color,
+        createdAt: mapRegions.createdAt,
+        terrainTypeId: mapRegions.terrainTypeId,
+        terrainTypeColor: terrainTypes.color,
+        layerId: terrainTypes.layerId,
+        layerSortOrder: mapLayers.sortOrder,
+      })
+      .from(mapRegions)
+      .innerJoin(terrainTypes, eq(terrainTypes.id, mapRegions.terrainTypeId))
+      .innerJoin(mapLayers, eq(mapLayers.id, terrainTypes.layerId))
+      .where(
+        and(eq(mapRegions.mapId, mapId), isNotNull(mapRegions.terrainTypeId)),
+      ),
   ]);
   const regions = [...linkedRegions, ...standaloneRegions];
 
@@ -545,5 +638,5 @@ export async function getPublicMap(universeId: string, mapId: string) {
     ? `/api/share/assets/${map.imageAssetId}/thumb${signShareAssetUrl(universeId, map.imageAssetId, 'thumb')}`
     : null;
 
-  return { ...map, rawUrl, thumbUrl, pins, regions };
+  return { ...map, rawUrl, thumbUrl, pins, regions, terrainAreas };
 }
