@@ -40,6 +40,7 @@ import {
   getPublicEntryById,
   getPublicGraph,
   getPublicMap,
+  getPublicMapLayers,
   getPublicMaps,
   getPublicTimeline,
   getPublicUniverseMeta,
@@ -468,9 +469,75 @@ const publicMapDetailSchema = publicMapSchema.extend({
       createdAt: z.string().or(z.date()),
     }),
   ),
+  // D-44-03: terrain areas (terrainTypeId IS NOT NULL) in a separate group;
+  // enriched with terrainTypeColor/layerId/layerSortOrder for share rendering.
+  terrainAreas: z.array(
+    z.object({
+      id: z.string(),
+      mapId: z.string(),
+      entryId: z.string().nullable(),
+      name: z.string(),
+      points: z.string(),
+      color: z.string().nullable(),
+      createdAt: z.string().or(z.date()),
+      terrainTypeId: z.string().nullable(),
+      terrainTypeColor: z.string(),
+      layerId: z.string(),
+      layerSortOrder: z.number(),
+    }),
+  ),
 });
 
+// D-44-04: bare-array layer palette schema for /api/share/map-layers.
+// Mirrors listLayersRoute response shape exactly (share-seam-bare-array-contract).
+const publicLayersResponseSchema = z.array(
+  z.object({
+    id: z.string(),
+    universeId: z.string(),
+    name: z.string(),
+    ordered: z.boolean(),
+    defaultOpacity: z.number(),
+    sortOrder: z.number(),
+    createdAt: z.string().or(z.date()),
+    terrainTypes: z.array(
+      z.object({
+        id: z.string(),
+        layerId: z.string(),
+        name: z.string(),
+        color: z.string(),
+        label: z.string().nullable(),
+        sortOrder: z.number(),
+        createdAt: z.string().or(z.date()),
+      }),
+    ),
+  }),
+);
+
 const mapIdParams = z.object({ mid: z.string().uuid() });
+
+// D-44-04 / GEOSHARE-01: GET /map-layers — bare-array terrain palette read.
+// Web seam: web/src/api/client.ts strips /universes/<uid> and prepends /api/share,
+// so /universes/:uid/map-layers → /api/share/map-layers (transparent seam).
+// universeId from c.var.shareUniverseId (share token), never a path param (D-03).
+// No mutation route in share namespace (T-44-05).
+const publicMapLayersRoute = createRoute({
+  method: 'get',
+  path: '/map-layers',
+  tags: ['Share'],
+  summary: 'Public terrain layer palette for the share-token universe',
+  description:
+    'Returns all map layers with nested terrainTypes[] as a bare array (D-44-04). ' +
+    'Mirrors the authenticated listLayersRoute shape exactly (share-seam-bare-array-contract). ' +
+    'universeId from share token only (D-03). No mutation routes in share namespace (T-44-05).',
+  security: [{ shareToken: [] }],
+  middleware: [requireShareToken] as const,
+  responses: {
+    200: {
+      content: { 'application/json': { schema: publicLayersResponseSchema } },
+      description: 'Terrain layer palette (bare array with nested terrainTypes[])',
+    },
+  },
+});
 
 const publicMapsRoute = createRoute({
   method: 'get',
@@ -655,6 +722,14 @@ export const shareRoutes = router
     const lid = c.req.query('lid')?.trim() || null;
     const words = await getPublicDictionaryWords(c.var.shareUniverseId, lid);
     return c.json(words as any, 200);
+  })
+
+  // GET /map-layers — public terrain layer palette (D-44-04 / GEOSHARE-01)
+  // Bare array with nested terrainTypes[] — mirrors listLayersRoute shape exactly.
+  // universeId from c.var.shareUniverseId (share token), never a path param (D-03).
+  .openapi(publicMapLayersRoute, async (c) => {
+    const rows = await getPublicMapLayers(c.var.shareUniverseId);
+    return c.json(rows as any, 200);
   })
 
   // GET /maps — public maps list (Phase 40 MAPS-06 / D-10 / D-11)
