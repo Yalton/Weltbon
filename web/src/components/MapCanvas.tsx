@@ -234,11 +234,17 @@ function PinCircle({
  *
  * Translucent fill (fillOpacity 0.18) + solid border (strokeOpacity 1) in the
  * element color (D-07). Renders BEFORE pins in z-order so pins stay on top (D-07).
+ *
+ * isDrawing gate (43-05): When isDrawing is true (addPinMode||drawRegionMode||paintTerrainMode),
+ * the polygon sets pointerEvents:'none' so clicks fall through to the root <svg> onClick
+ * (handleSvgClick → onCanvasClick → vertex append). onRegionClick navigation is also
+ * suppressed while isDrawing. onContextMenu is UNCHANGED in all modes.
  */
 interface RegionPolygonProps {
   region: MapRegion;
   imageWidth: number;
   imageHeight: number;
+  isDrawing: boolean;
   onRegionClick: (region: MapRegion) => void;
   onRegionContextMenu: (region: MapRegion, clientX: number, clientY: number) => void;
 }
@@ -247,6 +253,7 @@ function RegionPolygon({
   region,
   imageWidth,
   imageHeight,
+  isDrawing,
   onRegionClick,
   onRegionContextMenu,
 }: RegionPolygonProps) {
@@ -268,6 +275,10 @@ function RegionPolygon({
   const color = region.color ?? '#6b7280';
 
   const handleClick = (e: React.MouseEvent<SVGPolygonElement>) => {
+    // While isDrawing: return early WITHOUT stopPropagation and WITHOUT calling onRegionClick.
+    // The click bubbles to handleSvgClick → vertex append; no entry navigation occurs (43-05).
+    // While idle: stopPropagation + navigate to linked entry (D-07 behavior unchanged).
+    if (isDrawing) return;
     e.stopPropagation();
     onRegionClick(region);
   };
@@ -286,7 +297,10 @@ function RegionPolygon({
       stroke={color}
       strokeWidth={1.5}
       strokeOpacity={1}
-      style={{ cursor: region.entryId ? 'pointer' : 'default' }}
+      style={{
+        cursor: region.entryId ? 'pointer' : 'default',
+        pointerEvents: isDrawing ? 'none' : 'auto',
+      }}
       onClick={handleClick}
       onContextMenu={handleContextMenu}
     >
@@ -304,8 +318,15 @@ function RegionPolygon({
  * React-rendered SVG and would throw (memory: timeline-pins-react-rendered-no-d3-datum).
  *
  * Borderless solid fill (stroke="none") in the terrain type's derived color.
- * Fill opacity is per-viewer (0..1). Left-click is a no-op (passive, stops propagation
- * to prevent canvas-level draw-vertex from firing). Right-click opens context menu.
+ * Fill opacity is per-viewer (0..1). Right-click opens context menu (UNCHANGED in all modes).
+ *
+ * isDrawing gate (43-05): When isDrawing is true (addPinMode||drawRegionMode||paintTerrainMode),
+ * the polygon sets pointerEvents:'none' so clicks fall through to the root <svg> onClick
+ * (handleSvgClick → onCanvasClick → vertex append). The left-click handleClick no-op also
+ * skips stopPropagation while isDrawing (belt-and-suspenders). When isDrawing is false,
+ * left-click is still a passive no-op (stopPropagation fires, no vertex; terrain areas are
+ * not click-to-navigate — D-43-04). onContextMenu is UNCHANGED in all modes.
+ *
  * Renders BELOW political regions (inside terrain-areas group, before regions group).
  */
 interface TerrainAreaPolygonProps {
@@ -313,6 +334,7 @@ interface TerrainAreaPolygonProps {
   imageWidth: number;
   imageHeight: number;
   viewerOpacity: number;
+  isDrawing: boolean;
   onTerrainAreaContextMenu: (region: TerrainAreaRegion, clientX: number, clientY: number) => void;
 }
 
@@ -321,6 +343,7 @@ function TerrainAreaPolygon({
   imageWidth,
   imageHeight,
   viewerOpacity,
+  isDrawing,
   onTerrainAreaContextMenu,
 }: TerrainAreaPolygonProps) {
   // Parse the points JSON string to [{x, y}] normalized 0..1 then convert to image space.
@@ -340,7 +363,9 @@ function TerrainAreaPolygon({
     .join(' ');
 
   const handleClick = (e: React.MouseEvent<SVGPolygonElement>) => {
-    // Passive — stops propagation to prevent canvas-level draw-vertex from firing.
+    // Belt-and-suspenders: only stopPropagation when NOT drawing.
+    // When isDrawing, return immediately so the click bubbles to handleSvgClick (43-05).
+    if (isDrawing) return;
     e.stopPropagation();
   };
 
@@ -357,7 +382,7 @@ function TerrainAreaPolygon({
       fillOpacity={viewerOpacity}       // per-viewer, 0..1
       stroke="none"                     // borderless (D-43-04)
       strokeWidth={0}
-      style={{ cursor: 'default', pointerEvents: 'auto' }}
+      style={{ cursor: 'default', pointerEvents: isDrawing ? 'none' : 'auto' }}
       onClick={handleClick}
       onContextMenu={handleContextMenu}
       role="none"
@@ -418,6 +443,14 @@ export function MapCanvas({
   // Share-token-aware navigation (T-40-14 / D-12): when a share token is present,
   // pin/region left-click navigates within /share/:token to avoid uid leaks.
   const shareToken = useShareToken();
+
+  // isDrawing: true whenever any vertex-producing mode is active (43-05).
+  // Mirrors the exact condition in handleSvgClick (~:491) — keep them consistent.
+  // Used to gate pointerEvents on overlay polygons (TerrainAreaPolygon, RegionPolygon)
+  // so clicks over existing areas fall through to handleSvgClick → onCanvasClick.
+  // addPinMode is included because handleSvgClick already appends a pin/vertex for it
+  // and a pin-placement click over a terrain area should also pass through.
+  const isDrawing = addPinMode || drawRegionMode || paintTerrainMode;
 
   // Install d3-zoom on the svg element, targeting <g.viewport>.
   // Pins and regions are React-rendered inside this effect's SVG structure but are
@@ -599,6 +632,7 @@ export function MapCanvas({
                       imageWidth={imageWidth}
                       imageHeight={imageHeight}
                       viewerOpacity={viewerOpacity}
+                      isDrawing={isDrawing}
                       onTerrainAreaContextMenu={onTerrainAreaContextMenu ?? (() => {})}
                     />
                   ))}
@@ -615,6 +649,7 @@ export function MapCanvas({
               region={region}
               imageWidth={imageWidth}
               imageHeight={imageHeight}
+              isDrawing={isDrawing}
               onRegionClick={onRegionClick}
               onRegionContextMenu={onRegionContextMenu}
             />
