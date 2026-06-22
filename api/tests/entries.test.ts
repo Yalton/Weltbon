@@ -946,4 +946,197 @@ describe('entry routes (ENT-01..06)', () => {
       expect(ids).not.toContain(b.id);
     });
   });
+
+  // ─── Phase 45 XREF-04: Aliases (D-05/D-06/D-07/D-08) ──────────────────────
+
+  describe('aliases (Phase 45 XREF-04)', () => {
+    // ALIAS-01: create entry with aliases — round-trips correctly
+    it('POST entry with aliases persists and returns them (D-08)', async () => {
+      const { hdrs } = await userWithToken('alias-create@test.com');
+      const universe = await createUniverse(hdrs);
+
+      const res = await req('POST', `/api/universes/${universe.id}/entries`, {
+        headers: hdrs,
+        body: {
+          title: 'The Empire',
+          entryType: 'faction',
+          aliases: ['Empire', 'The Imperial State'],
+        },
+      });
+      expect(res.status).toBe(201);
+      const entry = await json(res);
+      expect(entry.aliases).toEqual(['Empire', 'The Imperial State']);
+    });
+
+    // ALIAS-02: within-entry de-dupe and trim (D-07)
+    it('POST entry with duplicates/whitespace aliases normalizes them (D-07)', async () => {
+      const { hdrs } = await userWithToken('alias-dedup@test.com');
+      const universe = await createUniverse(hdrs);
+
+      const res = await req('POST', `/api/universes/${universe.id}/entries`, {
+        headers: hdrs,
+        body: {
+          title: 'The Empire',
+          entryType: 'faction',
+          // "Empire" and "empire" and " Empire " should de-dupe to one; "Realm" is distinct
+          aliases: ['Empire', 'empire', ' Empire ', 'Realm'],
+        },
+      });
+      expect(res.status).toBe(201);
+      const entry = await json(res);
+      // Should contain exactly one "Empire"-equivalent and "Realm"
+      expect(entry.aliases).toHaveLength(2);
+      // The preserved value should be the first seen (trimmed) or at least not duplicated
+      const lower = entry.aliases.map((a: string) => a.trim().toLowerCase());
+      expect(lower).toContain('empire');
+      expect(lower).toContain('realm');
+    });
+
+    // ALIAS-03: D-07 Zod cap — >20 items rejected with 400
+    it('POST entry with more than 20 aliases is rejected with 400 (D-07)', async () => {
+      const { hdrs } = await userWithToken('alias-cap-count@test.com');
+      const universe = await createUniverse(hdrs);
+
+      const aliases = Array.from({ length: 21 }, (_, i) => `alias${i}`);
+      const res = await req('POST', `/api/universes/${universe.id}/entries`, {
+        headers: hdrs,
+        body: { title: 'Big Alias', entryType: 'concept', aliases },
+      });
+      expect(res.status).toBe(400);
+    });
+
+    // ALIAS-04: D-07 Zod cap — alias >100 chars rejected with 400
+    it('POST entry with alias longer than 100 chars is rejected with 400 (D-07)', async () => {
+      const { hdrs } = await userWithToken('alias-cap-len@test.com');
+      const universe = await createUniverse(hdrs);
+
+      const aliases = ['a'.repeat(101)];
+      const res = await req('POST', `/api/universes/${universe.id}/entries`, {
+        headers: hdrs,
+        body: { title: 'Long Alias', entryType: 'concept', aliases },
+      });
+      expect(res.status).toBe(400);
+    });
+
+    // ALIAS-05: D-05 — cross-entry alias collision rejected (universe-scoped)
+    it('POST entry whose alias duplicates an existing alias in the same universe is rejected with 400 or 409 (D-05)', async () => {
+      const { hdrs } = await userWithToken('alias-collision@test.com');
+      const universe = await createUniverse(hdrs);
+
+      // Create first entry with alias "Overlord"
+      await req('POST', `/api/universes/${universe.id}/entries`, {
+        headers: hdrs,
+        body: { title: 'First Entry', entryType: 'concept', aliases: ['Overlord'] },
+      });
+
+      // Second entry tries to claim the same alias (case-folded)
+      const res = await req('POST', `/api/universes/${universe.id}/entries`, {
+        headers: hdrs,
+        body: { title: 'Second Entry', entryType: 'concept', aliases: ['overlord'] },
+      });
+      expect([400, 409]).toContain(res.status);
+      const body = await json(res);
+      expect(body.error).toBeTruthy();
+      // Error must name the conflicting alias
+      expect(body.error.toLowerCase()).toContain('overlord');
+    });
+
+    // ALIAS-06: D-05 — collision uniqueness query is scoped to universe only
+    it('alias collision check is universe-scoped — same alias in different universe is allowed (T-45-02)', async () => {
+      const { hdrs } = await userWithToken('alias-scope@test.com');
+      const univA = await createUniverse(hdrs, 'UnivA');
+      const univB = await createUniverse(hdrs, 'UnivB');
+
+      // Create entry with alias "Warlord" in universe A
+      await req('POST', `/api/universes/${univA.id}/entries`, {
+        headers: hdrs,
+        body: { title: 'Entry A', entryType: 'concept', aliases: ['Warlord'] },
+      });
+
+      // Same alias "Warlord" in universe B — must succeed (D-05 is intra-universe)
+      const res = await req('POST', `/api/universes/${univB.id}/entries`, {
+        headers: hdrs,
+        body: { title: 'Entry B', entryType: 'concept', aliases: ['Warlord'] },
+      });
+      expect(res.status).toBe(201);
+      const entry = await json(res);
+      expect(entry.aliases).toContain('Warlord');
+    });
+
+    // ALIAS-07: D-06 — alias equals some entry's canonical title succeeds with warning
+    it('POST entry with alias matching an existing entry title succeeds and returns aliasWarnings (D-06)', async () => {
+      const { hdrs } = await userWithToken('alias-title-warn@test.com');
+      const universe = await createUniverse(hdrs);
+
+      // Create "The Empire" entry
+      await req('POST', `/api/universes/${universe.id}/entries`, {
+        headers: hdrs,
+        body: { title: 'The Empire', entryType: 'faction' },
+      });
+
+      // Create another entry whose alias matches "The Empire" title — must SUCCEED not block
+      const res = await req('POST', `/api/universes/${universe.id}/entries`, {
+        headers: hdrs,
+        body: { title: 'Imperial Faction', entryType: 'faction', aliases: ['The Empire'] },
+      });
+      // D-06: must succeed (201) but return aliasWarnings
+      expect(res.status).toBe(201);
+      const entry = await json(res);
+      expect(entry.aliases).toContain('The Empire');
+      // D-06: a warning must be present
+      expect(entry.aliasWarnings).toBeTruthy();
+      expect(Array.isArray(entry.aliasWarnings)).toBe(true);
+      expect(entry.aliasWarnings.length).toBeGreaterThan(0);
+    });
+
+    // ALIAS-08: PATCH omitting aliases preserves existing (non-destructive)
+    it('PATCH omitting aliases field preserves existing aliases (non-destructive)', async () => {
+      const { hdrs } = await userWithToken('alias-patch-preserve@test.com');
+      const universe = await createUniverse(hdrs);
+
+      // Create entry with aliases
+      const createRes = await req('POST', `/api/universes/${universe.id}/entries`, {
+        headers: hdrs,
+        body: { title: 'Faction', entryType: 'faction', aliases: ['Guild', 'Order'] },
+      });
+      const created = await json(createRes);
+      expect(created.aliases).toEqual(['Guild', 'Order']);
+
+      // PATCH without aliases field — must not wipe aliases
+      const patchRes = await req('PATCH', `/api/universes/${universe.id}/entries/${created.id}`, {
+        headers: hdrs,
+        body: { title: 'Updated Faction' },
+      });
+      expect(patchRes.status).toBe(200);
+      const updated = await json(patchRes);
+      expect(updated.aliases).toEqual(['Guild', 'Order']);
+    });
+
+    // ALIAS-09: PATCH entry's alias collision is also rejected (D-05)
+    it('PATCH entry with alias that collides with sibling entry alias is rejected (D-05)', async () => {
+      const { hdrs } = await userWithToken('alias-patch-collision@test.com');
+      const universe = await createUniverse(hdrs);
+
+      // Create entry A with alias "Knight"
+      await req('POST', `/api/universes/${universe.id}/entries`, {
+        headers: hdrs,
+        body: { title: 'Entry A', entryType: 'concept', aliases: ['Knight'] },
+      });
+      // Create entry B without aliases
+      const bRes = await req('POST', `/api/universes/${universe.id}/entries`, {
+        headers: hdrs,
+        body: { title: 'Entry B', entryType: 'concept' },
+      });
+      const entryB = await json(bRes);
+
+      // PATCH entry B to add alias "knight" — collides with entry A's "Knight" (case-folded)
+      const patchRes = await req('PATCH', `/api/universes/${universe.id}/entries/${entryB.id}`, {
+        headers: hdrs,
+        body: { aliases: ['knight'] },
+      });
+      expect([400, 409]).toContain(patchRes.status);
+      const body = await json(patchRes);
+      expect(body.error).toBeTruthy();
+    });
+  });
 });
