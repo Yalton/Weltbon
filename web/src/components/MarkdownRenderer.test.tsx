@@ -229,7 +229,8 @@ describe('T7: alias [[word|Alias]] resolves on "word" and displays "Alias"', () 
   });
 
   it('displays alias label for a resolved entry title', () => {
-    const entryTitles = new Map([['Aragorn', 'entry-99']]);
+    // Phase 45 D-03: entryTitles keyed on lower(title.trim()) from Phase 45 onward.
+    const entryTitles = new Map([['aragorn', 'entry-99']]);
     const wikis = makeWikis({ entryTitles });
 
     render(
@@ -250,7 +251,8 @@ describe('T7: alias [[word|Alias]] resolves on "word" and displays "Alias"', () 
 
 describe('T8: share-mode entry-title wikilink uses /share/:token/entries/:id', () => {
   it('generates a share-subtree href when isShareMode=true and shareToken is set', () => {
-    const entryTitles = new Map([['Gondor', 'entry-55']]);
+    // Phase 45 D-03: entryTitles keyed on lower(title.trim()) from Phase 45 onward.
+    const entryTitles = new Map([['gondor', 'entry-55']]);
     const wikis = makeWikis({
       entryTitles,
       isShareMode: true,
@@ -268,7 +270,8 @@ describe('T8: share-mode entry-title wikilink uses /share/:token/entries/:id', (
   });
 
   it('falls back to authenticated path when isShareMode is absent (default behavior)', () => {
-    const entryTitles = new Map([['Gondor', 'entry-55']]);
+    // Phase 45 D-03: entryTitles keyed on lower(title.trim()) from Phase 45 onward.
+    const entryTitles = new Map([['gondor', 'entry-55']]);
     const wikis = makeWikis({ entryTitles }); // no isShareMode
 
     render(
