@@ -816,4 +816,152 @@ describe('export/import (EXP-01, IMP-01..03)', () => {
     expect(reExportData.entries).toHaveLength(1);
     expect(reExportData.entries[0].id).not.toBe(originalEntryId);
   });
+
+  // --- Phase 45 XREF-04 (D-08): aliases round-trip + SC1 display-text pipe form ---
+
+  /**
+   * Export a universe as a ZIP buffer.
+   * The ?format=json route returns application/zip since Phase 38 MEDIA-06.
+   */
+  async function exportAsZipBuffer(uid: string, hdrs: Record<string, string>): Promise<Buffer> {
+    const res = await app.request(`http://localhost/api/universes/${uid}/export?format=json`, {
+      headers: { ...hdrs },
+    });
+    if (res.status !== 200) throw new Error(`export failed: ${res.status}`);
+    expect(res.headers.get('content-type')).toBe('application/zip');
+    return Buffer.from(await res.arrayBuffer());
+  }
+
+  /**
+   * Import a ZIP buffer via multipart POST and return the import result JSON.
+   */
+  // eslint-disable-next-line @typescript-eslint/no-explicit-any
+  async function importZipBuffer(zipBytes: Buffer, hdrs: Record<string, string>): Promise<{ status: number; body: any }> {
+    const fd = new FormData();
+    const blob = new Blob([zipBytes], { type: 'application/zip' });
+    fd.append('file', blob, 'universe.zip');
+    const res = await app.request('http://localhost/api/universes/import', {
+      method: 'POST',
+      headers: { ...hdrs },
+      body: fd,
+    });
+    return { status: res.status, body: await res.json() };
+  }
+
+  /**
+   * List entries for a universe and return them.
+   * The entries list endpoint returns a bare JSON array (c.json(rows, 200)).
+   */
+  // eslint-disable-next-line @typescript-eslint/no-explicit-any
+  async function listEntries(uid: string, hdrs: Record<string, string>): Promise<any[]> {
+    const res = await req('GET', `/api/universes/${uid}/entries`, { headers: hdrs });
+    const data = await json(res);
+    // Response is a bare array (not wrapped in { entries: [...] }).
+    return Array.isArray(data) ? data : [];
+  }
+
+  // ALIAS-RT-01: aliases + [[entry|display]] body round-trip (SC1).
+  // Seeds an entry with aliases and a body containing [[entry|display text]],
+  // exports as ZIP, imports into a clean universe via ZIP upload, and asserts
+  // both aliases and the pipe display-text form survive intact.
+  it('ALIAS-RT-01: aliases + [[entry|display]] body round-trip (SC1)', async () => {
+    const { hdrs } = await userWithToken('alias-rt01@test.com');
+    const universe = await createUniverse(hdrs, 'AliasRoundTripWorld');
+
+    // Create entry with aliases and a body containing the pipe display-text form (SC1).
+    const entry = await createEntry(universe.id, hdrs, {
+      title: 'The Empire',
+      entryType: 'faction',
+      aliases: ['Old Name', 'AKA'],
+      body: 'See also [[Some Entry|the display label]] for context.',
+    });
+    // Verify the entry was created with the correct aliases.
+    expect(entry.aliases).toEqual(['Old Name', 'AKA']);
+
+    // Export the universe as ZIP (Phase 38 MEDIA-06 ZIP format).
+    const zipBytes = await exportAsZipBuffer(universe.id, hdrs);
+
+    // Import into a clean universe via ZIP upload.
+    const { status: importStatus, body: importResult } = await importZipBuffer(zipBytes, hdrs);
+    expect(importStatus).toBe(201);
+    expect(importResult.entryCount).toBe(1);
+
+    // Query the imported universe's entries via API to verify aliases.
+    const importedEntries = await listEntries(importResult.universeId, hdrs);
+    const importedEntry = importedEntries.find((e: { title: string }) => e.title === 'The Empire');
+    expect(importedEntry).toBeTruthy();
+
+    // D-08: aliases survive the round-trip intact.
+    expect(importedEntry.aliases).toEqual(['Old Name', 'AKA']);
+
+    // SC1: verify the body round-trip by querying the entry detail.
+    const detailRes = await req('GET', `/api/universes/${importResult.universeId}/entries/${importedEntry.id}`, { headers: hdrs });
+    const detail = await json(detailRes);
+    // SC1: the pipe display-text form is byte-identical post-import — no corruption.
+    expect(detail.body).toContain('[[Some Entry|the display label]]');
+  });
+
+  // ALIAS-RT-02: backward-compat — pre-Phase-45 export (no aliases field) imports cleanly.
+  // Posts a legacy 1.0.0 JSON payload (entries without aliases key) and asserts
+  // import succeeds with aliases defaulting to [] on all imported entries.
+  it('ALIAS-RT-02: import pre-Phase-45 JSON (no aliases field) succeeds with aliases=[]', async () => {
+    const { hdrs } = await userWithToken('alias-rt02@test.com');
+
+    // Hand-constructed 1.0.0 payload without an `aliases` key on the entry objects.
+    const legacyPayload = {
+      weltbon_version: '1.0.0',
+      exported_at: new Date().toISOString(),
+      universe: { name: 'LegacyAliasWorld', description: '' },
+      entries: [
+        {
+          id: 'cccccccc-cccc-4ccc-8ccc-cccccccccc01',
+          title: 'Legacy Entry One',
+          entryType: 'concept',
+          summary: '',
+          body: 'A body with [[Some Reference|display text]] that should survive.',
+          tags: ['old-tag'],
+          meta: {},
+          icon: '',
+          categoryId: null,
+          // NO aliases field — simulates a pre-Phase-45 export
+        },
+        {
+          id: 'cccccccc-cccc-4ccc-8ccc-cccccccccc02',
+          title: 'Legacy Entry Two',
+          entryType: 'entity',
+          summary: '',
+          body: '',
+          tags: [],
+          meta: {},
+          icon: '',
+          categoryId: null,
+          // NO aliases field
+        },
+      ],
+      links: [],
+    };
+
+    // Import via the legacy JSON path (application/json Content-Type → 1.0.0 handler).
+    const importRes = await req('POST', '/api/universes/import', { headers: hdrs, body: legacyPayload });
+    expect(importRes.status).toBe(201);
+    const importResult = await json(importRes);
+    expect(importResult.entryCount).toBe(2);
+
+    // Query the imported entries via API to inspect aliases.
+    const importedEntries = await listEntries(importResult.universeId, hdrs);
+    expect(importedEntries).toHaveLength(2);
+
+    // Both entries must have aliases=[] (the .default([]) in the import Zod backfills to []).
+    for (const e of importedEntries) {
+      expect(e.aliases, `aliases for "${e.title}" should default to []`).toEqual([]);
+    }
+
+    // SC1: body containing [[...]] pipe form is preserved verbatim through import.
+    const legacyOne = importedEntries.find((e: { title: string }) => e.title === 'Legacy Entry One');
+    expect(legacyOne).toBeTruthy();
+    // Fetch detail to get full body (list may truncate).
+    const detailRes = await req('GET', `/api/universes/${importResult.universeId}/entries/${legacyOne.id}`, { headers: hdrs });
+    const detail = await json(detailRes);
+    expect(detail.body).toContain('[[Some Reference|display text]]');
+  });
 });
