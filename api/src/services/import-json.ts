@@ -58,6 +58,9 @@ export const importSchema = z.object({
     summary: z.string().optional().default(''),
     body: z.string().optional().default(''),
     tags: z.array(z.string()).optional().default([]),
+    // Phase 45 XREF-04 (D-08): aliases array — pre-Phase-45 exports lack this field;
+    // .default([]) silently backfills to empty array on import (mirrors isPublic idiom).
+    aliases: z.array(z.string()).optional().default([]),
     meta: z.record(z.string(), z.unknown()).optional().default({}),
     icon: z.string().optional().default(''),
     // Phase 29 D-11 / T-29-13: pre-Phase-29 exports lack this field — default to false
@@ -405,6 +408,7 @@ export async function importUniverseJson(
           summary: entry.summary,
           body,
           tags: entry.tags,
+          aliases: entry.aliases,      // Phase 45 XREF-04 (D-08)
           meta: entry.meta,
           icon: entry.icon,
           categoryId: mappedCategoryId,

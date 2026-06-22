@@ -54,6 +54,8 @@ export interface ExportPayloadEntry {
   summary: string;
   body: string;
   tags: string[];
+  /** Phase 45 XREF-04 (D-08): aliases for alternate wikilink resolution. */
+  aliases: string[];
   meta: Record<string, unknown>;
   icon: string;
   categoryId: string | null;
@@ -378,6 +380,7 @@ export async function loadUniverseExportPayload(universeId: string): Promise<Exp
     summary: e.summary,
     body: e.body,
     tags: e.tags,
+    aliases: e.aliases,                  // Phase 45 XREF-04 (D-08)
     meta: e.meta as Record<string, unknown>,
     icon: e.icon,
     categoryId: e.categoryId,

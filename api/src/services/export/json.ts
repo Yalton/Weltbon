@@ -53,6 +53,7 @@ export function exportUniverseJsonAsZip(
       summary: e.summary,
       body: e.body,
       tags: e.tags,
+      aliases: e.aliases,              // Phase 45 XREF-04 (D-08) — round-trip aliases
       meta: e.meta,
       icon: e.icon,
       isPublic: e.isPublic,
