@@ -274,6 +274,7 @@ export const entries = pgTable('entries', {
   summary:      text('summary').default('').notNull(),
   body:         text('body').default('').notNull(),
   tags:         text('tags').array().default([]).notNull(),
+  aliases:      text('aliases').array().default([]).notNull(),  // Phase 45 XREF-04 (D-08): alternate wikilink resolution names
   meta:         jsonb('meta').default({}).notNull(),
   icon:         text('icon').default('').notNull(),
   searchVector: text('search_vector'),
