@@ -1,5 +1,5 @@
 import { OpenAPIHono, createRoute, z } from '@hono/zod-openapi';
-import { and, eq, desc, isNull, sql, arrayContains, type SQL } from 'drizzle-orm';
+import { and, eq, ne, desc, isNull, sql, arrayContains, type SQL } from 'drizzle-orm';
 import { HTTPException } from 'hono/http-exception';
 import { db } from '../db/client.js';
 import { entries, links, categories, issues, issueEntries, entryTemplates } from '../db/schema.js';
@@ -22,6 +22,10 @@ const createEntrySchema = z.object({
   summary: z.string().max(500).optional().default(''),
   body: z.string().optional().default(''),
   tags: z.array(z.string().max(50)).max(20).optional().default([]),
+  // Phase 45 XREF-04 (D-07/D-08): alternate wikilink resolution names.
+  // Cap: 20 aliases × 100 chars each (mirrors tags but wider per-item cap for entry names).
+  // Normalization (trim, drop empties, case-fold de-dupe within list) is done in the handler.
+  aliases: z.array(z.string().max(100)).max(20).optional().default([]),
   meta: z.record(z.string(), z.unknown()).optional().default({}),
   icon: z.string().max(10).optional().default(''),
   categoryId: z.string().uuid().nullable().optional(),
@@ -43,6 +47,9 @@ const patchEntrySchema = z.object({
   summary: z.string().max(500).optional(),
   body: z.string().optional(),
   tags: z.array(z.string().max(50)).max(20).optional(),
+  // Phase 45 XREF-04 (D-07/D-08): NO .default([]) — omitting on PATCH must NOT wipe
+  // existing aliases (PATCH is non-destructive). Normalization done in handler.
+  aliases: z.array(z.string().max(100)).max(20).optional(),
   meta: z.record(z.string(), z.unknown()).optional(),
   icon: z.string().max(10).optional(),
   categoryId: z.string().uuid().nullable().optional(),
@@ -68,6 +75,8 @@ const entrySchema = z.object({
   entryType: z.string(),
   summary: z.string(),
   tags: z.array(z.string()),
+  // Phase 45 XREF-04 (D-08): alternate wikilink resolution names returned on every read.
+  aliases: z.array(z.string()),
   meta: z.record(z.string(), z.unknown()),
   icon: z.string(),
   categoryId: z.string().nullable(),
@@ -79,6 +88,9 @@ const entrySchema = z.object({
   wip: z.boolean(),
   createdAt: z.string(),
   updatedAt: z.string(),
+  // Phase 45 XREF-04 (D-06): present only on create/patch when an alias matches an existing
+  // entry's canonical title. The canonical title still wins at resolution (D-01).
+  aliasWarnings: z.array(z.string()).optional(),
 });
 
 const entryDetailSchema = entrySchema.extend({
@@ -113,7 +125,7 @@ const entryDetailSchema = entrySchema.extend({
   assetUrls: z.record(z.string(), z.string()).optional(),
 });
 
-// ─── Helper ──────────────────────────────────────────────────────────────────
+// ─── Helpers ─────────────────────────────────────────────────────────────────
 
 async function categoryBelongsToUniverse(categoryId: string, universeId: string): Promise<boolean> {
   const [cat] = await db()
@@ -121,6 +133,95 @@ async function categoryBelongsToUniverse(categoryId: string, universeId: string)
     .from(categories)
     .where(and(eq(categories.id, categoryId), eq(categories.universeId, universeId)));
   return !!cat;
+}
+
+/**
+ * Phase 45 XREF-04 (D-07): Normalize an alias array.
+ * - Trim whitespace from each item
+ * - Drop empty strings
+ * - De-dupe case-foldedly within the entry's own list (first occurrence wins)
+ */
+function normalizeAliases(raw: string[]): string[] {
+  const seen = new Set<string>();
+  const result: string[] = [];
+  for (const a of raw) {
+    const trimmed = a.trim();
+    if (!trimmed) continue;
+    const key = trimmed.toLowerCase();
+    if (!seen.has(key)) {
+      seen.add(key);
+      result.push(trimmed);
+    }
+  }
+  return result;
+}
+
+/**
+ * Phase 45 XREF-04 (D-05/D-06): Validate aliases against existing universe entries.
+ *
+ * D-05: An alias may not duplicate (case-foldedly) any alias owned by a DIFFERENT entry
+ *       in the same universe. Returns an error string if a collision is found.
+ *
+ * D-06: An alias may equal (case-foldedly) some entry's canonical title — soft warn only.
+ *       Returns the list of warning strings for aliases that match a title.
+ *
+ * T-45-02: Uniqueness query is ALWAYS scoped to universe_id = uid (never cross-universe).
+ * T-45-03: Uses parameterized Drizzle sql`` template; lower() applied in SQL — no injection.
+ */
+async function validateAliasUniqueness(
+  aliases: string[],
+  universeId: string,
+  excludeEntryId?: string,
+): Promise<{ error: string | null; warnings: string[] }> {
+  if (aliases.length === 0) return { error: null, warnings: [] };
+
+  // Fetch sibling entries' title + aliases within the same universe.
+  // "Sibling" excludes the current entry (for PATCH — the entry being updated).
+  // T-45-02: always scoped to universe_id = universeId — never cross-universe.
+  const conditions = [eq(entries.universeId, universeId)];
+  if (excludeEntryId) {
+    conditions.push(ne(entries.id, excludeEntryId));
+  }
+
+  const siblings = await db()
+    .select({ title: entries.title, aliases: entries.aliases })
+    .from(entries)
+    .where(and(...conditions));
+
+  // Build lower-case sets from sibling data for O(1) lookup.
+  const siblingAliasFolded = new Set<string>();
+  const siblingTitleFolded = new Set<string>();
+
+  for (const s of siblings) {
+    siblingTitleFolded.add(s.title.trim().toLowerCase());
+    for (const a of s.aliases ?? []) {
+      siblingAliasFolded.add(a.trim().toLowerCase());
+    }
+  }
+
+  // D-05: check for alias collision with a sibling's alias.
+  for (const alias of aliases) {
+    const key = alias.trim().toLowerCase();
+    if (siblingAliasFolded.has(key)) {
+      return {
+        error: `Alias "${alias}" is already used by another entry in this universe.`,
+        warnings: [],
+      };
+    }
+  }
+
+  // D-06: check for alias matching a sibling's canonical title (soft warn).
+  const warnings: string[] = [];
+  for (const alias of aliases) {
+    const key = alias.trim().toLowerCase();
+    if (siblingTitleFolded.has(key)) {
+      warnings.push(
+        `Alias "${alias}" matches an existing entry title — the canonical title takes precedence in wikilink resolution.`,
+      );
+    }
+  }
+
+  return { error: null, warnings };
 }
 
 // ─── Route definitions ───────────────────────────────────────────────────────
@@ -376,6 +477,8 @@ export const entryRoutes = new OpenAPIHono<AppEnv>()
       entryType: entries.entryType,
       summary: entries.summary,
       tags: entries.tags,
+      // Phase 45 XREF-04 (D-08): surface aliases on list responses for wikilink resolution.
+      aliases: entries.aliases,
       meta: entries.meta,
       icon: entries.icon,
       categoryId: entries.categoryId,
@@ -429,6 +532,18 @@ export const entryRoutes = new OpenAPIHono<AppEnv>()
       }
     }
 
+    // Phase 45 XREF-04 (D-07): Normalize aliases — trim, drop empties, case-fold de-dupe.
+    const normalizedAliases = normalizeAliases(data.aliases ?? []);
+
+    // Phase 45 XREF-04 (D-05/D-06): Validate alias uniqueness within the universe.
+    const { error: aliasError, warnings: aliasWarnings } = await validateAliasUniqueness(
+      normalizedAliases,
+      uid,
+    );
+    if (aliasError) {
+      return c.json({ error: aliasError }, 400);
+    }
+
     const [created] = await db()
       .insert(entries)
       .values({
@@ -438,6 +553,8 @@ export const entryRoutes = new OpenAPIHono<AppEnv>()
         summary: data.summary,
         body: data.body,
         tags: data.tags,
+        // Phase 45 XREF-04 (D-08): persist normalized aliases.
+        aliases: normalizedAliases,
         meta: data.meta,
         icon: data.icon,
         categoryId: data.categoryId ?? null,
@@ -467,7 +584,11 @@ export const entryRoutes = new OpenAPIHono<AppEnv>()
       }
     }
 
-    return c.json(created as any, 201);
+    // Phase 45 XREF-04 (D-06): include aliasWarnings if any alias matches an existing title.
+    const response = aliasWarnings.length > 0
+      ? { ...created, aliasWarnings }
+      : created;
+    return c.json(response as any, 201);
   })
 
   // GET /:id -- entry detail
@@ -562,6 +683,24 @@ export const entryRoutes = new OpenAPIHono<AppEnv>()
       }
     }
 
+    // Phase 45 XREF-04 (D-07): Normalize aliases if provided (PATCH non-destructive — undefined = skip).
+    let patchAliasWarnings: string[] = [];
+    if (patch.aliases !== undefined) {
+      const normalizedAliases = normalizeAliases(patch.aliases);
+      // Phase 45 XREF-04 (D-05/D-06): validate against sibling entries, excluding self.
+      const { error: aliasError, warnings } = await validateAliasUniqueness(
+        normalizedAliases,
+        uid,
+        entryId,
+      );
+      if (aliasError) {
+        return c.json({ error: aliasError }, 400);
+      }
+      patchAliasWarnings = warnings;
+      // Replace the patch aliases with the normalized version.
+      patch.aliases = normalizedAliases;
+    }
+
     const [updated] = await db()
       .update(entries)
       .set({ ...patch, updatedAt: new Date() })
@@ -572,7 +711,11 @@ export const entryRoutes = new OpenAPIHono<AppEnv>()
       throw new HTTPException(404, { message: 'Entry not found' });
     }
 
-    return c.json(updated as any, 200);
+    // Phase 45 XREF-04 (D-06): include aliasWarnings if any alias matches an existing title.
+    const response = patchAliasWarnings.length > 0
+      ? { ...updated, aliasWarnings: patchAliasWarnings }
+      : updated;
+    return c.json(response as any, 200);
   })
 
   // DELETE /:id -- delete entry
