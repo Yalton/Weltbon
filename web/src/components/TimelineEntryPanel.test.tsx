@@ -21,6 +21,8 @@ function makeEntry(id: string, title: string, overrides: Partial<Entry> = {}): E
     entryType: 'character',
     summary: '',
     tags: [],
+    // Phase 45 XREF-04 — Entry interface now requires aliases (empty array default).
+    aliases: [],
     meta: {},
     icon: '',
     categoryId: null,

@@ -189,6 +189,7 @@ function makeEntries(count: number): Entry[] {
     entryType: 'concept',
     summary: '',
     tags: [],
+    aliases: [],
     meta: {},
     icon: '',
     categoryId: null,

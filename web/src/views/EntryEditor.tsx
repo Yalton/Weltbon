@@ -40,6 +40,8 @@ export function EntryEditor() {
   const updateEntry = useUpdateEntry(uid!, entryId ?? '');
 
   const [tags, setTags] = useState<string[]>([]);
+  // Phase 45 XREF-04 (D-09) — alias chips placed immediately after Tags field.
+  const [aliases, setAliases] = useState<string[]>([]);
   const [meta, setMeta] = useState<Record<string, string>>({});
   const [categoryId, setCategoryId] = useState<string | null>(null);
   const [metaValid, setMetaValid] = useState(true);
@@ -91,6 +93,7 @@ export function EntryEditor() {
         icon: existingEntry.icon ?? '',
       });
       setTags(existingEntry.tags ?? []);
+      setAliases(existingEntry.aliases ?? []);
       setMeta((existingEntry.meta as Record<string, string>) ?? {});
       setCategoryId(existingEntry.categoryId ?? null);
       // Phase 29 SHARE-04 — seed the Public toggle from the loaded entry.
@@ -148,6 +151,7 @@ export function EntryEditor() {
       body: values.body,
       icon: values.icon,
       tags,
+      aliases,
       meta,
       categoryId,
       // Phase 29 SHARE-04 — Plan 03 surface accepts isPublic on POST + PATCH.
@@ -373,6 +377,14 @@ export function EntryEditor() {
           <label className="block text-sm mb-1">Tags</label>
           <div className="rounded-md border border-neutral-300 dark:border-neutral-700 px-3 py-2">
             <TagInput value={tags} onChange={setTags} />
+          </div>
+        </div>
+
+        {/* Aliases (Phase 45 XREF-04 / D-09) */}
+        <div>
+          <label className="block text-sm mb-1">Aliases</label>
+          <div className="rounded-md border border-neutral-300 dark:border-neutral-700 px-3 py-2">
+            <TagInput value={aliases} onChange={setAliases} />
           </div>
         </div>
 

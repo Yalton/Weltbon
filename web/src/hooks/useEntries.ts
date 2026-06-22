@@ -9,6 +9,13 @@ export interface Entry {
   entryType: string;
   summary: string;
   tags: string[];
+  /**
+   * Phase 45 — XREF-04 / D-08.
+   * Alternate names for this entry. Wikilinks matching any alias resolve to
+   * this entry (alias tier, D-01 precedence: title → alias → dictionary).
+   * Empty array when no aliases are set.
+   */
+  aliases: string[];
   meta: Record<string, unknown>;
   icon: string;
   categoryId: string | null;
@@ -94,6 +101,8 @@ export type CreateEntryInput = {
   summary?: string;
   body?: string;
   tags?: string[];
+  /** Phase 45 XREF-04 — aliases for alternate wikilink resolution (D-07: max 20 × 100 chars). */
+  aliases?: string[];
   meta?: Record<string, unknown>;
   icon?: string;
   categoryId?: string | null;
