@@ -52,12 +52,35 @@ export function EntryDetail() {
   // (T-32-11: no private entry titles enter the share-mode resolution map).
   const { data: allEntries } = useEntries(uid!);
 
-  // Build entryTitles map: normalized title (trim) → entryId.
-  // Used to populate the D-01 entry-title-first resolution bucket.
+  // Build entryTitles map: lower(title.trim()) → entryId.
+  // Phase 45 D-03: keyed on lowercase so [[empire]] resolves to "Empire".
+  // Phase 45 D-04: API list is ordered by updatedAt DESC, so we sort by
+  // created_at ASC before iterating — first-inserted entry (oldest created_at)
+  // wins the slot when two titles collide on case-fold.
   const entryTitles = useMemo<Map<string, string>>(() => {
+    const sorted = [...(allEntries ?? [])].sort((a, b) =>
+      a.createdAt < b.createdAt ? -1 : a.createdAt > b.createdAt ? 1 : 0,
+    );
     const map = new Map<string, string>();
-    for (const e of allEntries ?? []) {
-      map.set(e.title.trim(), e.id);
+    for (const e of sorted) {
+      const key = e.title.trim().toLowerCase();
+      if (!map.has(key)) map.set(key, e.id); // D-04: oldest wins
+    }
+    return map;
+  }, [allEntries]);
+
+  // Phase 45 XREF-04 (D-01 slot 2): alias → entryId map. Case-insensitive keys.
+  // Same created_at ASC sort ensures first-inserted alias wins on collision (D-04/D-05).
+  const entryAliases = useMemo<Map<string, string>>(() => {
+    const sorted = [...(allEntries ?? [])].sort((a, b) =>
+      a.createdAt < b.createdAt ? -1 : a.createdAt > b.createdAt ? 1 : 0,
+    );
+    const map = new Map<string, string>();
+    for (const e of sorted) {
+      for (const alias of e.aliases ?? []) {
+        const key = alias.trim().toLowerCase();
+        if (!map.has(key)) map.set(key, e.id); // first alias wins on duplicate
+      }
     }
     return map;
   }, [allEntries]);
@@ -126,6 +149,7 @@ export function EntryDetail() {
   //   for visitors; amber affordance rendered without "+" button per WikilinkText).
   const wikis: WikilinkResolutionData = {
     entryTitles,
+    entryAliases, // Phase 45 XREF-04 — alias tier, covers both auth + share paths (EntryDetail reuse)
     dictionaryWords,
     universeId: uid!,
     languageEntryId: linkedLanguageEntryId,

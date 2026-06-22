@@ -12,8 +12,19 @@ import { WordPopover } from './WordPopover';
  * component — T-32-13 Pitfall 3 prevention).
  */
 export interface WikilinkResolutionData {
-  /** Normalized entry title → entry id. Build with `title.trim()` as key. */
+  /**
+   * Normalized entry title → entry id.
+   * Phase 45 D-03: build with `title.trim().toLowerCase()` as key so that
+   * [[empire]] resolves to "Empire". D-04 oldest-created_at wins on collision.
+   */
   entryTitles: Map<string, string>;
+  /**
+   * Phase 45 XREF-04 (D-01/D-03): lower(alias) → entry id.
+   * Slot 2 in resolution order: title (case-insensitive) → alias → dictionary.
+   * Optional so un-updated callers degrade gracefully (alias tier skipped, no crash).
+   * Constructed by the caller (EntryDetail) from entry.aliases.
+   */
+  entryAliases?: Map<string, string>;
   /** lower(word) → DictionaryWord row. */
   dictionaryWords: Map<string, DictionaryWord>;
   universeId: string;
@@ -145,6 +156,7 @@ interface WikilinkTextProps {
 export function WikilinkText({ children, wikis }: WikilinkTextProps) {
   const {
     entryTitles,
+    entryAliases,
     dictionaryWords,
     universeId,
     languageEntryId,
@@ -160,10 +172,13 @@ export function WikilinkText({ children, wikis }: WikilinkTextProps) {
       return <Fragment key={key}>{raw}</Fragment>;
     }
 
-    // D-01: entry-title FIRST (case-sensitive match after trim — mirrors the
-    // two-pass resolver in ingest-markdown.ts which uses the normalized title map)
-    if (entryTitles.has(target)) {
-      const entryId = entryTitles.get(target)!;
+    // Phase 45 D-03: compute lowerTarget ONCE for all case-insensitive lookups.
+    const lowerTarget = target.toLowerCase().trim();
+
+    // D-01: entry-title FIRST (case-insensitive — D-03 aligns render with ingest).
+    // Callers build entryTitles with lower(title.trim()) keys from Phase 45 onward.
+    if (entryTitles.has(lowerTarget)) {
+      const entryId = entryTitles.get(lowerTarget)!;
       // Phase 33 INT-BLOCKER-2 fix: in share mode, navigate within the share
       // subtree to keep visitors out of the ProtectedRoute tree. When
       // isShareMode is false/absent, use the authenticated path (default).
@@ -182,8 +197,25 @@ export function WikilinkText({ children, wikis }: WikilinkTextProps) {
       );
     }
 
-    // D-02: dictionary word (case-insensitive)
-    const lowerTarget = target.toLowerCase();
+    // Phase 45 XREF-04 (D-01 slot 2): alias tier — case-insensitive, after title, before dictionary.
+    if (entryAliases?.has(lowerTarget)) {
+      const entryId = entryAliases.get(lowerTarget)!;
+      const entryTo =
+        isShareMode && shareToken
+          ? `/share/${shareToken}/entries/${entryId}`
+          : `/universes/${universeId}/entries/${entryId}`;
+      return (
+        <Link
+          key={key}
+          to={entryTo}
+          className="text-sm text-[color:var(--color-accent)] hover:underline"
+        >
+          {label}
+        </Link>
+      );
+    }
+
+    // D-02: dictionary word (case-insensitive) — lowerTarget already computed above.
     if (dictionaryWords.has(lowerTarget)) {
       const wordRow = dictionaryWords.get(lowerTarget)!;
       return (
