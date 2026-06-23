@@ -3,6 +3,7 @@ import { Link } from 'react-router-dom';
 import type { DictionaryWord } from '../hooks/useDictionary';
 import type { Entry } from '../hooks/useEntries';
 import { WordPopover } from './WordPopover';
+import { EntryHoverCard } from './EntryHoverCard';
 
 // ---------------------------------------------------------------------------
 // Types
@@ -213,6 +214,7 @@ export function WikilinkText({ children, wikis }: WikilinkTextProps) {
     onAddWord,
     isShareMode,
     shareToken,
+    entriesById,
   } = wikis;
 
   function resolveSegment(inner: string, label: string, raw: string, key: string) {
@@ -236,7 +238,7 @@ export function WikilinkText({ children, wikis }: WikilinkTextProps) {
         isShareMode && shareToken
           ? `/share/${shareToken}/entries/${entryId}`
           : `/universes/${universeId}/entries/${entryId}`;
-      return (
+      const link = (
         <Link
           key={key}
           to={entryTo}
@@ -245,6 +247,19 @@ export function WikilinkText({ children, wikis }: WikilinkTextProps) {
           {label}
         </Link>
       );
+      // Phase 46 Plan 02 (XREF-02): wrap the resolved entry link in EntryHoverCard
+      // so hovering shows the preview card (D-01..D-04, D-11..D-13).
+      // Graceful degradation: if entriesById is undefined (caller predating 46-01)
+      // or this id is not in the map, fall back to the bare Link — no card, no crash.
+      const entryObj = entriesById?.get(entryId);
+      if (entryObj) {
+        return (
+          <EntryHoverCard key={key} entry={entryObj} universeId={universeId}>
+            {link}
+          </EntryHoverCard>
+        );
+      }
+      return link;
     }
 
     // Phase 45 XREF-04 (D-01 slot 2): alias tier — case-insensitive, after title, before dictionary.
@@ -254,7 +269,7 @@ export function WikilinkText({ children, wikis }: WikilinkTextProps) {
         isShareMode && shareToken
           ? `/share/${shareToken}/entries/${entryId}`
           : `/universes/${universeId}/entries/${entryId}`;
-      return (
+      const link = (
         <Link
           key={key}
           to={entryTo}
@@ -263,6 +278,18 @@ export function WikilinkText({ children, wikis }: WikilinkTextProps) {
           {label}
         </Link>
       );
+      // Phase 46 Plan 02 (XREF-02): wrap the alias-tier link in EntryHoverCard
+      // identically to the title tier. Graceful degradation via optional chaining:
+      // if entriesById is undefined or the id is absent, render the bare Link.
+      const entryObj = entriesById?.get(entryId);
+      if (entryObj) {
+        return (
+          <EntryHoverCard key={key} entry={entryObj} universeId={universeId}>
+            {link}
+          </EntryHoverCard>
+        );
+      }
+      return link;
     }
 
     // D-02: dictionary word (case-insensitive) — lowerTarget already computed above.
