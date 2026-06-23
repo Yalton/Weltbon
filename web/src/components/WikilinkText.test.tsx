@@ -1,7 +1,7 @@
 /**
- * WikilinkText resolver tests — Phase 45 Plan 02 (XREF-04).
+ * WikilinkText resolver tests — Phase 45 Plan 02 (XREF-04) + Phase 46 Plan 01 (XREF-02/XREF-03).
  *
- * Tests (RED phase):
+ * Phase 45 tests:
  *  1. D-03: case-insensitive title match — [[empire]] resolves to entry "Empire"
  *  2. D-03 regression guard: exact-case [[Entry Title]] still resolves correctly
  *  3. D-01 slot 2: alias match → Link (by alias → entryId map)
@@ -9,13 +9,21 @@
  *  5. D-04: oldest created_at wins on case-fold title collision (verified via EntryDetail map construction)
  *  6. display-text [[X|label]] renders label as visible anchor
  *  7. unresolved token still renders amber affordance
+ *
+ * Phase 46 Plan 01 tests (tokenize embed split):
+ *  8. tokenize("see ![[Empire]]") yields kind 'embed', inner 'Empire' (via component render)
+ *  9. tokenize("see [[Empire]]") still yields kind 'wikilink' (regression guard)
+ *  10. Mixed "![[A]] and [[B]]" — embed A, text " and ", wikilink B (order preserved)
+ *  11. A bare "!" not immediately followed by [[ stays plain text ("wow!" untouched)
+ *  12. WikilinkResolutionData accepts entriesById / embedDepth / currentEntryId (backward-compat type check)
  */
 import { describe, it, expect, vi } from 'vitest';
 import { render, screen } from '@testing-library/react';
 import { MemoryRouter } from 'react-router-dom';
-import { WikilinkText } from './WikilinkText';
+import { WikilinkText, tokenize } from './WikilinkText';
 import type { WikilinkResolutionData } from './WikilinkText';
 import type { DictionaryWord } from '../hooks/useDictionary';
+import type { Entry } from '../hooks/useEntries';
 
 // ---------------------------------------------------------------------------
 // Helpers
@@ -178,5 +186,95 @@ describe('WikilinkText — Phase 45 XREF-04 resolution', () => {
 
     const link = screen.getByRole('link', { name: 'hero' });
     expect(link.getAttribute('href')).toBe('/share/tok123/entries/entry-hero-id');
+  });
+});
+
+// ---------------------------------------------------------------------------
+// Phase 46 Plan 01 — tokenize embed split (XREF-02/XREF-03)
+// ---------------------------------------------------------------------------
+
+describe('tokenize embed split — Phase 46 Plan 01', () => {
+  // ── Direct tokenize() unit tests (white-box) ─────────────────────────────
+
+  it('tokenize("see ![[Empire]]") yields one embed segment with inner "Empire"', () => {
+    const segments = tokenize('see ![[Empire]]');
+    // Expect: text "see ", then embed "Empire"
+    expect(segments).toHaveLength(2);
+    expect(segments[0]).toEqual({ kind: 'text', text: 'see ' });
+    expect(segments[1]).toMatchObject({ kind: 'embed', inner: 'Empire' });
+  });
+
+  it('tokenize("see [[Empire]]") still yields kind "wikilink" (regression guard)', () => {
+    const segments = tokenize('see [[Empire]]');
+    expect(segments).toHaveLength(2);
+    expect(segments[0]).toEqual({ kind: 'text', text: 'see ' });
+    expect(segments[1]).toMatchObject({ kind: 'wikilink', inner: 'Empire' });
+  });
+
+  it('mixed "![[A]] and [[B]]" yields embed A, text " and ", wikilink B in order', () => {
+    const segments = tokenize('![[A]] and [[B]]');
+    expect(segments).toHaveLength(3);
+    expect(segments[0]).toMatchObject({ kind: 'embed', inner: 'A' });
+    expect(segments[1]).toEqual({ kind: 'text', text: ' and ' });
+    expect(segments[2]).toMatchObject({ kind: 'wikilink', inner: 'B' });
+  });
+
+  it('bare "!" not immediately followed by [[ stays plain text ("wow!" untouched)', () => {
+    const segments = tokenize('wow!');
+    expect(segments).toHaveLength(1);
+    expect(segments[0]).toEqual({ kind: 'text', text: 'wow!' });
+  });
+
+  it('bare "!" before non-[[ stays text ("hello! world")', () => {
+    const segments = tokenize('hello! world');
+    expect(segments).toHaveLength(1);
+    expect(segments[0]).toEqual({ kind: 'text', text: 'hello! world' });
+  });
+
+  // ── WikilinkResolutionData backward-compat type check ────────────────────
+  // Verifies the new optional fields compile and are backward-compatible.
+  // These assertions are type-level — if the interface lacks the fields,
+  // TypeScript will error at compile time and the test file won't compile.
+
+  it('WikilinkResolutionData accepts entriesById, embedDepth, currentEntryId (optional — backward-compat)', () => {
+    // Minimal usage without new fields (backward-compat)
+    const minimal: WikilinkResolutionData = {
+      entryTitles: new Map(),
+      dictionaryWords: new Map<string, DictionaryWord>(),
+      universeId: 'u1',
+    };
+    expect(minimal.entriesById).toBeUndefined();
+    expect(minimal.embedDepth).toBeUndefined();
+    expect(minimal.currentEntryId).toBeUndefined();
+
+    // Full usage with new fields (forward usage)
+    const full: WikilinkResolutionData = {
+      entryTitles: new Map(),
+      dictionaryWords: new Map<string, DictionaryWord>(),
+      universeId: 'u1',
+      entriesById: new Map<string, Entry>(),
+      embedDepth: 0,
+      currentEntryId: 'some-entry-id',
+    };
+    expect(full.entriesById).toBeDefined();
+    expect(full.embedDepth).toBe(0);
+    expect(full.currentEntryId).toBe('some-entry-id');
+  });
+
+  // ── Component integration: ![[entry]] falls through to wikilink rendering ──
+  // Per the plan: an embed segment may fall through to existing wikilink handling
+  // (rendering as a normal link is acceptable interim behavior — Plan 03 owns the
+  // embed render branch).
+
+  it('![[Empire]] renders as a link (falls through to wikilink resolution) when entry title exists', () => {
+    const wikis = makeWikis({
+      entryTitles: new Map([['empire', 'entry-empire-id']]),
+    });
+    renderWikilink('![[Empire]]', wikis);
+
+    // Should resolve Empire → entry link (falling through embed→wikilink handling)
+    const link = screen.getByRole('link', { name: 'Empire' });
+    expect(link).toBeDefined();
+    expect(link.getAttribute('href')).toBe('/universes/universe-1/entries/entry-empire-id');
   });
 });
