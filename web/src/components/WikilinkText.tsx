@@ -1,6 +1,7 @@
 import { Fragment } from 'react';
 import { Link } from 'react-router-dom';
 import type { DictionaryWord } from '../hooks/useDictionary';
+import type { Entry } from '../hooks/useEntries';
 import { WordPopover } from './WordPopover';
 
 // ---------------------------------------------------------------------------
@@ -49,6 +50,29 @@ export interface WikilinkResolutionData {
    * Required when `isShareMode` is true; ignored otherwise.
    */
   shareToken?: string | null;
+  /**
+   * Phase 46 Plan 01 (D-11/D-12/D-13 hover-card content source).
+   * Full entry objects keyed by id, built from the already-cached useEntries list.
+   * Optional — backward-compatible like entryAliases above.
+   * Consumed by Plan 02 (EntryHoverCard) and Plan 03 (EntryEmbed).
+   */
+  entriesById?: Map<string, Entry>;
+  /**
+   * Phase 46 Plan 01 (D-05 flatten control).
+   * The nesting depth of the current render context.
+   * undefined / 0 = top level (embeds expand); 1 = inside an embedded body
+   * (embed segments flatten to wikilink rendering — cycle-safe depth-1 flatten).
+   * Optional — backward-compatible. Set by Plan 03's EntryEmbed recursive call.
+   */
+  embedDepth?: number;
+  /**
+   * Phase 46 Plan 01 (D-06 self/circular-embed guard source).
+   * The route id of the entry currently being viewed, set by EntryDetail (Task 2).
+   * Consumed by Plan 03's EntryEmbed component to detect and render the circular-embed
+   * affordance instead of expanding. Never rendered itself — only compared by equality.
+   * Optional — backward-compatible.
+   */
+  currentEntryId?: string;
 }
 
 // ---------------------------------------------------------------------------
@@ -58,7 +82,10 @@ export interface WikilinkResolutionData {
 
 // T-32-SC (Tampering) — no new deps; T-32-12 (XSS) — tokens are React
 // elements (text + spans), never dangerouslySetInnerHTML.
-const WIKILINK_RE = /\[\[([^\]\n]+?)\]\]/g;
+// Phase 46 Plan 01: group 1 = optional leading `!` (embed marker),
+// group 2 = inner ref. A bare `!` not immediately followed by `[[` stays
+// plain text — the regex requires `!` to be adjacent to `[[` to capture it.
+const WIKILINK_RE = /(!?)\[\[([^\]\n]+?)\]\]/g;
 
 interface ParsedToken {
   /** The target reference (pipe-split, heading-stripped, .md-stripped). */
@@ -104,19 +131,42 @@ function parseWikilink(inner: string): ParsedToken {
 
 type Segment =
   | { kind: 'text'; text: string }
-  | { kind: 'wikilink'; inner: string; raw: string };
+  | { kind: 'wikilink'; inner: string; raw: string }
+  /**
+   * Phase 46 Plan 01 (D-05 / XREF-03): embed transclusion token.
+   * Emitted when a `!` immediately precedes `[[...]]`. The inner ref is
+   * identical in shape to a wikilink inner — parseWikilink handles it the
+   * same way. Plan 03's EntryEmbed component owns the render branch for this
+   * kind; at this plan's stage an embed segment falls through to the existing
+   * wikilink handling (renders as a normal link — non-throwing interim behavior).
+   */
+  | { kind: 'embed'; inner: string; raw: string };
 
-function tokenize(text: string): Segment[] {
+/**
+ * Split a plain-text string into Segment tokens.
+ * Exported for unit testing (Phase 46 Plan 01).
+ */
+export function tokenize(text: string): Segment[] {
   const segments: Segment[] = [];
   WIKILINK_RE.lastIndex = 0;
   let lastIndex = 0;
   let match: RegExpExecArray | null;
   while ((match = WIKILINK_RE.exec(text)) !== null) {
-    if (match.index > lastIndex) {
-      segments.push({ kind: 'text', text: text.slice(lastIndex, match.index) });
+    const bang = match[1];   // group 1: '' or '!'
+    const inner = match[2];  // group 2: the inner ref text
+    // When there is a leading `!`, the match begins one character earlier
+    // (at the `!`), but match.index points to `!` only if it's the start
+    // of the full match. We need to account for the `!` in the leading text.
+    const matchStart = match.index;
+    if (matchStart > lastIndex) {
+      segments.push({ kind: 'text', text: text.slice(lastIndex, matchStart) });
     }
-    segments.push({ kind: 'wikilink', inner: match[1], raw: match[0] });
-    lastIndex = match.index + match[0].length;
+    if (bang === '!') {
+      segments.push({ kind: 'embed', inner, raw: match[0] });
+    } else {
+      segments.push({ kind: 'wikilink', inner, raw: match[0] });
+    }
+    lastIndex = matchStart + match[0].length;
   }
   if (lastIndex < text.length) {
     segments.push({ kind: 'text', text: text.slice(lastIndex) });
@@ -273,7 +323,12 @@ export function WikilinkText({ children, wikis }: WikilinkTextProps) {
           if (seg.kind === 'text') {
             return <Fragment key={key}>{seg.text}</Fragment>;
           }
-          // wikilink segment
+          // wikilink segment OR embed segment.
+          // Phase 46 Plan 01: embed segments fall through to the existing
+          // wikilink resolution path here. Plan 03 (EntryEmbed) will add the
+          // proper embed render branch in a later extension of resolveSegment.
+          // This interim behavior renders embeds as normal entry links, which
+          // is non-throwing and acceptable until Plan 03 is in place.
           const parsed = parseWikilink(seg.inner);
           return resolveSegment(seg.inner, parsed.label, seg.raw, key);
         })}
