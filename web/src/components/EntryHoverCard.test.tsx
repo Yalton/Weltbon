@@ -95,6 +95,7 @@ function makeEntry(overrides: Partial<Entry> = {}): Entry {
 // Default useEntry mock: no data (not called in the common case)
 beforeEach(() => {
   mockNavigate.mockClear();
+  mockUseEntry.mockClear();
   mockUseEntry.mockReturnValue({ data: undefined, isLoading: false });
 });
 
