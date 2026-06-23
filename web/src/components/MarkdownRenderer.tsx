@@ -1,6 +1,6 @@
 import ReactMarkdown, { defaultUrlTransform } from 'react-markdown';
 import remarkGfm from 'remark-gfm';
-import { WikilinkText } from './WikilinkText';
+import { WikilinkText, tokenize } from './WikilinkText';
 import type { WikilinkResolutionData } from './WikilinkText';
 
 /**
@@ -18,6 +18,39 @@ import type { WikilinkResolutionData } from './WikilinkText';
 function urlTransformWithAssets(url: string): string {
   if (url.startsWith('asset://')) return url;
   return defaultUrlTransform(url);
+}
+
+/**
+ * Phase 46 CR-01 — detect whether a paragraph's children contain a top-level
+ * `![[entry]]` embed that WikilinkText will expand into a block-level callout.
+ *
+ * EntryEmbed renders a block `<div>` (plus a recursively-rendered `<p>`) for a
+ * resolved embed. react-markdown's `p` node would otherwise wrap that block in
+ * a `<p>`, which is invalid DOM nesting: React 19 logs a hydration error and
+ * the browser HTML parser reparents the callout out of position, silently
+ * breaking the XREF-03 reading-surface layout. When this returns true the `p`
+ * override below renders a `<div>` wrapper instead, which is a valid block
+ * container for the embed callout.
+ *
+ * Embeds only expand to a block at top level. At `embedDepth === 1` they
+ * flatten to inline hover-card links (D-05), which are valid inside `<p>`, so
+ * this returns false there and the normal `<p>` wrapper is preserved.
+ */
+function paragraphHasBlockEmbed(
+  children: React.ReactNode,
+  wikis: WikilinkResolutionData,
+): boolean {
+  if (wikis.embedDepth === 1) return false;
+  const scan = (node: React.ReactNode): boolean => {
+    // Only string children are tokenised by WikilinkText; code spans and other
+    // elements arrive as non-string nodes and never produce an embed.
+    if (typeof node === 'string') {
+      return tokenize(node).some((seg) => seg.kind === 'embed');
+    }
+    if (Array.isArray(node)) return node.some(scan);
+    return false;
+  };
+  return scan(children);
 }
 
 // Re-export so callers can import the type from the MarkdownRenderer module.
@@ -124,11 +157,20 @@ export function MarkdownRenderer({
           // (entriesById, embedDepth, currentEntryId) added in Plan 01 reach
           // WikilinkText automatically, enabling Plans 02 (EntryHoverCard) and
           // 03 (EntryEmbed) to consume them without re-touching this wiring.
-          p: ({ children }: { children?: React.ReactNode }) => (
-            <p>
-              <WikilinkText wikis={wikis}>{children}</WikilinkText>
-            </p>
-          ),
+          p: ({ children }: { children?: React.ReactNode }) =>
+            // Phase 46 CR-01: a block-level embed callout cannot be a descendant
+            // of <p> (React 19 reparents the DOM, breaking the embed layout).
+            // When the paragraph contains a top-level embed, render a <div>
+            // wrapper instead — a valid block container for the callout.
+            paragraphHasBlockEmbed(children, wikis) ? (
+              <div>
+                <WikilinkText wikis={wikis}>{children}</WikilinkText>
+              </div>
+            ) : (
+              <p>
+                <WikilinkText wikis={wikis}>{children}</WikilinkText>
+              </p>
+            ),
           li: ({ children }: { children?: React.ReactNode }) => (
             <li>
               <WikilinkText wikis={wikis}>{children}</WikilinkText>
