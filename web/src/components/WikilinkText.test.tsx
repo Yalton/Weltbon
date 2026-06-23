@@ -1,5 +1,5 @@
 /**
- * WikilinkText resolver tests — Phase 45 Plan 02 (XREF-04) + Phase 46 Plan 01 (XREF-02/XREF-03).
+ * WikilinkText resolver tests — Phase 45 Plan 02 (XREF-04) + Phase 46 Plan 01/03 (XREF-02/XREF-03).
  *
  * Phase 45 tests:
  *  1. D-03: case-insensitive title match — [[empire]] resolves to entry "Empire"
@@ -16,18 +16,42 @@
  *  10. Mixed "![[A]] and [[B]]" — embed A, text " and ", wikilink B (order preserved)
  *  11. A bare "!" not immediately followed by [[ stays plain text ("wow!" untouched)
  *  12. WikilinkResolutionData accepts entriesById / embedDepth / currentEntryId (backward-compat type check)
+ *
+ * Phase 46 Plan 03 tests (embed rendering):
+ *  13. top-level ![[Known]] renders EntryEmbed (embed-callout or unavailable affordance)
+ *  14. ![[Known]] at embedDepth===1 flattens to a hover-card link (D-05 flatten)
  */
 import { describe, it, expect, vi } from 'vitest';
 import { render, screen } from '@testing-library/react';
 import { MemoryRouter } from 'react-router-dom';
+import type { ReactNode } from 'react';
+import { QueryClient, QueryClientProvider } from '@tanstack/react-query';
 import { WikilinkText, tokenize } from './WikilinkText';
 import type { WikilinkResolutionData } from './WikilinkText';
 import type { DictionaryWord } from '../hooks/useDictionary';
 import type { Entry } from '../hooks/useEntries';
 
 // ---------------------------------------------------------------------------
+// useEntry mock — needed for EntryEmbed (called inside WikilinkText for embed segments)
+// ---------------------------------------------------------------------------
+
+const mockUseEntry = vi.fn();
+
+vi.mock('../hooks/useEntries', async () => {
+  const actual = await vi.importActual<typeof import('../hooks/useEntries')>('../hooks/useEntries');
+  return { ...actual, useEntry: (...args: unknown[]) => mockUseEntry(...args) };
+});
+
+// Default: return no data (embed renders unavailable affordance)
+mockUseEntry.mockReturnValue({ data: undefined, isLoading: false, isError: false });
+
+// ---------------------------------------------------------------------------
 // Helpers
 // ---------------------------------------------------------------------------
+
+function makeQueryClient() {
+  return new QueryClient({ defaultOptions: { queries: { retry: false } } });
+}
 
 function makeWikis(overrides: Partial<WikilinkResolutionData> = {}): WikilinkResolutionData {
   return {
@@ -40,9 +64,19 @@ function makeWikis(overrides: Partial<WikilinkResolutionData> = {}): WikilinkRes
 
 function renderWikilink(text: string, wikis: WikilinkResolutionData) {
   return render(
-    <MemoryRouter>
-      <WikilinkText wikis={wikis}>{text}</WikilinkText>
-    </MemoryRouter>,
+    <QueryClientProvider client={makeQueryClient()}>
+      <MemoryRouter>
+        <WikilinkText wikis={wikis}>{text}</WikilinkText>
+      </MemoryRouter>
+    </QueryClientProvider>,
+  );
+}
+
+function EmbedWrapper({ children }: { children: ReactNode }) {
+  return (
+    <QueryClientProvider client={makeQueryClient()}>
+      <MemoryRouter>{children}</MemoryRouter>
+    </QueryClientProvider>
   );
 }
 
@@ -261,20 +295,79 @@ describe('tokenize embed split — Phase 46 Plan 01', () => {
     expect(full.currentEntryId).toBe('some-entry-id');
   });
 
-  // ── Component integration: ![[entry]] falls through to wikilink rendering ──
-  // Per the plan: an embed segment may fall through to existing wikilink handling
-  // (rendering as a normal link is acceptable interim behavior — Plan 03 owns the
-  // embed render branch).
+  // ── Component integration: ![[entry]] at top level renders EntryEmbed ──
+  // Phase 46 Plan 03: the embed branch is now wired in WikilinkText. An
+  // ![[Empire]] with embedDepth undefined (top-level) renders EntryEmbed,
+  // which calls useEntry. With no data returned (mock default), it renders
+  // the unavailable affordance (D-10).
 
-  it('![[Empire]] renders as a link (falls through to wikilink resolution) when entry title exists', () => {
+  it('![[Empire]] at top level renders EntryEmbed (unavailable affordance when no body returned)', () => {
+    // useEntry returns no data → EntryEmbed renders D-10 unavailable affordance
+    mockUseEntry.mockReturnValue({ data: undefined, isLoading: false, isError: false });
+
     const wikis = makeWikis({
       entryTitles: new Map([['empire', 'entry-empire-id']]),
     });
-    renderWikilink('![[Empire]]', wikis);
 
-    // Should resolve Empire → entry link (falling through embed→wikilink handling)
+    render(
+      <EmbedWrapper>
+        <WikilinkText wikis={wikis}>{'![[Empire]]'}</WikilinkText>
+      </EmbedWrapper>,
+    );
+
+    // EntryEmbed renders — no body means unavailable affordance (D-10)
+    const affordance = screen.getByTestId('embed-unavailable');
+    expect(affordance).toBeInTheDocument();
+  });
+});
+
+// ---------------------------------------------------------------------------
+// Phase 46 Plan 03 — embed branch in WikilinkText (D-05 flatten, EntryEmbed render)
+// ---------------------------------------------------------------------------
+
+describe('embed branch — Phase 46 Plan 03', () => {
+  // ── D-05: ![[Known]] at embedDepth===1 flattens to hover-card link ──────
+
+  it('![[Known]] with embedDepth===1 flattens to a link (D-05 flatten, no recursive embed)', () => {
+    const wikis = makeWikis({
+      entryTitles: new Map([['empire', 'entry-empire-id']]),
+      embedDepth: 1,
+    });
+
+    render(
+      <EmbedWrapper>
+        <WikilinkText wikis={wikis}>{'![[Empire]]'}</WikilinkText>
+      </EmbedWrapper>,
+    );
+
+    // At embedDepth 1, ![[Empire]] flattens to a regular link (no embed callout)
+    expect(screen.queryByTestId('embed-callout')).toBeNull();
+    expect(screen.queryByTestId('embed-unavailable')).toBeNull();
+    expect(screen.queryByTestId('embed-circular-notice')).toBeNull();
+    // Should render as a link to the entry
     const link = screen.getByRole('link', { name: 'Empire' });
-    expect(link).toBeDefined();
+    expect(link).toBeInTheDocument();
     expect(link.getAttribute('href')).toBe('/universes/universe-1/entries/entry-empire-id');
+  });
+
+  // ── Top-level ![[Unknown]] renders unavailable affordance (D-10) ─────────
+
+  it('![[Unknown]] at top level renders unavailable affordance when target not in maps', () => {
+    mockUseEntry.mockReturnValue({ data: undefined, isLoading: false, isError: false });
+
+    const wikis = makeWikis({
+      entryTitles: new Map(), // no entry matches 'unknown'
+    });
+
+    render(
+      <EmbedWrapper>
+        <WikilinkText wikis={wikis}>{'![[Unknown]]'}</WikilinkText>
+      </EmbedWrapper>,
+    );
+
+    // Null targetId → EntryEmbed renders D-10 unavailable affordance
+    const affordance = screen.getByTestId('embed-unavailable');
+    expect(affordance).toBeInTheDocument();
+    expect(affordance.textContent).toContain('Unknown');
   });
 });

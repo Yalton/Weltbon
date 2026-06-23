@@ -4,6 +4,7 @@ import type { DictionaryWord } from '../hooks/useDictionary';
 import type { Entry } from '../hooks/useEntries';
 import { WordPopover } from './WordPopover';
 import { EntryHoverCard } from './EntryHoverCard';
+import { EntryEmbed } from './EntryEmbed';
 
 // ---------------------------------------------------------------------------
 // Types
@@ -215,6 +216,7 @@ export function WikilinkText({ children, wikis }: WikilinkTextProps) {
     isShareMode,
     shareToken,
     entriesById,
+    embedDepth,
   } = wikis;
 
   function resolveSegment(inner: string, label: string, raw: string, key: string) {
@@ -350,12 +352,39 @@ export function WikilinkText({ children, wikis }: WikilinkTextProps) {
           if (seg.kind === 'text') {
             return <Fragment key={key}>{seg.text}</Fragment>;
           }
-          // wikilink segment OR embed segment.
-          // Phase 46 Plan 01: embed segments fall through to the existing
-          // wikilink resolution path here. Plan 03 (EntryEmbed) will add the
-          // proper embed render branch in a later extension of resolveSegment.
-          // This interim behavior renders embeds as normal entry links, which
-          // is non-throwing and acceptable until Plan 03 is in place.
+          // Phase 46 Plan 03: handle embed segments produced by the 46-01 tokenizer.
+          if (seg.kind === 'embed') {
+            const parsed = parseWikilink(seg.inner);
+            const lowerTarget = parsed.target.toLowerCase().trim();
+
+            // D-05 flatten: when already inside an embedded body (embedDepth === 1),
+            // render the ![[...]] as a normal wikilink/hover-card link — NOT a recursive
+            // embed. This is the cycle-safe depth-1 flatten decision.
+            if (embedDepth === 1) {
+              // Fall through to existing wikilink resolution (renders as a link/hover-card).
+              return resolveSegment(seg.inner, parsed.label, seg.raw, key);
+            }
+
+            // Top-level embed (embedDepth undefined/0): resolve target id via the same
+            // entryTitles/entryAliases lookup as the wikilink branch, then render EntryEmbed.
+            const resolvedId =
+              entryTitles.get(lowerTarget) ??
+              entryAliases?.get(lowerTarget) ??
+              null;
+
+            return (
+              <EntryEmbed
+                key={key}
+                targetId={resolvedId}
+                label={parsed.label}
+                currentEntryId={wikis.currentEntryId}
+                wikis={wikis}
+                universeId={universeId}
+              />
+            );
+          }
+
+          // Plain wikilink segment — existing resolution path (unchanged).
           const parsed = parseWikilink(seg.inner);
           return resolveSegment(seg.inner, parsed.label, seg.raw, key);
         })}
