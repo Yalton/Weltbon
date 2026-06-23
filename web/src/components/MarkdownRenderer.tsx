@@ -118,6 +118,12 @@ export function MarkdownRenderer({
           // tokenised in their text segments. Code spans are React elements
           // (not plain strings) inside these containers, so they pass through
           // WikilinkText unchanged — code-span exclusion holds.
+          //
+          // Phase 46 Plan 01: the whole `wikis` object is forwarded to WikilinkText
+          // here — no structural change is needed. The new optional fields
+          // (entriesById, embedDepth, currentEntryId) added in Plan 01 reach
+          // WikilinkText automatically, enabling Plans 02 (EntryHoverCard) and
+          // 03 (EntryEmbed) to consume them without re-touching this wiring.
           p: ({ children }: { children?: React.ReactNode }) => (
             <p>
               <WikilinkText wikis={wikis}>{children}</WikilinkText>

@@ -1,6 +1,6 @@
 import { useMemo, useState } from 'react';
 import { Link, useParams, useNavigate } from 'react-router-dom';
-import { useEntries, useEntry, useDeleteEntry } from '../hooks/useEntries';
+import { useEntries, useEntry, useDeleteEntry, type Entry } from '../hooks/useEntries';
 import { useFilteredDictionary, useUniverseDictionary, type DictionaryWord } from '../hooks/useDictionary';
 import { useTimelinePins } from '../hooks/useTimelinePins';
 import { useCalendar } from '../hooks/useCalendar';
@@ -66,6 +66,17 @@ export function EntryDetail() {
       const key = e.title.trim().toLowerCase();
       if (!map.has(key)) map.set(key, e.id); // D-04: oldest wins
     }
+    return map;
+  }, [allEntries]);
+
+  // Phase 46 Plan 01 (D-11/D-12/D-13 hover-card content source).
+  // Full entry objects keyed by id — built from the same useEntries(uid!) cache
+  // already in use below. No new query, no re-key (memory: react-query-key-change-blast-radius).
+  // In share mode useEntries flows through /api/share/entries which drops is_public=false rows
+  // server-side (T-46-02 mitigate: private entries never enter the map in share mode).
+  const entriesById = useMemo<Map<string, Entry>>(() => {
+    const map = new Map<string, Entry>();
+    for (const e of allEntries ?? []) map.set(e.id, e);
     return map;
   }, [allEntries]);
 
@@ -165,6 +176,16 @@ export function EntryDetail() {
     // for unauthenticated share visitors).
     isShareMode,
     shareToken: token ?? null,
+    // Phase 46 Plan 01 (D-11/D-12/D-13): full entry objects for hover-card content.
+    // Built from the already-cached useEntries list (no new query, no re-key).
+    entriesById,
+    // Phase 46 Plan 01 (D-06 guard source): the route id of the entry currently
+    // being viewed — Plan 03's EntryEmbed compares embed target id against this
+    // to detect and render the circular/self-embed affordance instead of expanding.
+    // This is the SOLE wiring site for currentEntryId; Plan 03 only consumes it.
+    currentEntryId: entryId,
+    // embedDepth is intentionally omitted at the top level — undefined = depth 0
+    // = embeds expand (D-05 flatten: depth-1 is set by EntryEmbed's recursive call).
   };
 
   return (
