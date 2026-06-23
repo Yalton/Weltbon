@@ -4,7 +4,7 @@ import { useForm } from 'react-hook-form';
 import { zodResolver } from '@hookform/resolvers/zod';
 import { z } from 'zod';
 import * as DropdownMenu from '@radix-ui/react-dropdown-menu';
-import { useEntry, useCreateEntry, useUpdateEntry } from '../hooks/useEntries';
+import { useEntry, useCreateEntry, useUpdateEntry, useEntries } from '../hooks/useEntries';
 import { useUniverse } from '../hooks/useUniverse';
 import { TagInput } from '../components/TagInput';
 import { MetaEditor } from '../components/MetaEditor';
@@ -14,6 +14,7 @@ import { Toast } from '../components/Toast';
 import { Toggle } from '../components/Toggle';
 import { WipPill } from '../components/WipPill';
 import { AssetPickerModal } from '../components/AssetPickerModal';
+import { WikilinkAutocomplete, buildInsertString, isInsideCodeSpan, rankEntries } from '../components/WikilinkAutocomplete';
 import { metaArrayToRecord } from '../lib/entryTemplates';
 import type { Entry } from '../hooks/useEntries';
 import type { EntryTemplate } from '../lib/entryTemplates';
@@ -38,6 +39,9 @@ export function EntryEditor() {
   const { data: existingEntry, isLoading: entryLoading } = useEntry(uid!, entryId ?? '');
   const createEntry = useCreateEntry(uid!);
   const updateEntry = useUpdateEntry(uid!, entryId ?? '');
+  // Phase 47 XREF-01 — load the entries list for the wikilink picker.
+  // Uses the same ['entries', uid] cache as WikilinkAutocomplete (D-10, no re-key).
+  const { data: allEntries = [] } = useEntries(uid ?? '');
 
   const [tags, setTags] = useState<string[]>([]);
   // Phase 45 XREF-04 (D-09) — alias chips placed immediately after Tags field.
@@ -59,6 +63,14 @@ export function EntryEditor() {
   const [pickerMode, setPickerMode] = useState<'insert-embed' | 'set-cover'>('insert-embed');
   // Ref to the body textarea for cursor-position insertion of asset:// embeds.
   const bodyTextareaRef = useRef<HTMLTextAreaElement | null>(null);
+  // Phase 47 XREF-01 — wikilink autocomplete picker state.
+  // triggerStart: textarea char index of the opening `[[` (inclusive of first `[`).
+  // wikilinkQuery: the text typed after `[[`, updated on each keystroke.
+  const [wikilinkPickerOpen, setWikilinkPickerOpen] = useState(false);
+  const [wikilinkTriggerStart, setWikilinkTriggerStart] = useState<number>(0);
+  const [wikilinkQuery, setWikilinkQuery] = useState('');
+  const [wikilinkActiveIndex, setWikilinkActiveIndex] = useState(0);
+  const [wikilinkResultCount, setWikilinkResultCount] = useState(0);
   // CR-03: gate the create-mode template prefill so it runs at most once per
   // navigation. Without this, every refetch of `universe` (window focus,
   // stale-time expiry) re-runs the prefill effect and silently wipes any
@@ -174,6 +186,119 @@ export function EntryEditor() {
 
   const entryTypes = universe?.entryTypes ?? [];
   const isPending = createEntry.isPending || updateEntry.isPending;
+
+  // Phase 47 XREF-01 — detect an unclosed `[[` token backward from the caret.
+  // Returns the char index of the `[` that opens the `[[`, or null if not found.
+  // Returns null when the cursor is inside a code span (D-11).
+  function detectWikilinkTrigger(value: string, caret: number): number | null {
+    // Guard: inside code span → suppress (D-11)
+    if (isInsideCodeSpan(value, caret)) return null;
+
+    const before = value.slice(0, caret);
+    // Walk backward looking for `[[`. Stop on newline (treat each line independently).
+    for (let i = before.length - 2; i >= 0; i--) {
+      const ch = before[i];
+      // Newline terminates the search — wikilinks don't span lines
+      if (ch === '\n') return null;
+      if (ch === '[' && before[i + 1] === '[') {
+        // Found `[[` — check there's no closing `]` or `]]` between here and caret
+        const between = before.slice(i + 2);
+        if (between.includes(']') || between.includes('\n')) return null;
+        return i;
+      }
+    }
+    return null;
+  }
+
+  // Phase 47 XREF-01 — insert the selected wikilink text at the `[[` trigger position.
+  // Reuses the nativeInputValueSetter + dispatchEvent pattern from handlePickerSelect (D-04).
+  const handleWikilinkInsert = (insertText: string) => {
+    const textarea = bodyTextareaRef.current;
+    if (textarea) {
+      const replaceStart = wikilinkTriggerStart;
+      const replaceEnd = textarea.selectionStart ?? 0;
+      const currentValue = textarea.value;
+      const newValue =
+        currentValue.slice(0, replaceStart) + insertText + currentValue.slice(replaceEnd);
+      // Use react-hook-form's setValue via the native input event approach
+      const nativeInputValueSetter = Object.getOwnPropertyDescriptor(
+        window.HTMLTextAreaElement.prototype,
+        'value',
+      )?.set;
+      if (nativeInputValueSetter) {
+        nativeInputValueSetter.call(textarea, newValue);
+        textarea.dispatchEvent(new Event('input', { bubbles: true }));
+      }
+      // Move cursor after the inserted wikilink
+      const cursor = replaceStart + insertText.length;
+      setTimeout(() => {
+        textarea.selectionStart = cursor;
+        textarea.selectionEnd = cursor;
+        textarea.focus();
+      }, 0);
+    }
+    setWikilinkPickerOpen(false);
+    setWikilinkActiveIndex(0);
+    setWikilinkQuery('');
+  };
+
+  // Phase 47 XREF-01 — keyboard handler for the body textarea when picker is open.
+  const handleBodyKeyDown = (e: React.KeyboardEvent<HTMLTextAreaElement>) => {
+    if (!wikilinkPickerOpen) return;
+    if (e.key === 'ArrowDown') {
+      e.preventDefault();
+      setWikilinkActiveIndex((i) => Math.min(i + 1, wikilinkResultCount - 1));
+    } else if (e.key === 'ArrowUp') {
+      e.preventDefault();
+      setWikilinkActiveIndex((i) => Math.max(i - 1, 0));
+    } else if (e.key === 'Enter') {
+      e.preventDefault();
+      // Re-compute the same ranked results the component shows (same O(n) client-side
+      // filter, same rankEntries helper — deterministic, no new fetch, D-10 cache reuse).
+      const results = rankEntries(allEntries, wikilinkQuery, entryId ?? null);
+      const activeEntry = results[wikilinkActiveIndex];
+      if (activeEntry) {
+        handleWikilinkInsert(buildInsertString(activeEntry, wikilinkQuery));
+      }
+    } else if (e.key === 'Escape') {
+      e.preventDefault();
+      setWikilinkPickerOpen(false);
+      setWikilinkActiveIndex(0);
+    } else if (e.key === ' ') {
+      // Space closes the picker (D-12) — but does NOT prevent the space from being typed
+      setWikilinkPickerOpen(false);
+      setWikilinkActiveIndex(0);
+    }
+  };
+
+  // Phase 47 XREF-01 — onChange watcher for the body textarea.
+  // Detects `[[` trigger and updates query. Composed with react-hook-form's onChange.
+  const handleBodyChange = (e: React.ChangeEvent<HTMLTextAreaElement>) => {
+    const value = e.target.value;
+    const caret = e.target.selectionStart ?? 0;
+    const triggerIdx = detectWikilinkTrigger(value, caret);
+    if (triggerIdx !== null) {
+      // Extract the query text between `[[` and the caret
+      const query = value.slice(triggerIdx + 2, caret);
+      // Close on `]]` completing the token (D-12)
+      if (query.includes(']')) {
+        setWikilinkPickerOpen(false);
+        setWikilinkActiveIndex(0);
+        return;
+      }
+      setWikilinkTriggerStart(triggerIdx);
+      setWikilinkQuery(query);
+      setWikilinkPickerOpen(true);
+      // Reset active index when query changes
+      setWikilinkActiveIndex(0);
+    } else {
+      // No trigger found — close the picker
+      if (wikilinkPickerOpen) {
+        setWikilinkPickerOpen(false);
+        setWikilinkActiveIndex(0);
+      }
+    }
+  };
 
   // Phase 38 MEDIA-05: handle picker selection for both modes.
   const handlePickerSelect = (assetId: string) => {
@@ -310,19 +435,54 @@ export function EntryEditor() {
               Insert image
             </button>
           </div>
-          <textarea
-            id="entry-body"
-            rows={12}
-            {...register('body')}
-            ref={(el) => {
-              // Merge react-hook-form ref + our bodyTextareaRef
-              const { ref: rhfRef } = register('body');
-              if (typeof rhfRef === 'function') rhfRef(el);
-              bodyTextareaRef.current = el;
-            }}
-            placeholder="Write in Markdown..."
-            className="w-full rounded-md border border-neutral-300 dark:border-neutral-700 bg-transparent px-3 py-2 text-sm font-mono"
-          />
+          {/* position:relative parent so WikilinkAutocomplete caret-anchor span positions correctly */}
+          <div style={{ position: 'relative' }}>
+            <textarea
+              id="entry-body"
+              rows={12}
+              {...register('body')}
+              ref={(el) => {
+                // Merge react-hook-form ref + our bodyTextareaRef
+                const { ref: rhfRef } = register('body');
+                if (typeof rhfRef === 'function') rhfRef(el);
+                bodyTextareaRef.current = el;
+              }}
+              onKeyDown={handleBodyKeyDown}
+              onChange={(e) => {
+                // Compose with react-hook-form's onChange — call rHF first, then our handler
+                const rhfOnChange = register('body').onChange;
+                rhfOnChange(e);
+                handleBodyChange(e);
+              }}
+              onBlur={(e) => {
+                // Compose with react-hook-form's onBlur (validation trigger)
+                const rhfOnBlur = register('body').onBlur;
+                rhfOnBlur(e);
+                // Close picker on blur, but use a microtask guard so a row
+                // mousedown fires first (onMouseDown fires before blur)
+                setTimeout(() => setWikilinkPickerOpen(false), 100);
+              }}
+              placeholder="Write in Markdown..."
+              className="w-full rounded-md border border-neutral-300 dark:border-neutral-700 bg-transparent px-3 py-2 text-sm font-mono"
+            />
+            {uid && wikilinkPickerOpen && (
+              <WikilinkAutocomplete
+                universeId={uid}
+                currentEntryId={entryId ?? null}
+                query={wikilinkQuery}
+                textareaRef={bodyTextareaRef}
+                triggerStart={wikilinkTriggerStart}
+                activeIndex={wikilinkActiveIndex}
+                onActiveIndexChange={setWikilinkActiveIndex}
+                onResultCountChange={setWikilinkResultCount}
+                onSelect={handleWikilinkInsert}
+                onDismiss={() => {
+                  setWikilinkPickerOpen(false);
+                  setWikilinkActiveIndex(0);
+                }}
+              />
+            )}
+          </div>
         </div>
 
         {/* Cover image (D-04/D-05) */}
