@@ -65,6 +65,7 @@ interface HarnessProps {
   onResultCountChange?: (n: number) => void;
   onSelect?: (text: string) => void;
   onDismiss?: () => void;
+  onActiveInsertChange?: (text: string | null) => void;
 }
 
 function Harness(props: HarnessProps) {
@@ -78,6 +79,7 @@ function Harness(props: HarnessProps) {
     onResultCountChange = () => {},
     onSelect = () => {},
     onDismiss = () => {},
+    onActiveInsertChange = () => {},
   } = props;
 
   // Create a stable textarea ref for tests
@@ -95,6 +97,7 @@ function Harness(props: HarnessProps) {
       onResultCountChange={onResultCountChange}
       onSelect={onSelect}
       onDismiss={onDismiss}
+      onActiveInsertChange={onActiveInsertChange}
     />
   );
 }

@@ -14,7 +14,7 @@ import { Toast } from '../components/Toast';
 import { Toggle } from '../components/Toggle';
 import { WipPill } from '../components/WipPill';
 import { AssetPickerModal } from '../components/AssetPickerModal';
-import { WikilinkAutocomplete, buildInsertString, isInsideCodeSpan, rankEntries } from '../components/WikilinkAutocomplete';
+import { WikilinkAutocomplete, isInsideCodeSpan } from '../components/WikilinkAutocomplete';
 import { metaArrayToRecord } from '../lib/entryTemplates';
 import type { Entry } from '../hooks/useEntries';
 import type { EntryTemplate } from '../lib/entryTemplates';
@@ -39,9 +39,11 @@ export function EntryEditor() {
   const { data: existingEntry, isLoading: entryLoading } = useEntry(uid!, entryId ?? '');
   const createEntry = useCreateEntry(uid!);
   const updateEntry = useUpdateEntry(uid!, entryId ?? '');
-  // Phase 47 XREF-01 — load the entries list for the wikilink picker.
-  // Uses the same ['entries', uid] cache as WikilinkAutocomplete (D-10, no re-key).
-  const { data: allEntries = [] } = useEntries(uid ?? '');
+  // Phase 47 XREF-01 — warm the ['entries', uid] cache so the picker has data the
+  // instant `[[` is typed, closing the async-empty window CR-01 flagged. The picker
+  // owns its own useEntries subscription AND the active selection (CR-01); this call
+  // is prefetch only — its result is intentionally not bound or used for ranking.
+  useEntries(uid ?? '');
 
   const [tags, setTags] = useState<string[]>([]);
   // Phase 45 XREF-04 (D-09) — alias chips placed immediately after Tags field.
@@ -71,6 +73,10 @@ export function EntryEditor() {
   const [wikilinkQuery, setWikilinkQuery] = useState('');
   const [wikilinkActiveIndex, setWikilinkActiveIndex] = useState(0);
   const [wikilinkResultCount, setWikilinkResultCount] = useState(0);
+  // CR-01: canonical insert string for the currently-highlighted row, reported up
+  // by WikilinkAutocomplete from its own (authoritative) result list. The Enter
+  // handler inserts this instead of re-ranking from a second subscription.
+  const [wikilinkActiveInsert, setWikilinkActiveInsert] = useState<string | null>(null);
   // CR-03: gate the create-mode template prefill so it runs at most once per
   // navigation. Without this, every refetch of `universe` (window focus,
   // stale-time expiry) re-runs the prefill effect and silently wipes any
@@ -216,7 +222,11 @@ export function EntryEditor() {
     const textarea = bodyTextareaRef.current;
     if (textarea) {
       const replaceStart = wikilinkTriggerStart;
-      const replaceEnd = textarea.selectionStart ?? 0;
+      // WR-03: replace the full selection range. Using selectionStart as the end
+      // drops or duplicates a non-collapsed selection; selectionEnd === selectionStart
+      // when the caret is collapsed, so this is safe in the common case and correct
+      // when text is selected (mirrors handlePickerSelect's embed inserter).
+      const replaceEnd = textarea.selectionEnd ?? textarea.selectionStart ?? 0;
       const currentValue = textarea.value;
       const newValue =
         currentValue.slice(0, replaceStart) + insertText + currentValue.slice(replaceEnd);
@@ -232,6 +242,9 @@ export function EntryEditor() {
       // Move cursor after the inserted wikilink
       const cursor = replaceStart + insertText.length;
       setTimeout(() => {
+        // WR-06: bail if the textarea was unmounted/replaced before the timer
+        // fired — avoids touching/focusing a detached node after navigation.
+        if (bodyTextareaRef.current !== textarea) return;
         textarea.selectionStart = cursor;
         textarea.selectionEnd = cursor;
         textarea.focus();
@@ -240,6 +253,7 @@ export function EntryEditor() {
     setWikilinkPickerOpen(false);
     setWikilinkActiveIndex(0);
     setWikilinkQuery('');
+    setWikilinkActiveInsert(null);
   };
 
   // Phase 47 XREF-01 — keyboard handler for the body textarea when picker is open.
@@ -253,19 +267,23 @@ export function EntryEditor() {
       setWikilinkActiveIndex((i) => Math.max(i - 1, 0));
     } else if (e.key === 'Enter') {
       e.preventDefault();
-      // Re-compute the same ranked results the component shows (same O(n) client-side
-      // filter, same rankEntries helper — deterministic, no new fetch, D-10 cache reuse).
-      const results = rankEntries(allEntries, wikilinkQuery, entryId ?? null);
-      const activeEntry = results[wikilinkActiveIndex];
-      if (activeEntry) {
-        handleWikilinkInsert(buildInsertString(activeEntry, wikilinkQuery));
+      // CR-01: insert exactly what the picker highlights. wikilinkActiveInsert is
+      // reported up by WikilinkAutocomplete from its own result list, so it can
+      // never desync from the rendered rows the way a parent-side re-rank could
+      // (which silently inserted nothing while a populated list was on screen).
+      if (wikilinkActiveInsert) {
+        handleWikilinkInsert(wikilinkActiveInsert);
       }
     } else if (e.key === 'Escape') {
       e.preventDefault();
       setWikilinkPickerOpen(false);
       setWikilinkActiveIndex(0);
     } else if (e.key === ' ') {
-      // Space closes the picker (D-12) — but does NOT prevent the space from being typed
+      // Space closes the picker (D-12) — but does NOT prevent the space from being
+      // typed. WR-01: once the query holds a pipe, the user is authoring `|display`
+      // text (D-05), which commonly contains spaces (`[[Empire|the big one]]`); keep
+      // the picker open so Enter can still commit the link.
+      if (wikilinkQuery.includes('|')) return;
       setWikilinkPickerOpen(false);
       setWikilinkActiveIndex(0);
     }
@@ -278,14 +296,10 @@ export function EntryEditor() {
     const caret = e.target.selectionStart ?? 0;
     const triggerIdx = detectWikilinkTrigger(value, caret);
     if (triggerIdx !== null) {
-      // Extract the query text between `[[` and the caret
+      // Extract the query text between `[[` and the caret. IN-02: detectWikilinkTrigger
+      // already returns null when a `]` sits between `[[` and the caret, so the query
+      // here can never contain `]` — no redundant `]]`-close check is needed.
       const query = value.slice(triggerIdx + 2, caret);
-      // Close on `]]` completing the token (D-12)
-      if (query.includes(']')) {
-        setWikilinkPickerOpen(false);
-        setWikilinkActiveIndex(0);
-        return;
-      }
       setWikilinkTriggerStart(triggerIdx);
       setWikilinkQuery(query);
       setWikilinkPickerOpen(true);
@@ -475,6 +489,7 @@ export function EntryEditor() {
                 activeIndex={wikilinkActiveIndex}
                 onActiveIndexChange={setWikilinkActiveIndex}
                 onResultCountChange={setWikilinkResultCount}
+                onActiveInsertChange={setWikilinkActiveInsert}
                 onSelect={handleWikilinkInsert}
                 onDismiss={() => {
                   setWikilinkPickerOpen(false);

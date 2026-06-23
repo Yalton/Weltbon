@@ -8,9 +8,12 @@
  * same result list deterministically.
  */
 
-import { useRef, useState, useEffect } from 'react';
+import { useState, useEffect, useMemo } from 'react';
 import * as Popover from '@radix-ui/react-popover';
 import { useEntries, type Entry } from '../hooks/useEntries';
+
+/** D-08: maximum number of result rows the picker surfaces. */
+const MAX_RESULTS = 8;
 
 // ---------------------------------------------------------------------------
 // Props interface — stable contract for Plan 47-02
@@ -27,6 +30,13 @@ export interface WikilinkAutocompleteProps {
   onResultCountChange: (count: number) => void;
   onSelect: (insertText: string) => void;
   onDismiss: () => void;
+  /**
+   * CR-01: report the canonical insert string for the currently-active row so the
+   * parent's Enter handler inserts exactly what is highlighted — null when there
+   * is no active result. The component owns the result list, so this is the only
+   * desync-free source for keyboard selection.
+   */
+  onActiveInsertChange: (insertText: string | null) => void;
 }
 
 // ---------------------------------------------------------------------------
@@ -61,7 +71,7 @@ export function rankEntries(
     return (entries ?? [])
       .filter(exclude)
       .sort((a, b) => b.updatedAt.localeCompare(a.updatedAt))
-      .slice(0, 8);
+      .slice(0, MAX_RESULTS);
   }
 
   const titlePrefix: Entry[] = [];
@@ -90,7 +100,7 @@ export function rankEntries(
     }
   }
 
-  return [...titlePrefix, ...aliasPrefix, ...titleSub, ...aliasSub].slice(0, 8);
+  return [...titlePrefix, ...aliasPrefix, ...titleSub, ...aliasSub].slice(0, MAX_RESULTS);
 }
 
 /**
@@ -220,17 +230,18 @@ function getCaretCoordinates(
   span.textContent = '​'; // zero-width space
   div.appendChild(span);
 
-  // Append to body to measure, then clean up
+  // Append to body to measure, then clean up. WR-04: removeChild runs in a
+  // `finally` so a throw mid-measure (e.g. detached-node offset read in an edge
+  // jsdom/SSR path) never leaks the mirror div onto document.body.
   document.body.appendChild(div);
-
-  const coords: CaretCoords = {
-    top: span.offsetTop + textarea.offsetTop - textarea.scrollTop,
-    left: span.offsetLeft + textarea.offsetLeft,
-  };
-
-  document.body.removeChild(div);
-
-  return coords;
+  try {
+    return {
+      top: span.offsetTop + textarea.offsetTop - textarea.scrollTop,
+      left: span.offsetLeft + textarea.offsetLeft,
+    };
+  } finally {
+    document.body.removeChild(div);
+  }
 }
 
 // ---------------------------------------------------------------------------
@@ -248,9 +259,15 @@ export function WikilinkAutocomplete({
   onResultCountChange,
   onSelect,
   onDismiss,
+  onActiveInsertChange,
 }: WikilinkAutocompleteProps) {
   const { data: entries = [] } = useEntries(universeId);
-  const results = rankEntries(entries, query, currentEntryId);
+  // WR-05: memoize so the result identity is stable across the parent re-renders
+  // that the report-up effects trigger — prevents effect thrash / churn.
+  const results = useMemo(
+    () => rankEntries(entries, query, currentEntryId),
+    [entries, query, currentEntryId],
+  );
 
   // Caret coordinates state — updated whenever triggerStart or query changes
   const [caretCoords, setCaretCoords] = useState<CaretCoords>({ top: 0, left: 0 });
@@ -266,6 +283,16 @@ export function WikilinkAutocomplete({
   useEffect(() => {
     onResultCountChange(results.length);
   }, [results.length, onResultCountChange]);
+
+  // CR-01: the component owns the authoritative result list, so it (not the
+  // parent) resolves which entry the active row maps to. Report the active row's
+  // canonical insert string up so the parent's Enter handler inserts exactly what
+  // is highlighted — never a stale re-rank from a second useEntries subscription
+  // that may be mid-fetch (empty list → silent no-op, or desync → wrong entry).
+  useEffect(() => {
+    const active = results[activeIndex];
+    onActiveInsertChange(active ? buildInsertString(active, query) : null);
+  }, [results, activeIndex, query, onActiveInsertChange]);
 
   return (
     <Popover.Root open>
