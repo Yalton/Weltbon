@@ -5,6 +5,7 @@ import { db } from '../db/client.js';
 import { entries, links, categories, issues, issueEntries, entryTemplates } from '../db/schema.js';
 import { requireUniverse } from '../utils/ownership.js';
 import { signAssetUrl } from '../services/asset-signing.js';
+import { rewriteWikilinks } from '../services/rewrite-wikilinks.js';
 import type { AuthVariables } from '../middleware/auth.js';
 
 type AppEnv = { Variables: AuthVariables };
@@ -360,6 +361,11 @@ const patchRoute = createRoute({
   security: [{ bearerAuth: [] }],
   request: {
     params: uidAndIdParams,
+    query: z.object({
+      // Phase 48 XREF-05 (D-08): dry-run flag. When ?preview=true, returns
+      // { affectedLinks, affectedEntries } WITHOUT writing any change.
+      preview: z.string().optional(),
+    }),
     body: {
       content: {
         'application/json': {
@@ -673,6 +679,9 @@ export const entryRoutes = new OpenAPIHono<AppEnv>()
     const universe = await requireUniverse(uid, userId);
     const patch = c.req.valid('json');
 
+    // Phase 48 XREF-05 (D-08): ?preview=true returns affected-link counts WITHOUT writing.
+    const preview = c.req.query('preview') === 'true';
+
     if (patch.entryType && !universe.entryTypes.includes(patch.entryType)) {
       return c.json({ error: 'Invalid entry type' }, 400);
     }
@@ -701,20 +710,113 @@ export const entryRoutes = new OpenAPIHono<AppEnv>()
       patch.aliases = normalizedAliases;
     }
 
-    const [updated] = await db()
-      .update(entries)
-      .set({ ...patch, updatedAt: new Date() })
-      .where(and(eq(entries.id, entryId), eq(entries.universeId, uid)))
-      .returning();
+    // Phase 48 XREF-05 (D-06): Detect propagation trigger.
+    // Fetch the CURRENT entry row to diff old vs new title+aliases.
+    const [currentEntry] = await db()
+      .select({ title: entries.title, aliases: entries.aliases })
+      .from(entries)
+      .where(and(eq(entries.id, entryId), eq(entries.universeId, uid)));
 
-    if (!updated) {
+    if (!currentEntry) {
       throw new HTTPException(404, { message: 'Entry not found' });
     }
 
-    // Phase 45 XREF-04 (D-06): include aliasWarnings if any alias matches an existing title.
+    // Compute staleNames = lowercased (oldTitle ∪ oldAliases) MINUS lowercased (newTitle ∪ newAliases).
+    // D-05: surviving names excluded; D-06: alias add-only contributes nothing (no stale names).
+    const oldTitle = currentEntry.title;
+    const oldAliases = currentEntry.aliases ?? [];
+    const newTitle = patch.title ?? oldTitle;
+    const newAliases = patch.aliases ?? oldAliases;
+
+    const oldNamesLower = new Set<string>([
+      oldTitle.toLowerCase(),
+      ...oldAliases.map((a) => a.toLowerCase()),
+    ]);
+    const newNamesLower = new Set<string>([
+      newTitle.toLowerCase(),
+      ...newAliases.map((a) => a.toLowerCase()),
+    ]);
+
+    const staleNames = new Set<string>();
+    for (const name of oldNamesLower) {
+      if (!newNamesLower.has(name)) {
+        staleNames.add(name);
+      }
+    }
+
+    // D-06: if no stale names, skip propagation and use the simple update path.
+    if (staleNames.size === 0) {
+      const [updated] = await db()
+        .update(entries)
+        .set({ ...patch, updatedAt: new Date() })
+        .where(and(eq(entries.id, entryId), eq(entries.universeId, uid)))
+        .returning();
+
+      if (!updated) {
+        throw new HTTPException(404, { message: 'Entry not found' });
+      }
+
+      // Phase 45 XREF-04 (D-06): include aliasWarnings if any alias matches an existing title.
+      const response = patchAliasWarnings.length > 0
+        ? { ...updated, aliasWarnings: patchAliasWarnings, rewriteCount: 0 }
+        : { ...updated, rewriteCount: 0 };
+      return c.json(response as any, 200);
+    }
+
+    // Phase 48 XREF-05: staleNames is non-empty — propagation needed.
+    // Fetch all sibling bodies (universe-scoped, excludes self — T-48-04).
+    const siblings = await db()
+      .select({ id: entries.id, body: entries.body })
+      .from(entries)
+      .where(and(eq(entries.universeId, uid), ne(entries.id, entryId)));
+
+    // D-08: preview mode — compute counts WITHOUT writing.
+    if (preview) {
+      let affectedLinks = 0;
+      let affectedEntries = 0;
+      for (const sibling of siblings) {
+        const { count } = rewriteWikilinks(sibling.body, staleNames, newTitle);
+        if (count > 0) {
+          affectedLinks += count;
+          affectedEntries++;
+        }
+      }
+      return c.json({ affectedLinks, affectedEntries } as any, 200);
+    }
+
+    // Commit mode: wrap entry update + all sibling rewrites in a single transaction (SC2, T-48-05).
+    const { updated, rewriteCount } = await db().transaction(async (tx) => {
+      // 1. Update the entry itself.
+      const [updatedEntry] = await tx
+        .update(entries)
+        .set({ ...patch, updatedAt: new Date() })
+        .where(and(eq(entries.id, entryId), eq(entries.universeId, uid)))
+        .returning();
+
+      if (!updatedEntry) {
+        throw new HTTPException(404, { message: 'Entry not found' });
+      }
+
+      // 2. Rewrite sibling bodies (universe-scoped, self excluded — T-48-04).
+      let totalRewrites = 0;
+      for (const sibling of siblings) {
+        const { body: newBody, count } = rewriteWikilinks(sibling.body, staleNames, newTitle);
+        if (count > 0) {
+          await tx
+            .update(entries)
+            .set({ body: newBody, updatedAt: new Date() })
+            .where(eq(entries.id, sibling.id));
+          totalRewrites += count;
+        }
+      }
+
+      return { updated: updatedEntry, rewriteCount: totalRewrites };
+    });
+
+    // D-10: include rewriteCount + aliasWarnings in response.
     const response = patchAliasWarnings.length > 0
-      ? { ...updated, aliasWarnings: patchAliasWarnings }
-      : updated;
+      ? { ...updated, aliasWarnings: patchAliasWarnings, rewriteCount }
+      : { ...updated, rewriteCount };
     return c.json(response as any, 200);
   })
 
