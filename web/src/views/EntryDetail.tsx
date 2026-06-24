@@ -13,6 +13,7 @@ import { ConfirmDialog } from '../components/ConfirmDialog';
 import { LinkSection } from '../components/LinkSection';
 import { IssueSection } from '../components/IssueSection';
 import { TimelinePinSection } from '../components/TimelinePinSection';
+import { UnlinkedMentionsPanel } from '../components/UnlinkedMentionsPanel';
 import { useShareMode, useShareCalendar } from '../contexts/ShareModeContext';
 
 export function EntryDetail() {
@@ -397,6 +398,14 @@ export function EntryDetail() {
             onChanged={() => refetch()}
           />
           <TimelinePinSection universeId={uid!} entryId={entryId!} />
+          {/* Phase 48 XREF-06 (D-11/D-12): unlinked mentions panel — authoring-only.
+              Scans the cached useEntries corpus; no new query key. */}
+          <UnlinkedMentionsPanel
+            universeId={uid!}
+            entry={entry}
+            allEntries={allEntries ?? []}
+            onLinked={() => refetch()}
+          />
         </>
       )}
 
