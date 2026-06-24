@@ -18,6 +18,25 @@ export interface EntryPatchResponse extends Entry {
 }
 
 /**
+ * Phase 48 XREF-06 — standalone fetcher for a single EntryDetail (with body).
+ *
+ * Calls the same GET /universes/:uid/entries/:id path that `useEntry`'s queryFn
+ * uses, so its result lands on (or is read from) the existing
+ * `['entry', universeId, entryId]` cache key when consumed via
+ * `queryClient.fetchQuery`. Deliberately NOT a hook, NOT a `useMutation`, so it
+ * never triggers cache invalidation on its own.
+ *
+ * Used by UnlinkedMentionsPanel to source sibling `body` from the detail
+ * endpoint (which projects it) rather than the list cache (which does not).
+ */
+export async function fetchEntryDetail(
+  universeId: string,
+  entryId: string,
+): Promise<EntryDetail> {
+  return api<EntryDetail>(`/universes/${universeId}/entries/${entryId}`);
+}
+
+/**
  * Phase 48 XREF-05 — write-free preview of how many links a save would rewrite.
  *
  * Calls PATCH with `?preview=true`, which returns `{ affectedLinks, affectedEntries }`
