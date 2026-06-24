@@ -2,6 +2,39 @@ import { useMutation, useQuery, useQueryClient } from '@tanstack/react-query';
 import { api } from '../api/client';
 import type { Severity } from './useIssues';
 
+/**
+ * Phase 48 XREF-05 — response shape for the rename-propagation PATCH.
+ *
+ * Extends `Entry` with fields returned by the server's propagation code path:
+ * - `rewriteCount`: how many wikilinks were rewritten across the universe body text.
+ *   Present (even as 0) when the stale-names path was taken; omitted on the fast path.
+ * - `affectedLinks` / `affectedEntries`: returned by the `?preview=true` dry-run only;
+ *   both absent in the commit response.
+ */
+export interface EntryPatchResponse extends Entry {
+  rewriteCount?: number;
+  affectedLinks?: number;
+  affectedEntries?: number;
+}
+
+/**
+ * Phase 48 XREF-05 — write-free preview of how many links a save would rewrite.
+ *
+ * Calls PATCH with `?preview=true`, which returns `{ affectedLinks, affectedEntries }`
+ * and writes NOTHING. Deliberately NOT a useMutation so it never triggers cache
+ * invalidation (memory: react-query-key-change-blast-radius).
+ */
+export async function previewEntryUpdate(
+  universeId: string,
+  entryId: string,
+  body: UpdateEntryInput,
+): Promise<Pick<EntryPatchResponse, 'affectedLinks' | 'affectedEntries'>> {
+  return api<Pick<EntryPatchResponse, 'affectedLinks' | 'affectedEntries'>>(
+    `/universes/${universeId}/entries/${entryId}?preview=true`,
+    { method: 'PATCH', body: JSON.stringify(body) },
+  );
+}
+
 export interface Entry {
   id: string;
   universeId: string;
@@ -150,7 +183,7 @@ export function useUpdateEntry(universeId: string, entryId: string) {
   const qc = useQueryClient();
   return useMutation({
     mutationFn: (body: UpdateEntryInput) =>
-      api<Entry>(`/universes/${universeId}/entries/${entryId}`, {
+      api<EntryPatchResponse>(`/universes/${universeId}/entries/${entryId}`, {
         method: 'PATCH',
         body: JSON.stringify(body),
       }),
