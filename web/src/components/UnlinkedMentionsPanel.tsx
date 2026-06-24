@@ -1,6 +1,7 @@
-import { useMemo, useState } from 'react';
+import { useEffect, useMemo, useState } from 'react';
+import { useQueryClient } from '@tanstack/react-query';
 import type { Entry } from '../hooks/useEntries';
-import { useUpdateEntry } from '../hooks/useEntries';
+import { fetchEntryDetail, useUpdateEntry } from '../hooks/useEntries';
 import { isInsideCodeSpan } from './WikilinkAutocomplete';
 
 // Reuse WikilinkText's WIKILINK_RE pattern to locate existing [[ ]] spans so
@@ -25,16 +26,21 @@ interface Props {
   universeId: string;
   /** The entry being viewed — its title + aliases are the scan targets. */
   entry: Entry;
-  /** Full corpus: all universe entries with their bodies (from useEntries cache). */
+  /** Full corpus: all universe entries from useEntries cache (list rows — body is NOT projected). */
   allEntries: Entry[];
   /** Called after a successful linkify so EntryDetail can refetch. */
   onLinked?: () => void;
 }
 
 /**
- * Scan the cached entry corpus for prose that mentions `entry` (by title or
- * alias) without a [[ ]] link, and let the author linkify a single occurrence
- * with one click (XREF-06, D-11..D-15).
+ * Scan sibling entry bodies (fetched from the detail endpoint) for prose that
+ * mentions `entry` (by title or alias) without a [[ ]] link, and let the
+ * author linkify a single occurrence with one click (XREF-06, D-11..D-15).
+ *
+ * Body sourcing: the useEntries LIST cache never projects `body` (locked by
+ * api/tests/entries.test.ts ENT-03). This panel fetches each sibling's body
+ * from the detail endpoint (GET /universes/:uid/entries/:id) via
+ * queryClient.fetchQuery on the existing ['entry', universeId, entryId] key.
  *
  * Whole-word (D-13): uses \b-bounded regex, so "Sun" does NOT fire on "Sunday".
  * Case-insensitive (D-13): "empire" matches entry title "Empire".
@@ -44,12 +50,52 @@ interface Props {
  * Linkify form (D-14): bare [[Title]] when text matches title exactly, else
  *   [[Title|matchedText]] so the sentence still reads as written.
  * Single-occurrence linkify (D-15): only the selected occurrence is rewritten.
+ * Splice guard: if body.slice(matchIndex, matchIndex+matchLength) !== matchedText
+ *   (stale index after a concurrent edit), the click aborts rather than corrupting.
  *
- * Does NOT introduce any new query key — corpus is the passed allEntries prop
- * (memory: react-query-key-change-blast-radius).
+ * Does NOT introduce any new shared query key — reuses the existing
+ * ['entry', universeId, entryId] key (memory: react-query-key-change-blast-radius).
+ * isInsideCodeSpan backtick-count hardening deferred (WARNING — out of scope for
+ * this data-integrity gap; remark-parse parity is a separate concern).
  */
 export function UnlinkedMentionsPanel({ universeId, entry, allEntries, onLinked }: Props) {
   const [pendingId, setPendingId] = useState<string | null>(null);
+  const queryClient = useQueryClient();
+
+  // Map from sibling entry id → fetched body string.
+  // Populated by the effect below; keyed so re-fetching one entry is cheap.
+  const [siblingBodies, setSiblingBodies] = useState<Record<string, string>>({});
+
+  // Fetch detail bodies for all non-self siblings whenever allEntries changes.
+  // Uses the existing ['entry', universeId, entryId] cache key so the fetch
+  // hits the cache if the entry was already loaded (e.g. user just visited it).
+  useEffect(() => {
+    let cancelled = false;
+    const siblings = allEntries.filter((e) => e.id !== entry.id);
+
+    void (async () => {
+      const pairs = await Promise.all(
+        siblings.map(async (sibling) => {
+          try {
+            const detail = await queryClient.fetchQuery({
+              queryKey: ['entry', universeId, sibling.id],
+              queryFn: () => fetchEntryDetail(universeId, sibling.id),
+            });
+            return [sibling.id, detail.body ?? ''] as const;
+          } catch {
+            return [sibling.id, ''] as const;
+          }
+        }),
+      );
+      if (!cancelled) {
+        setSiblingBodies(Object.fromEntries(pairs));
+      }
+    })();
+
+    return () => {
+      cancelled = true;
+    };
+  }, [allEntries, entry.id, universeId, queryClient]);
 
   // Compute the list of unlinked mentions across all other entries.
   const mentions = useMemo<Mention[]>(() => {
@@ -69,7 +115,8 @@ export function UnlinkedMentionsPanel({ universeId, entry, allEntries, onLinked 
       // Exclude the entry being viewed from its own corpus scan (D-11).
       if (sourceEntry.id === entry.id) continue;
 
-      const body: string = (sourceEntry as { body?: string }).body ?? '';
+      // Source body from the detail-fetched corpus, NOT the list-cache row.
+      const body: string = siblingBodies[sourceEntry.id] ?? '';
       if (!body) continue;
 
       // Build protected ranges: character spans already inside [[ ]] links.
@@ -114,41 +161,7 @@ export function UnlinkedMentionsPanel({ universeId, entry, allEntries, onLinked 
     }
 
     return result;
-  }, [allEntries, entry]);
-
-  // Per-mention linkify handler (D-15 single occurrence, D-14 bare vs piped form).
-  const handleLinkify = (mention: Mention) => {
-    const sourceEntry = allEntries.find((e) => e.id === mention.sourceEntryId);
-    if (!sourceEntry) return;
-
-    const body: string = (sourceEntry as { body?: string }).body ?? '';
-
-    // D-14: bare [[Title]] when matched text equals canonical title exactly;
-    // otherwise [[Title|matchedText]] to preserve how the prose reads.
-    const canonical = entry.title;
-    const replacement =
-      mention.matchedText === canonical
-        ? `[[${canonical}]]`
-        : `[[${canonical}|${mention.matchedText}]]`;
-
-    // D-15: splice only this single occurrence at [matchIndex, matchIndex+matchLength).
-    const newBody =
-      body.slice(0, mention.matchIndex) +
-      replacement +
-      body.slice(mention.matchIndex + mention.matchLength);
-
-    setPendingId(`${mention.sourceEntryId}:${mention.matchIndex}`);
-
-    // Note: useUpdateEntry is called per-mention; instantiated here via a
-    // closure. Because React hooks can't be called conditionally we initialise
-    // the mutation inline and trigger it immediately.
-    // eslint-disable-next-line react-hooks/rules-of-hooks -- not conditional; the
-    // closure only captures the hook result from the component scope.
-    // The mutation is triggered directly; the hook instance below is created in
-    // render time (satisfies Rules of Hooks) and we just call .mutate here.
-    // See LinkifyButton sub-component below — this is where the per-mention
-    // mutation is actually wired so hooks are never called inside a callback.
-  };
+  }, [allEntries, entry, siblingBodies]);
 
   return (
     <div className="mt-6 pt-6 border-t border-neutral-200 dark:border-neutral-800">
@@ -177,7 +190,6 @@ export function UnlinkedMentionsPanel({ universeId, entry, allEntries, onLinked 
                 <LinkifyButton
                   universeId={universeId}
                   mention={m}
-                  allEntries={allEntries}
                   canonicalTitle={entry.title}
                   isPending={pendingId === mentionKey}
                   onPending={() => setPendingId(mentionKey)}
@@ -199,11 +211,13 @@ export function UnlinkedMentionsPanel({ universeId, entry, allEntries, onLinked 
  * Sub-component that owns one useUpdateEntry hook instance per mention row.
  * This satisfies the Rules of Hooks (hook called unconditionally in render,
  * not inside an event handler).
+ *
+ * Body for the splice is fetched fresh from the detail endpoint on click so
+ * the PATCH always uses authoritative, non-stale content.
  */
 function LinkifyButton({
   universeId,
   mention,
-  allEntries,
   canonicalTitle,
   isPending,
   onPending,
@@ -211,19 +225,39 @@ function LinkifyButton({
 }: {
   universeId: string;
   mention: Mention;
-  allEntries: Entry[];
   canonicalTitle: string;
   isPending: boolean;
   onPending: () => void;
   onLinked: () => void;
 }) {
   const updateEntry = useUpdateEntry(universeId, mention.sourceEntryId);
+  const queryClient = useQueryClient();
 
-  const handleClick = () => {
-    const sourceEntry = allEntries.find((e) => e.id === mention.sourceEntryId);
-    if (!sourceEntry) return;
+  const handleClick = async () => {
+    // Fetch the authoritative body from the detail endpoint (NOT the list cache).
+    // Reuses the existing ['entry', universeId, entryId] cache key — no new key.
+    let detail;
+    try {
+      detail = await queryClient.fetchQuery({
+        queryKey: ['entry', universeId, mention.sourceEntryId],
+        queryFn: () => fetchEntryDetail(universeId, mention.sourceEntryId),
+      });
+    } catch {
+      // Network/auth failure — abort without mutating.
+      onLinked();
+      return;
+    }
 
-    const body: string = (sourceEntry as { body?: string }).body ?? '';
+    const body = detail.body ?? '';
+
+    // Splice guard (T-48-05-03): if the body changed under the scanned index
+    // (concurrent edit), the slice will not equal matchedText — abort rather
+    // than splicing at the wrong position and corrupting unrelated prose.
+    if (body.slice(mention.matchIndex, mention.matchIndex + mention.matchLength) !== mention.matchedText) {
+      // Stale index — call onLinked so the panel refreshes instead of corrupting.
+      onLinked();
+      return;
+    }
 
     // D-14: bare [[Title]] when matched text equals canonical title exactly.
     const replacement =
@@ -244,7 +278,7 @@ function LinkifyButton({
   return (
     <button
       type="button"
-      onClick={handleClick}
+      onClick={() => { void handleClick(); }}
       disabled={isPending || updateEntry.isPending}
       className="shrink-0 rounded-md border border-neutral-300 dark:border-neutral-700 text-sm px-3 py-1.5 hover:bg-neutral-50 dark:hover:bg-neutral-800 disabled:opacity-50"
     >
