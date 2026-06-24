@@ -540,4 +540,51 @@ describe('UnlinkedMentionsPanel', () => {
       expect(callBody.body).toContain('ashes of the old wars');
     });
   });
+
+  // ── Stale-index guard (T-48-05-03 / LO-01) ────────────────────────────────
+
+  it('aborts the linkify (no PATCH) when the body shifted under the scanned index', async () => {
+    // The panel scans body A and records matchIndex against it. If the entry is
+    // edited between scan and click, the click-time detail fetch returns body B
+    // where body.slice(matchIndex, matchIndex+matchLength) !== matchedText.
+    // The splice guard MUST abort rather than corrupt unrelated prose.
+    const scannedBody = 'The Empire rose.';      // "Empire" at index 4
+    const shiftedBody = 'XXThe Empire rose.';     // prepended chars shift the match
+
+    const target = mkListRow({ title: 'Empire', id: 'E1' });
+    const source = mkSourceRow('E2');
+    const onLinked = vi.fn();
+
+    let e2GetCount = 0;
+    // eslint-disable-next-line @typescript-eslint/no-explicit-any
+    (api as any).mockImplementation((path: string, opts?: RequestInit) => {
+      if (opts?.method === 'PATCH') return Promise.resolve({});
+      const m = typeof path === 'string' ? path.match(/\/entries\/([^/?]+)(?:\?|$)/) : null;
+      const id = m?.[1];
+      if (id === 'E2') {
+        e2GetCount += 1;
+        // First GET (scan) → scannedBody; the click-time GET → shiftedBody.
+        return Promise.resolve(
+          mkSourceDetail('E2', e2GetCount === 1 ? scannedBody : shiftedBody),
+        );
+      }
+      return Promise.resolve(mkDetail({ id: 'E1', title: 'Empire', body: '' }));
+    });
+
+    renderPanel(target, [target, source], onLinked);
+
+    // The mention surfaces from the scanned body.
+    await userEvent.click(await screen.findByRole('button', { name: /link/i }));
+
+    // Guard-abort path calls onLinked (so the panel refreshes) and returns.
+    await waitFor(() => {
+      expect(onLinked).toHaveBeenCalled();
+    });
+
+    // The critical assertion: NO PATCH was issued — the stale body was not spliced.
+    const patchCall = vi.mocked(api).mock.calls.find(
+      ([, opts]) => opts?.method === 'PATCH',
+    );
+    expect(patchCall).toBeUndefined();
+  });
 });

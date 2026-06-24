@@ -193,6 +193,7 @@ export function UnlinkedMentionsPanel({ universeId, entry, allEntries, onLinked 
                   canonicalTitle={entry.title}
                   isPending={pendingId === mentionKey}
                   onPending={() => setPendingId(mentionKey)}
+                  onReset={() => setPendingId(null)}
                   onLinked={() => {
                     setPendingId(null);
                     onLinked?.();
@@ -221,6 +222,7 @@ function LinkifyButton({
   canonicalTitle,
   isPending,
   onPending,
+  onReset,
   onLinked,
 }: {
   universeId: string;
@@ -228,12 +230,20 @@ function LinkifyButton({
   canonicalTitle: string;
   isPending: boolean;
   onPending: () => void;
+  onReset: () => void;
   onLinked: () => void;
 }) {
   const updateEntry = useUpdateEntry(universeId, mention.sourceEntryId);
   const queryClient = useQueryClient();
+  const [error, setError] = useState<string | null>(null);
 
   const handleClick = async () => {
+    // HI-01: claim the pending slot BEFORE any await so a double-click within
+    // the fetch window cannot launch a second concurrent handleClick (the
+    // button disables on the first synchronous render after onPending()).
+    onPending();
+    setError(null);
+
     // Fetch the authoritative body from the detail endpoint (NOT the list cache).
     // Reuses the existing ['entry', universeId, entryId] cache key — no new key.
     let detail;
@@ -243,8 +253,11 @@ function LinkifyButton({
         queryFn: () => fetchEntryDetail(universeId, mention.sourceEntryId),
       });
     } catch {
-      // Network/auth failure — abort without mutating.
-      onLinked();
+      // ME-01: network/auth failure — surface real feedback and release the
+      // pending slot. Do NOT call onLinked() here: that is the success path and
+      // would trigger a misleading refetch with no error shown to the user.
+      setError('Could not load the entry — try again.');
+      onReset();
       return;
     }
 
@@ -271,18 +284,36 @@ function LinkifyButton({
       replacement +
       body.slice(mention.matchIndex + mention.matchLength);
 
-    onPending();
-    updateEntry.mutate({ body: newBody }, { onSuccess: () => onLinked() });
+    // Pending slot already claimed at the top of handleClick (HI-01).
+    updateEntry.mutate(
+      { body: newBody },
+      {
+        onSuccess: () => onLinked(),
+        // Without onError the failed PATCH leaves pendingId set, stranding the
+        // row permanently disabled. Release it and surface feedback instead.
+        onError: () => {
+          setError('Could not save the link — try again.');
+          onReset();
+        },
+      },
+    );
   };
 
   return (
-    <button
-      type="button"
-      onClick={() => { void handleClick(); }}
-      disabled={isPending || updateEntry.isPending}
-      className="shrink-0 rounded-md border border-neutral-300 dark:border-neutral-700 text-sm px-3 py-1.5 hover:bg-neutral-50 dark:hover:bg-neutral-800 disabled:opacity-50"
-    >
-      {isPending || updateEntry.isPending ? 'Linking…' : 'Link'}
-    </button>
+    <div className="flex shrink-0 flex-col items-end gap-1">
+      <button
+        type="button"
+        onClick={() => { void handleClick(); }}
+        disabled={isPending || updateEntry.isPending}
+        className="rounded-md border border-neutral-300 dark:border-neutral-700 text-sm px-3 py-1.5 hover:bg-neutral-50 dark:hover:bg-neutral-800 disabled:opacity-50"
+      >
+        {isPending || updateEntry.isPending ? 'Linking…' : 'Link'}
+      </button>
+      {error && (
+        <span role="alert" className="text-xs text-red-500">
+          {error}
+        </span>
+      )}
+    </div>
   );
 }
