@@ -652,3 +652,230 @@ describe('EntryEditor wikilink autocomplete (Phase 47 XREF-01)', () => {
     });
   });
 });
+
+// ---------------------------------------------------------------------------
+// Phase 48 XREF-05 — Two-phase rename-propagation save (D-08/D-09/D-10)
+// ---------------------------------------------------------------------------
+
+// Entry that has an existing title so title-change diffing works.
+const RENAME_ENTRY = makeTestEntry('RENAME-ID', 'Empire', ['The Imperium'], '2026-06-20T00:00:00Z');
+
+/**
+ * Render EntryEditor in edit mode for RENAME_ENTRY.
+ * apiOverrides lets tests inject custom PATCH/preview responses.
+ */
+function renderEditModeForRename({
+  previewResponse,
+  commitResponse,
+}: {
+  previewResponse: { affectedLinks: number; affectedEntries: number };
+  commitResponse: Record<string, unknown>;
+}) {
+  vi.mocked(api).mockImplementation(async (path?: string, init?: RequestInit) => {
+    if (!path) return undefined;
+    if (path === '/universes/U1') return { entryTypes: ['place', 'character'] };
+    if (path.startsWith('/universes/U1/categories')) {
+      return { categories: [], uncategorizedCount: 0 };
+    }
+    if (path === '/universes/U1/entries' && !init?.method) {
+      return [RENAME_ENTRY];
+    }
+    // Single entry load for edit mode
+    if (path === '/universes/U1/entries/RENAME-ID' && !init?.method) {
+      return {
+        ...RENAME_ENTRY,
+        body: '',
+        outboundLinks: [],
+        backlinks: [],
+        issues: [],
+      };
+    }
+    // Preview call: PATCH with ?preview=true
+    if (
+      path.startsWith('/universes/U1/entries/RENAME-ID') &&
+      path.includes('preview=true') &&
+      init?.method === 'PATCH'
+    ) {
+      return previewResponse;
+    }
+    // Commit call: PATCH without ?preview=true
+    if (
+      path === '/universes/U1/entries/RENAME-ID' &&
+      init?.method === 'PATCH'
+    ) {
+      return commitResponse;
+    }
+    return undefined;
+  });
+
+  const qc = new QueryClient({
+    defaultOptions: { queries: { retry: false }, mutations: { retry: false } },
+  });
+
+  return render(
+    <QueryClientProvider client={qc}>
+      <MemoryRouter initialEntries={['/universes/U1/entries/RENAME-ID/edit']}>
+        <Routes>
+          <Route path="/universes/:uid/entries/:entryId/edit" element={<EntryEditor />} />
+          <Route path="/universes/:uid/entries/:entryId" element={<div>Entry detail</div>} />
+        </Routes>
+      </MemoryRouter>
+    </QueryClientProvider>,
+  );
+}
+
+describe('EntryEditor rename-propagation two-phase save (Phase 48 XREF-05)', () => {
+  beforeEach(() => {
+    vi.mocked(api).mockReset();
+    document.body.style.removeProperty('pointer-events');
+    document.body.removeAttribute('data-scroll-locked');
+  });
+
+  it('D-08: rename with preview affectedLinks=3 shows ConfirmDialog with link count before any commit', async () => {
+    renderEditModeForRename({
+      previewResponse: { affectedLinks: 3, affectedEntries: 2 },
+      commitResponse: { ...RENAME_ENTRY, rewriteCount: 3 },
+    });
+
+    // Wait for the editor to load the entry
+    await waitFor(() => {
+      expect(screen.getByRole('button', { name: /save changes/i })).toBeInTheDocument();
+    });
+    await screen.findByDisplayValue('Empire');
+
+    // Change the title to trigger propagation
+    const titleInput = screen.getByLabelText(/title/i);
+    await userEvent.clear(titleInput);
+    await userEvent.type(titleInput, 'Imperium');
+
+    // Submit the form
+    await userEvent.click(screen.getByRole('button', { name: /save changes/i }));
+
+    // ConfirmDialog should appear with the link count
+    await waitFor(() => {
+      expect(screen.getByRole('dialog')).toBeInTheDocument();
+      expect(screen.getByText(/3 link/i)).toBeInTheDocument();
+      expect(screen.getByText(/2 entr/i)).toBeInTheDocument();
+    });
+
+    // The Proceed button with confirmLabel should be visible
+    expect(screen.getByRole('button', { name: /proceed/i })).toBeInTheDocument();
+
+    // Verify NO commit PATCH was made yet (only the preview call)
+    const patchCommitCalls = vi.mocked(api).mock.calls.filter(
+      ([path, init]) =>
+        typeof path === 'string' &&
+        path === '/universes/U1/entries/RENAME-ID' &&
+        (init as RequestInit)?.method === 'PATCH',
+    );
+    expect(patchCommitCalls).toHaveLength(0);
+  });
+
+  it('D-09: clicking Cancel in the ConfirmDialog makes no PATCH commit', async () => {
+    renderEditModeForRename({
+      previewResponse: { affectedLinks: 3, affectedEntries: 2 },
+      commitResponse: { ...RENAME_ENTRY, rewriteCount: 3 },
+    });
+
+    await waitFor(() => {
+      expect(screen.getByRole('button', { name: /save changes/i })).toBeInTheDocument();
+    });
+    await screen.findByDisplayValue('Empire');
+
+    const titleInput = screen.getByLabelText(/title/i);
+    await userEvent.clear(titleInput);
+    await userEvent.type(titleInput, 'Imperium');
+
+    await userEvent.click(screen.getByRole('button', { name: /save changes/i }));
+
+    // Wait for dialog
+    await waitFor(() => {
+      expect(screen.getByRole('dialog')).toBeInTheDocument();
+    });
+
+    // Click Cancel
+    await userEvent.click(screen.getByRole('button', { name: /cancel/i }));
+
+    // Dialog should close
+    await waitFor(() => {
+      expect(screen.queryByRole('dialog')).not.toBeInTheDocument();
+    });
+
+    // Still NO commit PATCH call was made
+    const patchCommitCalls = vi.mocked(api).mock.calls.filter(
+      ([path, init]) =>
+        typeof path === 'string' &&
+        path === '/universes/U1/entries/RENAME-ID' &&
+        (init as RequestInit)?.method === 'PATCH',
+    );
+    expect(patchCommitCalls).toHaveLength(0);
+  });
+
+  it('D-08: rename with preview affectedLinks=0 saves silently with no dialog', async () => {
+    renderEditModeForRename({
+      previewResponse: { affectedLinks: 0, affectedEntries: 0 },
+      commitResponse: { ...RENAME_ENTRY, title: 'Imperium', rewriteCount: 0 },
+    });
+
+    await waitFor(() => {
+      expect(screen.getByRole('button', { name: /save changes/i })).toBeInTheDocument();
+    });
+    await screen.findByDisplayValue('Empire');
+
+    const titleInput = screen.getByLabelText(/title/i);
+    await userEvent.clear(titleInput);
+    await userEvent.type(titleInput, 'Imperium');
+
+    await userEvent.click(screen.getByRole('button', { name: /save changes/i }));
+
+    // No dialog should appear
+    await waitFor(
+      () => {
+        expect(screen.queryByRole('dialog')).not.toBeInTheDocument();
+      },
+      { timeout: 500 },
+    );
+
+    // A commit PATCH (not preview) should have fired
+    await waitFor(() => {
+      const patchCommitCalls = vi.mocked(api).mock.calls.filter(
+        ([path, init]) =>
+          typeof path === 'string' &&
+          path === '/universes/U1/entries/RENAME-ID' &&
+          (init as RequestInit)?.method === 'PATCH',
+      );
+      expect(patchCommitCalls.length).toBeGreaterThan(0);
+    });
+  });
+
+  it('D-10: after Proceed, "N links rewritten" after-summary is shown via toast', async () => {
+    renderEditModeForRename({
+      previewResponse: { affectedLinks: 3, affectedEntries: 2 },
+      commitResponse: { ...RENAME_ENTRY, title: 'Imperium', rewriteCount: 3 },
+    });
+
+    await waitFor(() => {
+      expect(screen.getByRole('button', { name: /save changes/i })).toBeInTheDocument();
+    });
+    await screen.findByDisplayValue('Empire');
+
+    const titleInput = screen.getByLabelText(/title/i);
+    await userEvent.clear(titleInput);
+    await userEvent.type(titleInput, 'Imperium');
+
+    await userEvent.click(screen.getByRole('button', { name: /save changes/i }));
+
+    // Wait for confirm dialog
+    await waitFor(() => {
+      expect(screen.getByRole('dialog')).toBeInTheDocument();
+    });
+
+    // Click Proceed
+    await userEvent.click(screen.getByRole('button', { name: /proceed/i }));
+
+    // After commit, the after-summary "3 links rewritten" should appear (D-10)
+    await waitFor(() => {
+      expect(screen.getByText(/3 links rewritten/i)).toBeInTheDocument();
+    });
+  });
+});
