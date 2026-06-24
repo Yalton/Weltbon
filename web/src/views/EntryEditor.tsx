@@ -4,7 +4,7 @@ import { useForm } from 'react-hook-form';
 import { zodResolver } from '@hookform/resolvers/zod';
 import { z } from 'zod';
 import * as DropdownMenu from '@radix-ui/react-dropdown-menu';
-import { useEntry, useCreateEntry, useUpdateEntry, useEntries } from '../hooks/useEntries';
+import { useEntry, useCreateEntry, useUpdateEntry, useEntries, previewEntryUpdate } from '../hooks/useEntries';
 import { useUniverse } from '../hooks/useUniverse';
 import { TagInput } from '../components/TagInput';
 import { MetaEditor } from '../components/MetaEditor';
@@ -15,6 +15,7 @@ import { Toggle } from '../components/Toggle';
 import { WipPill } from '../components/WipPill';
 import { AssetPickerModal } from '../components/AssetPickerModal';
 import { WikilinkAutocomplete, isInsideCodeSpan } from '../components/WikilinkAutocomplete';
+import { ConfirmDialog } from '../components/ConfirmDialog';
 import { metaArrayToRecord } from '../lib/entryTemplates';
 import type { Entry } from '../hooks/useEntries';
 import type { EntryTemplate } from '../lib/entryTemplates';
@@ -53,6 +54,18 @@ export function EntryEditor() {
   const [metaValid, setMetaValid] = useState(true);
   const [saveAsOpen, setSaveAsOpen] = useState(false);
   const [toast, setToast] = useState<{ message: string; variant: 'success' | 'error' } | null>(null);
+  // Phase 48 XREF-05 (D-08/D-09/D-10) — two-phase save state.
+  // When a rename/alias change would affect N>0 links, the preview count is
+  // stored here and the confirm dialog opens. On Proceed the pending payload
+  // is committed; on Cancel the dialog closes with no write.
+  const [propagateConfirmOpen, setPropagateConfirmOpen] = useState(false);
+  const [propagateAffectedLinks, setPropagateAffectedLinks] = useState(0);
+  const [propagateAffectedEntries, setPropagateAffectedEntries] = useState(0);
+  const [propagatePendingPayload, setPropagatePendingPayload] = useState<Record<string, unknown> | null>(null);
+  // Phase 48 XREF-05 (D-10) — deferred navigation path after a toast is shown.
+  // When rewriteCount > 0, we show the after-summary toast and then navigate
+  // when the user dismisses it (better UX than navigating before the toast is seen).
+  const [pendingNavigationPath, setPendingNavigationPath] = useState<string | null>(null);
   // Phase 29 SHARE-04 / UI-SPEC §B / D-10 — Public toggle state. Default TRUE on
   // new entries (0023 share-public-by-default); seeded from existingEntry.isPublic on edit.
   const [isPublic, setIsPublic] = useState(true);
@@ -155,6 +168,25 @@ export function EntryEditor() {
     return <p className="text-sm text-neutral-500">Loading...</p>;
   }
 
+  // Phase 48 XREF-05 (D-10) — commit the pending payload after confirm.
+  // Called from the ConfirmDialog's onConfirm prop (Proceed button).
+  const handlePropagateConfirm = async () => {
+    if (!propagatePendingPayload) return;
+    const result = await updateEntry.mutateAsync(propagatePendingPayload as Parameters<typeof updateEntry.mutateAsync>[0]);
+    const rewriteCount = result?.rewriteCount;
+    setPropagatePendingPayload(null);
+    setPropagateConfirmOpen(false);
+    const destPath = `/universes/${uid}/entries/${entryId}`;
+    // D-10: show after-summary "N links rewritten" via the existing toast mechanism.
+    // Defer navigation until the user dismisses the toast so they can read it.
+    if (typeof rewriteCount === 'number' && rewriteCount > 0) {
+      setToast({ message: `${rewriteCount} link${rewriteCount === 1 ? '' : 's'} rewritten`, variant: 'success' });
+      setPendingNavigationPath(destPath);
+    } else {
+      navigate(destPath, { replace: true });
+    }
+  };
+
   const onSubmit = handleSubmit(async (values) => {
     // D-16: read templateId from location.state and forward to POST /entries
     // Treated as opaque — no shape parsing/branching
@@ -182,7 +214,44 @@ export function EntryEditor() {
     };
 
     if (isEditMode) {
-      await updateEntry.mutateAsync(payload);
+      // Phase 48 XREF-05 (D-08/D-09) — two-phase save for rename/alias changes.
+      // Determine if the title or aliases changed in a way that could break links
+      // (D-06 trigger set: title rename, alias rename, alias removal).
+      const oldTitle = existingEntry?.title ?? '';
+      const oldAliases = existingEntry?.aliases ?? [];
+      const newTitle = values.title;
+      const newAliases = aliases;
+      const titleChanged = oldTitle !== newTitle;
+      // Propagation triggers when title changes or any old alias is no longer
+      // in the new alias set (D-06: title rename, alias rename, alias removal).
+      // Adding a new alias never triggers (D-06: add-only contributes nothing).
+      const newNamesSet = new Set([newTitle.toLowerCase(), ...newAliases.map((a) => a.toLowerCase())]);
+      const mightPropagate =
+        titleChanged ||
+        oldAliases.some((a) => !newNamesSet.has(a.toLowerCase()));
+
+      if (mightPropagate && uid && entryId) {
+        // Call the write-free preview to get the affected-link count (D-08).
+        const preview = await previewEntryUpdate(uid, entryId, payload);
+        const affected = preview.affectedLinks ?? 0;
+        if (affected > 0) {
+          // Store the pending payload and open the confirm dialog (D-08).
+          setPropagatePendingPayload(payload as unknown as Record<string, unknown>);
+          setPropagateAffectedLinks(affected);
+          setPropagateAffectedEntries(preview.affectedEntries ?? 0);
+          setPropagateConfirmOpen(true);
+          // Return early — the actual commit will happen in handlePropagateConfirm.
+          return;
+        }
+      }
+
+      // Silent path: 0 affected links, or non-propagating change (D-08).
+      const result = await updateEntry.mutateAsync(payload);
+      const rewriteCount = result?.rewriteCount;
+      // D-10: show after-summary even on the silent path if the server propagated.
+      if (typeof rewriteCount === 'number' && rewriteCount > 0) {
+        setToast({ message: `${rewriteCount} link${rewriteCount === 1 ? '' : 's'} rewritten`, variant: 'success' });
+      }
       navigate(`/universes/${uid}/entries/${entryId}`, { replace: true });
     } else {
       const created = await createEntry.mutateAsync(payload);
@@ -726,9 +795,36 @@ export function EntryEditor() {
         <Toast
           message={toast.message}
           variant={toast.variant}
-          onDismiss={() => setToast(null)}
+          onDismiss={() => {
+            setToast(null);
+            // Phase 48 XREF-05 (D-10): navigate after the user sees the rewrite summary.
+            if (pendingNavigationPath) {
+              const dest = pendingNavigationPath;
+              setPendingNavigationPath(null);
+              navigate(dest, { replace: true });
+            }
+          }}
         />
       )}
+
+      {/* Phase 48 XREF-05 (D-08/D-09) — rename-propagation confirm dialog.
+          Only opens in edit mode when the preview returns affectedLinks > 0.
+          Offers ONLY Proceed (rename + propagate) and Cancel (no write at all)
+          per D-09. No "rename without propagating" option. */}
+      <ConfirmDialog
+        open={propagateConfirmOpen}
+        onOpenChange={(open) => {
+          if (!open) {
+            // Cancel: close dialog, discard pending payload — no write (D-09).
+            setPropagateConfirmOpen(false);
+            setPropagatePendingPayload(null);
+          }
+        }}
+        title="Update links?"
+        body={`This will update ${propagateAffectedLinks} link${propagateAffectedLinks === 1 ? '' : 's'} across ${propagateAffectedEntries} entr${propagateAffectedEntries === 1 ? 'y' : 'ies'}.`}
+        confirmLabel="Proceed"
+        onConfirm={handlePropagateConfirm}
+      />
     </div>
   );
 }
