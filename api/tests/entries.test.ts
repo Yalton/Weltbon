@@ -1139,4 +1139,242 @@ describe('entry routes (ENT-01..06)', () => {
       expect(body.error).toBeTruthy();
     });
   });
+
+  // ─── Phase 48 XREF-05: rename-propagation integration tests ───────────────
+
+  describe('PATCH rename-propagation (XREF-05)', () => {
+    // Helper: fetch an entry body directly for post-state assertions
+    async function fetchEntryBody(hdrs: Record<string, string>, uid: string, entryId: string): Promise<string> {
+      const res = await req('GET', `/api/universes/${uid}/entries/${entryId}`, { headers: hdrs });
+      const body = await json(res);
+      return body.body ?? '';
+    }
+
+    // PROP-01: title rename propagates bare links
+    it('PROP-01: title rename rewrites bare [[Empire]] links in sibling bodies (D-02)', async () => {
+      const { hdrs } = await userWithToken('prop-01@test.com');
+      const universe = await createUniverse(hdrs);
+
+      // Create the entry to rename
+      const empireRes = await req('POST', `/api/universes/${universe.id}/entries`, {
+        headers: hdrs,
+        body: { title: 'Empire', entryType: 'faction' },
+      });
+      const empire = await json(empireRes);
+
+      // Create a sibling with a link to Empire
+      const siblingRes = await req('POST', `/api/universes/${universe.id}/entries`, {
+        headers: hdrs,
+        body: { title: 'Lore Entry', entryType: 'concept', body: 'The [[Empire]] rules all.' },
+      });
+      const sibling = await json(siblingRes);
+
+      // PATCH Empire -> Imperium
+      const patchRes = await req('PATCH', `/api/universes/${universe.id}/entries/${empire.id}`, {
+        headers: hdrs,
+        body: { title: 'Imperium' },
+      });
+      expect(patchRes.status).toBe(200);
+      const updated = await json(patchRes);
+      expect(updated.title).toBe('Imperium');
+      expect(updated.rewriteCount).toBe(1);
+
+      // Sibling body must now read [[Imperium]]
+      const newBody = await fetchEntryBody(hdrs, universe.id, sibling.id);
+      expect(newBody).toBe('The [[Imperium]] rules all.');
+    });
+
+    // PROP-02: display text preserved end-to-end (D-03)
+    it('PROP-02: piped display text preserved — [[Empire|the realm]] becomes [[Imperium|the realm]]', async () => {
+      const { hdrs } = await userWithToken('prop-02@test.com');
+      const universe = await createUniverse(hdrs);
+
+      const empireRes = await req('POST', `/api/universes/${universe.id}/entries`, {
+        headers: hdrs,
+        body: { title: 'Empire', entryType: 'faction' },
+      });
+      const empire = await json(empireRes);
+
+      const siblingRes = await req('POST', `/api/universes/${universe.id}/entries`, {
+        headers: hdrs,
+        body: { title: 'History', entryType: 'concept', body: 'Led by [[Empire|the realm]] itself.' },
+      });
+      const sibling = await json(siblingRes);
+
+      const patchRes = await req('PATCH', `/api/universes/${universe.id}/entries/${empire.id}`, {
+        headers: hdrs,
+        body: { title: 'Imperium' },
+      });
+      expect(patchRes.status).toBe(200);
+      const updated = await json(patchRes);
+      expect(updated.rewriteCount).toBe(1);
+
+      // Display text must be byte-identical; only target updates
+      const newBody = await fetchEntryBody(hdrs, universe.id, sibling.id);
+      expect(newBody).toBe('Led by [[Imperium|the realm]] itself.');
+    });
+
+    // PROP-03: alias removal rewrites to canonical title (D-04)
+    it('PROP-03: dropped alias rewrites [[The Imperium]] to [[Empire]] (D-04)', async () => {
+      const { hdrs } = await userWithToken('prop-03@test.com');
+      const universe = await createUniverse(hdrs);
+
+      const empireRes = await req('POST', `/api/universes/${universe.id}/entries`, {
+        headers: hdrs,
+        body: { title: 'Empire', entryType: 'faction', aliases: ['The Imperium'] },
+      });
+      const empire = await json(empireRes);
+
+      const siblingRes = await req('POST', `/api/universes/${universe.id}/entries`, {
+        headers: hdrs,
+        body: { title: 'History', entryType: 'concept', body: 'See [[The Imperium]] for details.' },
+      });
+      const sibling = await json(siblingRes);
+
+      // Remove the alias -- must rewrite links to canonical title
+      const patchRes = await req('PATCH', `/api/universes/${universe.id}/entries/${empire.id}`, {
+        headers: hdrs,
+        body: { aliases: [] },
+      });
+      expect(patchRes.status).toBe(200);
+      const updated = await json(patchRes);
+      expect(updated.rewriteCount).toBe(1);
+
+      const newBody = await fetchEntryBody(hdrs, universe.id, sibling.id);
+      expect(newBody).toBe('See [[Empire]] for details.');
+    });
+
+    // PROP-04: surviving alias leaves link untouched (D-05)
+    it('PROP-04: kept alias -- [[The Imperium]] unchanged when alias survives rename (D-05)', async () => {
+      const { hdrs } = await userWithToken('prop-04@test.com');
+      const universe = await createUniverse(hdrs);
+
+      const empireRes = await req('POST', `/api/universes/${universe.id}/entries`, {
+        headers: hdrs,
+        body: { title: 'Empire', entryType: 'faction', aliases: ['The Imperium'] },
+      });
+      const empire = await json(empireRes);
+
+      const siblingRes = await req('POST', `/api/universes/${universe.id}/entries`, {
+        headers: hdrs,
+        body: { title: 'History', entryType: 'concept', body: 'The [[The Imperium]] stands.' },
+      });
+      const sibling = await json(siblingRes);
+
+      // Rename title but KEEP 'The Imperium' alias -- surviving alias is NOT stale
+      const patchRes = await req('PATCH', `/api/universes/${universe.id}/entries/${empire.id}`, {
+        headers: hdrs,
+        body: { title: 'Imperium', aliases: ['The Imperium'] },
+      });
+      expect(patchRes.status).toBe(200);
+      const updated = await json(patchRes);
+      // rewriteCount must be 0 for that link (surviving alias)
+      expect(updated.rewriteCount).toBe(0);
+
+      const newBody = await fetchEntryBody(hdrs, universe.id, sibling.id);
+      // Body must be byte-identical -- [[The Imperium]] still resolves
+      expect(newBody).toBe('The [[The Imperium]] stands.');
+    });
+
+    // PROP-05: alias add-only triggers no rewrite (D-06)
+    it('PROP-05: alias add-only -- no sibling body changes, rewriteCount 0 (D-06)', async () => {
+      const { hdrs } = await userWithToken('prop-05@test.com');
+      const universe = await createUniverse(hdrs);
+
+      const empireRes = await req('POST', `/api/universes/${universe.id}/entries`, {
+        headers: hdrs,
+        body: { title: 'Empire', entryType: 'faction' },
+      });
+      const empire = await json(empireRes);
+
+      const siblingRes = await req('POST', `/api/universes/${universe.id}/entries`, {
+        headers: hdrs,
+        body: { title: 'Lore', entryType: 'concept', body: 'The [[Empire]] is powerful.' },
+      });
+      const sibling = await json(siblingRes);
+      const bodyBefore = await fetchEntryBody(hdrs, universe.id, sibling.id);
+
+      // Add a brand-new alias -- no existing links point at "New Alias" so nothing to rewrite
+      const patchRes = await req('PATCH', `/api/universes/${universe.id}/entries/${empire.id}`, {
+        headers: hdrs,
+        body: { aliases: ['New Alias'] },
+      });
+      expect(patchRes.status).toBe(200);
+      const updated = await json(patchRes);
+      // rewriteCount must be 0 or absent
+      expect(updated.rewriteCount ?? 0).toBe(0);
+
+      const bodyAfter = await fetchEntryBody(hdrs, universe.id, sibling.id);
+      expect(bodyAfter).toBe(bodyBefore);
+    });
+
+    // PROP-06: preview dry-run returns counts without writing (D-08)
+    it('PROP-06: ?preview=true returns affectedLinks/affectedEntries WITHOUT writing (D-08)', async () => {
+      const { hdrs } = await userWithToken('prop-06@test.com');
+      const universe = await createUniverse(hdrs);
+
+      const empireRes = await req('POST', `/api/universes/${universe.id}/entries`, {
+        headers: hdrs,
+        body: { title: 'Empire', entryType: 'faction' },
+      });
+      const empire = await json(empireRes);
+
+      const siblingRes = await req('POST', `/api/universes/${universe.id}/entries`, {
+        headers: hdrs,
+        body: { title: 'History', entryType: 'concept', body: 'The [[Empire]] was vast. [[Empire]] had power.' },
+      });
+      const sibling = await json(siblingRes);
+
+      // Preview mode -- must NOT write
+      const previewRes = await req('PATCH', `/api/universes/${universe.id}/entries/${empire.id}?preview=true`, {
+        headers: hdrs,
+        body: { title: 'Imperium' },
+      });
+      expect(previewRes.status).toBe(200);
+      const preview = await json(previewRes);
+      expect(preview.affectedLinks).toBe(2);
+      expect(preview.affectedEntries).toBe(1);
+
+      // Sibling body must be byte-identical -- no write occurred
+      const bodyAfterPreview = await fetchEntryBody(hdrs, universe.id, sibling.id);
+      expect(bodyAfterPreview).toBe('The [[Empire]] was vast. [[Empire]] had power.');
+
+      // Entry title must also be unchanged
+      const empireAfterRes = await req('GET', `/api/universes/${universe.id}/entries/${empire.id}`, { headers: hdrs });
+      const empireAfterBody = await json(empireAfterRes);
+      expect(empireAfterBody.title).toBe('Empire');
+    });
+
+    // PROP-07: universe scoping -- cross-universe sibling not modified (T-48-04)
+    it('PROP-07: rename does NOT rewrite [[Empire]] in a different universe (T-48-04)', async () => {
+      const { hdrs } = await userWithToken('prop-07@test.com');
+      const univA = await createUniverse(hdrs, 'UniverseA');
+      const univB = await createUniverse(hdrs, 'UniverseB');
+
+      // Entry in universe A that will be renamed
+      const empireRes = await req('POST', `/api/universes/${univA.id}/entries`, {
+        headers: hdrs,
+        body: { title: 'Empire', entryType: 'faction' },
+      });
+      const empire = await json(empireRes);
+
+      // Sibling in universe B that references [[Empire]] -- must NOT be touched
+      const otherRes = await req('POST', `/api/universes/${univB.id}/entries`, {
+        headers: hdrs,
+        body: { title: 'Cross Ref', entryType: 'concept', body: 'The [[Empire]] from another world.' },
+      });
+      const other = await json(otherRes);
+
+      // Rename Empire -> Imperium in universe A
+      const patchRes = await req('PATCH', `/api/universes/${univA.id}/entries/${empire.id}`, {
+        headers: hdrs,
+        body: { title: 'Imperium' },
+      });
+      expect(patchRes.status).toBe(200);
+
+      // Universe B entry must be untouched
+      const crossBody = await fetchEntryBody(hdrs, univB.id, other.id);
+      expect(crossBody).toBe('The [[Empire]] from another world.');
+    });
+  });
 });
