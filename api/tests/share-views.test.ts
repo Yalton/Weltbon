@@ -109,7 +109,12 @@ async function appRequest(
   return { status: res.status, body: json };
 }
 
-async function seedEntry(opts: { isPublic: boolean; title?: string; entryType?: string }) {
+async function seedEntry(opts: {
+  isPublic: boolean;
+  title?: string;
+  entryType?: string;
+  aliases?: string[];
+}) {
   const [row] = await handle.db
     .insert(entries)
     .values({
@@ -117,6 +122,7 @@ async function seedEntry(opts: { isPublic: boolean; title?: string; entryType?: 
       title: opts.title ?? 'Test Entry',
       entryType: opts.entryType ?? 'note',
       isPublic: opts.isPublic,
+      ...(opts.aliases !== undefined ? { aliases: opts.aliases } : {}),
     })
     .returning();
   return row!;
@@ -517,5 +523,90 @@ describe('XREF-07: private-reference leak invariants (hover-card / embed share p
         `fetched via the detail path (getPublicEntryById full select). ` +
         `EntryEmbed uses this path to render the transcluded content.`,
     ).toBe(true);
+  });
+});
+
+describe('XREF-04/XREF-07: alias projection in share-list (BLOCKER-01 closure)', () => {
+  // ─────────────────────────────────────────────────────────────────────────────
+  // Test A — alias availability: a public entry's aliases appear in the list
+  //
+  // The web entryAliases map (EntryDetail.tsx:86-98) is built from the share
+  // LIST response. getPublicEntries must project `aliases: entries.aliases` so
+  // [[alias]]-form wikilinks and alias-addressed ![[alias]] embeds resolve to
+  // the correct entry in /share/:token.
+  // ─────────────────────────────────────────────────────────────────────────────
+  it('public entry aliases appear in GET /api/share/entries list response (XREF-04, Test A)', async () => {
+    const pub = await seedEntry({
+      isPublic: true,
+      title: 'Bobby Brown',
+      aliases: ['Bob', 'Bobby'],
+    });
+
+    const res = await appRequest('GET', '/api/share/entries', {
+      headers: { 'share-token': activeTokenPlaintext },
+    });
+
+    expect(res.status).toBe(200);
+    expect(Array.isArray(res.body)).toBe(true);
+    // eslint-disable-next-line @typescript-eslint/no-explicit-any
+    const list = res.body as any[];
+
+    const row = list.find((e: { id: string }) => e.id === pub.id);
+    expect(
+      row,
+      `XREF-04 alias-availability: the public entry seeded with aliases ['Bob','Bobby'] ` +
+        `must appear in the GET /api/share/entries list.`,
+    ).toBeDefined();
+    expect(
+      row?.aliases,
+      `XREF-04 alias-availability: the list row's aliases field must be an array — ` +
+        `getPublicEntries SELECT omitted aliases before this fix, returning undefined here.`,
+    ).toEqual(['Bob', 'Bobby']);
+  });
+
+  // ─────────────────────────────────────────────────────────────────────────────
+  // Test B — alias privacy: a private entry's aliases NEVER appear in the list
+  //
+  // The is_public=true filter already gates which rows reach share visitors.
+  // This assertion proves the filter extends to alias values: a private entry
+  // seeded with a distinctive alias must be absent from the list entirely, and
+  // no returned row may carry that alias (information-disclosure threat T-49.1-01).
+  // ─────────────────────────────────────────────────────────────────────────────
+  it('private entry aliases are absent from GET /api/share/entries list response (XREF-04, Test B)', async () => {
+    await seedEntry({ isPublic: true, title: 'Visible Entry' });
+    await seedEntry({
+      isPublic: false,
+      title: 'Hidden Character',
+      aliases: ['SecretName'],
+    });
+
+    const res = await appRequest('GET', '/api/share/entries', {
+      headers: { 'share-token': activeTokenPlaintext },
+    });
+
+    expect(res.status).toBe(200);
+    expect(Array.isArray(res.body)).toBe(true);
+    // eslint-disable-next-line @typescript-eslint/no-explicit-any
+    const list = res.body as any[];
+
+    // The private entry must be absent from the list entirely.
+    expect(
+      list.length,
+      `XREF-04 alias-privacy: GET /api/share/entries must return exactly 1 entry ` +
+        `(the public one). Private entry with aliases=['SecretName'] must be excluded ` +
+        `by the eq(entries.isPublic, true) filter. Got ${list.length} rows.`,
+    ).toBe(1);
+
+    // No returned row may carry the private alias.
+    // eslint-disable-next-line @typescript-eslint/no-explicit-any
+    const leakingRows = list.filter((e: any) =>
+      Array.isArray(e.aliases) && e.aliases.includes('SecretName'),
+    );
+    expect(
+      leakingRows.length,
+      `XREF-04 alias-privacy (T-49.1-01): no list row may carry the private alias ` +
+        `'SecretName'. A leak here means the is_public filter failed to exclude the ` +
+        `private entry's aliases from the share corpus.`,
+    ).toBe(0);
   });
 });
