@@ -365,3 +365,157 @@ describe('Phase 29 share-view privacy invariants', () => {
     ).toBe(404);
   });
 });
+
+describe('XREF-07: private-reference leak invariants (hover-card / embed share path)', () => {
+  // ────────────────────────────────────────────────────────────────────
+  // Test XREF-07-1 — T-49-04: hover-card / embed lazy fetch of a private
+  // referenced entry returns 404 (no title/summary/body leaks)
+  //
+  // EntryHoverCard lazy useEntry and EntryEmbed's useEntry both call
+  // GET /api/share/entries/{id} in share mode. A private target → null in
+  // getPublicEntryById → route returns 404. The hover card shows no excerpt
+  // and the embed shows the D-10 "unavailable" affordance instead of content.
+  // ────────────────────────────────────────────────────────────────────
+  it('hover-card/embed lazy fetch of a private referenced entry returns 404 (T-49-04)', async () => {
+    // Seed: a PUBLIC entry whose body contains wikilink and embed references to
+    // a PRIVATE entry titled "Secret". This mirrors the threat: a public page
+    // references private content via [[ ]] and ![[ ]] markers.
+    const publicEntry = await seedEntry({
+      isPublic: true,
+      title: 'Public Entry Referencing Secret',
+    });
+    const privateEntry = await seedEntry({ isPublic: false, title: 'Secret' });
+
+    // Verify the public entry can be fetched to confirm the token / universe work
+    const pubRes = await appRequest('GET', `/api/share/entries/${publicEntry.id}`, {
+      headers: { 'share-token': activeTokenPlaintext },
+    });
+    expect(pubRes.status).toBe(200);
+
+    // The critical assertion: GET /api/share/entries/{privateId} — the EXACT path
+    // EntryHoverCard's lazy useEntry and EntryEmbed's useEntry hit in share mode.
+    // A 404 means no title/summary/body reaches the hover card or embed callout.
+    const res = await appRequest('GET', `/api/share/entries/${privateEntry.id}`, {
+      headers: { 'share-token': activeTokenPlaintext },
+    });
+    expect(
+      res.status,
+      `T-49-04: GET /api/share/entries/{privateId} MUST return 404 (NOT 200, NOT 403). ` +
+        `A private entry referenced by [[ ]] / ![[ ]] in a public body must be ` +
+        `indistinguishable from a missing entry. ` +
+        `A 200 would leak the private entry's title/summary/body to any share visitor ` +
+        `who inspects the hover-card or embed fetch. ` +
+        `Affected components: EntryHoverCard lazy useEntry + EntryEmbed useEntry in share mode. ` +
+        `Root cause if failing: getPublicEntryById is_public filter at share-views.ts removed/bypassed.`,
+    ).toBe(404);
+  });
+
+  // ────────────────────────────────────────────────────────────────────
+  // Test XREF-07-2 — T-49-05: share resolver corpus excludes the private
+  // referenced entry AND carries no body (LIST-omits-body invariant)
+  //
+  // The resolver corpus a share visitor reads (GET /api/share/entries) is used
+  // by WikilinkText / the share-mode resolver to look up entry titles by id.
+  // It must:
+  //   (a) omit the private "Secret" entry (is_public filter at L100)
+  //   (b) carry NO body property on any row (the LIST-omits-body invariant —
+  //       memory: list-endpoint-body-projection-false-green; getPublicEntries
+  //       SELECT explicitly omits body, L104-119)
+  // A regression in either would allow a share-mode resolver to surface private
+  // content or any body from the list path.
+  // ────────────────────────────────────────────────────────────────────
+  it('GET /api/share/entries excludes private referenced entry AND no row carries body (T-49-05)', async () => {
+    // Seed the same public + private pair as T-49-04.
+    const publicEntry = await seedEntry({ isPublic: true, title: 'Public Entry' });
+    await seedEntry({ isPublic: false, title: 'Secret' });
+
+    const res = await appRequest('GET', '/api/share/entries', {
+      headers: { 'share-token': activeTokenPlaintext },
+    });
+
+    expect(res.status).toBe(200);
+
+    // Phase 33 / T-49-08: share /entries returns a bare array.
+    expect(
+      Array.isArray(res.body),
+      `T-49-08: GET /api/share/entries MUST return a bare array (not a wrapper object). ` +
+        `A wrapper-shape regression breaks the transparent web seam (share-seam-bare-array-contract).`,
+    ).toBe(true);
+
+    // eslint-disable-next-line @typescript-eslint/no-explicit-any
+    const list = res.body as any[];
+
+    // (a) private entry must be absent from the resolver corpus
+    const ids = list.map((e: { id: string }) => e.id);
+    expect(
+      list.length,
+      `T-49-05a: GET /api/share/entries MUST return exactly 1 entry (the public one). ` +
+        `The private "Secret" entry (isPublic=false) must be excluded by the is_public filter. ` +
+        `Returned ids: ${JSON.stringify(ids)}`,
+    ).toBe(1);
+    expect(ids).toContain(publicEntry.id);
+
+    // (b) no row in the list must carry a body property
+    // getPublicEntries SELECT (share-views.ts L104-119) deliberately omits body.
+    // This assertion locks the LIST-omits-body invariant: a share-mode resolver
+    // can never surface private body content via the list corpus.
+    const rowsWithBody = list.filter(
+      (e: Record<string, unknown>) => 'body' in e && e.body !== undefined,
+    );
+    expect(
+      rowsWithBody.length,
+      `T-49-05b (LIST-omits-body invariant): GET /api/share/entries rows MUST NOT carry a ` +
+        `'body' property. The getPublicEntries SELECT explicitly omits body so the resolver ` +
+        `corpus never exposes raw entry markdown to share visitors (memory: ` +
+        `list-endpoint-body-projection-false-green). ` +
+        `Rows with body: ${JSON.stringify(rowsWithBody.map((e: { id: string }) => e.id))}`,
+    ).toBe(0);
+  });
+
+  // ────────────────────────────────────────────────────────────────────
+  // Test XREF-07-3 — positive control: a PUBLIC referenced target IS
+  // reachable via GET /api/share/entries/{visibleId} with body present
+  //
+  // This guards against a false-green where everything 404s (e.g. the share
+  // router is unmounted or requireShareToken always rejects). Embeds of
+  // public targets MUST render — getPublicEntryById returns the full row
+  // including body for public entries (share-views.ts L141-152 full select).
+  // ────────────────────────────────────────────────────────────────────
+  it('public referenced entry returns 200 with body present (positive control, T-49-04)', async () => {
+    // Seed a public entry with an explicit body so we can assert it is present.
+    const [publicVisible] = await handle.db
+      .insert(entries)
+      .values({
+        universeId,
+        title: 'Visible Public Entry',
+        entryType: 'note',
+        isPublic: true,
+        body: 'This body content must be visible to share visitors via the detail path.',
+      })
+      .returning();
+
+    const res = await appRequest('GET', `/api/share/entries/${publicVisible!.id}`, {
+      headers: { 'share-token': activeTokenPlaintext },
+    });
+
+    expect(
+      res.status,
+      `T-49-04 positive control: GET /api/share/entries/{publicId} MUST return 200 for a ` +
+        `public entry. If this fails, the test suite is in a false-green state where ALL ` +
+        `entry-detail fetches return 404 (e.g. share router unmounted, requireShareToken broken).`,
+    ).toBe(200);
+
+    // The detail path (getPublicEntryById) returns the full row including body,
+    // so embeds of public targets render correctly. Assert body is present.
+    expect(
+      res.body,
+      `Public entry detail response must be an object with a body property`,
+    ).toHaveProperty('body');
+    expect(
+      typeof res.body.body === 'string' && res.body.body.length > 0,
+      `T-49-04 positive control: body MUST be a non-empty string for a public entry ` +
+        `fetched via the detail path (getPublicEntryById full select). ` +
+        `EntryEmbed uses this path to render the transcluded content.`,
+    ).toBe(true);
+  });
+});
