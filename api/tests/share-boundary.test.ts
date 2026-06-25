@@ -217,3 +217,105 @@ describe('SHARE-03 baseline sanity (the seed produced a valid token)', () => {
     expect(Array.isArray(res.body)).toBe(true);
   });
 });
+
+describe('XREF-07 SC5: v5.2 mutation surface rejects share-token-only callers', () => {
+  // These cases are intentionally redundant with the SHARE-03 auto-enumeration
+  // (which already covers PATCH /entries/{id} and POST /entries structurally).
+  // Their value is a NAMED, documented assertion that a future refactor cannot
+  // silently drop — the SHARE-03 loop would catch a regression only if it
+  // still enumerates those routes, whereas these named its would catch a
+  // regression even if share.ts were somehow mounted at a new prefix.
+
+  it('PATCH /api/universes/{uid}/entries/{id} (alias-update + rename-propagation + linkify) rejects share-token-only', async () => {
+    // PATCH /api/universes/:uid/entries/:id is the SINGLE route through which
+    // all three v5.2 mutation flows funnel:
+    //   - XREF-04 alias-update:         `aliases` field
+    //   - XREF-05 rename-propagation:   `title` change → server calls rewriteWikilinks
+    //   - XREF-06 linkify:              web sends rewritten `body` via useUpdateEntry
+    // A share-token-only caller MUST be rejected (401 or 403) before any body
+    // parsing or DB access occurs (requireAuth on the /universes/* router).
+    const res = await appRequest(
+      'PATCH',
+      `/api/universes/${FAKE_UUID}/entries/${FAKE_UUID}`,
+      {
+        headers: {
+          'share-token': plaintext,
+          'content-type': 'application/json',
+        },
+        body: JSON.stringify({
+          title: 'X',
+          aliases: ['Y'],
+          body: '[[Z]]',
+        }),
+      },
+    );
+    expect(
+      [401, 403],
+      `XREF-07 SC5: PATCH /api/universes/{uid}/entries/{id} MUST reject a share-token-only ` +
+        `caller with 401 or 403. This single route covers XREF-04 alias-update (aliases field), ` +
+        `XREF-05 rename-propagation (title field → rewriteWikilinks), and XREF-06 linkify ` +
+        `(body field sent by UnlinkedMentionsPanel via useUpdateEntry). ` +
+        `All three v5.2 mutation flows MUST be unreachable by a share-token-only caller. ` +
+        `status=${res.status}, body=${JSON.stringify(res.body)?.slice(0, 200)}`,
+    ).toContain(res.status);
+  });
+
+  it('POST /api/universes/{uid}/entries (alias-set creation) rejects share-token-only', async () => {
+    // POST /api/universes/:uid/entries is the entry-create route which also
+    // handles the `aliases` field (XREF-04 alias-set creation path).
+    // A share-token-only caller MUST be rejected (401 or 403).
+    const res = await appRequest('POST', `/api/universes/${FAKE_UUID}/entries`, {
+      headers: {
+        'share-token': plaintext,
+        'content-type': 'application/json',
+      },
+      body: JSON.stringify({
+        title: 'New Entry',
+        entryType: 'note',
+        aliases: ['alias-one'],
+      }),
+    });
+    expect(
+      [401, 403],
+      `XREF-07 SC5: POST /api/universes/{uid}/entries (alias-set creation, XREF-04) ` +
+        `MUST reject a share-token-only caller with 401 or 403. ` +
+        `status=${res.status}, body=${JSON.stringify(res.body)?.slice(0, 200)}`,
+    ).toContain(res.status);
+  });
+
+  it('share.ts declares no mutation route (read-only router invariant)', async () => {
+    // Assert that the OpenAPI document declares NO /api/share/* POST/PATCH/DELETE
+    // route. This is the structural proof that no v5.2 (or any) mutation was ever
+    // mounted under the share prefix — even if a future plan adds a new route
+    // and forgets to run the SHARE-03 enumeration, this named assertion catches it.
+    const res = await app.fetch(new Request('http://localhost/api/openapi.json'));
+    expect(res.status).toBe(200);
+    const doc = (await res.json()) as {
+      paths: Record<string, Record<string, unknown>>;
+    };
+
+    // Filter to share-prefixed paths with a mutation HTTP verb
+    const shareMutationSpecs: Array<{ path: string; method: string }> = [];
+    for (const [openapiPath, methodsObj] of Object.entries(doc.paths)) {
+      if (!openapiPath.startsWith('/share/')) continue;
+      if (!methodsObj || typeof methodsObj !== 'object') continue;
+      for (const method of Object.keys(methodsObj)) {
+        const verb = method.toLowerCase();
+        if (['post', 'patch', 'put', 'delete'].includes(verb)) {
+          shareMutationSpecs.push({ path: openapiPath, method: verb });
+        }
+      }
+    }
+
+    expect(
+      shareMutationSpecs,
+      `XREF-07 SC5 read-only-router invariant: the OpenAPI document MUST declare ZERO ` +
+        `POST/PATCH/PUT/DELETE routes under /share/*. The share router is read-only by ` +
+        `construction — all v5.2 mutations (alias-update, rename-propagation, linkify, ` +
+        `entry-create) are mounted under /api/universes/* behind requireAuth. ` +
+        `A route appearing here means a mutation was accidentally mounted under the share ` +
+        `prefix and bypasses the authenticated boundary. ` +
+        `Mutation specs found: ${JSON.stringify(shareMutationSpecs)}`,
+    ).toHaveLength(0);
+  });
+});
