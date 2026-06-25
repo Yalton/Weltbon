@@ -17,3 +17,4 @@ web/e2e/seed.json
 web/test-results/
 web/playwright-report/
 web/playwright/.cache/
+
