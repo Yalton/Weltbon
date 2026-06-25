@@ -964,4 +964,116 @@ describe('export/import (EXP-01, IMP-01..03)', () => {
     const detail = await json(detailRes);
     expect(detail.body).toContain('[[Some Reference|display text]]');
   });
+
+  // ALIAS-RT-03: aliases + ALL THREE link forms round-trip byte-identical (SC2 / XREF-07).
+  // Seeds one entry whose body carries plain [[entry]], piped [[entry|display]], AND embed
+  // ![[entry]] — the three forms Phase 45's ALIAS-RT-01 did not fully cover (missing ![[ ]]).
+  // Asserts each token survives export → ZIP import byte-identical, closing the SC2 gap.
+  it('ALIAS-RT-03: aliases + all link forms ([[]], [[|display]], ![[...]]) round-trip byte-identical (SC2)', async () => {
+    const { hdrs } = await userWithToken('alias-rt03@test.com');
+    const universe = await createUniverse(hdrs, 'AllLinkFormsWorld');
+
+    // Create entry with aliases and a body containing all three link forms.
+    const entry = await createEntry(universe.id, hdrs, {
+      title: 'The Dragon',
+      entryType: 'entity',
+      aliases: ['Alt Name', 'Nickname'],
+      body: [
+        'This references [[Target Entry]] directly.',
+        'This uses the piped form [[Target Entry|the shown text]] for display.',
+        'This embeds the entry content: ![[Target Entry]].',
+      ].join(' '),
+    });
+    // Verify entry was created with the correct aliases.
+    expect(entry.aliases).toEqual(['Alt Name', 'Nickname']);
+
+    // Export the universe as ZIP.
+    const zipBytes = await exportAsZipBuffer(universe.id, hdrs);
+
+    // Import into a clean universe via ZIP upload.
+    const { status: importStatus, body: importResult } = await importZipBuffer(zipBytes, hdrs);
+    expect(importStatus).toBe(201);
+    expect(importResult.entryCount).toBe(1);
+
+    // Query the imported universe's entries via API to verify aliases (D-08).
+    const importedEntries = await listEntries(importResult.universeId, hdrs);
+    const importedEntry = importedEntries.find((e: { title: string }) => e.title === 'The Dragon');
+    expect(importedEntry).toBeTruthy();
+
+    // D-08: aliases survive the round-trip byte-identical.
+    expect(importedEntry.aliases).toEqual(['Alt Name', 'Nickname']);
+
+    // SC2: fetch the entry detail and assert all three link-form tokens are byte-identical.
+    const detailRes = await req(
+      'GET',
+      `/api/universes/${importResult.universeId}/entries/${importedEntry.id}`,
+      { headers: hdrs },
+    );
+    const detail = await json(detailRes);
+
+    // Plain wikilink form — must not be corrupted.
+    expect(detail.body).toContain('[[Target Entry]]');
+    // Piped display-text form — pipe + display label must survive verbatim.
+    expect(detail.body).toContain('[[Target Entry|the shown text]]');
+    // Embed form — the ![[ ]] prefix must survive verbatim (the gap ALIAS-RT-01 left open).
+    expect(detail.body).toContain('![[Target Entry]]');
+  });
+
+  // ALIAS-RT-04: legacy (pre-Phase-45) import with ![[ ]] embed in body succeeds (SC2 backward-compat).
+  // A hand-crafted 1.0.0 payload (no aliases key) whose entry body carries ![[Legacy Embed]]
+  // must import cleanly with the embed token surviving byte-identical — proving the embed form
+  // is non-fatal on legacy import paths (import-json.ts L395-399 asset:// rewrite is the ONLY
+  // body transform and cannot touch [[ ]] / ![[ ]] / |display tokens).
+  it('ALIAS-RT-04: pre-Phase-45 JSON with ![[embed]] body imports cleanly (embed token byte-identical)', async () => {
+    const { hdrs } = await userWithToken('alias-rt04@test.com');
+
+    // Hand-constructed 1.0.0 payload — no aliases key — body contains an embed token.
+    const legacyEmbedPayload = {
+      weltbon_version: '1.0.0',
+      exported_at: new Date().toISOString(),
+      universe: { name: 'LegacyEmbedWorld', description: '' },
+      entries: [
+        {
+          id: 'dddddddd-dddd-4ddd-8ddd-dddddddddd01',
+          title: 'Ancient Tome',
+          entryType: 'artifact',
+          summary: '',
+          body: 'The tome contains: ![[Legacy Embed]] and [[Another Entry|see here]].',
+          tags: [],
+          meta: {},
+          icon: '',
+          categoryId: null,
+          // NO aliases field — simulates pre-Phase-45 export
+        },
+      ],
+      links: [],
+    };
+
+    // Import via the legacy JSON path (application/json → 1.0.0 handler).
+    const importRes = await req('POST', '/api/universes/import', {
+      headers: hdrs,
+      body: legacyEmbedPayload,
+    });
+    expect(importRes.status).toBe(201);
+    const importResult = await json(importRes);
+    expect(importResult.entryCount).toBe(1);
+
+    // Aliases must default to [] on a pre-Phase-45 entry.
+    const importedEntries = await listEntries(importResult.universeId, hdrs);
+    const importedEntry = importedEntries.find(
+      (e: { title: string }) => e.title === 'Ancient Tome',
+    );
+    expect(importedEntry).toBeTruthy();
+    expect(importedEntry.aliases).toEqual([]);
+
+    // SC2: the embed token and piped form survive byte-identical through legacy import.
+    const detailRes = await req(
+      'GET',
+      `/api/universes/${importResult.universeId}/entries/${importedEntry.id}`,
+      { headers: hdrs },
+    );
+    const detail = await json(detailRes);
+    expect(detail.body).toContain('![[Legacy Embed]]');
+    expect(detail.body).toContain('[[Another Entry|see here]]');
+  });
 });
