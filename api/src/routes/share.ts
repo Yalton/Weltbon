@@ -118,6 +118,7 @@ const publicEntryListItemSchema = z.object({
   entryType: z.string(),
   summary: z.string(),
   tags: z.array(z.string()),
+  aliases: z.array(z.string()),
   meta: z.record(z.string(), z.unknown()),
   icon: z.string(),
   categoryId: z.string().nullable(),

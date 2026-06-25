@@ -109,6 +109,7 @@ export async function getPublicEntries(universeId: string, entryType?: string) {
       entryType: entries.entryType,
       summary: entries.summary,
       tags: entries.tags,
+      aliases: entries.aliases,
       meta: entries.meta,
       icon: entries.icon,
       categoryId: entries.categoryId,
