@@ -1,7 +1,7 @@
 import { z } from 'zod';
 import sharp from 'sharp';
 import { db } from '../db/client.js';
-import { universes, entries, links, categories, issues, issueEntries, graphPositions, timelinePins, assets, maps, mapPins, mapRegions, mapLayers, terrainTypes } from '../db/schema.js';
+import { universes, entries, links, categories, issues, issueEntries, graphPositions, timelinePins, assets, maps, mapPins, mapRegions, mapRoutes, mapLayers, terrainTypes } from '../db/schema.js';
 import { storageBackend } from './storage/local.js';
 
 // CR-02: quota enforcement on the import path (same cap as the upload path).
@@ -176,6 +176,25 @@ export const importSchema = z.object({
         // Phase 44 GEOSHARE-02: terrain discriminator; null = political/standalone.
         // Pre-v5.1 exports lack this field → default null (backward-compat, SC2).
         terrainTypeId: z.string().uuid().nullable().optional().default(null),
+      })
+    )
+    .optional()
+    .default([]),
+  // Phase 51 ROUTE-03: map routes from v5.3+ exports.
+  // Backward-compat: pre-v5.3 exports lack this field → default [] for zero inserts (T-51-09).
+  mapRoutes: z
+    .array(
+      z.object({
+        id: z.string().uuid().optional(),
+        mapId: z.string().uuid(),
+        entryId: z.string().uuid().nullable().optional().default(null),
+        name: z.string().optional().default(''),
+        points: z.string(),  // raw JSON text, validated as non-empty
+        color: z.string().nullable().optional().default(null),
+        // Style fields — pre-v5.3 exports lack these; defaults apply (T-51-09 backward-compat).
+        lineStyle: z.enum(['solid', 'dashed']).optional().default('solid'),
+        width: z.number().int().optional().default(4),
+        showArrow: z.boolean().optional().default(false),
       })
     )
     .optional()
@@ -583,6 +602,34 @@ export async function importUniverseJson(
       });
     }
 
+    // 3f. Phase 51 ROUTE-03: Insert map_routes with remapped mapId + optional entryId.
+    //     D-12 strict remap discipline (mirrors region discipline, no lenient terrain branch):
+    //     - mapId strict: unknown mapId THROWS (T-51-04 integrity).
+    //     - entryId strict when non-null: unknown non-null entryId THROWS.
+    //     - entryId null stays null (nullable asymmetry vs pins — same as regions).
+    //     Do NOT set created_at — let defaultNow apply (drizzle-migrate-synthetic-timestamp-skip).
+    for (const route of data.mapRoutes) {
+      const newMapId = mapIdMap.get(route.mapId);
+      if (!newMapId) throw new Error('Map route references unknown map ID');
+      let newEntryId: string | null = null;
+      if (route.entryId) {
+        newEntryId = entryIdMap.get(route.entryId) ?? null;
+        if (!newEntryId) {
+          throw new Error('Map route references unknown entry ID');
+        }
+      }
+      await tx.insert(mapRoutes).values({
+        mapId: newMapId,
+        entryId: newEntryId,
+        name: route.name ?? '',
+        points: route.points,
+        color: route.color ?? null,
+        lineStyle: route.lineStyle,
+        width: route.width,
+        showArrow: route.showArrow,
+      });
+    }
+
     return {
       universeId: universe.id,
       universeName: universe.name,
@@ -596,6 +643,8 @@ export async function importUniverseJson(
       mapCount: data.maps.length,
       mapPinCount: data.mapPins.length,
       mapRegionCount: data.mapRegions.length,
+      // Phase 51 ROUTE-03: route count for import result.
+      mapRouteCount: data.mapRoutes.length,
       // Phase 44 GEOSHARE-02: terrain palette counts for import result.
       mapLayerCount: data.mapLayers.length,
       terrainTypeCount: data.terrainTypes.length,
