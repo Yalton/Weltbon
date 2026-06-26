@@ -1,10 +1,12 @@
-import { useCallback, useEffect, useMemo, useState } from 'react';
+import { useCallback, useEffect, useMemo, useRef, useState } from 'react';
 import { useNavigate, useParams } from 'react-router-dom';
 import { AddEntriesPicker } from '../components/AddEntriesPicker';
 import { AssetPickerModal } from '../components/AssetPickerModal';
 import { ConfirmDialog } from '../components/ConfirmDialog';
 import { EmptyState } from '../components/EmptyState';
-import { MapCanvas } from '../components/MapCanvas';
+import { MapCanvas, type MapCanvasHandle } from '../components/MapCanvas';
+import { MapCompass } from '../components/MapCompass';
+import { MapZoomControls } from '../components/MapZoomControls';
 import { LayersPanel } from '../components/LayersPanel';
 import { MapLegend } from '../components/MapLegend';
 import { MapToolbar } from '../components/MapToolbar';
@@ -191,6 +193,10 @@ export function MapEditor() {
   const [toast, setToast] = useState<ToastState>(null);
   const [legendVisible, setLegendVisible] = useState(false);
   const [layersPanelVisible, setLayersPanelVisible] = useState(false);
+  // Grid overlay toggle — off by default (D-05). Mirrors legendVisible/layersPanelVisible pattern.
+  const [gridVisible, setGridVisible] = useState(false);
+  // Imperative zoom handle — wired to MapZoomControls onZoomIn/onZoomOut/onFitReset callbacks.
+  const canvasRef = useRef<MapCanvasHandle>(null);
   // Color picker for LayersPanel terrain-type swatches (onRequestColorPick wiring).
   // When the LayersPanel requests a color pick, we open this dialog and forward
   // the selected color to the `layersColorPickerCallback` function.
@@ -1070,8 +1076,10 @@ export function MapEditor() {
 
       {/* Map canvas — d3-zoom + React-rendered pins + regions.
           In share mode: addPinMode/drawRegionMode forced false; mutation
-          callbacks (context menus) are no-ops (T-40-12). */}
+          callbacks (context menus) are no-ops (T-40-12).
+          canvasRef exposes the imperative zoom seam for MapZoomControls (D-04, Plan 02). */}
       <MapCanvas
+        ref={canvasRef}
         imageUrl={map.rawUrl}
         imageWidth={imageWidth}
         imageHeight={imageHeight}
@@ -1092,7 +1100,21 @@ export function MapEditor() {
         layerViewerState={layerViewerState}
         paintTerrainMode={!isShare && !!armedTerrainTypeId}
         onTerrainAreaContextMenu={isShare ? () => {} : handleTerrainAreaContextMenu}
+        gridVisible={gridVisible}
       />
+
+      {/* ── Glassy map chrome — rendered in BOTH editor and share mode (D-09 parity) ── */}
+      {/* CRITICAL: NOT gated on !isShare — zoom controls + compass are always visible. */}
+      {/* MapZoomControls: bottom-right cluster; wired to canvasRef imperative zoom seam (D-04). */}
+      <MapZoomControls
+        onZoomIn={() => canvasRef.current?.zoomIn()}
+        onZoomOut={() => canvasRef.current?.zoomOut()}
+        onFitReset={() => canvasRef.current?.fitReset()}
+        gridVisible={gridVisible}
+        onToggleGrid={() => setGridVisible((v) => !v)}
+      />
+      {/* MapCompass: static decorative compass rose, bottom-left corner (D-06). */}
+      <MapCompass />
 
       {/* Map legend (auto-derived, pointer-events-none overlay).
           In share mode: onRenameLabel is a no-op — captions are not editable. */}

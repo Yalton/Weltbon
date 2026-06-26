@@ -220,6 +220,38 @@ describe('MapCanvas — overlay polygon pointer-events gating (UAT Test 5, 43-05
   });
 });
 
+// ── Phase 50 Task 1 (Plan 02): grid overlay + imperative zoom handle ──────────
+
+describe('MapCanvas — grid overlay (D-05, Plan 02 Task 1)', () => {
+  /**
+   * Test I: grid overlay is ABSENT when gridVisible is false (default).
+   */
+  it('Test I: grid-overlay group is absent when gridVisible=false', () => {
+    const { container } = renderMapCanvas({ gridVisible: false });
+    const grid = container.querySelector('.grid-overlay');
+    expect(grid).toBeNull();
+  });
+
+  /**
+   * Test J: grid overlay is PRESENT when gridVisible=true and uses pointerEvents:'none'.
+   */
+  it('Test J: grid-overlay group renders with pointerEvents:none when gridVisible=true', () => {
+    const { container } = renderMapCanvas({ gridVisible: true });
+    const grid = container.querySelector('.grid-overlay');
+    expect(grid, 'grid-overlay <g> must exist when gridVisible=true').not.toBeNull();
+    expect((grid as HTMLElement).style.pointerEvents).toBe('none');
+  });
+
+  /**
+   * Test K: grid overlay is absent when gridVisible is undefined (default off).
+   */
+  it('Test K: grid-overlay is absent when gridVisible prop is omitted', () => {
+    const { container } = renderMapCanvas({});
+    const grid = container.querySelector('.grid-overlay');
+    expect(grid).toBeNull();
+  });
+});
+
 // ── Phase 50 Task 2: PinCircle teardrop + glow + drag regression ─────────────
 
 // A minimal pin fixture for teardrop and drag tests.
