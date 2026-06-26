@@ -20,6 +20,10 @@ export interface MapPin {
   // API returns bare map_pins rows (no entry join server-side).
   entryTitle?: string;
   entryType?: string;
+  // Phase 50 MAP-UI-03 (D-09): share-projected from entries.summary for tooltip excerpt parity.
+  // In auth mode, summary is joined client-side from useEntries in MapEditor (enrichedPins).
+  // In share mode, summary comes from the server projection (getPublicMap) — no client-side useEntries join for pins.
+  summary?: string | null;
 }
 
 // Phase 40 MAPS-04 (D-09): Region polygon within a map.

@@ -457,6 +457,7 @@ const publicMapDetailSchema = publicMapSchema.extend({
       y: z.number(),
       color: z.string().nullable(),
       icon: z.string().nullable(),
+      summary: z.string(), // D-09: share-projected from entries.summary (non-null, '' default); no body
     }),
   ),
   regions: z.array(

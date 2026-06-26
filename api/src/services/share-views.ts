@@ -551,6 +551,7 @@ export async function getPublicMap(universeId: string, mapId: string) {
       y: mapPins.y,
       color: mapPins.color,
       icon: mapPins.icon,
+      summary: entries.summary,   // D-09: entries already INNER JOINed for isPublic filter; no new join needed
     })
     .from(mapPins)
     .innerJoin(entries, eq(entries.id, mapPins.entryId))
