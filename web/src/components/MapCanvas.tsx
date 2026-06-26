@@ -1,4 +1,4 @@
-import { forwardRef, useEffect, useImperativeHandle, useRef, useState } from 'react';
+import { forwardRef, useCallback, useEffect, useImperativeHandle, useRef, useState } from 'react';
 import { select } from 'd3-selection';
 import { zoom, zoomTransform, type ZoomBehavior } from 'd3-zoom';
 import { useNavigate } from 'react-router-dom';
@@ -124,6 +124,10 @@ interface PinCircleProps {
   onNavigate: (entryId: string) => void;
   onDragEnd: (pinId: string, nx: number, ny: number) => void;
   onContextMenu: (pin: MapPin, clientX: number, clientY: number) => void;
+  /** Called on pointer enter with client coords; must NOT call if drag is active (D-11 isolation). */
+  onPinHoverEnter: (pin: MapPin, clientX: number, clientY: number) => void;
+  /** Called on pointer leave; must NOT call if drag is active (D-11 isolation). */
+  onPinHoverLeave: () => void;
 }
 
 function PinCircle({
@@ -135,6 +139,8 @@ function PinCircle({
   onNavigate,
   onDragEnd,
   onContextMenu,
+  onPinHoverEnter,
+  onPinHoverLeave,
 }: PinCircleProps) {
   // Pin color: explicit override or fallback to entry type color (D-01, graceful degradation D-03)
   const pinColor = pin.color ?? entryTypeHexColor(pin.entryType ?? 'concept');
@@ -224,6 +230,21 @@ function PinCircle({
     onContextMenu(pin, e.clientX, e.clientY);
   };
 
+  // Hover handlers — NEVER fire during an active drag (D-11 isolation).
+  // Hover state is managed by MapCanvas (not PinCircle) via the callbacks.
+  // NEVER attach d3 .on(event,(e,d)=>) for hover — d is undefined on React SVG (memory).
+  const handlePointerEnter = (e: React.PointerEvent<SVGGElement>) => {
+    // Skip hover during drag to avoid interfering with drag state (D-11 isolation).
+    if (dragging.current) return;
+    onPinHoverEnter(pin, e.clientX, e.clientY);
+  };
+
+  const handlePointerLeave = () => {
+    // Skip hover-leave during drag (pointer capture keeps the element "hot" during drag).
+    if (dragging.current) return;
+    onPinHoverLeave();
+  };
+
   return (
     <g
       transform={`translate(${pinX},${pinY}) scale(${1 / currentScale})`}
@@ -234,6 +255,8 @@ function PinCircle({
       onPointerMove={handlePointerMove}
       onPointerUp={handlePointerUp}
       onContextMenu={handleContextMenu}
+      onPointerEnter={handlePointerEnter}
+      onPointerLeave={handlePointerLeave}
     >
       {/* SVG tooltip for hover */}
       <title>{pin.entryTitle ?? 'Pin'}</title>
@@ -299,6 +322,10 @@ interface RegionPolygonProps {
   isDrawing: boolean;
   onRegionClick: (region: MapRegion) => void;
   onRegionContextMenu: (region: MapRegion, clientX: number, clientY: number) => void;
+  /** Called on pointer enter with client coords for the tooltip overlay. */
+  onRegionHoverEnter: (region: MapRegion, clientX: number, clientY: number) => void;
+  /** Called on pointer leave to clear the tooltip. */
+  onRegionHoverLeave: () => void;
 }
 
 function RegionPolygon({
@@ -308,6 +335,8 @@ function RegionPolygon({
   isDrawing,
   onRegionClick,
   onRegionContextMenu,
+  onRegionHoverEnter,
+  onRegionHoverLeave,
 }: RegionPolygonProps) {
   // Parse the points JSON string to [{x, y}] normalized 0..1 then convert to image space.
   let points: Array<{ x: number; y: number }> = [];
@@ -341,6 +370,15 @@ function RegionPolygon({
     onRegionContextMenu(region, e.clientX, e.clientY);
   };
 
+  // Hover handlers — NEVER attach d3 .on(event,(e,d)=>) — d is undefined on React SVG (memory).
+  const handlePointerEnter = (e: React.PointerEvent<SVGPolygonElement>) => {
+    onRegionHoverEnter(region, e.clientX, e.clientY);
+  };
+
+  const handlePointerLeave = () => {
+    onRegionHoverLeave();
+  };
+
   return (
     <polygon
       points={svgPoints}
@@ -355,6 +393,8 @@ function RegionPolygon({
       }}
       onClick={handleClick}
       onContextMenu={handleContextMenu}
+      onPointerEnter={handlePointerEnter}
+      onPointerLeave={handlePointerLeave}
     >
       <title>{region.name || 'Region'}</title>
     </polygon>
@@ -489,12 +529,25 @@ export const MapCanvas = forwardRef<MapCanvasHandle, MapCanvasProps>(function Ma
   gridVisible = false,
 }, ref) {
   const svgRef = useRef<SVGSVGElement>(null);
+  const containerRef = useRef<HTMLDivElement>(null);
   const [currentScale, setCurrentScale] = useState(1);
   // Ref to the d3 zoomBehavior — lifted so imperative handle methods can call it (Task 1).
   const zoomBehaviorRef = useRef<ZoomBehavior<SVGSVGElement, unknown> | null>(null);
   // Pointer position in image space for rubber-band preview (drawRegionMode).
   const [pointerImgPos, setPointerImgPos] = useState<{ x: number; y: number } | null>(null);
   const navigate = useNavigate();
+
+  // ── Hover tooltip state (D-07, D-08, Plan 04 Task 2) ──────────────────────────
+  // Managed here (not in PinCircle/RegionPolygon) so the overlay renders outside the SVG.
+  // Independent of the PinCircle dragging ref — hover callbacks skip during drag.
+  const [hoveredTooltip, setHoveredTooltip] = useState<{
+    title: string;
+    type: string | undefined;
+    summary: string | undefined | null;
+    /** Client-space X (used with container-relative offset for positioning). */
+    clientX: number;
+    clientY: number;
+  } | null>(null);
   // Share-token-aware navigation (T-40-14 / D-12): when a share token is present,
   // pin/region left-click navigates within /share/:token to avoid uid leaks.
   const shareToken = useShareToken();
@@ -635,6 +688,33 @@ export const MapCanvas = forwardRef<MapCanvasHandle, MapCanvasProps>(function Ma
     }
   };
 
+  // ── Hover tooltip callbacks (D-07, D-08) ──────────────────────────────────────
+  // T-50-07: summary rendered as React text child — auto-escaped, NEVER dangerouslySetInnerHTML.
+  // Callbacks are stable via useCallback so PinCircle/RegionPolygon renders are not spurious.
+  const handlePinHoverEnter = useCallback((pin: MapPin, clientX: number, clientY: number) => {
+    setHoveredTooltip({
+      title: pin.entryTitle ?? 'Pin',
+      type: pin.entryType,
+      summary: pin.summary,
+      clientX,
+      clientY,
+    });
+  }, []);
+
+  const handleRegionHoverEnter = useCallback((region: MapRegion, clientX: number, clientY: number) => {
+    setHoveredTooltip({
+      title: region.name || 'Region',
+      type: undefined,
+      summary: undefined,
+      clientX,
+      clientY,
+    });
+  }, []);
+
+  const handleHoverLeave = useCallback(() => {
+    setHoveredTooltip(null);
+  }, []);
+
   // ── Rubber-band preview helpers ──────────────────────────────────────────────
   // Convert pending vertices (normalized) to image-space SVG points string.
   const pendingPoints = pendingVertices
@@ -663,7 +743,31 @@ export const MapCanvas = forwardRef<MapCanvasHandle, MapCanvasProps>(function Ma
   // The region draw preview color uses the accent color.
   const previewColor = 'var(--color-accent, #3b82f6)';
 
+  // Compute tooltip position relative to the container div.
+  // getBoundingClientRect() returns zeros in jsdom — that's fine for tests (tooltip still renders).
+  const tooltipStyle = hoveredTooltip ? (() => {
+    const rect = containerRef.current?.getBoundingClientRect();
+    const left = hoveredTooltip.clientX - (rect?.left ?? 0) + 14;
+    const top = hoveredTooltip.clientY - (rect?.top ?? 0) + 14;
+    return { left, top } as React.CSSProperties;
+  })() : undefined;
+
+  // Whether the summary excerpt should render (D-08):
+  // non-empty string only — empty string, null, undefined all suppress the excerpt line.
+  const hasExcerpt =
+    hoveredTooltip?.summary != null &&
+    hoveredTooltip.summary.trim().length > 0;
+
+  // Truncate summary to ~120 chars to keep the tooltip compact.
+  const excerptText =
+    hasExcerpt && hoveredTooltip!.summary!.length > 120
+      ? hoveredTooltip!.summary!.slice(0, 120) + '…'
+      : hoveredTooltip?.summary ?? '';
+
   return (
+    // Container div: fills parent, provides positioning context for the tooltip overlay.
+    // height/width inherit from the SVG's h-full w-full, matching prior layout.
+    <div ref={containerRef} className="relative h-full w-full">
     <svg
       ref={svgRef}
       role="application"
@@ -799,6 +903,8 @@ export const MapCanvas = forwardRef<MapCanvasHandle, MapCanvasProps>(function Ma
               isDrawing={isDrawing}
               onRegionClick={onRegionClick}
               onRegionContextMenu={onRegionContextMenu}
+              onRegionHoverEnter={handleRegionHoverEnter}
+              onRegionHoverLeave={handleHoverLeave}
             />
           ))}
         </g>
@@ -847,6 +953,8 @@ export const MapCanvas = forwardRef<MapCanvasHandle, MapCanvasProps>(function Ma
             <PinCircle
               key={pin.id}
               pin={pin}
+              onPinHoverEnter={handlePinHoverEnter}
+              onPinHoverLeave={handleHoverLeave}
               imageWidth={imageWidth}
               imageHeight={imageHeight}
               currentScale={currentScale}
@@ -860,5 +968,40 @@ export const MapCanvas = forwardRef<MapCanvasHandle, MapCanvasProps>(function Ma
         </g>
       </g>
     </svg>
+
+    {/* ── Hover tooltip overlay (D-07, D-08, Plan 04 Task 2) ── */}
+    {/* pointer-events-none wrapper: d3-zoom and pin drag must NEVER be blocked (MapLegend 148 guard). */}
+    {/* T-50-07: summary rendered as React text children — auto-escaped, NEVER dangerouslySetInnerHTML. */}
+    <div className="pointer-events-none absolute inset-0">
+      {hoveredTooltip && (
+        <div
+          data-testid="map-tooltip"
+          className="pointer-events-none absolute z-50 max-w-[200px] rounded-md border border-neutral-200 bg-white/90 backdrop-blur-sm shadow-sm dark:border-neutral-800 dark:bg-neutral-900/90 px-3 py-2"
+          style={tooltipStyle}
+        >
+          {/* Title — always shown (D-07, D-08) */}
+          <p className="text-xs font-semibold text-neutral-900 dark:text-neutral-100 truncate">
+            {hoveredTooltip.title}
+          </p>
+          {/* Entry type — shown when present (pin type; regions may not have it) */}
+          {hoveredTooltip.type && (
+            <p className="text-xs capitalize text-neutral-500 dark:text-neutral-400">
+              {hoveredTooltip.type}
+            </p>
+          )}
+          {/* Summary excerpt — ONLY when summary is a non-empty string (D-08).
+              Empty string / null / undefined → NO excerpt, NO placeholder. */}
+          {hasExcerpt && (
+            <p
+              data-testid="tooltip-excerpt"
+              className="mt-1 text-xs text-neutral-600 dark:text-neutral-300 line-clamp-2"
+            >
+              {excerptText}
+            </p>
+          )}
+        </div>
+      )}
+    </div>
+    </div>
   );
 });
