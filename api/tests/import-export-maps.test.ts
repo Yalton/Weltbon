@@ -456,6 +456,174 @@ describe('import-export-maps (SC4)', () => {
     expect(mapDetail.regions[0].terrainTypeId, 'orphaned terrain ref must null out').toBeNull();
   });
 
+  // ─── Phase 51 ROUTE-03: Route helpers ──────────────────────────────────────
+
+  /** Phase 51 ROUTE-03: Create a route on a map. Returns the route object. */
+  async function createRoute(
+    uid: string,
+    mapId: string,
+    hdrs: Record<string, string>,
+    opts: {
+      entryId?: string | null;
+      name?: string;
+      lineStyle?: 'solid' | 'dashed';
+      width?: number;
+      showArrow?: boolean;
+    } = {},
+  ) {
+    const points = JSON.stringify([{ x: 0.1, y: 0.1 }, { x: 0.5, y: 0.5 }, { x: 0.9, y: 0.1 }]);
+    const res = await jsonReq(
+      'POST',
+      `/api/universes/${uid}/maps/${mapId}/routes`,
+      {
+        headers: hdrs,
+        body: {
+          name: opts.name ?? 'Test Route',
+          points,
+          entryId: opts.entryId !== undefined ? opts.entryId : null,
+          lineStyle: opts.lineStyle ?? 'solid',
+          width: opts.width ?? 4,
+          showArrow: opts.showArrow ?? false,
+        },
+      },
+    );
+    if (res.status !== 201) {
+      throw new Error(`createRoute failed with status ${res.status}: ${await res.text()}`);
+    }
+    return json(res);
+  }
+
+  // ─── Phase 51 ROUTE-03: Route round-trip test ───────────────────────────────
+
+  it('exports ZIP + reimports: routes round-trip with style fields and remapped entryId (ROUTE-03)', async () => {
+    const { hdrs } = await userWithToken('sc4-routes-rt@test.com');
+    const universe = await createUniverse(hdrs, 'RouteWorld');
+
+    // 1. Upload a map image asset.
+    const mapAsset = await uploadAsset(universe.id, hdrs);
+
+    // 2. Create an entry to link via an entry-linked route.
+    const entry = await createEntry(universe.id, hdrs, { title: 'Journey Entry' });
+
+    // 3. Create a map using the asset.
+    const map = await createMap(universe.id, hdrs, mapAsset.id);
+
+    // 4. Create an entry-linked route (dashed, width 7, showArrow true).
+    const linkedRoute = await createRoute(universe.id, map.id, hdrs, {
+      name: "King's Road",
+      entryId: entry.id,
+      lineStyle: 'dashed',
+      width: 7,
+      showArrow: true,
+    });
+    expect(linkedRoute.entryId).toBe(entry.id);
+
+    // 5. Create a standalone route (no entry link, default style).
+    const standaloneRoute = await createRoute(universe.id, map.id, hdrs, {
+      name: 'Merchant Trail',
+      entryId: null,
+      lineStyle: 'solid',
+      width: 4,
+      showArrow: false,
+    });
+    expect(standaloneRoute.entryId).toBeNull();
+
+    // 6. Export as ZIP.
+    const zipBytes = await exportAsZip(universe.id, hdrs);
+    expect(zipBytes.length).toBeGreaterThan(0);
+
+    // 7. Import into a new universe.
+    const { status, body: importResult } = await importZip(zipBytes, hdrs);
+    expect(status, `import failed: ${JSON.stringify(importResult)}`).toBe(201);
+    expect(importResult.mapRouteCount, 'mapRouteCount must be 2').toBe(2);
+
+    const newUniverseId: string = importResult.universeId;
+
+    // 8. Fetch the re-imported map detail; routes must have style fields intact.
+    const newMapsRes = await jsonReq('GET', `/api/universes/${newUniverseId}/maps`, { headers: hdrs });
+    expect(newMapsRes.status).toBe(200);
+    const newMaps = await json(newMapsRes);
+    expect(newMaps).toHaveLength(1);
+
+    const newMapId = newMaps[0].id;
+    const mapDetailRes = await jsonReq(
+      'GET',
+      `/api/universes/${newUniverseId}/maps/${newMapId}`,
+      { headers: hdrs },
+    );
+    expect(mapDetailRes.status).toBe(200);
+    const newMapDetail = await json(mapDetailRes);
+
+    expect(newMapDetail.routes).toHaveLength(2);
+
+    // Find the linked route by name and assert style fields + remapped entryId.
+    // eslint-disable-next-line @typescript-eslint/no-explicit-any
+    const newLinkedRoute = newMapDetail.routes.find((r: any) => r.name === "King's Road");
+    expect(newLinkedRoute, 'linked route must be found by name').toBeDefined();
+    expect(newLinkedRoute.lineStyle, 'lineStyle must be dashed').toBe('dashed');
+    expect(newLinkedRoute.width, 'width must be 7').toBe(7);
+    expect(newLinkedRoute.showArrow, 'showArrow must be true').toBe(true);
+    // entryId must be remapped — not the original id, and non-null.
+    expect(newLinkedRoute.entryId, 'entryId must be remapped (non-null)').toBeTruthy();
+    expect(newLinkedRoute.entryId, 'entryId must not be the original').not.toBe(entry.id);
+
+    // Find the standalone route and assert null entryId + default style fields.
+    // eslint-disable-next-line @typescript-eslint/no-explicit-any
+    const newStandaloneRoute = newMapDetail.routes.find((r: any) => r.name === 'Merchant Trail');
+    expect(newStandaloneRoute, 'standalone route must be found by name').toBeDefined();
+    expect(newStandaloneRoute.entryId, 'standalone route entryId must be null').toBeNull();
+    expect(newStandaloneRoute.lineStyle, 'standalone lineStyle must be solid').toBe('solid');
+    expect(newStandaloneRoute.width, 'standalone width must be 4').toBe(4);
+    expect(newStandaloneRoute.showArrow, 'standalone showArrow must be false').toBe(false);
+  });
+
+  // ─── Phase 51 ROUTE-03: Route backward-compat test (pre-v5.3) ───────────────
+
+  it('imports a payload without mapRoutes field succeeds — backward-compat pre-v5.3', async () => {
+    const { hdrs } = await userWithToken('sc4-routes-compat@test.com');
+
+    const mapId = 'eeeeeeee-eeee-4eee-8eee-eeeeeeeeeeee';
+    // Hand-craft a v5.1 export that has no mapRoutes key.
+    const preV53Payload = {
+      weltbon_version: '2.0.0',
+      exported_at: new Date().toISOString(),
+      universe: { name: 'PreRoutesUniverse', description: 'Pre-v5.3 export without routes' },
+      entries: [],
+      links: [],
+      maps: [{ id: mapId, name: 'Old Map', imageAssetId: null, legendLabels: null }],
+      mapPins: [],
+      mapRegions: [],
+      mapLayers: [],
+      terrainTypes: [],
+      // Deliberately NO mapRoutes key — pre-v5.3 backward-compat (T-51-09 mitigation).
+    };
+
+    const res = await jsonReq('POST', '/api/universes/import', {
+      headers: hdrs,
+      body: preV53Payload,
+    });
+    expect(res.status, 'pre-v5.3 import (no mapRoutes) must succeed with 201').toBe(201);
+    const result = await json(res);
+    // mapRouteCount must be 0 (defaulted to [] by import schema).
+    expect(result.mapRouteCount ?? 0, 'missing mapRoutes field must yield 0 routes').toBe(0);
+
+    // No routes should appear in the imported map.
+    const newMapsRes = await jsonReq('GET', `/api/universes/${result.universeId}/maps`, { headers: hdrs });
+    expect(newMapsRes.status).toBe(200);
+    const newMaps = await json(newMapsRes);
+    expect(newMaps).toHaveLength(1);
+
+    const mapDetailRes = await jsonReq(
+      'GET',
+      `/api/universes/${result.universeId}/maps/${newMaps[0].id}`,
+      { headers: hdrs },
+    );
+    expect(mapDetailRes.status).toBe(200);
+    const newMapDetail = await json(mapDetailRes);
+    // routes field must be empty (zero routes in pre-v5.3 import).
+    expect(newMapDetail.routes ?? [], 'no routes in pre-v5.3 import').toHaveLength(0);
+  });
+
   // ─── Backward-compat test ───────────────────────────────────────────────────
 
   it('imports a maps-less export (no maps key) with mapCount 0 — backward compat', async () => {
@@ -497,6 +665,8 @@ describe('import-export-maps (SC4)', () => {
     // Phase 44 GEOSHARE-02 SC2: pre-v5.1 exports (no terrain keys) must yield zero terrain counts.
     expect(result.mapLayerCount ?? 0, 'pre-v5.1 export must have mapLayerCount=0').toBe(0);
     expect(result.terrainTypeCount ?? 0, 'pre-v5.1 export must have terrainTypeCount=0').toBe(0);
+    // Phase 51 ROUTE-03: pre-maps export also has no routes.
+    expect(result.mapRouteCount ?? 0, 'pre-maps export must have mapRouteCount=0').toBe(0);
 
     // No maps should appear in the imported universe.
     const mapsRes = await jsonReq('GET', `/api/universes/${result.universeId}/maps`, {
