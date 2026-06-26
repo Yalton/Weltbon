@@ -103,6 +103,14 @@ vi.mock('../components/Toast', () => ({
   Toast: () => null,
 }));
 
+// Mock MapZoomControls and MapCompass — chrome components under test for share parity (D-09).
+vi.mock('../components/MapZoomControls', () => ({
+  MapZoomControls: () => <div data-testid="map-zoom-controls-stub" />,
+}));
+vi.mock('../components/MapCompass', () => ({
+  MapCompass: () => <div data-testid="map-compass-stub" />,
+}));
+
 import { api } from '../api/client';
 import { MapEditor } from './MapEditor';
 import type { MapDetail } from '../hooks/useMap';
@@ -383,6 +391,49 @@ describe('MapEditor share mode (GEOSHARE-01 / 44-03)', () => {
     await waitFor(() => {
       const polygons = screen.getAllByTestId('terrain-area-polygon');
       expect(polygons.length).toBeGreaterThanOrEqual(1);
+    });
+  });
+
+  /**
+   * Test 5: MapZoomControls renders in share mode (D-04, D-09 parity).
+   * Chrome must appear in BOTH editor and share view — NOT gated on !isShare.
+   */
+  it('Test 5: MapZoomControls renders in share mode (D-09 parity)', async () => {
+    vi.mocked(api).mockImplementation(async (path: string) => {
+      if (path.includes('/map-layers')) return makeLayers() as never;
+      if (path.includes('/entries')) return [] as never;
+      return makeMapDetail() as never;
+    });
+
+    renderShareEditor();
+
+    // Wait for the page to load — the map canvas stub appears when data is ready.
+    await screen.findByTestId('map-canvas-stub');
+
+    // MapZoomControls must be present in share mode (chrome parity).
+    await waitFor(() => {
+      expect(screen.getByTestId('map-zoom-controls-stub')).toBeInTheDocument();
+    });
+  });
+
+  /**
+   * Test 6: MapCompass renders in share mode (D-06, D-09 parity).
+   * The static compass rose must appear in BOTH editor and share view.
+   */
+  it('Test 6: MapCompass renders in share mode (D-09 parity)', async () => {
+    vi.mocked(api).mockImplementation(async (path: string) => {
+      if (path.includes('/map-layers')) return makeLayers() as never;
+      if (path.includes('/entries')) return [] as never;
+      return makeMapDetail() as never;
+    });
+
+    renderShareEditor();
+
+    await screen.findByTestId('map-canvas-stub');
+
+    // MapCompass must be present in share mode (chrome parity).
+    await waitFor(() => {
+      expect(screen.getByTestId('map-compass-stub')).toBeInTheDocument();
     });
   });
 });
