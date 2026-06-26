@@ -4,7 +4,7 @@ import { zoom, zoomTransform, type ZoomBehavior } from 'd3-zoom';
 import { useNavigate } from 'react-router-dom';
 import { entryTypeHexColor } from '../lib/entryTypeColor';
 import { GlyphIcon } from '../lib/mapGlyphs';
-import type { MapPin, MapRegion, TerrainAreaRegion } from '../hooks/useMap';
+import type { MapPin, MapRegion, TerrainAreaRegion, MapRoute } from '../hooks/useMap';
 import type { MapLayer } from '../hooks/useMapLayers';
 import { useShareToken } from '../contexts/ShareModeContext';
 
@@ -13,6 +13,8 @@ const HIT_RADIUS = 22;         // transparent hit area — 44px diameter touch t
 const DRAG_THRESHOLD_PX = 4;   // pointer movement below this is treated as a click
 const SNAP_DISTANCE_PX = 18;   // first-vertex snap radius in IMAGE pixels (scaled)
 const GRID_PX = 100;           // grid spacing in image pixels (T-50-03: bounded by imageWidth/GRID_PX)
+const ROUTE_HIT_WIDTH = 20;    // wide transparent hit-stroke for route polylines (image-space units)
+const ROUTE_LABEL_MAX_CHARS = 24; // label truncation length for route midpoint chip
 
 // ─── Teardrop pin marker geometry (D-03) ─────────────────────────────────────
 // Tip at local (0,0) = the pin's normalized image coordinate.
@@ -96,6 +98,14 @@ export interface MapCanvasProps {
   layers?: MapLayer[];
   /** When true, render the optional faint square grid overlay in image space (D-05). Off by default. */
   gridVisible?: boolean;
+
+  // ── Phase 51 ROUTE-01: route polyline rendering ──────────────────────────────
+  /** Routes for this map. */
+  routes?: MapRoute[];
+  /** Called on route left-click (navigate to linked entry). */
+  onRouteClick?: (route: MapRoute) => void;
+  /** Called on route right-click with client coords (context menu). */
+  onRouteContextMenu?: (route: MapRoute, clientX: number, clientY: number) => void;
 }
 
 // ─── PinCircle ────────────────────────────────────────────────────────────────
@@ -401,6 +411,190 @@ function RegionPolygon({
   );
 }
 
+// ─── RoutePolyline ────────────────────────────────────────────────────────────
+/**
+ * React-rendered SVG polyline for a map route (ROUTE-01, Plan 06).
+ *
+ * CRITICAL: All interaction uses React event handlers (onClick, onContextMenu).
+ * NEVER use d3 .on(event, (e, d) => ...) on this element — d is undefined on
+ * React-rendered SVG and would throw (T-51-12, memory: timeline-pins-react-rendered-no-d3-datum).
+ *
+ * Two stacked path elements: a visible styled polyline (pointerEvents:'none') and a
+ * fat transparent hit-stroke (strokeWidth=ROUTE_HIT_WIDTH) carrying handlers (D-07).
+ * When isDrawing, BOTH paths set pointerEvents:'none' so clicks fall through to
+ * handleSvgClick → vertex append (43-05 draw-mode fall-through).
+ *
+ * T-51-11: JSON.parse guard + min-2-point early return so malformed/short geometry renders null.
+ * T-51-12: Label rendered as React text in <foreignObject> — no dangerouslySetInnerHTML.
+ *
+ * Optional end-arrowhead via SVG <marker> at the final vertex (showArrow=true).
+ * Optional upright glassy label chip via <foreignObject> at the path midpoint (name!=='').
+ */
+interface RoutePolylineProps {
+  route: MapRoute;
+  imageWidth: number;
+  imageHeight: number;
+  isDrawing: boolean;
+  onRouteClick: (route: MapRoute) => void;
+  onRouteContextMenu: (route: MapRoute, clientX: number, clientY: number) => void;
+  /** Called on pointer enter for tooltip overlay. */
+  onRouteHoverEnter: (route: MapRoute, clientX: number, clientY: number) => void;
+  /** Called on pointer leave to clear tooltip. */
+  onRouteHoverLeave: () => void;
+}
+
+function RoutePolyline({
+  route,
+  imageWidth,
+  imageHeight,
+  isDrawing,
+  onRouteClick,
+  onRouteContextMenu,
+  onRouteHoverEnter,
+  onRouteHoverLeave,
+}: RoutePolylineProps) {
+  // T-51-11: Parse points JSON — malformed or short geometry renders null rather than throwing.
+  let points: Array<{ x: number; y: number }> = [];
+  try {
+    points = JSON.parse(route.points) as Array<{ x: number; y: number }>;
+  } catch {
+    return null;
+  }
+
+  if (points.length < 2) return null;
+
+  // Build SVG polyline points string in image-space coords.
+  const svgPoints = points
+    .map((p) => `${p.x * imageWidth},${p.y * imageHeight}`)
+    .join(' ');
+
+  const color = route.color ?? '#6b7280';
+
+  // Pointer events: none when any draw mode active (draw-mode fall-through, 43-05 / D-07).
+  const pointerEventsValue: React.CSSProperties['pointerEvents'] = isDrawing ? 'none' : 'auto';
+
+  const handleClick = (e: React.MouseEvent) => {
+    // While isDrawing: return early WITHOUT stopPropagation — click bubbles to handleSvgClick
+    // → vertex append; no route navigation occurs (mirrors RegionPolygon 43-05 pattern).
+    if (isDrawing) return;
+    e.stopPropagation();
+    onRouteClick(route);
+  };
+
+  const handleContextMenu = (e: React.MouseEvent) => {
+    e.preventDefault();
+    e.stopPropagation();
+    onRouteContextMenu(route, e.clientX, e.clientY);
+  };
+
+  // Hover handlers — NEVER attach d3 .on(event,(e,d)=>) — d is undefined on React SVG.
+  const handlePointerEnter = (e: React.PointerEvent) => {
+    onRouteHoverEnter(route, e.clientX, e.clientY);
+  };
+
+  const handlePointerLeave = () => {
+    onRouteHoverLeave();
+  };
+
+  // Midpoint for the label chip: midpoint of the middle segment.
+  const midIdx = Math.floor((points.length - 1) / 2);
+  const p0 = points[midIdx];
+  const p1 = points[midIdx + 1];
+  const midX = ((p0.x + p1.x) / 2) * imageWidth;
+  const midY = ((p0.y + p1.y) / 2) * imageHeight;
+
+  // T-51-12: Label rendered as React text — no dangerouslySetInnerHTML.
+  const labelText =
+    route.name.length > ROUTE_LABEL_MAX_CHARS
+      ? route.name.slice(0, ROUTE_LABEL_MAX_CHARS) + '…'
+      : route.name;
+
+  // Unique per-route marker ID to avoid defs collisions across multiple routes.
+  const markerId = `route-arrow-${route.id}`;
+
+  return (
+    <g style={{ cursor: route.entryId ? 'pointer' : 'default' }}>
+      {/* Arrowhead marker definition — registered in-SVG-tree defs when showArrow */}
+      {route.showArrow && (
+        <defs>
+          <marker
+            id={markerId}
+            markerWidth="10"
+            markerHeight="7"
+            refX="9"
+            refY="3.5"
+            orient="auto"
+            markerUnits="strokeWidth"
+          >
+            <path d="M0,0 L0,7 L10,3.5 Z" fill={color} />
+          </marker>
+        </defs>
+      )}
+
+      {/* Visible styled polyline — pointerEvents:none so hit layer handles all interaction */}
+      <polyline
+        points={svgPoints}
+        fill="none"
+        stroke={color}
+        strokeWidth={route.width}
+        strokeLinecap="round"
+        strokeLinejoin="round"
+        strokeDasharray={route.lineStyle === 'dashed' ? '8 6' : undefined}
+        markerEnd={route.showArrow ? `url(#${markerId})` : undefined}
+        style={{ pointerEvents: 'none' }}
+      />
+
+      {/* Fat transparent hit-stroke — carries all interaction handlers (D-07) */}
+      {/* Both paths set pointerEvents:'none' when isDrawing (draw-mode fall-through, 43-05). */}
+      <polyline
+        points={svgPoints}
+        fill="none"
+        stroke="transparent"
+        strokeWidth={ROUTE_HIT_WIDTH}
+        strokeLinecap="round"
+        style={{ pointerEvents: pointerEventsValue }}
+        onClick={handleClick}
+        onContextMenu={handleContextMenu}
+        onPointerEnter={handlePointerEnter}
+        onPointerLeave={handlePointerLeave}
+      />
+
+      {/* Upright midpoint label chip — shown when route.name !== '' (T-51-12, D-05) */}
+      {/* Glassy chip matching Phase 50 chrome: bg/90 backdrop-blur + accent-color border. */}
+      {/* Rendered as React text, NOT dangerouslySetInnerHTML — XSS safe. */}
+      {route.name !== '' && (
+        <foreignObject
+          x={midX - 60}
+          y={midY - 14}
+          width={120}
+          height={28}
+          style={{ pointerEvents: 'none', overflow: 'visible' }}
+        >
+          <div
+            className="route-label-chip"
+            style={{
+              display: 'inline-flex',
+              alignItems: 'center',
+              padding: '2px 8px',
+              borderRadius: '4px',
+              fontSize: '11px',
+              fontWeight: 600,
+              whiteSpace: 'nowrap',
+              color: 'var(--color-text, #f1f5f9)',
+              background: 'rgba(15, 23, 42, 0.9)',
+              backdropFilter: 'blur(4px)',
+              border: `1px solid ${color}`,
+              lineHeight: '1.4',
+            }}
+          >
+            {labelText}
+          </div>
+        </foreignObject>
+      )}
+    </g>
+  );
+}
+
 // ─── TerrainAreaPolygon ───────────────────────────────────────────────────────
 /**
  * React-rendered SVG polygon for a terrain area (TERRAIN-03).
@@ -527,6 +721,9 @@ export const MapCanvas = forwardRef<MapCanvasHandle, MapCanvasProps>(function Ma
   onTerrainAreaContextMenu,
   layers = [],
   gridVisible = false,
+  routes = [],
+  onRouteClick,
+  onRouteContextMenu,
 }, ref) {
   const svgRef = useRef<SVGSVGElement>(null);
   const containerRef = useRef<HTMLDivElement>(null);
@@ -704,6 +901,17 @@ export const MapCanvas = forwardRef<MapCanvasHandle, MapCanvasProps>(function Ma
   const handleRegionHoverEnter = useCallback((region: MapRegion, clientX: number, clientY: number) => {
     setHoveredTooltip({
       title: region.name || 'Region',
+      type: undefined,
+      summary: undefined,
+      clientX,
+      clientY,
+    });
+  }, []);
+
+  // Phase 51 ROUTE-01: route hover handler — shows route name in tooltip.
+  const handleRouteHoverEnter = useCallback((route: MapRoute, clientX: number, clientY: number) => {
+    setHoveredTooltip({
+      title: route.name || 'Route',
       type: undefined,
       summary: undefined,
       clientX,
@@ -905,6 +1113,24 @@ export const MapCanvas = forwardRef<MapCanvasHandle, MapCanvasProps>(function Ma
               onRegionContextMenu={onRegionContextMenu}
               onRegionHoverEnter={handleRegionHoverEnter}
               onRegionHoverLeave={handleHoverLeave}
+            />
+          ))}
+        </g>
+
+        {/* ── Routes — rendered ABOVE regions, BELOW pins (D-08 stacking, ROUTE-01) ── */}
+        {/* CRITICAL: React handlers only — NEVER d3 .on(event,(e,d)=>) on route elements. */}
+        <g className="routes">
+          {routes.map((route) => (
+            <RoutePolyline
+              key={route.id}
+              route={route}
+              imageWidth={imageWidth}
+              imageHeight={imageHeight}
+              isDrawing={isDrawing}
+              onRouteClick={onRouteClick ?? (() => {})}
+              onRouteContextMenu={onRouteContextMenu ?? (() => {})}
+              onRouteHoverEnter={handleRouteHoverEnter}
+              onRouteHoverLeave={handleHoverLeave}
             />
           ))}
         </g>
