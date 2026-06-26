@@ -131,6 +131,19 @@ export function exportUniverseJsonAsZip(
       terrainTypeId: r.terrainTypeId,
       createdAt: r.createdAt.toISOString(),
     })),
+    // Phase 51 ROUTE-03: all routes scoped to this universe via maps FK.
+    mapRoutes: payload.mapRoutes.map((r) => ({
+      id: r.id,
+      mapId: r.mapId,
+      entryId: r.entryId,
+      name: r.name,
+      points: r.points,
+      color: r.color,
+      lineStyle: r.lineStyle,
+      width: r.width,
+      showArrow: r.showArrow,
+      createdAt: r.createdAt.toISOString(),
+    })),
     // Phase 44 GEOSHARE-02 D-44-08: full universe palette — all layers + types.
     mapLayers: payload.mapLayersData.map((l) => ({
       id: l.id,

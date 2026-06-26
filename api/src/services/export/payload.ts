@@ -13,6 +13,7 @@ import {
   maps,
   mapPins,
   mapRegions,
+  mapRoutes,
   mapLayers,
   terrainTypes,
 } from '../../db/schema.js';
@@ -115,6 +116,20 @@ export interface ExportPayloadMapRegion {
   createdAt: Date;
 }
 
+/** Phase 51 ROUTE-03: map route exported alongside the universe payload. */
+export interface ExportPayloadMapRoute {
+  id: string;
+  mapId: string;
+  entryId: string | null;  // nullable — standalone routes have no entry
+  name: string;
+  points: string;  // raw JSON text "[{x,y},...]"
+  color: string | null;
+  lineStyle: string;   // 'solid' | 'dashed'
+  width: number;
+  showArrow: boolean;
+  createdAt: Date;
+}
+
 /** Phase 44 GEOSHARE-02: map layer exported as full universe palette (D-44-08). */
 export interface ExportPayloadMapLayer {
   id: string;
@@ -203,6 +218,8 @@ export interface ExportPayload {
   mapPins: ExportPayloadMapPin[];
   /** Phase 41 D-01: all map regions scoped to this universe (via maps FK). */
   mapRegions: ExportPayloadMapRegion[];
+  /** Phase 51 ROUTE-03: all map routes scoped to this universe (via maps FK). */
+  mapRoutes: ExportPayloadMapRoute[];
   /** Phase 44 GEOSHARE-02 D-44-08: full universe map-layer palette (not filtered to painted). */
   mapLayersData: ExportPayloadMapLayer[];
   /** Phase 44 GEOSHARE-02 D-44-08: full universe terrain-type palette (scoped via layers FK). */
@@ -336,6 +353,25 @@ export async function loadUniverseExportPayload(universeId: string): Promise<Exp
     })
     .from(mapRegions)
     .innerJoin(maps, eq(maps.id, mapRegions.mapId))
+    .where(eq(maps.universeId, universeId));
+
+  // Phase 51 ROUTE-03: load map routes scoped to this universe via maps FK.
+  // map_routes has no direct universeId — scope through INNER JOIN maps.
+  const mapRouteRows = await db()
+    .select({
+      id: mapRoutes.id,
+      mapId: mapRoutes.mapId,
+      entryId: mapRoutes.entryId,
+      name: mapRoutes.name,
+      points: mapRoutes.points,
+      color: mapRoutes.color,
+      lineStyle: mapRoutes.lineStyle,
+      width: mapRoutes.width,
+      showArrow: mapRoutes.showArrow,
+      createdAt: mapRoutes.createdAt,
+    })
+    .from(mapRoutes)
+    .innerJoin(maps, eq(maps.id, mapRoutes.mapId))
     .where(eq(maps.universeId, universeId));
 
   // Phase 44 GEOSHARE-02 D-44-08: full universe map-layer palette.
@@ -475,6 +511,19 @@ export async function loadUniverseExportPayload(universeId: string): Promise<Exp
       color: r.color ?? null,
       // Phase 44 GEOSHARE-02: terrain discriminator; null = political/standalone.
       terrainTypeId: r.terrainTypeId ?? null,
+      createdAt: r.createdAt,
+    })),
+    // Phase 51 ROUTE-03: all routes scoped to this universe via maps FK.
+    mapRoutes: mapRouteRows.map((r) => ({
+      id: r.id,
+      mapId: r.mapId,
+      entryId: r.entryId ?? null,
+      name: r.name,
+      points: r.points,
+      color: r.color ?? null,
+      lineStyle: r.lineStyle,
+      width: r.width,
+      showArrow: r.showArrow,
       createdAt: r.createdAt,
     })),
     // Phase 44 GEOSHARE-02 D-44-08: full palette — export ALL layers/types for the universe.
