@@ -21,6 +21,11 @@
   --sim-line-opacity-dark:        0.18;
   --sim-line-opacity-light:       0.22;
 
+  /* ── Map pin chrome design tokens (D-03, Phase 50) ── */
+  /* These drive the SVG filter attributes in MapCanvas PinCircle (see feDropShadow / feGaussianBlur). */
+  --pin-shadow-color:             rgba(0, 0, 0, 0.45);
+  --pin-glow-color:               oklch(0.65 0.22 270);  /* accent-adjacent violet glow */
+
   --animate-overlay-in:  fade-in   var(--motion-dialog-enter-duration) var(--motion-ease-out) both;
   --animate-overlay-out: fade-out  var(--motion-dialog-exit-duration)  var(--motion-ease-in)  both;
   --animate-dialog-in:   dialog-in var(--motion-dialog-enter-duration) var(--motion-ease-out) both;
