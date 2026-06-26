@@ -1,4 +1,4 @@
-import { useEffect, useRef, useState } from 'react';
+import { forwardRef, useEffect, useImperativeHandle, useRef, useState } from 'react';
 import { select } from 'd3-selection';
 import { zoom, zoomTransform, type ZoomBehavior } from 'd3-zoom';
 import { useNavigate } from 'react-router-dom';
@@ -12,6 +12,7 @@ import { useShareToken } from '../contexts/ShareModeContext';
 const HIT_RADIUS = 22;         // transparent hit area — 44px diameter touch target
 const DRAG_THRESHOLD_PX = 4;   // pointer movement below this is treated as a click
 const SNAP_DISTANCE_PX = 18;   // first-vertex snap radius in IMAGE pixels (scaled)
+const GRID_PX = 100;           // grid spacing in image pixels (T-50-03: bounded by imageWidth/GRID_PX)
 
 // ─── Teardrop pin marker geometry (D-03) ─────────────────────────────────────
 // Tip at local (0,0) = the pin's normalized image coordinate.
@@ -33,6 +34,20 @@ const GLYPH_OFFSET_Y = -26;
 /** Clamp a number to [lo, hi]. */
 function clamp(v: number, lo: number, hi: number): number {
   return Math.min(hi, Math.max(lo, v));
+}
+
+// ─── Imperative handle (Task 1: D-05 zoom seam) ──────────────────────────────
+/**
+ * Imperative zoom methods exposed via forwardRef + useImperativeHandle.
+ * MapEditor holds a ref to MapCanvas and calls these from MapZoomControls callbacks.
+ */
+export interface MapCanvasHandle {
+  /** Zoom in by 1.3× (scaleBy on the d3 zoomBehavior). */
+  zoomIn(): void;
+  /** Zoom out by 1/1.3 (scaleBy on the d3 zoomBehavior). */
+  zoomOut(): void;
+  /** Fit image to viewport — restores the initial fit-to-view transform. */
+  fitReset(): void;
 }
 
 // ─── Props ────────────────────────────────────────────────────────────────────
@@ -79,6 +94,8 @@ export interface MapCanvasProps {
   onTerrainAreaContextMenu?: (region: TerrainAreaRegion, clientX: number, clientY: number) => void;
   /** Map layers for stacking order (sorted ascending by sortOrder). */
   layers?: MapLayer[];
+  /** When true, render the optional faint square grid overlay in image space (D-05). Off by default. */
+  gridVisible?: boolean;
 }
 
 // ─── PinCircle ────────────────────────────────────────────────────────────────
@@ -448,7 +465,7 @@ function TerrainAreaPolygon({
  *
  * Z-ORDER (D-07): regions <g> is rendered BEFORE pins <g> so pins stay on top.
  */
-export function MapCanvas({
+export const MapCanvas = forwardRef<MapCanvasHandle, MapCanvasProps>(function MapCanvas({
   imageUrl,
   imageWidth,
   imageHeight,
@@ -469,9 +486,12 @@ export function MapCanvas({
   paintTerrainMode = false,
   onTerrainAreaContextMenu,
   layers = [],
-}: MapCanvasProps) {
+  gridVisible = false,
+}, ref) {
   const svgRef = useRef<SVGSVGElement>(null);
   const [currentScale, setCurrentScale] = useState(1);
+  // Ref to the d3 zoomBehavior — lifted so imperative handle methods can call it (Task 1).
+  const zoomBehaviorRef = useRef<ZoomBehavior<SVGSVGElement, unknown> | null>(null);
   // Pointer position in image space for rubber-band preview (drawRegionMode).
   const [pointerImgPos, setPointerImgPos] = useState<{ x: number; y: number } | null>(null);
   const navigate = useNavigate();
@@ -490,6 +510,7 @@ export function MapCanvas({
   // Install d3-zoom on the svg element, targeting <g.viewport>.
   // Pins and regions are React-rendered inside this effect's SVG structure but are
   // NOT touched by d3 — d3 only manages the zoom transform on <g.viewport>.
+  // zoomBehavior is lifted to zoomBehaviorRef so imperative handle methods can call it (Task 1).
   useEffect(() => {
     if (!svgRef.current || imageWidth <= 0 || imageHeight <= 0) return;
 
@@ -506,6 +527,9 @@ export function MapCanvas({
         g.attr('transform', evt.transform.toString());
         setCurrentScale(evt.transform.k);
       });
+
+    // Lift into ref so useImperativeHandle can access it without closure staleness.
+    zoomBehaviorRef.current = zoomBehavior;
 
     svg.call(zoomBehavior);
     // Disable d3's built-in dblclick-to-zoom so a double-click on a pin
@@ -524,8 +548,35 @@ export function MapCanvas({
 
     return () => {
       svg.on('.zoom', null);
+      zoomBehaviorRef.current = null;
     };
   }, [imageWidth, imageHeight]);
+
+  // ── Imperative zoom handle (Task 1: D-05 seam for MapZoomControls) ───────────
+  // Exposes zoomIn / zoomOut / fitReset so MapEditor can wire MapZoomControls
+  // buttons directly to the d3 zoomBehavior without prop-drilling callbacks.
+  useImperativeHandle(ref, () => ({
+    zoomIn() {
+      if (!svgRef.current || !zoomBehaviorRef.current) return;
+      zoomBehaviorRef.current.scaleBy(select(svgRef.current), 1.3);
+    },
+    zoomOut() {
+      if (!svgRef.current || !zoomBehaviorRef.current) return;
+      zoomBehaviorRef.current.scaleBy(select(svgRef.current), 1 / 1.3);
+    },
+    fitReset() {
+      if (!svgRef.current || !zoomBehaviorRef.current) return;
+      const svgEl = svgRef.current;
+      const svg = select(svgEl);
+      const vw = svgEl.clientWidth || svgEl.getBoundingClientRect().width;
+      const vh = svgEl.clientHeight || svgEl.getBoundingClientRect().height;
+      if (vw > 0 && vh > 0) {
+        const scale = Math.min(vw / imageWidth, vh / imageHeight);
+        zoomBehaviorRef.current.translateTo(svg, imageWidth / 2, imageHeight / 2);
+        zoomBehaviorRef.current.scaleTo(svg, scale);
+      }
+    },
+  }), [imageWidth, imageHeight]);
 
   // ── Coordinate conversion helper ─────────────────────────────────────────────
   // Two-step screen → image space conversion (Approach A).
@@ -676,6 +727,39 @@ export function MapCanvas({
           />
         )}
 
+        {/* ── Optional image-space grid overlay (D-05, Task 1) ── */}
+        {/* Placed INSIDE <g.viewport> so it pans/zooms with the map (image space). */}
+        {/* After background image, BEFORE terrain areas and regions. */}
+        {/* pointerEvents:'none' — never blocks d3-zoom or pin/region interaction (T-50-03). */}
+        {gridVisible && (() => {
+          const vLines: number[] = [];
+          const hLines: number[] = [];
+          for (let x = 0; x <= imageWidth; x += GRID_PX) vLines.push(x);
+          for (let y = 0; y <= imageHeight; y += GRID_PX) hLines.push(y);
+          return (
+            <g className="grid-overlay" style={{ pointerEvents: 'none' }}>
+              {vLines.map((x) => (
+                <line
+                  key={`v${x}`}
+                  x1={x} y1={0}
+                  x2={x} y2={imageHeight}
+                  stroke="var(--map-grid-color, rgba(120,120,120,0.18))"
+                  strokeWidth={1}
+                />
+              ))}
+              {hLines.map((y) => (
+                <line
+                  key={`h${y}`}
+                  x1={0} y1={y}
+                  x2={imageWidth} y2={y}
+                  stroke="var(--map-grid-color, rgba(120,120,120,0.18))"
+                  strokeWidth={1}
+                />
+              ))}
+            </g>
+          );
+        })()}
+
         {/* ── Terrain areas — rendered BELOW regions (D-07, TERRAIN-03) ── */}
         {/* Stacked bottom-to-top by layer sortOrder; hidden layers render nothing. */}
         {/* CRITICAL: React handlers only — NEVER d3 .on(event,(e,d)=>) here */}
@@ -777,4 +861,4 @@ export function MapCanvas({
       </g>
     </svg>
   );
-}
+});

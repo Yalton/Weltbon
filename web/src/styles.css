@@ -26,6 +26,10 @@
   --pin-shadow-color:             rgba(0, 0, 0, 0.45);
   --pin-glow-color:               oklch(0.65 0.22 270);  /* accent-adjacent violet glow */
 
+  /* ── Map grid overlay token (D-05, Phase 50 Task 1) ── */
+  /* Used by the optional image-space grid overlay in MapCanvas. */
+  --map-grid-color:               rgba(120, 120, 120, 0.18);
+
   --animate-overlay-in:  fade-in   var(--motion-dialog-enter-duration) var(--motion-ease-out) both;
   --animate-overlay-out: fade-out  var(--motion-dialog-exit-duration)  var(--motion-ease-in)  both;
   --animate-dialog-in:   dialog-in var(--motion-dialog-enter-duration) var(--motion-ease-out) both;
