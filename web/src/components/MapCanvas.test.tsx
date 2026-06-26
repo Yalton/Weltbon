@@ -35,7 +35,7 @@ import { render, fireEvent, cleanup } from '@testing-library/react';
 import { MemoryRouter } from 'react-router-dom';
 import { QueryClient, QueryClientProvider } from '@tanstack/react-query';
 import { MapCanvas } from './MapCanvas';
-import type { TerrainAreaRegion, MapRegion } from '../hooks/useMap';
+import type { TerrainAreaRegion, MapRegion, MapPin } from '../hooks/useMap';
 import type { MapLayer } from '../hooks/useMapLayers';
 
 // Mock ShareModeContext — MapCanvas imports useShareToken; not under test here.
@@ -217,5 +217,161 @@ describe('MapCanvas — overlay polygon pointer-events gating (UAT Test 5, 43-05
     fireEvent.click(polygon!);
     expect(onRegionClick).toHaveBeenCalledTimes(1);
     expect(onRegionClick).toHaveBeenCalledWith(POLITICAL_REGION);
+  });
+});
+
+// ── Phase 50 Task 2: PinCircle teardrop + glow + drag regression ─────────────
+
+// A minimal pin fixture for teardrop and drag tests.
+const TEST_PIN: MapPin = {
+  id: 'pin1',
+  mapId: 'm1',
+  entryId: 'entry1',
+  x: 0.5,
+  y: 0.5,
+  color: '#3b82f6',
+  icon: null,
+  entryTitle: 'Camp Fire',
+  entryType: 'location',
+};
+
+// Pin with no color / icon — graceful degradation test.
+const BARE_PIN: MapPin = {
+  id: 'pin2',
+  mapId: 'm1',
+  entryId: 'entry2',
+  x: 0.3,
+  y: 0.3,
+  color: null,
+  icon: null,
+  entryTitle: 'Unknown',
+  entryType: undefined,
+};
+
+/**
+ * Attach stub setPointerCapture / releasePointerCapture to an element.
+ * Required because SVG <g> elements in jsdom do not have these methods and
+ * PinCircle's pointer handlers call them unconditionally.
+ */
+function stubPointerCapture(el: Element) {
+  Object.defineProperty(el, 'setPointerCapture', {
+    value: vi.fn(),
+    configurable: true,
+    writable: true,
+  });
+  Object.defineProperty(el, 'releasePointerCapture', {
+    value: vi.fn(),
+    configurable: true,
+    writable: true,
+  });
+}
+
+describe('PinCircle — teardrop render (D-03, Task 2)', () => {
+  /**
+   * Test D: The pin group must contain a <path> element (teardrop shape).
+   * RED pre-impl: PinCircle renders a <circle r=14>, not a <path> → FAIL.
+   * GREEN post-impl: teardrop <path> replaces the visible circle → PASS.
+   */
+  it('Test D: pin group contains a teardrop <path> (not just circles)', () => {
+    const { container } = renderMapCanvas({ pins: [TEST_PIN] });
+    const pinGroup = container.querySelector('.pins g[aria-label]');
+    expect(pinGroup).not.toBeNull();
+    // The teardrop must be a <path> inside the pin group.
+    const tearpath = pinGroup!.querySelector('path');
+    expect(tearpath, 'PinCircle should render a teardrop <path>').not.toBeNull();
+  });
+
+  /**
+   * Test E: A drop-shadow SVG filter (feDropShadow) must be defined in the canvas.
+   * RED pre-impl: no <feDropShadow> in the DOM → FAIL.
+   * GREEN post-impl: <defs> contains <feDropShadow> → PASS.
+   */
+  it('Test E: SVG <defs> defines a feDropShadow filter', () => {
+    const { container } = renderMapCanvas({ pins: [TEST_PIN] });
+    const dropShadow = container.querySelector('feDropShadow');
+    expect(dropShadow, 'MapCanvas <defs> must include a feDropShadow element').not.toBeNull();
+  });
+
+  /**
+   * Test F: A pin with color=null and icon=null still renders a teardrop.
+   * Graceful degradation (D-03): entryTypeHexColor fallback is used.
+   * RED pre-impl: circle, not path → FAIL.
+   * GREEN post-impl: teardrop <path> with fallback fill → PASS.
+   */
+  it('Test F: pin with color=null and icon=null still renders a teardrop', () => {
+    const { container } = renderMapCanvas({ pins: [BARE_PIN] });
+    const pinGroup = container.querySelector('.pins g[aria-label]');
+    expect(pinGroup).not.toBeNull();
+    const tearpath = pinGroup!.querySelector('path');
+    expect(tearpath, 'Bare pin (no color, no icon) must still render a teardrop <path>').not.toBeNull();
+  });
+});
+
+describe('PinCircle — drag regression (D-11, Task 2)', () => {
+  /**
+   * Test G: drag > threshold at currentScale=1 fires onDragEnd with correct DELTA coords.
+   *
+   * Why currentScale=1: jsdom cannot run d3-zoom layout, so currentScale stays at its
+   * initial useState(1) value. The test still exercises the full drag path and the DELTA
+   * formula (dxImg = dx / k / imageWidth). The scale-awareness is validated by the
+   * formula structure, not a live zoom change.
+   *
+   * At scale=1, imageWidth=1000, imageHeight=1000, pin at (0.5, 0.5):
+   *   drag from (200, 200) → (250, 215): dx=50, dy=15 (> threshold of 4)
+   *   nx = clamp(0.5 + 50/(1*1000), 0, 1) = 0.55
+   *   ny = clamp(0.5 + 15/(1*1000), 0, 1) = 0.515
+   *
+   * RED pre-impl: might pass if drag math unchanged, but feDropShadow test (E) is RED.
+   * This test documents the expected contract and guards against future regressions.
+   */
+  it('Test G: drag > threshold calls onPinDragEnd with DELTA-converted coords', () => {
+    const onPinDragEnd = vi.fn();
+    const { container } = renderMapCanvas({
+      pins: [TEST_PIN],
+      onPinDragEnd,
+    });
+
+    const pinGroup = container.querySelector('.pins g[aria-label]') as Element;
+    expect(pinGroup).not.toBeNull();
+    stubPointerCapture(pinGroup);
+
+    // Simulate: pointerdown → pointermove (> threshold) → pointerup
+    fireEvent.pointerDown(pinGroup, { pointerId: 1, clientX: 200, clientY: 200, bubbles: true });
+    fireEvent.pointerMove(pinGroup, { pointerId: 1, clientX: 250, clientY: 215, bubbles: true });
+    fireEvent.pointerUp(pinGroup,   { pointerId: 1, clientX: 250, clientY: 215, bubbles: true });
+
+    expect(onPinDragEnd).toHaveBeenCalledTimes(1);
+    const [id, nx, ny] = onPinDragEnd.mock.calls[0] as [string, number, number];
+    expect(id).toBe('pin1');
+    // nx = clamp(0.5 + 50/(1*1000), 0, 1)
+    expect(nx).toBeCloseTo(0.55, 4);
+    // ny = clamp(0.5 + 15/(1*1000), 0, 1)
+    expect(ny).toBeCloseTo(0.515, 4);
+  });
+
+  /**
+   * Test H: drag BELOW threshold (< DRAG_THRESHOLD_PX=4) is treated as a click →
+   * onPinDragEnd is NOT called.
+   *
+   * RED pre-impl: same — if drag math is unchanged this might already pass.
+   * This test guards the threshold boundary: a tiny move must not trigger onDragEnd.
+   */
+  it('Test H: drag below threshold does not call onPinDragEnd', () => {
+    const onPinDragEnd = vi.fn();
+    const { container } = renderMapCanvas({
+      pins: [TEST_PIN],
+      onPinDragEnd,
+    });
+
+    const pinGroup = container.querySelector('.pins g[aria-label]') as Element;
+    expect(pinGroup).not.toBeNull();
+    stubPointerCapture(pinGroup);
+
+    // Move only 2px — below DRAG_THRESHOLD_PX=4
+    fireEvent.pointerDown(pinGroup, { pointerId: 1, clientX: 200, clientY: 200, bubbles: true });
+    fireEvent.pointerMove(pinGroup, { pointerId: 1, clientX: 202, clientY: 201, bubbles: true });
+    fireEvent.pointerUp(pinGroup,   { pointerId: 1, clientX: 202, clientY: 201, bubbles: true });
+
+    expect(onPinDragEnd).not.toHaveBeenCalled();
   });
 });
