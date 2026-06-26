@@ -32,7 +32,7 @@ import {
   createTestUser,
   type TestDbHandle,
 } from './helpers.js';
-import { entries, links, shareTokens, universes } from '../src/db/schema.js';
+import { entries, links, maps, mapPins, shareTokens, universes } from '../src/db/schema.js';
 
 let handle: TestDbHandle;
 // eslint-disable-next-line @typescript-eslint/no-explicit-any
@@ -608,5 +608,169 @@ describe('XREF-04/XREF-07: alias projection in share-list (BLOCKER-01 closure)',
         `'SecretName'. A leak here means the is_public filter failed to exclude the ` +
         `private entry's aliases from the share corpus.`,
     ).toBe(0);
+  });
+});
+
+describe('MAP-UI-03: getPublicMap summary projection (D-09 / share-projection-mirrors-auth-projection)', () => {
+  // ──────────────────────────────────────────────────────────────────────────────
+  // Background: In share mode there is NO client-side useEntries join for map pins.
+  // The tooltip excerpt source (summary) MUST come from the server projection.
+  // Plan 50-03 adds `summary: entries.summary` to the getPublicMap pins select.
+  // The entries table is already INNER JOINed for the is_public=true privacy filter,
+  // so no new join is required — summary only ever reflects a public entry.
+  //
+  // These two tests implement D-09 (share-parity):
+  //   Test 1 — presence: a public pin's summary is projected correctly.
+  //   Test 2 — absence/privacy: a private entry's pin is dropped entirely (INNER JOIN
+  //            excludes it) and its distinctive summary never appears in the response.
+  // ──────────────────────────────────────────────────────────────────────────────
+
+  async function seedMap(name: string) {
+    const [row] = await handle.db
+      .insert(maps)
+      .values({ universeId, name })
+      .returning();
+    return row!;
+  }
+
+  async function seedEntryWithSummary(opts: {
+    isPublic: boolean;
+    title: string;
+    summary: string;
+  }) {
+    const [row] = await handle.db
+      .insert(entries)
+      .values({
+        universeId,
+        title: opts.title,
+        entryType: 'location',
+        isPublic: opts.isPublic,
+        summary: opts.summary,
+      })
+      .returning();
+    return row!;
+  }
+
+  async function seedPin(mapId: string, entryId: string) {
+    const [row] = await handle.db
+      .insert(mapPins)
+      .values({ mapId, entryId, x: 0.5, y: 0.5 })
+      .returning();
+    return row!;
+  }
+
+  // ──────────────────────────────────────────────────────────────────────────────
+  // Test 1 — MAP-UI-03 presence: a public pin carries summary equal to seeded value
+  // ──────────────────────────────────────────────────────────────────────────────
+  it('public pin summary matches seeded entry summary in getPublicMap response (MAP-UI-03 presence)', async () => {
+    const seededSummary = 'A grand coastal city known for its silver towers.';
+    const map = await seedMap('Test Map Presence');
+    const entry = await seedEntryWithSummary({
+      isPublic: true,
+      title: 'Silverhaven',
+      summary: seededSummary,
+    });
+    await seedPin(map.id, entry.id);
+
+    const res = await appRequest('GET', `/api/share/maps/${map.id}`, {
+      headers: { 'share-token': activeTokenPlaintext },
+    });
+
+    expect(
+      res.status,
+      `MAP-UI-03 presence: GET /api/share/maps/${map.id} must return 200. ` +
+        `If 404, the map was not seeded under the share token's universe.`,
+    ).toBe(200);
+
+    // eslint-disable-next-line @typescript-eslint/no-explicit-any
+    const pins: any[] = res.body?.pins ?? [];
+    expect(
+      pins.length,
+      `MAP-UI-03 presence: response must include exactly 1 pin (the public entry pin). ` +
+        `Got ${pins.length} pins. Pins: ${JSON.stringify(pins)}`,
+    ).toBe(1);
+
+    const pin = pins[0];
+    expect(
+      pin,
+      `MAP-UI-03 presence (D-09): the pin must carry a 'summary' property. ` +
+        `Missing 'summary' means getPublicMap pins select omitted entries.summary ` +
+        `(share-projection-mirrors-auth-projection invariant violated).`,
+    ).toHaveProperty('summary');
+
+    expect(
+      pin.summary,
+      `MAP-UI-03 presence (D-09): pin.summary must equal the seeded entry summary. ` +
+        `Expected: "${seededSummary}". Got: "${pin.summary}". ` +
+        `A mismatch means the select is joining the wrong row or defaulting incorrectly.`,
+    ).toBe(seededSummary);
+  });
+
+  // ──────────────────────────────────────────────────────────────────────────────
+  // Test 2 — MAP-UI-03 privacy/absence: a private entry's pin is dropped entirely
+  // and its distinctive summary string never appears in the serialized response.
+  //
+  // The INNER JOIN on entries + eq(entries.isPublic, true) is the privacy gate.
+  // If the filter is bypassed, T-50-05 (Information Disclosure) is violated.
+  // ──────────────────────────────────────────────────────────────────────────────
+  it('private entry pin is absent and its summary never appears in getPublicMap response (MAP-UI-03 privacy)', async () => {
+    const secretSummary = 'SEKRET_SUMMARY_7f3a9b: hidden antagonist lair coordinates.';
+    const map = await seedMap('Test Map Privacy');
+
+    // Seed a public entry (positive control — ensures the response is not vacuously empty)
+    const publicEntry = await seedEntryWithSummary({
+      isPublic: true,
+      title: 'Public Location',
+      summary: 'A visible landmark.',
+    });
+    await seedPin(map.id, publicEntry.id);
+
+    // Seed a PRIVATE entry with a distinctive summary that must never reach the share visitor
+    const privateEntry = await seedEntryWithSummary({
+      isPublic: false,
+      title: 'Hidden Lair',
+      summary: secretSummary,
+    });
+    await seedPin(map.id, privateEntry.id);
+
+    const res = await appRequest('GET', `/api/share/maps/${map.id}`, {
+      headers: { 'share-token': activeTokenPlaintext },
+    });
+
+    expect(
+      res.status,
+      `MAP-UI-03 privacy: GET /api/share/maps/${map.id} must return 200.`,
+    ).toBe(200);
+
+    // eslint-disable-next-line @typescript-eslint/no-explicit-any
+    const pins: any[] = res.body?.pins ?? [];
+
+    // The private entry's pin must be absent (INNER JOIN drops is_public=false entries).
+    const privatePin = pins.find((p: { entryId: string }) => p.entryId === privateEntry.id);
+    expect(
+      privatePin,
+      `MAP-UI-03 privacy (T-50-05): the private entry's pin must NOT appear in getPublicMap.pins. ` +
+        `Found pin: ${JSON.stringify(privatePin)}. ` +
+        `Root cause if failing: eq(entries.isPublic, true) INNER JOIN filter removed/bypassed ` +
+        `in getPublicMap pins select (share-views.ts).`,
+    ).toBeUndefined();
+
+    // The positive control: the public pin must be present.
+    expect(
+      pins.length,
+      `MAP-UI-03 privacy positive control: exactly 1 pin must be returned (the public entry). ` +
+        `Got ${pins.length} pins.`,
+    ).toBe(1);
+
+    // The distinctive secret summary must never appear anywhere in the serialized response
+    // (not in pins, not leaked through any other field).
+    const serialized = JSON.stringify(res.body);
+    expect(
+      serialized.includes(secretSummary),
+      `MAP-UI-03 privacy (T-50-05 / Information Disclosure): the private entry's summary ` +
+        `"${secretSummary}" must never appear anywhere in the share map response. ` +
+        `If this fails, the is_public filter failed to gate the private summary ` +
+        `(share-projection-mirrors-auth-projection invariant violated).`,
+    ).toBe(false);
   });
 });
