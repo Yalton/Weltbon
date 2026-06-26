@@ -32,7 +32,7 @@ import {
   createTestUser,
   type TestDbHandle,
 } from './helpers.js';
-import { entries, links, maps, mapPins, shareTokens, universes } from '../src/db/schema.js';
+import { entries, links, maps, mapPins, mapRoutes, shareTokens, universes } from '../src/db/schema.js';
 
 let handle: TestDbHandle;
 // eslint-disable-next-line @typescript-eslint/no-explicit-any
@@ -772,5 +772,41 @@ describe('MAP-UI-03: getPublicMap summary projection (D-09 / share-projection-mi
         `If this fails, the is_public filter failed to gate the private summary ` +
         `(share-projection-mirrors-auth-projection invariant violated).`,
     ).toBe(false);
+  });
+});
+
+// ─── ROUTE-03 RED gate: getPublicMap must return a routes bare array ───────────
+//
+// This minimal test acts as the TDD RED gate for Task 1. It will fail until
+// getPublicMap in share-views.ts projects routes. Once the implementation lands
+// (GREEN), the full coverage suite (describe 'ROUTE-03: route projection') takes
+// over with field-presence, field-absence, and standalone assertions.
+
+describe('ROUTE-03 RED gate: getPublicMap routes bare array', () => {
+  async function seedMapForRoute(name: string) {
+    const [row] = await handle.db
+      .insert(maps)
+      .values({ universeId, name })
+      .returning();
+    return row!;
+  }
+
+  it('GET /api/share/maps/:mid returns a routes bare array (ROUTE-03 share contract)', async () => {
+    const map = await seedMapForRoute('Route Red Gate Map');
+
+    const res = await appRequest('GET', `/api/share/maps/${map.id}`, {
+      headers: { 'share-token': activeTokenPlaintext },
+    });
+
+    expect(
+      res.status,
+      `ROUTE-03 RED gate: GET /api/share/maps/${map.id} must return 200.`,
+    ).toBe(200);
+    expect(
+      Array.isArray(res.body?.routes),
+      `ROUTE-03 RED gate: map detail must include a 'routes' bare array. ` +
+        `Got: ${JSON.stringify(res.body?.routes)}. ` +
+        `Root cause: getPublicMap in share-views.ts does not yet project mapRoutes.`,
+    ).toBe(true);
   });
 });
