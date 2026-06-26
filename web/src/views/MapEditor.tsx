@@ -235,7 +235,18 @@ export function MapEditor() {
 
   // ── Join pins with entries ────────────────────────────────────────────────────
   // The API returns bare map_pins rows (id, mapId, entryId, x, y, color, icon).
-  // We join here to supply entryTitle/entryType for MapCanvas pin display (D-09).
+  // We join here to supply entryTitle/entryType/summary for MapCanvas pin display (D-07, D-09).
+  //
+  // SUMMARY SOURCE (D-07, memory list-endpoint-body-projection-false-green):
+  // Auth mode: summary comes from the useEntries list cache (entry.summary — always present
+  //   in the list projection). Fallback to pin.summary (e.g. for pins with no matching entry).
+  // Share mode: entriesData is undefined (no useEntries join for share); enrichedPins
+  //   falls back to map.pins, which already carry summary from the Plan 03 server projection
+  //   (getPublicMap, entries INNER JOINed for is_public=true filter). No change needed here.
+  //
+  // DO NOT add body to this join — body is omitted from the entries list endpoint
+  // (memory list-endpoint-body-projection-false-green) and would yield undefined in prod.
+  // DO NOT re-key ['map',uid,mid] / ['maps',uid] / ['map-layers',uid] (memory react-query-key-change-blast-radius).
   const enrichedPins = useMemo<MapPin[]>(() => {
     if (!map?.pins) return [];
     if (!entriesData) return map.pins;
@@ -246,6 +257,7 @@ export function MapEditor() {
         ...pin,
         entryTitle: entry?.title ?? pin.entryTitle,
         entryType: entry?.entryType ?? pin.entryType,
+        summary: entry?.summary ?? pin.summary,  // D-07: tooltip excerpt source (NEVER body)
       };
     });
   }, [map?.pins, entriesData]);
