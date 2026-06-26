@@ -665,3 +665,71 @@ describe('D-44-03 / D-44-04: terrain area discrimination + map-layers bare array
     expect(Array.isArray(res.body[0].terrainTypes)).toBe(true);
   });
 });
+
+// ─── T-51-03: share mutation boundary — map_routes ────────────────────────────
+//
+// Proves that no map_routes mutation is reachable through the /share/:token seam.
+// Route mutations are mounted only under the authenticated /universes path
+// (api/src/routes/maps.ts /{mid}/routes). A share-token-only caller MUST be
+// rejected with 401 or 403 before reaching any handler body.
+//
+// Mirrors the D-13 boundary block for pins/regions above and D-44-05 for layers.
+// Routes mounted at /api/universes/:uid/maps/:mid/routes.
+
+describe('T-51-03: share mutation boundary — map_routes', () => {
+  it('POST /api/universes/:uid/maps/:mid/routes (create route) rejects share-token-only caller', async () => {
+    const points = JSON.stringify([{ x: 0.1, y: 0.1 }, { x: 0.5, y: 0.5 }]);
+    const res = await appRequest(
+      'POST',
+      `/api/universes/${FAKE_UUID}/maps/${FAKE_UUID}/routes`,
+      {
+        headers: {
+          'share-token': activeTokenPlaintext,
+          'content-type': 'application/json',
+        },
+        body: JSON.stringify({ name: 'Attack Route', points }),
+      },
+    );
+
+    expect(
+      [401, 403],
+      `T-51-03: POST /maps/:mid/routes must reject share-token-only caller with 401 or 403. ` +
+        `Got ${res.status}. If 404: route not mounted (check maps.ts route CRUD). ` +
+        `If 200/201: share seam unexpectedly accepted the create — route mutation is exposed.`,
+    ).toContain(res.status);
+  });
+
+  it('PATCH /api/universes/:uid/maps/:mid/routes/:routeId (update route) rejects share-token-only caller', async () => {
+    const res = await appRequest(
+      'PATCH',
+      `/api/universes/${FAKE_UUID}/maps/${FAKE_UUID}/routes/${FAKE_UUID}`,
+      {
+        headers: {
+          'share-token': activeTokenPlaintext,
+          'content-type': 'application/json',
+        },
+        body: JSON.stringify({ name: 'Hacked Route' }),
+      },
+    );
+
+    expect(
+      [401, 403],
+      `T-51-03: PATCH /maps/:mid/routes/:routeId must reject share-token-only caller. Got ${res.status}.`,
+    ).toContain(res.status);
+  });
+
+  it('DELETE /api/universes/:uid/maps/:mid/routes/:routeId rejects share-token-only caller', async () => {
+    const res = await appRequest(
+      'DELETE',
+      `/api/universes/${FAKE_UUID}/maps/${FAKE_UUID}/routes/${FAKE_UUID}`,
+      {
+        headers: { 'share-token': activeTokenPlaintext },
+      },
+    );
+
+    expect(
+      [401, 403],
+      `T-51-03: DELETE /maps/:mid/routes/:routeId must reject share-token-only caller. Got ${res.status}.`,
+    ).toContain(res.status);
+  });
+});

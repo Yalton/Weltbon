@@ -810,3 +810,196 @@ describe('ROUTE-03 RED gate: getPublicMap routes bare array', () => {
     ).toBe(true);
   });
 });
+
+// ─── ROUTE-03: route projection — presence / absence / standalone ─────────────
+//
+// Full coverage suite for the ROUTE-03 share route projection requirement.
+// Proves the three invariants from the threat model (T-51-02, T-51-08):
+//
+//   Test A (field-presence)  — a route on a PUBLIC entry appears with every
+//     authenticated field present (lineStyle, width, showArrow, color, points,
+//     name, entryId, id, mapId, createdAt). Fails if the projection omits a
+//     field that the auth routeSchema returns ([[share-projection-mirrors-auth-projection]]).
+//
+//   Test B (field-absence)   — a route on a PRIVATE entry is silently dropped
+//     from routes[]. Fails if the INNER JOIN isPublic=true gate is removed.
+//
+//   Test C (standalone)      — a route with entryId=null always appears
+//     regardless of entry privacy (D-11 equivalent).
+//
+// Lane: DB-gated integration. Re-uses the module-level handle/app/universe/token
+// state established in beforeEach.
+
+describe('ROUTE-03: getPublicMap route projection (T-51-02 / T-51-08)', () => {
+  async function seedMapR(name: string) {
+    const [row] = await handle.db
+      .insert(maps)
+      .values({ universeId, name })
+      .returning();
+    return row!;
+  }
+
+  async function seedEntryR(opts: { isPublic: boolean; title?: string }) {
+    const [row] = await handle.db
+      .insert(entries)
+      .values({
+        universeId,
+        title: opts.title ?? 'Route Test Entry',
+        entryType: 'location',
+        isPublic: opts.isPublic,
+      })
+      .returning();
+    return row!;
+  }
+
+  async function seedRoute(opts: {
+    mapId: string;
+    entryId?: string | null;
+    name?: string;
+    color?: string | null;
+    lineStyle?: string;
+    width?: number;
+    showArrow?: boolean;
+  }) {
+    const [row] = await handle.db
+      .insert(mapRoutes)
+      .values({
+        mapId: opts.mapId,
+        entryId: opts.entryId ?? null,
+        name: opts.name ?? 'Test Route',
+        points: JSON.stringify([{ x: 0.1, y: 0.1 }, { x: 0.5, y: 0.5 }]),
+        color: opts.color ?? '#ff0000',
+        lineStyle: opts.lineStyle ?? 'solid',
+        width: opts.width ?? 4,
+        showArrow: opts.showArrow ?? false,
+      })
+      .returning();
+    return row!;
+  }
+
+  // ──────────────────────────────────────────────────────────────────────────────
+  // Test A — field-presence: route on a PUBLIC entry carries all auth fields
+  // (T-51-08: share-projection-mirrors-auth-projection)
+  // ──────────────────────────────────────────────────────────────────────────────
+  it('route linked to a public entry appears with all authenticated fields present (T-51-08 field-presence)', async () => {
+    const map = await seedMapR('Route Presence Map');
+    const entry = await seedEntryR({ isPublic: true, title: 'Public Route Entry' });
+    const route = await seedRoute({
+      mapId: map.id,
+      entryId: entry.id,
+      name: 'Grand Road',
+      color: '#00aaff',
+      lineStyle: 'dashed',
+      width: 6,
+      showArrow: true,
+    });
+
+    const res = await appRequest('GET', `/api/share/maps/${map.id}`, {
+      headers: { 'share-token': activeTokenPlaintext },
+    });
+
+    expect(res.status, 'ROUTE-03 T-51-08: map detail must return 200').toBe(200);
+
+    // eslint-disable-next-line @typescript-eslint/no-explicit-any
+    const routes: any[] = res.body?.routes ?? [];
+    expect(
+      routes.length,
+      `T-51-08 field-presence: expected exactly 1 route. Got ${routes.length}.`,
+    ).toBe(1);
+
+    const r = routes[0];
+    expect(r.id, 'T-51-08: id must be present').toBe(route.id);
+    expect(r.mapId, 'T-51-08: mapId must be present').toBe(map.id);
+    expect(r.entryId, 'T-51-08: entryId must be present').toBe(entry.id);
+    expect(r.name, 'T-51-08: name must match seeded value').toBe('Grand Road');
+    expect(typeof r.points, 'T-51-08: points must be a string').toBe('string');
+    expect(r.color, 'T-51-08: color must match seeded value').toBe('#00aaff');
+    expect(
+      r.lineStyle,
+      'T-51-08: lineStyle must be present (field absent if projection dropped it)',
+    ).toBe('dashed');
+    expect(
+      r.width,
+      'T-51-08: width must be present (field absent if projection dropped it)',
+    ).toBe(6);
+    expect(
+      r.showArrow,
+      'T-51-08: showArrow must be present (field absent if projection dropped it)',
+    ).toBe(true);
+    expect(r.createdAt, 'T-51-08: createdAt must be present').toBeDefined();
+  });
+
+  // ──────────────────────────────────────────────────────────────────────────────
+  // Test B — field-absence: route on a PRIVATE entry is silently dropped
+  // (T-51-02: INNER JOIN entries WHERE isPublic=true gate)
+  // ──────────────────────────────────────────────────────────────────────────────
+  it('route linked to a private entry is silently dropped from routes[] (T-51-02 field-absence)', async () => {
+    const map = await seedMapR('Route Absence Map');
+    const privateEntry = await seedEntryR({ isPublic: false, title: 'Secret Entry' });
+    const publicEntry = await seedEntryR({ isPublic: true, title: 'Visible Entry' });
+
+    // Route on a private entry — must be dropped
+    await seedRoute({ mapId: map.id, entryId: privateEntry.id, name: 'Secret Road' });
+    // Route on a public entry — positive control, must appear
+    const publicRoute = await seedRoute({ mapId: map.id, entryId: publicEntry.id, name: 'Public Road' });
+
+    const res = await appRequest('GET', `/api/share/maps/${map.id}`, {
+      headers: { 'share-token': activeTokenPlaintext },
+    });
+
+    expect(res.status, 'ROUTE-03 T-51-02: map detail must return 200').toBe(200);
+
+    // eslint-disable-next-line @typescript-eslint/no-explicit-any
+    const routes: any[] = res.body?.routes ?? [];
+
+    // Only the public route must appear
+    expect(
+      routes.length,
+      `T-51-02 field-absence: expected 1 route (the public one). Got ${routes.length}. ` +
+        `If 2 are returned, the INNER JOIN isPublic=true gate was removed or bypassed.`,
+    ).toBe(1);
+    expect(
+      routes[0].id,
+      'T-51-02: the surviving route must be the public-entry one',
+    ).toBe(publicRoute.id);
+
+    // The private route's name must never appear in the serialized response
+    const serialized = JSON.stringify(res.body);
+    expect(
+      serialized.includes('Secret Road'),
+      'T-51-02 Information Disclosure: private route name must not appear anywhere in the response.',
+    ).toBe(false);
+  });
+
+  // ──────────────────────────────────────────────────────────────────────────────
+  // Test C — standalone: route with entryId=null always appears
+  // (D-11 equivalent: no privacy owner to gate on)
+  // ──────────────────────────────────────────────────────────────────────────────
+  it('standalone route (entryId=null) always appears regardless of other entries (standalone-included)', async () => {
+    const map = await seedMapR('Standalone Route Map');
+    const privateEntry = await seedEntryR({ isPublic: false, title: 'Private Entry' });
+
+    // Route on a private entry — must be dropped
+    await seedRoute({ mapId: map.id, entryId: privateEntry.id, name: 'Dropped Road' });
+    // Standalone route (entryId null) — must always appear
+    const standalone = await seedRoute({ mapId: map.id, entryId: null, name: 'Standalone Path' });
+
+    const res = await appRequest('GET', `/api/share/maps/${map.id}`, {
+      headers: { 'share-token': activeTokenPlaintext },
+    });
+
+    expect(res.status, 'ROUTE-03 standalone: map detail must return 200').toBe(200);
+
+    // eslint-disable-next-line @typescript-eslint/no-explicit-any
+    const routes: any[] = res.body?.routes ?? [];
+
+    expect(
+      routes.length,
+      `Standalone-included: expected exactly 1 route (the standalone one). Got ${routes.length}. ` +
+        `If 0: standaloneRoutes query missing or wrong WHERE. ` +
+        `If 2: linked private route leaked through.`,
+    ).toBe(1);
+    expect(routes[0].id, 'The surviving route must be the standalone one').toBe(standalone.id);
+    expect(routes[0].entryId, 'Standalone route entryId must be null').toBeNull();
+  });
+});
