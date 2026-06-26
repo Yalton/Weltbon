@@ -407,3 +407,194 @@ describe('PinCircle — drag regression (D-11, Task 2)', () => {
     expect(onPinDragEnd).not.toHaveBeenCalled();
   });
 });
+
+// ── Phase 50 Task 2 (Plan 04): pin/region hover tooltip (D-07, D-08) ──────────
+
+// Tooltip pin fixtures — include summary field (MapPin.summary is optional per Plan 03).
+const PIN_WITH_SUMMARY: MapPin = {
+  id: 'tip1',
+  mapId: 'm1',
+  entryId: 'e_tip1',
+  x: 0.5,
+  y: 0.5,
+  color: '#ff0000',
+  icon: null,
+  entryTitle: 'Dragon Keep',
+  entryType: 'location',
+  summary: 'An ancient fortress in the mountains.',
+};
+
+const PIN_EMPTY_SUMMARY: MapPin = {
+  id: 'tip2',
+  mapId: 'm1',
+  entryId: 'e_tip2',
+  x: 0.4,
+  y: 0.4,
+  color: '#0000ff',
+  icon: null,
+  entryTitle: 'Silent Town',
+  entryType: 'location',
+  summary: '',
+};
+
+const PIN_NULL_SUMMARY: MapPin = {
+  id: 'tip3',
+  mapId: 'm1',
+  entryId: 'e_tip3',
+  x: 0.6,
+  y: 0.6,
+  color: '#00ff00',
+  icon: null,
+  entryTitle: 'Hidden Cove',
+  entryType: 'location',
+  summary: null,
+};
+
+const REGION_FOR_HOVER: MapRegion = {
+  id: 'r_hover',
+  mapId: 'm1',
+  entryId: 'e_region1',
+  name: 'Northern Realm',
+  points: SQUARE_POINTS,
+  color: '#6b7280',
+  createdAt: CREATED_AT,
+  terrainTypeId: null,
+};
+
+describe('MapCanvas — pin/region hover tooltip (D-07, D-08, Plan 04 Task 2)', () => {
+  /**
+   * Test L: Hovering a pin shows a tooltip overlay with the pin title.
+   * RED pre-impl: no tooltip overlay exists → FAIL.
+   * GREEN post-impl: onPointerEnter sets hover state → tooltip renders → PASS.
+   */
+  it('Test L: hovering a pin shows a tooltip overlay with pin title', () => {
+    const { container } = renderMapCanvas({ pins: [PIN_WITH_SUMMARY] });
+    const pinGroup = container.querySelector('.pins g[aria-label]');
+    expect(pinGroup).not.toBeNull();
+
+    // Before hover: no tooltip overlay
+    expect(container.querySelector('[data-testid="map-tooltip"]')).toBeNull();
+
+    // Fire pointer enter on the pin group
+    fireEvent.pointerEnter(pinGroup!);
+
+    // After hover: tooltip overlay appears with the pin title
+    const tooltip = container.querySelector('[data-testid="map-tooltip"]');
+    expect(tooltip, 'tooltip overlay must appear on pointerEnter').not.toBeNull();
+    expect(tooltip!.textContent).toContain('Dragon Keep');
+  });
+
+  /**
+   * Test M: Hovering a pin with non-empty summary shows an excerpt line (D-07).
+   * RED pre-impl: no tooltip → FAIL.
+   * GREEN post-impl: summary is non-empty → excerpt rendered → PASS.
+   */
+  it('Test M: hovering a pin with non-empty summary shows an excerpt line (D-07)', () => {
+    const { container } = renderMapCanvas({ pins: [PIN_WITH_SUMMARY] });
+    const pinGroup = container.querySelector('.pins g[aria-label]');
+    expect(pinGroup).not.toBeNull();
+
+    fireEvent.pointerEnter(pinGroup!);
+
+    const tooltip = container.querySelector('[data-testid="map-tooltip"]');
+    expect(tooltip).not.toBeNull();
+    // tooltip must contain an excerpt element (data-testid="tooltip-excerpt")
+    const excerpt = tooltip!.querySelector('[data-testid="tooltip-excerpt"]');
+    expect(excerpt, 'excerpt element must render when summary is non-empty').not.toBeNull();
+    // excerpt must contain the summary text (or a truncation of it)
+    expect(excerpt!.textContent).toContain('An ancient fortress');
+  });
+
+  /**
+   * Test N: Hovering a pin with empty/null summary shows title + type only — no excerpt (D-08).
+   * RED pre-impl: no tooltip → FAIL.
+   * GREEN post-impl: summary is '' → no excerpt element → PASS.
+   */
+  it('Test N: hovering a pin with empty summary shows title only, no excerpt, no placeholder (D-08)', () => {
+    const { container } = renderMapCanvas({ pins: [PIN_EMPTY_SUMMARY] });
+    const pinGroup = container.querySelector('.pins g[aria-label]');
+    expect(pinGroup).not.toBeNull();
+
+    fireEvent.pointerEnter(pinGroup!);
+
+    const tooltip = container.querySelector('[data-testid="map-tooltip"]');
+    expect(tooltip).not.toBeNull();
+    // Title must appear
+    expect(tooltip!.textContent).toContain('Silent Town');
+    // No excerpt element — D-08: empty summary → name+type only, no placeholder
+    const excerpt = tooltip!.querySelector('[data-testid="tooltip-excerpt"]');
+    expect(excerpt, 'no excerpt element when summary is empty string').toBeNull();
+  });
+
+  /**
+   * Test N2: Hovering a pin with null summary also shows no excerpt (D-08).
+   */
+  it('Test N2: hovering a pin with null summary shows no excerpt (D-08)', () => {
+    const { container } = renderMapCanvas({ pins: [PIN_NULL_SUMMARY] });
+    const pinGroup = container.querySelector('.pins g[aria-label]');
+    expect(pinGroup).not.toBeNull();
+
+    fireEvent.pointerEnter(pinGroup!);
+
+    const tooltip = container.querySelector('[data-testid="map-tooltip"]');
+    expect(tooltip).not.toBeNull();
+    expect(tooltip!.textContent).toContain('Hidden Cove');
+    const excerpt = tooltip!.querySelector('[data-testid="tooltip-excerpt"]');
+    expect(excerpt, 'no excerpt element when summary is null').toBeNull();
+  });
+
+  /**
+   * Test O: Hovering a region shows the region name in the tooltip overlay.
+   * RED pre-impl: no tooltip → FAIL.
+   * GREEN post-impl: region onPointerEnter fires → region name in tooltip → PASS.
+   */
+  it('Test O: hovering a region shows the region name in the tooltip', () => {
+    const { container } = renderMapCanvas({ regions: [REGION_FOR_HOVER] });
+    const polygon = container.querySelector('.regions polygon');
+    expect(polygon).not.toBeNull();
+
+    fireEvent.pointerEnter(polygon!);
+
+    const tooltip = container.querySelector('[data-testid="map-tooltip"]');
+    expect(tooltip, 'tooltip overlay must appear on region pointerEnter').not.toBeNull();
+    expect(tooltip!.textContent).toContain('Northern Realm');
+  });
+
+  /**
+   * Test P: Entering a pin during an active drag does NOT call onDragEnd an extra time.
+   * onPointerEnter must be independent of the drag ref — entering/leaving during drag
+   * does not fire onDragEnd or reset the drag (Plan 01 D-11 isolation).
+   *
+   * RED pre-impl: no enter handler → no interference → could pass pre-impl, but the
+   * tooltip test (L) ensures this describe block is MIXED-RED (L fails).
+   * GREEN post-impl: hover handler reads dragging.current and returns early → onDragEnd
+   * called exactly once (from the real pointerUp), not from enter/leave.
+   */
+  it('Test P: drag is unaffected by pointer enter/leave during an active drag', () => {
+    const onPinDragEnd = vi.fn();
+    const { container } = renderMapCanvas({
+      pins: [PIN_WITH_SUMMARY],
+      onPinDragEnd,
+    });
+
+    const pinGroup = container.querySelector('.pins g[aria-label]') as Element;
+    expect(pinGroup).not.toBeNull();
+    stubPointerCapture(pinGroup);
+
+    // Start drag
+    fireEvent.pointerDown(pinGroup, { pointerId: 1, clientX: 200, clientY: 200, bubbles: true });
+    // Simulate enter/leave events during drag — must not trigger onDragEnd
+    fireEvent.pointerEnter(pinGroup, { bubbles: true });
+    fireEvent.pointerLeave(pinGroup, { bubbles: true });
+    // Move enough to cross threshold (> 4px)
+    fireEvent.pointerMove(pinGroup, { pointerId: 1, clientX: 250, clientY: 250, bubbles: true });
+    fireEvent.pointerEnter(pinGroup, { bubbles: true });
+    // End drag
+    fireEvent.pointerUp(pinGroup, { pointerId: 1, clientX: 250, clientY: 250, bubbles: true });
+
+    // onDragEnd called exactly once from pointerUp; enter/leave did NOT call it
+    expect(onPinDragEnd).toHaveBeenCalledTimes(1);
+    const [id] = onPinDragEnd.mock.calls[0] as [string, number, number];
+    expect(id).toBe('tip1');
+  });
+});
