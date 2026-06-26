@@ -55,6 +55,22 @@ export interface TerrainAreaRegion extends MapRegion {
   layerSortOrder: number;     // from map_layers.sort_order, for bottom-to-top stacking
 }
 
+// Phase 51 ROUTE-01: Route polyline within a map.
+// CRITICAL: Do NOT re-key ['map', universeId, mapId] when widening this type.
+// (memory: react-query-key-change-blast-radius)
+export interface MapRoute {
+  id: string;
+  mapId: string;
+  entryId: string | null;
+  name: string;
+  points: string; // JSON: [{x:number, y:number}, ...] normalized 0..1
+  color: string | null;
+  lineStyle: 'solid' | 'dashed';
+  width: number;
+  showArrow: boolean;
+  createdAt: string;
+}
+
 export interface MapDetail {
   id: string;
   universeId: string;
@@ -66,6 +82,7 @@ export interface MapDetail {
   legendLabels?: string | null; // JSON: Record<string,string> keyed by "{color}:{icon}"
   pins: MapPin[];
   regions: MapRegion[]; // Phase 40 MAPS-04: widened payload, key UNCHANGED
+  routes: MapRoute[]; // Phase 51 ROUTE-01: widened payload, key UNCHANGED
   // Phase 44 GEOSHARE-01: terrain areas pre-enriched by the share seam (D-44-03).
   // Only populated on share map detail responses; undefined in authenticated responses.
   // In share mode, the API discriminates terrainTypeId IS NOT NULL rows into this group
