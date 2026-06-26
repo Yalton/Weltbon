@@ -1,27 +1,47 @@
 /**
- * MapEditor share-mode render tests (GEOSHARE-01 / 44-03).
+ * MapEditor share-mode render tests (GEOSHARE-01 / 44-03) +
+ * MapEditor route interaction tests (ROUTE-02, Plan 07).
  *
- * Tests:
+ * Share-mode tests (Tests 1-7):
  *  1. Share legend renders per-layer terrain types in sortOrder (present-types-only)
  *  2. Share legend renders ordered-layer ranked-ramp band labels
  *  3. Share mode shows NO visibility toggles and NO opacity sliders (D-44-01)
  *  4. Terrain area polygon group renders in the share canvas
+ *  5. MapZoomControls renders in share mode (D-09 parity)
+ *  6. MapCompass renders in share mode (D-09 parity)
+ *  7. share-mode pins carry server-projected summary through to MapCanvas (D-07, D-09)
+ *
+ * Route interaction tests (ROUTE-02, Plan 07):
+ *  R1. lineStyle toggle fires updateRoute
+ *  R2. width preset fires updateRoute
+ *  R3. showArrow toggle fires updateRoute
+ *  R4. rename fires updateRoute
+ *  R5. relink fires updateRoute
+ *  R6. delete-confirm fires deleteRoute
+ *  R7. left-click on linked route navigates (editor path)
+ *  R8. left-click on linked route navigates (share path) — in share mode
+ *  R9. share mode suppresses route context menu (T-51-13)
  */
 import { describe, it, expect, beforeEach, vi, afterEach } from 'vitest';
 import React from 'react';
-import { render, screen, waitFor } from '@testing-library/react';
+import { render, screen, waitFor, fireEvent } from '@testing-library/react';
 import { MemoryRouter, Routes, Route } from 'react-router-dom';
 import { QueryClient, QueryClientProvider } from '@tanstack/react-query';
 
 // Per-file api/client mock (mirrors DiagramEditor.test.tsx convention).
 vi.mock('../api/client', () => ({ api: vi.fn() }));
 
-// Mock ShareModeContext so we can inject share mode without needing a real share route.
-// NOTE: use plain arrow functions (not vi.fn().mockReturnValue) so afterEach vi.clearAllMocks()
-// does not wipe the return values between tests within this file.
+// Mutable flags for per-test share mode control.
+// Default to share mode (true) to preserve existing tests.
+// Route interaction tests set these to false in beforeEach.
+// Using plain variable references so vi.clearAllMocks() never wipes them.
+let _shareMode = true;
+let _shareToken: string | null = 'test-share-token';
+
+// Mock ShareModeContext — uses variable-backed closures so per-test overrides work.
 vi.mock('../contexts/ShareModeContext', () => ({
-  useShareMode: () => true,
-  useShareToken: () => 'test-share-token',
+  useShareMode: () => _shareMode,
+  useShareToken: () => _shareToken,
   ShareModeContext: {},
   ShareModeProvider: ({ children }: { children: React.ReactNode }) => <>{children}</>,
 }));
@@ -29,10 +49,20 @@ vi.mock('../contexts/ShareModeContext', () => ({
 // Mock MapCanvas — the test asserts on terrain group rendering via stub, not real SVG.
 // Expose a stub <g className="terrain-areas"> so assertions can check terrain render.
 // Also exposes pin summaries (data-testid="pin-summary") for Plan 04 Task 3 share-parity test.
+// Also exposes route stubs (data-testid="route-stub") for ROUTE-02 Plan 07 interaction tests.
 type MockMapPin = {
   id: string;
   entryId: string;
   summary?: string | null;
+  [key: string]: unknown;
+};
+type MockMapRoute = {
+  id: string;
+  entryId: string | null;
+  name: string;
+  lineStyle: 'solid' | 'dashed';
+  width: number;
+  showArrow: boolean;
   [key: string]: unknown;
 };
 type MockMapCanvasProps = {
@@ -40,12 +70,15 @@ type MockMapCanvasProps = {
   terrainAreas?: Array<{ id: string; terrainTypeId: string; terrainTypeColor: string; layerId: string; layerSortOrder: number; name: string; points: string; mapId: string; entryId: string | null; color: string | null; createdAt: string }>;
   layers?: Array<{ id: string; name: string; sortOrder: number; ordered: boolean; defaultOpacity: number; universeId: string; createdAt: string; terrainTypes?: Array<{ id: string; name: string; color: string; label: string | null; sortOrder: number; layerId: string; createdAt: string }> }>;
   layerViewerState?: Record<string, { visible: boolean; opacity: number }>;
+  routes?: MockMapRoute[];
+  onRouteClick?: (route: MockMapRoute) => void;
+  onRouteContextMenu?: (route: MockMapRoute, clientX: number, clientY: number) => void;
   [key: string]: unknown;
 };
 
 vi.mock('../components/MapCanvas', () => ({
   MapCanvas: (props: MockMapCanvasProps) => {
-    const { pins = [], terrainAreas = [], layers = [], layerViewerState = {} } = props;
+    const { pins = [], terrainAreas = [], layers = [], layerViewerState = {}, routes = [], onRouteClick, onRouteContextMenu } = props;
     return (
       <div data-testid="map-canvas-stub">
         {/* Expose pin summaries so Plan 04 Task 3 share-parity test can assert on them */}
@@ -54,6 +87,23 @@ vi.mock('../components/MapCanvas', () => ({
             <span key={pin.id} data-testid="pin-summary" data-pin-id={pin.id}>{pin.summary}</span>
           ) : null
         )}
+        {/* Route stubs — expose click + right-click triggers for ROUTE-02 Plan 07 tests */}
+        {routes.map((route) => (
+          <div key={route.id} data-testid="route-stub" data-route-id={route.id}>
+            <button
+              data-testid={`route-click-${route.id}`}
+              onClick={() => onRouteClick?.(route)}
+            >
+              route-click
+            </button>
+            <button
+              data-testid={`route-ctx-${route.id}`}
+              onClick={() => onRouteContextMenu?.(route, 100, 100)}
+            >
+              route-ctx
+            </button>
+          </div>
+        ))}
         {/* Replicate the terrain group so tests can assert terrain rendering */}
         <svg>
           <g className="terrain-areas">
@@ -92,9 +142,17 @@ vi.mock('../components/LayersPanel', () => ({
     props.visible ? <div data-testid="layers-panel-stub" /> : null,
 }));
 
-// Mock AddEntriesPicker — out of scope.
+// Mock AddEntriesPicker — renders a stub button when open, for relink mutation tests (R5).
 vi.mock('../components/AddEntriesPicker', () => ({
-  AddEntriesPicker: () => null,
+  AddEntriesPicker: ({ open, onAdd }: { open?: boolean; onAdd?: (id: string) => void }) =>
+    open ? (
+      <button
+        data-testid="add-entries-picker-select"
+        onClick={() => onAdd?.('entry-new-uuid')}
+      >
+        Select entry
+      </button>
+    ) : null,
 }));
 
 // Mock AssetPickerModal — out of scope.
@@ -102,9 +160,28 @@ vi.mock('../components/AssetPickerModal', () => ({
   AssetPickerModal: () => null,
 }));
 
-// Mock ConfirmDialog — out of scope.
+// Mock ConfirmDialog — renders a confirm button when open, for delete mutation tests (R6).
+// Backward-safe: in share mode the !isShare gate prevents ConfirmDialog from mounting,
+// so the mock never renders open=true in existing share-mode tests.
 vi.mock('../components/ConfirmDialog', () => ({
-  ConfirmDialog: () => null,
+  ConfirmDialog: ({
+    open,
+    onConfirm,
+    confirmLabel,
+  }: {
+    open: boolean;
+    onConfirm?: () => void;
+    confirmLabel?: string;
+    onOpenChange?: (open: boolean) => void;
+    title?: string;
+    body?: string;
+    destructive?: boolean;
+  }) =>
+    open ? (
+      <button data-testid="confirm-dialog-confirm" onClick={onConfirm}>
+        {confirmLabel ?? 'Confirm'}
+      </button>
+    ) : null,
 }));
 
 // Mock EmptyState — out of scope.
@@ -508,5 +585,304 @@ describe('MapEditor share mode (GEOSHARE-01 / 44-03)', () => {
       expect(summaryEl).toBeInTheDocument();
       expect(summaryEl.textContent).toContain(SHARE_PIN_SUMMARY);
     });
+  });
+});
+
+// ── Route interaction tests (ROUTE-02, Plan 07) ───────────────────────────────
+
+describe('MapEditor route interactions (ROUTE-02, Plan 07)', () => {
+  const ROUTE_1_ID = 'route-1-uuid';
+  const LINKED_ENTRY_ID = 'entry-linked-uuid';
+  const EDITOR_UID = 'test-universe-uuid';
+
+  // Mock route used across tests
+  const ROUTE_FIXTURE = {
+    id: ROUTE_1_ID,
+    mapId: MAP_ID,
+    entryId: LINKED_ENTRY_ID,
+    name: 'The Kings Road',
+    points: JSON.stringify([{ x: 0.1, y: 0.1 }, { x: 0.5, y: 0.5 }]),
+    color: '#3b82f6',
+    lineStyle: 'solid' as const,
+    width: 4,
+    showArrow: false,
+    createdAt: '2026-01-01T00:00:00Z',
+  };
+
+  // Route update stub returned by api for PATCH/DELETE calls
+  const routeStub = { ...ROUTE_FIXTURE };
+
+  function makeMapWithRoute(): MapDetail {
+    return { ...makeMapDetail(), routes: [ROUTE_FIXTURE] };
+  }
+
+  // Set up api mock to handle: map detail, layers, entries, route mutations
+  function setupEditorApi(mapData?: MapDetail) {
+    vi.mocked(api).mockImplementation(async (path: string) => {
+      if (typeof path !== 'string') return null as never;
+      if (path.includes('/map-layers')) return [] as never;
+      // Universe entries list (/universes/:uid/entries)
+      if (path.match(/\/entries$/) || path.match(/\/entries\?/)) return [] as never;
+      // Route mutation calls (/routes/:routeId)
+      if (path.includes('/routes/')) return routeStub as never;
+      // Default: map detail
+      return (mapData ?? makeMapWithRoute()) as never;
+    });
+  }
+
+  // Render editor (non-share) with a fresh QueryClient
+  function renderEditorMode() {
+    const qc = new QueryClient({
+      defaultOptions: { queries: { retry: false }, mutations: { retry: false } },
+    });
+    return render(
+      <QueryClientProvider client={qc}>
+        <MemoryRouter initialEntries={[`/universes/${EDITOR_UID}/maps/${MAP_ID}`]}>
+          <Routes>
+            <Route path="/universes/:uid/maps/:mid" element={<MapEditor />} />
+            <Route
+              path="/universes/:uid/entries/:entryId"
+              element={<div data-testid="entry-page" />}
+            />
+          </Routes>
+        </MemoryRouter>
+      </QueryClientProvider>,
+    );
+  }
+
+  // Helper: wait for canvas, then open the route context menu via stub button
+  async function openRouteContextMenu() {
+    await screen.findByTestId('map-canvas-stub');
+    const ctxBtn = await screen.findByTestId(`route-ctx-${ROUTE_1_ID}`);
+    fireEvent.click(ctxBtn);
+    return screen.findByRole('menu', { name: /route actions/i });
+  }
+
+  beforeEach(() => {
+    // Switch to editor mode for these tests
+    _shareMode = false;
+    _shareToken = null;
+    vi.mocked(api).mockReset();
+  });
+
+  afterEach(() => {
+    // Restore share mode defaults so sibling describe blocks are unaffected
+    _shareMode = true;
+    _shareToken = 'test-share-token';
+    vi.clearAllMocks();
+  });
+
+  it('R1: lineStyle toggle fires updateRoute PATCH with dashed lineStyle', async () => {
+    setupEditorApi();
+    renderEditorMode();
+    await openRouteContextMenu();
+
+    // For a 'solid' route, the toggle button text is "Dashed line"
+    const lineStyleBtn = screen.getByRole('menuitem', { name: /dashed line/i });
+    fireEvent.click(lineStyleBtn);
+
+    await waitFor(() => {
+      const patchCall = vi.mocked(api).mock.calls.find(([path, init]) =>
+        typeof path === 'string' &&
+        path.includes(`/routes/${ROUTE_1_ID}`) &&
+        (init as RequestInit)?.method === 'PATCH' &&
+        ((init as RequestInit)?.body as string)?.includes('"lineStyle":"dashed"'),
+      );
+      expect(patchCall).toBeDefined();
+    });
+  });
+
+  it('R2: width preset fires updateRoute PATCH with width 2 (Thin)', async () => {
+    setupEditorApi();
+    renderEditorMode();
+    await openRouteContextMenu();
+
+    const thinBtn = screen.getByRole('menuitem', { name: /^Thin$/i });
+    fireEvent.click(thinBtn);
+
+    await waitFor(() => {
+      const patchCall = vi.mocked(api).mock.calls.find(([path, init]) =>
+        typeof path === 'string' &&
+        path.includes(`/routes/${ROUTE_1_ID}`) &&
+        (init as RequestInit)?.method === 'PATCH' &&
+        ((init as RequestInit)?.body as string)?.includes('"width":2'),
+      );
+      expect(patchCall).toBeDefined();
+    });
+  });
+
+  it('R3: showArrow toggle fires updateRoute PATCH with showArrow true', async () => {
+    setupEditorApi();
+    renderEditorMode();
+    await openRouteContextMenu();
+
+    // For showArrow=false, the toggle button says "Add arrow"
+    const arrowBtn = screen.getByRole('menuitem', { name: /add arrow/i });
+    fireEvent.click(arrowBtn);
+
+    await waitFor(() => {
+      const patchCall = vi.mocked(api).mock.calls.find(([path, init]) =>
+        typeof path === 'string' &&
+        path.includes(`/routes/${ROUTE_1_ID}`) &&
+        (init as RequestInit)?.method === 'PATCH' &&
+        ((init as RequestInit)?.body as string)?.includes('"showArrow":true'),
+      );
+      expect(patchCall).toBeDefined();
+    });
+  });
+
+  it('R4: rename dialog fires updateRoute PATCH with new name', async () => {
+    setupEditorApi();
+    renderEditorMode();
+    await openRouteContextMenu();
+
+    // Click "Rename..." — context menu closes, rename dialog opens
+    fireEvent.click(screen.getByRole('menuitem', { name: /rename/i }));
+
+    const dialog = await screen.findByRole('dialog', { name: /rename route/i });
+    const input = dialog.querySelector('input') as HTMLInputElement;
+    fireEvent.change(input, { target: { value: 'New Route Name' } });
+
+    // Click Save
+    fireEvent.click(screen.getByRole('button', { name: /save/i }));
+
+    await waitFor(() => {
+      const patchCall = vi.mocked(api).mock.calls.find(([path, init]) =>
+        typeof path === 'string' &&
+        path.includes(`/routes/${ROUTE_1_ID}`) &&
+        (init as RequestInit)?.method === 'PATCH' &&
+        ((init as RequestInit)?.body as string)?.includes('"name":"New Route Name"'),
+      );
+      expect(patchCall).toBeDefined();
+    });
+  });
+
+  it('R5: relink picker fires updateRoute PATCH with new entryId', async () => {
+    setupEditorApi();
+    renderEditorMode();
+    await openRouteContextMenu();
+
+    // Click "Change entry..." — picker opens
+    fireEvent.click(screen.getByRole('menuitem', { name: /change entry/i }));
+
+    const pickerBtn = await screen.findByTestId('add-entries-picker-select');
+    fireEvent.click(pickerBtn);
+
+    await waitFor(() => {
+      const patchCall = vi.mocked(api).mock.calls.find(([path, init]) =>
+        typeof path === 'string' &&
+        path.includes(`/routes/${ROUTE_1_ID}`) &&
+        (init as RequestInit)?.method === 'PATCH' &&
+        ((init as RequestInit)?.body as string)?.includes('"entryId":"entry-new-uuid"'),
+      );
+      expect(patchCall).toBeDefined();
+    });
+  });
+
+  it('R6: delete-confirm fires deleteRoute DELETE', async () => {
+    setupEditorApi();
+    renderEditorMode();
+    await openRouteContextMenu();
+
+    // Click "Delete route" — ConfirmDialog opens
+    fireEvent.click(screen.getByRole('menuitem', { name: /delete route/i }));
+
+    const confirmBtn = await screen.findByTestId('confirm-dialog-confirm');
+    fireEvent.click(confirmBtn);
+
+    await waitFor(() => {
+      const deleteCall = vi.mocked(api).mock.calls.find(([path, init]) =>
+        typeof path === 'string' &&
+        path.includes(`/routes/${ROUTE_1_ID}`) &&
+        (init as RequestInit)?.method === 'DELETE',
+      );
+      expect(deleteCall).toBeDefined();
+    });
+  });
+
+  it('R7: left-click on linked route navigates to editor entry path', async () => {
+    setupEditorApi();
+    renderEditorMode();
+    await screen.findByTestId('map-canvas-stub');
+
+    const clickBtn = await screen.findByTestId(`route-click-${ROUTE_1_ID}`);
+    fireEvent.click(clickBtn);
+
+    // Navigator must render the entry page at /universes/:uid/entries/:entryId
+    await waitFor(() => {
+      expect(screen.getByTestId('entry-page')).toBeInTheDocument();
+    });
+  });
+
+  it('R8: left-click on linked route navigates to share entry path in share mode', async () => {
+    // Override to share mode for this test (afterEach restores)
+    _shareMode = true;
+    _shareToken = 'test-share-token';
+
+    vi.mocked(api).mockImplementation(async (path: string) => {
+      if (path.includes('/map-layers')) return [] as never;
+      if (path.includes('/entries')) return [] as never;
+      return makeMapWithRoute() as never;
+    });
+
+    const qc = new QueryClient({
+      defaultOptions: { queries: { retry: false }, mutations: { retry: false } },
+    });
+    render(
+      <QueryClientProvider client={qc}>
+        <MemoryRouter initialEntries={[`/share/test-share-token/maps/${MAP_ID}`]}>
+          <Routes>
+            <Route path="/share/:token/maps/:mid" element={<MapEditor />} />
+            <Route
+              path="/share/:token/entries/:entryId"
+              element={<div data-testid="share-entry-page" />}
+            />
+          </Routes>
+        </MemoryRouter>
+      </QueryClientProvider>,
+    );
+
+    await screen.findByTestId('map-canvas-stub');
+    const clickBtn = await screen.findByTestId(`route-click-${ROUTE_1_ID}`);
+    fireEvent.click(clickBtn);
+
+    await waitFor(() => {
+      expect(screen.getByTestId('share-entry-page')).toBeInTheDocument();
+    });
+  });
+
+  it('R9: share mode suppresses route context menu (T-51-13)', async () => {
+    // Override to share mode for this test (afterEach restores)
+    _shareMode = true;
+    _shareToken = 'test-share-token';
+
+    vi.mocked(api).mockImplementation(async (path: string) => {
+      if (path.includes('/map-layers')) return [] as never;
+      if (path.includes('/entries')) return [] as never;
+      return makeMapWithRoute() as never;
+    });
+
+    const qc = new QueryClient({
+      defaultOptions: { queries: { retry: false }, mutations: { retry: false } },
+    });
+    render(
+      <QueryClientProvider client={qc}>
+        <MemoryRouter initialEntries={[`/share/test-share-token/maps/${MAP_ID}`]}>
+          <Routes>
+            <Route path="/share/:token/maps/:mid" element={<MapEditor />} />
+          </Routes>
+        </MemoryRouter>
+      </QueryClientProvider>,
+    );
+
+    await screen.findByTestId('map-canvas-stub');
+
+    // In share mode, the MapCanvas prop onRouteContextMenu is a no-op () => {}.
+    // Clicking the stub's context-menu trigger calls that no-op → routeContextMenu stays null.
+    const ctxBtn = await screen.findByTestId(`route-ctx-${ROUTE_1_ID}`);
+    fireEvent.click(ctxBtn);
+
+    // Route context menu div must NOT appear (T-51-13 gate)
+    expect(screen.queryByRole('menu', { name: /route actions/i })).not.toBeInTheDocument();
   });
 });
