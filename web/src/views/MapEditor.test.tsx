@@ -28,7 +28,15 @@ vi.mock('../contexts/ShareModeContext', () => ({
 
 // Mock MapCanvas — the test asserts on terrain group rendering via stub, not real SVG.
 // Expose a stub <g className="terrain-areas"> so assertions can check terrain render.
+// Also exposes pin summaries (data-testid="pin-summary") for Plan 04 Task 3 share-parity test.
+type MockMapPin = {
+  id: string;
+  entryId: string;
+  summary?: string | null;
+  [key: string]: unknown;
+};
 type MockMapCanvasProps = {
+  pins?: MockMapPin[];
   terrainAreas?: Array<{ id: string; terrainTypeId: string; terrainTypeColor: string; layerId: string; layerSortOrder: number; name: string; points: string; mapId: string; entryId: string | null; color: string | null; createdAt: string }>;
   layers?: Array<{ id: string; name: string; sortOrder: number; ordered: boolean; defaultOpacity: number; universeId: string; createdAt: string; terrainTypes?: Array<{ id: string; name: string; color: string; label: string | null; sortOrder: number; layerId: string; createdAt: string }> }>;
   layerViewerState?: Record<string, { visible: boolean; opacity: number }>;
@@ -37,9 +45,15 @@ type MockMapCanvasProps = {
 
 vi.mock('../components/MapCanvas', () => ({
   MapCanvas: (props: MockMapCanvasProps) => {
-    const { terrainAreas = [], layers = [], layerViewerState = {} } = props;
+    const { pins = [], terrainAreas = [], layers = [], layerViewerState = {} } = props;
     return (
       <div data-testid="map-canvas-stub">
+        {/* Expose pin summaries so Plan 04 Task 3 share-parity test can assert on them */}
+        {pins.map((pin) =>
+          pin.summary ? (
+            <span key={pin.id} data-testid="pin-summary" data-pin-id={pin.id}>{pin.summary}</span>
+          ) : null
+        )}
         {/* Replicate the terrain group so tests can assert terrain rendering */}
         <svg>
           <g className="terrain-areas">
@@ -434,6 +448,63 @@ describe('MapEditor share mode (GEOSHARE-01 / 44-03)', () => {
     // MapCompass must be present in share mode (chrome parity).
     await waitFor(() => {
       expect(screen.getByTestId('map-compass-stub')).toBeInTheDocument();
+    });
+  });
+
+  /**
+   * Test 7: Share-mode enrichedPins pass server-projected summary through to MapCanvas (D-07, D-09).
+   *
+   * In share mode there is NO authenticated useEntries join, so the tooltip summary MUST come
+   * from the server projection on map.pins (Plan 03 / getPublicMap). The enrichedPins path:
+   *   if (!entriesData) return map.pins;  ← share mode: entriesData undefined → pass pins as-is
+   *
+   * This test verifies that a pin with summary from the share API response reaches MapCanvas
+   * with that summary intact — the MapCanvas stub renders pin summaries as data-testid="pin-summary".
+   *
+   * Acceptance criteria (Plan 04 Task 3):
+   * - grep -c "summary: entry" web/src/views/MapEditor.tsx ≥ 1 (join widened)
+   * - Share-mode pins carry Plan 03 server-projected summary through to MapCanvas
+   */
+  it('Test 7: share-mode pins carry server-projected summary through to MapCanvas (D-07, D-09)', async () => {
+    const SHARE_PIN_SUMMARY = 'The famous castle of the northern realm.';
+
+    vi.mocked(api).mockImplementation(async (path: string) => {
+      if (path.includes('/map-layers')) return [] as never;
+      if (path.includes('/entries')) return [] as never;
+      // Return map detail with a pin that has a server-projected summary (Plan 03)
+      return {
+        ...makeMapDetail(),
+        pins: [
+          {
+            id: 'share-pin-1',
+            mapId: MAP_ID,
+            entryId: 'entry-1',
+            x: 0.5,
+            y: 0.5,
+            color: '#3b82f6',
+            icon: null,
+            entryTitle: 'North Castle',
+            entryType: 'location',
+            // summary comes from the server projection (Plan 03 / getPublicMap)
+            summary: SHARE_PIN_SUMMARY,
+            createdAt: '2026-01-01T00:00:00Z',
+          },
+        ],
+      } as never;
+    });
+
+    renderShareEditor();
+
+    // Wait for the canvas stub to render.
+    await screen.findByTestId('map-canvas-stub');
+
+    // The pin's server-projected summary must reach MapCanvas via enrichedPins.
+    // In share mode: entriesData is undefined → enrichedPins = map.pins (no join).
+    // The stub renders pin.summary as a data-testid="pin-summary" span.
+    await waitFor(() => {
+      const summaryEl = screen.getByTestId('pin-summary');
+      expect(summaryEl).toBeInTheDocument();
+      expect(summaryEl.textContent).toContain(SHARE_PIN_SUMMARY);
     });
   });
 });
