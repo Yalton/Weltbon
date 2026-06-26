@@ -31,6 +31,7 @@ import {
   mapLayers,
   mapPins,
   mapRegions,
+  mapRoutes,
   maps,
   terrainTypes,
   timelinePins,
@@ -641,6 +642,53 @@ export async function getPublicMap(universeId: string, mapId: string) {
   ]);
   const regions = [...linkedRegions, ...standaloneRegions];
 
+  // Privacy-filtered routes: split into linked (entry-gated) and standalone.
+  //
+  // Linked routes (entryId set): INNER JOIN entries WHERE isPublic=true silently drops
+  //   routes linked to private entries (T-51-02 / [[share-projection-mirrors-auth-projection]]).
+  // Standalone routes (entryId null): always included (D-11 equivalent: no privacy owner).
+  //
+  // NO terrain discriminator — routes have no terrainTypeId, unlike regions.
+  // Field set mirrors the authenticated routeSchema exactly:
+  //   id, mapId, entryId, name, points, color, lineStyle, width, showArrow, createdAt.
+  // Returns a bare array ([[share-seam-bare-array-contract]]).
+  const [linkedRoutes, standaloneRoutes] = await Promise.all([
+    // Entry-linked routes — is_public filtered (T-51-02)
+    getDb()
+      .select({
+        id: mapRoutes.id,
+        mapId: mapRoutes.mapId,
+        entryId: mapRoutes.entryId,
+        name: mapRoutes.name,
+        points: mapRoutes.points,
+        color: mapRoutes.color,
+        lineStyle: mapRoutes.lineStyle,
+        width: mapRoutes.width,
+        showArrow: mapRoutes.showArrow,
+        createdAt: mapRoutes.createdAt,
+      })
+      .from(mapRoutes)
+      .innerJoin(entries, eq(entries.id, mapRoutes.entryId))
+      .where(and(eq(mapRoutes.mapId, mapId), eq(entries.isPublic, true))),
+    // Standalone routes (entryId null) — always public
+    getDb()
+      .select({
+        id: mapRoutes.id,
+        mapId: mapRoutes.mapId,
+        entryId: mapRoutes.entryId,
+        name: mapRoutes.name,
+        points: mapRoutes.points,
+        color: mapRoutes.color,
+        lineStyle: mapRoutes.lineStyle,
+        width: mapRoutes.width,
+        showArrow: mapRoutes.showArrow,
+        createdAt: mapRoutes.createdAt,
+      })
+      .from(mapRoutes)
+      .where(and(eq(mapRoutes.mapId, mapId), isNull(mapRoutes.entryId))),
+  ]);
+  const routes = [...linkedRoutes, ...standaloneRoutes];
+
   const rawUrl = map.imageAssetId
     ? `/api/share/assets/${map.imageAssetId}/raw${signShareAssetUrl(universeId, map.imageAssetId, 'raw')}`
     : null;
@@ -648,5 +696,5 @@ export async function getPublicMap(universeId: string, mapId: string) {
     ? `/api/share/assets/${map.imageAssetId}/thumb${signShareAssetUrl(universeId, map.imageAssetId, 'thumb')}`
     : null;
 
-  return { ...map, rawUrl, thumbUrl, pins, regions, terrainAreas };
+  return { ...map, rawUrl, thumbUrl, pins, regions, routes, terrainAreas };
 }
