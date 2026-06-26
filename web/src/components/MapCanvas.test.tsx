@@ -35,7 +35,7 @@ import { render, fireEvent, cleanup } from '@testing-library/react';
 import { MemoryRouter } from 'react-router-dom';
 import { QueryClient, QueryClientProvider } from '@tanstack/react-query';
 import { MapCanvas } from './MapCanvas';
-import type { TerrainAreaRegion, MapRegion, MapPin } from '../hooks/useMap';
+import type { TerrainAreaRegion, MapRegion, MapPin, MapRoute } from '../hooks/useMap';
 import type { MapLayer } from '../hooks/useMapLayers';
 
 // Mock ShareModeContext — MapCanvas imports useShareToken; not under test here.
@@ -596,5 +596,180 @@ describe('MapCanvas — pin/region hover tooltip (D-07, D-08, Plan 04 Task 2)', 
     expect(onPinDragEnd).toHaveBeenCalledTimes(1);
     const [id] = onPinDragEnd.mock.calls[0] as [string, number, number];
     expect(id).toBe('tip1');
+  });
+});
+
+// ── Phase 51 Plan 06: RoutePolyline render tests ──────────────────────────────
+
+// A simple two-vertex route going from (0.2, 0.5) to (0.8, 0.5) — a horizontal line.
+const ROUTE_POINTS = JSON.stringify([
+  { x: 0.2, y: 0.5 },
+  { x: 0.8, y: 0.5 },
+]);
+
+const SOLID_ROUTE: MapRoute = {
+  id: 'route1',
+  mapId: 'm1',
+  entryId: 'e1',
+  name: '',
+  points: ROUTE_POINTS,
+  color: '#ef4444',
+  lineStyle: 'solid',
+  width: 4,
+  showArrow: false,
+  createdAt: CREATED_AT,
+};
+
+const DASHED_ROUTE: MapRoute = {
+  id: 'route2',
+  mapId: 'm1',
+  entryId: null,
+  name: '',
+  points: ROUTE_POINTS,
+  color: '#3b82f6',
+  lineStyle: 'dashed',
+  width: 2,
+  showArrow: false,
+  createdAt: CREATED_AT,
+};
+
+const NAMED_ROUTE: MapRoute = {
+  id: 'route3',
+  mapId: 'm1',
+  entryId: null,
+  name: 'The High Road',
+  points: ROUTE_POINTS,
+  color: '#a855f7',
+  lineStyle: 'solid',
+  width: 4,
+  showArrow: false,
+  createdAt: CREATED_AT,
+};
+
+const ARROW_ROUTE: MapRoute = {
+  id: 'route4',
+  mapId: 'm1',
+  entryId: null,
+  name: '',
+  points: ROUTE_POINTS,
+  color: '#f97316',
+  lineStyle: 'solid',
+  width: 4,
+  showArrow: true,
+  createdAt: CREATED_AT,
+};
+
+describe('MapCanvas — RoutePolyline render (Phase 51, Plan 06)', () => {
+  /**
+   * Test Q: A solid route renders two stacked <polyline> elements (visible + hit-stroke)
+   * with fill="none" and the expected stroke color on the visible path.
+   *
+   * The hit-stroke polyline carries stroke="transparent" so it does not visually obscure
+   * the route, and the visible polyline has pointerEvents:'none'.
+   */
+  it('Test Q: solid route renders open polyline (not polygon) with fill="none" and correct stroke color', () => {
+    const { container } = renderMapCanvas({ routes: [SOLID_ROUTE] });
+
+    // The routes <g> must exist.
+    const routesG = container.querySelector('.routes');
+    expect(routesG, '.routes group must exist').not.toBeNull();
+
+    // There must be at least one <polyline> inside the routes group (not a <polygon>).
+    const polylines = routesG!.querySelectorAll('polyline');
+    expect(polylines.length, 'routes group must contain polyline elements').toBeGreaterThanOrEqual(1);
+
+    // The polygon element must NOT appear (open geometry, not closed).
+    const polygon = routesG!.querySelector('polygon');
+    expect(polygon, 'route must not render a <polygon> — open geometry only').toBeNull();
+
+    // The visible polyline should have fill="none" and the route color as stroke.
+    // The visible polyline has pointerEvents:'none' and no onClick.
+    const visiblePolyline = Array.from(polylines).find(
+      (el) => (el as SVGPolylineElement).getAttribute('stroke') === SOLID_ROUTE.color,
+    );
+    expect(visiblePolyline, 'a polyline with the route color must exist').not.toBeNull();
+    expect((visiblePolyline as SVGPolylineElement).getAttribute('fill')).toBe('none');
+    expect((visiblePolyline as SVGPolylineElement).style.pointerEvents).toBe('none');
+  });
+
+  /**
+   * Test R: A dashed route sets strokeDasharray on the visible polyline.
+   * The hit-stroke polyline does NOT have strokeDasharray (it is transparent and uses
+   * a solid wide stroke for maximum hit area coverage).
+   */
+  it('Test R: dashed route sets strokeDasharray on the visible polyline', () => {
+    const { container } = renderMapCanvas({ routes: [DASHED_ROUTE] });
+
+    const routesG = container.querySelector('.routes');
+    expect(routesG).not.toBeNull();
+
+    const polylines = routesG!.querySelectorAll('polyline');
+    // The visible polyline (stroke=route color) must have a strokeDasharray attribute.
+    const visiblePolyline = Array.from(polylines).find(
+      (el) => (el as SVGPolylineElement).getAttribute('stroke') === DASHED_ROUTE.color,
+    );
+    expect(visiblePolyline, 'dashed route must have a colored visible polyline').not.toBeNull();
+    const dashArray = (visiblePolyline as SVGPolylineElement).getAttribute('stroke-dasharray');
+    expect(dashArray, 'dashed route visible polyline must have strokeDasharray set').not.toBeNull();
+    expect(dashArray).not.toBe('');
+  });
+
+  /**
+   * Test S: A named route renders its label text inside a foreignObject chip.
+   * The chip appears at the path midpoint and displays the route name.
+   */
+  it('Test S: named route renders its label chip text in a foreignObject', () => {
+    const { container } = renderMapCanvas({ routes: [NAMED_ROUTE] });
+
+    const routesG = container.querySelector('.routes');
+    expect(routesG).not.toBeNull();
+
+    // The <foreignObject> must be present.
+    const fo = routesG!.querySelector('foreignObject');
+    expect(fo, 'named route must render a <foreignObject> label chip').not.toBeNull();
+
+    // The label chip must contain the route name text.
+    expect(fo!.textContent).toContain(NAMED_ROUTE.name);
+  });
+
+  /**
+   * Test T: A route with showArrow=true renders an SVG <marker> (arrowhead) and
+   * the visible polyline references it via markerEnd.
+   */
+  it('Test T: showArrow route renders an SVG <marker> arrowhead referenced on the polyline', () => {
+    const { container } = renderMapCanvas({ routes: [ARROW_ROUTE] });
+
+    const routesG = container.querySelector('.routes');
+    expect(routesG).not.toBeNull();
+
+    // A <marker> element must be defined in <defs> inside the route group.
+    const marker = routesG!.querySelector('marker');
+    expect(marker, 'showArrow route must define a <marker> arrowhead').not.toBeNull();
+
+    // The visible polyline must carry a markerEnd/marker-end reference.
+    const polylines = routesG!.querySelectorAll('polyline');
+    const arrowPolyline = Array.from(polylines).find(
+      (el) => (el as SVGPolylineElement).getAttribute('marker-end') !== null,
+    );
+    expect(arrowPolyline, 'a polyline must reference the arrowhead via marker-end').not.toBeNull();
+  });
+
+  /**
+   * Test U: The routes <g> appears before (i.e., earlier in DOM order than) the pins <g>,
+   * so routes are rendered beneath pins (D-08 stacking).
+   */
+  it('Test U: routes <g> is ordered before pins <g> in the DOM (routes beneath pins)', () => {
+    const { container } = renderMapCanvas({
+      routes: [SOLID_ROUTE],
+      pins: [TEST_PIN],
+    });
+
+    const allGroups = Array.from(container.querySelectorAll('g[class]'));
+    const routesIdx = allGroups.findIndex((g) => g.classList.contains('routes'));
+    const pinsIdx = allGroups.findIndex((g) => g.classList.contains('pins'));
+
+    expect(routesIdx, 'routes <g> must be found in DOM').toBeGreaterThanOrEqual(0);
+    expect(pinsIdx, 'pins <g> must be found in DOM').toBeGreaterThanOrEqual(0);
+    expect(routesIdx, 'routes <g> must appear before pins <g> in DOM order (beneath pins)').toBeLessThan(pinsIdx);
   });
 });
