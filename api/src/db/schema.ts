@@ -608,6 +608,31 @@ export const mapRegions = pgTable('map_regions', {
 });
 
 /**
+ * Phase 51 ROUTE-01: Per-map journey/route polylines.
+ *
+ * Structural near-clone of mapRegions — same FK cascade rules and points JSON
+ * convention — with three route-only style fields and no terrainTypeId.
+ *
+ * - points: JSON array of {x, y} normalized 0..1 fractions, stored as text.
+ * - color: nullable hex string (null → fallback render color).
+ * - lineStyle: 'solid' | 'dashed' — validated at Zod layer; stored as plain text.
+ * - width: discrete preset (thin/medium/thick) stored as integer.
+ * - showArrow: optional end-arrowhead, default false.
+ */
+export const mapRoutes = pgTable('map_routes', {
+  id:        uuid('id').primaryKey().defaultRandom(),
+  mapId:     uuid('map_id').references(() => maps.id, { onDelete: 'cascade' }).notNull(),
+  entryId:   uuid('entry_id').references(() => entries.id, { onDelete: 'cascade' }),  // nullable
+  name:      text('name').notNull().default(''),
+  points:    text('points').notNull(),  // JSON: [{x:number,y:number}, ...]
+  color:     text('color'),             // nullable hex
+  lineStyle: text('line_style').notNull().default('solid'),   // 'solid' | 'dashed' (D-02)
+  width:     integer('width').notNull().default(4),           // discrete preset px (D-03)
+  showArrow: boolean('show_arrow').notNull().default(false),  // end-arrowhead (D-04)
+  createdAt: timestamp('created_at').defaultNow().notNull(),
+});
+
+/**
  * Phase 42 LAYER-01/LAYER-02: Universe-scoped terrain layer definitions.
  *
  * - `universeId` FK CASCADE: deleting a universe removes all its layers (and
