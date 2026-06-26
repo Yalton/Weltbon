@@ -9,11 +9,26 @@ import type { MapLayer } from '../hooks/useMapLayers';
 import { useShareToken } from '../contexts/ShareModeContext';
 
 // ─── Constants ────────────────────────────────────────────────────────────────
-const NODE_RADIUS = 14;        // matches DiagramCanvas NODE_RADIUS
 const HIT_RADIUS = 22;         // transparent hit area — 44px diameter touch target
-const SELECTION_RING_R = 18;   // HALO_RADIUS in DiagramCanvas terms
 const DRAG_THRESHOLD_PX = 4;   // pointer movement below this is treated as a click
 const SNAP_DISTANCE_PX = 18;   // first-vertex snap radius in IMAGE pixels (scaled)
+
+// ─── Teardrop pin marker geometry (D-03) ─────────────────────────────────────
+// Tip at local (0,0) = the pin's normalized image coordinate.
+// Circular body extends upward (negative y in local coords) so the <g> transform
+// `translate(pinX,pinY)` correctly anchors the tip to the pin location.
+// Counteracted by scale(1/currentScale) so the marker stays constant screen size.
+//
+//   Head circle center: (0, -20)  head radius: 11
+//   Path: tip → left bezier → head-left (-11,-20) → arc over top → head-right (11,-20)
+//         → right bezier → tip
+//   Arc: large-arc=1, sweep=0 → counterclockwise in SVG (goes through topmost point (0,-31))
+const TEARDROP_D =
+  'M 0 0 C -5 -6,-11 -14,-11 -20 A 11 11 0 1 0 11 -20 C 11 -14,5 -6,0 0 Z';
+
+// foreignObject placement for the 16×16 glyph icon, centered at (0, -18) in local coords.
+const GLYPH_OFFSET_X = -8;
+const GLYPH_OFFSET_Y = -26;
 
 /** Clamp a number to [lo, hi]. */
 function clamp(v: number, lo: number, hi: number): number {
@@ -104,13 +119,22 @@ function PinCircle({
   onDragEnd,
   onContextMenu,
 }: PinCircleProps) {
-  const pinX = pin.x * imageWidth;
-  const pinY = pin.y * imageHeight;
-
-  // Pin color: explicit override or fallback to entry type color (D-01)
+  // Pin color: explicit override or fallback to entry type color (D-01, graceful degradation D-03)
   const pinColor = pin.color ?? entryTypeHexColor(pin.entryType ?? 'concept');
 
-  // Drag state (mutable via ref — no rerender during drag)
+  // ── Drag visual position (D-11 fix) ────────────────────────────────────────
+  // Stored in local state so a parent re-render during drag (e.g. selection state
+  // change, future tooltip hover) does NOT snap the marker back to pin.x*imageWidth.
+  // When null (idle), the transform falls back to pin.x * imageWidth as before.
+  const [dragVisualX, setDragVisualX] = useState<number | null>(null);
+  const [dragVisualY, setDragVisualY] = useState<number | null>(null);
+
+  // Image-space pin position: use drag-local state during drag to prevent parent
+  // re-renders from resetting the visual position mid-drag.
+  const pinX = dragVisualX !== null ? dragVisualX : pin.x * imageWidth;
+  const pinY = dragVisualY !== null ? dragVisualY : pin.y * imageHeight;
+
+  // Drag bookkeeping (mutable ref — does not trigger re-renders itself)
   const dragging = useRef(false);
   const dragStart = useRef<{
     clientX: number;
@@ -135,10 +159,16 @@ function PinCircle({
 
   const handlePointerMove = (e: React.PointerEvent<SVGGElement>) => {
     if (!dragging.current || !dragStart.current) return;
-    const dx = Math.abs(e.clientX - dragStart.current.clientX);
-    const dy = Math.abs(e.clientY - dragStart.current.clientY);
-    if (dx > DRAG_THRESHOLD_PX || dy > DRAG_THRESHOLD_PX) {
+    const dx = e.clientX - dragStart.current.clientX;
+    const dy = e.clientY - dragStart.current.clientY;
+    if (Math.abs(dx) > DRAG_THRESHOLD_PX || Math.abs(dy) > DRAG_THRESHOLD_PX) {
       dragStart.current.moved = true;
+      // Update visual position in local state (D-11 fix: not derived from pin.x during drag)
+      const k = currentScale;
+      const nx = clamp(dragStart.current.origX + dx / (k * imageWidth), 0, 1);
+      const ny = clamp(dragStart.current.origY + dy / (k * imageHeight), 0, 1);
+      setDragVisualX(nx * imageWidth);
+      setDragVisualY(ny * imageHeight);
     }
   };
 
@@ -150,13 +180,17 @@ function PinCircle({
     const start = dragStart.current;
     dragStart.current = null;
 
+    // Clear visual drag state — pin.x * imageWidth resumes after parent re-renders
+    setDragVisualX(null);
+    setDragVisualY(null);
+
     if (!start.moved) {
       // Treat as a click — navigate to entry
       onNavigate(pin.entryId);
       return;
     }
 
-    // DRAG-END COORDINATE CONVERSION (zoom-aware, DELTA approach):
+    // DRAG-END COORDINATE CONVERSION (zoom-aware, DELTA approach — VERBATIM D-11):
     // A screen-space delta is in ZOOMED pixels, so divide by the current zoom
     // scale k before converting to image-space delta. currentScale = k.
     const k = currentScale;
@@ -184,41 +218,42 @@ function PinCircle({
       onPointerUp={handlePointerUp}
       onContextMenu={handleContextMenu}
     >
-      {/* SVG tooltip for hover — D-09 */}
+      {/* SVG tooltip for hover */}
       <title>{pin.entryTitle ?? 'Pin'}</title>
 
-      {/* Transparent hit area — 44px touch target (HIT_RADIUS=22 -> 44px diameter) */}
+      {/* Transparent hit area — 44px touch target (HIT_RADIUS=22 → 44px diameter) */}
       <circle r={HIT_RADIUS} fill="transparent" />
 
-      {/* Visible pin circle with color override (D-01) */}
-      <circle
-        r={NODE_RADIUS}
+      {/* Selection glow layer — blurred copy behind the marker, only when selected (D-03) */}
+      {selected && (
+        <path
+          d={TEARDROP_D}
+          fill={pinColor}
+          filter="url(#pin-glow)"
+          style={{ pointerEvents: 'none' }}
+        />
+      )}
+
+      {/* Teardrop marker — drop shadow always applied (D-03) */}
+      <path
+        d={TEARDROP_D}
         fill={pinColor}
-        stroke="#111827"
-        strokeWidth={1}
+        stroke="rgba(0,0,0,0.35)"
+        strokeWidth={1.5}
+        filter="url(#pin-shadow)"
       />
 
-      {/* Glyph icon overlay — rendered when pin.icon is set (D-02) */}
+      {/* Glyph icon overlay — rendered when pin.icon is set (D-02, T-40-10) */}
       {pin.icon && (
         <foreignObject
-          x={-8}
-          y={-8}
+          x={GLYPH_OFFSET_X}
+          y={GLYPH_OFFSET_Y}
           width={16}
           height={16}
           style={{ pointerEvents: 'none', overflow: 'visible' }}
         >
           <GlyphIcon glyph={pin.icon} size={16} color="#fff" />
         </foreignObject>
-      )}
-
-      {/* Selection ring — shown when pin is selected (delete/relink context) */}
-      {selected && (
-        <circle
-          r={SELECTION_RING_R}
-          fill="none"
-          stroke="var(--color-accent)"
-          strokeWidth={2}
-        />
       )}
     </g>
   );
@@ -591,6 +626,34 @@ export function MapCanvas({
       onClick={handleSvgClick}
       onPointerMove={handleSvgPointerMove}
     >
+      {/* ── SVG filter definitions (D-03) ──────────────────────────────────── */}
+      {/* Placed OUTSIDE <g.viewport> so they are not zoom-transformed.        */}
+      <defs>
+        {/* Drop shadow — always applied to the teardrop marker.
+            Colors driven by CSS custom properties (Task 3 design tokens). */}
+        <filter id="pin-shadow" x="-30%" y="-30%" width="160%" height="160%">
+          <feDropShadow
+            dx="0"
+            dy="2"
+            stdDeviation="2"
+            floodColor="var(--pin-shadow-color, rgba(0,0,0,0.5))"
+            floodOpacity="1"
+          />
+        </filter>
+
+        {/* Selection glow — applied to a blurred copy behind the marker when selected.
+            Uses accent color by default; overridden by --pin-glow-color token (Task 3). */}
+        <filter id="pin-glow" x="-60%" y="-60%" width="220%" height="220%">
+          <feGaussianBlur stdDeviation="4" in="SourceGraphic" result="blur" />
+          <feFlood floodColor="var(--pin-glow-color, oklch(0.6 0.18 270))" floodOpacity="0.75" result="color" />
+          <feComposite in="color" in2="blur" operator="in" result="coloredBlur" />
+          <feMerge>
+            <feMergeNode in="coloredBlur" />
+            <feMergeNode in="SourceGraphic" />
+          </feMerge>
+        </filter>
+      </defs>
+
       <g className="viewport">
         {/* Map background image layer — omitted when imageUrl is absent (backing asset deleted). */}
         {imageUrl ? (
