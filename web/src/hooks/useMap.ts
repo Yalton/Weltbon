@@ -294,3 +294,90 @@ export function useDeleteRegion(universeId: string, mapId: string) {
     },
   });
 }
+
+// ─── Phase 51 ROUTE-01: Route mutations ──────────────────────────────────────
+
+/**
+ * useCreateRoute — POST .../routes to create a new route polyline (ROUTE-01).
+ * Invalidates ['map', universeId, mapId] so the canvas re-renders.
+ */
+export function useCreateRoute(universeId: string, mapId: string) {
+  const qc = useQueryClient();
+  return useMutation({
+    mutationFn: (input: {
+      name?: string;
+      points: string; // JSON [{x,y}, ...]
+      entryId?: string | null;
+      color?: string | null;
+      lineStyle?: 'solid' | 'dashed';
+      width?: number;
+      showArrow?: boolean;
+    }) =>
+      api<MapRoute>(`/universes/${universeId}/maps/${mapId}/routes`, {
+        method: 'POST',
+        body: JSON.stringify(input),
+      }),
+    onSuccess: () => {
+      // CRITICAL: invalidate the EXISTING key — do NOT change the key shape
+      // (memory: react-query-key-change-blast-radius)
+      qc.invalidateQueries({ queryKey: ['map', universeId, mapId] });
+    },
+  });
+}
+
+/**
+ * useUpdateRoute — PATCH .../routes/:routeId (rename, recolor, relink, restyle).
+ * Invalidates the existing map key — no new key.
+ */
+export function useUpdateRoute(universeId: string, mapId: string) {
+  const qc = useQueryClient();
+  return useMutation({
+    mutationFn: ({
+      routeId,
+      name,
+      color,
+      entryId,
+      lineStyle,
+      width,
+      showArrow,
+    }: {
+      routeId: string;
+      name?: string;
+      color?: string | null;
+      entryId?: string | null;
+      lineStyle?: 'solid' | 'dashed';
+      width?: number;
+      showArrow?: boolean;
+    }) =>
+      api<MapRoute>(
+        `/universes/${universeId}/maps/${mapId}/routes/${routeId}`,
+        {
+          method: 'PATCH',
+          body: JSON.stringify({ name, color, entryId, lineStyle, width, showArrow }),
+        },
+      ),
+    onSuccess: () => {
+      // CRITICAL: same key — no blast-radius re-key
+      // (memory: react-query-key-change-blast-radius)
+      qc.invalidateQueries({ queryKey: ['map', universeId, mapId] });
+    },
+  });
+}
+
+/**
+ * useDeleteRoute — DELETE .../routes/:routeId.
+ * Never touches the linked entry — only removes the route record.
+ */
+export function useDeleteRoute(universeId: string, mapId: string) {
+  const qc = useQueryClient();
+  return useMutation({
+    mutationFn: (routeId: string) =>
+      api<void>(
+        `/universes/${universeId}/maps/${mapId}/routes/${routeId}`,
+        { method: 'DELETE' },
+      ),
+    onSuccess: () => {
+      qc.invalidateQueries({ queryKey: ['map', universeId, mapId] });
+    },
+  });
+}
