@@ -483,6 +483,66 @@ const deleteRegionRoute = createRoute({
   },
 });
 
+// Phase 51 ROUTE-01: Route CRUD routes (mirrors region route defs)
+const addRouteRoute = createRoute({
+  method: 'post',
+  path: '/{mid}/routes',
+  tags: ['Maps'],
+  summary: 'Add a route polyline to a map (entryId optional)',
+  security: [{ bearerAuth: [] }],
+  request: {
+    params: uidAndMidParams,
+    body: { content: { 'application/json': { schema: createRouteSchema } }, required: true },
+  },
+  responses: {
+    201: {
+      content: { 'application/json': { schema: routeSchema } },
+      description: 'Route created',
+    },
+    400: { content: { 'application/json': { schema: errorSchema } }, description: 'Validation error' },
+    401: { content: { 'application/json': { schema: errorSchema } }, description: 'Unauthorized' },
+    403: { content: { 'application/json': { schema: errorSchema } }, description: 'Forbidden' },
+    404: { content: { 'application/json': { schema: errorSchema } }, description: 'Not found' },
+  },
+});
+
+const updateRouteRoute = createRoute({
+  method: 'patch',
+  path: '/{mid}/routes/{routeId}',
+  tags: ['Maps'],
+  summary: 'Update route name, color, entry link, or style fields (routeId can be set to null)',
+  security: [{ bearerAuth: [] }],
+  request: {
+    params: uidMidRouteParams,
+    body: { content: { 'application/json': { schema: updateRouteSchema } }, required: true },
+  },
+  responses: {
+    200: {
+      content: { 'application/json': { schema: routeSchema } },
+      description: 'Route updated',
+    },
+    400: { content: { 'application/json': { schema: errorSchema } }, description: 'Validation error' },
+    401: { content: { 'application/json': { schema: errorSchema } }, description: 'Unauthorized' },
+    403: { content: { 'application/json': { schema: errorSchema } }, description: 'Forbidden' },
+    404: { content: { 'application/json': { schema: errorSchema } }, description: 'Route not found' },
+  },
+});
+
+const deleteRouteRoute = createRoute({
+  method: 'delete',
+  path: '/{mid}/routes/{routeId}',
+  tags: ['Maps'],
+  summary: 'Delete a route (linked entry is not affected)',
+  security: [{ bearerAuth: [] }],
+  request: { params: uidMidRouteParams },
+  responses: {
+    204: { description: 'Route deleted' },
+    401: { content: { 'application/json': { schema: errorSchema } }, description: 'Unauthorized' },
+    403: { content: { 'application/json': { schema: errorSchema } }, description: 'Forbidden' },
+    404: { content: { 'application/json': { schema: errorSchema } }, description: 'Route not found' },
+  },
+});
+
 // ─── Helper ───────────────────────────────────────────────────────────────────
 
 /**
@@ -850,6 +910,111 @@ export const mapsRouter = new OpenAPIHono<AppEnv>()
 
     if (deleted.length === 0) {
       return c.json({ error: 'Region not found' }, 404);
+    }
+
+    return c.body(null, 204);
+  })
+
+  // Phase 51 ROUTE-01: Route CRUD handlers (mirror region handlers; no terrainTypeId)
+
+  // POST /universes/:uid/maps/:mid/routes — create route (T-51-06: entryId universe check)
+  .openapi(addRouteRoute, async (c) => {
+    const { uid, mid } = c.req.valid('param');
+    await requireUniverse(uid, c.var.userId);
+    await requireMap(mid, uid);
+    const data = c.req.valid('json');
+
+    // T-51-06: Validate optional entryId belongs to this universe (mirrors T-40-02)
+    if (data.entryId) {
+      const entryRows = await db()
+        .select({ id: entries.id })
+        .from(entries)
+        .where(and(eq(entries.id, data.entryId), eq(entries.universeId, uid)));
+      if (entryRows.length === 0) {
+        return c.json({ error: 'Entry not found in this universe' }, 404);
+      }
+    }
+
+    const [row] = await db()
+      .insert(mapRoutes)
+      .values({
+        mapId: mid,
+        entryId: data.entryId ?? null,
+        name: data.name ?? '',
+        points: data.points,
+        color: data.color ?? null,
+        lineStyle: data.lineStyle ?? 'solid',
+        width: data.width ?? 4,
+        showArrow: data.showArrow ?? false,
+      })
+      .returning();
+
+    return c.json(row as any, 201);
+  })
+
+  // PATCH /universes/:uid/maps/:mid/routes/:routeId — update route (T-51-01 IDOR guard)
+  .openapi(updateRouteRoute, async (c) => {
+    const { uid, mid, routeId } = c.req.valid('param');
+    await requireUniverse(uid, c.var.userId);
+    await requireMap(mid, uid);
+    const data = c.req.valid('json');
+
+    // T-51-06: Validate provided non-null entryId belongs to this universe
+    if (data.entryId !== undefined && data.entryId !== null) {
+      const entryRows = await db()
+        .select({ id: entries.id })
+        .from(entries)
+        .where(and(eq(entries.id, data.entryId), eq(entries.universeId, uid)));
+      if (entryRows.length === 0) {
+        return c.json({ error: 'Entry not found in this universe' }, 404);
+      }
+    }
+
+    // Build partial update — only provided fields
+    // null is a valid value (clears color/entryId), undefined means not provided
+    const updates: {
+      name?: string;
+      color?: string | null;
+      entryId?: string | null;
+      lineStyle?: 'solid' | 'dashed';
+      width?: number;
+      showArrow?: boolean;
+    } = {};
+    if (data.name !== undefined) updates.name = data.name;
+    if ('color' in data) updates.color = data.color ?? null;
+    if ('entryId' in data) updates.entryId = data.entryId ?? null;
+    if (data.lineStyle !== undefined) updates.lineStyle = data.lineStyle;
+    if (data.width !== undefined) updates.width = data.width;
+    if (data.showArrow !== undefined) updates.showArrow = data.showArrow;
+
+    // T-51-01 IDOR guard: scope by both routeId AND mapId
+    const [updated] = await db()
+      .update(mapRoutes)
+      .set(updates)
+      .where(and(eq(mapRoutes.id, routeId), eq(mapRoutes.mapId, mid)))
+      .returning();
+
+    if (!updated) {
+      return c.json({ error: 'Route not found' }, 404);
+    }
+
+    return c.json(updated as any, 200);
+  })
+
+  // DELETE /universes/:uid/maps/:mid/routes/:routeId — delete route (never deletes entry)
+  .openapi(deleteRouteRoute, async (c) => {
+    const { uid, mid, routeId } = c.req.valid('param');
+    await requireUniverse(uid, c.var.userId);
+    await requireMap(mid, uid);
+
+    // T-51-01 IDOR guard: scope by both routeId AND mapId
+    const deleted = await db()
+      .delete(mapRoutes)
+      .where(and(eq(mapRoutes.id, routeId), eq(mapRoutes.mapId, mid)))
+      .returning();
+
+    if (deleted.length === 0) {
+      return c.json({ error: 'Route not found' }, 404);
     }
 
     return c.body(null, 204);

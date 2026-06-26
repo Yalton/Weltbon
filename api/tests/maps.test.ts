@@ -663,4 +663,260 @@ describe('map routes (MAPS-04/05 regions + pin style)', () => {
 
     expect(patchRes.status).toBe(404);
   });
+
+  // ─── Phase 51 ROUTE-01/02: Route CRUD + IDOR ──────────────────────────────
+
+  it('POST /routes creates a standalone route (no entryId) and returns 201 with defaults', async () => {
+    const { hdrs, uid, mid } = await seedMap();
+    const points = JSON.stringify([{ x: 0.1, y: 0.1 }, { x: 0.5, y: 0.5 }]);
+
+    const res = await req('POST', `/api/universes/${uid}/maps/${mid}/routes`, {
+      headers: hdrs,
+      body: { name: 'The Road', points, color: '#ff5722' },
+    });
+
+    expect(res.status).toBe(201);
+    const data = await json(res);
+    expect(data.id).toBeDefined();
+    expect(data.mapId).toBe(mid);
+    expect(data.entryId).toBeNull();
+    expect(data.name).toBe('The Road');
+    expect(data.points).toBe(points);
+    expect(data.color).toBe('#ff5722');
+    // Default style fields
+    expect(data.lineStyle).toBe('solid');
+    expect(data.width).toBe(4);
+    expect(data.showArrow).toBe(false);
+  });
+
+  it('POST /routes accepts explicit null entryId and color and returns 201', async () => {
+    const { hdrs, uid, mid } = await seedMap();
+    const points = JSON.stringify([{ x: 0.0, y: 0.0 }, { x: 1.0, y: 1.0 }]);
+
+    const res = await req('POST', `/api/universes/${uid}/maps/${mid}/routes`, {
+      headers: hdrs,
+      body: { name: '', points, entryId: null, color: null },
+    });
+
+    expect(res.status).toBe(201);
+    const data = await json(res);
+    expect(data.entryId).toBeNull();
+    expect(data.color).toBeNull();
+  });
+
+  it('POST /routes creates a linked route with valid entryId and returns 201', async () => {
+    const { hdrs, uid, mid } = await seedMap();
+    const entryId = await createEntry(uid, hdrs, 'Journey Route Entry');
+    const points = JSON.stringify([{ x: 0.2, y: 0.2 }, { x: 0.8, y: 0.8 }]);
+
+    const res = await req('POST', `/api/universes/${uid}/maps/${mid}/routes`, {
+      headers: hdrs,
+      body: { name: 'Hero Journey', points, entryId },
+    });
+
+    expect(res.status).toBe(201);
+    const data = await json(res);
+    expect(data.entryId).toBe(entryId);
+  });
+
+  it('POST /routes with cross-universe entryId returns 404', async () => {
+    const { hdrs, uid, mid } = await seedMap('route-a@test.com');
+    const uid2 = await createUniverse(hdrs, 'OtherWorld');
+    const foreignEntryId = await createEntry(uid2, hdrs);
+    const points = JSON.stringify([{ x: 0.1, y: 0.1 }, { x: 0.9, y: 0.9 }]);
+
+    const res = await req('POST', `/api/universes/${uid}/maps/${mid}/routes`, {
+      headers: hdrs,
+      body: { points, entryId: foreignEntryId },
+    });
+
+    expect(res.status).toBe(404);
+  });
+
+  it('PATCH /routes/:routeId updates name and color and returns 200', async () => {
+    const { hdrs, uid, mid } = await seedMap();
+    const points = JSON.stringify([{ x: 0.0, y: 0.0 }, { x: 0.5, y: 0.5 }]);
+
+    const createRes = await req('POST', `/api/universes/${uid}/maps/${mid}/routes`, {
+      headers: hdrs,
+      body: { name: 'Old Name', points, color: '#ff0000' },
+    });
+    const route = await json(createRes);
+
+    const patchRes = await req('PATCH', `/api/universes/${uid}/maps/${mid}/routes/${route.id}`, {
+      headers: hdrs,
+      body: { name: 'New Name', color: '#00ff00' },
+    });
+
+    expect(patchRes.status).toBe(200);
+    const updated = await json(patchRes);
+    expect(updated.name).toBe('New Name');
+    expect(updated.color).toBe('#00ff00');
+  });
+
+  it('PATCH /routes/:routeId updates style fields (lineStyle dashed + showArrow true)', async () => {
+    const { hdrs, uid, mid } = await seedMap();
+    const points = JSON.stringify([{ x: 0.0, y: 0.0 }, { x: 0.5, y: 0.5 }]);
+
+    const createRes = await req('POST', `/api/universes/${uid}/maps/${mid}/routes`, {
+      headers: hdrs,
+      body: { name: 'Trade Route', points },
+    });
+    const route = await json(createRes);
+    expect(route.lineStyle).toBe('solid');
+    expect(route.showArrow).toBe(false);
+
+    const patchRes = await req('PATCH', `/api/universes/${uid}/maps/${mid}/routes/${route.id}`, {
+      headers: hdrs,
+      body: { lineStyle: 'dashed', showArrow: true, width: 6 },
+    });
+
+    expect(patchRes.status).toBe(200);
+    const updated = await json(patchRes);
+    expect(updated.lineStyle).toBe('dashed');
+    expect(updated.showArrow).toBe(true);
+    expect(updated.width).toBe(6);
+  });
+
+  it('PATCH /routes/:routeId can set entryId to null (unlink)', async () => {
+    const { hdrs, uid, mid } = await seedMap();
+    const entryId = await createEntry(uid, hdrs, 'Route Entry');
+    const points = JSON.stringify([{ x: 0.0, y: 0.0 }, { x: 1.0, y: 1.0 }]);
+
+    const createRes = await req('POST', `/api/universes/${uid}/maps/${mid}/routes`, {
+      headers: hdrs,
+      body: { name: 'Linked', points, entryId },
+    });
+    const route = await json(createRes);
+    expect(route.entryId).toBe(entryId);
+
+    const patchRes = await req('PATCH', `/api/universes/${uid}/maps/${mid}/routes/${route.id}`, {
+      headers: hdrs,
+      body: { entryId: null },
+    });
+
+    expect(patchRes.status).toBe(200);
+    const updated = await json(patchRes);
+    expect(updated.entryId).toBeNull();
+  });
+
+  it('PATCH /routes/:routeId with cross-universe entryId returns 404', async () => {
+    const { hdrs, uid, mid } = await seedMap();
+    const points = JSON.stringify([{ x: 0.0, y: 0.0 }, { x: 0.5, y: 0.5 }]);
+
+    const createRes = await req('POST', `/api/universes/${uid}/maps/${mid}/routes`, {
+      headers: hdrs,
+      body: { name: 'MyRoute', points },
+    });
+    const route = await json(createRes);
+
+    const uid2 = await createUniverse(hdrs, 'OtherWorld');
+    const foreignEntryId = await createEntry(uid2, hdrs);
+
+    const patchRes = await req('PATCH', `/api/universes/${uid}/maps/${mid}/routes/${route.id}`, {
+      headers: hdrs,
+      body: { entryId: foreignEntryId },
+    });
+
+    expect(patchRes.status).toBe(404);
+  });
+
+  it('DELETE /routes/:routeId returns 204 and does NOT delete the linked entry', async () => {
+    const { hdrs, uid, mid } = await seedMap();
+    const entryId = await createEntry(uid, hdrs, 'Journey');
+    const points = JSON.stringify([{ x: 0.0, y: 0.0 }, { x: 1.0, y: 1.0 }]);
+
+    const createRes = await req('POST', `/api/universes/${uid}/maps/${mid}/routes`, {
+      headers: hdrs,
+      body: { name: 'Doomed Route', points, entryId },
+    });
+    const route = await json(createRes);
+
+    const delRes = await req('DELETE', `/api/universes/${uid}/maps/${mid}/routes/${route.id}`, {
+      headers: hdrs,
+    });
+
+    expect(delRes.status).toBe(204);
+
+    // Verify the entry still exists
+    const entryRes = await req('GET', `/api/universes/${uid}/entries/${entryId}`, { headers: hdrs });
+    expect(entryRes.status).toBe(200);
+  });
+
+  it('DELETE /routes/:routeId with unknown routeId returns 404', async () => {
+    const { hdrs, uid, mid } = await seedMap();
+    const fakeId = '00000000-0000-4000-8000-000000000010';
+
+    const delRes = await req('DELETE', `/api/universes/${uid}/maps/${mid}/routes/${fakeId}`, {
+      headers: hdrs,
+    });
+
+    expect(delRes.status).toBe(404);
+  });
+
+  it('GET /maps/:mid detail payload includes routes array alongside pins and regions', async () => {
+    const { hdrs, uid, mid } = await seedMap();
+    const points = JSON.stringify([{ x: 0.0, y: 0.0 }, { x: 0.5, y: 0.5 }]);
+
+    await req('POST', `/api/universes/${uid}/maps/${mid}/routes`, {
+      headers: hdrs,
+      body: { name: 'Test Route', points },
+    });
+
+    const detailRes = await req('GET', `/api/universes/${uid}/maps/${mid}`, { headers: hdrs });
+    expect(detailRes.status).toBe(200);
+    const detail = await json(detailRes);
+
+    expect(Array.isArray(detail.pins)).toBe(true);
+    expect(Array.isArray(detail.regions)).toBe(true);
+    expect(Array.isArray(detail.routes)).toBe(true);
+    expect(detail.routes).toHaveLength(1);
+    expect(detail.routes[0].name).toBe('Test Route');
+    expect(detail.routes[0].lineStyle).toBe('solid');
+  });
+
+  // ─── Phase 51 ROUTE-02: IDOR guard (wrong mid → 404) ──────────────────────
+
+  it('PATCH /routes/:routeId via a foreign mid returns 404 (IDOR guard)', async () => {
+    const { hdrs, uid, mid } = await seedMap();
+    // Create a second map in the same universe
+    const assetId = await uploadAsset(uid, hdrs);
+    const mid2 = await createMap(uid, hdrs, assetId);
+    const points = JSON.stringify([{ x: 0.0, y: 0.0 }, { x: 0.5, y: 0.5 }]);
+
+    // Create the route under mid
+    const createRes = await req('POST', `/api/universes/${uid}/maps/${mid}/routes`, {
+      headers: hdrs,
+      body: { name: 'Secret Route', points },
+    });
+    const route = await json(createRes);
+
+    // Attempt to mutate it through mid2 (the route belongs to mid, not mid2)
+    const patchRes = await req('PATCH', `/api/universes/${uid}/maps/${mid2}/routes/${route.id}`, {
+      headers: hdrs,
+      body: { name: 'IDOR attempt' },
+    });
+
+    expect(patchRes.status).toBe(404);
+  });
+
+  it('DELETE /routes/:routeId via a foreign mid returns 404 (IDOR guard)', async () => {
+    const { hdrs, uid, mid } = await seedMap();
+    const assetId = await uploadAsset(uid, hdrs);
+    const mid2 = await createMap(uid, hdrs, assetId);
+    const points = JSON.stringify([{ x: 0.0, y: 0.0 }, { x: 0.5, y: 0.5 }]);
+
+    const createRes = await req('POST', `/api/universes/${uid}/maps/${mid}/routes`, {
+      headers: hdrs,
+      body: { name: 'Secret Route', points },
+    });
+    const route = await json(createRes);
+
+    // Attempt to delete it through mid2
+    const delRes = await req('DELETE', `/api/universes/${uid}/maps/${mid2}/routes/${route.id}`, {
+      headers: hdrs,
+    });
+
+    expect(delRes.status).toBe(404);
+  });
 });
