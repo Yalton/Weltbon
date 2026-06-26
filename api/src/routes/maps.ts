@@ -21,7 +21,7 @@ import { OpenAPIHono, createRoute, z } from '@hono/zod-openapi';
 import { and, eq } from 'drizzle-orm';
 import { HTTPException } from 'hono/http-exception';
 import { db } from '../db/client.js';
-import { maps, mapPins, mapRegions, entries, assets, terrainTypes, mapLayers } from '../db/schema.js';
+import { maps, mapPins, mapRegions, mapRoutes, entries, assets, terrainTypes, mapLayers } from '../db/schema.js';
 import { requireUniverse } from '../utils/ownership.js';
 import { signAssetUrl } from '../services/asset-signing.js';
 import type { AuthVariables } from '../middleware/auth.js';
@@ -54,6 +54,7 @@ const uidParams = z.object({ uid: z.string().uuid() });
 const uidAndMidParams = z.object({ uid: z.string().uuid(), mid: z.string().uuid() });
 const uidMidPinParams = z.object({ uid: z.string().uuid(), mid: z.string().uuid(), pinId: z.string().uuid() });
 const uidMidRegionParams = z.object({ uid: z.string().uuid(), mid: z.string().uuid(), regionId: z.string().uuid() });
+const uidMidRouteParams = z.object({ uid: z.string().uuid(), mid: z.string().uuid(), routeId: z.string().uuid() });
 
 // ─── Zod schemas ──────────────────────────────────────────────────────────────
 
@@ -138,6 +139,49 @@ const updateRegionSchema = z.object({
   { message: 'At least one field must be provided' },
 );
 
+// Phase 51 ROUTE-01: Route Zod schemas (mirror region schemas; drop terrainTypeId; add lineStyle/width/showArrow)
+const routeSchema = z.object({
+  id: z.string(),
+  mapId: z.string(),
+  entryId: z.string().nullable(),
+  name: z.string(),
+  points: z.string(),               // raw JSON string; web parses to {x,y}[]
+  color: z.string().nullable(),
+  lineStyle: z.enum(['solid', 'dashed']),
+  width: z.number().int(),
+  showArrow: z.boolean(),
+  createdAt: z.string().or(z.date()),
+});
+
+const createRouteSchema = z.object({
+  name: z.string().max(200).default(''),
+  points: z.string().min(1),
+  // entryId/color nullable — draw-route UI may send explicit null for standalone route
+  entryId: z.string().uuid().nullable().optional(),
+  color: z.string().nullable().optional(),
+  lineStyle: z.enum(['solid', 'dashed']).optional().default('solid'),
+  width: z.number().int().positive().optional(),
+  showArrow: z.boolean().optional().default(false),
+});
+
+const updateRouteSchema = z.object({
+  name: z.string().max(200).optional(),
+  color: z.string().nullable().optional(),
+  entryId: z.string().uuid().nullable().optional(),
+  lineStyle: z.enum(['solid', 'dashed']).optional(),
+  width: z.number().int().positive().optional(),
+  showArrow: z.boolean().optional(),
+}).refine(
+  (data) =>
+    data.name !== undefined ||
+    data.color !== undefined ||
+    data.entryId !== undefined ||
+    data.lineStyle !== undefined ||
+    data.width !== undefined ||
+    data.showArrow !== undefined,
+  { message: 'At least one field must be provided' },
+);
+
 // Phase 40 MAPS-05: Pin style Zod schema
 const pinStyleSchema = z.object({
   color: z.string().nullable().optional(),
@@ -158,6 +202,7 @@ const mapDetailSchema = z.object({
   legendLabels: z.string().nullable().optional(), // Phase 40 MAPS-05 (D-03): legend caption overrides
   pins: z.array(pinSchema),
   regions: z.array(regionSchema),   // Phase 40: regions alongside pins
+  routes: z.array(routeSchema),     // Phase 51: routes alongside regions
 });
 
 const createPinSchema = z.object({
@@ -507,9 +552,10 @@ export const mapsRouter = new OpenAPIHono<AppEnv>()
     await requireUniverse(uid, c.var.userId);
     const map = await requireMap(mid, uid);
 
-    const [pinRows, regionRows] = await Promise.all([
+    const [pinRows, regionRows, routeRows] = await Promise.all([
       db().select().from(mapPins).where(eq(mapPins.mapId, mid)),
       db().select().from(mapRegions).where(eq(mapRegions.mapId, mid)),
+      db().select().from(mapRoutes).where(eq(mapRoutes.mapId, mid)),  // Phase 51
     ]);
 
     return c.json({
@@ -517,6 +563,7 @@ export const mapsRouter = new OpenAPIHono<AppEnv>()
       ...mapImageUrls(uid, map.imageAssetId ?? null),
       pins: pinRows,
       regions: regionRows,   // Phase 40 addition
+      routes: routeRows,     // Phase 51 addition
     } as any, 200);
   })
 
