@@ -106,6 +106,14 @@ export interface MapCanvasProps {
   onRouteClick?: (route: MapRoute) => void;
   /** Called on route right-click with client coords (context menu). */
   onRouteContextMenu?: (route: MapRoute, clientX: number, clientY: number) => void;
+  /** When true, canvas click drops a route vertex (reuses draw-region pipeline). */
+  drawRouteMode?: boolean;
+  /**
+   * Called on double-click while drawRouteMode is active — signals the route
+   * draw finisher (open polyline closed by dblclick or Enter).
+   * d3's dblclick-to-zoom is already suppressed in the d3 zoom setup.
+   */
+  onCanvasDblClick?: () => void;
 }
 
 // ─── PinCircle ────────────────────────────────────────────────────────────────
@@ -724,6 +732,8 @@ export const MapCanvas = forwardRef<MapCanvasHandle, MapCanvasProps>(function Ma
   routes = [],
   onRouteClick,
   onRouteContextMenu,
+  drawRouteMode = false,
+  onCanvasDblClick,
 }, ref) {
   const svgRef = useRef<SVGSVGElement>(null);
   const containerRef = useRef<HTMLDivElement>(null);
@@ -755,7 +765,9 @@ export const MapCanvas = forwardRef<MapCanvasHandle, MapCanvasProps>(function Ma
   // so clicks over existing areas fall through to handleSvgClick → onCanvasClick.
   // addPinMode is included because handleSvgClick already appends a pin/vertex for it
   // and a pin-placement click over a terrain area should also pass through.
-  const isDrawing = addPinMode || drawRegionMode || paintTerrainMode;
+  // isDrawing includes drawRouteMode so route elements set pointerEvents:'none'
+  // during route draw, letting clicks fall through to handleSvgClick → vertex append.
+  const isDrawing = addPinMode || drawRegionMode || drawRouteMode || paintTerrainMode;
 
   // Install d3-zoom on the svg element, targeting <g.viewport>.
   // Pins and regions are React-rendered inside this effect's SVG structure but are
@@ -857,7 +869,7 @@ export const MapCanvas = forwardRef<MapCanvasHandle, MapCanvasProps>(function Ma
   // paintTerrainMode reuses the same onCanvasClick vertex-append pipeline as drawRegionMode
   // (the MapEditor onCanvasClick handler branches on armed state).
   const handleSvgClick = (e: React.MouseEvent<SVGSVGElement>) => {
-    if (!addPinMode && !drawRegionMode && !paintTerrainMode) return;
+    if (!addPinMode && !drawRegionMode && !drawRouteMode && !paintTerrainMode) return;
     // Ignore clicks that originated on a pin group (they handle their own events).
     if ((e.target as Element).closest('g[aria-label]')) return;
 
@@ -868,8 +880,16 @@ export const MapCanvas = forwardRef<MapCanvasHandle, MapCanvasProps>(function Ma
 
   // POINTER MOVE — track cursor in image space for rubber-band preview.
   // Active in drawRegionMode AND paintTerrainMode (shared vertex-snap preview).
+  // dblclick finisher for route draw — d3's dblclick-to-zoom is already suppressed.
+  // Only fires when drawRouteMode is active; delegates to MapEditor's handler.
+  const handleSvgDblClick = (e: React.MouseEvent<SVGSVGElement>) => {
+    if (!drawRouteMode) return;
+    e.stopPropagation();
+    onCanvasDblClick?.();
+  };
+
   const handleSvgPointerMove = (e: React.PointerEvent<SVGSVGElement>) => {
-    if (!drawRegionMode && !paintTerrainMode) return;
+    if (!drawRegionMode && !drawRouteMode && !paintTerrainMode) return;
     const pos = screenToImage(e.clientX, e.clientY);
     if (pos) setPointerImgPos({ x: pos.nx * imageWidth, y: pos.ny * imageHeight });
   };
@@ -982,11 +1002,12 @@ export const MapCanvas = forwardRef<MapCanvasHandle, MapCanvasProps>(function Ma
       aria-label="Map canvas"
       className={[
         'block h-full w-full select-none',
-        addPinMode || drawRegionMode || paintTerrainMode ? 'cursor-crosshair' : '',
+        addPinMode || drawRegionMode || drawRouteMode || paintTerrainMode ? 'cursor-crosshair' : '',
       ]
         .filter(Boolean)
         .join(' ')}
       onClick={handleSvgClick}
+      onDoubleClick={handleSvgDblClick}
       onPointerMove={handleSvgPointerMove}
     >
       {/* ── SVG filter definitions (D-03) ──────────────────────────────────── */}
@@ -1135,10 +1156,10 @@ export const MapCanvas = forwardRef<MapCanvasHandle, MapCanvasProps>(function Ma
           ))}
         </g>
 
-        {/* ── Rubber-band preview polygon (drawRegionMode or paintTerrainMode) ── */}
-        {/* Reuse the same vertex snap circles and accent stroke for both modes. */}
+        {/* ── Rubber-band preview (drawRegionMode, drawRouteMode, or paintTerrainMode) ── */}
+        {/* Reuse the same vertex snap circles and accent stroke for all draw modes. */}
         {/* CRITICAL: React handlers only — NEVER d3 .on(event,(e,d)=>) here */}
-        {(drawRegionMode || paintTerrainMode) && pendingVertices.length > 0 && (
+        {(drawRegionMode || drawRouteMode || paintTerrainMode) && pendingVertices.length > 0 && (
           <g className="region-preview">
             {/* Preview polygon */}
             <polygon

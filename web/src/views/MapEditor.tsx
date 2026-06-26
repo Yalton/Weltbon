@@ -15,16 +15,20 @@ import { useEntries } from '../hooks/useEntries';
 import {
   useAddPin,
   useCreateRegion,
+  useCreateRoute,
   useDeletePin,
   useDeleteRegion,
+  useDeleteRoute,
   useMap,
   useMovePin,
   useRelinkPin,
   useUpdateMap,
   useUpdatePinStyle,
   useUpdateRegion,
+  useUpdateRoute,
   type MapPin,
   type MapRegion,
+  type MapRoute,
   type TerrainAreaRegion,
 } from '../hooks/useMap';
 import { useMapLayers } from '../hooks/useMapLayers';
@@ -76,6 +80,19 @@ const COPY = {
   terrainReclassifyError: "Couldn't reclassify. Try again.",
   terrainContextMenuDelete: 'Delete area',
   terrainContextMenuReclassify: 'Reclassify ▸',
+  // Route draw copy (51-07 ROUTE-01/02)
+  drawRouteBanner: 'Click to add vertices · Enter or double-click to finish · Esc to cancel',
+  routeSaveError: "Couldn't save route. Try again.",
+  routeDeleteError: "Couldn't delete route. Try again.",
+  deleteRouteTitle: (name: string) => `Delete route "${name}"?`,
+  deleteRouteBody: 'This removes the route from the map. The linked entry is not affected.',
+  deleteRouteConfirm: 'Delete route',
+  routeContextMenuDelete: 'Delete route',
+  routeContextMenuRelink: 'Change entry...',
+  routeContextMenuRename: 'Rename...',
+  routeContextMenuColor: 'Change color...',
+  routeContextMenuLineStyle: (current: string) => current === 'dashed' ? 'Solid line' : 'Dashed line',
+  routeContextMenuArrow: (on: boolean) => on ? 'Remove arrow' : 'Add arrow',
 } as const;
 
 // ─── Types ────────────────────────────────────────────────────────────────────
@@ -99,6 +116,13 @@ type RegionContextMenuState = {
 /** State for the positioned terrain area context menu. */
 type TerrainContextMenuState = {
   region: TerrainAreaRegion;
+  clientX: number;
+  clientY: number;
+} | null;
+
+/** State for the positioned route context menu (ROUTE-02, Plan 07). */
+type RouteContextMenuState = {
+  route: MapRoute;
   clientX: number;
   clientY: number;
 } | null;
@@ -165,6 +189,10 @@ export function MapEditor() {
   const createRegion = useCreateRegion(uid, mid);
   const updateRegion = useUpdateRegion(uid, mid);
   const deleteRegion = useDeleteRegion(uid, mid);
+  // Phase 51 ROUTE-01/02 (Plan 07): route mutations — draw, restyle, rename, relink, delete.
+  const createRoute = useCreateRoute(uid, mid);
+  const updateRoute = useUpdateRoute(uid, mid);
+  const deleteRoute = useDeleteRoute(uid, mid);
 
   // ── Image dimensions (loaded from the rawUrl to get intrinsic size) ──────────
   const [imageWidth, setImageWidth] = useState(DEFAULT_IMAGE_WIDTH);
@@ -209,6 +237,18 @@ export function MapEditor() {
   const [pendingVertices, setPendingVertices] = useState<Array<{ x: number; y: number }>>([]);
   const [regionContextMenu, setRegionContextMenu] = useState<RegionContextMenuState>(null);
   const [deleteRegionTarget, setDeleteRegionTarget] = useState<MapRegion | null>(null);
+
+  // ── Draw-route mode state (ROUTE-01, Plan 07) ─────────────────────────────────
+  // pendingVertices is SHARED with draw-region — route draw is another branch in the
+  // existing vertex pipeline (handleCanvasClick), NOT a new input paradigm.
+  const [drawRouteMode, setDrawRouteMode] = useState(false);
+  const [routeContextMenu, setRouteContextMenu] = useState<RouteContextMenuState>(null);
+  const [deleteRouteTarget, setDeleteRouteTarget] = useState<MapRoute | null>(null);
+  const [routeRelinkPickerOpen, setRouteRelinkPickerOpen] = useState(false);
+  const [routeRelinkTarget, setRouteRelinkTarget] = useState<MapRoute | null>(null);
+  const [renameRouteTarget, setRenameRouteTarget] = useState<MapRoute | null>(null);
+  const [renameRouteDraft, setRenameRouteDraft] = useState('');
+  const [routeColorTarget, setRouteColorTarget] = useState<MapRoute | null>(null);
 
   // ── Terrain paint state (43-04) ───────────────────────────────────────────────
   // armedTerrainTypeId !== null → paintTerrainMode active; pendingVertices SHARED with drawRegion
@@ -467,9 +507,36 @@ export function MapEditor() {
     return () => window.removeEventListener('keydown', handler);
   }, [armedTerrainTypeId, pendingVertices]);
 
-  // Priority 3: context menu open → close menu (pin or region or terrain).
+  // Priority 2d (NEW ROUTE-01): drawRouteMode + pending vertices → clear vertices first (Esc).
   useEffect(() => {
-    if (!contextMenu && !regionContextMenu && !terrainContextMenu) return;
+    if (!drawRouteMode || pendingVertices.length === 0) return;
+    const handler = (e: KeyboardEvent) => {
+      if (e.key === 'Escape') setPendingVertices([]);
+    };
+    window.addEventListener('keydown', handler);
+    return () => window.removeEventListener('keydown', handler);
+  }, [drawRouteMode, pendingVertices]);
+
+  // Priority 2e (NEW ROUTE-01): Enter key to finish an open route (≥2 vertices while in route draw mode).
+  // Mirror of the region Enter handler (Priority 2b) but with min-2-vertex guard.
+  useEffect(() => {
+    if (!drawRouteMode || pendingVertices.length < 2) return;
+    const handler = (e: KeyboardEvent) => {
+      if (e.key === 'Enter') {
+        e.preventDefault();
+        const verts = [...pendingVertices];
+        setPendingVertices([]);
+        void handleCloseRouteAsync(verts);
+      }
+    };
+    window.addEventListener('keydown', handler);
+    return () => window.removeEventListener('keydown', handler);
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [drawRouteMode, pendingVertices]);
+
+  // Priority 3: context menu open → close menu (pin or region or terrain or route).
+  useEffect(() => {
+    if (!contextMenu && !regionContextMenu && !terrainContextMenu && !routeContextMenu) return;
     const handler = (e: KeyboardEvent) => {
       if (e.key === 'Escape') {
         setContextMenu(null);
@@ -477,11 +544,12 @@ export function MapEditor() {
         setRegionContextMenu(null);
         setTerrainContextMenu(null);
         setReclassifySubmenuOpen(false);
+        setRouteContextMenu(null);
       }
     };
     window.addEventListener('keydown', handler);
     return () => window.removeEventListener('keydown', handler);
-  }, [contextMenu, regionContextMenu, terrainContextMenu]);
+  }, [contextMenu, regionContextMenu, terrainContextMenu, routeContextMenu]);
 
   // Priority 4: addPinMode / drawRegionMode active (no picker/menu/vertices) → exit mode.
   useEffect(() => {
@@ -514,6 +582,16 @@ export function MapEditor() {
     window.addEventListener('keydown', handler);
     return () => window.removeEventListener('keydown', handler);
   }, [armedTerrainTypeId, pendingVertices, terrainContextMenu]);
+
+  // Priority 4c (NEW ROUTE-01): drawRouteMode active (no pending vertices, no route menu) → exit mode.
+  useEffect(() => {
+    if (!drawRouteMode || pendingVertices.length > 0 || routeContextMenu) return;
+    const handler = (e: KeyboardEvent) => {
+      if (e.key === 'Escape') setDrawRouteMode(false);
+    };
+    window.addEventListener('keydown', handler);
+    return () => window.removeEventListener('keydown', handler);
+  }, [drawRouteMode, pendingVertices, routeContextMenu]);
 
   // ── Draw-region close helper ─────────────────────────────────────────────────
 
@@ -579,6 +657,13 @@ export function MapEditor() {
    */
   const handleCanvasClick = useCallback((nx: number, ny: number) => {
     // NEW (43-04): paintTerrainMode branch — mirrors drawRegionMode vertex-append logic.
+    // Route draw branch (ROUTE-01, Plan 07): append vertex; finish via Enter or double-click
+    // (NOT snap-to-first — routes are open polylines). Checked before drawRegionMode so the
+    // route mode takes priority when both might be set (mutual exclusivity is enforced at arm-time).
+    if (drawRouteMode) {
+      setPendingVertices((verts) => [...verts, { x: nx, y: ny }]);
+      return;
+    }
     if (armedTerrainTypeId) {
       setPendingVertices((verts) => {
         if (verts.length >= 3) {
@@ -615,7 +700,7 @@ export function MapEditor() {
     // addPinMode:
     setPendingPinCoords({ x: nx, y: ny });
     setEntryPickerOpen(true);
-  }, [armedTerrainTypeId, drawRegionMode, handleCloseTerrainAreaAsync, handleCloseRegion]); // eslint-disable-line react-hooks/exhaustive-deps
+  }, [drawRouteMode, armedTerrainTypeId, drawRegionMode, handleCloseTerrainAreaAsync, handleCloseRegion]); // eslint-disable-line react-hooks/exhaustive-deps
 
   // Async version that takes a snapshot of vertices (avoids stale closure in setState callback).
   const handleCloseRegionAsync = useCallback(async (verts: Array<{ x: number; y: number }>) => {
@@ -631,6 +716,24 @@ export function MapEditor() {
       setToast({ message: COPY.regionSaveError, variant: 'error' });
     }
   }, [createRegion]);
+
+  // ── Route draw close helper (ROUTE-01, Plan 07) ──────────────────────────────
+  // Mirror of handleCloseRegionAsync but with min 2 vertices (routes are OPEN polylines,
+  // not closed polygons; min-3 rule does NOT apply). Does not clear drawRouteMode so the
+  // user can draw multiple routes without re-arming.
+  const handleCloseRouteAsync = useCallback(async (verts: Array<{ x: number; y: number }>) => {
+    if (verts.length < 2) return;
+    try {
+      await createRoute.mutateAsync({
+        name: '',
+        points: JSON.stringify(verts),
+        entryId: null,
+        color: null,
+      });
+    } catch {
+      setToast({ message: COPY.routeSaveError, variant: 'error' });
+    }
+  }, [createRoute]);
 
   /**
    * Called when user selects an entry from the picker.
@@ -878,6 +981,152 @@ export function MapEditor() {
     [armedTerrainTypeId, layers],
   );
 
+  // ── Route left-click navigate (ROUTE-02, Plan 07) ────────────────────────────
+  // Share-aware: mirror handleRegionClick (731-739). Navigate within /share/:token in share
+  // mode to avoid uid leaks (T-51-14). Inert when route.entryId is null.
+  const handleRouteClick = useCallback((route: MapRoute) => {
+    if (route.entryId) {
+      if (shareToken) {
+        navigate(`/share/${shareToken}/entries/${route.entryId}`);
+      } else {
+        navigate(`/universes/${uid}/entries/${route.entryId}`);
+      }
+    }
+  }, [navigate, shareToken, uid]);
+
+  // ── Route context menu handlers (ROUTE-02, Plan 07) ──────────────────────────
+  // Mirror the region context menu set (741-807): clone handlers swapping region→route,
+  // adding the route-only restyle controls (lineStyle/width/showArrow, D-06).
+
+  const handleRouteContextMenu = useCallback(
+    (route: MapRoute, clientX: number, clientY: number) => {
+      setRouteContextMenu({ route, clientX, clientY });
+    },
+    [],
+  );
+
+  const handleRouteContextMenuDelete = () => {
+    if (!routeContextMenu) return;
+    setDeleteRouteTarget(routeContextMenu.route);
+    setRouteContextMenu(null);
+  };
+
+  const handleRouteContextMenuRelink = () => {
+    if (!routeContextMenu) return;
+    setRouteRelinkTarget(routeContextMenu.route);
+    setRouteRelinkPickerOpen(true);
+    setRouteContextMenu(null);
+  };
+
+  const handleRouteContextMenuRename = () => {
+    if (!routeContextMenu) return;
+    setRenameRouteTarget(routeContextMenu.route);
+    setRenameRouteDraft(routeContextMenu.route.name);
+    setRouteContextMenu(null);
+  };
+
+  const handleRouteContextMenuColor = () => {
+    if (!routeContextMenu) return;
+    setRouteColorTarget(routeContextMenu.route);
+    setRouteContextMenu(null);
+  };
+
+  // Route-only restyle: line-style toggle (solid↔dashed), width preset, arrow toggle (D-06).
+  const handleRouteContextMenuLineStyle = async () => {
+    if (!routeContextMenu) return;
+    const { route } = routeContextMenu;
+    setRouteContextMenu(null);
+    const newStyle: 'solid' | 'dashed' = route.lineStyle === 'dashed' ? 'solid' : 'dashed';
+    try {
+      await updateRoute.mutateAsync({ routeId: route.id, lineStyle: newStyle });
+    } catch {
+      setToast({ message: COPY.routeSaveError, variant: 'error' });
+    }
+  };
+
+  const handleRouteContextMenuWidth = async (width: number) => {
+    if (!routeContextMenu) return;
+    const { route } = routeContextMenu;
+    setRouteContextMenu(null);
+    try {
+      await updateRoute.mutateAsync({ routeId: route.id, width });
+    } catch {
+      setToast({ message: COPY.routeSaveError, variant: 'error' });
+    }
+  };
+
+  const handleRouteContextMenuArrow = async () => {
+    if (!routeContextMenu) return;
+    const { route } = routeContextMenu;
+    setRouteContextMenu(null);
+    try {
+      await updateRoute.mutateAsync({ routeId: route.id, showArrow: !route.showArrow });
+    } catch {
+      setToast({ message: COPY.routeSaveError, variant: 'error' });
+    }
+  };
+
+  const handleDeleteRouteConfirm = async () => {
+    if (!deleteRouteTarget) return;
+    try {
+      await deleteRoute.mutateAsync(deleteRouteTarget.id);
+    } catch {
+      setToast({ message: COPY.routeDeleteError, variant: 'error' });
+    }
+    setDeleteRouteTarget(null);
+  };
+
+  const handleRouteRelinkEntry = async (entryId: string) => {
+    const route = routeRelinkTarget;
+    setRouteRelinkPickerOpen(false);
+    setRouteRelinkTarget(null);
+    if (!route) return;
+    try {
+      await updateRoute.mutateAsync({ routeId: route.id, entryId });
+    } catch {
+      setToast({ message: COPY.routeSaveError, variant: 'error' });
+    }
+  };
+
+  const handleRouteRenameConfirm = async () => {
+    if (!renameRouteTarget) return;
+    try {
+      await updateRoute.mutateAsync({
+        routeId: renameRouteTarget.id,
+        name: renameRouteDraft,
+      });
+    } catch {
+      setToast({ message: COPY.routeSaveError, variant: 'error' });
+    }
+    setRenameRouteTarget(null);
+  };
+
+  const handleRouteColorSelect = async (color: string) => {
+    if (!routeColorTarget) return;
+    const route = routeColorTarget;
+    setRouteColorTarget(null);
+    try {
+      await updateRoute.mutateAsync({ routeId: route.id, color });
+    } catch {
+      setToast({ message: COPY.routeSaveError, variant: 'error' });
+    }
+  };
+
+  // dblclick finisher for route draw (Plan 07 ROUTE-01).
+  // Uses functional setState to read the latest vertices snapshot — avoids stale closure.
+  // Removes the last vertex (the duplicate from the dblclick's second single-click) before closing.
+  const handleCanvasDblClick = useCallback(() => {
+    if (!drawRouteMode) return;
+    setPendingVertices((verts) => {
+      // Trim the duplicate dblclick vertex (2nd click of dblclick adds an extra point).
+      const trimmed = verts.length > 1 ? verts.slice(0, -1) : verts;
+      if (trimmed.length >= 2) {
+        setTimeout(() => handleCloseRouteAsync(trimmed), 0);
+      }
+      return []; // always clear pending vertices on dblclick finish
+    });
+  }, [drawRouteMode, handleCloseRouteAsync]);
+
   // ── onLayerViewerStateChange helper (43-04) ────────────────────────────────────
   const handleLayerViewerStateChange = useCallback(
     (layerId: string, patch: { visible?: boolean; opacity?: number }) => {
@@ -994,6 +1243,19 @@ export function MapEditor() {
     return () => window.removeEventListener('mousedown', handler);
   }, [terrainContextMenu]);
 
+  // ── Click-away to close route context menu (ROUTE-02, Plan 07) ───────────────
+  useEffect(() => {
+    if (!routeContextMenu) return;
+    const handler = (e: MouseEvent) => {
+      const menu = document.getElementById('map-route-context-menu');
+      if (menu && !menu.contains(e.target as Node)) {
+        setRouteContextMenu(null);
+      }
+    };
+    window.addEventListener('mousedown', handler);
+    return () => window.removeEventListener('mousedown', handler);
+  }, [routeContextMenu]);
+
   // ── Render ────────────────────────────────────────────────────────────────────
 
   if (isLoading) {
@@ -1018,6 +1280,7 @@ export function MapEditor() {
           onToggleAddPinMode={() => {
             setAddPinMode((v) => !v);
             if (drawRegionMode) setDrawRegionMode(false);
+            if (drawRouteMode) { setDrawRouteMode(false); setPendingVertices([]); }
             // Exit terrain paint mode (mode exclusivity)
             if (armedTerrainTypeId) {
               setArmedTerrainTypeId(null);
@@ -1028,8 +1291,20 @@ export function MapEditor() {
           onToggleDrawRegionMode={() => {
             setDrawRegionMode((v) => !v);
             if (addPinMode) setAddPinMode(false);
+            if (drawRouteMode) { setDrawRouteMode(false); setPendingVertices([]); }
             if (!drawRegionMode) setPendingVertices([]);
             // Exit terrain paint mode (mode exclusivity)
+            if (armedTerrainTypeId) {
+              setArmedTerrainTypeId(null);
+              setArmedLayerId(null);
+            }
+          }}
+          drawRouteMode={drawRouteMode}
+          onToggleDrawRouteMode={() => {
+            setDrawRouteMode((v) => !v);
+            if (addPinMode) setAddPinMode(false);
+            if (drawRegionMode) { setDrawRegionMode(false); }
+            if (!drawRouteMode) setPendingVertices([]);
             if (armedTerrainTypeId) {
               setArmedTerrainTypeId(null);
               setArmedLayerId(null);
@@ -1086,6 +1361,16 @@ export function MapEditor() {
         </div>
       )}
 
+      {/* Route draw banner (ROUTE-01, Plan 07) — suppressed in share mode */}
+      {!isShare && drawRouteMode && (
+        <div className="pointer-events-none absolute left-1/2 top-14 z-10 -translate-x-1/2 px-3">
+          <div className="rounded-full px-3 py-1 text-xs shadow-sm whitespace-nowrap border border-[color:var(--color-accent)] bg-[color:var(--color-accent-soft)] text-[color:var(--color-accent)]">
+            {COPY.drawRouteBanner}
+            {pendingVertices.length > 0 && ` (${pendingVertices.length} vertices)`}
+          </div>
+        </div>
+      )}
+
       {/* Map canvas — d3-zoom + React-rendered pins + regions.
           In share mode: addPinMode/drawRegionMode forced false; mutation
           callbacks (context menus) are no-ops (T-40-12).
@@ -1113,6 +1398,11 @@ export function MapEditor() {
         paintTerrainMode={!isShare && !!armedTerrainTypeId}
         onTerrainAreaContextMenu={isShare ? () => {} : handleTerrainAreaContextMenu}
         gridVisible={gridVisible}
+        routes={map?.routes ?? []}
+        onRouteClick={handleRouteClick}
+        onRouteContextMenu={isShare ? () => {} : handleRouteContextMenu}
+        drawRouteMode={!isShare && drawRouteMode}
+        onCanvasDblClick={isShare ? undefined : handleCanvasDblClick}
       />
 
       {/* ── Glassy map chrome — rendered in BOTH editor and share mode (D-09 parity) ── */}
@@ -1213,6 +1503,16 @@ export function MapEditor() {
             onRemove={() => { /* no-op */ }}
             onClose={() => { setRegionRelinkPickerOpen(false); setRegionRelinkTarget(null); }}
             open={regionRelinkPickerOpen}
+          />
+
+          {/* Entry picker for route relink (ROUTE-02, Plan 07) */}
+          <AddEntriesPicker
+            entries={universeEntries}
+            placedEntryIds={new Set()}
+            onAdd={handleRouteRelinkEntry}
+            onRemove={() => { /* no-op */ }}
+            onClose={() => { setRouteRelinkPickerOpen(false); setRouteRelinkTarget(null); }}
+            open={routeRelinkPickerOpen}
           />
 
           {/* Change image picker */}
@@ -1395,6 +1695,87 @@ export function MapEditor() {
                 })}
             </div>
           )}
+        </div>
+      )}
+
+      {/* Route context menu (ROUTE-02, Plan 07) — suppressed in share mode (T-51-13) */}
+      {!isShare && routeContextMenu && (
+        <div
+          id="map-route-context-menu"
+          role="menu"
+          aria-label="Route actions"
+          className="fixed z-50 min-w-[160px] rounded-md border border-neutral-200 dark:border-neutral-800 bg-white dark:bg-neutral-900 shadow-lg"
+          style={{ top: routeContextMenu.clientY, left: routeContextMenu.clientX }}
+        >
+          {/* Route-only restyle controls (D-06) */}
+          <button
+            type="button"
+            role="menuitem"
+            onClick={handleRouteContextMenuLineStyle}
+            className="w-full text-left text-sm px-3 py-2 hover:bg-neutral-50 dark:hover:bg-neutral-800"
+          >
+            {COPY.routeContextMenuLineStyle(routeContextMenu.route.lineStyle)}
+          </button>
+          {/* Width preset picker: thin(2) / medium(4) / thick(7) */}
+          <div role="presentation" className="text-xs uppercase text-neutral-500 px-3 py-1 border-t border-neutral-100 dark:border-neutral-800">
+            Width
+          </div>
+          {([['Thin', 2], ['Medium', 4], ['Thick', 7]] as const).map(([label, w]) => (
+            <button
+              key={w}
+              type="button"
+              role="menuitem"
+              onClick={() => handleRouteContextMenuWidth(w)}
+              className={[
+                'w-full text-left text-sm px-3 py-1.5 hover:bg-neutral-50 dark:hover:bg-neutral-800 flex items-center gap-2',
+                routeContextMenu.route.width === w ? 'font-semibold text-[color:var(--color-accent)]' : '',
+              ].join(' ')}
+            >
+              <span className="inline-block h-0.5 w-6 rounded-full" style={{ height: `${Math.max(1, w / 2)}px`, backgroundColor: 'currentColor' }} aria-hidden="true" />
+              {label}
+            </button>
+          ))}
+          <button
+            type="button"
+            role="menuitem"
+            onClick={handleRouteContextMenuArrow}
+            className="w-full text-left text-sm px-3 py-2 hover:bg-neutral-50 dark:hover:bg-neutral-800 border-t border-neutral-100 dark:border-neutral-800"
+          >
+            {COPY.routeContextMenuArrow(routeContextMenu.route.showArrow)}
+          </button>
+          {/* Standard rename / relink / color / delete */}
+          <button
+            type="button"
+            role="menuitem"
+            onClick={handleRouteContextMenuRename}
+            className="w-full text-left text-sm px-3 py-2 hover:bg-neutral-50 dark:hover:bg-neutral-800 border-t border-neutral-100 dark:border-neutral-800"
+          >
+            {COPY.routeContextMenuRename}
+          </button>
+          <button
+            type="button"
+            role="menuitem"
+            onClick={handleRouteContextMenuRelink}
+            className="w-full text-left text-sm px-3 py-2 hover:bg-neutral-50 dark:hover:bg-neutral-800"
+          >
+            {COPY.routeContextMenuRelink}
+          </button>
+          <button
+            type="button"
+            role="menuitem"
+            onClick={handleRouteContextMenuColor}
+            className="w-full text-left text-sm px-3 py-2 hover:bg-neutral-50 dark:hover:bg-neutral-800"
+          >
+            {COPY.routeContextMenuColor}
+          </button>
+          <button
+            type="button"
+            role="menuitem"
+            onClick={handleRouteContextMenuDelete}
+            className="w-full text-left text-sm px-3 py-2 hover:bg-neutral-50 dark:hover:bg-neutral-800 text-red-600 dark:text-red-400 border-t border-neutral-100 dark:border-neutral-800"
+          >
+            {COPY.routeContextMenuDelete}
+          </button>
         </div>
       )}
 
@@ -1597,6 +1978,98 @@ export function MapEditor() {
                 <button
                   type="button"
                   onClick={() => setRegionColorTarget(null)}
+                  className="text-xs text-neutral-400 hover:text-neutral-600 self-end"
+                >
+                  Cancel
+                </button>
+              </div>
+            </div>
+          )}
+
+          {/* Route delete confirm dialog (ROUTE-02, Plan 07) */}
+          <ConfirmDialog
+            open={deleteRouteTarget !== null}
+            onOpenChange={(open) => {
+              if (!open) setDeleteRouteTarget(null);
+            }}
+            title={COPY.deleteRouteTitle(deleteRouteTarget?.name || 'this route')}
+            body={COPY.deleteRouteBody}
+            confirmLabel={COPY.deleteRouteConfirm}
+            destructive
+            onConfirm={handleDeleteRouteConfirm}
+          />
+
+          {/* Route rename dialog (ROUTE-02, Plan 07) */}
+          {renameRouteTarget && (
+            <div
+              role="dialog"
+              aria-label="Rename route"
+              className="fixed inset-0 z-50 flex items-center justify-center bg-black/40"
+              onClick={(e) => { if (e.target === e.currentTarget) setRenameRouteTarget(null); }}
+            >
+              <div className="bg-white dark:bg-neutral-900 rounded-lg border border-neutral-200 dark:border-neutral-800 shadow-xl p-5 w-72 flex flex-col gap-3">
+                <p className="text-sm font-semibold text-neutral-900 dark:text-neutral-100">Rename route</p>
+                <input
+                  type="text"
+                  value={renameRouteDraft}
+                  onChange={(e) => setRenameRouteDraft(e.target.value)}
+                  onKeyDown={(e) => {
+                    if (e.key === 'Enter') void handleRouteRenameConfirm();
+                    if (e.key === 'Escape') setRenameRouteTarget(null);
+                  }}
+                  className="rounded-md border border-neutral-300 dark:border-neutral-700 bg-white dark:bg-neutral-800 text-sm px-3 py-2 outline-none focus:ring-2 focus:ring-[color:var(--color-accent)]"
+                  autoFocus
+                  placeholder="Route name"
+                />
+                <div className="flex justify-end gap-2">
+                  <button
+                    type="button"
+                    onClick={() => setRenameRouteTarget(null)}
+                    className="text-sm px-3 py-1.5 rounded-md border border-neutral-300 dark:border-neutral-700 text-neutral-700 dark:text-neutral-300 hover:bg-neutral-50 dark:hover:bg-neutral-800"
+                  >
+                    Cancel
+                  </button>
+                  <button
+                    type="button"
+                    onClick={() => void handleRouteRenameConfirm()}
+                    className="text-sm px-3 py-1.5 rounded-md bg-[color:var(--color-accent)] text-white hover:opacity-90"
+                  >
+                    Save
+                  </button>
+                </div>
+              </div>
+            </div>
+          )}
+
+          {/* Color picker for route (MAP_COLOR_PALETTE swatches, D-06) */}
+          {routeColorTarget && (
+            <div
+              role="dialog"
+              aria-label="Change route color"
+              className="fixed inset-0 z-50 flex items-center justify-center bg-black/40"
+              onClick={(e) => { if (e.target === e.currentTarget) setRouteColorTarget(null); }}
+            >
+              <div className="bg-white dark:bg-neutral-900 rounded-lg border border-neutral-200 dark:border-neutral-800 shadow-xl p-5 flex flex-col gap-3">
+                <p className="text-sm font-semibold text-neutral-900 dark:text-neutral-100">Route color</p>
+                <div className="flex flex-wrap gap-2">
+                  {MAP_COLOR_PALETTE.map((color) => (
+                    <button
+                      key={color}
+                      type="button"
+                      onClick={() => void handleRouteColorSelect(color)}
+                      className="w-7 h-7 rounded-full border-2 border-transparent hover:scale-110 transition-transform focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-[color:var(--color-accent)]"
+                      style={{
+                        backgroundColor: color,
+                        borderColor: routeColorTarget.color === color ? '#111827' : 'transparent',
+                      }}
+                      aria-label={color}
+                      title={color}
+                    />
+                  ))}
+                </div>
+                <button
+                  type="button"
+                  onClick={() => setRouteColorTarget(null)}
                   className="text-xs text-neutral-400 hover:text-neutral-600 self-end"
                 >
                   Cancel

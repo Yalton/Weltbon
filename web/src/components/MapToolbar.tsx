@@ -5,6 +5,8 @@ const COPY = {
   changeImage: 'Change image',
   drawRegion: 'Draw region',
   drawingRegion: 'Drawing region...',
+  drawRoute: 'Draw route',
+  drawingRoute: 'Drawing route...',
   legend: 'Legend',
   layers: 'Layers',
 } as const;
@@ -20,6 +22,10 @@ export interface MapToolbarProps {
   drawRegionMode: boolean;
   /** Toggle draw-region mode on/off. */
   onToggleDrawRegionMode: () => void;
+  /** Whether the canvas is in draw-route mode (ROUTE-01, Plan 07). */
+  drawRouteMode?: boolean;
+  /** Toggle draw-route mode on/off. */
+  onToggleDrawRouteMode?: () => void;
   /** Open the Change image picker. */
   onChangeImage: () => void;
   /** Whether the legend panel is visible. */
@@ -52,6 +58,8 @@ export function MapToolbar({
   onToggleAddPinMode,
   drawRegionMode,
   onToggleDrawRegionMode,
+  drawRouteMode,
+  onToggleDrawRouteMode,
   onChangeImage,
   legendVisible,
   onToggleLegend,
@@ -98,6 +106,24 @@ export function MapToolbar({
       >
         {drawRegionMode ? COPY.drawingRegion : COPY.drawRegion}
       </button>
+
+      {/* Draw route mode toggle — Phase 51 ROUTE-01 (Plan 07). Only shown when onToggleDrawRouteMode provided. */}
+      {onToggleDrawRouteMode && (
+        <button
+          type="button"
+          onClick={onToggleDrawRouteMode}
+          aria-pressed={drawRouteMode}
+          className={[
+            'rounded-md text-sm px-3 py-2',
+            'focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-[color:var(--color-accent)] focus-visible:ring-offset-2',
+            drawRouteMode
+              ? 'bg-[color:var(--color-accent)] text-white'
+              : 'border border-neutral-300 dark:border-neutral-700 text-neutral-700 dark:text-neutral-300 hover:bg-neutral-50 dark:hover:bg-neutral-800',
+          ].join(' ')}
+        >
+          {drawRouteMode ? COPY.drawingRoute : COPY.drawRoute}
+        </button>
+      )}
 
       {/* Change image — border style */}
       <button

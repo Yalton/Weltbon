@@ -220,6 +220,8 @@ function makeMapDetail(): MapDetail {
     pins: [],
     // Political/standalone regions only (no terrain-tagged rows in share response)
     regions: [],
+    // Phase 51 ROUTE-01: routes array (empty for terrain-focused share tests).
+    routes: [],
     // Pre-enriched terrain areas from the share seam (D-44-03).
     // Both Elevation types (Lowlands + Highlands) and one Biome (Forest) are present.
     terrainAreas: [
