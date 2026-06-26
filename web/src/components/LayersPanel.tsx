@@ -255,7 +255,7 @@ export function LayersPanel({
         <div
           role="region"
           aria-label="Layers panel"
-          className="pointer-events-auto absolute top-14 right-3 z-50 w-64 max-h-[70vh] overflow-y-auto rounded-md border border-neutral-200 bg-white shadow-lg dark:border-neutral-800 dark:bg-neutral-900"
+          className="pointer-events-auto absolute top-14 right-3 z-50 w-64 max-h-[70vh] overflow-y-auto rounded-md border border-neutral-200 bg-white/90 backdrop-blur-sm shadow-lg dark:border-neutral-800 dark:bg-neutral-900/90"
         >
           {/* Panel header */}
           <div className="flex items-center justify-between px-4 py-2">
