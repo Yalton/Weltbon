@@ -490,8 +490,13 @@ describe('MapEditor share mode (GEOSHARE-01 / 44-03)', () => {
       screen.queryByRole('slider', { name: /opacity/i }),
     ).not.toBeInTheDocument();
 
-    // MapToolbar (which also has edit controls) must NOT be rendered in share mode.
-    expect(screen.queryByTestId('map-toolbar-stub')).not.toBeInTheDocument();
+    // Phase 52 SEARCH-01 (D-04): MapToolbar NOW renders in share mode (for the search input).
+    // The toolbar stub IS present — but mutation/editing buttons must NOT be rendered
+    // (no onToggleAddPinMode / onToggleDrawRegionMode passed in share mode).
+    expect(screen.queryByTestId('map-toolbar-stub')).toBeInTheDocument();
+    expect(screen.queryByTestId('toolbar-add-pin-toggle')).not.toBeInTheDocument();
+    expect(screen.queryByTestId('toolbar-draw-region-toggle')).not.toBeInTheDocument();
+    expect(screen.queryByTestId('toolbar-draw-route-toggle')).not.toBeInTheDocument();
   });
 
   it('Test 4: terrain area polygons render in the share canvas', async () => {

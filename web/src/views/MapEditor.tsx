@@ -105,6 +105,17 @@ const COPY = {
 
 type ToastState = { message: string; variant: 'error' | 'success' } | null;
 
+// Phase 52 SEARCH-01: client-side search result type (D-06).
+// Each result carries the item type, its database id, a display label, and the
+// normalized (0..1) image-space coordinates for panZoomTo.
+type SearchResult = {
+  type: 'pin' | 'region' | 'route';
+  id: string;
+  label: string;
+  nx: number;
+  ny: number;
+};
+
 /** State for the positioned pin context menu. */
 type ContextMenuState = {
   pin: MapPin;
@@ -238,6 +249,18 @@ export function MapEditor() {
   const [gridVisible, setGridVisible] = useState(false);
   // Imperative zoom handle — wired to MapZoomControls onZoomIn/onZoomOut/onFitReset callbacks.
   const canvasRef = useRef<MapCanvasHandle>(null);
+
+  // ── Phase 52 SEARCH-01: in-map search state (D-04, D-05, D-06, D-07) ─────────
+  // searchQuery is controlled by MapToolbar's search input (editor + share mode).
+  // searchInputRef is forwarded to the input element for the `/` focus shortcut (D-04).
+  // highlightedItemId is set on result select; MapCanvas renders a pulse on that item;
+  //   cleared after the pulse animation completes (D-05a).
+  // selectedResultIndex tracks arrow-key navigation in the dropdown (-1 = no selection).
+  const [searchQuery, setSearchQuery] = useState('');
+  const searchInputRef = useRef<HTMLInputElement>(null);
+  const [highlightedItemId, setHighlightedItemId] = useState<string | null>(null);
+  const [selectedResultIndex, setSelectedResultIndex] = useState(-1);
+
   // Color picker for LayersPanel terrain-type swatches (onRequestColorPick wiring).
   // When the LayersPanel requests a color pick, we open this dialog and forward
   // the selected color to the `layersColorPickerCallback` function.
@@ -394,6 +417,72 @@ export function MapEditor() {
       return null;
     }
   }, [map?.legendLabels]);
+
+  // ── Phase 52 SEARCH-01: client-side search match logic (D-06, D-07) ──────────────
+  // Case-insensitive substring match over:
+  //   - enrichedPins: linked-entry title only (D-06). Skip pins with no entryTitle.
+  //   - regions: region name (D-06). Skip unnamed regions.
+  //   - map.routes: route name/label (D-06). Skip unnamed routes.
+  // Normalised 0..1 coords (nx, ny) are included for panZoomTo on select (D-05a).
+  // D-06a: secret items are absent from the share payload (52-02) — they can never appear
+  // in share-view search results; no separate search-side secret filtering needed.
+  // DO NOT re-key any React Query cache key (memory: react-query-key-change-blast-radius).
+  const searchResults = useMemo<SearchResult[]>(() => {
+    const q = searchQuery.trim().toLowerCase();
+    if (!q) return [];
+    const results: SearchResult[] = [];
+
+    // Pins — match linked-entry title; position = pin.x / pin.y (already normalized)
+    for (const pin of enrichedPins) {
+      if (!pin.entryTitle) continue;                           // no linked-entry title → skip (D-06)
+      if (pin.entryTitle.toLowerCase().includes(q)) {
+        results.push({ type: 'pin', id: pin.id, label: pin.entryTitle, nx: pin.x, ny: pin.y });
+      }
+      if (results.length >= 10) break;
+    }
+
+    // Regions — match region name; position = centroid of parsed point array
+    for (const region of regions) {
+      if (!region.name) continue;                              // unnamed → skip (D-06)
+      if (region.name.toLowerCase().includes(q)) {
+        let nx = 0.5;
+        let ny = 0.5;
+        try {
+          const pts = JSON.parse(region.points) as Array<{ x: number; y: number }>;
+          if (pts.length > 0) {
+            nx = pts.reduce((s, p) => s + p.x, 0) / pts.length;
+            ny = pts.reduce((s, p) => s + p.y, 0) / pts.length;
+          }
+        } catch { /* malformed points → default to center */ }
+        results.push({ type: 'region', id: region.id, label: region.name, nx, ny });
+      }
+      if (results.length >= 10) break;
+    }
+
+    // Routes — match route name/label; position = midpoint of middle segment
+    for (const route of (map?.routes ?? [])) {
+      if (!route.name) continue;                               // unnamed → skip (D-06)
+      if (route.name.toLowerCase().includes(q)) {
+        let nx = 0.5;
+        let ny = 0.5;
+        try {
+          const pts = JSON.parse(route.points) as Array<{ x: number; y: number }>;
+          if (pts.length >= 2) {
+            const mid = Math.floor((pts.length - 1) / 2);
+            nx = (pts[mid].x + pts[mid + 1].x) / 2;
+            ny = (pts[mid].y + pts[mid + 1].y) / 2;
+          } else if (pts.length === 1) {
+            nx = pts[0].x;
+            ny = pts[0].y;
+          }
+        } catch { /* malformed points → default to center */ }
+        results.push({ type: 'route', id: route.id, label: route.name, nx, ny });
+      }
+      if (results.length >= 10) break;
+    }
+
+    return results.slice(0, 10);
+  }, [searchQuery, enrichedPins, regions, map?.routes]);
 
   // ── Share-mode static layerViewerState (44-03 D-44-01) ────────────────────────
   // In share mode: build state statically from layers — all visible, each at its
@@ -1308,6 +1397,84 @@ export function MapEditor() {
     return () => window.removeEventListener('mousedown', handler);
   }, [routeContextMenu]);
 
+  // ── Phase 52 SEARCH-01: click-away to close search dropdown ──────────────────
+  useEffect(() => {
+    if (!searchQuery.trim()) return;
+    const handler = (e: MouseEvent) => {
+      const dropdown = document.getElementById('map-search-dropdown');
+      const input = searchInputRef.current;
+      if (
+        dropdown && !dropdown.contains(e.target as Node) &&
+        input && !input.contains(e.target as Node)
+      ) {
+        setSearchQuery('');
+        setSelectedResultIndex(-1);
+      }
+    };
+    window.addEventListener('mousedown', handler);
+    return () => window.removeEventListener('mousedown', handler);
+  }, [searchQuery]);
+
+  // Reset arrow-key selection when search results change (new query typed).
+  useEffect(() => {
+    setSelectedResultIndex(-1);
+  }, [searchResults]);
+
+  // ── Phase 52 SEARCH-01: `/` shortcut — focus the search input (D-04) ─────────
+  // No-op when focus is already in an INPUT or TEXTAREA (D-04 guard).
+  // Mirror of existing keydown effect ladder (lines 456–607).
+  useEffect(() => {
+    const handler = (e: KeyboardEvent) => {
+      if (e.key !== '/') return;
+      const tag = (e.target as HTMLElement).tagName;
+      if (tag === 'INPUT' || tag === 'TEXTAREA') return;
+      e.preventDefault();
+      searchInputRef.current?.focus();
+    };
+    window.addEventListener('keydown', handler);
+    return () => window.removeEventListener('keydown', handler);
+  }, []);
+
+  // ── Phase 52 SEARCH-01: select handler — panZoomTo + highlight ───────────────
+  // Clears the query, pans/zooms to the item, sets a temporary highlight, then
+  // clears it after the 1.5s pulse animation + buffer.
+  // CRITICAL: no d3 datum handler — imperative ref call only.
+  const handleSearchResultSelect = useCallback((result: SearchResult) => {
+    setSearchQuery('');
+    setSelectedResultIndex(-1);
+    canvasRef.current?.panZoomTo(result.nx, result.ny);
+    setHighlightedItemId(result.id);
+    setTimeout(() => setHighlightedItemId(null), 2000);
+  }, []);
+
+  // ── Phase 52 SEARCH-01: Arrow/Enter keyboard navigation in the dropdown ───────
+  // Attached to the window when the search dropdown is visible (searchQuery non-empty
+  // + results exist). Checks `document.activeElement === searchInputRef.current` so
+  // it only fires when the search input is focused.
+  useEffect(() => {
+    if (!searchQuery.trim() || searchResults.length === 0) return;
+    const handler = (e: KeyboardEvent) => {
+      if (document.activeElement !== searchInputRef.current) return;
+      if (e.key === 'ArrowDown') {
+        e.preventDefault();
+        setSelectedResultIndex((i) => Math.min(i + 1, searchResults.length - 1));
+      } else if (e.key === 'ArrowUp') {
+        e.preventDefault();
+        setSelectedResultIndex((i) => Math.max(i - 1, 0));
+      } else if (e.key === 'Enter') {
+        if (selectedResultIndex >= 0 && selectedResultIndex < searchResults.length) {
+          e.preventDefault();
+          handleSearchResultSelect(searchResults[selectedResultIndex]);
+        }
+      } else if (e.key === 'Escape') {
+        setSearchQuery('');
+        setSelectedResultIndex(-1);
+      }
+    };
+    window.addEventListener('keydown', handler);
+    return () => window.removeEventListener('keydown', handler);
+  }, [searchQuery, searchResults, selectedResultIndex, handleSearchResultSelect]);
+
   // ── Render ────────────────────────────────────────────────────────────────────
 
   if (isLoading) {
@@ -1324,12 +1491,19 @@ export function MapEditor() {
 
   return (
     <div className="relative h-[calc(100vh-7rem)] w-full overflow-hidden">
-      {/* Floating toolbar overlay — suppressed in share mode (T-40-12 / D-12) */}
-      {!isShare && (
-        <MapToolbar
-          mapName={map.name}
-          addPinMode={addPinMode}
-          onToggleAddPinMode={() => {
+      {/* Floating toolbar overlay — Phase 52 SEARCH-01: now renders in BOTH editor and share mode
+          so the search input is available to share visitors (D-04 + D-06a).
+          Mutation buttons (Add pin, Draw region, Change image, etc.) only appear when their
+          callbacks are provided — they are omitted in share mode. The search input always
+          appears (when onSearchQueryChange is provided). */}
+      <MapToolbar
+        mapName={map.name}
+        searchQuery={searchQuery}
+        onSearchQueryChange={setSearchQuery}
+        searchInputRef={searchInputRef}
+        {...(!isShare ? {
+          addPinMode,
+          onToggleAddPinMode: () => {
             setAddPinMode((v) => !v);
             if (drawRegionMode) setDrawRegionMode(false);
             if (drawRouteMode) { setDrawRouteMode(false); setPendingVertices([]); }
@@ -1338,9 +1512,9 @@ export function MapEditor() {
               setArmedTerrainTypeId(null);
               setArmedLayerId(null);
             }
-          }}
-          drawRegionMode={drawRegionMode}
-          onToggleDrawRegionMode={() => {
+          },
+          drawRegionMode,
+          onToggleDrawRegionMode: () => {
             setDrawRegionMode((v) => !v);
             if (addPinMode) setAddPinMode(false);
             if (drawRouteMode) { setDrawRouteMode(false); setPendingVertices([]); }
@@ -1350,9 +1524,9 @@ export function MapEditor() {
               setArmedTerrainTypeId(null);
               setArmedLayerId(null);
             }
-          }}
-          drawRouteMode={drawRouteMode}
-          onToggleDrawRouteMode={() => {
+          },
+          drawRouteMode,
+          onToggleDrawRouteMode: () => {
             setDrawRouteMode((v) => !v);
             if (addPinMode) setAddPinMode(false);
             if (drawRegionMode) { setDrawRegionMode(false); }
@@ -1361,16 +1535,75 @@ export function MapEditor() {
               setArmedTerrainTypeId(null);
               setArmedLayerId(null);
             }
-          }}
-          onChangeImage={() => setChangeImageOpen(true)}
-          legendVisible={legendVisible}
-          onToggleLegend={() => setLegendVisible((v) => !v)}
-          layersPanelVisible={layersPanelVisible}
-          onToggleLayersPanel={() => setLayersPanelVisible((v) => !v)}
-        />
+          },
+          onChangeImage: () => setChangeImageOpen(true),
+          legendVisible,
+          onToggleLegend: () => setLegendVisible((v) => !v),
+          layersPanelVisible,
+          onToggleLayersPanel: () => setLayersPanelVisible((v) => !v),
+        } : {})}
+      />
+
+      {/* Phase 52 SEARCH-01: live search results dropdown (D-05).
+          Positioned below the toolbar (top-14 = 56px, toolbar is top-4 ~40px tall).
+          z-50 matches context menus. Shows when the search query is non-empty.
+          Each row: type badge + label + item-type tag (D-05).
+          Keyboard: ArrowUp/Down selects row; Enter confirms; Escape clears.
+          All elements React-rendered — no d3 datum handlers
+          (memory: timeline-pins-react-rendered-no-d3-datum). */}
+      {searchQuery.trim() && (
+        <div
+          id="map-search-dropdown"
+          role="listbox"
+          aria-label="Search results"
+          className="absolute left-4 top-14 z-50 min-w-[260px] max-w-[320px] rounded-md border border-neutral-200 dark:border-neutral-800 bg-white dark:bg-neutral-900 shadow-lg overflow-hidden"
+        >
+          {searchResults.length === 0 ? (
+            /* D-05: explicit empty/no-match state */
+            <div className="px-3 py-2 text-sm text-neutral-500 dark:text-neutral-400 italic">
+              No matches
+            </div>
+          ) : (
+            searchResults.map((result, idx) => (
+              <button
+                key={result.id}
+                type="button"
+                role="option"
+                aria-selected={idx === selectedResultIndex}
+                onClick={() => handleSearchResultSelect(result)}
+                onMouseEnter={() => setSelectedResultIndex(idx)}
+                className={[
+                  'w-full text-left text-sm px-3 py-2 flex items-center gap-2',
+                  idx === selectedResultIndex
+                    ? 'bg-[color:var(--color-accent-soft,#eff6ff)] dark:bg-neutral-800'
+                    : 'hover:bg-neutral-50 dark:hover:bg-neutral-800',
+                ].join(' ')}
+              >
+                {/* Type badge (D-05) — colored pill, no emoji */}
+                <span
+                  className={[
+                    'flex-shrink-0 text-xs font-semibold px-1.5 py-0.5 rounded-full',
+                    result.type === 'pin'
+                      ? 'bg-blue-100 dark:bg-blue-900/40 text-blue-700 dark:text-blue-300'
+                      : result.type === 'region'
+                      ? 'bg-green-100 dark:bg-green-900/40 text-green-700 dark:text-green-300'
+                      : 'bg-purple-100 dark:bg-purple-900/40 text-purple-700 dark:text-purple-300',
+                  ].join(' ')}
+                  aria-hidden="true"
+                >
+                  {result.type === 'pin' ? 'Pin' : result.type === 'region' ? 'Region' : 'Route'}
+                </span>
+                {/* Label — truncated to keep dropdown compact */}
+                <span className="flex-1 truncate text-neutral-900 dark:text-neutral-100">
+                  {result.label}
+                </span>
+              </button>
+            ))
+          )}
+        </div>
       )}
 
-      {/* Share-mode legend toggle button (replaces MapToolbar legend toggle) */}
+      {/* Share-mode legend toggle button — top-right, independent of toolbar position */}
       {isShare && (
         <div className="absolute top-3 right-3 z-10">
           <button
@@ -1452,6 +1685,7 @@ export function MapEditor() {
           if (!drawRouteMode) return;
           setPendingVertices((v) => [...v, { x: pin.x, y: pin.y }]);
         }}
+        highlightedItemId={highlightedItemId}
       />
 
       {/* ── Glassy map chrome — rendered in BOTH editor and share mode (D-09 parity) ── */}
