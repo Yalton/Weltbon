@@ -50,7 +50,17 @@ export interface MapCanvasHandle {
   zoomOut(): void;
   /** Fit image to viewport — restores the initial fit-to-view transform. */
   fitReset(): void;
+  /**
+   * Pan and zoom to normalized image-space coordinates (0..1).
+   * Used by the search result select flow (SEARCH-01, D-05a).
+   * Target zoom level ~2.5 (enough detail without excessive magnification).
+   * CRITICAL: React-rendered only — no d3 datum handlers (memory: timeline-pins-react-rendered-no-d3-datum).
+   */
+  panZoomTo(nx: number, ny: number): void;
 }
+
+// Target zoom level for panZoomTo (SEARCH-01, D-05a). High enough to see item detail.
+const PAN_ZOOM_TARGET_SCALE = 2.5;
 
 // ─── Props ────────────────────────────────────────────────────────────────────
 export interface MapCanvasProps {
@@ -121,6 +131,14 @@ export interface MapCanvasProps {
    * BUG-B fix (51-07). No-op / undefined in share mode.
    */
   onRouteVertexAtPin?: (pin: MapPin) => void;
+
+  // ── Phase 52 SEARCH-01: search result highlight ──────────────────────────────
+  /**
+   * ID of the pin/region/route to briefly highlight via a pulse animation.
+   * Set by MapEditor when a search result is selected (D-05a); cleared after the pulse.
+   * React-rendered SVG — no d3 datum handler (memory: timeline-pins-react-rendered-no-d3-datum).
+   */
+  highlightedItemId?: string | null;
 }
 
 // ─── PinCircle ────────────────────────────────────────────────────────────────
@@ -839,6 +857,7 @@ export const MapCanvas = forwardRef<MapCanvasHandle, MapCanvasProps>(function Ma
   drawRouteMode = false,
   onCanvasDblClick,
   onRouteVertexAtPin,
+  highlightedItemId = null,
 }, ref) {
   const svgRef = useRef<SVGSVGElement>(null);
   const containerRef = useRef<HTMLDivElement>(null);
@@ -944,6 +963,7 @@ export const MapCanvas = forwardRef<MapCanvasHandle, MapCanvasProps>(function Ma
   // ── Imperative zoom handle (Task 1: D-05 seam for MapZoomControls) ───────────
   // Exposes zoomIn / zoomOut / fitReset so MapEditor can wire MapZoomControls
   // buttons directly to the d3 zoomBehavior without prop-drilling callbacks.
+  // Phase 52 SEARCH-01: also exposes panZoomTo(nx, ny) for search result selection (D-05a).
   useImperativeHandle(ref, () => ({
     zoomIn() {
       if (!svgRef.current || !zoomBehaviorRef.current) return;
@@ -964,6 +984,18 @@ export const MapCanvas = forwardRef<MapCanvasHandle, MapCanvasProps>(function Ma
         zoomBehaviorRef.current.translateTo(svg, imageWidth / 2, imageHeight / 2);
         zoomBehaviorRef.current.scaleTo(svg, scale);
       }
+    },
+    // Phase 52 SEARCH-01: pan + zoom to normalized image-space coordinates (D-05a).
+    // Mirrors fitReset: guard on svgRef + zoomBehaviorRef, convert nx/ny to image pixels,
+    // call translateTo + scaleTo. Target scale PAN_ZOOM_TARGET_SCALE (2.5).
+    // CRITICAL: no d3 datum handler — imperative call only (memory: timeline-pins-react-rendered-no-d3-datum).
+    panZoomTo(nx: number, ny: number) {
+      if (!svgRef.current || !zoomBehaviorRef.current) return;
+      const svg = select(svgRef.current);
+      const px = nx * imageWidth;
+      const py = ny * imageHeight;
+      zoomBehaviorRef.current.translateTo(svg, px, py);
+      zoomBehaviorRef.current.scaleTo(svg, PAN_ZOOM_TARGET_SCALE);
     },
   }), [imageWidth, imageHeight]);
 
@@ -1360,6 +1392,78 @@ export const MapCanvas = forwardRef<MapCanvasHandle, MapCanvasProps>(function Ma
             />
           ))}
         </g>
+
+        {/* ── Phase 52 SEARCH-01: highlight pulse for search result selection (D-05a) ──
+            Rendered ABOVE all items. React SVG only — no d3 datum handlers.
+            CRITICAL: uses React-rendered SVG circles with SMIL <animate> elements.
+            No d3 .on(event,(e,d)=>) (memory: timeline-pins-react-rendered-no-d3-datum).
+            Pulse: expanding ring (r grows from 12 to 50) fading to 0 opacity over 1.5s.
+            Position: image-space coords for pin/region/route (same centroid/midpoint logic
+            as the lock badge renderers in PinCircle/RegionPolygon/RoutePolyline). */}
+        {highlightedItemId && (() => {
+          // Find the highlighted item and compute its image-space position.
+          let px: number | null = null;
+          let py: number | null = null;
+
+          // Check pins first
+          const hitPin = pins.find((p) => p.id === highlightedItemId);
+          if (hitPin) {
+            px = hitPin.x * imageWidth;
+            py = hitPin.y * imageHeight;
+          }
+
+          // Check regions
+          if (px === null) {
+            const hitRegion = regions.find((r) => r.id === highlightedItemId);
+            if (hitRegion) {
+              try {
+                const pts = JSON.parse(hitRegion.points) as Array<{ x: number; y: number }>;
+                if (pts.length > 0) {
+                  px = (pts.reduce((s, p) => s + p.x, 0) / pts.length) * imageWidth;
+                  py = (pts.reduce((s, p) => s + p.y, 0) / pts.length) * imageHeight;
+                }
+              } catch { /* malformed → skip */ }
+            }
+          }
+
+          // Check routes
+          if (px === null) {
+            const hitRoute = routes.find((r) => r.id === highlightedItemId);
+            if (hitRoute) {
+              try {
+                const pts = JSON.parse(hitRoute.points) as Array<{ x: number; y: number }>;
+                if (pts.length >= 2) {
+                  const midIdx = Math.floor((pts.length - 1) / 2);
+                  px = ((pts[midIdx].x + pts[midIdx + 1].x) / 2) * imageWidth;
+                  py = ((pts[midIdx].y + pts[midIdx + 1].y) / 2) * imageHeight;
+                } else if (pts.length === 1) {
+                  px = pts[0].x * imageWidth;
+                  py = pts[0].y * imageHeight;
+                }
+              } catch { /* malformed → skip */ }
+            }
+          }
+
+          if (px === null || py === null) return null;
+
+          return (
+            <g
+              className="highlight-pulse"
+              style={{ pointerEvents: 'none' }}
+              aria-hidden="true"
+            >
+              {/* Outer expanding ring — fades out as it grows */}
+              <circle cx={px} cy={py} r={12} fill="none" stroke="var(--color-accent, #3b82f6)" strokeWidth={2 / currentScale} opacity={1}>
+                <animate attributeName="r" from={12 / currentScale} to={50 / currentScale} dur="1.5s" fill="freeze" />
+                <animate attributeName="opacity" from={0.9} to={0} dur="1.5s" fill="freeze" />
+              </circle>
+              {/* Inner solid dot — fades more slowly */}
+              <circle cx={px} cy={py} r={6 / currentScale} fill="var(--color-accent, #3b82f6)" opacity={0.7}>
+                <animate attributeName="opacity" from={0.7} to={0} dur="1.5s" fill="freeze" />
+              </circle>
+            </g>
+          );
+        })()}
       </g>
     </svg>
 
