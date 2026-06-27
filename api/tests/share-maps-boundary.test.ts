@@ -47,7 +47,7 @@ import {
   createTestUser,
   type TestDbHandle,
 } from './helpers.js';
-import { assets, entries, maps, mapLayers, mapPins, mapRegions, terrainTypes, shareTokens, universes } from '../src/db/schema.js';
+import { assets, entries, maps, mapLayers, mapPins, mapRegions, mapRoutes, terrainTypes, shareTokens, universes } from '../src/db/schema.js';
 
 let handle: TestDbHandle;
 // eslint-disable-next-line @typescript-eslint/no-explicit-any
@@ -666,6 +666,24 @@ describe('D-44-03 / D-44-04: terrain area discrimination + map-layers bare array
   });
 });
 
+async function seedRoute(
+  mapId: string,
+  opts: { entryId?: string | null; name?: string; secret?: boolean } = {},
+) {
+  const points = JSON.stringify([{ x: 0.1, y: 0.1 }, { x: 0.5, y: 0.5 }]);
+  const [row] = await handle.db
+    .insert(mapRoutes)
+    .values({
+      mapId,
+      entryId: opts.entryId ?? null,
+      name: opts.name ?? 'Test Route',
+      points,
+      secret: opts.secret ?? false,
+    })
+    .returning();
+  return row!.id;
+}
+
 // ─── T-51-03: share mutation boundary — map_routes ────────────────────────────
 //
 // Proves that no map_routes mutation is reachable through the /share/:token seam.
@@ -731,5 +749,143 @@ describe('T-51-03: share mutation boundary — map_routes', () => {
       [401, 403],
       `T-51-03: DELETE /maps/:mid/routes/:routeId must reject share-token-only caller. Got ${res.status}.`,
     ).toContain(res.status);
+  });
+});
+
+// ─── T-52-03/T-52-04/T-52-05: secret item filtering + field-absence ───────────
+//
+// Boundary tests proving:
+//   1. Secret pins (secret=true, public entry) are absent from share GET /maps/:mid.
+//   2. Secret political regions (secret=true) are absent from share GET /maps/:mid.
+//   3. Secret standalone routes (secret=true) are absent from share GET /maps/:mid.
+//   4. Secret terrain-area (region.secret=true) absent; AND non-secret terrain-area
+//      under a SECRET layer absent (D-03 OR-cascade). Non-secret area under non-secret
+//      layer present (proves correct sibling survives).
+//   5. Secret layer absent from GET /api/share/map-layers; non-secret layer present.
+//   6. Field-absence: every returned share object must not carry a `secret` key
+//      (WR-01 / T-52-05 — @hono/zod-openapi does NOT validate response bodies).
+//
+// Secret values are seeded directly via DB insert (toggle endpoint lands in 52-03).
+// Uses the same share-token header + activeTokenPlaintext flow as all blocks above.
+
+describe('T-52-03/T-52-04/T-52-05: secret item filtering + field-absence', () => {
+  it('GET /api/share/maps/:mid drops secret pin, keeps sibling non-secret pin (T-52-03)', async () => {
+    const mid = await seedMap();
+    const entryId = await seedEntry({ isPublic: true, title: 'Public Entry' });
+    // Non-secret pin — must appear in response
+    await handle.db.insert(mapPins).values({ mapId: mid, entryId, x: 0.3, y: 0.3, secret: false }).returning();
+    // Secret pin — must be absent
+    await handle.db.insert(mapPins).values({ mapId: mid, entryId, x: 0.7, y: 0.7, secret: true }).returning();
+
+    const res = await appRequest('GET', `/api/share/maps/${mid}`, {
+      headers: { 'share-token': activeTokenPlaintext },
+    });
+
+    expect(res.status).toBe(200);
+    expect(res.body.pins.length).toBe(1);
+    expect(res.body.pins[0].x).toBeCloseTo(0.3);
+    // Field-absence: secret key must not appear on any pin object (T-52-05)
+    expect(res.body.pins[0]).not.toHaveProperty('secret');
+  });
+
+  it('GET /api/share/maps/:mid drops secret political region, keeps sibling non-secret region (T-52-03)', async () => {
+    const mid = await seedMap();
+    const points = JSON.stringify([{ x: 0.1, y: 0.1 }, { x: 0.5, y: 0.1 }, { x: 0.5, y: 0.5 }]);
+    // Non-secret standalone region — must appear
+    await handle.db.insert(mapRegions).values({ mapId: mid, entryId: null, name: 'Visible Region', points, secret: false }).returning();
+    // Secret standalone region — must be absent
+    await handle.db.insert(mapRegions).values({ mapId: mid, entryId: null, name: 'Secret Region', points, secret: true }).returning();
+
+    const res = await appRequest('GET', `/api/share/maps/${mid}`, {
+      headers: { 'share-token': activeTokenPlaintext },
+    });
+
+    expect(res.status).toBe(200);
+    expect(res.body.regions.length).toBe(1);
+    expect(res.body.regions[0].name).toBe('Visible Region');
+    // Field-absence: secret key must not appear on any region object (T-52-05)
+    expect(res.body.regions[0]).not.toHaveProperty('secret');
+  });
+
+  it('GET /api/share/maps/:mid drops secret route, keeps sibling non-secret route (T-52-03)', async () => {
+    const mid = await seedMap();
+    // Non-secret standalone route — must appear
+    await seedRoute(mid, { name: 'Visible Route', secret: false });
+    // Secret standalone route — must be absent
+    await seedRoute(mid, { name: 'Secret Route', secret: true });
+
+    const res = await appRequest('GET', `/api/share/maps/${mid}`, {
+      headers: { 'share-token': activeTokenPlaintext },
+    });
+
+    expect(res.status).toBe(200);
+    expect(res.body.routes.length).toBe(1);
+    expect(res.body.routes[0].name).toBe('Visible Route');
+    // Field-absence: secret key must not appear on any route object (T-52-05)
+    expect(res.body.routes[0]).not.toHaveProperty('secret');
+  });
+
+  it('GET /api/share/maps/:mid: D-03 OR-cascade — secret terrain area absent; area under secret layer absent; area under non-secret layer present (T-52-04)', async () => {
+    const mid = await seedMap();
+    const points = JSON.stringify([{ x: 0.1, y: 0.1 }, { x: 0.5, y: 0.1 }, { x: 0.5, y: 0.5 }]);
+
+    // Visible layer + type — non-secret terrain area under non-secret layer → PRESENT
+    const visibleLayerId = await seedLayer('Visible Layer');
+    const visibleTypeId = await seedTerrainType(visibleLayerId, 'Grassland', '#99cc44');
+    await handle.db.insert(mapRegions).values({
+      mapId: mid, entryId: null, name: 'Visible Area', points,
+      terrainTypeId: visibleTypeId, secret: false,
+    });
+
+    // Secret layer + type — non-secret terrain area under SECRET layer → ABSENT (D-03 cascade)
+    const [secretLayerRow] = await handle.db
+      .insert(mapLayers)
+      .values({ universeId, name: 'Secret Layer', ordered: false, defaultOpacity: 0.6, sortOrder: 1, secret: true })
+      .returning();
+    const secretLayerId = secretLayerRow!.id;
+    const secretLayerTypeId = await seedTerrainType(secretLayerId, 'Hidden Terrain', '#333333');
+    await handle.db.insert(mapRegions).values({
+      mapId: mid, entryId: null, name: 'Area Under Secret Layer', points,
+      terrainTypeId: secretLayerTypeId, secret: false,
+    });
+
+    // Non-secret layer + type — region.secret=true → ABSENT (item-level filter)
+    const anotherLayerId = await seedLayer('Another Layer');
+    const anotherTypeId = await seedTerrainType(anotherLayerId, 'Desert', '#cc9900');
+    await handle.db.insert(mapRegions).values({
+      mapId: mid, entryId: null, name: 'Secret Area', points,
+      terrainTypeId: anotherTypeId, secret: true,
+    });
+
+    const res = await appRequest('GET', `/api/share/maps/${mid}`, {
+      headers: { 'share-token': activeTokenPlaintext },
+    });
+
+    expect(res.status).toBe(200);
+    // Only the visible-layer non-secret area survives
+    expect(res.body.terrainAreas.length).toBe(1);
+    expect(res.body.terrainAreas[0].name).toBe('Visible Area');
+    // Field-absence: secret key must not appear on any terrainArea object (T-52-05)
+    expect(res.body.terrainAreas[0]).not.toHaveProperty('secret');
+  });
+
+  it('GET /api/share/map-layers drops secret layer, keeps sibling non-secret layer; no secret field on layer objects (T-52-05)', async () => {
+    // Non-secret layer — must appear
+    await seedLayer('Public Layer');
+    // Secret layer — must be absent
+    await handle.db.insert(mapLayers).values({
+      universeId, name: 'Secret Layer', ordered: false, defaultOpacity: 0.6, sortOrder: 1, secret: true,
+    });
+
+    const res = await appRequest('GET', '/api/share/map-layers', {
+      headers: { 'share-token': activeTokenPlaintext },
+    });
+
+    expect(res.status).toBe(200);
+    expect(Array.isArray(res.body)).toBe(true);
+    expect(res.body.length).toBe(1);
+    expect(res.body[0].name).toBe('Public Layer');
+    // Field-absence: secret key must not appear on any layer object (T-52-05)
+    expect(res.body[0]).not.toHaveProperty('secret');
   });
 });
