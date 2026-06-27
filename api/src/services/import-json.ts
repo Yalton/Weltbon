@@ -200,7 +200,8 @@ export const importSchema = z.object({
         // Style fields — pre-v5.3 exports lack these; defaults apply (T-51-09 backward-compat).
         lineStyle: z.enum(['solid', 'dashed']).optional().default('solid'),
         // WR-02: align with create API — width must be positive.
-        width: z.number().int().positive().optional().default(4),
+        // WR-04: cap stroke width (mirror create/update route schemas).
+        width: z.number().int().positive().max(64).optional().default(4),
         showArrow: z.boolean().optional().default(false),
       })
     )

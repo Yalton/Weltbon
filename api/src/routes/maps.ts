@@ -162,7 +162,8 @@ const createRouteSchema = z.object({
   entryId: z.string().uuid().nullable().optional(),
   color: z.string().nullable().optional(),
   lineStyle: z.enum(['solid', 'dashed']).optional().default('solid'),
-  width: z.number().int().positive().optional(),
+  // WR-04: cap stroke width — UI only offers presets 2/4/7; a bound is free.
+  width: z.number().int().positive().max(64).optional(),
   showArrow: z.boolean().optional().default(false),
 });
 
@@ -171,7 +172,8 @@ const updateRouteSchema = z.object({
   color: z.string().nullable().optional(),
   entryId: z.string().uuid().nullable().optional(),
   lineStyle: z.enum(['solid', 'dashed']).optional(),
-  width: z.number().int().positive().optional(),
+  // WR-04: cap stroke width (mirror createRouteSchema).
+  width: z.number().int().positive().max(64).optional(),
   showArrow: z.boolean().optional(),
 }).refine(
   (data) =>
