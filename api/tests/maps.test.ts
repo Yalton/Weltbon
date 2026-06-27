@@ -919,4 +919,90 @@ describe('map routes (MAPS-04/05 regions + pin style)', () => {
 
     expect(delRes.status).toBe(404);
   });
+
+  // ─── Phase 52 SECRET-01: secret toggle on pin / region / route ────────────
+
+  it('PATCH /pins/:pinId/style with {secret:true} sets secret on a pin and returns 200', async () => {
+    const { hdrs, uid, mid } = await seedMap();
+    const entryId = await createEntry(uid, hdrs);
+
+    const pinRes = await req('POST', `/api/universes/${uid}/maps/${mid}/pins`, {
+      headers: hdrs,
+      body: { entryId, x: 0.1, y: 0.2 },
+    });
+    const pin = await json(pinRes);
+    expect(pin.secret).toBe(false);
+
+    const patchRes = await req('PATCH', `/api/universes/${uid}/maps/${mid}/pins/${pin.id}/style`, {
+      headers: hdrs,
+      body: { secret: true },
+    });
+
+    expect(patchRes.status).toBe(200);
+    const updated = await json(patchRes);
+    expect(updated.secret).toBe(true);
+  });
+
+  it('PATCH /pins/:pinId/style secret-only PATCH passes the at-least-one-field guard', async () => {
+    const { hdrs, uid, mid } = await seedMap();
+    const entryId = await createEntry(uid, hdrs);
+
+    const pinRes = await req('POST', `/api/universes/${uid}/maps/${mid}/pins`, {
+      headers: hdrs,
+      body: { entryId, x: 0.1, y: 0.2 },
+    });
+    const pin = await json(pinRes);
+
+    // A secret-only body (no color, no icon) must not be rejected by the .refine() guard
+    const patchRes = await req('PATCH', `/api/universes/${uid}/maps/${mid}/pins/${pin.id}/style`, {
+      headers: hdrs,
+      body: { secret: false },
+    });
+
+    expect(patchRes.status).toBe(200);
+    const updated = await json(patchRes);
+    expect(updated.secret).toBe(false);
+  });
+
+  it('PATCH /regions/:regionId with {secret:true} sets secret on a region and returns 200', async () => {
+    const { hdrs, uid, mid } = await seedMap();
+    const points = JSON.stringify([{ x: 0.0, y: 0.0 }, { x: 0.4, y: 0.0 }, { x: 0.4, y: 0.4 }]);
+
+    const createRes = await req('POST', `/api/universes/${uid}/maps/${mid}/regions`, {
+      headers: hdrs,
+      body: { name: 'Hidden Realm', points, entryId: null, color: null },
+    });
+    const region = await json(createRes);
+    expect(region.secret).toBe(false);
+
+    const patchRes = await req('PATCH', `/api/universes/${uid}/maps/${mid}/regions/${region.id}`, {
+      headers: hdrs,
+      body: { secret: true },
+    });
+
+    expect(patchRes.status).toBe(200);
+    const updated = await json(patchRes);
+    expect(updated.secret).toBe(true);
+  });
+
+  it('PATCH /routes/:routeId with {secret:true} sets secret on a route and returns 200', async () => {
+    const { hdrs, uid, mid } = await seedMap();
+    const points = JSON.stringify([{ x: 0.0, y: 0.0 }, { x: 0.5, y: 0.5 }]);
+
+    const createRes = await req('POST', `/api/universes/${uid}/maps/${mid}/routes`, {
+      headers: hdrs,
+      body: { name: 'Hidden Road', points },
+    });
+    const route = await json(createRes);
+    expect(route.secret).toBe(false);
+
+    const patchRes = await req('PATCH', `/api/universes/${uid}/maps/${mid}/routes/${route.id}`, {
+      headers: hdrs,
+      body: { secret: true },
+    });
+
+    expect(patchRes.status).toBe(200);
+    const updated = await json(patchRes);
+    expect(updated.secret).toBe(true);
+  });
 });

@@ -672,4 +672,26 @@ describe('map-layers routes (Phase 42)', () => {
     expect(list[0].name).toBe('Biomes');
     expect(list[0].terrainTypes.length).toBe(7);
   });
+
+  // ─── Phase 52 SECRET-02: secret toggle on layer ───────────────────────────
+
+  it('PATCH /map-layers/:layerId with {secret:true} sets secret and returns 200', async () => {
+    const { hdrs, uid } = await seedUniverse();
+
+    const createRes = await req('POST', `/api/universes/${uid}/map-layers`, {
+      headers: hdrs,
+      body: { name: 'Hidden Layer' },
+    });
+    const layer = await json(createRes);
+    expect(layer.secret).toBe(false);
+
+    const patchRes = await req('PATCH', `/api/universes/${uid}/map-layers/${layer.id}`, {
+      headers: hdrs,
+      body: { secret: true },
+    });
+
+    expect(patchRes.status).toBe(200);
+    const updated = await json(patchRes);
+    expect(updated.secret).toBe(true);
+  });
 });
