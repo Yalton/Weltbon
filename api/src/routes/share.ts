@@ -447,6 +447,12 @@ const publicMapSchema = z.object({
 // share-seam-bare-array-contract: list MUST be a bare array (no {maps:[...]} wrapper).
 const publicMapsResponseSchema = z.array(publicMapSchema);
 
+// Phase 52 SECRET-01: `secret` field intentionally absent from all sub-object schemas
+// (pins, regions, routes, terrainAreas) — secret items are FILTERED OUT server-side
+// in getPublicMap (share-views.ts) and the field must never appear in share responses.
+// @hono/zod-openapi does NOT validate response bodies, so the runtime enforcement is
+// the explicit select projection in getPublicMap + getPublicMapLayers. This schema
+// absence is contract documentation only (share-projection-mirrors-auth-projection).
 const publicMapDetailSchema = publicMapSchema.extend({
   pins: z.array(
     z.object({
@@ -509,6 +515,10 @@ const publicMapDetailSchema = publicMapSchema.extend({
 
 // D-44-04: bare-array layer palette schema for /api/share/map-layers.
 // Mirrors listLayersRoute response shape exactly (share-seam-bare-array-contract).
+// Phase 52 SECRET-01: `secret` field intentionally absent — secret layers are
+// FILTERED OUT server-side in getPublicMapLayers (share-views.ts) via
+// eq(mapLayers.secret, false). The field must never appear in share responses
+// (share-projection-mirrors-auth-projection).
 const publicLayersResponseSchema = z.array(
   z.object({
     id: z.string(),

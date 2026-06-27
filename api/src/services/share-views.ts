@@ -465,10 +465,24 @@ export async function getPublicAsset(
 // never a URL path param (file-header tenant-scoping contract).
 //
 export async function getPublicMapLayers(universeId: string) {
+  // Phase 52 T-52-05: explicit projection omitting `secret` (WR-01 field-absence).
+  // Also add eq(mapLayers.secret, false) to drop secret layers from the share palette.
+  // The bare .select() was replaced here to prevent `secret` leaking into share responses
+  // once the schema column landed (share-projection-mirrors-auth-projection).
   const layerRows = await getDb()
-    .select()
+    .select({
+      id: mapLayers.id,
+      universeId: mapLayers.universeId,
+      name: mapLayers.name,
+      ordered: mapLayers.ordered,
+      defaultOpacity: mapLayers.defaultOpacity,
+      sortOrder: mapLayers.sortOrder,
+      createdAt: mapLayers.createdAt,
+      // Phase 52 SECRET-01: `secret` intentionally omitted — field must not appear
+      // in share responses (share-projection-mirrors-auth-projection).
+    })
     .from(mapLayers)
-    .where(eq(mapLayers.universeId, universeId))
+    .where(and(eq(mapLayers.universeId, universeId), eq(mapLayers.secret, false)))
     .orderBy(mapLayers.sortOrder);
 
   if (layerRows.length === 0) {
@@ -556,7 +570,8 @@ export async function getPublicMap(universeId: string, mapId: string) {
     })
     .from(mapPins)
     .innerJoin(entries, eq(entries.id, mapPins.entryId))
-    .where(and(eq(mapPins.mapId, mapId), eq(entries.isPublic, true)));
+    // Phase 52 T-52-03: add eq(mapPins.secret, false) — secret pins must never reach share callers.
+    .where(and(eq(mapPins.mapId, mapId), eq(entries.isPublic, true), eq(mapPins.secret, false)));
 
   // Privacy-filtered regions: split on terrainTypeId discriminator (D-44-03).
   //
@@ -588,6 +603,8 @@ export async function getPublicMap(universeId: string, mapId: string) {
           eq(mapRegions.mapId, mapId),
           isNull(mapRegions.terrainTypeId),
           eq(entries.isPublic, true),
+          // Phase 52 T-52-03: secret region must never reach share callers.
+          eq(mapRegions.secret, false),
         ),
       ),
     // Standalone political regions (terrainTypeId null, entryId null) — always public
@@ -608,6 +625,8 @@ export async function getPublicMap(universeId: string, mapId: string) {
           eq(mapRegions.mapId, mapId),
           isNull(mapRegions.entryId),
           isNull(mapRegions.terrainTypeId),
+          // Phase 52 T-52-03: secret standalone region must never reach share callers.
+          eq(mapRegions.secret, false),
         ),
       ),
     // Terrain areas (terrainTypeId IS NOT NULL) — always public; enriched with fill/layer
@@ -633,10 +652,15 @@ export async function getPublicMap(universeId: string, mapId: string) {
         // Defense-in-depth tenant isolation (D-03 / T-29-17) — without this, a region
         // carrying a terrainTypeId from a foreign universe would leak that universe's
         // terrainTypeColor/layerId/layerSortOrder into the share response.
+        // Phase 52 T-52-04 D-03 OR-cascade: drop terrain area if region.secret=true
+        // OR parent layer.secret=true. The mapLayers innerJoin is already present
+        // (CR-44-01 tenant guard) — this is the ONLY layer-cascade point in the schema.
         and(
           eq(mapRegions.mapId, mapId),
           isNotNull(mapRegions.terrainTypeId),
           eq(mapLayers.universeId, universeId),
+          eq(mapRegions.secret, false),
+          eq(mapLayers.secret, false),
         ),
       ),
   ]);
@@ -669,7 +693,8 @@ export async function getPublicMap(universeId: string, mapId: string) {
       })
       .from(mapRoutes)
       .innerJoin(entries, eq(entries.id, mapRoutes.entryId))
-      .where(and(eq(mapRoutes.mapId, mapId), eq(entries.isPublic, true))),
+      // Phase 52 T-52-03: add eq(mapRoutes.secret, false) — secret routes must never reach share callers.
+      .where(and(eq(mapRoutes.mapId, mapId), eq(entries.isPublic, true), eq(mapRoutes.secret, false))),
     // Standalone routes (entryId null) — always public
     getDb()
       .select({
@@ -685,7 +710,8 @@ export async function getPublicMap(universeId: string, mapId: string) {
         createdAt: mapRoutes.createdAt,
       })
       .from(mapRoutes)
-      .where(and(eq(mapRoutes.mapId, mapId), isNull(mapRoutes.entryId))),
+      // Phase 52 T-52-03: add eq(mapRoutes.secret, false) — secret standalone routes must never reach share callers.
+      .where(and(eq(mapRoutes.mapId, mapId), isNull(mapRoutes.entryId), eq(mapRoutes.secret, false))),
   ]);
   const routes = [...linkedRoutes, ...standaloneRoutes];
 
