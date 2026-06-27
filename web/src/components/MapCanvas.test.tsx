@@ -773,3 +773,68 @@ describe('MapCanvas — RoutePolyline render (Phase 51, Plan 06)', () => {
     expect(routesIdx, 'routes <g> must appear before pins <g> in DOM order (beneath pins)').toBeLessThan(pinsIdx);
   });
 });
+
+// ── Phase 51 Plan 07 BUG-1 regression: route draw preview is an open polyline ──
+//
+// Confirms the fix for "Route draws as a CLOSED POLYGON": when drawRouteMode is true
+// and pendingVertices are present, the rubber-band preview must render a <polyline>
+// (open geometry, fill="none") — NOT a <polygon> (which auto-closes and fills).
+//
+// Also confirms the first-vertex circle aria-label is "Vertex 1" in route mode
+// (NOT "Close polygon", which would imply snap-to-close is active — it must not be).
+describe('MapCanvas — route draw preview is an open polyline (BUG-1 fix, Plan 07)', () => {
+  const TWO_VERTS = [
+    { x: 0.2, y: 0.3 },
+    { x: 0.6, y: 0.7 },
+  ];
+
+  /**
+   * Test V: drawRouteMode + pending vertices → preview group renders a <polyline>
+   * with fill="none" and NO <polygon>.
+   *
+   * If this test turns RED after a refactor, it means the route preview was switched
+   * back to a closed <polygon> — a direct regression of BUG-1.
+   */
+  it('Test V: drawRouteMode preview renders <polyline fill="none"> not <polygon>', () => {
+    const { container } = renderMapCanvas({
+      drawRouteMode: true,
+      pendingVertices: TWO_VERTS,
+    });
+
+    const previewG = container.querySelector('.region-preview');
+    expect(previewG, '.region-preview group must exist when drawRouteMode + vertices').not.toBeNull();
+
+    // Must contain a <polyline> (open geometry).
+    const polyline = previewG!.querySelector('polyline');
+    expect(polyline, 'route preview must render a <polyline> (open path)').not.toBeNull();
+    expect(polyline!.getAttribute('fill')).toBe('none');
+
+    // Must NOT contain a <polygon> (closed, auto-fills — wrong for a route).
+    const polygon = previewG!.querySelector('polygon');
+    expect(polygon, 'route preview must NOT render a <polygon> (would auto-close the shape)').toBeNull();
+  });
+
+  /**
+   * Test W: In drawRouteMode, the first vertex circle has aria-label "Vertex 1"
+   * (not "Close polygon"), confirming the snap-to-close affordance is suppressed
+   * for routes (routes finish via Enter or double-click, never by first-vertex snap).
+   */
+  it('Test W: first vertex circle in drawRouteMode has aria-label "Vertex 1" not "Close polygon"', () => {
+    const { container } = renderMapCanvas({
+      drawRouteMode: true,
+      pendingVertices: TWO_VERTS,
+    });
+
+    const previewG = container.querySelector('.region-preview');
+    expect(previewG).not.toBeNull();
+
+    const circles = previewG!.querySelectorAll('circle');
+    expect(circles.length, 'preview circles must equal vertex count').toBe(TWO_VERTS.length);
+
+    const firstCircle = circles[0];
+    const firstLabel = firstCircle.getAttribute('aria-label');
+    expect(firstLabel, 'first vertex in route mode must be labelled "Vertex 1" not "Close polygon"')
+      .toBe('Vertex 1');
+    expect(firstLabel).not.toBe('Close polygon');
+  });
+});

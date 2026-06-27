@@ -962,9 +962,10 @@ export const MapCanvas = forwardRef<MapCanvasHandle, MapCanvasProps>(function Ma
       return Math.sqrt(dx * dx + dy * dy) < SNAP_DISTANCE_PX / currentScale;
     })();
 
-  // Preview polygon includes the current pointer as a trailing vertex for rubber-band effect.
+  // Preview shape includes the current pointer as a trailing vertex for rubber-band effect.
+  // drawRouteMode is included so the open-polyline preview also tracks the cursor.
   const previewPoints =
-    (drawRegionMode || paintTerrainMode) && pendingVertices.length > 0 && pointerImgPos
+    (drawRegionMode || drawRouteMode || paintTerrainMode) && pendingVertices.length > 0 && pointerImgPos
       ? pendingPoints + ` ${pointerImgPos.x},${pointerImgPos.y}`
       : pendingPoints;
 
@@ -1161,16 +1162,31 @@ export const MapCanvas = forwardRef<MapCanvasHandle, MapCanvasProps>(function Ma
         {/* CRITICAL: React handlers only — NEVER d3 .on(event,(e,d)=>) here */}
         {(drawRegionMode || drawRouteMode || paintTerrainMode) && pendingVertices.length > 0 && (
           <g className="region-preview">
-            {/* Preview polygon */}
-            <polygon
-              points={previewPoints}
-              fill={previewColor}
-              fillOpacity={0.15}
-              stroke={previewColor}
-              strokeWidth={1.5}
-              strokeDasharray="4 3"
-              style={{ pointerEvents: 'none' }}
-            />
+            {/* Preview shape: open polyline for routes (never closes), closed polygon for regions/terrain.
+                BUG-1 fix: route draw must NOT render a <polygon> — <polygon> auto-closes the shape and
+                fills it, making the preview look like a closed polygon instead of an open path. */}
+            {drawRouteMode ? (
+              <polyline
+                points={previewPoints}
+                fill="none"
+                stroke={previewColor}
+                strokeWidth={1.5}
+                strokeDasharray="4 3"
+                strokeLinecap="round"
+                strokeLinejoin="round"
+                style={{ pointerEvents: 'none' }}
+              />
+            ) : (
+              <polygon
+                points={previewPoints}
+                fill={previewColor}
+                fillOpacity={0.15}
+                stroke={previewColor}
+                strokeWidth={1.5}
+                strokeDasharray="4 3"
+                style={{ pointerEvents: 'none' }}
+              />
+            )}
             {/* Vertex handle circles — React-rendered, React handlers only */}
             {pendingVertices.map((v, idx) => {
               const vx = v.x * imageWidth;
@@ -1186,8 +1202,10 @@ export const MapCanvas = forwardRef<MapCanvasHandle, MapCanvasProps>(function Ma
                   fill={isSnapped ? previewColor : '#ffffff'}
                   stroke={previewColor}
                   strokeWidth={1.5 / currentScale}
-                  style={{ cursor: isFirst && pendingVertices.length >= 3 ? 'pointer' : 'default', pointerEvents: 'none' }}
-                  aria-label={isFirst ? 'Close polygon' : `Vertex ${idx + 1}`}
+                  // Route mode: no snap-to-first-vertex affordance — routes finish via Enter/dblclick,
+                  // never by snapping back to the first vertex. No pointer cursor, no 'Close polygon' label.
+                  style={{ cursor: isFirst && !drawRouteMode && pendingVertices.length >= 3 ? 'pointer' : 'default', pointerEvents: 'none' }}
+                  aria-label={isFirst && !drawRouteMode ? 'Close polygon' : `Vertex ${idx + 1}`}
                 />
               );
             })}
