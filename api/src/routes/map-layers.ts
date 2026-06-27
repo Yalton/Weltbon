@@ -45,8 +45,10 @@ const updateLayerSchema = z.object({
   name: z.string().min(1).max(200).optional(),
   defaultOpacity: z.number().min(0).max(1).optional(),
   sortOrder: z.number().int().optional(),
+  // Phase 52 SECRET-02: owner-only secret flag; false = visible to share visitors.
+  secret: z.boolean().optional(),
 }).refine(
-  (d) => d.name !== undefined || d.defaultOpacity !== undefined || d.sortOrder !== undefined,
+  (d) => d.name !== undefined || d.defaultOpacity !== undefined || d.sortOrder !== undefined || d.secret !== undefined,
   { message: 'At least one field must be provided' },
 );
 
@@ -87,6 +89,8 @@ const layerSchema = z.object({
   sortOrder: z.number(),
   createdAt: z.string().or(z.date()),
   terrainTypes: z.array(terrainTypeSchema),
+  // Phase 52 SECRET-02: owner-only secret flag in authenticated response (NOT in share.ts).
+  secret: z.boolean().optional(),
 });
 
 // ─── Route definitions ────────────────────────────────────────────────────────
@@ -422,10 +426,12 @@ export const mapLayersRouter = new OpenAPIHono<AppEnv>()
     await requireUniverse(uid, c.var.userId);
     const data = c.req.valid('json');
 
-    const updates: { name?: string; defaultOpacity?: number; sortOrder?: number } = {};
+    const updates: { name?: string; defaultOpacity?: number; sortOrder?: number; secret?: boolean } = {};
     if (data.name !== undefined) updates.name = data.name;
     if (data.defaultOpacity !== undefined) updates.defaultOpacity = data.defaultOpacity;
     if (data.sortOrder !== undefined) updates.sortOrder = data.sortOrder;
+    // Phase 52 SECRET-02: persist secret flag when provided
+    if (data.secret !== undefined) updates.secret = data.secret;
 
     const [updated] = await db()
       .update(mapLayers)

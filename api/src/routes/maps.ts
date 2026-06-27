@@ -96,6 +96,8 @@ const pinSchema = z.object({
   y: z.number(),
   color: z.string().nullable().optional(),  // Phase 40 MAPS-05 (D-01)
   icon: z.string().nullable().optional(),   // Phase 40 MAPS-05 (D-02)
+  // Phase 52 SECRET-01: owner-only secret flag in authenticated response (NOT in share.ts).
+  secret: z.boolean().optional(),
 });
 
 // Phase 40 MAPS-04: Region Zod schemas (D-09)
@@ -110,6 +112,8 @@ const regionSchema = z.object({
   createdAt: z.string().or(z.date()),
   // Phase 43: terrain discriminator — null = political/standalone; set = terrain area (T-43-01)
   terrainTypeId: z.string().uuid().nullable().optional(),
+  // Phase 52 SECRET-01: owner-only secret flag in authenticated response (NOT in share.ts).
+  secret: z.boolean().optional(),
 });
 
 const createRegionSchema = z.object({
@@ -131,12 +135,15 @@ const updateRegionSchema = z.object({
   entryId: z.string().uuid().nullable().optional(),
   // Phase 43: reclassify support — use 'terrainTypeId' in data presence check in handler
   terrainTypeId: z.string().uuid().nullable().optional(),
+  // Phase 52 SECRET-01: owner-only secret flag; false = visible to share, true = excluded.
+  secret: z.boolean().optional(),
 }).refine(
   (data) =>
     data.name !== undefined ||
     data.color !== undefined ||
     data.entryId !== undefined ||
-    data.terrainTypeId !== undefined,
+    data.terrainTypeId !== undefined ||
+    data.secret !== undefined,
   { message: 'At least one field must be provided' },
 );
 
@@ -152,6 +159,8 @@ const routeSchema = z.object({
   width: z.number().int(),
   showArrow: z.boolean(),
   createdAt: z.string().or(z.date()),
+  // Phase 52 SECRET-01: owner-only secret flag in authenticated response (NOT in share.ts).
+  secret: z.boolean().optional(),
 });
 
 const createRouteSchema = z.object({
@@ -175,6 +184,8 @@ const updateRouteSchema = z.object({
   // WR-04: cap stroke width (mirror createRouteSchema).
   width: z.number().int().positive().max(64).optional(),
   showArrow: z.boolean().optional(),
+  // Phase 52 SECRET-01: owner-only secret flag; mirrors showArrow boolean-toggle pattern.
+  secret: z.boolean().optional(),
 }).refine(
   (data) =>
     data.name !== undefined ||
@@ -182,17 +193,20 @@ const updateRouteSchema = z.object({
     data.entryId !== undefined ||
     data.lineStyle !== undefined ||
     data.width !== undefined ||
-    data.showArrow !== undefined,
+    data.showArrow !== undefined ||
+    data.secret !== undefined,
   { message: 'At least one field must be provided' },
 );
 
 // Phase 40 MAPS-05: Pin style Zod schema
+// Phase 52 SECRET-01: secret added alongside color/icon (owner-only flag).
 const pinStyleSchema = z.object({
   color: z.string().nullable().optional(),
   icon: z.string().nullable().optional(),
+  secret: z.boolean().optional(),
 }).refine(
-  (data) => data.color !== undefined || data.icon !== undefined,
-  { message: 'At least one of color or icon must be provided' },
+  (data) => data.color !== undefined || data.icon !== undefined || data.secret !== undefined,
+  { message: 'At least one of color, icon, or secret must be provided' },
 );
 
 const mapDetailSchema = z.object({
@@ -783,9 +797,11 @@ export const mapsRouter = new OpenAPIHono<AppEnv>()
 
     // Build update object — only include fields that were provided
     // null is a valid value (clears the style), undefined means not provided
-    const updates: { color?: string | null; icon?: string | null } = {};
+    const updates: { color?: string | null; icon?: string | null; secret?: boolean } = {};
     if ('color' in data) updates.color = data.color ?? null;
     if ('icon' in data) updates.icon = data.icon ?? null;
+    // Phase 52 SECRET-01: persist secret flag when provided
+    if (data.secret !== undefined) updates.secret = data.secret;
 
     const [updated] = await db()
       .update(mapPins)
@@ -878,13 +894,15 @@ export const mapsRouter = new OpenAPIHono<AppEnv>()
     }
 
     // Build partial update — only provided fields
-    const updates: { name?: string; color?: string | null; entryId?: string | null; terrainTypeId?: string | null } = {};
+    const updates: { name?: string; color?: string | null; entryId?: string | null; terrainTypeId?: string | null; secret?: boolean } = {};
     if (data.name !== undefined) updates.name = data.name;
     if ('color' in data) updates.color = data.color ?? null;
     if ('entryId' in data) updates.entryId = data.entryId ?? null;
     // Phase 43 TERRAIN-01: reclassify support — 'key' in data presence check mirrors color/entryId pattern
     // so an omitted terrainTypeId does NOT overwrite the existing value (T-43-01)
     if ('terrainTypeId' in data) updates.terrainTypeId = data.terrainTypeId ?? null;
+    // Phase 52 SECRET-01: persist secret flag when provided
+    if (data.secret !== undefined) updates.secret = data.secret;
 
     // T-40-IDOR: scope by both regionId AND mapId
     const [updated] = await db()
@@ -983,6 +1001,7 @@ export const mapsRouter = new OpenAPIHono<AppEnv>()
       lineStyle?: 'solid' | 'dashed';
       width?: number;
       showArrow?: boolean;
+      secret?: boolean;
     } = {};
     if (data.name !== undefined) updates.name = data.name;
     if ('color' in data) updates.color = data.color ?? null;
@@ -990,6 +1009,8 @@ export const mapsRouter = new OpenAPIHono<AppEnv>()
     if (data.lineStyle !== undefined) updates.lineStyle = data.lineStyle;
     if (data.width !== undefined) updates.width = data.width;
     if (data.showArrow !== undefined) updates.showArrow = data.showArrow;
+    // Phase 52 SECRET-01: persist secret flag when provided; mirrors showArrow pattern.
+    if (data.secret !== undefined) updates.secret = data.secret;
 
     // T-51-01 IDOR guard: scope by both routeId AND mapId
     const [updated] = await db()
