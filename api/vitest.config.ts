@@ -90,6 +90,8 @@ const DB_GATED_TESTS = [
   'tests/import-export-maps.test.ts',
   // Phase 42 — layer + terrain-type CRUD/IDOR integration tests.
   'tests/map-layers.test.ts',
+  // Phase 52 Plan 04 — SECRET-02 export→import round-trip integration tests.
+  'tests/export-import-roundtrip.test.ts',
 ];
 
 export default defineConfig({
