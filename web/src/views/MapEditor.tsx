@@ -1332,44 +1332,37 @@ export function MapEditor() {
         </div>
       )}
 
-      {/* Add-pin hint banner — suppressed in share mode */}
-      {!isShare && addPinMode && !entryPickerOpen && (
-        <div className="pointer-events-none absolute left-1/2 top-14 z-10 -translate-x-1/2 px-3">
-          <div className="rounded-full px-3 py-1 text-xs shadow-sm whitespace-nowrap border border-[color:var(--color-accent)] bg-[color:var(--color-accent-soft)] text-[color:var(--color-accent)]">
-            {COPY.hintBanner}
-          </div>
-        </div>
-      )}
+      {/* ── Single hint banner (BUG-2 fix) ─────────────────────────────────────
+          Previously four separate <div>s at the same absolute position could stack
+          when two modes were simultaneously active (e.g. addPinMode + drawRouteMode),
+          producing garbled overlapping text. Fix: compute ONE banner string and render
+          AT MOST ONE element. Priority order mirrors the toolbar mutual-exclusion logic
+          (route > region > terrain > addPin). */}
+      {!isShare && (() => {
+        // Compute the single active banner text (null → no banner rendered).
+        const bannerText: string | null =
+          drawRouteMode
+            ? COPY.drawRouteBanner + (pendingVertices.length > 0 ? ` (${pendingVertices.length} vertices)` : '')
+          : drawRegionMode
+            ? COPY.drawRegionBanner + (pendingVertices.length > 0 ? ` (${pendingVertices.length} vertices)` : '')
+          : (armedTerrainTypeId && !drawRegionMode)
+            ? COPY.paintTerrainBanner(armedTypeName) + (pendingVertices.length > 0 ? ` (${pendingVertices.length} vertices)` : '')
+          : (addPinMode && !entryPickerOpen)
+            ? COPY.hintBanner
+          : null;
 
-      {/* Draw-region hint banner — suppressed in share mode */}
-      {!isShare && drawRegionMode && (
-        <div className="pointer-events-none absolute left-1/2 top-14 z-10 -translate-x-1/2 px-3">
-          <div className="rounded-full px-3 py-1 text-xs shadow-sm whitespace-nowrap border border-[color:var(--color-accent)] bg-[color:var(--color-accent-soft)] text-[color:var(--color-accent)]">
-            {COPY.drawRegionBanner}
-            {pendingVertices.length > 0 && ` (${pendingVertices.length} vertices)`}
+        if (!bannerText) return null;
+        return (
+          <div
+            data-testid="map-hint-banner"
+            className="pointer-events-none absolute left-1/2 top-14 z-10 -translate-x-1/2 px-3"
+          >
+            <div className="rounded-full px-3 py-1 text-xs shadow-sm whitespace-nowrap border border-[color:var(--color-accent)] bg-[color:var(--color-accent-soft)] text-[color:var(--color-accent)]">
+              {bannerText}
+            </div>
           </div>
-        </div>
-      )}
-
-      {/* Terrain paint banner (43-04) — suppressed in share mode and when drawRegionMode active */}
-      {!isShare && armedTerrainTypeId && !drawRegionMode && (
-        <div className="pointer-events-none absolute left-1/2 top-14 z-10 -translate-x-1/2 px-3">
-          <div className="rounded-full px-3 py-1 text-xs shadow-sm whitespace-nowrap border border-[color:var(--color-accent)] bg-[color:var(--color-accent-soft)] text-[color:var(--color-accent)]">
-            {COPY.paintTerrainBanner(armedTypeName)}
-            {pendingVertices.length > 0 && ` (${pendingVertices.length} vertices)`}
-          </div>
-        </div>
-      )}
-
-      {/* Route draw banner (ROUTE-01, Plan 07) — suppressed in share mode */}
-      {!isShare && drawRouteMode && (
-        <div className="pointer-events-none absolute left-1/2 top-14 z-10 -translate-x-1/2 px-3">
-          <div className="rounded-full px-3 py-1 text-xs shadow-sm whitespace-nowrap border border-[color:var(--color-accent)] bg-[color:var(--color-accent-soft)] text-[color:var(--color-accent)]">
-            {COPY.drawRouteBanner}
-            {pendingVertices.length > 0 && ` (${pendingVertices.length} vertices)`}
-          </div>
-        </div>
-      )}
+        );
+      })()}
 
       {/* Map canvas — d3-zoom + React-rendered pins + regions.
           In share mode: addPinMode/drawRegionMode forced false; mutation
@@ -1445,9 +1438,16 @@ export function MapEditor() {
         onLayerViewerStateChange={handleLayerViewerStateChange}
       />
 
-      {/* No-pins empty state overlay — suppressed in share mode (no mutation CTA) */}
-      {!isShare && enrichedPins.length === 0 && regions.length === 0 && terrainAreas.length === 0 && (
-        <div className="pointer-events-none absolute inset-0 flex items-center justify-center z-10">
+      {/* No-pins empty state overlay — suppressed in share mode (no mutation CTA).
+          BUG-2 fix: also hide when ANY draw mode is active so this pointer-events-auto
+          div cannot intercept canvas clicks and steal vertex placements (BUG-3 root cause:
+          the CTA card sits at the map center with pointer-events-auto; a click landing on
+          it sets addPinMode=true without appending a route vertex, making the click appear
+          to "not register" for route drawing). */}
+      {!isShare &&
+        !drawRouteMode && !drawRegionMode && !armedTerrainTypeId && !addPinMode &&
+        enrichedPins.length === 0 && regions.length === 0 && terrainAreas.length === 0 && (
+        <div data-testid="map-empty-state-cta" className="pointer-events-none absolute inset-0 flex items-center justify-center z-10">
           <div className="pointer-events-auto">
             <EmptyState
               title={COPY.noPinsTitle}
@@ -1455,7 +1455,15 @@ export function MapEditor() {
               action={
                 <button
                   type="button"
-                  onClick={() => setAddPinMode(true)}
+                  onClick={() => {
+                    // Mirror the toolbar onToggleAddPinMode exclusion: clear all draw modes
+                    // before arming addPinMode so the two-mode overlap cannot occur even if
+                    // this button is clicked while some draw mode is transitioning.
+                    if (drawRegionMode) setDrawRegionMode(false);
+                    if (drawRouteMode) { setDrawRouteMode(false); setPendingVertices([]); }
+                    if (armedTerrainTypeId) { setArmedTerrainTypeId(null); setArmedLayerId(null); }
+                    setAddPinMode(true);
+                  }}
                   className="rounded-md bg-[color:var(--color-accent)] text-white text-sm px-3 py-2"
                 >
                   {COPY.noPinsCta}

@@ -132,8 +132,29 @@ vi.mock('../components/MapCanvas', () => ({
 }));
 
 // Mock MapToolbar — editor controls; suppressed in share mode anyway.
+// Exposes toggle buttons so tests can arm draw modes to assert banner / CTA behaviour.
 vi.mock('../components/MapToolbar', () => ({
-  MapToolbar: () => <div data-testid="map-toolbar-stub" />,
+  MapToolbar: ({
+    onToggleAddPinMode,
+    onToggleDrawRouteMode,
+    onToggleDrawRegionMode,
+  }: {
+    onToggleAddPinMode?: () => void;
+    onToggleDrawRouteMode?: () => void;
+    onToggleDrawRegionMode?: () => void;
+  }) => (
+    <div data-testid="map-toolbar-stub">
+      {onToggleAddPinMode && (
+        <button data-testid="toolbar-add-pin-toggle" onClick={onToggleAddPinMode} />
+      )}
+      {onToggleDrawRouteMode && (
+        <button data-testid="toolbar-draw-route-toggle" onClick={onToggleDrawRouteMode} />
+      )}
+      {onToggleDrawRegionMode && (
+        <button data-testid="toolbar-draw-region-toggle" onClick={onToggleDrawRegionMode} />
+      )}
+    </div>
+  ),
 }));
 
 // Mock LayersPanel — suppressed in share mode; stub so absence assertions work.
@@ -884,5 +905,102 @@ describe('MapEditor route interactions (ROUTE-02, Plan 07)', () => {
 
     // Route context menu div must NOT appear (T-51-13 gate)
     expect(screen.queryByRole('menu', { name: /route actions/i })).not.toBeInTheDocument();
+  });
+});
+
+// ── BUG-2 / BUG-3 regression tests (Plan 07 UAT fix) ────────────────────────────
+//
+// BUG-2: Multiple hint banners could stack (each positioned at the same absolute
+//   spot) when two draw modes were simultaneously active. Fix: compute ONE banner
+//   string and render at most one element (data-testid="map-hint-banner").
+//
+// BUG-3: The empty-state CTA button ("Add pin") was a pointer-events-auto card
+//   in the map center. While drawing a route, clicking a vertex location that
+//   overlapped the card set addPinMode=true without appending a vertex, making
+//   the canvas click appear to "not register". Fix: hide the CTA whenever any
+//   draw mode is active.
+
+describe('MapEditor banner dedup + CTA draw-mode guard (BUG-2/BUG-3, Plan 07)', () => {
+  const EDITOR_UID_B = 'test-universe-uuid';
+
+  // A map with no content so the empty-state CTA shows.
+  function makeEmptyMap(): MapDetail {
+    return { ...makeMapDetail(), terrainAreas: [], pins: [], regions: [], routes: [] };
+  }
+
+  function setupEmptyMapApi() {
+    vi.mocked(api).mockImplementation(async (path: string) => {
+      if (typeof path !== 'string') return null as never;
+      if (path.includes('/map-layers')) return [] as never;
+      if (path.match(/\/entries$/) || path.match(/\/entries\?/)) return [] as never;
+      return makeEmptyMap() as never;
+    });
+  }
+
+  function renderEditorEmpty() {
+    const qc = new QueryClient({
+      defaultOptions: { queries: { retry: false }, mutations: { retry: false } },
+    });
+    return render(
+      <QueryClientProvider client={qc}>
+        <MemoryRouter initialEntries={[`/universes/${EDITOR_UID_B}/maps/${MAP_ID}`]}>
+          <Routes>
+            <Route path="/universes/:uid/maps/:mid" element={<MapEditor />} />
+          </Routes>
+        </MemoryRouter>
+      </QueryClientProvider>,
+    );
+  }
+
+  beforeEach(() => {
+    _shareMode = false;
+    _shareToken = null;
+    vi.mocked(api).mockReset();
+  });
+
+  afterEach(() => {
+    // Restore share mode so sibling describe blocks are unaffected.
+    _shareMode = true;
+    _shareToken = 'test-share-token';
+    vi.clearAllMocks();
+  });
+
+  it('B1: exactly ONE hint banner renders when drawRouteMode is armed', async () => {
+    setupEmptyMapApi();
+    renderEditorEmpty();
+    await screen.findByTestId('map-canvas-stub');
+
+    // Arm route draw mode via the toolbar toggle stub.
+    const routeToggle = await screen.findByTestId('toolbar-draw-route-toggle');
+    fireEvent.click(routeToggle);
+
+    // Exactly ONE hint banner must appear — the banner dedup fix eliminates multiple stacked divs.
+    await waitFor(() => {
+      const banners = screen.getAllByTestId('map-hint-banner');
+      expect(banners, 'must render exactly one banner when drawRouteMode is active').toHaveLength(1);
+    });
+  });
+
+  it('B2: empty-state CTA container is hidden while any draw mode is active (BUG-3 root cause fix)', async () => {
+    setupEmptyMapApi();
+    renderEditorEmpty();
+    await screen.findByTestId('map-canvas-stub');
+
+    // CTA container must be visible initially (no draw modes, no map items).
+    // Uses data-testid="map-empty-state-cta" — the pointer-events-auto wrapper is always
+    // in the DOM when the condition is satisfied, even though EmptyState itself is mocked to null.
+    await waitFor(() => {
+      expect(screen.queryByTestId('map-empty-state-cta')).not.toBeNull();
+    });
+
+    // Arm route draw mode.
+    const routeToggle = await screen.findByTestId('toolbar-draw-route-toggle');
+    fireEvent.click(routeToggle);
+
+    // CTA container must disappear — its pointer-events-auto card was the root cause of BUG-3
+    // (it intercepted canvas clicks in the map center, preventing vertex placement in route mode).
+    await waitFor(() => {
+      expect(screen.queryByTestId('map-empty-state-cta')).toBeNull();
+    });
   });
 });
