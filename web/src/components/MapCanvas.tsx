@@ -114,6 +114,13 @@ export interface MapCanvasProps {
    * d3's dblclick-to-zoom is already suppressed in the d3 zoom setup.
    */
   onCanvasDblClick?: () => void;
+  /**
+   * Called when the user clicks a pin while drawRouteMode is active.
+   * MapEditor appends the pin's exact normalized coords to pendingVertices so the
+   * route snaps precisely to the pin rather than using a screen-space approximation.
+   * BUG-B fix (51-07). No-op / undefined in share mode.
+   */
+  onRouteVertexAtPin?: (pin: MapPin) => void;
 }
 
 // ─── PinCircle ────────────────────────────────────────────────────────────────
@@ -146,6 +153,18 @@ interface PinCircleProps {
   onPinHoverEnter: (pin: MapPin, clientX: number, clientY: number) => void;
   /** Called on pointer leave; must NOT call if drag is active (D-11 isolation). */
   onPinHoverLeave: () => void;
+  /**
+   * When true, a click on this pin calls onRouteVertexAtPin instead of onNavigate,
+   * and pin drag-reposition is suppressed (pin is a snap target in route-draw mode).
+   * BUG-B fix (51-07).
+   */
+  drawRouteMode?: boolean;
+  /**
+   * Called when drawRouteMode is true and the user clicks the pin.
+   * MapEditor appends the pin's exact normalized coords to pendingVertices.
+   * BUG-B fix (51-07).
+   */
+  onRouteVertexAtPin?: (pin: MapPin) => void;
 }
 
 function PinCircle({
@@ -159,6 +178,8 @@ function PinCircle({
   onContextMenu,
   onPinHoverEnter,
   onPinHoverLeave,
+  drawRouteMode = false,
+  onRouteVertexAtPin,
 }: PinCircleProps) {
   // Pin color: explicit override or fallback to entry type color (D-01, graceful degradation D-03)
   const pinColor = pin.color ?? entryTypeHexColor(pin.entryType ?? 'concept');
@@ -200,6 +221,10 @@ function PinCircle({
 
   const handlePointerMove = (e: React.PointerEvent<SVGGElement>) => {
     if (!dragging.current || !dragStart.current) return;
+    // In route-draw mode the pin is a snap target, not draggable.
+    // Skip drag-tracking so moved stays false and pointer-up treats it as a click → vertex snap.
+    // BUG-B fix (51-07).
+    if (drawRouteMode) return;
     const dx = e.clientX - dragStart.current.clientX;
     const dy = e.clientY - dragStart.current.clientY;
     if (Math.abs(dx) > DRAG_THRESHOLD_PX || Math.abs(dy) > DRAG_THRESHOLD_PX) {
@@ -226,7 +251,14 @@ function PinCircle({
     setDragVisualY(null);
 
     if (!start.moved) {
-      // Treat as a click — navigate to entry
+      // Route-draw mode: snap a vertex to this pin's exact location instead of navigating.
+      // BUG-B fix (51-07): clicking a pin while drawRouteMode appends a route vertex
+      // at the pin's exact normalized coords, not a canvas-click approximation.
+      if (drawRouteMode) {
+        onRouteVertexAtPin?.(pin);
+        return;
+      }
+      // Idle mode: navigate to entry as before.
       onNavigate(pin.entryId);
       return;
     }
@@ -734,6 +766,7 @@ export const MapCanvas = forwardRef<MapCanvasHandle, MapCanvasProps>(function Ma
   onRouteContextMenu,
   drawRouteMode = false,
   onCanvasDblClick,
+  onRouteVertexAtPin,
 }, ref) {
   const svgRef = useRef<SVGSVGElement>(null);
   const containerRef = useRef<HTMLDivElement>(null);
@@ -769,6 +802,16 @@ export const MapCanvas = forwardRef<MapCanvasHandle, MapCanvasProps>(function Ma
   // during route draw, letting clicks fall through to handleSvgClick → vertex append.
   const isDrawing = addPinMode || drawRegionMode || drawRouteMode || paintTerrainMode;
 
+  // Ref mirror of isDrawing — read by the d3 zoom .filter() closure so the zoom behavior
+  // always sees the LIVE draw-mode state without being torn down and recreated (which would
+  // lose the current pan/zoom transform). Updated by a separate useEffect each render so it
+  // is consistent with isDrawing but does NOT appear in the zoom-effect deps array.
+  // BUG-A fix (51-07).
+  const isDrawingRef = useRef(isDrawing);
+  useEffect(() => {
+    isDrawingRef.current = isDrawing;
+  }, [isDrawing]);
+
   // Install d3-zoom on the svg element, targeting <g.viewport>.
   // Pins and regions are React-rendered inside this effect's SVG structure but are
   // NOT touched by d3 — d3 only manages the zoom transform on <g.viewport>.
@@ -785,6 +828,18 @@ export const MapCanvas = forwardRef<MapCanvasHandle, MapCanvasProps>(function Ma
       unknown
     >()
       .scaleExtent([0.1, 8])
+      // BUG-A fix (51-07): disable d3 pan-start gestures while any draw mode is active.
+      // The closure reads isDrawingRef.current so it always sees the live value without
+      // the zoom behavior being torn down (which would lose the current transform).
+      // deps are [imageWidth, imageHeight] only — DO NOT add mode flags here.
+      // Wheel events always pass through so scroll-to-zoom works in all modes.
+      // When not drawing, restore d3's default filter (primary button, no Ctrl).
+      .filter((event) => {
+        if (event.type === 'wheel') return true;
+        if (isDrawingRef.current) return false;
+        // d3 default: primary button only, no Ctrl modifier.
+        return !event.ctrlKey && !event.button;
+      })
       .on('zoom', (evt) => {
         g.attr('transform', evt.transform.toString());
         setCurrentScale(evt.transform.k);
@@ -1228,6 +1283,8 @@ export const MapCanvas = forwardRef<MapCanvasHandle, MapCanvasProps>(function Ma
               onNavigate={handleNavigate}
               onDragEnd={onPinDragEnd}
               onContextMenu={onPinContextMenu}
+              drawRouteMode={drawRouteMode}
+              onRouteVertexAtPin={onRouteVertexAtPin}
             />
           ))}
         </g>

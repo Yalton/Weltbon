@@ -47,6 +47,44 @@ vi.mock('../contexts/ShareModeContext', () => ({
   ShareModeProvider: ({ children }: { children: React.ReactNode }) => <>{children}</>,
 }));
 
+// Mock useNavigate from react-router-dom — needed for BUG-B tests (51-07) to spy on navigation.
+// Spreads actual module so MemoryRouter, Routes, etc. remain real (functional routing context).
+// mockNavigate is reset by vi.clearAllMocks() in the global afterEach.
+const mockNavigate = vi.fn();
+vi.mock('react-router-dom', async (importOriginal) => {
+  const actual = await importOriginal<typeof import('react-router-dom')>();
+  return { ...actual, useNavigate: () => mockNavigate };
+});
+
+// Mock d3-zoom to capture the filter function passed to zoom().filter(fn).
+// Only the filter setter is intercepted; all other behavior (scaleExtent, on, etc.)
+// delegates to the real implementation so existing tests are unaffected.
+// Used by BUG-A tests (51-07) to directly assert filter logic without triggering
+// d3's SVG geometry accessors (which crash in jsdom: svg.width.baseVal is undefined).
+const capturedZoomFilter = {
+  fn: null as ((event: { type: string; ctrlKey?: boolean; button?: number }) => boolean) | null,
+};
+vi.mock('d3-zoom', async (importOriginal) => {
+  const actual = await importOriginal<typeof import('d3-zoom')>();
+  return {
+    ...actual,
+    // eslint-disable-next-line @typescript-eslint/no-explicit-any
+    zoom: () => {
+      // Call the real zoom() to get a fully-functional behavior object.
+      const behavior = (actual.zoom as () => { filter: (...args: unknown[]) => typeof behavior })();
+      const origFilter = behavior.filter.bind(behavior);
+      // Wrap filter() to capture the fn argument and still call the original.
+      behavior.filter = (...args: unknown[]) => {
+        if (typeof args[0] === 'function') {
+          capturedZoomFilter.fn = args[0] as typeof capturedZoomFilter.fn;
+        }
+        return origFilter(...args);
+      };
+      return behavior;
+    },
+  };
+});
+
 // ── Fixtures ──────────────────────────────────────────────────────────────────
 const IMAGE_URL = '/x.png';
 const IMAGE_WIDTH = 1000;
@@ -836,5 +874,192 @@ describe('MapCanvas — route draw preview is an open polyline (BUG-1 fix, Plan 
     expect(firstLabel, 'first vertex in route mode must be labelled "Vertex 1" not "Close polygon"')
       .toBe('Vertex 1');
     expect(firstLabel).not.toBe('Close polygon');
+  });
+});
+
+// ── BUG-A fix (51-07): d3 zoom filter — pan blocked in draw modes ─────────────
+//
+// Root cause: the d3 zoom behavior had no .filter(), so mousedown always started a pan,
+// even during draw modes (drawRouteMode, drawRegionMode, addPinMode, paintTerrainMode).
+//
+// Fix: add a .filter() that reads isDrawingRef.current (a ref synced each render to
+// the isDrawing flag) so pan-start gestures (mousedown) are blocked while drawing.
+// Wheel events always pass so scroll-to-zoom still works in all modes.
+//
+// Test strategy: d3-zoom's full pan pipeline requires SVG geometry (svg.width.baseVal)
+// which jsdom 25 does not implement, making transform-change assertions unreliable.
+// Instead, we capture the actual filter function via the d3-zoom spy mock (top of file)
+// and call it directly. This directly tests the filter's behavior — the root fix for BUG-A —
+// without requiring d3's pan pipeline to run in jsdom.
+//
+// The spy captures the filter AFTER the component's useEffect runs (inside act()),
+// so the closure over isDrawingRef reflects the live draw-mode state.
+describe('MapCanvas — d3 zoom filter disables pan in draw modes (BUG-A, 51-07)', () => {
+  /**
+   * Test AA: When drawRouteMode=true, the zoom filter returns false for mousedown
+   * (d3 pan-start is blocked) and true for wheel (scroll-to-zoom is always allowed).
+   *
+   * We capture the filter function after render via the d3-zoom spy mock (top of file).
+   * The captured closure reads isDrawingRef.current, which is initialized from isDrawing
+   * at render time (useRef(isDrawing)), so it correctly reflects drawRouteMode=true.
+   *
+   * RED pre-fix: filter is not set → capturedZoomFilter.fn is null → assertion fails.
+   * GREEN post-fix: filter captures correctly → mousedown → false, wheel → true → PASS.
+   */
+  it('Test AA: zoom filter returns false for mousedown and true for wheel while drawRouteMode=true', () => {
+    // Render with draw mode active so isDrawingRef.current = true inside the component.
+    renderMapCanvas({ drawRouteMode: true });
+
+    const filter = capturedZoomFilter.fn;
+    expect(filter, 'capturedZoomFilter.fn must be set — .filter() was not called on the zoom behavior').not.toBeNull();
+
+    // Wheel always passes (scroll-to-zoom must work in all modes).
+    expect(filter!({ type: 'wheel', button: 0 }), 'wheel: filter must return true').toBe(true);
+
+    // Non-wheel events are blocked while any draw mode is active.
+    expect(filter!({ type: 'mousedown', button: 0 }), 'mousedown in draw mode: filter must return false').toBe(false);
+    expect(filter!({ type: 'pointermove', button: 0 }), 'pointermove in draw mode: filter must return false').toBe(false);
+  });
+
+  /**
+   * Test AB: When no draw mode is active (drawRouteMode=false), the filter returns
+   * true for a primary-button mousedown (pan is allowed in idle mode).
+   *
+   * This is the no-regression guard: the filter must not over-block.
+   * If this test turns RED, the filter is blocking pan even when no draw mode is armed.
+   */
+  it('Test AB: zoom filter returns true for primary-button mousedown when no draw mode is active', () => {
+    renderMapCanvas({ drawRouteMode: false });
+
+    const filter = capturedZoomFilter.fn;
+    expect(filter, 'capturedZoomFilter.fn must be set').not.toBeNull();
+
+    // Idle mode: primary-button, no ctrlKey → filter returns true (pan allowed).
+    expect(filter!({ type: 'mousedown', button: 0, ctrlKey: false }),
+      'idle mode mousedown: filter must return true (pan allowed)').toBe(true);
+
+    // Ctrl+click (Ctrl+mousedown) is blocked by d3 default convention (button modifier) but
+    // the filter is consistent: ctrlKey=true, button=0 → returns false (same as d3 default).
+    expect(filter!({ type: 'mousedown', button: 0, ctrlKey: true }),
+      'idle mode ctrl+mousedown: filter must return false (d3 convention)').toBe(false);
+
+    // Wheel always passes regardless of draw mode.
+    expect(filter!({ type: 'wheel', button: 0 }), 'wheel in idle mode: filter must return true').toBe(true);
+  });
+
+  /**
+   * Test AC: Regardless of draw mode, a wheel event always passes the filter.
+   * Scroll-to-zoom is never blocked so the map remains zoomable while drawing routes.
+   */
+  it('Test AC: zoom filter always returns true for wheel events (zoom works in all modes)', () => {
+    // Test with addPinMode, drawRegionMode, and drawRouteMode — all should pass wheel.
+    for (const props of [
+      { addPinMode: true },
+      { drawRegionMode: true },
+      { drawRouteMode: true },
+    ]) {
+      cleanup();
+      renderMapCanvas(props);
+      const filter = capturedZoomFilter.fn;
+      expect(filter, `capturedZoomFilter.fn must be set for props ${JSON.stringify(props)}`).not.toBeNull();
+      expect(filter!({ type: 'wheel', button: 0 }),
+        `wheel must return true when ${JSON.stringify(props)}`).toBe(true);
+    }
+  });
+});
+
+// ── BUG-B fix (51-07): pin click in drawRouteMode snaps a route vertex ──────────
+//
+// Root cause: PinCircle's handlePointerUp treated every non-moved click as onNavigate,
+// regardless of whether the user was in route-draw mode. Clicking a pin in route-draw
+// mode navigated to the entry instead of appending a route vertex at the pin's coords.
+//
+// Fix: when drawRouteMode=true, handlePointerUp calls onRouteVertexAtPin(pin) instead
+// of onNavigate(pin.entryId). Pin drag is also suppressed in route mode (handlePointerMove
+// skips the `moved` update) so any pointer movement during route draw is still treated
+// as a click → vertex snap.
+//
+// Note: navigate is mocked at the module level (see top of file) so we can assert
+// it is NOT called during route-draw clicks.
+describe('PinCircle — route-vertex snap replaces navigation in drawRouteMode (BUG-B, 51-07)', () => {
+  /**
+   * Test BA: In drawRouteMode, a non-moved click on a pin calls onRouteVertexAtPin
+   * with the clicked pin's exact data (x, y, id, etc.).
+   *
+   * RED pre-fix: onRouteVertexAtPin was never wired, clicks navigated instead → FAIL.
+   * GREEN post-fix: onRouteVertexAtPin is called with the pin → PASS.
+   */
+  it('Test BA: click on pin in drawRouteMode calls onRouteVertexAtPin with the pin', () => {
+    const onRouteVertexAtPin = vi.fn();
+    const { container } = renderMapCanvas({
+      pins: [TEST_PIN],
+      drawRouteMode: true,
+      onRouteVertexAtPin,
+    });
+
+    const pinGroup = container.querySelector('.pins g[aria-label]') as Element;
+    expect(pinGroup, 'pin group must exist').not.toBeNull();
+    stubPointerCapture(pinGroup);
+
+    // Simulate a non-moved click (no pointermove fired between down and up).
+    fireEvent.pointerDown(pinGroup, { pointerId: 1, clientX: 500, clientY: 500, bubbles: true });
+    fireEvent.pointerUp(pinGroup, { pointerId: 1, clientX: 500, clientY: 500, bubbles: true });
+
+    expect(onRouteVertexAtPin, 'onRouteVertexAtPin must be called exactly once').toHaveBeenCalledTimes(1);
+    const calledWith = onRouteVertexAtPin.mock.calls[0][0] as MapPin;
+    expect(calledWith.id, 'called with the correct pin id').toBe(TEST_PIN.id);
+    expect(calledWith.x, 'called with pin.x').toBe(TEST_PIN.x);
+    expect(calledWith.y, 'called with pin.y').toBe(TEST_PIN.y);
+  });
+
+  /**
+   * Test BB: In drawRouteMode, a non-moved click on a pin does NOT call navigate.
+   * The route-vertex handler replaces navigation — no entry navigation occurs.
+   *
+   * RED pre-fix: navigate was called (bug — entry opened instead of vertex appended) → FAIL.
+   * GREEN post-fix: navigate is NOT called → PASS.
+   */
+  it('Test BB: click on pin in drawRouteMode does NOT navigate to the entry', () => {
+    const onRouteVertexAtPin = vi.fn();
+    const { container } = renderMapCanvas({
+      pins: [TEST_PIN],
+      drawRouteMode: true,
+      onRouteVertexAtPin,
+    });
+
+    const pinGroup = container.querySelector('.pins g[aria-label]') as Element;
+    expect(pinGroup, 'pin group must exist').not.toBeNull();
+    stubPointerCapture(pinGroup);
+
+    fireEvent.pointerDown(pinGroup, { pointerId: 1, clientX: 500, clientY: 500, bubbles: true });
+    fireEvent.pointerUp(pinGroup, { pointerId: 1, clientX: 500, clientY: 500, bubbles: true });
+
+    // mockNavigate is the vi.fn() returned by the mocked useNavigate (see top of file).
+    expect(mockNavigate, 'navigate must NOT be called during a route-draw pin click')
+      .not.toHaveBeenCalled();
+  });
+
+  /**
+   * Test BC: In idle mode (drawRouteMode=false), a non-moved click on a pin DOES call
+   * navigate. This is the no-regression guard for pin navigation in normal use.
+   *
+   * If this test turns RED, the BUG-B fix accidentally broke normal pin navigation.
+   */
+  it('Test BC: click on pin in idle mode (drawRouteMode=false) calls navigate (no regression)', () => {
+    const { container } = renderMapCanvas({
+      pins: [TEST_PIN],
+      drawRouteMode: false,
+    });
+
+    const pinGroup = container.querySelector('.pins g[aria-label]') as Element;
+    expect(pinGroup, 'pin group must exist').not.toBeNull();
+    stubPointerCapture(pinGroup);
+
+    fireEvent.pointerDown(pinGroup, { pointerId: 1, clientX: 500, clientY: 500, bubbles: true });
+    fireEvent.pointerUp(pinGroup, { pointerId: 1, clientX: 500, clientY: 500, bubbles: true });
+
+    expect(mockNavigate, 'idle mode: pin click must call navigate to entry detail')
+      .toHaveBeenCalledTimes(1);
+    expect(mockNavigate.mock.calls[0][0] as string).toContain(TEST_PIN.entryId);
   });
 });
