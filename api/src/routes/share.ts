@@ -471,6 +471,23 @@ const publicMapDetailSchema = publicMapSchema.extend({
       createdAt: z.string().or(z.date()),
     }),
   ),
+  // Phase 51 WR-01: routes mirror the authenticated routeSchema exactly
+  // (maps.ts routeSchema) — share projection at share-views.ts:655-690 selects
+  // these same columns. Closes share-projection-mirrors-auth-projection drift.
+  routes: z.array(
+    z.object({
+      id: z.string(),
+      mapId: z.string(),
+      entryId: z.string().nullable(),
+      name: z.string(),
+      points: z.string(),
+      color: z.string().nullable(),
+      lineStyle: z.enum(['solid', 'dashed']),
+      width: z.number().int(),
+      showArrow: z.boolean(),
+      createdAt: z.string().or(z.date()),
+    }),
+  ),
   // D-44-03: terrain areas (terrainTypeId IS NOT NULL) in a separate group;
   // enriched with terrainTypeColor/layerId/layerSortOrder for share rendering.
   terrainAreas: z.array(
