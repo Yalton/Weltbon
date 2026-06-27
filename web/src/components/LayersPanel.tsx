@@ -5,6 +5,7 @@ import {
   useCreateMapLayer,
   useUpdateMapLayer,
   useDeleteMapLayer,
+  useToggleLayerSecret,
   useCreateTerrainType,
   useUpdateTerrainType,
   useDeleteTerrainType,
@@ -93,6 +94,8 @@ export function LayersPanel({
   const createLayer = useCreateMapLayer(universeId);
   const updateLayer = useUpdateMapLayer(universeId);
   const deleteLayer = useDeleteMapLayer(universeId);
+  // Phase 52 SECRET-01: secret toggle (D-03a). LayersPanel owns its own layer mutations directly.
+  const toggleLayerSecret = useToggleLayerSecret(universeId);
   const createType = useCreateTerrainType(universeId);
   const updateType = useUpdateTerrainType(universeId);
   const deleteType = useDeleteTerrainType(universeId);
@@ -395,6 +398,34 @@ export function LayersPanel({
                           className="focus-visible:ring-2 focus-visible:ring-[color:var(--color-accent)] focus-visible:ring-offset-2 min-h-[44px]"
                           title="Visible"
                         />
+
+                        {/* Phase 52 SECRET-01: per-layer secret toggle (D-03a).
+                            LayersPanel is always owner-only (rendered !isShare in MapEditor). */}
+                        <button
+                          type="button"
+                          onClick={() =>
+                            toggleLayerSecret.mutate({ layerId: layer.id, secret: !layer.secret })
+                          }
+                          aria-label={layer.secret ? `Unmark layer ${layer.name} as secret` : `Mark layer ${layer.name} as secret`}
+                          title={layer.secret ? 'Secret (click to unmark)' : 'Not secret (click to mark)'}
+                          className={[
+                            'text-xs focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-[color:var(--color-accent)] focus-visible:ring-offset-2 min-h-[44px] min-w-[28px] flex items-center justify-center',
+                            layer.secret
+                              ? 'text-amber-500 hover:text-amber-600'
+                              : 'text-neutral-400 hover:text-neutral-600',
+                          ].join(' ')}
+                        >
+                          {/* Padlock SVG: filled when secret, outline when not */}
+                          {layer.secret ? (
+                            <svg width="14" height="14" viewBox="0 0 24 24" fill="currentColor" aria-hidden="true">
+                              <path d="M18 8h-1V6c0-2.76-2.24-5-5-5S7 3.24 7 6v2H6c-1.1 0-2 .9-2 2v10c0 1.1.9 2 2 2h12c1.1 0 2-.9 2-2V10c0-1.1-.9-2-2-2zm-6 9c-1.1 0-2-.9-2-2s.9-2 2-2 2 .9 2 2-.9 2-2 2zm3.1-9H8.9V6c0-1.71 1.39-3.1 3.1-3.1 1.71 0 3.1 1.39 3.1 3.1v2z"/>
+                            </svg>
+                          ) : (
+                            <svg width="14" height="14" viewBox="0 0 24 24" fill="currentColor" aria-hidden="true">
+                              <path d="M12 1C9.24 1 7 3.24 7 6v1H6c-1.1 0-2 .9-2 2v10c0 1.1.9 2 2 2h12c1.1 0 2-.9 2-2V9c0-1.1-.9-2-2-2h-1V6c0-2.76-2.24-5-5-5zm0 2c1.71 0 3 1.29 3 3v1H9V6c0-1.71 1.29-3 3-3zm0 9c1.1 0 2 .9 2 2s-.9 2-2 2-2-.9-2-2 .9-2 2-2z"/>
+                            </svg>
+                          )}
+                        </button>
 
                         {/* Delete layer button */}
                         <button

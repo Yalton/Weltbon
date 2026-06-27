@@ -26,6 +26,9 @@ import {
   useUpdatePinStyle,
   useUpdateRegion,
   useUpdateRoute,
+  useTogglePinSecret,
+  useToggleRegionSecret,
+  useToggleRouteSecret,
   type MapPin,
   type MapRegion,
   type MapRoute,
@@ -93,6 +96,9 @@ const COPY = {
   routeContextMenuColor: 'Change color...',
   routeContextMenuLineStyle: (current: string) => current === 'dashed' ? 'Solid line' : 'Dashed line',
   routeContextMenuArrow: (on: boolean) => on ? 'Remove arrow' : 'Add arrow',
+  // Phase 52 SECRET-01: context-menu items for toggling secret status on pins/regions/routes/layers.
+  contextMenuMarkSecret: 'Mark secret',
+  contextMenuUnmarkSecret: 'Unmark secret',
 } as const;
 
 // ─── Types ────────────────────────────────────────────────────────────────────
@@ -193,6 +199,13 @@ export function MapEditor() {
   const createRoute = useCreateRoute(uid, mid);
   const updateRoute = useUpdateRoute(uid, mid);
   const deleteRoute = useDeleteRoute(uid, mid);
+  // Phase 52 SECRET-01: secret-toggle mutations for pin, region, route.
+  // Invalidate ONLY the existing ['map', uid, mid] key — no new key segments.
+  // (memory: react-query-key-change-blast-radius)
+  // Layer secret toggle lives in LayersPanel.tsx (it already owns all layer mutations directly).
+  const togglePinSecret = useTogglePinSecret(uid, mid);
+  const toggleRegionSecret = useToggleRegionSecret(uid, mid);
+  const toggleRouteSecret = useToggleRouteSecret(uid, mid);
 
   // ── Image dimensions (loaded from the rawUrl to get intrinsic size) ──────────
   const [imageWidth, setImageWidth] = useState(DEFAULT_IMAGE_WIDTH);
@@ -805,6 +818,19 @@ export function MapEditor() {
     setContextMenu(null);
   };
 
+  // Phase 52 SECRET-01: toggle secret on pin from context menu (D-01).
+  // Only shown to owner (gated !isShare at render time).
+  const handleContextMenuTogglePinSecret = async () => {
+    if (!contextMenu) return;
+    const { pin } = contextMenu;
+    setContextMenu(null);
+    try {
+      await togglePinSecret.mutateAsync({ pinId: pin.id, secret: !pin.secret });
+    } catch {
+      setToast({ message: COPY.pinSaveError, variant: 'error' });
+    }
+  };
+
   const handleDeletePinConfirm = async () => {
     if (!deletePinTarget) return;
     try {
@@ -872,6 +898,19 @@ export function MapEditor() {
     if (!regionContextMenu) return;
     setRegionColorTarget(regionContextMenu.region);
     setRegionContextMenu(null);
+  };
+
+  // Phase 52 SECRET-01: toggle secret on region from context menu (D-01).
+  // Only shown to owner (gated !isShare at render time).
+  const handleRegionContextMenuToggleSecret = async () => {
+    if (!regionContextMenu) return;
+    const { region } = regionContextMenu;
+    setRegionContextMenu(null);
+    try {
+      await toggleRegionSecret.mutateAsync({ regionId: region.id, secret: !region.secret });
+    } catch {
+      setToast({ message: COPY.regionSaveError, variant: 'error' });
+    }
   };
 
   const handleDeleteRegionConfirm = async () => {
@@ -1061,6 +1100,19 @@ export function MapEditor() {
     setRouteContextMenu(null);
     try {
       await updateRoute.mutateAsync({ routeId: route.id, showArrow: !route.showArrow });
+    } catch {
+      setToast({ message: COPY.routeSaveError, variant: 'error' });
+    }
+  };
+
+  // Phase 52 SECRET-01: toggle secret on route from context menu (D-01).
+  // Only shown to owner (gated !isShare at render time).
+  const handleRouteContextMenuToggleSecret = async () => {
+    if (!routeContextMenu) return;
+    const { route } = routeContextMenu;
+    setRouteContextMenu(null);
+    try {
+      await toggleRouteSecret.mutateAsync({ routeId: route.id, secret: !route.secret });
     } catch {
       setToast({ message: COPY.routeSaveError, variant: 'error' });
     }
@@ -1582,6 +1634,15 @@ export function MapEditor() {
           >
             Change icon...
           </button>
+          {/* Phase 52 SECRET-01: toggle secret (D-01). Normal color/style preserved. */}
+          <button
+            type="button"
+            role="menuitem"
+            onClick={handleContextMenuTogglePinSecret}
+            className="w-full text-left text-sm px-3 py-2 hover:bg-neutral-50 dark:hover:bg-neutral-800"
+          >
+            {contextMenu?.pin.secret ? COPY.contextMenuUnmarkSecret : COPY.contextMenuMarkSecret}
+          </button>
         </div>
       )}
 
@@ -1625,6 +1686,15 @@ export function MapEditor() {
             className="w-full text-left text-sm px-3 py-2 hover:bg-neutral-50 dark:hover:bg-neutral-800"
           >
             {COPY.regionContextMenuColor}
+          </button>
+          {/* Phase 52 SECRET-01: toggle secret (D-01). Normal color/style preserved. */}
+          <button
+            type="button"
+            role="menuitem"
+            onClick={handleRegionContextMenuToggleSecret}
+            className="w-full text-left text-sm px-3 py-2 hover:bg-neutral-50 dark:hover:bg-neutral-800"
+          >
+            {regionContextMenu?.region.secret ? COPY.contextMenuUnmarkSecret : COPY.contextMenuMarkSecret}
           </button>
         </div>
       )}
@@ -1779,6 +1849,15 @@ export function MapEditor() {
             className="w-full text-left text-sm px-3 py-2 hover:bg-neutral-50 dark:hover:bg-neutral-800"
           >
             {COPY.routeContextMenuColor}
+          </button>
+          {/* Phase 52 SECRET-01: toggle secret (D-01). Normal color/style preserved. */}
+          <button
+            type="button"
+            role="menuitem"
+            onClick={handleRouteContextMenuToggleSecret}
+            className="w-full text-left text-sm px-3 py-2 hover:bg-neutral-50 dark:hover:bg-neutral-800"
+          >
+            {routeContextMenu?.route.secret ? COPY.contextMenuUnmarkSecret : COPY.contextMenuMarkSecret}
           </button>
           <button
             type="button"
