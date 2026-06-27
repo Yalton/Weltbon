@@ -68,13 +68,17 @@ vi.mock('d3-zoom', async (importOriginal) => {
   const actual = await importOriginal<typeof import('d3-zoom')>();
   return {
     ...actual,
-    // eslint-disable-next-line @typescript-eslint/no-explicit-any
     zoom: () => {
       // Call the real zoom() to get a fully-functional behavior object.
-      const behavior = (actual.zoom as () => { filter: (...args: unknown[]) => typeof behavior })();
-      const origFilter = behavior.filter.bind(behavior);
+      // Cast to `any` to avoid the TS7022 circular-type error that arises when
+      // annotating the return type as `typeof behavior` inside the same declaration.
+      // eslint-disable-next-line @typescript-eslint/no-explicit-any
+      const behavior = (actual.zoom as () => any)();
+      // eslint-disable-next-line @typescript-eslint/no-explicit-any
+      const origFilter: (...args: any[]) => unknown = behavior.filter.bind(behavior);
       // Wrap filter() to capture the fn argument and still call the original.
-      behavior.filter = (...args: unknown[]) => {
+      // eslint-disable-next-line @typescript-eslint/no-explicit-any
+      behavior.filter = (...args: any[]) => {
         if (typeof args[0] === 'function') {
           capturedZoomFilter.fn = args[0] as typeof capturedZoomFilter.fn;
         }
