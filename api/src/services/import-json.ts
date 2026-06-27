@@ -189,11 +189,13 @@ export const importSchema = z.object({
         mapId: z.string().uuid(),
         entryId: z.string().uuid().nullable().optional().default(null),
         name: z.string().optional().default(''),
-        points: z.string(),  // raw JSON text, validated as non-empty
+        // WR-02: align with create API — non-empty points string.
+        points: z.string().min(1),  // raw JSON text
         color: z.string().nullable().optional().default(null),
         // Style fields — pre-v5.3 exports lack these; defaults apply (T-51-09 backward-compat).
         lineStyle: z.enum(['solid', 'dashed']).optional().default('solid'),
-        width: z.number().int().optional().default(4),
+        // WR-02: align with create API — width must be positive.
+        width: z.number().int().positive().optional().default(4),
         showArrow: z.boolean().optional().default(false),
       })
     )
