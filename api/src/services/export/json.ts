@@ -119,6 +119,8 @@ export function exportUniverseJsonAsZip(
       y: p.y,
       color: p.color,
       icon: p.icon,
+      // Phase 52 SECRET-02: carry owner-only flag into export so re-import preserves it.
+      secret: p.secret,
     })),
     mapRegions: payload.mapRegions.map((r) => ({
       id: r.id,
@@ -129,6 +131,8 @@ export function exportUniverseJsonAsZip(
       color: r.color,
       // Phase 44 GEOSHARE-02: terrain discriminator; null = political/standalone.
       terrainTypeId: r.terrainTypeId,
+      // Phase 52 SECRET-02: carry owner-only flag into export so re-import preserves it.
+      secret: r.secret,
       createdAt: r.createdAt.toISOString(),
     })),
     // Phase 51 ROUTE-03: all routes scoped to this universe via maps FK.
@@ -142,6 +146,8 @@ export function exportUniverseJsonAsZip(
       lineStyle: r.lineStyle,
       width: r.width,
       showArrow: r.showArrow,
+      // Phase 52 SECRET-02: carry owner-only flag into export so re-import preserves it.
+      secret: r.secret,
       createdAt: r.createdAt.toISOString(),
     })),
     // Phase 44 GEOSHARE-02 D-44-08: full universe palette — all layers + types.
@@ -151,6 +157,8 @@ export function exportUniverseJsonAsZip(
       ordered: l.ordered,
       defaultOpacity: l.defaultOpacity,
       sortOrder: l.sortOrder,
+      // Phase 52 SECRET-02: carry owner-only flag into export so re-import preserves it.
+      secret: l.secret,
       createdAt: l.createdAt.toISOString(),
     })),
     terrainTypes: payload.terrainTypesData.map((t) => ({

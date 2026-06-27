@@ -101,6 +101,8 @@ export interface ExportPayloadMapPin {
   y: number;
   color: string | null;
   icon: string | null;
+  /** Phase 52 SECRET-02: owner-only flag; false = visible to share visitors. */
+  secret: boolean;
 }
 
 /** Phase 41 D-01: map region exported alongside the universe payload. */
@@ -113,6 +115,8 @@ export interface ExportPayloadMapRegion {
   color: string | null;
   /** Phase 44 GEOSHARE-02: terrain discriminator; null = political/standalone region. */
   terrainTypeId: string | null;
+  /** Phase 52 SECRET-02: owner-only flag; false = visible to share visitors. */
+  secret: boolean;
   createdAt: Date;
 }
 
@@ -127,6 +131,8 @@ export interface ExportPayloadMapRoute {
   lineStyle: string;   // 'solid' | 'dashed'
   width: number;
   showArrow: boolean;
+  /** Phase 52 SECRET-02: owner-only flag; false = visible to share visitors. */
+  secret: boolean;
   createdAt: Date;
 }
 
@@ -138,6 +144,8 @@ export interface ExportPayloadMapLayer {
   ordered: boolean;
   defaultOpacity: number;
   sortOrder: number;
+  /** Phase 52 SECRET-02: owner-only flag; false = visible to share visitors. */
+  secret: boolean;
   createdAt: Date;
 }
 
@@ -332,6 +340,8 @@ export async function loadUniverseExportPayload(universeId: string): Promise<Exp
       y: mapPins.y,
       color: mapPins.color,
       icon: mapPins.icon,
+      // Phase 52 SECRET-02: owner-only flag — carried in owner export, not share path.
+      secret: mapPins.secret,
     })
     .from(mapPins)
     .innerJoin(maps, eq(maps.id, mapPins.mapId))
@@ -349,6 +359,8 @@ export async function loadUniverseExportPayload(universeId: string): Promise<Exp
       points: mapRegions.points,
       color: mapRegions.color,
       terrainTypeId: mapRegions.terrainTypeId,
+      // Phase 52 SECRET-02: owner-only flag — carried in owner export, not share path.
+      secret: mapRegions.secret,
       createdAt: mapRegions.createdAt,
     })
     .from(mapRegions)
@@ -368,6 +380,8 @@ export async function loadUniverseExportPayload(universeId: string): Promise<Exp
       lineStyle: mapRoutes.lineStyle,
       width: mapRoutes.width,
       showArrow: mapRoutes.showArrow,
+      // Phase 52 SECRET-02: owner-only flag — carried in owner export, not share path.
+      secret: mapRoutes.secret,
       createdAt: mapRoutes.createdAt,
     })
     .from(mapRoutes)
@@ -501,6 +515,8 @@ export async function loadUniverseExportPayload(universeId: string): Promise<Exp
       y: p.y,
       color: p.color ?? null,
       icon: p.icon ?? null,
+      // Phase 52 SECRET-02: plain boolean pass-through — no remap needed.
+      secret: p.secret,
     })),
     mapRegions: mapRegionRows.map((r) => ({
       id: r.id,
@@ -511,6 +527,8 @@ export async function loadUniverseExportPayload(universeId: string): Promise<Exp
       color: r.color ?? null,
       // Phase 44 GEOSHARE-02: terrain discriminator; null = political/standalone.
       terrainTypeId: r.terrainTypeId ?? null,
+      // Phase 52 SECRET-02: plain boolean pass-through — no remap needed.
+      secret: r.secret,
       createdAt: r.createdAt,
     })),
     // Phase 51 ROUTE-03: all routes scoped to this universe via maps FK.
@@ -524,6 +542,8 @@ export async function loadUniverseExportPayload(universeId: string): Promise<Exp
       lineStyle: r.lineStyle,
       width: r.width,
       showArrow: r.showArrow,
+      // Phase 52 SECRET-02: plain boolean pass-through — no remap needed.
+      secret: r.secret,
       createdAt: r.createdAt,
     })),
     // Phase 44 GEOSHARE-02 D-44-08: full palette — export ALL layers/types for the universe.
@@ -534,6 +554,9 @@ export async function loadUniverseExportPayload(universeId: string): Promise<Exp
       ordered: l.ordered,
       defaultOpacity: l.defaultOpacity,
       sortOrder: l.sortOrder,
+      // Phase 52 SECRET-02: mapLayerRows uses select * so `secret` is in the row;
+      // explicit inclusion here keeps the interface contract satisfied.
+      secret: l.secret,
       createdAt: l.createdAt,
     })),
     terrainTypesData: terrainTypeRows.map((t) => ({
