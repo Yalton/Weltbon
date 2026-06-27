@@ -578,6 +578,10 @@ export const mapPins = pgTable('map_pins', {
   y:       doublePrecision('y').notNull(),
   color:   text('color'),   // nullable hex; null → entryTypeHexColor fallback (D-01)
   icon:    text('icon'),    // nullable glyph key (D-02)
+  // Phase 52 SECRET-01/02: owner-only secret flag (default false = not secret).
+  // Server-side share filter in share-views.ts drops items where secret=true.
+  // Inverse polarity of entries.isPublic: false = visible, true = excluded from share.
+  secret: boolean('secret').default(false).notNull(),
 });
 
 /**
@@ -605,6 +609,10 @@ export const mapRegions = pgTable('map_regions', {
   createdAt:     timestamp('created_at').defaultNow().notNull(),
   // eslint-disable-next-line @typescript-eslint/no-use-before-define
   terrainTypeId: uuid('terrain_type_id').references((): any => terrainTypes.id, { onDelete: 'set null' }),  // nullable discriminator (Phase 42)
+  // Phase 52 SECRET-01/02: owner-only secret flag (default false = not secret).
+  // Server-side share filter in share-views.ts drops items where secret=true.
+  // Inverse polarity of entries.isPublic: false = visible, true = excluded from share.
+  secret: boolean('secret').default(false).notNull(),
 });
 
 /**
@@ -630,6 +638,10 @@ export const mapRoutes = pgTable('map_routes', {
   width:     integer('width').notNull().default(4),           // discrete preset px (D-03)
   showArrow: boolean('show_arrow').notNull().default(false),  // end-arrowhead (D-04)
   createdAt: timestamp('created_at').defaultNow().notNull(),
+  // Phase 52 SECRET-01/02: owner-only secret flag (default false = not secret).
+  // Server-side share filter in share-views.ts drops items where secret=true.
+  // Inverse polarity of entries.isPublic: false = visible, true = excluded from share.
+  secret: boolean('secret').default(false).notNull(),
 });
 
 /**
@@ -649,6 +661,10 @@ export const mapLayers = pgTable('map_layers', {
   defaultOpacity: doublePrecision('default_opacity').notNull().default(0.6),
   sortOrder:      integer('sort_order').notNull().default(0),
   createdAt:      timestamp('created_at').defaultNow().notNull(),
+  // Phase 52 SECRET-01/02: owner-only secret flag (default false = not secret).
+  // Server-side share filter in share-views.ts drops items where secret=true.
+  // Inverse polarity of entries.isPublic: false = visible, true = excluded from share.
+  secret: boolean('secret').default(false).notNull(),
 });
 
 /**
