@@ -255,6 +255,7 @@ function makeLayers(): MapLayer[] {
       defaultOpacity: 0.7,
       sortOrder: 0,
       createdAt: '2026-01-01T00:00:00Z',
+      secret: false,
       terrainTypes: [
         {
           id: TYPE_A1_ID,
@@ -284,6 +285,7 @@ function makeLayers(): MapLayer[] {
       defaultOpacity: 0.5,
       sortOrder: 1,
       createdAt: '2026-01-01T00:00:00Z',
+      secret: false,
       terrainTypes: [
         {
           id: TYPE_B1_ID,
@@ -335,6 +337,7 @@ function makeMapDetail(): MapDetail {
         ]),
         color: null,
         createdAt: '2026-01-01T00:00:00Z',
+        secret: false,
         terrainTypeId: TYPE_A1_ID,          // Elevation / Lowlands (sortOrder 0)
         terrainTypeColor: '#a8d5a2',
         layerId: LAYER_A_ID,
@@ -352,6 +355,7 @@ function makeMapDetail(): MapDetail {
         ]),
         color: null,
         createdAt: '2026-01-01T00:00:00Z',
+        secret: false,
         terrainTypeId: TYPE_A2_ID,          // Elevation / Highlands (sortOrder 1)
         terrainTypeColor: '#6b8f5e',
         layerId: LAYER_A_ID,
@@ -369,6 +373,7 @@ function makeMapDetail(): MapDetail {
         ]),
         color: null,
         createdAt: '2026-01-01T00:00:00Z',
+        secret: false,
         terrainTypeId: TYPE_B1_ID,          // Biomes / Forest
         terrainTypeColor: '#228b22',
         layerId: LAYER_B_ID,
@@ -627,6 +632,7 @@ describe('MapEditor route interactions (ROUTE-02, Plan 07)', () => {
     lineStyle: 'solid' as const,
     width: 4,
     showArrow: false,
+    secret: false,
     createdAt: '2026-01-01T00:00:00Z',
   };
 

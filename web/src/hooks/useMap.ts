@@ -16,6 +16,10 @@ export interface MapPin {
   // Phase 40 MAPS-05 style overrides (D-01, D-02):
   color?: string | null; // nullable hex — null means entryTypeHexColor fallback
   icon?: string | null;  // nullable glyph key from mapGlyphs.ts
+  // Phase 52 SECRET-01: owner-only secret flag (false = visible; true = hidden from share).
+  // Non-optional — the server always returns it. Share responses never include secret=true pins
+  // (they are filtered server-side in getPublicMap / share-views.ts).
+  secret: boolean;
   // Joined display fields — injected by the editor from useEntries, NOT returned by the API.
   // API returns bare map_pins rows (no entry join server-side).
   entryTitle?: string;
@@ -38,6 +42,9 @@ export interface MapRegion {
   points: string; // JSON: [{x:number, y:number}, ...] normalized 0..1
   color: string | null; // nullable hex — null means neutral fallback
   createdAt: string;
+  // Phase 52 SECRET-01: owner-only secret flag. Non-optional — server always returns it.
+  // Share responses never include secret=true regions (filtered in getPublicMap).
+  secret: boolean;
   // Phase 43: terrain discriminator — null = political/standalone; non-null = terrain area
   terrainTypeId?: string | null;
 }
@@ -68,6 +75,9 @@ export interface MapRoute {
   lineStyle: 'solid' | 'dashed';
   width: number;
   showArrow: boolean;
+  // Phase 52 SECRET-01: owner-only secret flag. Non-optional — server always returns it.
+  // Share responses never include secret=true routes (filtered in getPublicMap).
+  secret: boolean;
   createdAt: string;
 }
 
@@ -377,6 +387,81 @@ export function useDeleteRoute(universeId: string, mapId: string) {
         { method: 'DELETE' },
       ),
     onSuccess: () => {
+      qc.invalidateQueries({ queryKey: ['map', universeId, mapId] });
+    },
+  });
+}
+
+// ─── Phase 52 SECRET-01: Secret toggle mutations ──────────────────────────────
+// Each mutation PATCHes the respective item with { secret } and invalidates the
+// EXISTING ['map', universeId, mapId] key verbatim — no new key segment.
+// (memory: react-query-key-change-blast-radius)
+
+/**
+ * useTogglePinSecret — PATCH .../pins/:pinId/style with { secret }.
+ * Rides the existing pinStyleSchema endpoint (52-03 D-01).
+ * Invalidates ['map', universeId, mapId] — EXACT key shape, no new segment.
+ */
+export function useTogglePinSecret(universeId: string, mapId: string) {
+  const qc = useQueryClient();
+  return useMutation({
+    mutationFn: ({ pinId, secret }: { pinId: string; secret: boolean }) =>
+      api<MapPin>(
+        `/universes/${universeId}/maps/${mapId}/pins/${pinId}/style`,
+        {
+          method: 'PATCH',
+          body: JSON.stringify({ secret }),
+        },
+      ),
+    onSuccess: () => {
+      // CRITICAL: same key — no blast-radius re-key
+      // (memory: react-query-key-change-blast-radius)
+      qc.invalidateQueries({ queryKey: ['map', universeId, mapId] });
+    },
+  });
+}
+
+/**
+ * useToggleRegionSecret — PATCH .../regions/:regionId with { secret }.
+ * Invalidates ['map', universeId, mapId] — EXACT key shape, no new segment.
+ */
+export function useToggleRegionSecret(universeId: string, mapId: string) {
+  const qc = useQueryClient();
+  return useMutation({
+    mutationFn: ({ regionId, secret }: { regionId: string; secret: boolean }) =>
+      api<MapRegion>(
+        `/universes/${universeId}/maps/${mapId}/regions/${regionId}`,
+        {
+          method: 'PATCH',
+          body: JSON.stringify({ secret }),
+        },
+      ),
+    onSuccess: () => {
+      // CRITICAL: same key — no blast-radius re-key
+      // (memory: react-query-key-change-blast-radius)
+      qc.invalidateQueries({ queryKey: ['map', universeId, mapId] });
+    },
+  });
+}
+
+/**
+ * useToggleRouteSecret — PATCH .../routes/:routeId with { secret }.
+ * Invalidates ['map', universeId, mapId] — EXACT key shape, no new segment.
+ */
+export function useToggleRouteSecret(universeId: string, mapId: string) {
+  const qc = useQueryClient();
+  return useMutation({
+    mutationFn: ({ routeId, secret }: { routeId: string; secret: boolean }) =>
+      api<MapRoute>(
+        `/universes/${universeId}/maps/${mapId}/routes/${routeId}`,
+        {
+          method: 'PATCH',
+          body: JSON.stringify({ secret }),
+        },
+      ),
+    onSuccess: () => {
+      // CRITICAL: same key — no blast-radius re-key
+      // (memory: react-query-key-change-blast-radius)
       qc.invalidateQueries({ queryKey: ['map', universeId, mapId] });
     },
   });

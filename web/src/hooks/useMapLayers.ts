@@ -23,6 +23,9 @@ export interface MapLayer {
   defaultOpacity: number; // 0–1, default 0.6 (D-42-08); rendering in Phase 43
   sortOrder: number;
   createdAt: string;
+  // Phase 52 SECRET-01: owner-only secret flag (false = visible; true = excluded from share).
+  // Non-optional — server always returns it. Share layer responses filter secret=true layers.
+  secret: boolean;
   terrainTypes?: TerrainType[]; // populated when fetched via the GET list (two-query strategy)
 }
 
@@ -83,6 +86,25 @@ export function useDeleteMapLayer(universeId: string) {
     mutationFn: (layerId: string) =>
       api<void>(`/universes/${universeId}/map-layers/${layerId}`, {
         method: 'DELETE',
+      }),
+    onSuccess: () => {
+      qc.invalidateQueries({ queryKey: ['map-layers', universeId] });
+    },
+  });
+}
+
+/**
+ * useToggleLayerSecret — Phase 52 SECRET-01: PATCH .../map-layers/:layerId with { secret }.
+ * Invalidates ['map-layers', universeId] — matching useUpdateMapLayer.onSuccess.
+ * (memory: react-query-key-change-blast-radius — do NOT add new segments)
+ */
+export function useToggleLayerSecret(universeId: string) {
+  const qc = useQueryClient();
+  return useMutation({
+    mutationFn: ({ layerId, secret }: { layerId: string; secret: boolean }) =>
+      api<MapLayer>(`/universes/${universeId}/map-layers/${layerId}`, {
+        method: 'PATCH',
+        body: JSON.stringify({ secret }),
       }),
     onSuccess: () => {
       qc.invalidateQueries({ queryKey: ['map-layers', universeId] });

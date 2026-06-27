@@ -111,6 +111,7 @@ const TERRAIN_AREA: TerrainAreaRegion = {
   points: SQUARE_POINTS,
   color: null,
   createdAt: CREATED_AT,
+  secret: false,
   terrainTypeId: 'tt1',
   terrainTypeColor: '#228b22',
   layerId: 'L1',
@@ -125,6 +126,7 @@ const LAYER: MapLayer = {
   defaultOpacity: 0.6,
   sortOrder: 0,
   createdAt: CREATED_AT,
+  secret: false,
 };
 
 const POLITICAL_REGION: MapRegion = {
@@ -135,6 +137,7 @@ const POLITICAL_REGION: MapRegion = {
   points: SQUARE_POINTS,
   color: '#6b7280',
   createdAt: CREATED_AT,
+  secret: false,
   terrainTypeId: null,
 };
 
@@ -305,6 +308,7 @@ const TEST_PIN: MapPin = {
   y: 0.5,
   color: '#3b82f6',
   icon: null,
+  secret: false,
   entryTitle: 'Camp Fire',
   entryType: 'location',
 };
@@ -318,6 +322,7 @@ const BARE_PIN: MapPin = {
   y: 0.3,
   color: null,
   icon: null,
+  secret: false,
   entryTitle: 'Unknown',
   entryType: undefined,
 };
@@ -461,6 +466,7 @@ const PIN_WITH_SUMMARY: MapPin = {
   y: 0.5,
   color: '#ff0000',
   icon: null,
+  secret: false,
   entryTitle: 'Dragon Keep',
   entryType: 'location',
   summary: 'An ancient fortress in the mountains.',
@@ -474,6 +480,7 @@ const PIN_EMPTY_SUMMARY: MapPin = {
   y: 0.4,
   color: '#0000ff',
   icon: null,
+  secret: false,
   entryTitle: 'Silent Town',
   entryType: 'location',
   summary: '',
@@ -487,6 +494,7 @@ const PIN_NULL_SUMMARY: MapPin = {
   y: 0.6,
   color: '#00ff00',
   icon: null,
+  secret: false,
   entryTitle: 'Hidden Cove',
   entryType: 'location',
   summary: null,
@@ -500,6 +508,7 @@ const REGION_FOR_HOVER: MapRegion = {
   points: SQUARE_POINTS,
   color: '#6b7280',
   createdAt: CREATED_AT,
+  secret: false,
   terrainTypeId: null,
 };
 
@@ -659,6 +668,7 @@ const SOLID_ROUTE: MapRoute = {
   lineStyle: 'solid',
   width: 4,
   showArrow: false,
+  secret: false,
   createdAt: CREATED_AT,
 };
 
@@ -672,6 +682,7 @@ const DASHED_ROUTE: MapRoute = {
   lineStyle: 'dashed',
   width: 2,
   showArrow: false,
+  secret: false,
   createdAt: CREATED_AT,
 };
 
@@ -685,6 +696,7 @@ const NAMED_ROUTE: MapRoute = {
   lineStyle: 'solid',
   width: 4,
   showArrow: false,
+  secret: false,
   createdAt: CREATED_AT,
 };
 
@@ -698,6 +710,7 @@ const ARROW_ROUTE: MapRoute = {
   lineStyle: 'solid',
   width: 4,
   showArrow: true,
+  secret: false,
   createdAt: CREATED_AT,
 };
 
