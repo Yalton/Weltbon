@@ -3,6 +3,7 @@ import sharp from 'sharp';
 import { db } from '../db/client.js';
 import { universes, entries, links, categories, issues, issueEntries, graphPositions, timelinePins, assets, maps, mapPins, mapRegions, mapRoutes, mapLayers, terrainTypes } from '../db/schema.js';
 import { storageBackend } from './storage/local.js';
+import { isValidRoutePoints, ROUTE_POINTS_ERROR } from '../utils/route-points.js';
 
 // CR-02: quota enforcement on the import path (same cap as the upload path).
 const DEFAULT_MAX_UNIVERSE_QUOTA = 500 * 1024 * 1024; // 500 MB
@@ -190,7 +191,11 @@ export const importSchema = z.object({
         entryId: z.string().uuid().nullable().optional().default(null),
         name: z.string().optional().default(''),
         // WR-02: align with create API — non-empty points string.
-        points: z.string().min(1),  // raw JSON text
+        // WR-03: structurally validate as a JSON array of {x,y} in [0,1].
+        points: z
+          .string()
+          .min(1)
+          .refine(isValidRoutePoints, { message: ROUTE_POINTS_ERROR }),  // raw JSON text
         color: z.string().nullable().optional().default(null),
         // Style fields — pre-v5.3 exports lack these; defaults apply (T-51-09 backward-compat).
         lineStyle: z.enum(['solid', 'dashed']).optional().default('solid'),

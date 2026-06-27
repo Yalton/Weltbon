@@ -24,6 +24,7 @@ import { db } from '../db/client.js';
 import { maps, mapPins, mapRegions, mapRoutes, entries, assets, terrainTypes, mapLayers } from '../db/schema.js';
 import { requireUniverse } from '../utils/ownership.js';
 import { signAssetUrl } from '../services/asset-signing.js';
+import { isValidRoutePoints, ROUTE_POINTS_ERROR } from '../utils/route-points.js';
 import type { AuthVariables } from '../middleware/auth.js';
 
 type AppEnv = { Variables: AuthVariables };
@@ -155,7 +156,8 @@ const routeSchema = z.object({
 
 const createRouteSchema = z.object({
   name: z.string().max(200).default(''),
-  points: z.string().min(1),
+  // Phase 51 WR-03: structurally validate the raw points JSON server-side.
+  points: z.string().min(1).refine(isValidRoutePoints, { message: ROUTE_POINTS_ERROR }),
   // entryId/color nullable — draw-route UI may send explicit null for standalone route
   entryId: z.string().uuid().nullable().optional(),
   color: z.string().nullable().optional(),
