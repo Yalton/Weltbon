@@ -1396,6 +1396,10 @@ export function MapEditor() {
         onRouteContextMenu={isShare ? () => {} : handleRouteContextMenu}
         drawRouteMode={!isShare && drawRouteMode}
         onCanvasDblClick={isShare ? undefined : handleCanvasDblClick}
+        onRouteVertexAtPin={isShare ? undefined : (pin) => {
+          if (!drawRouteMode) return;
+          setPendingVertices((v) => [...v, { x: pin.x, y: pin.y }]);
+        }}
       />
 
       {/* ── Glassy map chrome — rendered in BOTH editor and share mode (D-09 parity) ── */}
