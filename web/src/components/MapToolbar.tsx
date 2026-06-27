@@ -46,7 +46,7 @@ export interface MapToolbarProps {
   /** Called when the search input value changes. Only rendered when provided. */
   onSearchQueryChange?: (q: string) => void;
   /** Ref forwarded to the search `<input>` element for programmatic focus (/ shortcut). */
-  searchInputRef?: React.RefObject<HTMLInputElement>;
+  searchInputRef?: React.RefObject<HTMLInputElement | null>;
 }
 
 /**
