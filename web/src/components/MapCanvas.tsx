@@ -183,6 +183,9 @@ function PinCircle({
 }: PinCircleProps) {
   // Pin color: explicit override or fallback to entry type color (D-01, graceful degradation D-03)
   const pinColor = pin.color ?? entryTypeHexColor(pin.entryType ?? 'concept');
+  // Phase 52 SECRET-01: shareToken for lock-badge gate (D-02).
+  // Hook called unconditionally at component top — React Hook rules.
+  const shareTokenForBadge = useShareToken();
 
   // ── Drag visual position (D-11 fix) ────────────────────────────────────────
   // Stored in local state so a parent re-render during drag (e.g. selection state
@@ -345,6 +348,29 @@ function PinCircle({
           <GlyphIcon glyph={pin.icon} size={16} color="#fff" />
         </foreignObject>
       )}
+
+      {/* Phase 52 SECRET-01: lock badge — owner-only, normal style intact (D-02).
+          CRITICAL: React SVG only. NEVER attach d3 .on(event,(e,d)=>) here — d is
+          undefined on React-rendered nodes and throws (memory: timeline-pins-react-rendered-no-d3-datum).
+          Position: top-right of the teardrop circle (10, -30). Badge = dark circle + SVG padlock. */}
+      {pin.secret && !shareTokenForBadge && (
+        <g transform="translate(10,-30)" style={{ pointerEvents: 'none' }} aria-label="Secret">
+          {/* Dark chip */}
+          <circle r={7} fill="rgba(15,23,42,0.85)" />
+          {/* Padlock shackle (arc) */}
+          <path
+            d="M-2.5,0.5 L-2.5,-2 A2.5,2.5 0 0,1 2.5,-2 L2.5,0.5"
+            stroke="#f1f5f9"
+            strokeWidth={1.2}
+            fill="none"
+            strokeLinecap="round"
+          />
+          {/* Padlock body */}
+          <rect x="-3.5" y="0" width="7" height="5" rx="1" fill="#f1f5f9" />
+          {/* Keyhole dot */}
+          <circle cx={0} cy={2.5} r={1} fill="rgba(15,23,42,0.85)" />
+        </g>
+      )}
     </g>
   );
 }
@@ -388,6 +414,9 @@ function RegionPolygon({
   onRegionHoverEnter,
   onRegionHoverLeave,
 }: RegionPolygonProps) {
+  // Phase 52 SECRET-01: shareToken for lock-badge gate. Hook called unconditionally (React rules).
+  const shareTokenForBadge = useShareToken();
+
   // Parse the points JSON string to [{x, y}] normalized 0..1 then convert to image space.
   let points: Array<{ x: number; y: number }> = [];
   try {
@@ -404,6 +433,10 @@ function RegionPolygon({
     .join(' ');
 
   const color = region.color ?? '#6b7280';
+
+  // Centroid (simple average of vertices) for badge placement.
+  const centroidX = points.reduce((s, p) => s + p.x * imageWidth, 0) / points.length;
+  const centroidY = points.reduce((s, p) => s + p.y * imageHeight, 0) / points.length;
 
   const handleClick = (e: React.MouseEvent<SVGPolygonElement>) => {
     // While isDrawing: return early WITHOUT stopPropagation and WITHOUT calling onRegionClick.
@@ -430,24 +463,43 @@ function RegionPolygon({
   };
 
   return (
-    <polygon
-      points={svgPoints}
-      fill={color}
-      fillOpacity={0.18}
-      stroke={color}
-      strokeWidth={1.5}
-      strokeOpacity={1}
-      style={{
-        cursor: region.entryId ? 'pointer' : 'default',
-        pointerEvents: isDrawing ? 'none' : 'auto',
-      }}
-      onClick={handleClick}
-      onContextMenu={handleContextMenu}
-      onPointerEnter={handlePointerEnter}
-      onPointerLeave={handlePointerLeave}
-    >
-      <title>{region.name || 'Region'}</title>
-    </polygon>
+    <g>
+      <polygon
+        points={svgPoints}
+        fill={color}
+        fillOpacity={0.18}
+        stroke={color}
+        strokeWidth={1.5}
+        strokeOpacity={1}
+        style={{
+          cursor: region.entryId ? 'pointer' : 'default',
+          pointerEvents: isDrawing ? 'none' : 'auto',
+        }}
+        onClick={handleClick}
+        onContextMenu={handleContextMenu}
+        onPointerEnter={handlePointerEnter}
+        onPointerLeave={handlePointerLeave}
+      >
+        <title>{region.name || 'Region'}</title>
+      </polygon>
+
+      {/* Phase 52 SECRET-01: lock badge at centroid — owner-only, normal style intact (D-02).
+          CRITICAL: React SVG only, no d3 datum handlers (memory: timeline-pins-react-rendered-no-d3-datum). */}
+      {region.secret && !shareTokenForBadge && (
+        <g transform={`translate(${centroidX},${centroidY})`} style={{ pointerEvents: 'none' }} aria-label="Secret">
+          <circle r={8} fill="rgba(15,23,42,0.85)" />
+          <path
+            d="M-2.5,0.5 L-2.5,-2 A2.5,2.5 0 0,1 2.5,-2 L2.5,0.5"
+            stroke="#f1f5f9"
+            strokeWidth={1.2}
+            fill="none"
+            strokeLinecap="round"
+          />
+          <rect x="-3.5" y="0" width="7" height="5" rx="1" fill="#f1f5f9" />
+          <circle cx={0} cy={2.5} r={1} fill="rgba(15,23,42,0.85)" />
+        </g>
+      )}
+    </g>
   );
 }
 
@@ -493,6 +545,9 @@ function RoutePolyline({
   onRouteHoverEnter,
   onRouteHoverLeave,
 }: RoutePolylineProps) {
+  // Phase 52 SECRET-01: shareToken for lock-badge gate. Hook called unconditionally (React rules).
+  const shareTokenForBadge = useShareToken();
+
   // T-51-11: Parse points JSON — malformed or short geometry renders null rather than throwing.
   let points: Array<{ x: number; y: number }> = [];
   try {
@@ -630,6 +685,23 @@ function RoutePolyline({
             {labelText}
           </div>
         </foreignObject>
+      )}
+
+      {/* Phase 52 SECRET-01: lock badge at route midpoint — owner-only, normal style intact (D-02).
+          CRITICAL: React SVG only, no d3 datum handlers (memory: timeline-pins-react-rendered-no-d3-datum). */}
+      {route.secret && !shareTokenForBadge && (
+        <g transform={`translate(${midX + 14},${midY - 14})`} style={{ pointerEvents: 'none' }} aria-label="Secret">
+          <circle r={8} fill="rgba(15,23,42,0.85)" />
+          <path
+            d="M-2.5,0.5 L-2.5,-2 A2.5,2.5 0 0,1 2.5,-2 L2.5,0.5"
+            stroke="#f1f5f9"
+            strokeWidth={1.2}
+            fill="none"
+            strokeLinecap="round"
+          />
+          <rect x="-3.5" y="0" width="7" height="5" rx="1" fill="#f1f5f9" />
+          <circle cx={0} cy={2.5} r={1} fill="rgba(15,23,42,0.85)" />
+        </g>
       )}
     </g>
   );
