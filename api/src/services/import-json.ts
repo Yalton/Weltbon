@@ -161,6 +161,9 @@ export const importSchema = z.object({
         y: z.number().finite().min(0).max(1),
         color: z.string().nullable().optional().default(null),
         icon: z.string().nullable().optional().default(null),
+        // Phase 52 SECRET-02: pre-v5.4 exports lack this field → default false
+        // (backward-compat: missing secret key imports cleanly, T-52-10 mitigation).
+        secret: z.boolean().optional().default(false),
       })
     )
     .optional()
@@ -177,6 +180,9 @@ export const importSchema = z.object({
         // Phase 44 GEOSHARE-02: terrain discriminator; null = political/standalone.
         // Pre-v5.1 exports lack this field → default null (backward-compat, SC2).
         terrainTypeId: z.string().uuid().nullable().optional().default(null),
+        // Phase 52 SECRET-02: pre-v5.4 exports lack this field → default false
+        // (backward-compat: missing secret key imports cleanly, T-52-10 mitigation).
+        secret: z.boolean().optional().default(false),
       })
     )
     .optional()
@@ -203,6 +209,9 @@ export const importSchema = z.object({
         // WR-04: cap stroke width (mirror create/update route schemas).
         width: z.number().int().positive().max(64).optional().default(4),
         showArrow: z.boolean().optional().default(false),
+        // Phase 52 SECRET-02: pre-v5.4 exports lack this field → default false
+        // (backward-compat: missing secret key imports cleanly, T-52-10 mitigation).
+        secret: z.boolean().optional().default(false),
       })
     )
     .optional()
@@ -217,6 +226,9 @@ export const importSchema = z.object({
         ordered: z.boolean().optional().default(false),
         defaultOpacity: z.number().min(0).max(1).optional().default(0.6),
         sortOrder: z.number().int().optional().default(0),
+        // Phase 52 SECRET-02: pre-v5.4 exports lack this field → default false
+        // (backward-compat: missing secret key imports cleanly, T-52-10 mitigation).
+        secret: z.boolean().optional().default(false),
       })
     )
     .optional()
@@ -535,6 +547,8 @@ export async function importUniverseJson(
         y: pin.y,
         color: pin.color ?? null,
         icon: pin.icon ?? null,
+        // Phase 52 SECRET-02: plain boolean pass-through — no ID remap needed.
+        secret: pin.secret,
       });
     }
 
@@ -555,6 +569,8 @@ export async function importUniverseJson(
           ordered: layer.ordered,
           defaultOpacity: layer.defaultOpacity,
           sortOrder: layer.sortOrder,
+          // Phase 52 SECRET-02: plain boolean pass-through — no ID remap needed.
+          secret: layer.secret,
         })
         .returning({ id: mapLayers.id });
       layerIdMap.set(layer.id, created.id);
@@ -607,6 +623,8 @@ export async function importUniverseJson(
         points: region.points,
         color: region.color ?? null,
         terrainTypeId: newTerrainTypeId,
+        // Phase 52 SECRET-02: plain boolean pass-through — no ID remap needed.
+        secret: region.secret,
       });
     }
 
@@ -635,6 +653,8 @@ export async function importUniverseJson(
         lineStyle: route.lineStyle,
         width: route.width,
         showArrow: route.showArrow,
+        // Phase 52 SECRET-02: plain boolean pass-through — no ID remap needed.
+        secret: route.secret,
       });
     }
 
