@@ -29,6 +29,8 @@ vi.mock('../hooks/useMapLayers', () => ({
   useCreateMapLayer: vi.fn(() => ({ mutate: vi.fn(), isPending: false })),
   useUpdateMapLayer: vi.fn(() => ({ mutate: vi.fn(), isPending: false })),
   useDeleteMapLayer: vi.fn(() => ({ mutate: vi.fn(), isPending: false })),
+  // Phase 52 SECRET-01: secret-toggle mock (Rule 1 fix — mock must match export surface)
+  useToggleLayerSecret: vi.fn(() => ({ mutate: vi.fn(), isPending: false })),
   useCreateTerrainType: vi.fn(() => ({ mutate: vi.fn(), isPending: false })),
   useUpdateTerrainType: vi.fn(() => ({ mutate: vi.fn(), isPending: false })),
   useDeleteTerrainType: vi.fn(() => ({ mutate: vi.fn(), isPending: false })),
@@ -69,6 +71,7 @@ const ORDERED_LAYER = {
   defaultOpacity: 0.6,
   sortOrder: 0,
   createdAt: '2026-06-19T00:00:00.000Z',
+  secret: false,
   terrainTypes: [
     {
       id: 'type-1',
