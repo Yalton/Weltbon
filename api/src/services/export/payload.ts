@@ -103,6 +103,8 @@ export interface ExportPayloadMapPin {
   icon: string | null;
   /** Phase 52 SECRET-02: owner-only flag; false = visible to share visitors. */
   secret: boolean;
+  /** Phase 53 NEST-01: target nested map (null = not a map link). */
+  targetMapId: string | null;
 }
 
 /** Phase 41 D-01: map region exported alongside the universe payload. */
@@ -117,6 +119,8 @@ export interface ExportPayloadMapRegion {
   terrainTypeId: string | null;
   /** Phase 52 SECRET-02: owner-only flag; false = visible to share visitors. */
   secret: boolean;
+  /** Phase 53 NEST-01: target nested map (null = not a map link). */
+  targetMapId: string | null;
   createdAt: Date;
 }
 
@@ -342,6 +346,8 @@ export async function loadUniverseExportPayload(universeId: string): Promise<Exp
       icon: mapPins.icon,
       // Phase 52 SECRET-02: owner-only flag — carried in owner export, not share path.
       secret: mapPins.secret,
+      // Phase 53 NEST-01: target map link for nested-map navigation round-trip.
+      targetMapId: mapPins.targetMapId,
     })
     .from(mapPins)
     .innerJoin(maps, eq(maps.id, mapPins.mapId))
@@ -361,6 +367,8 @@ export async function loadUniverseExportPayload(universeId: string): Promise<Exp
       terrainTypeId: mapRegions.terrainTypeId,
       // Phase 52 SECRET-02: owner-only flag — carried in owner export, not share path.
       secret: mapRegions.secret,
+      // Phase 53 NEST-01: target map link for nested-map navigation round-trip.
+      targetMapId: mapRegions.targetMapId,
       createdAt: mapRegions.createdAt,
     })
     .from(mapRegions)
@@ -517,6 +525,8 @@ export async function loadUniverseExportPayload(universeId: string): Promise<Exp
       icon: p.icon ?? null,
       // Phase 52 SECRET-02: plain boolean pass-through — no remap needed.
       secret: p.secret,
+      // Phase 53 NEST-01: carry for round-trip remap on import.
+      targetMapId: p.targetMapId ?? null,
     })),
     mapRegions: mapRegionRows.map((r) => ({
       id: r.id,
@@ -529,6 +539,8 @@ export async function loadUniverseExportPayload(universeId: string): Promise<Exp
       terrainTypeId: r.terrainTypeId ?? null,
       // Phase 52 SECRET-02: plain boolean pass-through — no remap needed.
       secret: r.secret,
+      // Phase 53 NEST-01: carry for round-trip remap on import.
+      targetMapId: r.targetMapId ?? null,
       createdAt: r.createdAt,
     })),
     // Phase 51 ROUTE-03: all routes scoped to this universe via maps FK.

@@ -121,6 +121,8 @@ export function exportUniverseJsonAsZip(
       icon: p.icon,
       // Phase 52 SECRET-02: carry owner-only flag into export so re-import preserves it.
       secret: p.secret,
+      // Phase 53 NEST-01: carry for round-trip remap on import.
+      targetMapId: p.targetMapId,
     })),
     mapRegions: payload.mapRegions.map((r) => ({
       id: r.id,
@@ -133,6 +135,8 @@ export function exportUniverseJsonAsZip(
       terrainTypeId: r.terrainTypeId,
       // Phase 52 SECRET-02: carry owner-only flag into export so re-import preserves it.
       secret: r.secret,
+      // Phase 53 NEST-01: carry for round-trip remap on import.
+      targetMapId: r.targetMapId,
       createdAt: r.createdAt.toISOString(),
     })),
     // Phase 51 ROUTE-03: all routes scoped to this universe via maps FK.
