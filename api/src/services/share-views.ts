@@ -20,7 +20,7 @@
  */
 
 import { alias } from 'drizzle-orm/pg-core';
-import { and, asc, desc, eq, inArray, isNotNull, isNull, like, or } from 'drizzle-orm';
+import { and, asc, desc, eq, inArray, isNotNull, isNull, like, or, sql } from 'drizzle-orm';
 import { db as getDb } from '../db/client.js';
 import {
   assets,
@@ -556,22 +556,59 @@ export async function getPublicMap(universeId: string, mapId: string) {
     .limit(1);
   if (!map) return null;
 
-  // Privacy-filtered pins: inner join to entries, isPublic=true filter
-  const pins = await getDb()
-    .select({
-      id: mapPins.id,
-      mapId: mapPins.mapId,
-      entryId: mapPins.entryId,
-      x: mapPins.x,
-      y: mapPins.y,
-      color: mapPins.color,
-      icon: mapPins.icon,
-      summary: entries.summary,   // D-09: entries already INNER JOINed for isPublic filter; no new join needed
-    })
-    .from(mapPins)
-    .innerJoin(entries, eq(entries.id, mapPins.entryId))
-    // Phase 52 T-52-03: add eq(mapPins.secret, false) — secret pins must never reach share callers.
-    .where(and(eq(mapPins.mapId, mapId), eq(entries.isPublic, true), eq(mapPins.secret, false)));
+  // Privacy-filtered pins: split into two branches (Phase 53 D-01a / NEST-01).
+  //
+  // Branch 1 — Entry-linked pins (entryId IS NOT NULL):
+  //   INNER JOIN entries enforces the isPublic=true privacy filter exactly as before.
+  //   A null entryId would NEVER reach this branch because innerJoin drops it.
+  //   targetMapId is SELECTED and returned (NEST-01 inversion: unlike `secret`,
+  //   targetMapId is INCLUDED so share visitors can navigate nested maps).
+  //
+  // Branch 2 — Map-only pins (entryId IS NULL, D-01a):
+  //   No entry to join — no isPublic gate to apply (modeled on standaloneRegions).
+  //   These pins are always public-safe: a null entryId means no entry whose
+  //   privacy we could violate. Secret filter still applies.
+  //   summary defaults to '' (mirrors entries.summary default; no entry to join).
+  //
+  // CRITICAL invariant (T-53-03): a pin WITH a non-null entryId MUST remain gated
+  // by the INNER JOIN isPublic filter. A null entryId can NEVER surface a private
+  // entry's data — the WHERE isNull(mapPins.entryId) guard is the enforcement point.
+  const [linkedPins, mapOnlyPins] = await Promise.all([
+    // Branch 1: entry-linked pins — INNER JOIN enforces isPublic=true
+    getDb()
+      .select({
+        id: mapPins.id,
+        mapId: mapPins.mapId,
+        entryId: mapPins.entryId,
+        x: mapPins.x,
+        y: mapPins.y,
+        color: mapPins.color,
+        icon: mapPins.icon,
+        summary: entries.summary,     // D-09: from INNER JOIN; only public entries reach here
+        targetMapId: mapPins.targetMapId,  // NEST-01: INCLUDED (not filtered — visitors navigate nested maps)
+      })
+      .from(mapPins)
+      .innerJoin(entries, eq(entries.id, mapPins.entryId))
+      // Phase 52 T-52-03: secret pins must never reach share callers.
+      .where(and(eq(mapPins.mapId, mapId), eq(entries.isPublic, true), eq(mapPins.secret, false))),
+    // Branch 2: map-only pins (entryId IS NULL, D-01a) — no entry to gate on; always public-safe
+    getDb()
+      .select({
+        id: mapPins.id,
+        mapId: mapPins.mapId,
+        entryId: mapPins.entryId,         // null for map-only pins (D-01a)
+        x: mapPins.x,
+        y: mapPins.y,
+        color: mapPins.color,
+        icon: mapPins.icon,
+        summary: sql<string>`''`,         // no entry → empty summary (mirrors entries.summary default '')
+        targetMapId: mapPins.targetMapId,  // NEST-01: INCLUDED
+      })
+      .from(mapPins)
+      // Phase 52 T-52-03: secret filter still applies to map-only pins.
+      .where(and(eq(mapPins.mapId, mapId), isNull(mapPins.entryId), eq(mapPins.secret, false))),
+  ]);
+  const pins = [...linkedPins, ...mapOnlyPins];
 
   // Privacy-filtered regions: split on terrainTypeId discriminator (D-44-03).
   //
@@ -595,6 +632,7 @@ export async function getPublicMap(universeId: string, mapId: string) {
         color: mapRegions.color,
         createdAt: mapRegions.createdAt,
         terrainTypeId: mapRegions.terrainTypeId,
+        targetMapId: mapRegions.targetMapId,  // NEST-01: INCLUDED (visitors navigate nested maps)
       })
       .from(mapRegions)
       .innerJoin(entries, eq(entries.id, mapRegions.entryId))
@@ -618,6 +656,7 @@ export async function getPublicMap(universeId: string, mapId: string) {
         color: mapRegions.color,
         createdAt: mapRegions.createdAt,
         terrainTypeId: mapRegions.terrainTypeId,
+        targetMapId: mapRegions.targetMapId,  // NEST-01: INCLUDED (visitors navigate nested maps)
       })
       .from(mapRegions)
       .where(
@@ -640,6 +679,7 @@ export async function getPublicMap(universeId: string, mapId: string) {
         color: mapRegions.color,
         createdAt: mapRegions.createdAt,
         terrainTypeId: mapRegions.terrainTypeId,
+        targetMapId: mapRegions.targetMapId,  // NEST-01: INCLUDED (visitors navigate nested maps)
         terrainTypeColor: terrainTypes.color,
         layerId: terrainTypes.layerId,
         layerSortOrder: mapLayers.sortOrder,
