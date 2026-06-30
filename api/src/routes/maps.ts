@@ -732,10 +732,34 @@ export const mapsRouter = new OpenAPIHono<AppEnv>()
       }
     }
 
+    // Phase 53 NEST-01: validate targetMapId is in this universe + not a self-target.
+    // Null/undefined targetMapId = no nested map link (always allowed at create time).
+    if (data.targetMapId) {
+      // T-53-06: reject self-target
+      if (data.targetMapId === mid) {
+        return c.json({ error: 'A pin cannot target its own map' }, 400);
+      }
+      // T-53-01: universe-scoped existence check
+      const mapRows = await db()
+        .select({ id: maps.id })
+        .from(maps)
+        .where(and(eq(maps.id, data.targetMapId), eq(maps.universeId, uid)));
+      if (mapRows.length === 0) {
+        return c.json({ error: 'Target map not found in this universe' }, 404);
+      }
+    }
+
     // D-11: NO 409 duplicate guard — multiple pins per entry are allowed
     const [row] = await db()
       .insert(mapPins)
-      .values({ mapId: mid, entryId: data.entryId ?? null, x: data.x, y: data.y })
+      .values({
+        mapId: mid,
+        entryId: data.entryId ?? null,
+        x: data.x,
+        y: data.y,
+        // Phase 53 NEST-01: persist target map link when provided
+        targetMapId: data.targetMapId ?? null,
+      })
       .returning();
 
     return c.json(row as any, 201);
@@ -817,11 +841,31 @@ export const mapsRouter = new OpenAPIHono<AppEnv>()
 
     // Build update object — only include fields that were provided
     // null is a valid value (clears the style), undefined means not provided
-    const updates: { color?: string | null; icon?: string | null; secret?: boolean } = {};
+    const updates: { color?: string | null; icon?: string | null; secret?: boolean; targetMapId?: string | null } = {};
     if ('color' in data) updates.color = data.color ?? null;
     if ('icon' in data) updates.icon = data.icon ?? null;
     // Phase 52 SECRET-01: persist secret flag when provided
     if (data.secret !== undefined) updates.secret = data.secret;
+
+    // Phase 53 NEST-01: set/clear target map link with universe + self-target validation
+    // Skip existence/self checks when targetMapId is null (clearing is always allowed — D-53-02).
+    if ('targetMapId' in data) {
+      if (data.targetMapId !== null && data.targetMapId !== undefined) {
+        // T-53-06: reject self-target (a map cannot link to itself)
+        if (data.targetMapId === mid) {
+          return c.json({ error: 'A pin cannot target its own map' }, 400);
+        }
+        // T-53-01: universe-scoped existence check — mirrors the relink entry-check (752-758)
+        const mapRows = await db()
+          .select({ id: maps.id })
+          .from(maps)
+          .where(and(eq(maps.id, data.targetMapId), eq(maps.universeId, uid)));
+        if (mapRows.length === 0) {
+          return c.json({ error: 'Target map not found in this universe' }, 404);
+        }
+      }
+      updates.targetMapId = data.targetMapId ?? null;
+    }
 
     const [updated] = await db()
       .update(mapPins)
@@ -914,7 +958,7 @@ export const mapsRouter = new OpenAPIHono<AppEnv>()
     }
 
     // Build partial update — only provided fields
-    const updates: { name?: string; color?: string | null; entryId?: string | null; terrainTypeId?: string | null; secret?: boolean } = {};
+    const updates: { name?: string; color?: string | null; entryId?: string | null; terrainTypeId?: string | null; secret?: boolean; targetMapId?: string | null } = {};
     if (data.name !== undefined) updates.name = data.name;
     if ('color' in data) updates.color = data.color ?? null;
     if ('entryId' in data) updates.entryId = data.entryId ?? null;
@@ -923,6 +967,26 @@ export const mapsRouter = new OpenAPIHono<AppEnv>()
     if ('terrainTypeId' in data) updates.terrainTypeId = data.terrainTypeId ?? null;
     // Phase 52 SECRET-01: persist secret flag when provided
     if (data.secret !== undefined) updates.secret = data.secret;
+
+    // Phase 53 NEST-01: set/clear target map link with universe + self-target validation
+    // Skip existence/self checks when targetMapId is null (clearing is always allowed — D-53-02).
+    if ('targetMapId' in data) {
+      if (data.targetMapId !== null && data.targetMapId !== undefined) {
+        // T-53-06: reject self-target (a region cannot point its map at itself)
+        if (data.targetMapId === mid) {
+          return c.json({ error: 'A region cannot target its own map' }, 400);
+        }
+        // T-53-01: universe-scoped existence check — mirrors the relink entry-check
+        const mapRows = await db()
+          .select({ id: maps.id })
+          .from(maps)
+          .where(and(eq(maps.id, data.targetMapId), eq(maps.universeId, uid)));
+        if (mapRows.length === 0) {
+          return c.json({ error: 'Target map not found in this universe' }, 404);
+        }
+      }
+      updates.targetMapId = data.targetMapId ?? null;
+    }
 
     // T-40-IDOR: scope by both regionId AND mapId
     const [updated] = await db()
