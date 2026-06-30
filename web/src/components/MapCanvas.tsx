@@ -1168,6 +1168,11 @@ export const MapCanvas = forwardRef<MapCanvasHandle, MapCanvasProps>(function Ma
       summary: undefined,
       clientX,
       clientY,
+      // NEST-01 (CR-01): carry entryId/targetMapId so a dual-target region's
+      // "View entry →" tooltip link renders — the only path to a linked entry
+      // for a share visitor once map-open wins the click.
+      entryId: region.entryId,
+      targetMapId: region.targetMapId,
     });
   }, []);
 

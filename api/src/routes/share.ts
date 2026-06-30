@@ -518,6 +518,11 @@ const publicMapDetailSchema = publicMapSchema.extend({
       terrainTypeColor: z.string(),
       layerId: z.string(),
       layerSortOrder: z.number(),
+      // NEST-01 (WR-01): terrain areas can carry a targetMapId too; the service
+      // selects it (share-views.ts terrainAreas branch). Declared here to keep
+      // the OpenAPI contract mirroring the runtime projection
+      // (share-projection-mirrors-auth-projection).
+      targetMapId: z.string().uuid().nullable(),
     }),
   ),
 });
