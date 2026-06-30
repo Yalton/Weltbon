@@ -91,13 +91,15 @@ const mapSchema = z.object({
 const pinSchema = z.object({
   id: z.string(),
   mapId: z.string(),
-  entryId: z.string(),
+  entryId: z.string().nullable(),           // D-01a: pin may be map-only (NEST-01)
   x: z.number(),
   y: z.number(),
   color: z.string().nullable().optional(),  // Phase 40 MAPS-05 (D-01)
   icon: z.string().nullable().optional(),   // Phase 40 MAPS-05 (D-02)
   // Phase 52 SECRET-01: owner-only secret flag in authenticated response (NOT in share.ts).
   secret: z.boolean().optional(),
+  // Phase 53 NEST-01: optional target map link (null = unlinked).
+  targetMapId: z.string().uuid().nullable().optional(),
 });
 
 // Phase 40 MAPS-04: Region Zod schemas (D-09)
@@ -114,6 +116,8 @@ const regionSchema = z.object({
   terrainTypeId: z.string().uuid().nullable().optional(),
   // Phase 52 SECRET-01: owner-only secret flag in authenticated response (NOT in share.ts).
   secret: z.boolean().optional(),
+  // Phase 53 NEST-01: optional target map link (null = unlinked).
+  targetMapId: z.string().uuid().nullable().optional(),
 });
 
 const createRegionSchema = z.object({
@@ -137,13 +141,16 @@ const updateRegionSchema = z.object({
   terrainTypeId: z.string().uuid().nullable().optional(),
   // Phase 52 SECRET-01: owner-only secret flag; false = visible to share, true = excluded.
   secret: z.boolean().optional(),
+  // Phase 53 NEST-01: optional target map link (null = unlinked).
+  targetMapId: z.string().uuid().nullable().optional(),
 }).refine(
   (data) =>
     data.name !== undefined ||
     data.color !== undefined ||
     data.entryId !== undefined ||
     data.terrainTypeId !== undefined ||
-    data.secret !== undefined,
+    data.secret !== undefined ||
+    data.targetMapId !== undefined,
   { message: 'At least one field must be provided' },
 );
 
@@ -200,13 +207,20 @@ const updateRouteSchema = z.object({
 
 // Phase 40 MAPS-05: Pin style Zod schema
 // Phase 52 SECRET-01: secret added alongside color/icon (owner-only flag).
+// Phase 53 NEST-01: targetMapId added for set/clear of the nested-map link.
 const pinStyleSchema = z.object({
   color: z.string().nullable().optional(),
   icon: z.string().nullable().optional(),
   secret: z.boolean().optional(),
+  // Phase 53 NEST-01: optional target map link (null = unlinked).
+  targetMapId: z.string().uuid().nullable().optional(),
 }).refine(
-  (data) => data.color !== undefined || data.icon !== undefined || data.secret !== undefined,
-  { message: 'At least one of color, icon, or secret must be provided' },
+  (data) =>
+    data.color !== undefined ||
+    data.icon !== undefined ||
+    data.secret !== undefined ||
+    data.targetMapId !== undefined,
+  { message: 'At least one of color, icon, secret, or targetMapId must be provided' },
 );
 
 const mapDetailSchema = z.object({
@@ -224,9 +238,12 @@ const mapDetailSchema = z.object({
 });
 
 const createPinSchema = z.object({
-  entryId: z.string().uuid(),
+  // D-01a: entryId is now nullable/optional — a pin can be map-only (NEST-01).
+  entryId: z.string().uuid().nullable().optional(),
   x: z.number().finite().min(0).max(1), // normalized 0..1 (D-10)
   y: z.number().finite().min(0).max(1),
+  // Phase 53 NEST-01: optional target map link for map-only or dual-target pins.
+  targetMapId: z.string().uuid().nullable().optional(),
 });
 
 const movePinSchema = z.object({
@@ -703,19 +720,22 @@ export const mapsRouter = new OpenAPIHono<AppEnv>()
     await requireMap(mid, uid);
     const data = c.req.valid('json');
 
-    // T-39-03: validate the entry belongs to this universe
-    const entryRows = await db()
-      .select({ id: entries.id })
-      .from(entries)
-      .where(and(eq(entries.id, data.entryId), eq(entries.universeId, uid)));
-    if (entryRows.length === 0) {
-      return c.json({ error: 'Entry not found in this universe' }, 404);
+    // T-39-03: validate the entry belongs to this universe (only when entryId provided —
+    // D-01a: entryId is nullable so a pin may be map-only and have no entry link).
+    if (data.entryId) {
+      const entryRows = await db()
+        .select({ id: entries.id })
+        .from(entries)
+        .where(and(eq(entries.id, data.entryId), eq(entries.universeId, uid)));
+      if (entryRows.length === 0) {
+        return c.json({ error: 'Entry not found in this universe' }, 404);
+      }
     }
 
     // D-11: NO 409 duplicate guard — multiple pins per entry are allowed
     const [row] = await db()
       .insert(mapPins)
-      .values({ mapId: mid, entryId: data.entryId, x: data.x, y: data.y })
+      .values({ mapId: mid, entryId: data.entryId ?? null, x: data.x, y: data.y })
       .returning();
 
     return c.json(row as any, 201);
