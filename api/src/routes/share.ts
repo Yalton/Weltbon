@@ -447,23 +447,31 @@ const publicMapSchema = z.object({
 // share-seam-bare-array-contract: list MUST be a bare array (no {maps:[...]} wrapper).
 const publicMapsResponseSchema = z.array(publicMapSchema);
 
-// Phase 52 SECRET-01: `secret` field intentionally absent from all sub-object schemas
+// Phase 52 SECRET-01: `secret` field intentionally ABSENT from all sub-object schemas
 // (pins, regions, routes, terrainAreas) — secret items are FILTERED OUT server-side
 // in getPublicMap (share-views.ts) and the field must never appear in share responses.
-// @hono/zod-openapi does NOT validate response bodies, so the runtime enforcement is
-// the explicit select projection in getPublicMap + getPublicMapLayers. This schema
-// absence is contract documentation only (share-projection-mirrors-auth-projection).
+//
+// Phase 53 NEST-01: `targetMapId` field intentionally PRESENT on pins and regions —
+// the OPPOSITE polarity of `secret`. Visitors must receive targetMapId so they can
+// navigate nested maps. The select projection in getPublicMap includes it explicitly
+// (share-projection-mirrors-auth-projection). @hono/zod-openapi does NOT validate
+// response bodies; runtime enforcement is the explicit getPublicMap SELECT projection +
+// the NEST-01 integration tests (Tests A and D in share-views.test.ts).
+//
+// Phase 53 D-01a: `pins.entryId` is now NULLABLE — a pin may be map-only (no linked
+// entry). The Zod schema is updated to reflect this (z.string().nullable()).
 const publicMapDetailSchema = publicMapSchema.extend({
   pins: z.array(
     z.object({
       id: z.string(),
       mapId: z.string(),
-      entryId: z.string(),
+      entryId: z.string().nullable(),               // D-01a: nullable — pin may be map-only (NEST-01)
       x: z.number(),
       y: z.number(),
       color: z.string().nullable(),
       icon: z.string().nullable(),
       summary: z.string(), // D-09: share-projected from entries.summary (non-null, '' default); no body
+      targetMapId: z.string().uuid().nullable(),   // NEST-01: INTENTIONALLY PRESENT (visitors navigate nested maps)
     }),
   ),
   regions: z.array(
@@ -475,6 +483,7 @@ const publicMapDetailSchema = publicMapSchema.extend({
       points: z.string(),
       color: z.string().nullable(),
       createdAt: z.string().or(z.date()),
+      targetMapId: z.string().uuid().nullable(),   // NEST-01: INTENTIONALLY PRESENT (visitors navigate nested maps)
     }),
   ),
   // Phase 51 WR-01: routes mirror the authenticated routeSchema exactly
