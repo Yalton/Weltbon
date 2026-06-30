@@ -139,6 +139,14 @@ export interface MapCanvasProps {
    * React-rendered SVG — no d3 datum handler (memory: timeline-pins-react-rendered-no-d3-datum).
    */
   highlightedItemId?: string | null;
+
+  // ── Phase 53 NEST-01: nested-map navigation (D-02) ──────────────────────────
+  /**
+   * Called when a pin with targetMapId is clicked (map-open wins — fires BEFORE entry navigation).
+   * The parent (MapEditor / ShareMapView) is responsible for share-token-aware routing.
+   * Plan 07 wires this callback; Plan 06 defines the prop contract.
+   */
+  onOpenMap?: (targetMapId: string) => void;
 }
 
 // ─── PinCircle ────────────────────────────────────────────────────────────────
@@ -183,6 +191,12 @@ interface PinCircleProps {
    * BUG-B fix (51-07).
    */
   onRouteVertexAtPin?: (pin: MapPin) => void;
+  /**
+   * Phase 53 NEST-01 (D-02): Called when pin.targetMapId is set and the pin is clicked.
+   * Map-open wins — this fires BEFORE onNavigate(entryId) and returns immediately.
+   * Undefined when the parent has not wired nested-map navigation (Plan 07).
+   */
+  onOpenMap?: (targetMapId: string) => void;
 }
 
 function PinCircle({
@@ -198,6 +212,7 @@ function PinCircle({
   onPinHoverLeave,
   drawRouteMode = false,
   onRouteVertexAtPin,
+  onOpenMap,
 }: PinCircleProps) {
   // Pin color: explicit override or fallback to entry type color (D-01, graceful degradation D-03)
   const pinColor = pin.color ?? entryTypeHexColor(pin.entryType ?? 'concept');
@@ -279,6 +294,10 @@ function PinCircle({
         onRouteVertexAtPin?.(pin);
         return;
       }
+      // D-02 map-open-wins (NEST-01): if pin targets a map, open it and return BEFORE entry nav.
+      // A map-only pin (entryId null) opens the map; a dual-target pin also opens the map.
+      // Pins with neither targetMapId nor entryId remain inert (today's behavior).
+      if (pin.targetMapId) { onOpenMap?.(pin.targetMapId); return; }
       // Idle mode: navigate to entry when linked (entryId may be null for map-only pins, D-01a).
       if (pin.entryId) onNavigate(pin.entryId);
       return;
@@ -389,6 +408,23 @@ function PinCircle({
           <circle cx={0} cy={2.5} r={1} fill="rgba(15,23,42,0.85)" />
         </g>
       )}
+
+      {/* Phase 53 NEST-01: nested-map badge — visible to share visitors (NO share gate, unlike secret badge).
+          Position: top-LEFT translate(-10,-30) vs lock badge top-right. Both may render simultaneously without overlap.
+          CRITICAL: React SVG only — NEVER d3 .on(event,(e,d)=>) (memory: timeline-pins-react-rendered-no-d3-datum). */}
+      {pin.targetMapId && (
+        <g transform="translate(-10,-30)" style={{ pointerEvents: 'none' }} aria-label="Opens map">
+          {/* Accent violet chip (UI-SPEC §4) */}
+          <circle r={7} fill="oklch(0.6 0.18 270)" />
+          {/* Stacked-maps glyph: two offset rounded squares, decorative (UI-SPEC §4) */}
+          <g aria-hidden="true">
+            {/* Back square */}
+            <rect x={-1} y={-3} width={6} height={6} rx={1} stroke="#f1f5f9" strokeWidth={1.2} fill="none" />
+            {/* Front square */}
+            <rect x={-3} y={-1} width={6} height={6} rx={1} stroke="#f1f5f9" strokeWidth={1.2} fill="none" />
+          </g>
+        </g>
+      )}
     </g>
   );
 }
@@ -490,7 +526,8 @@ function RegionPolygon({
         strokeWidth={1.5}
         strokeOpacity={1}
         style={{
-          cursor: region.entryId ? 'pointer' : 'default',
+          // Show pointer cursor when region is clickable: has an entry link OR a target map (NEST-01).
+          cursor: (region.entryId || region.targetMapId) ? 'pointer' : 'default',
           pointerEvents: isDrawing ? 'none' : 'auto',
         }}
         onClick={handleClick}
@@ -515,6 +552,21 @@ function RegionPolygon({
           />
           <rect x="-3.5" y="0" width="7" height="5" rx="1" fill="#f1f5f9" />
           <circle cx={0} cy={2.5} r={1} fill="rgba(15,23,42,0.85)" />
+        </g>
+      )}
+
+      {/* Phase 53 NEST-01: nested-map badge at centroid offset (-14,-14) — up-left of lock (lock stays at centroid).
+          NO share gate — visible to visitors (unlike secret badge). Both may render simultaneously without overlap.
+          CRITICAL: React SVG only — NEVER d3 .on(event,(e,d)=>) (memory: timeline-pins-react-rendered-no-d3-datum). */}
+      {region.targetMapId && (
+        <g transform={`translate(${centroidX - 14},${centroidY - 14})`} style={{ pointerEvents: 'none' }} aria-label="Opens map">
+          {/* Accent violet chip (UI-SPEC §4) */}
+          <circle r={7} fill="oklch(0.6 0.18 270)" />
+          {/* Stacked-maps glyph: two offset rounded squares, decorative (UI-SPEC §4) */}
+          <g aria-hidden="true">
+            <rect x={-1} y={-3} width={6} height={6} rx={1} stroke="#f1f5f9" strokeWidth={1.2} fill="none" />
+            <rect x={-3} y={-1} width={6} height={6} rx={1} stroke="#f1f5f9" strokeWidth={1.2} fill="none" />
+          </g>
         </g>
       )}
     </g>
@@ -858,6 +910,7 @@ export const MapCanvas = forwardRef<MapCanvasHandle, MapCanvasProps>(function Ma
   onCanvasDblClick,
   onRouteVertexAtPin,
   highlightedItemId = null,
+  onOpenMap,
 }, ref) {
   const svgRef = useRef<SVGSVGElement>(null);
   const containerRef = useRef<HTMLDivElement>(null);
@@ -878,7 +931,15 @@ export const MapCanvas = forwardRef<MapCanvasHandle, MapCanvasProps>(function Ma
     /** Client-space X (used with container-relative offset for positioning). */
     clientX: number;
     clientY: number;
+    /** Phase 53 NEST-01: entryId for dual-target "View entry →" link (D-02). Null = map-only pin. */
+    entryId?: string | null;
+    /** Phase 53 NEST-01: targetMapId — truthy means this item opens a nested map. */
+    targetMapId?: string | null;
   } | null>(null);
+  // Phase 53 NEST-01: grace-period timer so the pointer can travel from the pin to the
+  // "View entry →" tooltip link without the tooltip dismissing (D-02 dual-target affordance).
+  // Cleared when the pointer re-enters a pin/region or when the pointer enters the tooltip link.
+  const hoverLeaveTimerRef = useRef<ReturnType<typeof setTimeout> | null>(null);
   // Share-token-aware navigation (T-40-14 / D-12): when a share token is present,
   // pin/region left-click navigates within /share/:token to avoid uid leaks.
   const shareToken = useShareToken();
@@ -902,6 +963,15 @@ export const MapCanvas = forwardRef<MapCanvasHandle, MapCanvasProps>(function Ma
   useEffect(() => {
     isDrawingRef.current = isDrawing;
   }, [isDrawing]);
+
+  // Phase 53 NEST-01: cleanup hover-leave timer on unmount to prevent setState-on-unmounted-component.
+  useEffect(() => {
+    return () => {
+      if (hoverLeaveTimerRef.current !== null) {
+        clearTimeout(hoverLeaveTimerRef.current);
+      }
+    };
+  }, []);
 
   // Install d3-zoom on the svg element, targeting <g.viewport>.
   // Pins and regions are React-rendered inside this effect's SVG structure but are
@@ -1068,16 +1138,30 @@ export const MapCanvas = forwardRef<MapCanvasHandle, MapCanvasProps>(function Ma
   // T-50-07: summary rendered as React text child — auto-escaped, NEVER dangerouslySetInnerHTML.
   // Callbacks are stable via useCallback so PinCircle/RegionPolygon renders are not spurious.
   const handlePinHoverEnter = useCallback((pin: MapPin, clientX: number, clientY: number) => {
+    // Cancel any pending hover-leave dismissal (grace period for dual-target tooltip link travel).
+    if (hoverLeaveTimerRef.current !== null) {
+      clearTimeout(hoverLeaveTimerRef.current);
+      hoverLeaveTimerRef.current = null;
+    }
+    // Map-only pins (targetMapId set, entryId null) have no entry title — show "Opens map" affordance.
+    const isMapOnly = !!pin.targetMapId && !pin.entryId;
     setHoveredTooltip({
-      title: pin.entryTitle ?? 'Pin',
-      type: pin.entryType,
-      summary: pin.summary,
+      title: isMapOnly ? 'Opens map' : (pin.entryTitle ?? 'Pin'),
+      type: isMapOnly ? undefined : pin.entryType,
+      summary: isMapOnly ? undefined : pin.summary,
       clientX,
       clientY,
+      entryId: pin.entryId,
+      targetMapId: pin.targetMapId,
     });
   }, []);
 
   const handleRegionHoverEnter = useCallback((region: MapRegion, clientX: number, clientY: number) => {
+    // Cancel any pending hover-leave dismissal.
+    if (hoverLeaveTimerRef.current !== null) {
+      clearTimeout(hoverLeaveTimerRef.current);
+      hoverLeaveTimerRef.current = null;
+    }
     setHoveredTooltip({
       title: region.name || 'Region',
       type: undefined,
@@ -1089,6 +1173,11 @@ export const MapCanvas = forwardRef<MapCanvasHandle, MapCanvasProps>(function Ma
 
   // Phase 51 ROUTE-01: route hover handler — shows route name in tooltip.
   const handleRouteHoverEnter = useCallback((route: MapRoute, clientX: number, clientY: number) => {
+    // Cancel any pending hover-leave dismissal.
+    if (hoverLeaveTimerRef.current !== null) {
+      clearTimeout(hoverLeaveTimerRef.current);
+      hoverLeaveTimerRef.current = null;
+    }
     setHoveredTooltip({
       title: route.name || 'Route',
       type: undefined,
@@ -1099,7 +1188,12 @@ export const MapCanvas = forwardRef<MapCanvasHandle, MapCanvasProps>(function Ma
   }, []);
 
   const handleHoverLeave = useCallback(() => {
-    setHoveredTooltip(null);
+    // Phase 53 NEST-01: 150ms grace period so the pointer can cross the ~14px gap from the pin
+    // to the "View entry →" tooltip link without dismissing the tooltip (D-02 dual-target).
+    hoverLeaveTimerRef.current = setTimeout(() => {
+      setHoveredTooltip(null);
+      hoverLeaveTimerRef.current = null;
+    }, 150);
   }, []);
 
   // ── Rubber-band preview helpers ──────────────────────────────────────────────
@@ -1389,6 +1483,7 @@ export const MapCanvas = forwardRef<MapCanvasHandle, MapCanvasProps>(function Ma
               onContextMenu={onPinContextMenu}
               drawRouteMode={drawRouteMode}
               onRouteVertexAtPin={onRouteVertexAtPin}
+              onOpenMap={onOpenMap}
             />
           ))}
         </g>
@@ -1496,6 +1591,37 @@ export const MapCanvas = forwardRef<MapCanvasHandle, MapCanvasProps>(function Ma
             >
               {excerptText}
             </p>
+          )}
+          {/* Phase 53 NEST-01 (D-02): dual-target hint — shown ONLY when item has BOTH entryId and targetMapId.
+              "Opens map" clarity line makes the click behavior unambiguous before offering the entry link.
+              "View entry →" is the ONLY path to the entry for share visitors (no context menu in share).
+              pointer-events-auto on the link so it is clickable despite the pointer-events-none wrapper.
+              onPointerEnter cancels the hover-leave grace timer; onPointerLeave dismisses immediately. */}
+          {hoveredTooltip.entryId && hoveredTooltip.targetMapId && (
+            <>
+              <p className="mt-1 text-xs text-neutral-500 dark:text-neutral-400">Opens map</p>
+              <a
+                data-testid="tooltip-view-entry"
+                href="#"
+                className="mt-0.5 block text-xs"
+                style={{ pointerEvents: 'auto', color: 'var(--color-accent)' }}
+                onPointerEnter={() => {
+                  if (hoverLeaveTimerRef.current !== null) {
+                    clearTimeout(hoverLeaveTimerRef.current);
+                    hoverLeaveTimerRef.current = null;
+                  }
+                }}
+                onPointerLeave={() => {
+                  setHoveredTooltip(null);
+                }}
+                onClick={(e) => {
+                  e.preventDefault();
+                  if (hoveredTooltip.entryId) handleNavigate(hoveredTooltip.entryId);
+                }}
+              >
+                View entry →
+              </a>
+            </>
           )}
         </div>
       )}

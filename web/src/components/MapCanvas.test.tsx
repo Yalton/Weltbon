@@ -985,6 +985,107 @@ describe('MapCanvas — d3 zoom filter disables pan in draw modes (BUG-A, 51-07)
   });
 });
 
+// ── Phase 53 NEST-01: map-open-wins + dual-target "View entry →" tooltip (D-02) ─
+//
+// D-02: Clicking a pin with targetMapId calls onOpenMap (not navigate) — map-open wins.
+// D-02: A dual-target pin (both entryId and targetMapId) shows a "View entry →" tooltip link.
+//
+// Two test fixtures:
+//   MAP_ONLY_PIN  — targetMapId set, entryId null (map-only)
+//   DUAL_PIN      — targetMapId set, entryId set (dual-target)
+
+const MAP_ONLY_PIN: MapPin = {
+  id: 'map-only-1',
+  mapId: 'm1',
+  entryId: null,
+  x: 0.5,
+  y: 0.5,
+  color: '#6366f1',
+  icon: null,
+  secret: false,
+  entryTitle: undefined,
+  entryType: undefined,
+  targetMapId: 'target-map-id-1',
+};
+
+const DUAL_TARGET_PIN: MapPin = {
+  id: 'dual-target-1',
+  mapId: 'm1',
+  entryId: 'entry-for-dual',
+  x: 0.5,
+  y: 0.5,
+  color: '#6366f1',
+  icon: null,
+  secret: false,
+  entryTitle: 'Grand Keep',
+  entryType: 'location',
+  targetMapId: 'target-map-id-2',
+};
+
+describe('PinCircle — NEST-01 map-open-wins (D-02, Plan 53-06)', () => {
+  /**
+   * Test BD: clicking a map-only pin (targetMapId set, entryId null) calls onOpenMap
+   * with the targetMapId and does NOT call navigate (map-open wins, D-02).
+   *
+   * RED pre-impl: onOpenMap prop doesn't exist → can't be called → FAIL.
+   * GREEN post-impl: map-open-wins branch fires onOpenMap before entry nav check → PASS.
+   */
+  it('Test BD: clicking a pin with targetMapId calls onOpenMap (not navigate)', () => {
+    const onOpenMap = vi.fn();
+    const { container } = renderMapCanvas({
+      pins: [MAP_ONLY_PIN],
+      onOpenMap,
+    });
+
+    const pinGroup = container.querySelector('.pins g[aria-label]') as Element;
+    expect(pinGroup, 'pin group must exist').not.toBeNull();
+    stubPointerCapture(pinGroup);
+
+    // Simulate a non-moved click (pointer stays at same position — below drag threshold).
+    fireEvent.pointerDown(pinGroup, { pointerId: 1, clientX: 500, clientY: 500, bubbles: true });
+    fireEvent.pointerUp(pinGroup, { pointerId: 1, clientX: 500, clientY: 500, bubbles: true });
+
+    expect(onOpenMap, 'onOpenMap must be called exactly once').toHaveBeenCalledTimes(1);
+    expect(onOpenMap.mock.calls[0][0] as string, 'onOpenMap called with correct targetMapId')
+      .toBe('target-map-id-1');
+    expect(mockNavigate, 'navigate must NOT be called — map-open wins')
+      .not.toHaveBeenCalled();
+  });
+
+  /**
+   * Test BE: hovering a dual-target pin (both entryId and targetMapId) shows a
+   * "View entry →" link in the tooltip with pointer-events:auto (clickable).
+   *
+   * RED pre-impl: no such link in the tooltip → FAIL.
+   * GREEN post-impl: dual-target link renders with data-testid="tooltip-view-entry" → PASS.
+   */
+  it('Test BE: hovering a dual-target pin shows a "View entry →" link with pointer-events:auto', () => {
+    const { container } = renderMapCanvas({
+      pins: [DUAL_TARGET_PIN],
+    });
+
+    const pinGroup = container.querySelector('.pins g[aria-label]') as Element;
+    expect(pinGroup, 'pin group must exist').not.toBeNull();
+
+    // Before hover: no tooltip
+    expect(container.querySelector('[data-testid="map-tooltip"]')).toBeNull();
+
+    fireEvent.pointerEnter(pinGroup!);
+
+    // After hover: tooltip with entry title
+    const tooltip = container.querySelector('[data-testid="map-tooltip"]');
+    expect(tooltip, 'tooltip must appear on hover').not.toBeNull();
+    expect(tooltip!.textContent).toContain('Grand Keep');
+
+    // Dual-target link must be present and pointer-events:auto
+    const viewEntryLink = container.querySelector('[data-testid="tooltip-view-entry"]') as HTMLElement | null;
+    expect(viewEntryLink, '"View entry →" link must appear for dual-target pin').not.toBeNull();
+    expect(viewEntryLink!.textContent).toContain('View entry');
+    expect(viewEntryLink!.style.pointerEvents, 'link must have pointer-events:auto so it is clickable')
+      .toBe('auto');
+  });
+});
+
 // ── BUG-B fix (51-07): pin click in drawRouteMode snaps a route vertex ──────────
 //
 // Root cause: PinCircle's handlePointerUp treated every non-moved click as onNavigate,
