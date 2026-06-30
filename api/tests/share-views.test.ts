@@ -32,7 +32,7 @@ import {
   createTestUser,
   type TestDbHandle,
 } from './helpers.js';
-import { entries, links, maps, mapPins, mapRoutes, shareTokens, universes } from '../src/db/schema.js';
+import { entries, links, maps, mapPins, mapRegions, mapRoutes, shareTokens, universes } from '../src/db/schema.js';
 
 let handle: TestDbHandle;
 // eslint-disable-next-line @typescript-eslint/no-explicit-any
@@ -1001,5 +1001,276 @@ describe('ROUTE-03: getPublicMap route projection (T-51-02 / T-51-08)', () => {
     ).toBe(1);
     expect(routes[0].id, 'The surviving route must be the standalone one').toBe(standalone.id);
     expect(routes[0].entryId, 'Standalone route entryId must be null').toBeNull();
+  });
+});
+
+// ─── NEST-01: getPublicMap pin+region targetMapId projection ──────────────────
+//
+// Phase 53 Plan 03 — TDD RED gate.
+//
+// These four tests prove the core NEST-01 share invariants:
+//
+//   Test A (pin-targetMapId)   — a pin linked to a public entry carries the
+//     `targetMapId` field on the share response.  Fails until getPublicMap
+//     adds `targetMapId: mapPins.targetMapId` to the pin SELECT.
+//
+//   Test B (map-only-pin)      — a map-only pin (entryId=null, targetMapId set)
+//     appears in share pins[].  Fails until the innerJoin-only pin query is
+//     replaced with a linked+standalone split (the standalone branch handles
+//     map-only pins modeled on the standaloneRegions pattern).
+//
+//   Test C (privacy-unchanged) — a pin linked to a private entry is still
+//     silently dropped.  Regression guard for T-53-03: the null-entryId
+//     relaxation must NOT let a private entry's pin slip through.
+//
+//   Test D (region-targetMapId) — a standalone region carries the `targetMapId`
+//     field on the share response.  Fails until getPublicMap adds
+//     `targetMapId: mapRegions.targetMapId` to the standalone-regions SELECT.
+//
+// Lane: DB-gated integration.
+
+describe('NEST-01: getPublicMap pin+region targetMapId projection (T-53-02 / T-53-03)', () => {
+  async function seedMapN(name: string) {
+    const [row] = await handle.db
+      .insert(maps)
+      .values({ universeId, name })
+      .returning();
+    return row!;
+  }
+
+  async function seedEntryN(opts: { isPublic: boolean; title?: string }) {
+    const [row] = await handle.db
+      .insert(entries)
+      .values({
+        universeId,
+        title: opts.title ?? 'NEST-01 Test Entry',
+        entryType: 'location',
+        isPublic: opts.isPublic,
+      })
+      .returning();
+    return row!;
+  }
+
+  async function seedPinN(opts: {
+    mapId: string;
+    entryId?: string | null;
+    targetMapId?: string | null;
+    x?: number;
+    y?: number;
+  }) {
+    const [row] = await handle.db
+      .insert(mapPins)
+      .values({
+        mapId: opts.mapId,
+        entryId: opts.entryId ?? null,
+        targetMapId: opts.targetMapId ?? null,
+        x: opts.x ?? 0.5,
+        y: opts.y ?? 0.5,
+      })
+      .returning();
+    return row!;
+  }
+
+  async function seedRegionN(opts: {
+    mapId: string;
+    entryId?: string | null;
+    targetMapId?: string | null;
+    name?: string;
+  }) {
+    const [row] = await handle.db
+      .insert(mapRegions)
+      .values({
+        mapId: opts.mapId,
+        entryId: opts.entryId ?? null,
+        targetMapId: opts.targetMapId ?? null,
+        name: opts.name ?? 'NEST-01 Test Region',
+        points: JSON.stringify([{ x: 0.1, y: 0.1 }, { x: 0.9, y: 0.1 }, { x: 0.5, y: 0.9 }]),
+      })
+      .returning();
+    return row!;
+  }
+
+  // ────────────────────────────────────────────────────────────────────
+  // Test A — pin carries targetMapId on the share response (T-53-02 field-presence)
+  //
+  // Purpose: verify the explicit `targetMapId: mapPins.targetMapId` SELECT is
+  // present. A null targetMapId is valid (the pin has no target map), so the
+  // field must still be present in the response object (not undefined).
+  // ────────────────────────────────────────────────────────────────────
+  it('pin linked to a public entry carries targetMapId field on share response (T-53-02 pin-field-presence)', async () => {
+    const currentMap = await seedMapN('NEST-01 Pin-Field-Presence Map');
+    const targetMap = await seedMapN('NEST-01 Target Map');
+    const entry = await seedEntryN({ isPublic: true, title: 'Pin Target Entry' });
+    const pin = await seedPinN({ mapId: currentMap.id, entryId: entry.id, targetMapId: targetMap.id });
+
+    const res = await appRequest('GET', `/api/share/maps/${currentMap.id}`, {
+      headers: { 'share-token': activeTokenPlaintext },
+    });
+
+    expect(res.status, 'NEST-01 pin-field-presence: must return 200').toBe(200);
+
+    // eslint-disable-next-line @typescript-eslint/no-explicit-any
+    const pins: any[] = res.body?.pins ?? [];
+    expect(
+      pins.length,
+      `NEST-01 pin-field-presence: expected 1 pin in share response. Got ${pins.length}.`,
+    ).toBe(1);
+
+    const p = pins[0];
+    expect(p.id, 'NEST-01 pin-field-presence: pin id must match seeded pin').toBe(pin.id);
+
+    // targetMapId MUST be present as a key (not undefined) — the field is included, not filtered.
+    expect(
+      Object.prototype.hasOwnProperty.call(p, 'targetMapId'),
+      `NEST-01 pin-field-presence (T-53-02): pin object must carry a 'targetMapId' property. ` +
+        `Got pin shape: ${JSON.stringify(Object.keys(p))}. ` +
+        `Root cause: getPublicMap pins SELECT omits targetMapId (share-projection-mirrors-auth-projection).`,
+    ).toBe(true);
+
+    expect(
+      p.targetMapId,
+      'NEST-01 pin-field-presence: targetMapId must equal the seeded target map id',
+    ).toBe(targetMap.id);
+  });
+
+  // ────────────────────────────────────────────────────────────────────
+  // Test B — map-only pin survives the share projection (T-53-03 map-only-pin)
+  //
+  // Purpose: a pin with entryId=null and a targetMapId MUST appear in the
+  // share pins[] array. The current innerJoin(entries) drops it — this test
+  // drives the standalone-pin branch analogous to standaloneRegions.
+  // ────────────────────────────────────────────────────────────────────
+  it('map-only pin (entryId=null, targetMapId set) appears in share pins array (T-53-03 map-only-pin)', async () => {
+    const currentMap = await seedMapN('NEST-01 Map-Only-Pin Map');
+    const targetMap = await seedMapN('NEST-01 Target Map B');
+    const mapOnlyPin = await seedPinN({
+      mapId: currentMap.id,
+      entryId: null,           // map-only (D-01a)
+      targetMapId: targetMap.id,
+    });
+
+    // Positive control: also seed a regular public-entry pin so the response is non-vacuously populated
+    const publicEntry = await seedEntryN({ isPublic: true, title: 'Public Entry Control' });
+    await seedPinN({ mapId: currentMap.id, entryId: publicEntry.id });
+
+    const res = await appRequest('GET', `/api/share/maps/${currentMap.id}`, {
+      headers: { 'share-token': activeTokenPlaintext },
+    });
+
+    expect(res.status, 'NEST-01 map-only-pin: must return 200').toBe(200);
+
+    // eslint-disable-next-line @typescript-eslint/no-explicit-any
+    const pins: any[] = res.body?.pins ?? [];
+
+    const found = pins.find((p: { id: string }) => p.id === mapOnlyPin.id);
+    expect(
+      found,
+      `NEST-01 map-only-pin (T-53-03): the map-only pin (entryId=null, targetMapId=${targetMap.id}) ` +
+        `must appear in share pins[]. ` +
+        `Got pins: ${JSON.stringify(pins.map((p: { id: string; entryId: unknown; targetMapId: unknown }) => ({ id: p.id, entryId: p.entryId, targetMapId: p.targetMapId })))}. ` +
+        `Root cause: innerJoin(entries) drops pins with null entryId; add a standalone-pin branch.`,
+    ).toBeDefined();
+
+    expect(
+      found.entryId,
+      'NEST-01 map-only-pin: map-only pin must carry entryId=null',
+    ).toBeNull();
+
+    expect(
+      found.targetMapId,
+      'NEST-01 map-only-pin: map-only pin must carry the seeded targetMapId',
+    ).toBe(targetMap.id);
+  });
+
+  // ────────────────────────────────────────────────────────────────────
+  // Test C — private-entry pin is still dropped (T-53-03 privacy-unchanged)
+  //
+  // Regression guard: the nullable-entryId relaxation for map-only pins must
+  // NOT create a path where a pin linked to a private entry bypasses isPublic.
+  // A pin with a non-null entryId MUST remain gated by the isPublic filter.
+  // ────────────────────────────────────────────────────────────────────
+  it('pin linked to a private entry is still silently dropped from share pins (T-53-03 privacy-unchanged)', async () => {
+    const currentMap = await seedMapN('NEST-01 Privacy Map');
+    const privateEntry = await seedEntryN({ isPublic: false, title: 'Private Entry NEST-01' });
+    const publicEntry = await seedEntryN({ isPublic: true, title: 'Public Entry NEST-01' });
+
+    // Pin on a private entry — must be dropped by the isPublic filter
+    await seedPinN({ mapId: currentMap.id, entryId: privateEntry.id });
+    // Positive control: pin on a public entry — must appear
+    const publicPin = await seedPinN({ mapId: currentMap.id, entryId: publicEntry.id });
+
+    const res = await appRequest('GET', `/api/share/maps/${currentMap.id}`, {
+      headers: { 'share-token': activeTokenPlaintext },
+    });
+
+    expect(res.status, 'NEST-01 privacy-unchanged: must return 200').toBe(200);
+
+    // eslint-disable-next-line @typescript-eslint/no-explicit-any
+    const pins: any[] = res.body?.pins ?? [];
+
+    expect(
+      pins.length,
+      `NEST-01 privacy-unchanged (T-53-03): expected 1 pin (the public-entry one). Got ${pins.length}. ` +
+        `If 2 are returned, the standalone-pin branch introduced a path where a non-null entryId ` +
+        `bypasses the isPublic=true filter (T-53-03 information disclosure).`,
+    ).toBe(1);
+
+    expect(
+      pins[0].id,
+      'NEST-01 privacy-unchanged: the surviving pin must be the public-entry pin',
+    ).toBe(publicPin.id);
+
+    // Verify the private entry's title never leaks via any field
+    const serialized = JSON.stringify(res.body);
+    expect(
+      serialized.includes('Private Entry NEST-01'),
+      'NEST-01 privacy-unchanged (T-53-03 Information Disclosure): private entry title must never appear in share response.',
+    ).toBe(false);
+  });
+
+  // ────────────────────────────────────────────────────────────────────
+  // Test D — standalone region carries targetMapId (T-53-02 region-field-presence)
+  //
+  // Purpose: verify `targetMapId: mapRegions.targetMapId` is selected in the
+  // standaloneRegions branch. The property must be present (not undefined) even
+  // when the region has no target map (null is fine; absence is not).
+  // ────────────────────────────────────────────────────────────────────
+  it('standalone region carries targetMapId field on share response (T-53-02 region-field-presence)', async () => {
+    const currentMap = await seedMapN('NEST-01 Region-Field-Presence Map');
+    const targetMap = await seedMapN('NEST-01 Target Map D');
+    const region = await seedRegionN({
+      mapId: currentMap.id,
+      entryId: null,                // standalone — no entry to gate on
+      targetMapId: targetMap.id,
+      name: 'NEST-01 Standalone Region',
+    });
+
+    const res = await appRequest('GET', `/api/share/maps/${currentMap.id}`, {
+      headers: { 'share-token': activeTokenPlaintext },
+    });
+
+    expect(res.status, 'NEST-01 region-field-presence: must return 200').toBe(200);
+
+    // eslint-disable-next-line @typescript-eslint/no-explicit-any
+    const regions: any[] = res.body?.regions ?? [];
+
+    const found = regions.find((r: { id: string }) => r.id === region.id);
+    expect(
+      found,
+      `NEST-01 region-field-presence: the standalone region must appear in share regions[]. ` +
+        `Got regions: ${JSON.stringify(regions.map((r: { id: string }) => r.id))}.`,
+    ).toBeDefined();
+
+    expect(
+      Object.prototype.hasOwnProperty.call(found, 'targetMapId'),
+      `NEST-01 region-field-presence (T-53-02): region object must carry a 'targetMapId' property. ` +
+        `Got region shape: ${JSON.stringify(Object.keys(found))}. ` +
+        `Root cause: getPublicMap standaloneRegions SELECT omits targetMapId (share-projection-mirrors-auth-projection).`,
+    ).toBe(true);
+
+    expect(
+      found.targetMapId,
+      'NEST-01 region-field-presence: region targetMapId must equal the seeded target map id',
+    ).toBe(targetMap.id);
   });
 });
