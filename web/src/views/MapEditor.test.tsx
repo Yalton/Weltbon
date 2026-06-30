@@ -176,6 +176,20 @@ vi.mock('../components/AddEntriesPicker', () => ({
     ) : null,
 }));
 
+// Phase 53 NEST-01: Mock MapPickerModal — out of scope for existing tests; stub so it never
+// calls useMaps in the test environment (which would receive the wrong api mock shape).
+vi.mock('../components/MapPickerModal', () => ({
+  MapPickerModal: ({ open }: { open?: boolean }) =>
+    open ? <div data-testid="map-picker-modal-stub" /> : null,
+}));
+
+// Phase 53 NEST-01: Mock MapBreadcrumb — breadcrumb only renders when router state has `from`;
+// existing tests use clean MemoryRouter with no nav state, so it never mounts anyway.
+// Stub it to keep the mock list consistent and guard against future router-state accidents.
+vi.mock('../components/MapBreadcrumb', () => ({
+  MapBreadcrumb: () => <div data-testid="map-breadcrumb-stub" />,
+}));
+
 // Mock AssetPickerModal — out of scope.
 vi.mock('../components/AssetPickerModal', () => ({
   AssetPickerModal: () => null,
@@ -655,9 +669,12 @@ describe('MapEditor route interactions (ROUTE-02, Plan 07)', () => {
       if (path.includes('/map-layers')) return [] as never;
       // Universe entries list (/universes/:uid/entries)
       if (path.match(/\/entries$/) || path.match(/\/entries\?/)) return [] as never;
+      // Phase 53 NEST-01: universe maps list (/universes/:uid/maps without a trailing /:mid).
+      // useMaps calls this; return [] so MapPickerModal (even if un-mocked) gets an empty list.
+      if (path.match(/\/maps$/) || path.match(/\/maps\?/)) return [] as never;
       // Route mutation calls (/routes/:routeId)
       if (path.includes('/routes/')) return routeStub as never;
-      // Default: map detail
+      // Default: map detail (/universes/:uid/maps/:mid)
       return (mapData ?? makeMapWithRoute()) as never;
     });
   }

@@ -1,11 +1,13 @@
 import { useCallback, useEffect, useMemo, useRef, useState } from 'react';
-import { useNavigate, useParams } from 'react-router-dom';
+import { useNavigate, useParams, useLocation } from 'react-router-dom';
 import { AddEntriesPicker } from '../components/AddEntriesPicker';
 import { AssetPickerModal } from '../components/AssetPickerModal';
 import { ConfirmDialog } from '../components/ConfirmDialog';
 import { EmptyState } from '../components/EmptyState';
+import { MapBreadcrumb } from '../components/MapBreadcrumb';
 import { MapCanvas, type MapCanvasHandle } from '../components/MapCanvas';
 import { MapCompass } from '../components/MapCompass';
+import { MapPickerModal } from '../components/MapPickerModal';
 import { MapZoomControls } from '../components/MapZoomControls';
 import { LayersPanel } from '../components/LayersPanel';
 import { MapLegend } from '../components/MapLegend';
@@ -29,12 +31,15 @@ import {
   useTogglePinSecret,
   useToggleRegionSecret,
   useToggleRouteSecret,
+  useSetPinTargetMap,
+  useSetRegionTargetMap,
   type MapPin,
   type MapRegion,
   type MapRoute,
   type TerrainAreaRegion,
 } from '../hooks/useMap';
 import { useMapLayers } from '../hooks/useMapLayers';
+import { useMaps } from '../hooks/useMaps';
 import { MAP_COLOR_PALETTE, MAP_GLYPH_KEYS, getGlyphPath } from '../lib/mapGlyphs';
 import { entryTypeHexColor } from '../lib/entryTypeColor';
 import { useShareMode, useShareToken } from '../contexts/ShareModeContext';
@@ -99,6 +104,10 @@ const COPY = {
   // Phase 52 SECRET-01: context-menu items for toggling secret status on pins/regions/routes/layers.
   contextMenuMarkSecret: 'Mark secret',
   contextMenuUnmarkSecret: 'Unmark secret',
+  // Phase 53 NEST-01 D-01: map-link context menu items (UI-SPEC Copywriting Contract).
+  linkToMap: 'Link to map…',    // 'Link to map…' — literal ellipsis character
+  unlinkMap: 'Unlink map',
+  linkMapError: "Couldn't link the map. Try again.",
 } as const;
 
 // ─── Types ────────────────────────────────────────────────────────────────────
@@ -188,6 +197,10 @@ export function MapEditor() {
   const shareToken = useShareToken();
   const uid = paramUid ?? (isShare ? 'share' : '');
   const navigate = useNavigate();
+  // Phase 53 NEST-01 D-03: read origin from router nav state (`navigate(to, { state: { from } })`).
+  // Cast is safe — only MapEditor/MapBreadcrumb ever write this key.
+  const location = useLocation();
+  const fromOrigin = (location.state as { from?: { name: string; id: string } } | null)?.from ?? null;
 
   // ── Data hooks ───────────────────────────────────────────────────────────────
   const { data: map, isLoading, isError } = useMap(uid, mid);
@@ -217,6 +230,14 @@ export function MapEditor() {
   const togglePinSecret = useTogglePinSecret(uid, mid);
   const toggleRegionSecret = useToggleRegionSecret(uid, mid);
   const toggleRouteSecret = useToggleRouteSecret(uid, mid);
+  // Phase 53 NEST-01 D-01: set/clear target map on pins and regions.
+  // Rides the existing /pins/:pinId/style + /regions/:regionId PATCH endpoints (53-02 precedent).
+  // Invalidate ONLY the existing ['map', uid, mid] key (memory: react-query-key-change-blast-radius).
+  const setPinTargetMap = useSetPinTargetMap(uid, mid);
+  const setRegionTargetMap = useSetRegionTargetMap(uid, mid);
+  // Phase 53 NEST-01: universe maps list for "Opens: {mapName}" indicator in context menus.
+  // ['maps', uid] key — isolated from ['map', uid, mid] per react-query-key-change-blast-radius.
+  const { data: allMaps = [] } = useMaps(uid);
 
   // ── Image dimensions (loaded from the rawUrl to get intrinsic size) ──────────
   const [imageWidth, setImageWidth] = useState(DEFAULT_IMAGE_WIDTH);
@@ -267,6 +288,12 @@ export function MapEditor() {
   const [layersColorPickerOpen, setLayersColorPickerOpen] = useState(false);
   const [layersColorPickerCurrent, setLayersColorPickerCurrent] = useState('#000000');
   const [layersColorPickerCallback, setLayersColorPickerCallback] = useState<((hex: string) => void) | null>(null);
+
+  // Phase 53 NEST-01 D-01: map picker state.
+  // mapPickerPin XOR mapPickerRegion is set while the picker is open (whichever context menu triggered it).
+  const [mapPickerOpen, setMapPickerOpen] = useState(false);
+  const [mapPickerPin, setMapPickerPin] = useState<MapPin | null>(null);
+  const [mapPickerRegion, setMapPickerRegion] = useState<MapRegion | null>(null);
 
   // ── Draw-region mode state ────────────────────────────────────────────────────
   const [drawRegionMode, setDrawRegionMode] = useState(false);
@@ -920,6 +947,31 @@ export function MapEditor() {
     }
   };
 
+  // Phase 53 NEST-01 D-01: open map picker from pin context menu.
+  // Captures current pin, closes context menu, opens picker.
+  const handleContextMenuLinkMap = () => {
+    if (!contextMenu) return;
+    setMapPickerPin(contextMenu.pin);
+    setMapPickerRegion(null);
+    setMapPickerOpen(true);
+    setContextMenu(null);
+    setSelectedPinId(null);
+  };
+
+  // Phase 53 NEST-01 D-01: directly unlink target map from pin context menu (no picker).
+  // Neutral action — no ConfirmDialog (UI-SPEC Color note: unlinking is non-destructive).
+  const handleContextMenuUnlinkMapPin = async () => {
+    if (!contextMenu) return;
+    const { pin } = contextMenu;
+    setContextMenu(null);
+    setSelectedPinId(null);
+    try {
+      await setPinTargetMap.mutateAsync({ pinId: pin.id, targetMapId: null });
+    } catch {
+      setToast({ message: COPY.linkMapError, variant: 'error' });
+    }
+  };
+
   const handleDeletePinConfirm = async () => {
     if (!deletePinTarget) return;
     try {
@@ -945,6 +997,15 @@ export function MapEditor() {
   // ── Region context menu handlers ─────────────────────────────────────────────
 
   const handleRegionClick = useCallback((region: MapRegion) => {
+    // Phase 53 NEST-01 D-02: map-open wins — check targetMapId FIRST.
+    // Passes origin via router state so MapBreadcrumb can render on the target map (D-03).
+    if (region.targetMapId) {
+      const to = shareToken
+        ? `/share/${shareToken}/maps/${region.targetMapId}`
+        : `/universes/${uid}/maps/${region.targetMapId}`;
+      navigate(to, { state: { from: { name: map?.name ?? '', id: mid } } });
+      return;
+    }
     // Left-click navigates to linked entry (D-08-click); inert if no entryId.
     // In share mode stay within /share/:token to avoid uid leaks (T-40-14).
     if (region.entryId) {
@@ -954,7 +1015,17 @@ export function MapEditor() {
         navigate(`/universes/${uid}/entries/${region.entryId}`);
       }
     }
-  }, [navigate, shareToken, uid]);
+  }, [navigate, shareToken, uid, mid, map?.name]);
+
+  // Phase 53 NEST-01 D-02: pin click-to-open handler (passed as MapCanvas onOpenMap).
+  // Share-token-aware route; passes origin via router state for breadcrumb (D-03).
+  // Works identically in editor and share (MapCanvas calls onOpenMap for both).
+  const handleOpenMap = useCallback((targetMapId: string) => {
+    const to = shareToken
+      ? `/share/${shareToken}/maps/${targetMapId}`
+      : `/universes/${uid}/maps/${targetMapId}`;
+    navigate(to, { state: { from: { name: map?.name ?? '', id: mid } } });
+  }, [navigate, shareToken, uid, mid, map?.name]);
 
   const handleRegionContextMenu = useCallback(
     (region: MapRegion, clientX: number, clientY: number) => {
@@ -1002,6 +1073,27 @@ export function MapEditor() {
     }
   };
 
+  // Phase 53 NEST-01 D-01: open map picker from region context menu.
+  const handleRegionContextMenuLinkMap = () => {
+    if (!regionContextMenu) return;
+    setMapPickerRegion(regionContextMenu.region);
+    setMapPickerPin(null);
+    setMapPickerOpen(true);
+    setRegionContextMenu(null);
+  };
+
+  // Phase 53 NEST-01 D-01: directly unlink target map from region context menu (no picker).
+  const handleRegionContextMenuUnlinkMap = async () => {
+    if (!regionContextMenu) return;
+    const { region } = regionContextMenu;
+    setRegionContextMenu(null);
+    try {
+      await setRegionTargetMap.mutateAsync({ regionId: region.id, targetMapId: null });
+    } catch {
+      setToast({ message: COPY.linkMapError, variant: 'error' });
+    }
+  };
+
   const handleDeleteRegionConfirm = async () => {
     if (!deleteRegionTarget) return;
     try {
@@ -1035,6 +1127,34 @@ export function MapEditor() {
       setToast({ message: COPY.regionSaveError, variant: 'error' });
     }
     setRenameRegionTarget(null);
+  };
+
+  // Phase 53 NEST-01 D-01: map picker selection handler (called by MapPickerModal onSelect).
+  // Captures mapPickerPin/mapPickerRegion from the closure at call time — state is stable
+  // because onClose (which clears the state) runs AFTER onSelect in the picker.
+  const handleSelectTargetMap = async (mapId: string) => {
+    try {
+      if (mapPickerPin) {
+        await setPinTargetMap.mutateAsync({ pinId: mapPickerPin.id, targetMapId: mapId });
+      } else if (mapPickerRegion) {
+        await setRegionTargetMap.mutateAsync({ regionId: mapPickerRegion.id, targetMapId: mapId });
+      }
+    } catch {
+      setToast({ message: COPY.linkMapError, variant: 'error' });
+    }
+  };
+
+  // Phase 53 NEST-01 D-01: map picker unlink handler (called by MapPickerModal onUnlink).
+  const handleUnlinkTargetMap = async () => {
+    try {
+      if (mapPickerPin) {
+        await setPinTargetMap.mutateAsync({ pinId: mapPickerPin.id, targetMapId: null });
+      } else if (mapPickerRegion) {
+        await setRegionTargetMap.mutateAsync({ regionId: mapPickerRegion.id, targetMapId: null });
+      }
+    } catch {
+      setToast({ message: COPY.linkMapError, variant: 'error' });
+    }
   };
 
   // ── Terrain area context menu handlers (43-04) ───────────────────────────────
@@ -1501,6 +1621,7 @@ export function MapEditor() {
         searchQuery={searchQuery}
         onSearchQueryChange={setSearchQuery}
         searchInputRef={searchInputRef}
+        hasBreadcrumb={!!fromOrigin}
         {...(!isShare ? {
           addPinMode,
           onToggleAddPinMode: () => {
@@ -1686,7 +1807,21 @@ export function MapEditor() {
           setPendingVertices((v) => [...v, { x: pin.x, y: pin.y }]);
         }}
         highlightedItemId={highlightedItemId}
+        onOpenMap={handleOpenMap}
       />
+
+      {/* Phase 53 NEST-01 D-03: single-level breadcrumb — rendered in BOTH editor and share.
+          Sits at absolute left-4 top-4 z-20. The MapToolbar shifts to top-16 (hasBreadcrumb)
+          so they do not overlap (UI-SPEC §3). Only rendered when router nav state carries `from`.
+          No edit-only variant — share visitors also navigate nested maps. */}
+      {fromOrigin && (
+        <MapBreadcrumb
+          originMapId={fromOrigin.id}
+          originMapName={fromOrigin.name}
+          shareToken={shareToken}
+          universeId={uid}
+        />
+      )}
 
       {/* ── Glassy map chrome — rendered in BOTH editor and share mode (D-09 parity) ── */}
       {/* CRITICAL: NOT gated on !isShare — zoom controls + compass are always visible. */}
@@ -1813,6 +1948,23 @@ export function MapEditor() {
             open={routeRelinkPickerOpen}
           />
 
+          {/* Phase 53 NEST-01 D-01: map picker for linking a target map to a pin or region.
+              currentTargetMapId derives from whichever item is being edited (pin XOR region).
+              onClose clears picker state; onSelect/onUnlink fire mutations then picker calls onClose. */}
+          <MapPickerModal
+            open={mapPickerOpen}
+            onClose={() => {
+              setMapPickerOpen(false);
+              setMapPickerPin(null);
+              setMapPickerRegion(null);
+            }}
+            onSelect={handleSelectTargetMap}
+            onUnlink={handleUnlinkTargetMap}
+            currentMapId={mid}
+            currentTargetMapId={mapPickerPin?.targetMapId ?? mapPickerRegion?.targetMapId ?? null}
+            universeId={uid}
+          />
+
           {/* Change image picker */}
           <AssetPickerModal
             open={changeImageOpen}
@@ -1877,6 +2029,35 @@ export function MapEditor() {
           >
             {contextMenu?.pin.secret ? COPY.contextMenuUnmarkSecret : COPY.contextMenuMarkSecret}
           </button>
+          {/* Phase 53 NEST-01 D-01: "Opens: {mapName}" indicator + "Link to map…" + "Unlink map".
+              Independent of the existing "Change entry…" item — both/either/neither may be set.
+              Suppressed in share mode (whole menu is !isShare-gated above). */}
+          {contextMenu.pin.targetMapId && (() => {
+            const targetMap = allMaps.find((m) => m.id === contextMenu.pin.targetMapId);
+            return (
+              <p className="text-xs text-neutral-500 dark:text-neutral-400 px-3 py-1.5 truncate" role="presentation">
+                Opens: {targetMap?.name ?? '…'}
+              </p>
+            );
+          })()}
+          <button
+            type="button"
+            role="menuitem"
+            onClick={handleContextMenuLinkMap}
+            className="w-full text-left text-sm px-3 py-2 hover:bg-neutral-50 dark:hover:bg-neutral-800"
+          >
+            {COPY.linkToMap}
+          </button>
+          {contextMenu.pin.targetMapId && (
+            <button
+              type="button"
+              role="menuitem"
+              onClick={handleContextMenuUnlinkMapPin}
+              className="w-full text-left text-sm px-3 py-2 hover:bg-neutral-50 dark:hover:bg-neutral-800"
+            >
+              {COPY.unlinkMap}
+            </button>
+          )}
         </div>
       )}
 
@@ -1930,6 +2111,33 @@ export function MapEditor() {
           >
             {regionContextMenu?.region.secret ? COPY.contextMenuUnmarkSecret : COPY.contextMenuMarkSecret}
           </button>
+          {/* Phase 53 NEST-01 D-01: map-link items — independent of "Change entry…" item. */}
+          {regionContextMenu.region.targetMapId && (() => {
+            const targetMap = allMaps.find((m) => m.id === regionContextMenu.region.targetMapId);
+            return (
+              <p className="text-xs text-neutral-500 dark:text-neutral-400 px-3 py-1.5 truncate" role="presentation">
+                Opens: {targetMap?.name ?? '…'}
+              </p>
+            );
+          })()}
+          <button
+            type="button"
+            role="menuitem"
+            onClick={handleRegionContextMenuLinkMap}
+            className="w-full text-left text-sm px-3 py-2 hover:bg-neutral-50 dark:hover:bg-neutral-800"
+          >
+            {COPY.linkToMap}
+          </button>
+          {regionContextMenu.region.targetMapId && (
+            <button
+              type="button"
+              role="menuitem"
+              onClick={handleRegionContextMenuUnlinkMap}
+              className="w-full text-left text-sm px-3 py-2 hover:bg-neutral-50 dark:hover:bg-neutral-800"
+            >
+              {COPY.unlinkMap}
+            </button>
+          )}
         </div>
       )}
 

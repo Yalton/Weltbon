@@ -47,6 +47,10 @@ export interface MapToolbarProps {
   onSearchQueryChange?: (q: string) => void;
   /** Ref forwarded to the search `<input>` element for programmatic focus (/ shortcut). */
   searchInputRef?: React.RefObject<HTMLInputElement | null>;
+  // ── Phase 53 NEST-01 D-03: breadcrumb presence flag ─────────────────────────
+  /** When true, shifts the toolbar from top-4 to top-16 so the MapBreadcrumb chip
+   * (always rendered at top-4) sits above without overlap (UI-SPEC §3). */
+  hasBreadcrumb?: boolean;
 }
 
 /**
@@ -84,13 +88,14 @@ export function MapToolbar({
   searchQuery,
   onSearchQueryChange,
   searchInputRef,
+  hasBreadcrumb,
 }: MapToolbarProps) {
   // Whether any mutation button is present — used to decide if a divider is needed
   // before the search input.
   const hasMutationButtons = !!(onToggleAddPinMode || onToggleDrawRegionMode || onChangeImage || onToggleLegend || onToggleLayersPanel);
 
   return (
-    <div className="absolute left-4 top-4 z-10 flex flex-wrap items-center gap-2 rounded-md border border-neutral-200 dark:border-neutral-800 bg-white/90 dark:bg-neutral-900/90 backdrop-blur-sm px-3 py-2 shadow-sm max-w-[calc(100vw-2rem)]">
+    <div className={`absolute left-4 ${hasBreadcrumb ? 'top-16' : 'top-4'} z-10 flex flex-wrap items-center gap-2 rounded-md border border-neutral-200 dark:border-neutral-800 bg-white/90 dark:bg-neutral-900/90 backdrop-blur-sm px-3 py-2 shadow-sm max-w-[calc(100vw-2rem)]`}>
       {/* Read-only map name */}
       <span className="text-sm font-semibold text-neutral-900 dark:text-neutral-100 truncate max-w-[160px]">
         {mapName}
