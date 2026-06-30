@@ -156,7 +156,9 @@ export const importSchema = z.object({
       z.object({
         id: z.string().uuid().optional(),
         mapId: z.string().uuid(),
-        entryId: z.string().uuid(),
+        // D-01a: map-only pins have no entry link — nullable/optional mirrors mapRegions.entryId.
+        // Pre-v5.3 exports always carry a non-null entryId (backward-compat: valid UUID).
+        entryId: z.string().uuid().nullable().optional().default(null),
         x: z.number().finite().min(0).max(1),
         y: z.number().finite().min(0).max(1),
         color: z.string().nullable().optional().default(null),
@@ -164,6 +166,9 @@ export const importSchema = z.object({
         // Phase 52 SECRET-02: pre-v5.4 exports lack this field → default false
         // (backward-compat: missing secret key imports cleanly, T-52-10 mitigation).
         secret: z.boolean().optional().default(false),
+        // Phase 53 NEST-01: pre-v5.3 exports lack this field → default null
+        // (backward-compat: missing targetMapId imports cleanly, T-53-10 mitigation).
+        targetMapId: z.string().uuid().nullable().optional().default(null),
       })
     )
     .optional()
@@ -183,6 +188,9 @@ export const importSchema = z.object({
         // Phase 52 SECRET-02: pre-v5.4 exports lack this field → default false
         // (backward-compat: missing secret key imports cleanly, T-52-10 mitigation).
         secret: z.boolean().optional().default(false),
+        // Phase 53 NEST-01: pre-v5.3 exports lack this field → default null
+        // (backward-compat: missing targetMapId imports cleanly, T-53-10 mitigation).
+        targetMapId: z.string().uuid().nullable().optional().default(null),
       })
     )
     .optional()
@@ -533,13 +541,26 @@ export async function importUniverseJson(
     }
 
     // 3c. Phase 41 D-01: Insert map_pins with remapped mapId (mapIdMap) + entryId (entryIdMap).
-    //     Orphaned refs throw — same discipline as links/graphPositions.
+    //     D-01a: entryId is now nullable for map-only pins — only remap when non-null.
+    //     A non-null entryId absent from entryIdMap still throws (orphaned-ref discipline).
+    //     A null entryId stays null and does NOT throw (mirrors region nullable-entryId branch).
+    //     Phase 53 NEST-01 (T-53-10): targetMapId orphan → null, do NOT throw.
     //     Placed here (after step 4 entry inserts) so entryIdMap is fully populated.
     for (const pin of data.mapPins) {
       const newMapId = mapIdMap.get(pin.mapId);
-      const newEntryId = entryIdMap.get(pin.entryId);
       if (!newMapId) throw new Error('Map pin references unknown map ID');
-      if (!newEntryId) throw new Error('Map pin references unknown entry ID');
+      // D-01a: map-only pins have null entryId — only remap when non-null.
+      let newEntryId: string | null = null;
+      if (pin.entryId) {
+        newEntryId = entryIdMap.get(pin.entryId) ?? null;
+        if (!newEntryId) {
+          throw new Error('Map pin references unknown entry ID');
+        }
+      }
+      // NEST-01: lenient targetMapId remap — orphan → null, do NOT throw (T-53-10).
+      // mapIdMap is fully populated before this loop (step 3b), so even a forward-ref resolves.
+      let newTargetMapId: string | null = null;
+      if (pin.targetMapId) newTargetMapId = mapIdMap.get(pin.targetMapId) ?? null;
       await tx.insert(mapPins).values({
         mapId: newMapId,
         entryId: newEntryId,
@@ -549,6 +570,8 @@ export async function importUniverseJson(
         icon: pin.icon ?? null,
         // Phase 52 SECRET-02: plain boolean pass-through — no ID remap needed.
         secret: pin.secret,
+        // Phase 53 NEST-01: lenient remap via mapIdMap; orphan → null (ON DELETE SET NULL mirror).
+        targetMapId: newTargetMapId,
       });
     }
 
@@ -616,6 +639,10 @@ export async function importUniverseJson(
       if (region.terrainTypeId) {
         newTerrainTypeId = terrainTypeIdMap.get(region.terrainTypeId) ?? null;
       }
+      // NEST-01: lenient targetMapId remap — orphan → null, do NOT throw (T-53-10).
+      // mapIdMap is fully populated before this loop (step 3b), so even a forward-ref resolves.
+      let newTargetMapId: string | null = null;
+      if (region.targetMapId) newTargetMapId = mapIdMap.get(region.targetMapId) ?? null;
       await tx.insert(mapRegions).values({
         mapId: newMapId,
         entryId: newEntryId,
@@ -625,6 +652,8 @@ export async function importUniverseJson(
         terrainTypeId: newTerrainTypeId,
         // Phase 52 SECRET-02: plain boolean pass-through — no ID remap needed.
         secret: region.secret,
+        // Phase 53 NEST-01: lenient remap via mapIdMap; orphan → null (ON DELETE SET NULL mirror).
+        targetMapId: newTargetMapId,
       });
     }
 
