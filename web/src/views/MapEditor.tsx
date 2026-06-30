@@ -328,7 +328,7 @@ export function MapEditor() {
     if (!entriesData) return map.pins;
     const entryMap = new Map(entriesData.map((e) => [e.id, e]));
     return map.pins.map((pin) => {
-      const entry = entryMap.get(pin.entryId);
+      const entry = pin.entryId ? entryMap.get(pin.entryId) : undefined;
       return {
         ...pin,
         entryTitle: entry?.title ?? pin.entryTitle,

@@ -10,7 +10,7 @@ import { api } from '../api/client';
 export interface MapPin {
   id: string;
   mapId: string;
-  entryId: string;
+  entryId: string | null; // D-01a: nullable — map-only pins (no linked entry) allowed (Phase 53 NEST-01)
   x: number; // normalized 0..1
   y: number; // normalized 0..1
   // Phase 40 MAPS-05 style overrides (D-01, D-02):
@@ -20,6 +20,11 @@ export interface MapPin {
   // Non-optional — the server always returns it. Share responses never include secret=true pins
   // (they are filtered server-side in getPublicMap / share-views.ts).
   secret: boolean;
+  // Phase 53 NEST-01: target map for nested navigation. A string sets the link; null means not set.
+  // INCLUDED in share responses (unlike secret) — visitors need it to navigate nested maps.
+  // Do NOT re-key ['map', universeId, mapId] when adding this field.
+  // (memory: react-query-key-change-blast-radius)
+  targetMapId?: string | null;
   // Joined display fields — injected by the editor from useEntries, NOT returned by the API.
   // API returns bare map_pins rows (no entry join server-side).
   entryTitle?: string;
@@ -47,6 +52,11 @@ export interface MapRegion {
   secret: boolean;
   // Phase 43: terrain discriminator — null = political/standalone; non-null = terrain area
   terrainTypeId?: string | null;
+  // Phase 53 NEST-01: target map for nested navigation. A string sets the link; null means not set.
+  // INCLUDED in share responses (unlike secret) — visitors need it to navigate nested maps.
+  // Do NOT re-key ['map', universeId, mapId] when adding this field.
+  // (memory: react-query-key-change-blast-radius)
+  targetMapId?: string | null;
 }
 
 /**
@@ -457,6 +467,59 @@ export function useToggleRouteSecret(universeId: string, mapId: string) {
         {
           method: 'PATCH',
           body: JSON.stringify({ secret }),
+        },
+      ),
+    onSuccess: () => {
+      // CRITICAL: same key — no blast-radius re-key
+      // (memory: react-query-key-change-blast-radius)
+      qc.invalidateQueries({ queryKey: ['map', universeId, mapId] });
+    },
+  });
+}
+
+// ─── Phase 53 NEST-01: Target-map set/clear mutations ─────────────────────────
+// Each mutation PATCHes the respective item with { targetMapId } (string sets, null clears)
+// and invalidates the EXISTING ['map', universeId, mapId] key verbatim — no new key segment.
+// (memory: react-query-key-change-blast-radius)
+
+/**
+ * useSetPinTargetMap — PATCH .../pins/:pinId/style with { targetMapId }.
+ * Rides the existing pinStyleSchema endpoint (mirrors 53-02 design).
+ * Invalidates ['map', universeId, mapId] — EXACT key shape, no new segment.
+ */
+export function useSetPinTargetMap(universeId: string, mapId: string) {
+  const qc = useQueryClient();
+  return useMutation({
+    mutationFn: ({ pinId, targetMapId }: { pinId: string; targetMapId: string | null }) =>
+      api<MapPin>(
+        `/universes/${universeId}/maps/${mapId}/pins/${pinId}/style`,
+        {
+          method: 'PATCH',
+          body: JSON.stringify({ targetMapId }),
+        },
+      ),
+    onSuccess: () => {
+      // CRITICAL: same key — no blast-radius re-key
+      // (memory: react-query-key-change-blast-radius)
+      qc.invalidateQueries({ queryKey: ['map', universeId, mapId] });
+    },
+  });
+}
+
+/**
+ * useSetRegionTargetMap — PATCH .../regions/:regionId with { targetMapId }.
+ * Rides the existing region PATCH endpoint (mirrors 53-02 design).
+ * Invalidates ['map', universeId, mapId] — EXACT key shape, no new segment.
+ */
+export function useSetRegionTargetMap(universeId: string, mapId: string) {
+  const qc = useQueryClient();
+  return useMutation({
+    mutationFn: ({ regionId, targetMapId }: { regionId: string; targetMapId: string | null }) =>
+      api<MapRegion>(
+        `/universes/${universeId}/maps/${mapId}/regions/${regionId}`,
+        {
+          method: 'PATCH',
+          body: JSON.stringify({ targetMapId }),
         },
       ),
     onSuccess: () => {

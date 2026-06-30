@@ -279,8 +279,8 @@ function PinCircle({
         onRouteVertexAtPin?.(pin);
         return;
       }
-      // Idle mode: navigate to entry as before.
-      onNavigate(pin.entryId);
+      // Idle mode: navigate to entry when linked (entryId may be null for map-only pins, D-01a).
+      if (pin.entryId) onNavigate(pin.entryId);
       return;
     }
 
