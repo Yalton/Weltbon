@@ -573,7 +573,7 @@ export const maps = pgTable('maps', {
 export const mapPins = pgTable('map_pins', {
   id:      uuid('id').primaryKey().defaultRandom(),
   mapId:   uuid('map_id').references(() => maps.id, { onDelete: 'cascade' }).notNull(),
-  entryId: uuid('entry_id').references(() => entries.id, { onDelete: 'cascade' }).notNull(),
+  entryId: uuid('entry_id').references(() => entries.id, { onDelete: 'cascade' }),  // nullable (D-01a): a pin can be map-only (NEST-01)
   x:       doublePrecision('x').notNull(),
   y:       doublePrecision('y').notNull(),
   color:   text('color'),   // nullable hex; null → entryTypeHexColor fallback (D-01)
@@ -582,6 +582,10 @@ export const mapPins = pgTable('map_pins', {
   // Server-side share filter in share-views.ts drops items where secret=true.
   // Inverse polarity of entries.isPublic: false = visible, true = excluded from share.
   secret: boolean('secret').default(false).notNull(),
+  // Phase 53 NEST-01: target_map_id — nullable FK to maps (ON DELETE SET NULL, mirrors terrainTypeId)
+  // so deleting a target map nulls the link rather than cascade-deleting the source pin.
+  // eslint-disable-next-line @typescript-eslint/no-use-before-define
+  targetMapId: uuid('target_map_id').references((): any => maps.id, { onDelete: 'set null' }),
 });
 
 /**
@@ -613,6 +617,10 @@ export const mapRegions = pgTable('map_regions', {
   // Server-side share filter in share-views.ts drops items where secret=true.
   // Inverse polarity of entries.isPublic: false = visible, true = excluded from share.
   secret: boolean('secret').default(false).notNull(),
+  // Phase 53 NEST-01: target_map_id — nullable FK to maps (ON DELETE SET NULL, mirrors terrainTypeId)
+  // so deleting a target map nulls the link rather than cascade-deleting the source region.
+  // eslint-disable-next-line @typescript-eslint/no-use-before-define
+  targetMapId: uuid('target_map_id').references((): any => maps.id, { onDelete: 'set null' }),
 });
 
 /**

@@ -96,7 +96,7 @@ export interface ExportPayloadMap {
 export interface ExportPayloadMapPin {
   id: string;
   mapId: string;
-  entryId: string;
+  entryId: string | null;  // nullable (D-01a): a pin can be map-only (NEST-01)
   x: number;
   y: number;
   color: string | null;
