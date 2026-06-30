@@ -1005,4 +1005,214 @@ describe('map routes (MAPS-04/05 regions + pin style)', () => {
     const updated = await json(patchRes);
     expect(updated.secret).toBe(true);
   });
+
+  // ─── NEST-01: targetMapId schema widening (Task 1 RED) ────────────────────
+
+  it('NEST-01 (T1-schema): POST /pins with targetMapId and no entryId creates a map-only pin (201)', async () => {
+    // RED before Task 1: createPinSchema requires entryId → body rejected with 400.
+    // GREEN after Task 1 schema: entryId is optional, body accepted.
+    // GREEN after Task 2 handler: targetMapId is persisted in the row.
+    const { hdrs, uid, mid, assetId } = await seedMap('nest01-t1a@test.com');
+    const targetMapId = await createMap(uid, hdrs, assetId);
+
+    const res = await req('POST', `/api/universes/${uid}/maps/${mid}/pins`, {
+      headers: hdrs,
+      body: { x: 0.5, y: 0.5, targetMapId },
+    });
+
+    expect(res.status).toBe(201);
+    const pin = await json(res);
+    expect(pin.id).toBeDefined();
+    expect(pin.entryId).toBeNull();
+    // targetMapId persisted by Task 2 handler:
+    expect(pin.targetMapId).toBe(targetMapId);
+  });
+
+  it('NEST-01 (T1-schema): PATCH /pins/:pinId/style with only targetMapId passes the refine guard (200)', async () => {
+    // RED before Task 1: pinStyleSchema refine requires at least color/icon/secret →
+    // a targetMapId-only body returns 400.
+    const { hdrs, uid, mid, assetId } = await seedMap('nest01-t1b@test.com');
+    const entryId = await createEntry(uid, hdrs);
+    const targetMapId = await createMap(uid, hdrs, assetId);
+
+    const pinRes = await req('POST', `/api/universes/${uid}/maps/${mid}/pins`, {
+      headers: hdrs,
+      body: { entryId, x: 0.3, y: 0.3 },
+    });
+    const pin = await json(pinRes);
+
+    const patchRes = await req('PATCH', `/api/universes/${uid}/maps/${mid}/pins/${pin.id}/style`, {
+      headers: hdrs,
+      body: { targetMapId },
+    });
+
+    expect(patchRes.status).toBe(200);
+  });
+
+  it('NEST-01 (T1-schema): PATCH /regions/:regionId with only targetMapId passes the refine guard (200)', async () => {
+    // RED before Task 1: updateRegionSchema refine requires at least name/color/entryId/
+    // terrainTypeId/secret → a targetMapId-only body returns 400.
+    const { hdrs, uid, mid, assetId } = await seedMap('nest01-t1c@test.com');
+    const targetMapId = await createMap(uid, hdrs, assetId);
+    const points = JSON.stringify([{ x: 0.0, y: 0.0 }, { x: 0.4, y: 0.0 }, { x: 0.4, y: 0.4 }]);
+
+    const createRes = await req('POST', `/api/universes/${uid}/maps/${mid}/regions`, {
+      headers: hdrs,
+      body: { name: 'Forest', points },
+    });
+    const region = await json(createRes);
+
+    const patchRes = await req('PATCH', `/api/universes/${uid}/maps/${mid}/regions/${region.id}`, {
+      headers: hdrs,
+      body: { targetMapId },
+    });
+
+    expect(patchRes.status).toBe(200);
+  });
+
+  // ─── NEST-01: target_map_id universe validation (Task 2 RED) ──────────────
+  // These tests are RED after Task 1 (schema accepts targetMapId) but before
+  // Task 2 (handler validates universe membership and self-target).
+
+  it('NEST-01 (T2-handler): PATCH /pins/:pinId/style in-universe targetMapId → 200 with targetMapId set', async () => {
+    const { hdrs, uid, mid, assetId } = await seedMap('nest01-t2a@test.com');
+    const entryId = await createEntry(uid, hdrs);
+    const targetMapId = await createMap(uid, hdrs, assetId);
+
+    const pinRes = await req('POST', `/api/universes/${uid}/maps/${mid}/pins`, {
+      headers: hdrs,
+      body: { entryId, x: 0.2, y: 0.2 },
+    });
+    const pin = await json(pinRes);
+
+    const patchRes = await req('PATCH', `/api/universes/${uid}/maps/${mid}/pins/${pin.id}/style`, {
+      headers: hdrs,
+      body: { targetMapId },
+    });
+
+    expect(patchRes.status).toBe(200);
+    const updated = await json(patchRes);
+    expect(updated.targetMapId).toBe(targetMapId);
+
+    // Clearing targetMapId via null also works
+    const clearRes = await req('PATCH', `/api/universes/${uid}/maps/${mid}/pins/${pin.id}/style`, {
+      headers: hdrs,
+      body: { targetMapId: null },
+    });
+    expect(clearRes.status).toBe(200);
+    const cleared = await json(clearRes);
+    expect(cleared.targetMapId).toBeNull();
+  });
+
+  it('NEST-01 (T2-handler): PATCH /pins/:pinId/style cross-universe targetMapId → 404', async () => {
+    const { hdrs, uid, mid } = await seedMap('nest01-t2b@test.com');
+    const entryId = await createEntry(uid, hdrs);
+
+    // Other universe — different user with their own map
+    const { mid: otherMid } = await seedMap('nest01-t2b-other@test.com');
+
+    const pinRes = await req('POST', `/api/universes/${uid}/maps/${mid}/pins`, {
+      headers: hdrs,
+      body: { entryId, x: 0.2, y: 0.2 },
+    });
+    const pin = await json(pinRes);
+
+    const res = await req('PATCH', `/api/universes/${uid}/maps/${mid}/pins/${pin.id}/style`, {
+      headers: hdrs,
+      body: { targetMapId: otherMid },
+    });
+
+    expect(res.status).toBe(404);
+    const body = await json(res);
+    expect(body.error).toMatch(/target map not found/i);
+  });
+
+  it('NEST-01 (T2-handler): PATCH /pins/:pinId/style self-target (targetMapId === mid) → 400', async () => {
+    const { hdrs, uid, mid } = await seedMap('nest01-t2c@test.com');
+    const entryId = await createEntry(uid, hdrs);
+
+    const pinRes = await req('POST', `/api/universes/${uid}/maps/${mid}/pins`, {
+      headers: hdrs,
+      body: { entryId, x: 0.2, y: 0.2 },
+    });
+    const pin = await json(pinRes);
+
+    const res = await req('PATCH', `/api/universes/${uid}/maps/${mid}/pins/${pin.id}/style`, {
+      headers: hdrs,
+      body: { targetMapId: mid },
+    });
+
+    // Self-target is rejected — a pin cannot target its own map
+    expect(res.status).toBe(400);
+  });
+
+  it('NEST-01 (T2-handler): PATCH /regions/:regionId in-universe targetMapId → 200 with targetMapId set', async () => {
+    const { hdrs, uid, mid, assetId } = await seedMap('nest01-t2d@test.com');
+    const targetMapId = await createMap(uid, hdrs, assetId);
+    const points = JSON.stringify([{ x: 0.0, y: 0.0 }, { x: 0.4, y: 0.0 }, { x: 0.4, y: 0.4 }]);
+
+    const createRes = await req('POST', `/api/universes/${uid}/maps/${mid}/regions`, {
+      headers: hdrs,
+      body: { name: 'Target Region', points, entryId: null },
+    });
+    const region = await json(createRes);
+
+    const patchRes = await req('PATCH', `/api/universes/${uid}/maps/${mid}/regions/${region.id}`, {
+      headers: hdrs,
+      body: { targetMapId },
+    });
+
+    expect(patchRes.status).toBe(200);
+    const updated = await json(patchRes);
+    expect(updated.targetMapId).toBe(targetMapId);
+
+    // Clearing via null
+    const clearRes = await req('PATCH', `/api/universes/${uid}/maps/${mid}/regions/${region.id}`, {
+      headers: hdrs,
+      body: { targetMapId: null },
+    });
+    expect(clearRes.status).toBe(200);
+    const cleared = await json(clearRes);
+    expect(cleared.targetMapId).toBeNull();
+  });
+
+  it('NEST-01 (T2-handler): PATCH /regions/:regionId cross-universe targetMapId → 404', async () => {
+    const { hdrs, uid, mid } = await seedMap('nest01-t2e@test.com');
+    const { mid: otherMid } = await seedMap('nest01-t2e-other@test.com');
+    const points = JSON.stringify([{ x: 0.0, y: 0.0 }, { x: 0.4, y: 0.0 }, { x: 0.4, y: 0.4 }]);
+
+    const createRes = await req('POST', `/api/universes/${uid}/maps/${mid}/regions`, {
+      headers: hdrs,
+      body: { name: 'Region', points, entryId: null },
+    });
+    const region = await json(createRes);
+
+    const res = await req('PATCH', `/api/universes/${uid}/maps/${mid}/regions/${region.id}`, {
+      headers: hdrs,
+      body: { targetMapId: otherMid },
+    });
+
+    expect(res.status).toBe(404);
+    const body = await json(res);
+    expect(body.error).toMatch(/target map not found/i);
+  });
+
+  it('NEST-01 (T2-handler): PATCH /regions/:regionId self-target (targetMapId === mid) → 400', async () => {
+    const { hdrs, uid, mid } = await seedMap('nest01-t2f@test.com');
+    const points = JSON.stringify([{ x: 0.0, y: 0.0 }, { x: 0.4, y: 0.0 }, { x: 0.4, y: 0.4 }]);
+
+    const createRes = await req('POST', `/api/universes/${uid}/maps/${mid}/regions`, {
+      headers: hdrs,
+      body: { name: 'Self-Link Region', points, entryId: null },
+    });
+    const region = await json(createRes);
+
+    const res = await req('PATCH', `/api/universes/${uid}/maps/${mid}/regions/${region.id}`, {
+      headers: hdrs,
+      body: { targetMapId: mid },
+    });
+
+    // Self-target is rejected
+    expect(res.status).toBe(400);
+  });
 });
