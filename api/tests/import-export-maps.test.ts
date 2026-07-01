@@ -1170,18 +1170,37 @@ describe('import-export-maps (SC4)', () => {
     const { status, body: importResult } = await importZip(zipBytes, hdrs);
     expect(status, `import failed: ${JSON.stringify(importResult)}`).toBe(201);
 
-    // 15. Count assertions — all non-zero: secret items PRESENT in OWNER import (portability).
+    // 15. Count assertions — exact counts: secret items PRESENT in OWNER import (portability).
     //     A missing count means the item was incorrectly filtered or dropped by the import path.
-    expect(importResult.assetCount, 'assetCount ≥ 2 (two map images)').toBeGreaterThanOrEqual(2);
-    expect(importResult.entryCount, 'entryCount ≥ 2').toBeGreaterThanOrEqual(2);
-    expect(importResult.mapCount, 'mapCount ≥ 2 (Map A + Map B)').toBeGreaterThanOrEqual(2);
-    expect(importResult.mapPinCount, 'mapPinCount ≥ 2 (non-secret pin + secret pin)').toBeGreaterThanOrEqual(2);
-    expect(importResult.mapRegionCount, 'mapRegionCount ≥ 2 (terrain area + secret-layer region)').toBeGreaterThanOrEqual(2);
-    expect(importResult.mapRouteCount, 'mapRouteCount ≥ 2 (linked route + secret route)').toBeGreaterThanOrEqual(2);
-    expect(importResult.mapLayerCount, 'mapLayerCount ≥ 2 (visible layer + secret layer)').toBeGreaterThanOrEqual(2);
-    expect(importResult.terrainTypeCount, 'terrainTypeCount ≥ 2 (grassland + hidden terrain)').toBeGreaterThanOrEqual(2);
+    //     Exact bounds (not floor) catch idempotency bugs that would duplicate items on re-import.
+    expect(importResult.assetCount, 'assetCount must be 2 (two map images)').toBe(2);
+    expect(importResult.entryCount, 'entryCount must be 2').toBe(2);
+    expect(importResult.mapCount, 'mapCount must be 2 (Map A + Map B)').toBe(2);
+    expect(importResult.mapPinCount, 'mapPinCount must be 2 (non-secret pin + secret pin)').toBe(2);
+    expect(importResult.mapRegionCount, 'mapRegionCount must be 2 (terrain area + secret-layer region)').toBe(2);
+    expect(importResult.mapRouteCount, 'mapRouteCount must be 2 (linked route + secret route)').toBe(2);
+    expect(importResult.mapLayerCount, 'mapLayerCount must be 2 (visible layer + secret layer)').toBe(2);
+    expect(importResult.terrainTypeCount, 'terrainTypeCount must be 2 (grassland + hidden terrain)').toBe(2);
 
     const newUniverseId: string = importResult.universeId;
+
+    // 15b. Fetch layers in the new universe — verifies secret layer survived import with secret=true
+    //      and that IDs were remapped (layer-secrecy composition claim).
+    // eslint-disable-next-line @typescript-eslint/no-explicit-any
+    const newLayersRes = await jsonReq('GET', `/api/universes/${newUniverseId}/map-layers`, { headers: hdrs });
+    expect(newLayersRes.status).toBe(200);
+    const newLayers: any[] = await json(newLayersRes);
+    expect(newLayers, 'must have exactly 2 layers after import').toHaveLength(2);
+    // eslint-disable-next-line @typescript-eslint/no-explicit-any
+    const newVisibleLayer = newLayers.find((l: any) => l.name === 'Terrain Layer');
+    // eslint-disable-next-line @typescript-eslint/no-explicit-any
+    const newSecretLayerImported = newLayers.find((l: any) => l.name === 'Secret Layer');
+    expect(newVisibleLayer, 'Terrain Layer must be found after import').toBeDefined();
+    expect(newSecretLayerImported, 'Secret Layer must be found after import').toBeDefined();
+    // CR-01 + WR-02: secret flag must survive import on the layer.
+    expect(newSecretLayerImported.secret, 'Secret Layer must retain secret=true after import').toBe(true);
+    // IDs must be remapped — secret layer gets a new UUID in the imported universe.
+    expect(newSecretLayerImported.id, 'Secret Layer id must be remapped').not.toBe(secretLayer.id);
 
     // 16. Fetch re-imported maps; identify Map A and Map B by their distinct names.
     const newMapsRes = await jsonReq('GET', `/api/universes/${newUniverseId}/maps`, { headers: hdrs });
@@ -1203,6 +1222,11 @@ describe('import-export-maps (SC4)', () => {
     );
     expect(mapADetailRes.status).toBe(200);
     const mapADetail = await json(mapADetailRes);
+    // WR-04: guard against endpoint regressions that silently drop these arrays —
+    //        a TypeError on .find() gives a much worse diagnosis than a failing assertion here.
+    expect(Array.isArray(mapADetail.routes), 'map detail must include routes array').toBe(true);
+    expect(Array.isArray(mapADetail.pins), 'map detail must include pins array').toBe(true);
+    expect(Array.isArray(mapADetail.regions), 'map detail must include regions array').toBe(true);
 
     // 18. Style intactness: linked route lineStyle/width/showArrow survive the round-trip.
     // eslint-disable-next-line @typescript-eslint/no-explicit-any
@@ -1215,6 +1239,18 @@ describe('import-export-maps (SC4)', () => {
     expect(newLinkedRoute.entryId, 'route entryId must be remapped (non-null)').toBeTruthy();
     expect(newLinkedRoute.entryId, 'route entryId must not be the original entryA.id').not.toBe(entryA.id);
 
+    // 18b. CR-02: Shadow Path (secret × route) — verify style fields AND secret flag survive import.
+    //      The route is standalone (no entry link), so entryId must be null.
+    // eslint-disable-next-line @typescript-eslint/no-explicit-any
+    const newShadowRoute = mapADetail.routes.find((r: any) => r.name === 'Shadow Path');
+    expect(newShadowRoute, '"Shadow Path" secret route must be found after import').toBeDefined();
+    expect(newShadowRoute.lineStyle, 'Shadow Path lineStyle must be dashed').toBe('dashed');
+    expect(newShadowRoute.width, 'Shadow Path width must be 3').toBe(3);
+    expect(newShadowRoute.showArrow, 'Shadow Path showArrow must be true').toBe(true);
+    expect(newShadowRoute.entryId, 'Shadow Path is standalone — entryId must be null').toBeNull();
+    // CR-01 + CR-02: secret flag must survive import on the route.
+    expect(newShadowRoute.secret, 'Shadow Path must retain secret=true after import').toBe(true);
+
     // 19. Secret × targetMapId: secret pin must be PRESENT in the owner import (portability).
     //     The secret pin is the only pin on Map A with a non-null targetMapId.
     // eslint-disable-next-line @typescript-eslint/no-explicit-any
@@ -1223,6 +1259,8 @@ describe('import-export-maps (SC4)', () => {
     // targetMapId must remap to new Map B's id — NOT the original mapB.id.
     expect(newSecretPin.targetMapId, 'secret pin targetMapId must equal new Map B id').toBe(newMapB.id);
     expect(newSecretPin.targetMapId, 'secret pin targetMapId must not be original Map B id').not.toBe(mapB.id);
+    // CR-01: secret flag must survive import on the pin.
+    expect(newSecretPin.secret, 'secret pin must retain secret=true after import').toBe(true);
 
     // 20. Layer-secrecy × map-to-map region: hidden territory must be PRESENT in the owner import.
     //     (Share-boundary filtering is SC2's job; the OWNER export sees all items regardless of secrecy.)
@@ -1232,6 +1270,15 @@ describe('import-export-maps (SC4)', () => {
     // targetMapId must remap to new Map B's id.
     expect(newHiddenRegion.targetMapId, 'region targetMapId must equal new Map B id').toBe(newMapB.id);
     expect(newHiddenRegion.targetMapId, 'region targetMapId must not be original Map B id').not.toBe(mapB.id);
+    // WR-01: terrainTypeId under the secret layer must also be remapped — not nulled out.
+    expect(
+      newHiddenRegion.terrainTypeId,
+      '"Hidden Territory" terrainTypeId must be remapped (non-null)',
+    ).toBeTruthy();
+    expect(
+      newHiddenRegion.terrainTypeId,
+      '"Hidden Territory" terrainTypeId must not be the original secretLayerTerrainType.id',
+    ).not.toBe(secretLayerTerrainType.id);
 
     // 21. terrainTypeId remap: terrain area must reference a new terrainTypeId after import.
     // eslint-disable-next-line @typescript-eslint/no-explicit-any
