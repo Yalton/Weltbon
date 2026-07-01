@@ -31,6 +31,8 @@ import {
 } from './helpers.js';
 import { issueAccessToken } from '../src/services/auth.js';
 import { setTestDb } from '../src/db/client.js';
+import { eq } from 'drizzle-orm';
+import { mapLayers, mapPins, mapRegions, mapRoutes } from '../src/db/schema.js';
 
 describe('import-export-maps (SC4)', () => {
   let handle: TestDbHandle;
@@ -1040,5 +1042,202 @@ describe('import-export-maps (SC4)', () => {
 
     expect(mapDetail.regions).toHaveLength(1);
     expect(mapDetail.regions[0].targetMapId, 'pre-v5.3 region must have targetMapId=null').toBeNull();
+  });
+
+  // ─── SC3 omnibus: composition round-trip ─────────────────────────────────────
+  //
+  // Proves that routes + secret items + layer-level secrecy + map-to-map
+  // targetMapId links all compose through export→import TOGETHER into a clean
+  // universe with all data/styles/flags/ID-remaps intact.
+  //
+  // Composition interactions exercised:
+  //   • secret × route     — a secret route in the same universe as a non-secret route
+  //   • secret × targetMapId — a secret pin that ALSO carries a targetMapId
+  //   • layer-secrecy × map-to-map region — a region under a secret layer that also targets another map
+  //
+  // Seed strategy (54-PATTERNS §"Gap in the helper set" pattern #1):
+  //   Seed via the HTTP helpers, then set secret/targetMapId on the specific rows
+  //   via direct handle.db.update(...) — mirrors how share-maps-boundary.test.ts
+  //   seeds secret flags (direct DB insert/update) — THEN export + import.
+  //   This path exercises export/payload.ts (DB gather) AND export/json.ts
+  //   (serialization) AND import-json.ts (atomic ID-remap insert).
+
+  it('SC3 omnibus: routes + secret items + layer-secrecy + map-to-map links round-trip together into a clean universe', async () => {
+    const { hdrs } = await userWithToken('sc3-omnibus@test.com');
+    const universe = await createUniverse(hdrs, 'OmnibusWorld');
+    const uid = universe.id;
+
+    // 1. Upload map image assets for Map A (source) and Map B (target for nested links).
+    const mapAssetA = await uploadAsset(uid, hdrs);
+    const mapAssetB = await uploadAsset(uid, hdrs);
+
+    // 2. Create two entries: entryA for the linked route + non-secret pin; entryB for the secret pin.
+    const entryA = await createEntry(uid, hdrs, { title: 'Entry Alpha' });
+    const entryB = await createEntry(uid, hdrs, { title: 'Entry Beta' });
+
+    // 3. Create Map A (source) and Map B (target) with distinct names for post-import identification.
+    const mapARes = await jsonReq('POST', `/api/universes/${uid}/maps`, {
+      headers: hdrs,
+      body: { name: 'Source Map A', imageAssetId: mapAssetA.id },
+    });
+    if (mapARes.status !== 201) throw new Error(`createMapA failed: ${await mapARes.text()}`);
+    const mapA = await json(mapARes);
+
+    const mapBRes = await jsonReq('POST', `/api/universes/${uid}/maps`, {
+      headers: hdrs,
+      body: { name: 'Target Map B', imageAssetId: mapAssetB.id },
+    });
+    if (mapBRes.status !== 201) throw new Error(`createMapB failed: ${await mapBRes.text()}`);
+    const mapB = await json(mapBRes);
+
+    // 4. Visible terrain layer + type for the terrainTypeId remap assertion.
+    const layer = await createLayer(uid, hdrs, { name: 'Terrain Layer', ordered: false });
+    const terrainType = await createTerrainType(uid, layer.id, hdrs, {
+      name: 'Grassland',
+      color: '#66aa44',
+    });
+
+    // 5. Secret layer (for layer-secrecy × map-to-map region interaction).
+    //    HTTP create endpoint does not expose `secret`; set via direct DB update.
+    const secretLayer = await createLayer(uid, hdrs, { name: 'Secret Layer', ordered: false });
+    await handle.db
+      .update(mapLayers)
+      .set({ secret: true })
+      .where(eq(mapLayers.id, secretLayer.id));
+
+    // 6. Terrain type under the secret layer.
+    const secretLayerTerrainType = await createTerrainType(uid, secretLayer.id, hdrs, {
+      name: 'Hidden Terrain',
+      color: '#333333',
+    });
+
+    // 7. Non-secret pin on Map A linked to entryA (control — present in both export and import).
+    await createPin(uid, mapA.id, entryA.id, hdrs);
+
+    // 8. Secret pin linked to entryB + targetMapId (secret × targetMapId interaction).
+    //    Seed via HTTP, then set secret=true + targetMapId via direct DB update.
+    const secretPin = await createPin(uid, mapA.id, entryB.id, hdrs);
+    await handle.db
+      .update(mapPins)
+      .set({ secret: true, targetMapId: mapB.id })
+      .where(eq(mapPins.id, secretPin.id));
+
+    // 9. Terrain area on Map A under the visible terrain type (for terrainTypeId remap assertion).
+    await createRegion(uid, mapA.id, hdrs, {
+      name: 'Grass Field',
+      terrainTypeId: terrainType.id,
+    });
+
+    // 10. Region under the secret layer + targetMapId (layer-secrecy × map-to-map interaction).
+    //     Seed via HTTP, then set targetMapId via direct DB update.
+    const secretLayerRegion = await createRegion(uid, mapA.id, hdrs, {
+      name: 'Hidden Territory',
+      terrainTypeId: secretLayerTerrainType.id,
+    });
+    await handle.db
+      .update(mapRegions)
+      .set({ targetMapId: mapB.id })
+      .where(eq(mapRegions.id, secretLayerRegion.id));
+
+    // 11. Entry-linked route with non-default style (dashed/7/showArrow=true) — style intactness.
+    await createRoute(uid, mapA.id, hdrs, {
+      name: "King's Road",
+      entryId: entryA.id,
+      lineStyle: 'dashed',
+      width: 7,
+      showArrow: true,
+    });
+
+    // 12. Secret standalone route with non-default style (secret × route interaction).
+    //     Seed via HTTP, then set secret=true via direct DB update.
+    const secretRoute = await createRoute(uid, mapA.id, hdrs, {
+      name: 'Shadow Path',
+      entryId: null,
+      lineStyle: 'dashed',
+      width: 3,
+      showArrow: true,
+    });
+    await handle.db
+      .update(mapRoutes)
+      .set({ secret: true })
+      .where(eq(mapRoutes.id, secretRoute.id));
+
+    // 13. Export as ZIP — exercises export/payload.ts (DB gather) + export/json.ts (serialization).
+    const zipBytes = await exportAsZip(uid, hdrs);
+    expect(zipBytes.length).toBeGreaterThan(0);
+
+    // 14. Import into a clean new universe — exercises import-json.ts (ID remap + atomic insert).
+    const { status, body: importResult } = await importZip(zipBytes, hdrs);
+    expect(status, `import failed: ${JSON.stringify(importResult)}`).toBe(201);
+
+    // 15. Count assertions — all non-zero: secret items PRESENT in OWNER import (portability).
+    //     A missing count means the item was incorrectly filtered or dropped by the import path.
+    expect(importResult.assetCount, 'assetCount ≥ 2 (two map images)').toBeGreaterThanOrEqual(2);
+    expect(importResult.entryCount, 'entryCount ≥ 2').toBeGreaterThanOrEqual(2);
+    expect(importResult.mapCount, 'mapCount ≥ 2 (Map A + Map B)').toBeGreaterThanOrEqual(2);
+    expect(importResult.mapPinCount, 'mapPinCount ≥ 2 (non-secret pin + secret pin)').toBeGreaterThanOrEqual(2);
+    expect(importResult.mapRegionCount, 'mapRegionCount ≥ 2 (terrain area + secret-layer region)').toBeGreaterThanOrEqual(2);
+    expect(importResult.mapRouteCount, 'mapRouteCount ≥ 2 (linked route + secret route)').toBeGreaterThanOrEqual(2);
+    expect(importResult.mapLayerCount, 'mapLayerCount ≥ 2 (visible layer + secret layer)').toBeGreaterThanOrEqual(2);
+    expect(importResult.terrainTypeCount, 'terrainTypeCount ≥ 2 (grassland + hidden terrain)').toBeGreaterThanOrEqual(2);
+
+    const newUniverseId: string = importResult.universeId;
+
+    // 16. Fetch re-imported maps; identify Map A and Map B by their distinct names.
+    const newMapsRes = await jsonReq('GET', `/api/universes/${newUniverseId}/maps`, { headers: hdrs });
+    expect(newMapsRes.status).toBe(200);
+    const newMaps = await json(newMapsRes);
+    expect(newMaps).toHaveLength(2);
+    // eslint-disable-next-line @typescript-eslint/no-explicit-any
+    const newMapA = newMaps.find((m: any) => m.name === 'Source Map A');
+    // eslint-disable-next-line @typescript-eslint/no-explicit-any
+    const newMapB = newMaps.find((m: any) => m.name === 'Target Map B');
+    expect(newMapA, 'Source Map A must be found after import').toBeDefined();
+    expect(newMapB, 'Target Map B must be found after import').toBeDefined();
+
+    // 17. Fetch Map A detail for pin/region/route assertions.
+    const mapADetailRes = await jsonReq(
+      'GET',
+      `/api/universes/${newUniverseId}/maps/${newMapA.id}`,
+      { headers: hdrs },
+    );
+    expect(mapADetailRes.status).toBe(200);
+    const mapADetail = await json(mapADetailRes);
+
+    // 18. Style intactness: linked route lineStyle/width/showArrow survive the round-trip.
+    // eslint-disable-next-line @typescript-eslint/no-explicit-any
+    const newLinkedRoute = mapADetail.routes.find((r: any) => r.name === "King's Road");
+    expect(newLinkedRoute, "linked route \"King's Road\" must be found after import").toBeDefined();
+    expect(newLinkedRoute.lineStyle, 'lineStyle must be dashed').toBe('dashed');
+    expect(newLinkedRoute.width, 'width must be 7').toBe(7);
+    expect(newLinkedRoute.showArrow, 'showArrow must be true').toBe(true);
+    // entryId remap: must be a new UUID, not the original entryA.id.
+    expect(newLinkedRoute.entryId, 'route entryId must be remapped (non-null)').toBeTruthy();
+    expect(newLinkedRoute.entryId, 'route entryId must not be the original entryA.id').not.toBe(entryA.id);
+
+    // 19. Secret × targetMapId: secret pin must be PRESENT in the owner import (portability).
+    //     The secret pin is the only pin on Map A with a non-null targetMapId.
+    // eslint-disable-next-line @typescript-eslint/no-explicit-any
+    const newSecretPin = mapADetail.pins.find((p: any) => p.targetMapId !== null);
+    expect(newSecretPin, 'secret pin (targetMapId != null) must be PRESENT in owner import').toBeDefined();
+    // targetMapId must remap to new Map B's id — NOT the original mapB.id.
+    expect(newSecretPin.targetMapId, 'secret pin targetMapId must equal new Map B id').toBe(newMapB.id);
+    expect(newSecretPin.targetMapId, 'secret pin targetMapId must not be original Map B id').not.toBe(mapB.id);
+
+    // 20. Layer-secrecy × map-to-map region: hidden territory must be PRESENT in the owner import.
+    //     (Share-boundary filtering is SC2's job; the OWNER export sees all items regardless of secrecy.)
+    // eslint-disable-next-line @typescript-eslint/no-explicit-any
+    const newHiddenRegion = mapADetail.regions.find((r: any) => r.name === 'Hidden Territory');
+    expect(newHiddenRegion, '"Hidden Territory" region must be PRESENT in owner import').toBeDefined();
+    // targetMapId must remap to new Map B's id.
+    expect(newHiddenRegion.targetMapId, 'region targetMapId must equal new Map B id').toBe(newMapB.id);
+    expect(newHiddenRegion.targetMapId, 'region targetMapId must not be original Map B id').not.toBe(mapB.id);
+
+    // 21. terrainTypeId remap: terrain area must reference a new terrainTypeId after import.
+    // eslint-disable-next-line @typescript-eslint/no-explicit-any
+    const newGrassField = mapADetail.regions.find((r: any) => r.name === 'Grass Field');
+    expect(newGrassField, '"Grass Field" terrain area must be present after import').toBeDefined();
+    expect(newGrassField.terrainTypeId, 'terrainTypeId must be remapped (non-null)').toBeTruthy();
+    expect(newGrassField.terrainTypeId, 'terrainTypeId must not be the original').not.toBe(terrainType.id);
   });
 });
