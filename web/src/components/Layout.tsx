@@ -7,8 +7,8 @@ export function Layout() {
   return (
     <div className="min-h-full flex flex-col">
       <AppBackground />
-      <header className="border-b border-neutral-200 dark:border-neutral-800 px-6 py-3 flex items-center justify-between">
-        <Link to="/universes" className="font-semibold text-[color:var(--color-accent)]">
+      <header className="sticky top-0 z-40 border-b border-white/10 bg-[color:var(--color-chrome)] backdrop-blur-md px-6 py-3 flex items-center justify-between">
+        <Link to="/universes" className="wordmark text-lg">
           Weltbon
         </Link>
         {/* Phase 26 D-17: cross-universe in-flight audits badge sits next to

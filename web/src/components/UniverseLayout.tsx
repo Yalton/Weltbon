@@ -2,6 +2,7 @@ import { Outlet, Link, useParams } from 'react-router-dom';
 import { Sidebar } from './Sidebar';
 import { UserMenu } from './UserMenu';
 import { AppBackground } from './AppBackground';
+import { useUniverse } from '../hooks/useUniverse';
 
 /**
  * Layout shell for universe-scoped routes (/universes/:uid/entries/*,
@@ -16,15 +17,24 @@ import { AppBackground } from './AppBackground';
  */
 export function UniverseLayout() {
   const { uid } = useParams<{ uid: string }>();
+  const { data: universe } = useUniverse(uid);
   if (!uid) return null;
 
   return (
     <div className="min-h-full flex flex-col">
       <AppBackground />
-      <header className="border-b border-neutral-200 dark:border-neutral-800 px-6 py-3 flex items-center justify-between">
-        <Link to="/universes" className="font-semibold text-[color:var(--color-accent)]">
-          Weltbon
-        </Link>
+      <header className="sticky top-0 z-40 border-b border-white/10 bg-[color:var(--color-chrome)] backdrop-blur-md px-6 py-3 flex items-center justify-between">
+        <div className="flex items-baseline gap-3 min-w-0">
+          <Link to="/universes" className="wordmark text-lg shrink-0">
+            Weltbon
+          </Link>
+          {universe?.name && (
+            <>
+              <span className="text-ink-muted">/</span>
+              <span className="text-sm text-indigo-200 truncate">{universe.name}</span>
+            </>
+          )}
+        </div>
         <UserMenu />
       </header>
       <div className="flex-1 flex min-h-0">
