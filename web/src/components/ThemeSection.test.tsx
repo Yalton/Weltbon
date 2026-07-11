@@ -60,6 +60,14 @@ describe('ThemeSection', () => {
     });
   });
 
+  it('Save is disabled until the draft differs from the saved theme', async () => {
+    render(<ThemeSection universe={universe} />);
+    const saveBtn = screen.getByRole('button', { name: /save theme/i });
+    expect(saveBtn).toBeDisabled();
+    await userEvent.click(screen.getByRole('button', { name: /ember/i }));
+    expect(saveBtn).not.toBeDisabled();
+  });
+
   it('reset sends theme: null', async () => {
     render(
       <ThemeSection universe={{ ...universe, theme: { palette: 'ember' } } as Universe} />,

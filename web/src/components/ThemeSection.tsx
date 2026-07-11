@@ -33,15 +33,28 @@ export function ThemeSection({ universe }: { universe: Universe }) {
   const update = useUpdateUniverse(universe.id);
   const [draft, setDraft] = useState<UniverseTheme>(universe.theme ?? {});
   const [pickerOpen, setPickerOpen] = useState(false);
+  // Thumb URL of a backdrop picked THIS session — the server-resolved
+  // universe.backdropThumbUrl only exists after save, so this gives immediate
+  // thumbnail + live-preview feedback right after picking.
+  const [pickedThumbUrl, setPickedThumbUrl] = useState<string | null>(null);
 
   const set = (patch: Partial<UniverseTheme>) =>
     setDraft((d) => compact({ ...d, ...patch }));
 
+  // Untouched draft ≡ saved theme → Save would send a pointless no-op PATCH.
+  const dirty =
+    JSON.stringify(compact(draft)) !== JSON.stringify(universe.theme ?? {});
+
   const save = () => update.mutateAsync({ theme: compact(draft) });
   const reset = () => {
     setDraft({});
+    setPickedThumbUrl(null);
     return update.mutateAsync({ theme: null });
   };
+
+  const draftThumbUrl = draft.backdropAssetId
+    ? (pickedThumbUrl ?? universe.backdropThumbUrl ?? null)
+    : null;
 
   return (
     <section>
@@ -124,9 +137,9 @@ export function ThemeSection({ universe }: { universe: Universe }) {
 
       <h3 className="text-[10px] uppercase tracking-[0.14em] text-ink-muted mb-2">Backdrop</h3>
       <div className="flex items-center gap-3 mb-5">
-        {draft.backdropAssetId && universe.backdropThumbUrl && (
+        {draftThumbUrl && (
           <img
-            src={universe.backdropThumbUrl}
+            src={draftThumbUrl}
             alt="Current backdrop"
             className="h-14 w-24 rounded-md object-cover border border-glass-border"
           />
@@ -135,7 +148,10 @@ export function ThemeSection({ universe }: { universe: Universe }) {
         {draft.backdropAssetId && (
           <Button
             variant="ghost"
-            onClick={() => setDraft((d) => compact({ ...d, backdropAssetId: undefined }))}
+            onClick={() => {
+              setPickedThumbUrl(null);
+              setDraft((d) => compact({ ...d, backdropAssetId: undefined }));
+            }}
           >
             Remove backdrop
           </Button>
@@ -145,6 +161,7 @@ export function ThemeSection({ universe }: { universe: Universe }) {
       <h3 className="text-[10px] uppercase tracking-[0.14em] text-ink-muted mb-2">Preview</h3>
       <ThemeScope
         theme={compact(draft)}
+        backdropUrl={draftThumbUrl}
         backdropMode="contained"
         className="relative overflow-hidden rounded-[10px] border border-glass-border mb-5"
       >
@@ -159,7 +176,7 @@ export function ThemeSection({ universe }: { universe: Universe }) {
       </ThemeScope>
 
       <div className="flex gap-2">
-        <Button onClick={save} disabled={update.isPending}>Save theme</Button>
+        <Button onClick={save} disabled={update.isPending || !dirty}>Save theme</Button>
         <Button variant="ghost" onClick={reset} disabled={update.isPending}>
           Reset to default
         </Button>
@@ -175,8 +192,9 @@ export function ThemeSection({ universe }: { universe: Universe }) {
           onOpenChange={setPickerOpen}
           universeId={universe.id}
           mode="set-backdrop"
-          onSelect={(assetId) => {
+          onSelect={(assetId, asset) => {
             set({ backdropAssetId: assetId });
+            setPickedThumbUrl(asset?.thumbUrl ?? null);
             setPickerOpen(false);
           }}
         />

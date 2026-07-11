@@ -38,6 +38,10 @@ import type { ModelListingWithCoverage } from '../types/audit';
 
 const TABS = [
   { id: 'general', label: 'General' },
+  // Universe theming (2026-07-10 spec) — its own tab: ThemeSection carries its
+  // own Save, so nesting it inside General invited silent theme-change loss
+  // when users clicked General's Save instead.
+  { id: 'theme', label: 'Theme' },
   { id: 'entry-types', label: 'Entry types' },
   // Phase 36 DATA-02 — Fields tab: per-universe typed custom-field registry.
   { id: 'fields', label: 'Fields' },
@@ -195,11 +199,6 @@ export function UniverseSettings() {
               </div>
             )}
 
-            {/* Universe theming (2026-07-10 spec) — palette, accent, font, backdrop */}
-            <div className="pt-4 border-t border-neutral-200 dark:border-neutral-800">
-              <ThemeSection universe={data} />
-            </div>
-
             <div className="flex items-center justify-between pt-4 border-t border-neutral-200 dark:border-neutral-800">
               <button
                 type="button"
@@ -217,6 +216,15 @@ export function UniverseSettings() {
                 Delete universe
               </button>
             </div>
+          </div>
+        )}
+
+        {/* ─── Theme tab ───────────────────────────────────────────── */}
+        {/* Universe theming (2026-07-10 spec) — palette, accent, font,
+            backdrop. Own tab: ThemeSection carries its own Save button. */}
+        {safeTab === 'theme' && (
+          <div>
+            <ThemeSection universe={data} />
           </div>
         )}
 

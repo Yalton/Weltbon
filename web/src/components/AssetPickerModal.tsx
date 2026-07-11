@@ -25,7 +25,10 @@ interface Props {
   onOpenChange: (open: boolean) => void;
   universeId: string;
   mode: 'insert-embed' | 'set-cover' | 'set-backdrop';
-  onSelect: (assetId: string) => void;
+  /** Second arg is the full asset row (when found) so callers can e.g. show
+      an immediate thumb preview without refetching. Additive — single-param
+      handlers remain valid. */
+  onSelect: (assetId: string, asset?: AssetSummary) => void;
 }
 
 export function AssetPickerModal({
@@ -66,7 +69,7 @@ export function AssetPickerModal({
 
   const handleSelect = () => {
     if (!selected) return;
-    onSelect(selected);
+    onSelect(selected, assets?.find((a) => a.id === selected));
     onOpenChange(false);
   };
 
