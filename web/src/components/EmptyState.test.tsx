@@ -9,6 +9,7 @@ describe('EmptyState', () => {
     expect(screen.getByText('Create one.')).toBeInTheDocument();
     expect(screen.getByRole('button', { name: 'New map' })).toBeInTheDocument();
     expect(screen.getByTestId('empty-state-motif')).toBeInTheDocument();
+    expect(screen.getByTestId('empty-state-motif')).toHaveAttribute('aria-hidden', 'true');
   });
 
   it('omits optional parts', () => {

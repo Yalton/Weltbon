@@ -1,12 +1,18 @@
 /**
  * Shared Radix chrome recipes (visual overhaul spec §2).
  * Overlay surface = spec §1.1 --surface-overlay tier.
+ *
+ * Rule: recipes for the same element must be mutually exclusive — never
+ * base+override concatenation for the same CSS property. Tailwind emits
+ * utilities in its own stylesheet order (not class-string order), so an
+ * "override" utility can silently lose to the base one.
  */
 
 export const dialogOverlayClasses =
   'fixed inset-0 bg-black/60 backdrop-blur-[2px] ' +
   'data-[state=open]:animate-overlay-in data-[state=closed]:animate-overlay-out';
 
+/** Caller MUST append a max-w-* utility (e.g. `${dialogContentClasses} max-w-sm`). */
 export const dialogContentClasses =
   'fixed left-1/2 top-1/2 -translate-x-1/2 -translate-y-1/2 w-full ' +
   'bg-[color:var(--color-overlay)] backdrop-blur-md border border-white/10 ' +
@@ -23,5 +29,9 @@ export const menuContentClasses =
 export const menuItemClasses =
   'px-3 py-1.5 text-sm rounded-md cursor-pointer outline-none text-ink-secondary ' +
   'data-[highlighted]:bg-white/10 data-[highlighted]:text-ink';
+
+export const menuItemDangerClasses =
+  'px-3 py-1.5 text-sm rounded-md cursor-pointer outline-none text-rose-300 ' +
+  'data-[highlighted]:bg-rose-500/15 data-[highlighted]:text-rose-200';
 
 export const menuSeparatorClasses = 'my-1 h-px bg-white/10';
