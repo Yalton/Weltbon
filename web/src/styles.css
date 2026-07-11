@@ -2,12 +2,35 @@
 @import "@fontsource/inter/400.css";
 @import "@fontsource/inter/500.css";
 @import "@fontsource/inter/600.css";
+@import "@fontsource/spectral/400.css";
+@import "@fontsource/spectral/500.css";
+@import "@fontsource/spectral/600.css";
 @plugin "@tailwindcss/typography";
 
 @theme {
   --font-sans: 'Inter', ui-sans-serif, system-ui, sans-serif;
+  --font-display: 'Spectral', Georgia, 'Times New Roman', serif;
   --color-accent: oklch(0.6 0.18 270);
   --color-accent-soft: oklch(0.6 0.18 270 / 0.18);
+
+  /* ── Cosmic Observatory tokens (visual overhaul spec §1) ── */
+  /* canvas gradient stops */
+  --color-canvas-hi:  #151b31;
+  --color-canvas-mid: #0b0e1c;
+  --color-canvas-lo:  #070912;
+  /* surface tiers */
+  --color-chrome:       rgb(12 16 31 / 0.85);
+  --color-glass:        rgb(255 255 255 / 0.04);
+  --color-glass-border: rgb(255 255 255 / 0.08);
+  --color-overlay:      rgb(16 21 43 / 0.95);
+  /* text */
+  --color-ink:           #eef2ff;
+  --color-ink-secondary: #94a3c8;
+  --color-ink-muted:     #5d688a;
+  /* glow shadows */
+  --shadow-glow-accent: 0 0 20px rgb(99 102 241 / 0.30);
+  --shadow-glow-soft:   0 0 18px rgb(129 140 248 / 0.12);
+  --shadow-ambient:     0 4px 24px rgb(0 0 0 / 0.25);
 
   --motion-dialog-enter-duration: 180ms;
   --motion-dialog-exit-duration:  140ms;
@@ -41,7 +64,26 @@
 @variant dark (&:where(.dark, .dark *));
 
 html, body, #root { height: 100%; }
-body { font-family: var(--font-sans); }
+body {
+  font-family: var(--font-sans);
+  color: var(--color-ink);
+  background:
+    radial-gradient(140% 110% at 25% -10%,
+      var(--color-canvas-hi) 0%,
+      var(--color-canvas-mid) 50%,
+      var(--color-canvas-lo) 100%);
+  background-attachment: fixed;
+}
+
+.wordmark {
+  font-family: var(--font-display);
+  font-weight: 600;
+  letter-spacing: 0.01em;
+  background: linear-gradient(90deg, #a5b4fc, #e8ecff);
+  -webkit-background-clip: text;
+  background-clip: text;
+  color: transparent;
+}
 
 .prose a { color: var(--color-accent); }
 .prose a:hover { text-decoration: underline; }
