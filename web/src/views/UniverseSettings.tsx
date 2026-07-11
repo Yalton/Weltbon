@@ -3,6 +3,7 @@ import { Link, useParams, useNavigate, useSearchParams } from 'react-router-dom'
 import { useUniverse, useUpdateUniverse, useDeleteUniverse } from '../hooks/useUniverse';
 import { ConfirmDialog } from '../components/ConfirmDialog';
 import { EntryTypesSection } from '../components/EntryTypesSection';
+import { ThemeSection } from '../components/ThemeSection';
 import { FieldRegistrySection } from '../components/FieldRegistrySection';
 import { ShareLinksSection } from '../components/ShareLinksSection';
 import { SettingsTabBar } from '../components/SettingsTabBar';
@@ -193,6 +194,11 @@ export function UniverseSettings() {
                 </Link>
               </div>
             )}
+
+            {/* Universe theming (2026-07-10 spec) — palette, accent, font, backdrop */}
+            <div className="pt-4 border-t border-neutral-200 dark:border-neutral-800">
+              <ThemeSection universe={data} />
+            </div>
 
             <div className="flex items-center justify-between pt-4 border-t border-neutral-200 dark:border-neutral-800">
               <button

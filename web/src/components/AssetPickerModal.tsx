@@ -6,11 +6,13 @@ import { useAssets, useUploadAsset, type AssetSummary } from '../hooks/useAssets
 const COPY = {
   titleInsert: 'Insert image',
   titleCover: 'Set cover image',
+  titleBackdrop: 'Set backdrop image',
   uploadLabel: 'Upload new image',
   uploadAccept: 'PNG, JPEG, WebP, GIF',
   uploading: 'Uploading...',
   selectButton: 'Insert',
   selectButtonCover: 'Set as cover',
+  selectButtonBackdrop: 'Set as backdrop',
   cancel: 'Cancel',
   loading: 'Loading images...',
   empty: 'No images uploaded yet.',
@@ -22,7 +24,7 @@ interface Props {
   open: boolean;
   onOpenChange: (open: boolean) => void;
   universeId: string;
-  mode: 'insert-embed' | 'set-cover';
+  mode: 'insert-embed' | 'set-cover' | 'set-backdrop';
   onSelect: (assetId: string) => void;
 }
 
@@ -68,8 +70,10 @@ export function AssetPickerModal({
     onOpenChange(false);
   };
 
-  const dialogTitle = mode === 'insert-embed' ? COPY.titleInsert : COPY.titleCover;
-  const selectLabel = mode === 'insert-embed' ? COPY.selectButton : COPY.selectButtonCover;
+  const dialogTitle =
+    mode === 'insert-embed' ? COPY.titleInsert : mode === 'set-cover' ? COPY.titleCover : COPY.titleBackdrop;
+  const selectLabel =
+    mode === 'insert-embed' ? COPY.selectButton : mode === 'set-cover' ? COPY.selectButtonCover : COPY.selectButtonBackdrop;
 
   return (
     <Dialog.Root open={open} onOpenChange={onOpenChange}>
