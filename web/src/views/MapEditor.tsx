@@ -1610,7 +1610,7 @@ export function MapEditor() {
     enrichedPins.find((p) => p.id === deletePinTarget?.id)?.entryTitle ?? 'this entry';
 
   return (
-    <div className="relative h-[calc(100vh-7rem)] w-full overflow-hidden">
+    <div className="relative h-full w-full overflow-hidden">
       {/* Floating toolbar overlay — Phase 52 SEARCH-01: now renders in BOTH editor and share mode
           so the search input is available to share visitors (D-04 + D-06a).
           Mutation buttons (Add pin, Draw region, Change image, etc.) only appear when their

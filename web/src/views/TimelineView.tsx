@@ -297,7 +297,7 @@ export function TimelineView() {
   return (
     <div
       ref={containerRef}
-      className="relative flex h-[calc(100vh-7rem)] w-full flex-col overflow-hidden"
+      className="relative flex h-full w-full flex-col overflow-hidden"
     >
       <DndContext
         sensors={sensors}

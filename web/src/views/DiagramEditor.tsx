@@ -673,7 +673,7 @@ export function DiagramEditor() {
   }
 
   return (
-    <div className="relative h-[calc(100vh-7rem)] w-full overflow-hidden">
+    <div className="relative h-full w-full overflow-hidden">
       {/* Floating toolbar overlay */}
       <DiagramToolbar
         nodeCount={diagram.nodes?.length ?? 0}

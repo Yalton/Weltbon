@@ -281,7 +281,7 @@ export function GraphView() {
   return (
     <div
       ref={containerRef}
-      className="relative h-[calc(100vh-7rem)] w-full overflow-hidden"
+      className="relative h-full w-full overflow-hidden"
     >
       <div className="pointer-events-none absolute inset-x-0 top-3 z-10 flex items-start justify-between gap-3 px-3">
         <div className="pointer-events-auto text-xs text-neutral-500">
