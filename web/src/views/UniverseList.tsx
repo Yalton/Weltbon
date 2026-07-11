@@ -13,6 +13,15 @@ import {
 import { EmptyState } from '../components/EmptyState';
 import { ConfirmDialog } from '../components/ConfirmDialog';
 import { Toast } from '../components/Toast';
+import { Panel } from '../components/ui/Panel';
+import { Input } from '../components/ui/Input';
+import { Button } from '../components/ui/Button';
+import { PageHeader } from '../components/ui/PageHeader';
+import {
+  menuContentClasses,
+  menuItemClasses,
+  menuItemDangerClasses,
+} from '../components/ui/overlay';
 
 const schema = z.object({ name: z.string().min(1).max(80) });
 type FormValues = z.infer<typeof schema>;
@@ -49,43 +58,37 @@ export function UniverseList() {
     }
   };
 
-  if (isLoading) return <p className="text-sm text-neutral-500">Loading...</p>;
+  if (isLoading) return <p className="text-sm text-ink-muted">Loading...</p>;
 
   const isEmpty = !universes || universes.length === 0;
 
   return (
     <div className="max-w-4xl mx-auto">
-      <div className="flex items-center justify-between mb-6">
-        <h1 className="text-2xl font-semibold">Your universes</h1>
-        {!isEmpty && (
-          <button
-            type="button"
-            onClick={() => setShowForm((v) => !v)}
-            className="rounded-md bg-[color:var(--color-accent)] text-white text-sm px-3 py-1.5"
-          >
-            {showForm ? 'Cancel' : 'Create universe'}
-          </button>
-        )}
-      </div>
+      <PageHeader
+        title="Your universes"
+        subtitle={universes && universes.length > 0 ? `${universes.length} universe${universes.length === 1 ? '' : 's'}` : undefined}
+        actions={
+          !isEmpty && (
+            <Button onClick={() => setShowForm((v) => !v)} variant={showForm ? 'ghost' : 'primary'}>
+              {showForm ? 'Cancel' : 'Create universe'}
+            </Button>
+          )
+        }
+      />
 
       {showForm && (
         <form onSubmit={onSubmit} className="mb-6 flex gap-2 items-start">
           <div className="flex-1">
-            <input
+            <Input
               {...register('name')}
               placeholder="Universe name"
-              className="w-full rounded-md border border-neutral-300 dark:border-neutral-700 bg-transparent px-3 py-2 text-sm"
               autoFocus
             />
             {errors.name && <p className="mt-1 text-xs text-red-500">{errors.name.message}</p>}
           </div>
-          <button
-            type="submit"
-            disabled={create.isPending}
-            className="rounded-md bg-[color:var(--color-accent)] text-white text-sm px-3 py-2 disabled:opacity-50"
-          >
+          <Button type="submit" disabled={create.isPending}>
             {create.isPending ? 'Creating...' : 'Create'}
-          </button>
+          </Button>
         </form>
       )}
 
@@ -107,18 +110,18 @@ export function UniverseList() {
         <ul className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-3 gap-4">
           {universes!.map((u) => (
             <li key={u.id}>
-              <div className="relative rounded-md border border-neutral-200 dark:border-neutral-800 p-4 hover:border-[color:var(--color-accent)] transition-colors">
+              <Panel hover className="relative p-4 h-full">
                 <Link
                   to={`/universes/${u.id}/entries`}
-                  className="absolute inset-0 rounded-md focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-[color:var(--color-accent)] focus-visible:ring-offset-2 focus-visible:ring-offset-white dark:focus-visible:ring-offset-neutral-900"
+                  className="absolute inset-0 rounded-[10px] focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-[color:var(--color-accent)] focus-visible:ring-offset-2 focus-visible:ring-offset-white dark:focus-visible:ring-offset-neutral-900"
                   aria-label={`Open ${u.name}`}
                 >
                   <span className="sr-only">Open {u.name}</span>
                 </Link>
                 <div className="relative pointer-events-none">
-                  <h2 className="font-semibold pr-10">{u.name}</h2>
+                  <h2 className="font-display text-lg font-semibold text-ink pr-10">{u.name}</h2>
                   {u.description && (
-                    <p className="mt-1 text-sm text-neutral-600 dark:text-neutral-400 line-clamp-3">{u.description}</p>
+                    <p className="mt-1 text-sm text-ink-secondary line-clamp-3">{u.description}</p>
                   )}
                 </div>
                 <DropdownMenu.Root>
@@ -130,7 +133,7 @@ export function UniverseList() {
                         e.preventDefault();
                         e.stopPropagation();
                       }}
-                      className="absolute top-2 right-2 inline-flex items-center justify-center h-8 w-8 rounded-md text-neutral-500 dark:text-neutral-400 bg-transparent hover:text-neutral-900 dark:hover:text-neutral-100 hover:bg-neutral-100 dark:hover:bg-neutral-800 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-[color:var(--color-accent)] focus-visible:ring-offset-2 focus-visible:ring-offset-white dark:focus-visible:ring-offset-neutral-900 data-[state=open]:bg-neutral-100 dark:data-[state=open]:bg-neutral-800 data-[state=open]:text-neutral-900 dark:data-[state=open]:text-neutral-100"
+                      className="absolute top-2 right-2 inline-flex items-center justify-center h-8 w-8 rounded-md text-ink-muted hover:text-ink hover:bg-white/10 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-[color:var(--color-accent)] data-[state=open]:bg-white/10 data-[state=open]:text-ink"
                     >
                       <svg
                         viewBox="0 0 16 16"
@@ -150,24 +153,24 @@ export function UniverseList() {
                     <DropdownMenu.Content
                       align="end"
                       sideOffset={4}
-                      className="min-w-[160px] rounded-md border border-neutral-200 dark:border-neutral-800 bg-white dark:bg-neutral-900 p-1 shadow-lg z-50 data-[state=open]:animate-popover-in data-[state=closed]:animate-popover-out"
+                      className={menuContentClasses}
                     >
                       <DropdownMenu.Item
                         onSelect={() => navigate(`/universes/${u.id}/settings`)}
-                        className="px-3 py-2 text-sm rounded-sm cursor-pointer outline-none data-[highlighted]:bg-neutral-100 dark:data-[highlighted]:bg-neutral-800"
+                        className={menuItemClasses}
                       >
                         Settings
                       </DropdownMenu.Item>
                       <DropdownMenu.Item
                         onSelect={() => setTarget(u)}
-                        className="px-3 py-2 text-sm rounded-sm cursor-pointer outline-none text-red-600 dark:text-red-400 data-[highlighted]:bg-red-50 data-[highlighted]:text-red-700 dark:data-[highlighted]:bg-red-950/40 dark:data-[highlighted]:text-red-300"
+                        className={menuItemDangerClasses}
                       >
                         Delete…
                       </DropdownMenu.Item>
                     </DropdownMenu.Content>
                   </DropdownMenu.Portal>
                 </DropdownMenu.Root>
-              </div>
+              </Panel>
             </li>
           ))}
         </ul>

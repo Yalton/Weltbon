@@ -2,6 +2,11 @@ import * as DropdownMenu from '@radix-ui/react-dropdown-menu';
 import { useAuthStore } from '../store/auth';
 import { useLogout } from '../hooks/useAuth';
 import { useNavigate, Link } from 'react-router-dom';
+import {
+  menuContentClasses,
+  menuItemClasses,
+  menuSeparatorClasses,
+} from './ui/overlay';
 
 export function UserMenu() {
   const user = useAuthStore((s) => s.user);
@@ -18,29 +23,35 @@ export function UserMenu() {
   return (
     <DropdownMenu.Root>
       <DropdownMenu.Trigger
-        className="px-3 py-1.5 rounded-md hover:bg-neutral-100 dark:hover:bg-neutral-800 text-sm"
+        className="flex items-center gap-2 px-2 py-1.5 rounded-lg hover:bg-white/5 text-sm text-ink-secondary hover:text-ink"
         aria-label="User menu"
       >
+        <span
+          aria-hidden="true"
+          className="flex h-6 w-6 items-center justify-center rounded-full bg-gradient-to-br from-indigo-400 to-purple-400 text-[11px] font-semibold text-white shadow-glow-soft"
+        >
+          {user.displayName.charAt(0).toLowerCase()}
+        </span>
         {user.displayName}
       </DropdownMenu.Trigger>
       <DropdownMenu.Portal>
         <DropdownMenu.Content
           sideOffset={6}
-          className="bg-white dark:bg-neutral-900 border border-neutral-200 dark:border-neutral-800 rounded-md shadow-md p-1 min-w-[160px]"
+          className={menuContentClasses}
         >
           {/* Settings link — POL-03 §14.3, positioned above Log out */}
           <DropdownMenu.Item asChild>
             <Link
               to="/settings"
-              className="block px-3 py-1.5 text-sm rounded hover:bg-neutral-100 dark:hover:bg-neutral-800 cursor-pointer outline-none"
+              className={`block ${menuItemClasses}`}
             >
               Settings
             </Link>
           </DropdownMenu.Item>
-          <DropdownMenu.Separator className="my-1 h-px bg-neutral-200 dark:bg-neutral-800" />
+          <DropdownMenu.Separator className={menuSeparatorClasses} />
           <DropdownMenu.Item
             onSelect={handleLogout}
-            className="px-3 py-1.5 text-sm rounded hover:bg-neutral-100 dark:hover:bg-neutral-800 cursor-pointer outline-none"
+            className={menuItemClasses}
           >
             Log out
           </DropdownMenu.Item>

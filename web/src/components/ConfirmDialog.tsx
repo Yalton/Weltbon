@@ -1,5 +1,12 @@
 import { useEffect, useId, useState } from 'react';
 import * as Dialog from '@radix-ui/react-dialog';
+import {
+  dialogOverlayClasses,
+  dialogContentClasses,
+  dialogTitleClasses,
+} from './ui/overlay';
+import { Input } from './ui/Input';
+import { Button } from './ui/Button';
 
 interface Props {
   open: boolean;
@@ -40,32 +47,25 @@ export function ConfirmDialog({
     onOpenChange(false);
   };
 
-  const destructiveBaseClass =
-    'px-3 py-1.5 text-sm rounded-md bg-red-600 text-white hover:bg-red-700';
-  const destructiveDisabledClass =
-    ' disabled:opacity-50 disabled:cursor-not-allowed disabled:hover:bg-red-600';
-  const nonDestructiveClass =
-    'px-3 py-1.5 text-sm rounded-md bg-[color:var(--color-accent)] text-white';
-
   const confirmDisabled = requireMatch && !matched;
 
   return (
     <Dialog.Root open={open} onOpenChange={onOpenChange}>
       <Dialog.Portal>
-        <Dialog.Overlay className="fixed inset-0 bg-black/50 data-[state=open]:animate-overlay-in data-[state=closed]:animate-overlay-out" />
-        <Dialog.Content className="fixed left-1/2 top-1/2 -translate-x-1/2 -translate-y-1/2 w-full max-w-sm bg-white dark:bg-neutral-900 border border-neutral-200 dark:border-neutral-800 rounded-md p-6 shadow-lg data-[state=open]:animate-dialog-in data-[state=closed]:animate-dialog-out focus:outline-none">
-          <Dialog.Title className="text-lg font-semibold">{title}</Dialog.Title>
-          {body && <Dialog.Description className="mt-2 text-sm text-neutral-600 dark:text-neutral-400">{body}</Dialog.Description>}
+        <Dialog.Overlay className={dialogOverlayClasses} />
+        <Dialog.Content className={`${dialogContentClasses} max-w-sm`}>
+          <Dialog.Title className={dialogTitleClasses}>{title}</Dialog.Title>
+          {body && <Dialog.Description className="mt-2 text-sm text-ink-secondary">{body}</Dialog.Description>}
           {requireMatch && (
             <>
               <label
                 id={labelId}
                 htmlFor={inputId}
-                className="block mt-4 text-sm text-neutral-700 dark:text-neutral-300"
+                className="block mt-4 text-sm text-ink-secondary"
               >
                 Type <span className="font-mono">{confirmPhrase}</span> to confirm.
               </label>
-              <input
+              <Input
                 id={inputId}
                 type="text"
                 value={typed}
@@ -82,27 +82,22 @@ export function ConfirmDialog({
                     void handleConfirm();
                   }
                 }}
-                className="mt-2 w-full rounded-md border border-neutral-300 dark:border-neutral-700 bg-transparent px-3 py-2 text-sm focus:outline-none focus:ring-2 focus:ring-[color:var(--color-accent)]"
+                className="mt-2"
               />
             </>
           )}
           <div className="mt-6 flex justify-end gap-2">
-            <Dialog.Close className="px-3 py-1.5 text-sm rounded-md border border-neutral-300 dark:border-neutral-700">
-              {cancelLabel}
+            <Dialog.Close asChild>
+              <Button variant="ghost">{cancelLabel}</Button>
             </Dialog.Close>
-            <button
-              type="button"
+            <Button
+              variant={destructive ? 'danger' : 'primary'}
               onClick={handleConfirm}
               disabled={confirmDisabled}
               title={confirmDisabled ? 'Type the universe name above to enable Delete' : undefined}
-              className={
-                destructive
-                  ? destructiveBaseClass + destructiveDisabledClass
-                  : nonDestructiveClass
-              }
             >
               {confirmLabel}
-            </button>
+            </Button>
           </div>
         </Dialog.Content>
       </Dialog.Portal>
