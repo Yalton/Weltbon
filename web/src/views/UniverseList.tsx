@@ -84,7 +84,7 @@ export function UniverseList() {
               placeholder="Universe name"
               autoFocus
             />
-            {errors.name && <p className="mt-1 text-xs text-red-500">{errors.name.message}</p>}
+            {errors.name && <p className="mt-1 text-xs text-rose-400">{errors.name.message}</p>}
           </div>
           <Button type="submit" disabled={create.isPending}>
             {create.isPending ? 'Creating...' : 'Create'}
@@ -97,13 +97,7 @@ export function UniverseList() {
           title="Start a universe"
           body="A universe is a self-contained world — its own entries, categories, and timeline. Create one to get going."
           action={
-            <button
-              type="button"
-              onClick={() => setShowForm(true)}
-              className="bg-[color:var(--color-accent)] text-white text-sm font-medium px-4 py-2 rounded-md hover:opacity-90 focus:outline-none focus:ring-2 focus:ring-[color:var(--color-accent)] focus:ring-offset-2"
-            >
-              New universe
-            </button>
+            <Button onClick={() => setShowForm(true)}>New universe</Button>
           }
         />
       ) : (
@@ -113,7 +107,7 @@ export function UniverseList() {
               <Panel hover className="relative p-4 h-full">
                 <Link
                   to={`/universes/${u.id}/entries`}
-                  className="absolute inset-0 rounded-[10px] focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-[color:var(--color-accent)] focus-visible:ring-offset-2 focus-visible:ring-offset-white dark:focus-visible:ring-offset-neutral-900"
+                  className="absolute inset-0 rounded-[10px] focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-[color:var(--color-accent)] focus-visible:ring-offset-2 focus-visible:ring-offset-neutral-900"
                   aria-label={`Open ${u.name}`}
                 >
                   <span className="sr-only">Open {u.name}</span>

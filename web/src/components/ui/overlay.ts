@@ -6,15 +6,18 @@
  * base+override concatenation for the same CSS property. Tailwind emits
  * utilities in its own stylesheet order (not class-string order), so an
  * "override" utility can silently lose to the base one.
+ *
+ * App z-tier contract: shell chrome (sticky headers) = z-30; dialog scrims
+ * = z-40; dialog content, menus, popovers, and toasts = z-50.
  */
 
 export const dialogOverlayClasses =
-  'fixed inset-0 bg-black/60 backdrop-blur-[2px] ' +
+  'fixed inset-0 bg-black/60 backdrop-blur-[2px] z-40 ' +
   'data-[state=open]:animate-overlay-in data-[state=closed]:animate-overlay-out';
 
 /** Caller MUST append a max-w-* utility (e.g. `${dialogContentClasses} max-w-sm`). */
 export const dialogContentClasses =
-  'fixed left-1/2 top-1/2 -translate-x-1/2 -translate-y-1/2 w-full ' +
+  'fixed left-1/2 top-1/2 -translate-x-1/2 -translate-y-1/2 w-full z-50 ' +
   'bg-[color:var(--color-overlay)] backdrop-blur-md border border-white/10 ' +
   'rounded-xl p-6 shadow-ambient focus:outline-none ' +
   'data-[state=open]:animate-dialog-in data-[state=closed]:animate-dialog-out';

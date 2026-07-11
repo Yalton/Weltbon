@@ -19,7 +19,7 @@ import type { Canvas2dRenderer } from '../lib/sim/canvas2dRenderer';
  *   - If not reduced: start 30fps-capped rAF loop.
  * - visibilitychange: pause loop when hidden, resume when visible + not reduced.
  * - matchMedia change: if reduce fires → cancel rAF + static draw; if no-reduce → start rAF.
- * - MutationObserver on documentElement.class: setTheme on dark/light toggle.
+ * - MutationObserver on documentElement.class: legacy hook only — the app is dark-only now, no toggle triggers it.
  * - window.resize (debounced 100ms): renderer.resize(innerWidth, innerHeight).
  * - On unmount: cancelAnimationFrame + remove all listeners + disconnect observer + renderer.dispose().
  *

@@ -156,7 +156,7 @@ export function Sidebar({ universeId }: { universeId: string }) {
           <p className="text-sm mt-2 text-ink-muted">Loading…</p>
         )}
         {error && (
-          <p className="text-sm mt-2 text-red-500">Failed to load</p>
+          <p className="text-sm mt-2 text-rose-400">Failed to load</p>
         )}
 
         {data && data.categories.length === 0 && (
