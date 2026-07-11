@@ -65,7 +65,7 @@ function SidebarNavLink({ to, children }: { to: string; children: React.ReactNod
         [
           'flex items-center gap-2.5 rounded-lg px-2.5 py-1.5 text-sm transition-colors duration-150',
           isActive
-            ? 'text-indigo-100 bg-gradient-to-r from-indigo-400/15 to-indigo-400/5 shadow-[inset_0_0_0_1px_rgb(165_180_252/0.18),0_0_18px_rgb(129_140_248/0.12)] font-medium'
+            ? 'text-accent-ink bg-gradient-to-r from-accent-strong/15 to-accent-strong/5 [box-shadow:inset_0_0_0_1px_var(--color-accent-ring),var(--shadow-glow-soft)] font-medium'
             : 'text-ink-secondary hover:bg-white/5 hover:text-ink',
         ].join(' ')
       }
@@ -146,7 +146,7 @@ export function Sidebar({ universeId }: { universeId: string }) {
             type="button"
             onClick={openCreate}
             aria-label="New category"
-            className="text-xs px-2 py-0.5 rounded text-indigo-300 hover:text-indigo-200 hover:bg-white/5"
+            className="text-xs px-2 py-0.5 rounded text-accent-strong hover:text-accent-ink hover:bg-white/5"
           >
             + New
           </button>

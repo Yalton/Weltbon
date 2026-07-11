@@ -28,7 +28,7 @@ export function UserMenu() {
       >
         <span
           aria-hidden="true"
-          className="flex h-6 w-6 items-center justify-center rounded-full bg-gradient-to-br from-indigo-400 to-purple-400 text-[11px] font-semibold text-white shadow-glow-soft"
+          className="flex h-6 w-6 items-center justify-center rounded-full bg-gradient-to-br from-accent-strong to-accent text-[11px] font-semibold text-white shadow-glow-soft"
         >
           {user.displayName.charAt(0).toLowerCase()}
         </span>

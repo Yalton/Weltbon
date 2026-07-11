@@ -5,9 +5,8 @@ export type ButtonVariant = 'primary' | 'ghost' | 'danger';
 
 const VARIANT_CLASSES: Record<ButtonVariant, string> = {
   primary:
-    'bg-gradient-to-br from-indigo-400 to-indigo-600 text-white font-semibold ' +
-    '[box-shadow:var(--shadow-glow-accent),inset_0_1px_0_rgb(255_255_255/0.25)] ' +
-    'enabled:hover:from-indigo-300 enabled:hover:to-indigo-500',
+    'btn-accent text-white font-semibold ' +
+    '[box-shadow:var(--shadow-glow-accent),inset_0_1px_0_rgb(255_255_255/0.25)]',
   ghost:
     'bg-white/5 border border-glass-border text-ink-secondary ' +
     'enabled:hover:bg-white/10 enabled:hover:text-ink',

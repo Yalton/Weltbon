@@ -16,7 +16,7 @@ describe('Button', () => {
 
   it('applies variant classes', () => {
     const { rerender } = render(<Button>go</Button>);
-    expect(screen.getByRole('button')).toHaveClass('from-indigo-400');
+    expect(screen.getByRole('button')).toHaveClass('btn-accent');
     rerender(<Button variant="ghost">go</Button>);
     expect(screen.getByRole('button')).toHaveClass('border-glass-border');
     rerender(<Button variant="danger">go</Button>);

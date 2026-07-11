@@ -12,6 +12,10 @@
   --font-display: 'Spectral', Georgia, 'Times New Roman', serif;
   --color-accent: oklch(0.6 0.18 270);
   --color-accent-soft: oklch(0.6 0.18 270 / 0.18);
+  /* ── Accent derivations (theming spec §2.1) — overridden per-universe by ThemeScope ── */
+  --color-accent-strong: #818cf8;  /* indigo-400 — gradients, icons, emphasis */
+  --color-accent-ink:    #c7d2fe;  /* indigo-200 — accent-tinted text */
+  --color-accent-ring:   rgb(165 180 252 / 0.18);  /* inset rings on active pills */
 
   /* ── Cosmic Observatory tokens (visual overhaul spec §1) ── */
   /* canvas gradient stops */
@@ -79,11 +83,18 @@ body {
   font-family: var(--font-display);
   font-weight: 600;
   letter-spacing: 0.01em;
-  background: linear-gradient(90deg, #a5b4fc, #e8ecff);
+  background: linear-gradient(90deg, var(--color-accent-strong), #e8ecff);
   -webkit-background-clip: text;
   background-clip: text;
   color: transparent;
 }
+
+/* Accent-gradient primary button surface. A CSS class (not per-stop Tailwind
+   utilities) so ThemeScope's --color-accent* overrides retheme it. */
+.btn-accent {
+  background: linear-gradient(135deg, var(--color-accent-strong), var(--color-accent));
+}
+.btn-accent:enabled:hover { filter: brightness(1.12); }
 
 .prose a { color: var(--color-accent); }
 .prose a:hover { text-decoration: underline; }

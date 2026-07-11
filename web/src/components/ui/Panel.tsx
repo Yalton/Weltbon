@@ -16,7 +16,7 @@ export function Panel({
       className={cx(
         'rounded-[10px] bg-glass border border-glass-border backdrop-blur-[5px]',
         hover &&
-          'transition-all duration-150 hover:bg-white/10 hover:border-indigo-300/25 hover:shadow-glow-soft',
+          'transition-all duration-150 hover:bg-white/10 hover:border-accent-strong/25 hover:shadow-glow-soft',
         className,
       )}
     />

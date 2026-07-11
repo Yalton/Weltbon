@@ -31,7 +31,7 @@ export function UniverseLayout() {
           {universe?.name && (
             <>
               <span className="text-ink-muted">/</span>
-              <span className="text-sm text-indigo-200 truncate">{universe.name}</span>
+              <span className="text-sm text-accent-ink truncate">{universe.name}</span>
             </>
           )}
         </div>

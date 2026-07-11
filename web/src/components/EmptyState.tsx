@@ -11,13 +11,13 @@ function ConstellationMotif() {
       aria-hidden="true"
       className="mb-4 opacity-60"
     >
-      <line x1="14" y1="34" x2="44" y2="14" className="stroke-indigo-300" strokeWidth="0.75" opacity="0.4" />
-      <line x1="44" y1="14" x2="74" y2="28" className="stroke-indigo-300" strokeWidth="0.75" opacity="0.4" />
-      <line x1="74" y1="28" x2="106" y2="10" className="stroke-indigo-300" strokeWidth="0.75" opacity="0.4" />
-      <circle cx="14" cy="34" r="2.5" className="fill-indigo-200" opacity="0.8" />
-      <circle cx="44" cy="14" r="3.5" className="fill-indigo-400" />
-      <circle cx="74" cy="28" r="2" className="fill-indigo-200" opacity="0.7" />
-      <circle cx="106" cy="10" r="2.5" className="fill-indigo-200" opacity="0.8" />
+      <line x1="14" y1="34" x2="44" y2="14" className="stroke-accent-strong" strokeWidth="0.75" opacity="0.4" />
+      <line x1="44" y1="14" x2="74" y2="28" className="stroke-accent-strong" strokeWidth="0.75" opacity="0.4" />
+      <line x1="74" y1="28" x2="106" y2="10" className="stroke-accent-strong" strokeWidth="0.75" opacity="0.4" />
+      <circle cx="14" cy="34" r="2.5" className="fill-accent-ink" opacity="0.8" />
+      <circle cx="44" cy="14" r="3.5" className="fill-accent-strong" />
+      <circle cx="74" cy="28" r="2" className="fill-accent-ink" opacity="0.7" />
+      <circle cx="106" cy="10" r="2.5" className="fill-accent-ink" opacity="0.8" />
     </svg>
   );
 }
