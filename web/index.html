@@ -10,14 +10,9 @@
     <link rel="icon" type="image/png" sizes="48x48" href="/favicon-48.png" />
     <link rel="apple-touch-icon" href="/apple-touch-icon.png" />
     <link rel="manifest" href="/manifest.webmanifest" />
-    <meta name="theme-color" content="#ffffff" media="(prefers-color-scheme: light)" />
-    <meta name="theme-color" content="#0a0a0a" media="(prefers-color-scheme: dark)" />
+    <meta name="theme-color" content="#070912" />
     <script>
-      (function () {
-        var stored = localStorage.getItem('weltbon-theme');
-        var dark = stored === 'dark' || stored === null;
-        if (dark) document.documentElement.classList.add('dark');
-      })();
+      document.documentElement.classList.add('dark');
     </script>
   </head>
   <body class="bg-neutral-50 dark:bg-neutral-950 text-neutral-900 dark:text-neutral-100">

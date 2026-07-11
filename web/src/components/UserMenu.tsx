@@ -5,8 +5,6 @@ import { useNavigate, Link } from 'react-router-dom';
 
 export function UserMenu() {
   const user = useAuthStore((s) => s.user);
-  const theme = useAuthStore((s) => s.theme);
-  const setTheme = useAuthStore((s) => s.setTheme);
   const logout = useLogout();
   const navigate = useNavigate();
 
@@ -30,13 +28,6 @@ export function UserMenu() {
           sideOffset={6}
           className="bg-white dark:bg-neutral-900 border border-neutral-200 dark:border-neutral-800 rounded-md shadow-md p-1 min-w-[160px]"
         >
-          <DropdownMenu.Item
-            onSelect={() => setTheme(theme === 'dark' ? 'light' : 'dark')}
-            className="px-3 py-1.5 text-sm rounded hover:bg-neutral-100 dark:hover:bg-neutral-800 cursor-pointer outline-none"
-          >
-            Theme: {theme === 'dark' ? 'Dark' : 'Light'}
-          </DropdownMenu.Item>
-          <DropdownMenu.Separator className="my-1 h-px bg-neutral-200 dark:bg-neutral-800" />
           {/* Settings link — POL-03 §14.3, positioned above Log out */}
           <DropdownMenu.Item asChild>
             <Link
