@@ -2,7 +2,8 @@
  * SettingsLayout tests — Plan 09-03 must_haves truth #4.
  *
  * Asserts UI-SPEC §4.3 + §4.5 contract:
- * - <nav aria-label="Settings sections"> with two NavLinks ("Visual", "API tokens")
+ * - <nav aria-label="Settings sections"> with six NavLinks ("Visual",
+ *   "API tokens", "Invite codes", "Templates", "Shares", "LLM keys")
  * - Active state classes on the link matching the current route
  * - Container uses flex-col md:flex-row (mobile stacks above content; md: row)
  * - <Outlet /> renders nested route children
@@ -24,6 +25,8 @@ function renderAt(path: string) {
           <Route index element={<div data-testid="index-child">INDEX_CHILD</div>} />
           <Route path="tokens" element={<div data-testid="tokens-child">TOKENS_CHILD</div>} />
           <Route path="invites" element={<div data-testid="invites-child">INVITES_CHILD</div>} />
+          <Route path="templates" element={<div data-testid="templates-child">TEMPLATES_CHILD</div>} />
+          <Route path="shares" element={<div data-testid="shares-child">SHARES_CHILD</div>} />
           <Route path="llm" element={<div data-testid="llm-child">LLM_CHILD</div>} />
         </Route>
       </Routes>
@@ -39,22 +42,24 @@ describe('SettingsLayout', () => {
     expect(nav.tagName).toBe('NAV');
   });
 
-  it('renders five NavLinks: "Visual", "API tokens", "Invite codes", "Templates", "LLM keys"', () => {
+  it('renders six NavLinks: "Visual", "API tokens", "Invite codes", "Templates", "Shares", "LLM keys"', () => {
     renderAt('/settings');
     const visual = screen.getByRole('link', { name: 'Visual' });
     const apiTokens = screen.getByRole('link', { name: 'API tokens' });
     const inviteCodes = screen.getByRole('link', { name: 'Invite codes' });
     const templates = screen.getByRole('link', { name: 'Templates' });
+    const shares = screen.getByRole('link', { name: 'Shares' });
     const llmKeys = screen.getByRole('link', { name: 'LLM keys' });
 
     expect(visual.getAttribute('href')).toBe('/settings');
     expect(apiTokens.getAttribute('href')).toBe('/settings/tokens');
     expect(inviteCodes.getAttribute('href')).toBe('/settings/invites');
     expect(templates.getAttribute('href')).toBe('/settings/templates');
+    expect(shares.getAttribute('href')).toBe('/settings/shares');
     expect(llmKeys.getAttribute('href')).toBe('/settings/llm');
 
     const nav = screen.getByRole('navigation', { name: 'Settings sections' });
-    expect(nav.querySelectorAll('a').length).toBe(5);
+    expect(nav.querySelectorAll('a').length).toBe(6);
   });
 
   it('applies active classes to the "Visual" link when route is /settings', () => {
@@ -142,6 +147,27 @@ describe('SettingsLayout', () => {
     expect(screen.queryByTestId('tokens-child')).not.toBeInTheDocument();
   });
 
+  it('applies active classes to "Shares" link when route is /settings/shares', () => {
+    renderAt('/settings/shares');
+    const shares = screen.getByRole('link', { name: 'Shares' });
+    const cls = shares.getAttribute('class') ?? '';
+    expect(cls).toContain('bg-[color:var(--color-accent)]/10');
+    expect(cls).toContain('text-[color:var(--color-accent)]');
+    expect(cls).toContain('font-medium');
+    // The other links must NOT carry the active classes.
+    const visual = screen.getByRole('link', { name: 'Visual' });
+    expect(visual.getAttribute('class') ?? '').not.toContain('bg-[color:var(--color-accent)]/10');
+    const llmKeys = screen.getByRole('link', { name: 'LLM keys' });
+    expect(llmKeys.getAttribute('class') ?? '').not.toContain('bg-[color:var(--color-accent)]/10');
+  });
+
+  it('renders Outlet with the nested /shares route child', () => {
+    renderAt('/settings/shares');
+    expect(screen.getByTestId('shares-child')).toBeInTheDocument();
+    expect(screen.queryByTestId('index-child')).not.toBeInTheDocument();
+    expect(screen.queryByTestId('llm-child')).not.toBeInTheDocument();
+  });
+
   it('applies active classes to "LLM keys" link when route is /settings/llm', () => {
     renderAt('/settings/llm');
     const llmKeys = screen.getByRole('link', { name: 'LLM keys' });
@@ -149,13 +175,15 @@ describe('SettingsLayout', () => {
     expect(cls).toContain('bg-[color:var(--color-accent)]/10');
     expect(cls).toContain('text-[color:var(--color-accent)]');
     expect(cls).toContain('font-medium');
-    // The other three links must NOT carry the active classes.
+    // The other links must NOT carry the active classes.
     const visual = screen.getByRole('link', { name: 'Visual' });
     expect(visual.getAttribute('class') ?? '').not.toContain('bg-[color:var(--color-accent)]/10');
     const apiTokens = screen.getByRole('link', { name: 'API tokens' });
     expect(apiTokens.getAttribute('class') ?? '').not.toContain('bg-[color:var(--color-accent)]/10');
     const inviteCodes = screen.getByRole('link', { name: 'Invite codes' });
     expect(inviteCodes.getAttribute('class') ?? '').not.toContain('bg-[color:var(--color-accent)]/10');
+    const shares = screen.getByRole('link', { name: 'Shares' });
+    expect(shares.getAttribute('class') ?? '').not.toContain('bg-[color:var(--color-accent)]/10');
   });
 
   it('renders Outlet with the nested /llm route child', () => {
@@ -164,5 +192,6 @@ describe('SettingsLayout', () => {
     expect(screen.queryByTestId('index-child')).not.toBeInTheDocument();
     expect(screen.queryByTestId('tokens-child')).not.toBeInTheDocument();
     expect(screen.queryByTestId('invites-child')).not.toBeInTheDocument();
+    expect(screen.queryByTestId('shares-child')).not.toBeInTheDocument();
   });
 });
