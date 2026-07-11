@@ -19,7 +19,10 @@ const read = (rel: string) => readFileSync(resolve(SRC, rel), 'utf8');
 // copy is asserted in its component test.
 const CASES: Array<{ rel: string; copy: string }> = [
   { rel: 'views/EntryList.tsx', copy: 'Start with one idea' },
-  { rel: 'components/Sidebar.tsx', copy: 'Group your entries' },
+  // Wave-1 visual overhaul (Cosmic Observatory): the sidebar's category
+  // empty state became a compact promo card; canonical copy updated from
+  // "Group your entries" to the sentence below (approved copy change).
+  { rel: 'components/Sidebar.tsx', copy: 'Categories let you organise entries into folders.' },
   { rel: 'views/IssuesView.tsx', copy: 'Nothing flagged yet' },
   { rel: 'views/UniverseList.tsx', copy: 'Start a universe' },
 ];

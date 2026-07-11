@@ -1,5 +1,5 @@
 import { describe, it, expect, beforeEach, vi } from 'vitest';
-import { render, screen, waitFor } from '@testing-library/react';
+import { render, screen, waitFor, within } from '@testing-library/react';
 import userEvent from '@testing-library/user-event';
 import { MemoryRouter, Routes, Route } from 'react-router-dom';
 import { QueryClient, QueryClientProvider } from '@tanstack/react-query';
@@ -143,14 +143,14 @@ describe('DiagramList', () => {
       ),
     ).toBeInTheDocument();
 
-    // Click the confirm (destructive) Delete button inside the dialog
-    const confirmBtns = screen.getAllByRole('button', { name: 'Delete' });
-    // The last Delete button is the one in the ConfirmDialog (after the row's Delete btn)
-    const confirmDeleteBtn = confirmBtns.find(
-      (b) => b.className.includes('red-600') || b.className.includes('bg-red'),
-    );
-    expect(confirmDeleteBtn).toBeDefined();
-    await user.click(confirmDeleteBtn!);
+    // Click the confirm (destructive) Delete button inside the dialog.
+    // Select semantically: the ConfirmDialog is the only role="dialog", and its
+    // confirm button carries the exact accessible name "Delete" (the row's
+    // button is "Delete Targaryen family tree", outside the dialog anyway).
+    const confirmDeleteBtn = within(screen.getByRole('dialog')).getByRole('button', {
+      name: 'Delete',
+    });
+    await user.click(confirmDeleteBtn);
 
     // Verify the DELETE mutation was fired
     await waitFor(() => {
