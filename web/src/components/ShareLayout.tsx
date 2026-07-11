@@ -127,7 +127,7 @@ export function ShareLayout() {
       token={token ?? null}
       timelineWindow={universeMeta.timelineWindow ?? null}
     >
-      <div className="min-h-full flex flex-col">
+      <div className="h-full flex flex-col">
         <AppBackground />
         <header
           role="banner"
