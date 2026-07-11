@@ -38,6 +38,7 @@ import {
   universes,
   users,
   type Calendar,
+  type UniverseTheme,
 } from '../db/schema.js';
 import { signShareAssetUrl } from './asset-signing.js';
 
@@ -58,6 +59,13 @@ import { signShareAssetUrl } from './asset-signing.js';
 // On no row: returns null (handler returns 404 — race-with-delete or invalid
 // universe id from a stale token).
 //
+// Universe theming (2026-07-10 spec §1.3): also projects `theme` (cosmetic,
+// no PII) and resolves `backdropUrl` — a pre-signed share asset URL for the
+// owner's chosen backdrop, or null when unset OR the backdropAssetId is
+// dangling (asset deleted / not owned by this universe). Mirrors the
+// dangling-asset tolerance of routes/universes.ts withBackdropUrls, but this
+// is a separate D-04 code path (no cross-import) and intentionally omits
+// backdropThumbUrl — the share banner renders the full-bleed raw image only.
 export async function getPublicUniverseMeta(
   universeId: string,
 ): Promise<{
@@ -65,6 +73,8 @@ export async function getPublicUniverseMeta(
   ownerDisplayName: string;
   calendar: Calendar | null;
   timelineWindow: { start: number; end: number } | null;
+  theme: UniverseTheme | null;
+  backdropUrl: string | null;
 } | null> {
   const rows = await getDb()
     .select({
@@ -72,13 +82,28 @@ export async function getPublicUniverseMeta(
       ownerDisplayName: users.displayName,
       calendar: universes.calendar,
       timelineWindow: universes.timelineWindow,
+      theme: universes.theme,
     })
     .from(universes)
     .innerJoin(users, eq(universes.userId, users.id))
     .where(eq(universes.id, universeId))
     .limit(1);
   if (rows.length === 0) return null;
-  return rows[0];
+
+  const row = rows[0];
+  let backdropUrl: string | null = null;
+  const aid = row.theme?.backdropAssetId;
+  if (aid) {
+    const owned = await getDb()
+      .select({ id: assets.id })
+      .from(assets)
+      .where(and(eq(assets.id, aid), eq(assets.universeId, universeId)))
+      .limit(1);
+    if (owned.length > 0) {
+      backdropUrl = `/api/share/assets/${aid}/raw${signShareAssetUrl(universeId, aid, 'raw')}`;
+    }
+  }
+  return { ...row, backdropUrl };
 }
 
 // ─── Function 2: getPublicEntries ────────────────────────────────────────────
@@ -391,11 +416,16 @@ export async function getPublicDictionaryWords(
 //
 // Phase 38 D-13 / T-38-30 — Share-aware asset resolution.
 //
-// Returns `{ id, mimeType }` ONLY when ALL of the following hold:
-//   1. The asset row exists AND belongs to `universeId` (T-38-32 tenant scope).
-//   2. At least one entry in `universeId` with `is_public = true` references the
+// Returns `{ id, mimeType }` when the asset row exists AND belongs to
+// `universeId` (T-38-32 tenant scope) AND at least one of the following
+// authorization channels holds:
+//   1. At least one entry in `universeId` with `is_public = true` references the
 //      asset — either via `entries.cover_image_id = assetId` (FK) OR via an
 //      inline `asset://<assetId>` embed stored in `entries.body`.
+//   2. The asset backs a map image in the token-context universe (Phase 41.1
+//      MAPS-06 — maps have no own public flag; D-11).
+//   3. The asset is the universe's current `theme.backdropAssetId` (Universe
+//      theming 2026-07-10 spec §3 — owner opt-in backdrop exception).
 //
 // Returns null in any other case (T-38-30: 404, no existence leak).
 //
@@ -452,7 +482,25 @@ export async function getPublicAsset(
     )
     .limit(1);
 
-  if (mapRows.length === 0) return null;
+  if (mapRows.length > 0) return asset;
+
+  // Step 4 (additive backdrop channel — Universe theming 2026-07-10 spec §3):
+  // Universe backdrop exception: the owner opted this asset in as the shared
+  // universe's backdrop, so share visitors may load it even if no public
+  // entry references it. Universe scope enforced via the same `universeId`
+  // supplied by the caller (never a path param).
+  const backdropRows = await getDb()
+    .select({ id: universes.id })
+    .from(universes)
+    .where(
+      and(
+        eq(universes.id, universeId),
+        sql`${universes.theme}->>'backdropAssetId' = ${assetId}`,
+      ),
+    )
+    .limit(1);
+
+  if (backdropRows.length === 0) return null;
   return asset;
 }
 

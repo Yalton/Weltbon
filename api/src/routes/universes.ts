@@ -604,7 +604,7 @@ export const universeRoutes = new OpenAPIHono<AppEnv>()
         })
         .where(eq(universes.id, id))
         .returning();
-      return c.json(updated as any, 200);
+      return c.json((await withBackdropUrls([updated]))[0] as any, 200);
     }
 
     // rename
@@ -616,7 +616,7 @@ export const universeRoutes = new OpenAPIHono<AppEnv>()
     }
     if (body.oldName === body.newName) {
       // No-op rename — return universe untouched
-      return c.json(universe as any, 200);
+      return c.json((await withBackdropUrls([universe]))[0] as any, 200);
     }
 
     const updated = await db().transaction(async (tx) => {
@@ -636,7 +636,7 @@ export const universeRoutes = new OpenAPIHono<AppEnv>()
       const [u] = await tx.select().from(universes).where(eq(universes.id, id));
       return u;
     });
-    return c.json(updated as any, 200);
+    return c.json((await withBackdropUrls([updated]))[0] as any, 200);
   })
 
   // POL-02: DELETE /universes/:id/entry-types/:name

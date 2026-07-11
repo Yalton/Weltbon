@@ -75,6 +75,15 @@ const calendarResponseSchema = z
   })
   .nullable();
 
+// D-04 local mirror of routes/universes.ts themeSchema — do NOT import across
+// the namespace boundary. Parity pinned by tests/universe-theme-share-parity.test.ts.
+export const shareThemeSchema = z.object({
+  palette: z.enum(['observatory', 'ember', 'verdant', 'abyssal', 'parchment']).optional(),
+  accent: z.string().regex(/^#[0-9a-fA-F]{6}$/).optional(),
+  displayFont: z.enum(['spectral', 'cormorant', 'cinzel', 'crimson']).optional(),
+  backdropAssetId: z.string().uuid().optional(),
+});
+
 /**
  * T-29-21b minimal-disclosure binding: the universe banner schema declares
  * ONLY `name`, `ownerDisplayName`, and `calendar`. Any extra field flowing
@@ -88,6 +97,13 @@ const calendarResponseSchema = z
  * data (no PII); intentional disclosure per the threat register (T-30-09 /
  * T-30-10). The share frontend uses it to format timeline dates identically
  * to the authenticated view.
+ *
+ * Universe theming (2026-07-10 spec §1.3): `theme` (palette/accent/font/
+ * backdropAssetId — cosmetic, no PII) and `backdropUrl` (resolved, pre-signed
+ * share asset URL, or null when unset/dangling) are also intentional
+ * disclosures so the share banner can render the owner's chosen theming.
+ * No thumbUrl on the share banner — the share banner uses the full-bleed raw
+ * image only.
  */
 // Phase 33 SHARE-02: timelineWindow (cosmetic {start,end} range, no PII) is
 // disclosed so the share TimelineView can render — mirrors the calendar
@@ -102,6 +118,8 @@ const universeMetaResponseSchema = z.object({
     ownerDisplayName: z.string(),
     calendar: calendarResponseSchema,
     timelineWindow: timelineWindowResponseSchema,
+    theme: shareThemeSchema.nullable(),
+    backdropUrl: z.string().nullable(),
   }),
 });
 
