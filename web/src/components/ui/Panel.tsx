@@ -1,4 +1,5 @@
 import type { HTMLAttributes } from 'react';
+import { cx } from './cx';
 
 /**
  * Glass surface (spec §1.1 --surface-glass). `hover` adds the interactive
@@ -12,13 +13,12 @@ export function Panel({
   return (
     <div
       {...props}
-      className={[
+      className={cx(
         'rounded-[10px] bg-glass border border-glass-border backdrop-blur-[5px]',
-        hover
-          ? 'transition-all duration-150 hover:bg-white/10 hover:border-indigo-300/25 hover:shadow-glow-soft'
-          : '',
+        hover &&
+          'transition-all duration-150 hover:bg-white/10 hover:border-indigo-300/25 hover:shadow-glow-soft',
         className,
-      ].join(' ')}
+      )}
     />
   );
 }
