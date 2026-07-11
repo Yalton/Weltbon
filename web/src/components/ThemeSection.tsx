@@ -165,16 +165,22 @@ export function ThemeSection({ universe }: { universe: Universe }) {
         </Button>
       </div>
 
-      <AssetPickerModal
-        open={pickerOpen}
-        onOpenChange={setPickerOpen}
-        universeId={universe.id}
-        mode="set-backdrop"
-        onSelect={(assetId) => {
-          set({ backdropAssetId: assetId });
-          setPickerOpen(false);
-        }}
-      />
+      {/* Conditional mount: AssetPickerModal's useAssets query fires on mount
+          regardless of dialog open state, so mounting it eagerly would fetch
+          the asset list on every settings load. Unmount on close is fine here
+          (exit animation loss on this picker is acceptable). */}
+      {pickerOpen && (
+        <AssetPickerModal
+          open
+          onOpenChange={setPickerOpen}
+          universeId={universe.id}
+          mode="set-backdrop"
+          onSelect={(assetId) => {
+            set({ backdropAssetId: assetId });
+            setPickerOpen(false);
+          }}
+        />
+      )}
     </section>
   );
 }
