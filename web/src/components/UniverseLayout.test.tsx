@@ -3,10 +3,25 @@ import { render, screen } from '@testing-library/react';
 import { MemoryRouter, Routes, Route } from 'react-router-dom';
 import { QueryClient, QueryClientProvider } from '@tanstack/react-query';
 
-vi.mock('../api/client', () => ({ api: vi.fn().mockResolvedValue({ categories: [], uncategorizedCount: 0 }) }));
+// Route-aware api mock: the Sidebar's useCategories fetches
+// /universes/:uid/categories while the header breadcrumb's useUniverse
+// fetches /universes/:uid — branch on the path so both hooks resolve.
+// getShareToken is read synchronously by both hooks (share-seam gate);
+// null = authenticated mode.
+vi.mock('../api/client', () => ({
+  api: vi.fn((path: string) =>
+    path.includes('/categories')
+      ? Promise.resolve({ categories: [], uncategorizedCount: 0 })
+      : Promise.resolve({ id: 'ABC', name: 'Ayins Edge' })
+  ),
+  getShareToken: () => null,
+}));
 // UserMenu reads auth store + logout hook; stub it so the layout can render
 // without a populated auth store.
 vi.mock('./UserMenu', () => ({ UserMenu: () => <div data-testid="user-menu-stub" /> }));
+// AppBackground uses window.matchMedia which is not available in jsdom
+// (same stub as ShareLayout.race.test.tsx).
+vi.mock('./AppBackground', () => ({ AppBackground: () => null }));
 
 import { UniverseLayout } from './UniverseLayout';
 
@@ -47,5 +62,15 @@ describe('UniverseLayout', () => {
       'href',
       '/universes/ABC/issues'
     );
+  });
+
+  it('renders the wordmark and the universe-name breadcrumb once the universe loads', async () => {
+    renderLayout();
+
+    // Wordmark link back to the universe picker is always present.
+    expect(screen.getByRole('link', { name: 'Weltbon' })).toHaveAttribute('href', '/universes');
+
+    // Breadcrumb appears after the useUniverse query resolves.
+    expect(await screen.findByText('Ayins Edge')).toBeInTheDocument();
   });
 });

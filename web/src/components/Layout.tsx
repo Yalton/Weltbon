@@ -7,7 +7,7 @@ export function Layout() {
   return (
     <div className="min-h-full flex flex-col">
       <AppBackground />
-      <header className="sticky top-0 z-40 border-b border-white/10 bg-[color:var(--color-chrome)] backdrop-blur-md px-6 py-3 flex items-center justify-between">
+      <header className="sticky top-0 z-30 border-b border-white/10 bg-[color:var(--color-chrome)] backdrop-blur-md px-6 py-3 flex items-center justify-between">
         <Link to="/universes" className="wordmark text-lg">
           Weltbon
         </Link>
