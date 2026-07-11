@@ -397,4 +397,86 @@ describe('D-13 share asset boundary (T-38-30 / T-38-31 / T-38-32)', () => {
     // Must be 404 (not 200) — signature does not grant access to private assets.
     expect(res.status).toBe(404);
   });
+
+  // ─── Universe backdrop exception (theming spec §3) ────────────────────────
+  //
+  // The owner opting an asset in as the shared universe's backdrop is a third
+  // authorization channel in getPublicAsset (after public-entry reference and
+  // map image). These tests use `privateAssetId` — an asset referenced ONLY by
+  // a private entry and used by no map — so a 200 can come only from the
+  // backdrop channel.
+
+  it('backdrop channel: theme.backdropAssetId authorizes an otherwise-private asset → 200', async () => {
+    // No public entry references privateAssetId and no map uses it (see
+    // beforeEach). Opt it in as the universe backdrop directly via DB.
+    await handle.db
+      .update(universes)
+      .set({ theme: { backdropAssetId: privateAssetId } })
+      .where(eq(universes.id, universeId));
+
+    const res = await app.fetch(
+      new Request(`http://localhost/api/share/assets/${privateAssetId}/raw`, {
+        method: 'GET',
+        headers: { 'share-token': shareTokenPlaintext },
+      }),
+    );
+    expect(res.status).toBe(200);
+    expect(res.headers.get('content-type')).toBe('image/png');
+    const bytes = Buffer.from(await res.arrayBuffer());
+    expect(bytes.length).toBeGreaterThan(0);
+  });
+
+  it('backdrop channel baseline: same asset with theme=null → 404 (channel is opt-in only)', async () => {
+    // Explicit control for the test above: without the backdrop opt-in the
+    // asset stays private (theme is null from the beforeEach seed).
+    const res = await app.fetch(
+      new Request(`http://localhost/api/share/assets/${privateAssetId}/raw`, {
+        method: 'GET',
+        headers: { 'share-token': shareTokenPlaintext },
+      }),
+    );
+    expect(res.status).toBe(404);
+  });
+
+  it('backdrop channel backstop: foreign-universe asset id in theme.backdropAssetId → still 404 (T-38-32)', async () => {
+    // Seed a SECOND universe with its own asset, then write that foreign
+    // asset id into the FIRST universe's theme directly via DB — bypassing
+    // the PATCH-time ownership validation in routes/universes.ts. The
+    // assets.universeId scope check in getPublicAsset (Step 1) must backstop:
+    // the share seam may never serve another tenant's bytes.
+    const { storageBackend } = await import('../src/services/storage/local.js');
+    const pngBytes = await makePng();
+    const foreignAssetId = crypto.randomUUID();
+
+    const [foreignUniv] = await handle.db
+      .insert(universes)
+      .values({ userId, name: 'Foreign Universe' })
+      .returning();
+    await storageBackend.put(foreignAssetId, pngBytes);
+    await storageBackend.put(`${foreignAssetId}_thumb`, pngBytes);
+    await handle.db.insert(assets).values({
+      id: foreignAssetId,
+      universeId: foreignUniv!.id,
+      filename: 'foreign-asset.png',
+      mimeType: 'image/png',
+      extension: 'png',
+      sizeBytes: pngBytes.length,
+      thumbSizeBytes: pngBytes.length,
+    });
+
+    await handle.db
+      .update(universes)
+      .set({ theme: { backdropAssetId: foreignAssetId } })
+      .where(eq(universes.id, universeId));
+
+    const res = await app.fetch(
+      new Request(`http://localhost/api/share/assets/${foreignAssetId}/raw`, {
+        method: 'GET',
+        headers: { 'share-token': shareTokenPlaintext },
+      }),
+    );
+    // 404 — the asset belongs to a different universe; the backdrop opt-in
+    // cannot widen the tenant scope (no existence leak either, T-38-30).
+    expect(res.status).toBe(404);
+  });
 });

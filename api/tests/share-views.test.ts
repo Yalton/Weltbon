@@ -32,7 +32,7 @@ import {
   createTestUser,
   type TestDbHandle,
 } from './helpers.js';
-import { entries, links, maps, mapPins, mapRegions, mapRoutes, shareTokens, universes } from '../src/db/schema.js';
+import { assets, entries, links, maps, mapPins, mapRegions, mapRoutes, shareTokens, universes } from '../src/db/schema.js';
 
 let handle: TestDbHandle;
 // eslint-disable-next-line @typescript-eslint/no-explicit-any
@@ -1272,5 +1272,77 @@ describe('NEST-01: getPublicMap pin+region targetMapId projection (T-53-02 / T-5
       found.targetMapId,
       'NEST-01 region-field-presence: region targetMapId must equal the seeded target map id',
     ).toBe(targetMap.id);
+  });
+});
+
+// ──────────────────────────────────────────────────────────────────────
+// Universe theming (2026-07-10 spec §1.3): backdrop resolution on the
+// share meta payload. GET /api/share/universe must echo `theme` and
+// resolve `backdropUrl` as a pre-signed share asset URL — with dangling
+// tolerance (asset deleted → null, no throw).
+// ──────────────────────────────────────────────────────────────────────
+describe('Universe theming: share meta backdrop resolution', () => {
+  async function seedBackdropAsset() {
+    const assetId = crypto.randomUUID();
+    await handle.db.insert(assets).values({
+      id: assetId,
+      universeId,
+      filename: 'backdrop.png',
+      mimeType: 'image/png',
+      extension: 'png',
+      sizeBytes: 128,
+      thumbSizeBytes: 128,
+    });
+    return assetId;
+  }
+
+  it('GET /api/share/universe resolves backdropUrl and echoes theme for a valid backdropAssetId', async () => {
+    const assetId = await seedBackdropAsset();
+    const theme = { palette: 'ember' as const, backdropAssetId: assetId };
+    await handle.db
+      .update(universes)
+      .set({ theme })
+      .where(eq(universes.id, universeId));
+
+    const res = await appRequest('GET', '/api/share/universe', {
+      headers: { 'share-token': activeTokenPlaintext },
+    });
+
+    expect(res.status).toBe(200);
+    expect(res.body?.universe?.theme).toEqual(theme);
+    expect(
+      res.body?.universe?.backdropUrl,
+      `share meta backdropUrl must be a pre-signed share raw-asset URL. ` +
+        `Got: ${JSON.stringify(res.body?.universe?.backdropUrl)}`,
+    ).toMatch(new RegExp(`^/api/share/assets/${assetId}/raw\\?`));
+  });
+
+  it('GET /api/share/universe returns backdropUrl=null when backdropAssetId dangles (asset deleted)', async () => {
+    const assetId = await seedBackdropAsset();
+    await handle.db
+      .update(universes)
+      .set({ theme: { backdropAssetId: assetId } })
+      .where(eq(universes.id, universeId));
+    // Delete the asset row — the theme now points at a dangling id.
+    await handle.db.delete(assets).where(eq(assets.id, assetId));
+
+    const res = await appRequest('GET', '/api/share/universe', {
+      headers: { 'share-token': activeTokenPlaintext },
+    });
+
+    // No throw, no broken URL: dangling tolerance resolves to null.
+    expect(res.status).toBe(200);
+    expect(res.body?.universe?.theme).toEqual({ backdropAssetId: assetId });
+    expect(res.body?.universe?.backdropUrl).toBeNull();
+  });
+
+  it('GET /api/share/universe returns theme=null and backdropUrl=null when no theme is set', async () => {
+    const res = await appRequest('GET', '/api/share/universe', {
+      headers: { 'share-token': activeTokenPlaintext },
+    });
+
+    expect(res.status).toBe(200);
+    expect(res.body?.universe?.theme).toBeNull();
+    expect(res.body?.universe?.backdropUrl).toBeNull();
   });
 });
