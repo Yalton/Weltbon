@@ -372,4 +372,36 @@ describe('UniverseList view', () => {
     });
     expect((input as HTMLInputElement).value).toBe('');
   });
+
+  // --- Task 7 — themed universe cards on the homepage ---
+
+  it('renders a themed card with its contained backdrop', async () => {
+    const themedUniverses = [
+      {
+        id: 'U1',
+        userId: 'u1',
+        name: 'Yondergrove',
+        description: 'A forested realm.',
+        entryTypes: ['concept'],
+        createdAt: new Date().toISOString(),
+        updatedAt: new Date().toISOString(),
+        theme: { palette: 'ember' },
+        backdropThumbUrl: '/api/universes/u1/assets/a1/thumb?e=1&s=2',
+      },
+    ];
+    const fetchMock = vi.fn().mockResolvedValue(
+      new Response(JSON.stringify(themedUniverses), {
+        status: 200,
+        headers: { 'Content-Type': 'application/json' },
+      }),
+    );
+    vi.stubGlobal('fetch', fetchMock);
+
+    renderList();
+    await screen.findByText('Yondergrove');
+
+    const img = await screen.findByTestId('theme-backdrop');
+    expect(img).toHaveClass('absolute');
+    expect((img as HTMLImageElement).src).toContain('/assets/a1/thumb');
+  });
 });
