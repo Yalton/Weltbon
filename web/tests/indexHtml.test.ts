@@ -22,16 +22,12 @@ describe('index.html link + meta wiring (POL-01 Task 3)', () => {
     expect(matches.length).toBe(1);
   });
 
-  it('declares two theme-color metas, one each for light + dark color scheme', () => {
+  it('declares exactly one theme-color meta with the dark-only background color', () => {
     const themeColorMetas = html.match(/<meta[^>]+name="theme-color"[^>]*>/g) ?? [];
-    expect(themeColorMetas.length).toBe(2);
-    const hasDark = themeColorMetas.some((m) =>
-      /media="\(prefers-color-scheme:\s*dark\)"/.test(m),
-    );
-    const hasLight = themeColorMetas.some((m) =>
-      /media="\(prefers-color-scheme:\s*light\)"/.test(m),
-    );
-    expect(hasDark, 'expected a theme-color meta for prefers-color-scheme: dark').toBe(true);
-    expect(hasLight, 'expected a theme-color meta for prefers-color-scheme: light').toBe(true);
+    expect(themeColorMetas.length).toBe(1);
+    expect(
+      themeColorMetas[0],
+      'expected the single theme-color meta to carry the dark-only color #070912',
+    ).toMatch(/content="#070912"/);
   });
 });
