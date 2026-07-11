@@ -14,6 +14,7 @@
   --color-accent-soft: oklch(0.6 0.18 270 / 0.18);
   /* ── Accent derivations (theming spec §2.1) — overridden per-universe by ThemeScope ── */
   --color-accent-strong: #818cf8;  /* indigo-400 — gradients, icons, emphasis */
+  --color-accent-deep:   #4f46e5;  /* indigo-600 — CTA gradient end (exact old to-indigo-600) */
   --color-accent-ink:    #c7d2fe;  /* indigo-200 — accent-tinted text */
   --color-accent-ring:   rgb(165 180 252 / 0.18);  /* inset rings on active pills */
 
@@ -83,16 +84,17 @@ body {
   font-family: var(--font-display);
   font-weight: 600;
   letter-spacing: 0.01em;
-  background: linear-gradient(90deg, var(--color-accent-strong), #e8ecff);
+  background: linear-gradient(90deg, color-mix(in srgb, var(--color-accent-strong) 65%, #e8ecff), #e8ecff);
   -webkit-background-clip: text;
   background-clip: text;
   color: transparent;
 }
 
 /* Accent-gradient primary button surface. A CSS class (not per-stop Tailwind
-   utilities) so ThemeScope's --color-accent* overrides retheme it. */
+   utilities) so ThemeScope's --color-accent* overrides retheme it. The deep
+   end-stop reproduces the old to-indigo-600 exactly. */
 .btn-accent {
-  background: linear-gradient(135deg, var(--color-accent-strong), var(--color-accent));
+  background: linear-gradient(135deg, var(--color-accent-strong), var(--color-accent-deep));
 }
 .btn-accent:enabled:hover { filter: brightness(1.12); }
 
