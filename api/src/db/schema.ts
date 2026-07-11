@@ -81,6 +81,14 @@ export interface FieldRegistryEntry {
   hint?: string;
 }
 
+// Universe theming (spec 2026-07-10): null = Observatory defaults everywhere.
+export type UniverseTheme = {
+  palette?: 'observatory' | 'ember' | 'verdant' | 'abyssal' | 'parchment';
+  accent?: string;          // '#rrggbb' override of the palette accent
+  displayFont?: 'spectral' | 'cormorant' | 'cinzel' | 'crimson';
+  backdropAssetId?: string; // asset in THIS universe; unset = starfield
+};
+
 export const users = pgTable('users', {
   id:               uuid('id').primaryKey().defaultRandom(),
   email:            text('email').notNull().unique(),
@@ -107,6 +115,8 @@ export const universes = pgTable('universes', {
   // fallback everywhere (CALENDAR-03 backwards-compat). Non-null unlocks the
   // formatCalendar renderer for all position-display surfaces.
   calendar: jsonb('calendar').$type<Calendar | null>(),
+  // Universe theming (2026-07-10 spec): nullable JSONB, null = default theme.
+  theme: jsonb('theme').$type<UniverseTheme | null>(),
   createdAt:    timestamp('created_at').defaultNow().notNull(),
   updatedAt:    timestamp('updated_at').defaultNow().notNull(),
   // Phase 24 AUDIT-03: per-universe LLM audit opt-in (default OFF).

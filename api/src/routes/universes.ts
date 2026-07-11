@@ -1,8 +1,9 @@
 import { OpenAPIHono, createRoute, z } from '@hono/zod-openapi';
-import { and, eq, desc, sql } from 'drizzle-orm';
+import { and, eq, desc, sql, inArray } from 'drizzle-orm';
 import { db } from '../db/client.js';
-import { universes, entries } from '../db/schema.js';
+import { universes, entries, assets, type UniverseTheme } from '../db/schema.js';
 import { requireUniverse } from '../utils/ownership.js';
+import { signAssetUrl } from '../services/asset-signing.js';
 import type { AuthVariables } from '../middleware/auth.js';
 
 type AppEnv = { Variables: AuthVariables };
@@ -122,6 +123,14 @@ export const calendarSchema = z
   )
   .nullable();
 
+// Universe theming (2026-07-10 spec). Whole-object replace on PATCH; null resets.
+export const themeSchema = z.object({
+  palette: z.enum(['observatory', 'ember', 'verdant', 'abyssal', 'parchment']).optional(),
+  accent: z.string().regex(/^#[0-9a-fA-F]{6}$/).optional(),
+  displayFont: z.enum(['spectral', 'cormorant', 'cinzel', 'crimson']).optional(),
+  backdropAssetId: z.string().uuid().optional(),
+});
+
 export const patchSchema = z
   .object({
     name: z.string().min(1).max(80).optional(),
@@ -136,6 +145,8 @@ export const patchSchema = z
     calendar: calendarSchema.optional(),
     // Phase 36 DATA-02: per-universe typed custom-field registry (full-array replace).
     fieldRegistry: fieldRegistrySchema.optional(),
+    // Universe theming (2026-07-10 spec): whole-object replace; null resets to default.
+    theme: themeSchema.nullable().optional(),
   })
   .refine(
     (v) =>
@@ -146,7 +157,8 @@ export const patchSchema = z
       v.auditProvider !== undefined ||
       v.auditModel !== undefined ||
       v.calendar !== undefined ||
-      v.fieldRegistry !== undefined,
+      v.fieldRegistry !== undefined ||
+      v.theme !== undefined,
     { message: 'At least one of name, description, or timelineWindow is required' },
   )
   .refine(
@@ -183,6 +195,10 @@ const universeSchema = z.object({
   calendar: calendarSchema,
   // Phase 36 DATA-02: per-universe typed custom-field registry (returned on GET).
   fieldRegistry: z.array(fieldRegistryEntrySchema),
+  // Universe theming (2026-07-10 spec): raw theme + resolved backdrop URLs.
+  theme: themeSchema.nullable(),
+  backdropUrl: z.string().nullable(),
+  backdropThumbUrl: z.string().nullable(),
   createdAt: z.string(),
   updatedAt: z.string(),
 });
@@ -458,6 +474,40 @@ const deleteEntryTypeRoute = createRoute({
   },
 });
 
+/**
+ * Resolve signed backdrop URLs for universe rows. Tolerates dangling
+ * backdropAssetId (asset deleted): verifies the asset exists AND belongs to
+ * the row's universe in one batched query; otherwise both URLs are null so
+ * the client can never render a broken backdrop (spec §1.2).
+ */
+async function withBackdropUrls<T extends { id: string; theme: UniverseTheme | null }>(
+  rows: T[],
+): Promise<(T & { backdropUrl: string | null; backdropThumbUrl: string | null })[]> {
+  const wanted = rows
+    .map((r) => r.theme?.backdropAssetId)
+    .filter((v): v is string => !!v);
+  const existing = wanted.length
+    ? await db()
+        .select({ id: assets.id, universeId: assets.universeId })
+        .from(assets)
+        .where(inArray(assets.id, wanted))
+    : [];
+  const owner = new Map(existing.map((a) => [a.id, a.universeId]));
+  return rows.map((r) => {
+    const aid = r.theme?.backdropAssetId;
+    const ok = !!aid && owner.get(aid) === r.id;
+    return {
+      ...r,
+      backdropUrl: ok
+        ? `/api/universes/${r.id}/assets/${aid}/raw${signAssetUrl(r.id, aid!, 'raw')}`
+        : null,
+      backdropThumbUrl: ok
+        ? `/api/universes/${r.id}/assets/${aid}/thumb${signAssetUrl(r.id, aid!, 'thumb')}`
+        : null,
+    };
+  });
+}
+
 // ─── Router ──────────────────────────────────────────────────────────────────
 
 export const universeRoutes = new OpenAPIHono<AppEnv>()
@@ -470,7 +520,7 @@ export const universeRoutes = new OpenAPIHono<AppEnv>()
       .from(universes)
       .where(eq(universes.userId, userId))
       .orderBy(desc(universes.createdAt));
-    return c.json(rows as any, 200);
+    return c.json((await withBackdropUrls(rows)) as any, 200);
   })
 
   // POST /universes -- create (name-only per CONTEXT.md; description optional)
@@ -486,7 +536,7 @@ export const universeRoutes = new OpenAPIHono<AppEnv>()
         // entryTypes defaults to the standard list via schema
       })
       .returning();
-    return c.json(created as any, 201);
+    return c.json((await withBackdropUrls([created]))[0] as any, 201);
   })
 
   // GET /universes/:id -- one universe (ownership enforced inline)
@@ -494,7 +544,7 @@ export const universeRoutes = new OpenAPIHono<AppEnv>()
     const userId = c.var.userId;
     const { id } = c.req.valid('param');
     const universe = await requireUniverse(id, userId);
-    return c.json(universe as any, 200);
+    return c.json((await withBackdropUrls([universe]))[0] as any, 200);
   })
 
   // PATCH /universes/:id -- update name or description
@@ -503,12 +553,23 @@ export const universeRoutes = new OpenAPIHono<AppEnv>()
     const { id } = c.req.valid('param');
     await requireUniverse(id, userId);
     const patch = c.req.valid('json');
+
+    if (patch.theme?.backdropAssetId) {
+      const [owned] = await db()
+        .select({ id: assets.id })
+        .from(assets)
+        .where(and(eq(assets.id, patch.theme.backdropAssetId), eq(assets.universeId, id)));
+      if (!owned) {
+        return c.json({ error: 'backdropAssetId does not reference an asset in this universe' }, 400);
+      }
+    }
+
     const [updated] = await db()
       .update(universes)
       .set({ ...patch, updatedAt: new Date() })
       .where(and(eq(universes.id, id), eq(universes.userId, userId)))
       .returning();
-    return c.json(updated as any, 200);
+    return c.json((await withBackdropUrls([updated]))[0] as any, 200);
   })
 
   // DELETE /universes/:id -- delete (cascades to children in Phase 2+ via schema)
