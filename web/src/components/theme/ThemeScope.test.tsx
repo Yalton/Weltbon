@@ -28,11 +28,22 @@ describe('ThemeScope', () => {
     expect(screen.queryByTestId('theme-canvas')).not.toBeInTheDocument();
   });
 
-  it('contained mode uses absolute positioning', () => {
+  it('contained mode uses absolute positioning inside a clip container', () => {
     render(
       <ThemeScope theme={{}} backdropUrl="/t.png" backdropMode="contained">x</ThemeScope>,
     );
-    expect(screen.getByTestId('theme-backdrop')).toHaveClass('absolute');
+    const img = screen.getByTestId('theme-backdrop');
+    expect(img).toHaveClass('absolute');
+    // The clip container (not the host) carries overflow-hidden so sibling
+    // focus rings outside ThemeScope aren't clipped.
+    expect(img.parentElement).toHaveClass('overflow-hidden');
+  });
+
+  it('suppresses the canvas layer when showCanvas is false', () => {
+    render(
+      <ThemeScope theme={{ palette: 'verdant' }} showCanvas={false}>x</ThemeScope>,
+    );
+    expect(screen.queryByTestId('theme-canvas')).not.toBeInTheDocument();
   });
 
   it('renders no extra layers for a null theme without backdrop', () => {

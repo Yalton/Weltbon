@@ -105,12 +105,13 @@ export function UniverseList() {
         <ul className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-3 gap-4">
           {universes!.map((u) => (
             <li key={u.id}>
-              <Panel hover className="relative h-full overflow-hidden">
+              <Panel hover className="relative h-full">
                 <ThemeScope
                   theme={u.theme ?? null}
                   backdropUrl={u.backdropThumbUrl ?? null}
                   backdropMode="contained"
-                  className="relative p-4 h-full"
+                  showCanvas={false}
+                  className="relative p-4 h-full rounded-[10px]"
                 >
                   <Link
                     to={`/universes/${u.id}/entries`}
