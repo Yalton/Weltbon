@@ -2,6 +2,7 @@ import { useMutation, useQuery, useQueryClient } from '@tanstack/react-query';
 import { api, getShareToken } from '../api/client';
 import type { Calendar } from '../lib/calendarFormat';
 import type { FieldRegistryEntry } from '../types/fieldRegistry';
+import type { UniverseTheme } from '../types/theme';
 
 // Phase 36 DATA-02: re-export the canonical field-registry types from the hook
 // so FieldRegistrySection / MetaEditor can import them alongside Universe.
@@ -30,6 +31,10 @@ export interface Universe {
   // Phase 36 DATA-02: per-universe typed custom-field registry (nullable until migration runs).
   // Absent on pre-migration rows → treat as empty array.
   fieldRegistry?: FieldRegistryEntry[];
+  // Universe theming (2026-07-10 spec). Absent on pre-migration rows.
+  theme?: UniverseTheme | null;
+  backdropUrl?: string | null;
+  backdropThumbUrl?: string | null;
 }
 
 export function useUniverses() {
@@ -81,6 +86,8 @@ export function useUpdateUniverse(id: string) {
       linkTypes?: Record<string, { color?: string; directionDefault?: 'directed' | 'undirected'; inverseLabel?: string }>;
       // Phase 36 DATA-02: full-array field-registry replace (D-03 non-destructive to entries.meta).
       fieldRegistry?: FieldRegistryEntry[];
+      // Universe theming (2026-07-10 spec). Whole-object replace on PATCH; null resets.
+      theme?: UniverseTheme | null;
     }) =>
       api<Universe>(`/universes/${id}`, { method: 'PATCH', body: JSON.stringify(body) }),
     onSuccess: () => {

@@ -2,11 +2,13 @@ import { Outlet, useParams } from 'react-router-dom';
 import { useEffect, useState } from 'react';
 import { AppBackground } from './AppBackground';
 import { ShareSidebar } from './ShareSidebar';
+import { ThemeScope } from './theme/ThemeScope';
 import { ShareModeProvider } from '../contexts/ShareModeContext';
 import { ShareNotFound } from '../views/ShareNotFound';
 import { api, setShareToken, clearShareToken, ApiError } from '../api/client';
 import type { Calendar } from '../lib/calendarFormat';
 import type { TimelineWindow } from '../hooks/useTimelineWindow';
+import type { UniverseTheme } from '../types/theme';
 
 /**
  * Public root URL for the "Made with Weltbon" banner brand link.
@@ -35,6 +37,15 @@ interface UniverseMeta {
    * otherwise). Threaded into ShareModeContext like `calendar`.
    */
   timelineWindow?: TimelineWindow | null;
+  /**
+   * Universe theming (2026-07-10 spec): getPublicUniverseMeta +
+   * universeMetaResponseSchema also return `theme` and a resolved
+   * `backdropUrl` on this object (mirrors the `calendar`/`timelineWindow`
+   * widening above). No `backdropThumbUrl` on the share seam — share pages
+   * only render the full-bleed raw image.
+   */
+  theme?: UniverseTheme | null;
+  backdropUrl?: string | null;
 }
 
 interface ShareUniverseResponse {
@@ -127,8 +138,12 @@ export function ShareLayout() {
       token={token ?? null}
       timelineWindow={universeMeta.timelineWindow ?? null}
     >
-      <div className="h-full flex flex-col">
-        <AppBackground />
+      <ThemeScope
+        theme={universeMeta.theme}
+        backdropUrl={universeMeta.backdropUrl}
+        className="h-full flex flex-col"
+      >
+        {!universeMeta.backdropUrl && <AppBackground />}
         <header
           role="banner"
           className="border-b border-neutral-200 dark:border-neutral-800 px-6 py-3 sticky top-0 z-10 bg-neutral-100 dark:bg-neutral-900 flex items-center justify-between flex-wrap gap-2"
@@ -157,7 +172,7 @@ export function ShareLayout() {
             <Outlet />
           </main>
         </div>
-      </div>
+      </ThemeScope>
     </ShareModeProvider>
   );
 }

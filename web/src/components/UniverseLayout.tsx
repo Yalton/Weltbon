@@ -2,6 +2,7 @@ import { Outlet, Link, useParams } from 'react-router-dom';
 import { Sidebar } from './Sidebar';
 import { UserMenu } from './UserMenu';
 import { AppBackground } from './AppBackground';
+import { ThemeScope } from './theme/ThemeScope';
 import { useUniverse } from '../hooks/useUniverse';
 
 /**
@@ -21,8 +22,12 @@ export function UniverseLayout() {
   if (!uid) return null;
 
   return (
-    <div className="h-full flex flex-col">
-      <AppBackground />
+    <ThemeScope
+      theme={universe?.theme}
+      backdropUrl={universe?.backdropUrl}
+      className="h-full flex flex-col"
+    >
+      {!universe?.backdropUrl && <AppBackground />}
       <header className="sticky top-0 z-30 border-b border-white/10 bg-[color:var(--color-chrome)] backdrop-blur-md px-6 py-3 flex items-center justify-between">
         <div className="flex items-baseline gap-3 min-w-0">
           <Link to="/universes" className="wordmark text-lg shrink-0">
@@ -43,6 +48,6 @@ export function UniverseLayout() {
           <Outlet />
         </main>
       </div>
-    </div>
+    </ThemeScope>
   );
 }
