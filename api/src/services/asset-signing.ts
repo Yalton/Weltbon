@@ -21,7 +21,11 @@
 
 import { createHmac, timingSafeEqual } from 'node:crypto';
 import { and, eq, inArray } from 'drizzle-orm';
+import type { NodePgDatabase } from 'drizzle-orm/node-postgres';
+import * as schema from '../db/schema.js';
 import { assets } from '../db/schema.js';
+
+type Schema = typeof schema;
 
 /** Return the raw signing secret string (not the Uint8Array used by JWT). */
 function signingSecret(): string {
@@ -166,8 +170,7 @@ export function verifyShareAssetSig(
  * One query for the whole page; an empty `ids` issues no query at all.
  */
 export async function assetOwners(
-  // eslint-disable-next-line @typescript-eslint/no-explicit-any
-  reader: any,
+  reader: NodePgDatabase<Schema>,
   ids: string[],
   universeId: string,
 ): Promise<Set<string>> {
@@ -176,5 +179,5 @@ export async function assetOwners(
     .select({ id: assets.id })
     .from(assets)
     .where(and(eq(assets.universeId, universeId), inArray(assets.id, ids)));
-  return new Set(rows.map((r: { id: string }) => r.id));
+  return new Set(rows.map((r) => r.id));
 }

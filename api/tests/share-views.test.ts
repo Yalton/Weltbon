@@ -417,11 +417,11 @@ describe('Phase 29 share-view privacy invariants', () => {
     expect(row.coverThumbUrl).toBeNull();
   });
 
-  it('H. PARITY: the share entries list exposes the same cover fields as the auth list', async () => {
-    // The share projection has silently dropped fields from the auth projection twice
-    // (Phase 48 body, Phase 49.1 aliases). This is the tripwire: it compares the two
-    // LIVE payloads for the same entry, so a field added to one projection and
-    // forgotten on the other fails HERE rather than in a browser.
+  it('H. PARITY: the share entries list exposes every field the auth list does', async () => {
+    // This repo has shipped the same bug twice: a field added to the auth list, forgotten
+    // on the share list, tests green because web fixtures injected it (Phase 48 body,
+    // Phase 49.1 aliases). A hardcoded field list cannot catch the NEXT one — so this
+    // compares the full key sets of two LIVE payloads and fails on any unlisted divergence.
     const assetId = await seedAsset('parity.png');
     const pub = await seedEntry({ isPublic: true, title: 'Parity Entry' });
     await handle.db.update(entries).set({ coverImageId: assetId }).where(eq(entries.id, pub.id));
@@ -434,18 +434,30 @@ describe('Phase 29 share-view privacy invariants', () => {
     const shareRes = await appRequest('GET', '/api/share/entries', {
       headers: { 'share-token': activeTokenPlaintext },
     });
+    expect(authRes.status).toBe(200);
+    expect(shareRes.status).toBe(200);
 
     const authRow = authRes.body.find((r: any) => r.title === 'Parity Entry');
     const shareRow = shareRes.body.find((r: any) => r.title === 'Parity Entry');
 
-    for (const field of ['coverImageId', 'coverThumbUrl', 'icon', 'entryType', 'title'] as const) {
-      expect(shareRow).toHaveProperty(field);
-      expect(authRow).toHaveProperty(field);
-    }
-    // Same asset, same nullability — only the URL prefix differs (auth vs share seam).
+    // Fields the auth list may expose that the share list DELIBERATELY withholds.
+    // Adding to this list is a privacy decision — make it consciously, and say why.
+    const INTENTIONALLY_OWNER_ONLY = new Set<string>([
+      // (empty — every auth-list field is currently mirrored on the share list)
+    ]);
+
+    const missingOnShare = Object.keys(authRow)
+      .filter((k) => !(k in shareRow))
+      .filter((k) => !INTENTIONALLY_OWNER_ONLY.has(k));
+
+    expect(missingOnShare).toEqual([]);
+
+    // The cover specifically: same asset, both non-null, only the URL prefix differs.
     expect(shareRow.coverImageId).toBe(authRow.coverImageId);
     expect(shareRow.coverThumbUrl).not.toBeNull();
     expect(authRow.coverThumbUrl).not.toBeNull();
+    expect(shareRow.coverThumbUrl).toContain('/api/share/assets/');
+    expect(authRow.coverThumbUrl).toContain('/api/universes/');
   });
 
   it('I. a share visitor never gets a signed URL for an asset from another universe', async () => {

@@ -140,6 +140,11 @@ export async function getPublicEntries(universeId: string, entryType?: string) {
       icon: entries.icon,
       categoryId: entries.categoryId,
       isPublic: entries.isPublic,
+      // Phase 36 DATA-03: the WIP pill was always meant to render on the list as well as
+      // the detail. Discloses nothing new: getPublicEntryById already returns `wip` to
+      // share visitors (bare .select() of the row) — this only makes the list consistent
+      // with the detail. Caught by the parity tripwire (test H), not by a human.
+      wip: entries.wip,
       // Content-Forward Views §1.2 — mirrors the auth LIST projection exactly.
       coverImageId: entries.coverImageId,
       createdAt: entries.createdAt,
