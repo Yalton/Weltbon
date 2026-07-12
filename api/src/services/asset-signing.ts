@@ -17,6 +17,10 @@
  *   - Expiry-enforced: signatures are refused after TTL (default 24 h).
  *   - Scoped: HMAC message binds uid + id + variant — a thumb sig is rejected on the
  *     raw endpoint and vice-versa; a sig for one universe/id pair is rejected for any other.
+ *
+ * Also owns the ownership predicate the URL minters gate on (assetOwners); that DB read
+ * takes a `reader` param so this module never imports db/client — the pure-signing unit
+ * lane stays pool-free.
  */
 
 import { createHmac, timingSafeEqual } from 'node:crypto';
@@ -159,13 +163,21 @@ export function verifyShareAssetSig(
 }
 
 /**
- * Batched asset-ownership lookup — the one piece every signed-URL resolver shares.
+ * Batched asset-ownership lookup shared by the LIST resolvers
+ * (entries.ts withCoverThumbUrls, share-views.ts getPublicEntries) and by
+ * share-views.ts getPublicUniverseMeta.
  *
- * Returns the subset of `ids` that exist AND belong to `universeId`. Callers use it to
- * decide whether to mint a signed URL: an id that is missing (dangling FK) or owned by
- * another universe must resolve to null, never to a URL. Deliberately NOT a URL builder —
+ * Returns the subset of `ids` that exist AND belong to `universeId`. Callers gate on it
+ * to decide whether to mint a signed URL: an id that is missing (dangling FK) or owned by
+ * another universe resolves to null, never to a URL. Deliberately NOT a URL builder —
  * the authed and share paths differ in URL shape and signer, and unifying those would need
  * a config object nobody wants to read.
+ *
+ * NOTE — not universal: the DETAIL resolvers (share-views.ts getPublicEntryById,
+ * entries.ts detail handler) and the map-image resolvers currently sign cover/image ids
+ * WITHOUT this check, relying on the asset route's own universe gate to 404 them at serve
+ * time. That is a broken-<img>, not a leak — but it is inconsistent with the list path.
+ * Captured in project documentation
  *
  * One query for the whole page; an empty `ids` issues no query at all.
  */

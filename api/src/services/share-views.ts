@@ -91,18 +91,12 @@ export async function getPublicUniverseMeta(
   if (rows.length === 0) return null;
 
   const row = rows[0];
-  let backdropUrl: string | null = null;
   const aid = row.theme?.backdropAssetId;
-  if (aid) {
-    const owned = await getDb()
-      .select({ id: assets.id })
-      .from(assets)
-      .where(and(eq(assets.id, aid), eq(assets.universeId, universeId)))
-      .limit(1);
-    if (owned.length > 0) {
-      backdropUrl = `/api/share/assets/${aid}/raw${signShareAssetUrl(universeId, aid, 'raw')}`;
-    }
-  }
+  const live = await assetOwners(getDb(), aid ? [aid] : [], universeId);
+  const backdropUrl =
+    aid && live.has(aid)
+      ? `/api/share/assets/${aid}/raw${signShareAssetUrl(universeId, aid, 'raw')}`
+      : null;
   return { ...row, backdropUrl };
 }
 
@@ -145,7 +139,7 @@ export async function getPublicEntries(universeId: string, entryType?: string) {
       // share visitors (bare .select() of the row) — this only makes the list consistent
       // with the detail. Caught by the parity tripwire (test H), not by a human.
       wip: entries.wip,
-      // Content-Forward Views §1.2 — mirrors the auth LIST projection exactly.
+      // Content-Forward Views §1.2
       coverImageId: entries.coverImageId,
       createdAt: entries.createdAt,
       updatedAt: entries.updatedAt,

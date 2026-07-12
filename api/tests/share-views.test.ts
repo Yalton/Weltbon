@@ -440,17 +440,27 @@ describe('Phase 29 share-view privacy invariants', () => {
     const authRow = authRes.body.find((r: any) => r.title === 'Parity Entry');
     const shareRow = shareRes.body.find((r: any) => r.title === 'Parity Entry');
 
-    // Fields the auth list may expose that the share list DELIBERATELY withholds.
-    // Adding to this list is a privacy decision — make it consciously, and say why.
-    const INTENTIONALLY_OWNER_ONLY = new Set<string>([
-      // (empty — every auth-list field is currently mirrored on the share list)
-    ]);
+    // Without these, a LIST ordering/filtering change makes the tripwire die with
+    // `TypeError: Cannot convert undefined to object` — a stack trace instead of a diagnosis.
+    expect(authRow, 'auth LIST did not return the seeded parity entry').toBeDefined();
+    expect(shareRow, 'share LIST did not return the seeded parity entry').toBeDefined();
+
+    // Fields the auth list exposes that the share list DELIBERATELY withholds, field → reason.
+    // Adding an entry here is a PRIVACY DECISION, not a way to make the test green.
+    // The value is the reason, and it must say why the owner sees this and the visitor must not.
+    const INTENTIONALLY_OWNER_ONLY = new Map<string, string>([]); // none today
 
     const missingOnShare = Object.keys(authRow)
       .filter((k) => !(k in shareRow))
       .filter((k) => !INTENTIONALLY_OWNER_ONLY.has(k));
 
-    expect(missingOnShare).toEqual([]);
+    expect(
+      missingOnShare,
+      `Share-list drift: the auth LIST exposes ${missingOnShare.join(', ')} and the share LIST does not.\n` +
+        `Mirror the column into getPublicEntries() (services/share-views.ts) AND add it to ` +
+        `publicEntryListItemSchema (routes/share.ts). ONLY add it to INTENTIONALLY_OWNER_ONLY ` +
+        `(with a written reason) if a share visitor must never see it.`,
+    ).toEqual([]);
 
     // The cover specifically: same asset, both non-null, only the URL prefix differs.
     expect(shareRow.coverImageId).toBe(authRow.coverImageId);
@@ -460,7 +470,7 @@ describe('Phase 29 share-view privacy invariants', () => {
     expect(authRow.coverThumbUrl).toContain('/api/universes/');
   });
 
-  it('I. a share visitor never gets a signed URL for an asset from another universe', async () => {
+  it('I. the share entries LIST never mints a signed URL for a foreign-universe cover', async () => {
     // create/patch do NOT validate cover ownership (proven in tests/entries.test.ts), so a
     // cross-universe coverImageId is genuinely storable. The share resolver's universe
     // filter is what stops it minting a signed URL into a universe the visitor cannot see.

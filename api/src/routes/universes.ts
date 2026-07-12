@@ -483,6 +483,8 @@ const deleteEntryTypeRoute = createRoute({
 async function withBackdropUrls<T extends { id: string; theme: UniverseTheme | null }>(
   rows: T[],
 ): Promise<(T & { backdropUrl: string | null; backdropThumbUrl: string | null })[]> {
+  // Not on assetOwners(): this resolver is multi-universe (one row per universe), so it needs
+  // a per-row owner compare rather than assetOwners' single-universe SQL filter.
   const wanted = rows
     .map((r) => r.theme?.backdropAssetId)
     .filter((v): v is string => !!v);
