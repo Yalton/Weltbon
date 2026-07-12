@@ -93,10 +93,19 @@ const entrySchema = z.object({
   // entry's canonical title. The canonical title still wins at resolution (D-01).
   aliasWarnings: z.array(z.string()).optional(),
   // Content-Forward Views §1.1 — cover surface on every entry read.
-  // coverImageId was projected since Phase 38 but never declared; coverThumbUrl is
-  // the pre-signed thumb the UI renders (browsers cannot attach a Bearer header to
-  // an <img src>). Nullable and NON-optional: the field is present on every row.
+  // coverImageId was projected since Phase 38 but never declared. Honest on every
+  // endpoint that uses this schema: create/patch `.returning()` and the detail select
+  // all include the column.
   coverImageId: z.string().nullable(),
+});
+
+/**
+ * Content-Forward Views §1.1 — LIST-only. coverThumbUrl is a LIST-projection
+ * concern: only the list handler resolves it (via withCoverThumbUrls). Declaring
+ * it on the shared entrySchema would promise the field on create/patch/detail,
+ * which do not emit it — the projection-drift trap this repo has hit twice.
+ */
+const entryListItemSchema = entrySchema.extend({
   coverThumbUrl: z.string().nullable(),
 });
 
@@ -256,7 +265,7 @@ const listRoute = createRoute({
     200: {
       content: {
         'application/json': {
-          schema: z.array(entrySchema),
+          schema: z.array(entryListItemSchema),
         },
       },
       description: 'List of entries (no body field in list view)',

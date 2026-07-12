@@ -1461,6 +1461,32 @@ describe('entry routes (ENT-01..06)', () => {
     const rows = await json(res);
     const row = rows.find((r: any) => r.title === 'Dangling');
 
+    // Self-check: the row must genuinely hold a dead asset id, else this test is
+    // vacuous (a nulled column would satisfy the assertion below while proving nothing).
+    expect(row.coverImageId).toBe(assetId);
+    expect(row.coverThumbUrl).toBeNull();
+  });
+
+  it('LIST refuses to sign a cover asset that belongs to a DIFFERENT universe', async () => {
+    // create/patch do not validate cover ownership and the FK only requires the asset
+    // to exist somewhere — so a cross-universe cover id is genuinely persistable. The
+    // ownership check in withCoverThumbUrls is the only thing stopping LIST from
+    // minting a signed URL that reaches into another universe's assets.
+    const { hdrs } = await userWithToken('cover-crossuniverse@test.com');
+    const universeA = await createUniverse(hdrs, 'World A');
+    const universeB = await createUniverse(hdrs, 'World B');
+    const foreignAssetId = await seedAsset(universeA.id, 'foreign.png');
+
+    await req('POST', `/api/universes/${universeB.id}/entries`, {
+      headers: hdrs,
+      body: { title: 'Thief', entryType: 'artifact', coverImageId: foreignAssetId },
+    });
+
+    const res = await req('GET', `/api/universes/${universeB.id}/entries`, { headers: hdrs });
+    const rows = await json(res);
+    const row = rows.find((r: any) => r.title === 'Thief');
+
+    expect(row.coverImageId).toBe(foreignAssetId);
     expect(row.coverThumbUrl).toBeNull();
   });
 });
