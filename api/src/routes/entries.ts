@@ -1,10 +1,10 @@
 import { OpenAPIHono, createRoute, z } from '@hono/zod-openapi';
-import { and, eq, ne, desc, isNull, sql, arrayContains, inArray, type SQL } from 'drizzle-orm';
+import { and, eq, ne, desc, isNull, sql, arrayContains, type SQL } from 'drizzle-orm';
 import { HTTPException } from 'hono/http-exception';
 import { db } from '../db/client.js';
-import { entries, links, categories, issues, issueEntries, entryTemplates, assets } from '../db/schema.js';
+import { entries, links, categories, issues, issueEntries, entryTemplates } from '../db/schema.js';
 import { requireUniverse } from '../utils/ownership.js';
-import { signAssetUrl } from '../services/asset-signing.js';
+import { assetOwners, signAssetUrl } from '../services/asset-signing.js';
 import { rewriteWikilinks } from '../services/rewrite-wikilinks.js';
 import type { AuthVariables } from '../middleware/auth.js';
 
@@ -449,32 +449,28 @@ const deleteRoute = createRoute({
 /**
  * Content-Forward Views §1.1 — resolve a signed thumb URL per row.
  *
- * One batched `inArray` assets query per response (never N+1). The ownership
- * check (asset.universeId === row.universeId) means a cover id copied across
- * universes resolves to null rather than leaking a signed URL. Dangling-tolerant:
- * an id with no surviving asset row yields null, never a broken <img> src.
+ * One batched `assetOwners` query per response (never N+1). The LIST route is
+ * already universe-scoped (`eq(entries.universeId, uid)` is conditions[0]), so
+ * every row shares one universeId — passed explicitly rather than read per-row.
+ * Dangling-tolerant: an id with no surviving (or owned) asset row yields null,
+ * never a broken <img> src or a signed URL leaking into another universe.
  */
-async function withCoverThumbUrls<
-  T extends { universeId: string; coverImageId: string | null },
->(rows: T[]): Promise<(T & { coverThumbUrl: string | null })[]> {
-  const wanted = rows.map((r) => r.coverImageId).filter((v): v is string => !!v);
-  const existing = wanted.length
-    ? await db()
-        .select({ id: assets.id, universeId: assets.universeId })
-        .from(assets)
-        .where(inArray(assets.id, wanted))
-    : [];
-  const owner = new Map(existing.map((a) => [a.id, a.universeId]));
-  return rows.map((r) => {
-    const aid = r.coverImageId;
-    const ok = !!aid && owner.get(aid) === r.universeId;
-    return {
-      ...r,
-      coverThumbUrl: ok
-        ? `/api/universes/${r.universeId}/assets/${aid}/thumb${signAssetUrl(r.universeId, aid!, 'thumb')}`
+async function withCoverThumbUrls<T extends { coverImageId: string | null }>(
+  rows: T[],
+  uid: string,
+): Promise<(T & { coverThumbUrl: string | null })[]> {
+  const live = await assetOwners(
+    db(),
+    rows.map((r) => r.coverImageId).filter((v): v is string => !!v),
+    uid,
+  );
+  return rows.map((r) => ({
+    ...r,
+    coverThumbUrl:
+      r.coverImageId && live.has(r.coverImageId)
+        ? `/api/universes/${uid}/assets/${r.coverImageId}/thumb${signAssetUrl(uid, r.coverImageId, 'thumb')}`
         : null,
-    };
-  });
+  }));
 }
 
 // ─── Router ──────────────────────────────────────────────────────────────────
@@ -555,7 +551,7 @@ export const entryRoutes = new OpenAPIHono<AppEnv>()
         .from(entries)
         .where(and(...conditions))
         .orderBy(sql`ts_rank(search_vector, websearch_to_tsquery('english', ${q})) DESC`, desc(entries.updatedAt));
-      return c.json((await withCoverThumbUrls(rows)) as any, 200);
+      return c.json((await withCoverThumbUrls(rows, uid)) as any, 200);
     }
 
     const rows = await db()
@@ -564,7 +560,7 @@ export const entryRoutes = new OpenAPIHono<AppEnv>()
       .where(and(...conditions))
       .orderBy(desc(entries.updatedAt));
 
-    return c.json((await withCoverThumbUrls(rows)) as any, 200);
+    return c.json((await withCoverThumbUrls(rows, uid)) as any, 200);
   })
 
   // POST / -- create entry

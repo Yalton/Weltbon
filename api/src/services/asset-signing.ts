@@ -20,6 +20,8 @@
  */
 
 import { createHmac, timingSafeEqual } from 'node:crypto';
+import { and, eq, inArray } from 'drizzle-orm';
+import { assets } from '../db/schema.js';
 
 /** Return the raw signing secret string (not the Uint8Array used by JWT). */
 function signingSecret(): string {
@@ -150,4 +152,29 @@ export function verifyShareAssetSig(
   } catch {
     return { valid: false, uid: '' };
   }
+}
+
+/**
+ * Batched asset-ownership lookup — the one piece every signed-URL resolver shares.
+ *
+ * Returns the subset of `ids` that exist AND belong to `universeId`. Callers use it to
+ * decide whether to mint a signed URL: an id that is missing (dangling FK) or owned by
+ * another universe must resolve to null, never to a URL. Deliberately NOT a URL builder —
+ * the authed and share paths differ in URL shape and signer, and unifying those would need
+ * a config object nobody wants to read.
+ *
+ * One query for the whole page; an empty `ids` issues no query at all.
+ */
+export async function assetOwners(
+  // eslint-disable-next-line @typescript-eslint/no-explicit-any
+  reader: any,
+  ids: string[],
+  universeId: string,
+): Promise<Set<string>> {
+  if (ids.length === 0) return new Set();
+  const rows = await reader
+    .select({ id: assets.id })
+    .from(assets)
+    .where(and(eq(assets.universeId, universeId), inArray(assets.id, ids)));
+  return new Set(rows.map((r: { id: string }) => r.id));
 }

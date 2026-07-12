@@ -141,6 +141,10 @@ const publicEntryListItemSchema = z.object({
   icon: z.string(),
   categoryId: z.string().nullable(),
   isPublic: z.boolean(),
+  // Content-Forward Views §1.2 — mirrors entryListItemSchema in routes/entries.ts.
+  // Declared locally (D-04): the share schema never imports from the auth routes.
+  coverImageId: z.string().nullable(),
+  coverThumbUrl: z.string().nullable(),
   createdAt: z.string(),
   updatedAt: z.string(),
 });

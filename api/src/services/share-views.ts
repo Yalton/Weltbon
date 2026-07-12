@@ -40,7 +40,7 @@ import {
   type Calendar,
   type UniverseTheme,
 } from '../db/schema.js';
-import { signShareAssetUrl } from './asset-signing.js';
+import { assetOwners, signShareAssetUrl } from './asset-signing.js';
 
 // ─── Function 1: getPublicUniverseMeta ──────────────────────────────────────
 //
@@ -127,7 +127,7 @@ export async function getPublicEntries(universeId: string, entryType?: string) {
   const whereClause = entryType
     ? and(baseCondition, eq(entries.entryType, entryType))
     : baseCondition;
-  return getDb()
+  const rows = await getDb()
     .select({
       id: entries.id,
       universeId: entries.universeId,
@@ -140,12 +140,30 @@ export async function getPublicEntries(universeId: string, entryType?: string) {
       icon: entries.icon,
       categoryId: entries.categoryId,
       isPublic: entries.isPublic,
+      // Content-Forward Views §1.2 — mirrors the auth LIST projection exactly.
+      coverImageId: entries.coverImageId,
       createdAt: entries.createdAt,
       updatedAt: entries.updatedAt,
     })
     .from(entries)
     .where(whereClause)
     .orderBy(desc(entries.updatedAt));
+
+  // Batched ownership lookup (one query, never N+1), dangling-tolerant: an id whose
+  // asset row is gone yields null rather than a signed URL that 404s in an <img>.
+  // The universe filter is load-bearing, not decorative: create/patch accept a
+  // coverImageId from ANOTHER universe with no validation, so without it a visitor
+  // could be handed a signed URL into a universe they cannot see.
+  const wanted = rows.map((r) => r.coverImageId).filter((v): v is string => !!v);
+  const live = await assetOwners(getDb(), wanted, universeId);
+
+  return rows.map((r) => ({
+    ...r,
+    coverThumbUrl:
+      r.coverImageId && live.has(r.coverImageId)
+        ? `/api/share/assets/${r.coverImageId}/thumb${signShareAssetUrl(universeId, r.coverImageId, 'thumb')}`
+        : null,
+  }));
 }
 
 // ─── Function 3: getPublicEntryById ──────────────────────────────────────────

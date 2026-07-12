@@ -370,6 +370,114 @@ describe('Phase 29 share-view privacy invariants', () => {
       `D-05/T-29-26: an expired share-token MUST return 404 — same code as not-found / revoked.`,
     ).toBe(404);
   });
+
+  // ── Content-Forward Views §1.2 — share-side cover parity ────────────────────
+
+  async function seedAsset(filename = 'share-cover.png') {
+    const id = crypto.randomUUID();
+    await handle.db.insert(assets).values({
+      id,
+      universeId,
+      filename,
+      mimeType: 'image/png',
+      extension: 'png',
+      sizeBytes: 1024,
+      thumbSizeBytes: 256,
+    });
+    return id;
+  }
+
+  it('G. share entries list returns a share-prefixed signed coverThumbUrl for a public entry', async () => {
+    const assetId = await seedAsset();
+    const pub = await seedEntry({ isPublic: true, title: 'Public Covered' });
+    await handle.db.update(entries).set({ coverImageId: assetId }).where(eq(entries.id, pub.id));
+
+    const { status, body } = await appRequest('GET', '/api/share/entries', {
+      headers: { 'share-token': activeTokenPlaintext },
+    });
+
+    expect(status).toBe(200);
+    const row = body.find((r: any) => r.title === 'Public Covered');
+    expect(row.coverImageId).toBe(assetId);
+    // Share URLs carry no :uid in the path (D-03) — the universe id rides in ?u=.
+    expect(row.coverThumbUrl).toContain(`/api/share/assets/${assetId}/thumb`);
+    expect(row.coverThumbUrl).toContain(`u=${universeId}`);
+    expect(row.coverThumbUrl).not.toContain('/api/universes/');
+  });
+
+  it('G2. share entries list returns coverThumbUrl null when the public entry has no cover', async () => {
+    await seedEntry({ isPublic: true, title: 'Public Bare' });
+
+    const { body } = await appRequest('GET', '/api/share/entries', {
+      headers: { 'share-token': activeTokenPlaintext },
+    });
+
+    const row = body.find((r: any) => r.title === 'Public Bare');
+    expect(row.coverImageId).toBeNull();
+    expect(row.coverThumbUrl).toBeNull();
+  });
+
+  it('H. PARITY: the share entries list exposes the same cover fields as the auth list', async () => {
+    // The share projection has silently dropped fields from the auth projection twice
+    // (Phase 48 body, Phase 49.1 aliases). This is the tripwire: it compares the two
+    // LIVE payloads for the same entry, so a field added to one projection and
+    // forgotten on the other fails HERE rather than in a browser.
+    const assetId = await seedAsset('parity.png');
+    const pub = await seedEntry({ isPublic: true, title: 'Parity Entry' });
+    await handle.db.update(entries).set({ coverImageId: assetId }).where(eq(entries.id, pub.id));
+
+    const { issueAccessToken } = await import('../src/services/auth.js');
+    const token = await issueAccessToken(userId);
+    const authRes = await appRequest('GET', `/api/universes/${universeId}/entries`, {
+      headers: { Authorization: `Bearer ${token}` },
+    });
+    const shareRes = await appRequest('GET', '/api/share/entries', {
+      headers: { 'share-token': activeTokenPlaintext },
+    });
+
+    const authRow = authRes.body.find((r: any) => r.title === 'Parity Entry');
+    const shareRow = shareRes.body.find((r: any) => r.title === 'Parity Entry');
+
+    for (const field of ['coverImageId', 'coverThumbUrl', 'icon', 'entryType', 'title'] as const) {
+      expect(shareRow).toHaveProperty(field);
+      expect(authRow).toHaveProperty(field);
+    }
+    // Same asset, same nullability — only the URL prefix differs (auth vs share seam).
+    expect(shareRow.coverImageId).toBe(authRow.coverImageId);
+    expect(shareRow.coverThumbUrl).not.toBeNull();
+    expect(authRow.coverThumbUrl).not.toBeNull();
+  });
+
+  it('I. a share visitor never gets a signed URL for an asset from another universe', async () => {
+    // create/patch do NOT validate cover ownership (proven in tests/entries.test.ts), so a
+    // cross-universe coverImageId is genuinely storable. The share resolver's universe
+    // filter is what stops it minting a signed URL into a universe the visitor cannot see.
+    const [otherUniverse] = await handle.db
+      .insert(universes)
+      .values({ userId, name: 'Other Universe' })
+      .returning();
+    const foreignAssetId = crypto.randomUUID();
+    await handle.db.insert(assets).values({
+      id: foreignAssetId,
+      universeId: otherUniverse!.id,
+      filename: 'foreign.png',
+      mimeType: 'image/png',
+      extension: 'png',
+      sizeBytes: 1024,
+      thumbSizeBytes: 256,
+    });
+
+    const pub = await seedEntry({ isPublic: true, title: 'Foreign Cover' });
+    await handle.db.update(entries).set({ coverImageId: foreignAssetId }).where(eq(entries.id, pub.id));
+
+    const { body } = await appRequest('GET', '/api/share/entries', {
+      headers: { 'share-token': activeTokenPlaintext },
+    });
+
+    const row = body.find((r: any) => r.title === 'Foreign Cover');
+    expect(row.coverImageId).toBe(foreignAssetId);
+    expect(row.coverThumbUrl).toBeNull();
+  });
 });
 
 describe('XREF-07: private-reference leak invariants (hover-card / embed share path)', () => {
