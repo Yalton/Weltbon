@@ -36,21 +36,33 @@ export interface ResolvedMedallion {
   icon: string | null;
   /** First grapheme of the title, uppercased. '?' when the title is empty. */
   monogram: string;
-  /** Entry-type hex, e.g. '#f59e0b'. */
+  /** Entry-type hex, e.g. '#f59e0b'. Shared: HTML tints with it, SVG strokes with it. */
   hue: string;
-  /** CSS background for the fallback disc (HTML renderer). */
-  discBackground: string;
-  /** Hairline inset ring color. */
-  ringColor: string;
-  /** Flat disc fill for SVG surfaces, which cannot take a CSS gradient string. */
-  discFill: string;
-  discFillOpacity: number;
+  /** Presentation values for the HTML renderer (Medallion.tsx). */
+  html: {
+    /** CSS background for the fallback disc. */
+    discBackground: string;
+    /** Hairline inset ring color, for box-shadow. Not used by SVG, which strokes with `hue`. */
+    ringColor: string;
+  };
+  /** Presentation values for the SVG renderer (MedallionSVG.tsx), which cannot take a CSS gradient. */
+  svg: {
+    /** Flat disc fill — the gradient's stand-in on SVG surfaces. */
+    discFill: string;
+    /** Flat approximation of the gradient's visual weight (mockup B). */
+    discFillOpacity: number;
+  };
 }
 
 /**
- * First *grapheme* — not first code unit. `'🜂Ash'[0]` is a lone surrogate half,
- * which renders as mojibake; Intl.Segmenter (or the spread fallback) keeps astral
- * characters intact so an emoji-leading title shows the emoji.
+ * First *grapheme* — not first code unit. `'🜂Ash'[0]` is a lone surrogate half, which
+ * renders as mojibake.
+ *
+ * Intl.Segmenter is grapheme-cluster-correct. The spread fallback (older browsers —
+ * Firefox only shipped Segmenter in v125) is only code-point-safe: it keeps surrogate
+ * pairs intact but WOULD truncate a flag emoji, an emoji+ZWJ sequence, or a
+ * base+combining-accent to its first code point. Degraded, not wrong enough to matter
+ * for a monogram.
  */
 export function firstGrapheme(title: string): string {
   const trimmed = title.trim();
@@ -81,10 +93,15 @@ export function resolveMedallion(src: MedallionSource): ResolvedMedallion {
     icon,
     monogram: firstGrapheme(src.title),
     hue,
-    // The approved mockup B disc: an off-centre highlight fading into a dim base.
-    discBackground: `radial-gradient(circle at 35% 30%, ${hue}33, ${hue}12)`,
-    ringColor: `${hue}55`,
-    discFill: hue,
-    discFillOpacity: 0.18,
+    html: {
+      // The approved mockup B disc: an off-centre highlight fading into a dim base.
+      // Requires 6-digit hex from entryTypeHexColor — pinned by entryTypeColor.test.ts.
+      discBackground: `radial-gradient(circle at 35% 30%, ${hue}33, ${hue}12)`,
+      ringColor: `${hue}55`,
+    },
+    svg: {
+      discFill: hue,
+      discFillOpacity: 0.18,
+    },
   };
 }
