@@ -3,8 +3,8 @@ import { createApp } from '../src/index.js';
 import { createTestDb, cleanDb, createTestUser, authHeader, type TestDbHandle } from './helpers.js';
 import { issueAccessToken } from '../src/services/auth.js';
 import { setTestDb } from '../src/db/client.js';
-import { eq, and } from 'drizzle-orm';
-import { entryTemplates } from '../src/db/schema.js';
+import { eq, and, sql } from 'drizzle-orm';
+import { entryTemplates, assets } from '../src/db/schema.js';
 
 describe('entry routes (ENT-01..06)', () => {
   let handle: TestDbHandle;
@@ -1376,5 +1376,91 @@ describe('entry routes (ENT-01..06)', () => {
       const crossBody = await fetchEntryBody(hdrs, univB.id, other.id);
       expect(crossBody).toBe('The [[Empire]] from another world.');
     });
+  });
+
+  // ── Content-Forward Views §1.1 — coverThumbUrl on the LIST projection ──────
+  // These assert the field arrives from the SERVER payload. Never satisfy them
+  // by injecting coverThumbUrl into a fixture — that is the exact false-green
+  // failure mode this project has hit twice (list-endpoint body projection).
+
+  /** Insert an asset row owned by `universeId` and return its id. */
+  async function seedAsset(universeId: string, filename = 'cover.png') {
+    const id = crypto.randomUUID();
+    await handle.db.insert(assets).values({
+      id,
+      universeId,
+      filename,
+      mimeType: 'image/png',
+      extension: 'png',
+      sizeBytes: 1024,
+      thumbSizeBytes: 256,
+    });
+    return id;
+  }
+
+  it('LIST returns a signed coverThumbUrl for an entry with a live cover asset', async () => {
+    const { hdrs } = await userWithToken('cover-live@test.com');
+    const universe = await createUniverse(hdrs);
+    const assetId = await seedAsset(universe.id);
+
+    await req('POST', `/api/universes/${universe.id}/entries`, {
+      headers: hdrs,
+      body: { title: 'Covered', entryType: 'location', coverImageId: assetId },
+    });
+
+    const res = await req('GET', `/api/universes/${universe.id}/entries`, { headers: hdrs });
+    expect(res.status).toBe(200);
+    const rows = await json(res);
+    const row = rows.find((r: any) => r.title === 'Covered');
+
+    expect(row.coverImageId).toBe(assetId);
+    expect(row.coverThumbUrl).toContain(`/api/universes/${universe.id}/assets/${assetId}/thumb`);
+    // Signed: ?e=<exp>&s=<hex> per signAssetUrl.
+    expect(row.coverThumbUrl).toMatch(/\?e=\d+&s=[0-9a-f]{64}$/);
+  });
+
+  it('LIST returns coverThumbUrl null for an entry with no cover', async () => {
+    const { hdrs } = await userWithToken('cover-none@test.com');
+    const universe = await createUniverse(hdrs);
+
+    await req('POST', `/api/universes/${universe.id}/entries`, {
+      headers: hdrs,
+      body: { title: 'Bare', entryType: 'concept' },
+    });
+
+    const res = await req('GET', `/api/universes/${universe.id}/entries`, { headers: hdrs });
+    const rows = await json(res);
+    const row = rows.find((r: any) => r.title === 'Bare');
+
+    expect(row.coverImageId).toBeNull();
+    expect(row.coverThumbUrl).toBeNull();
+  });
+
+  it('LIST is dangling-tolerant: a cover pointing at a deleted asset yields null, not a broken URL', async () => {
+    const { hdrs } = await userWithToken('cover-dangling@test.com');
+    const universe = await createUniverse(hdrs);
+    const assetId = await seedAsset(universe.id, 'doomed.png');
+
+    await req('POST', `/api/universes/${universe.id}/entries`, {
+      headers: hdrs,
+      body: { title: 'Dangling', entryType: 'artifact', coverImageId: assetId },
+    });
+
+    // Force the dangling state directly: the real schema nulls coverImageId
+    // ON DELETE SET NULL, so a plain delete can't produce a dangling FK value.
+    // Disable that trigger for one transaction only (SET LOCAL session_replication_role)
+    // so the delete leaves entries.coverImageId pointing at a row that no longer
+    // exists — exercising the projection's OWN tolerance, which is what protects the
+    // UI if a row is ever orphaned outside the normal delete path (e.g. a raw import).
+    await handle.db.transaction(async (tx) => {
+      await tx.execute(sql`SET LOCAL session_replication_role = replica`);
+      await tx.delete(assets).where(eq(assets.id, assetId));
+    });
+
+    const res = await req('GET', `/api/universes/${universe.id}/entries`, { headers: hdrs });
+    const rows = await json(res);
+    const row = rows.find((r: any) => r.title === 'Dangling');
+
+    expect(row.coverThumbUrl).toBeNull();
   });
 });
