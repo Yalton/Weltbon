@@ -1417,6 +1417,16 @@ describe('entry routes (ENT-01..06)', () => {
     expect(row.coverThumbUrl).toContain(`/api/universes/${universe.id}/assets/${assetId}/thumb`);
     // Signed: ?e=<exp>&s=<hex> per signAssetUrl.
     expect(row.coverThumbUrl).toMatch(/\?e=\d+&s=[0-9a-f]{64}$/);
+
+    // The LIST handler has TWO return branches (?q= full-text and default) and both
+    // must resolve covers. Testing only one is how a projection silently drifts —
+    // covers would vanish the moment a user typed in the search box.
+    const searchRes = await req('GET', `/api/universes/${universe.id}/entries?q=Covered`, {
+      headers: hdrs,
+    });
+    const searchRows = await json(searchRes);
+    const searchRow = searchRows.find((r: any) => r.title === 'Covered');
+    expect(searchRow.coverThumbUrl).toContain(`/api/universes/${universe.id}/assets/${assetId}/thumb`);
   });
 
   it('LIST returns coverThumbUrl null for an entry with no cover', async () => {
@@ -1452,6 +1462,10 @@ describe('entry routes (ENT-01..06)', () => {
     // so the delete leaves entries.coverImageId pointing at a row that no longer
     // exists — exercising the projection's OWN tolerance, which is what protects the
     // UI if a row is ever orphaned outside the normal delete path (e.g. a raw import).
+    // NOTE: session_replication_role requires a SUPERUSER role. The test container's
+    // bootstrap user is one; a managed Postgres with a plain app role would reject this
+    // SET and the delete would simply null the column (the FK's ON DELETE SET NULL) —
+    // which is why the coverImageId self-check below exists, so that regression is loud.
     await handle.db.transaction(async (tx) => {
       await tx.execute(sql`SET LOCAL session_replication_role = replica`);
       await tx.delete(assets).where(eq(assets.id, assetId));
