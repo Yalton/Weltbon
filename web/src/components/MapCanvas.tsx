@@ -7,6 +7,9 @@ import { GlyphIcon } from '../lib/mapGlyphs';
 import type { MapPin, MapRegion, TerrainAreaRegion, MapRoute } from '../hooks/useMap';
 import type { MapLayer } from '../hooks/useMapLayers';
 import { useShareToken } from '../contexts/ShareModeContext';
+import { Medallion } from './Medallion';
+import { TypeBadge } from './TypeBadge';
+import type { MedallionSource } from '../lib/medallion';
 
 // ─── Constants ────────────────────────────────────────────────────────────────
 const HIT_RADIUS = 22;         // transparent hit area — 44px diameter touch target
@@ -84,6 +87,12 @@ export interface MapCanvasProps {
   selectedPinId: string | null;
   /** Universe id for same-tab entry navigation. */
   universeId: string;
+  /**
+   * Content-Forward Views §6 — entryId → cover/icon/monogram, from useEntryMedallions.
+   * ONLY the hover tooltip reads it; the canvas (pins/regions/routes) is untouched.
+   * Regions and map-only pins have no entryId, so they simply render no medallion.
+   */
+  medallions?: Map<string, MedallionSource>;
   /** Called with normalized [0,1] coords when user clicks canvas in addPinMode or drawRegionMode. */
   onCanvasClick: (nx: number, ny: number) => void;
   /** Called when a pin drag ends with the new normalized position. */
@@ -892,6 +901,7 @@ export const MapCanvas = forwardRef<MapCanvasHandle, MapCanvasProps>(function Ma
   pendingVertices,
   selectedPinId,
   universeId,
+  medallions,
   onCanvasClick,
   onPinDragEnd,
   onPinContextMenu,
@@ -1574,19 +1584,25 @@ export const MapCanvas = forwardRef<MapCanvasHandle, MapCanvasProps>(function Ma
       {hoveredTooltip && (
         <div
           data-testid="map-tooltip"
-          className="pointer-events-none absolute z-50 max-w-[200px] rounded-md border border-neutral-200 bg-white/90 backdrop-blur-sm shadow-sm dark:border-neutral-800 dark:bg-neutral-900/90 px-3 py-2"
+          className="pointer-events-none absolute z-50 max-w-[260px] rounded-md border border-neutral-200 bg-white/90 backdrop-blur-sm shadow-sm dark:border-neutral-800 dark:bg-neutral-900/90 px-3 py-2"
           style={tooltipStyle}
         >
-          {/* Title — always shown (D-07, D-08) */}
-          <p className="text-xs font-semibold text-neutral-900 dark:text-neutral-100 truncate">
-            {hoveredTooltip.title}
-          </p>
-          {/* Entry type — shown when present (pin type; regions may not have it) */}
-          {hoveredTooltip.type && (
-            <p className="text-xs capitalize text-neutral-500 dark:text-neutral-400">
-              {hoveredTooltip.type}
-            </p>
-          )}
+          {/* Identity row — Content-Forward Views §6. Regions and map-only pins have no
+              entryId, so the medallion renders only for an entry-linked item whose cover/
+              icon/monogram is resolvable from the medallions map. */}
+          <div className="flex items-center gap-2">
+            {hoveredTooltip.entryId && medallions?.get(hoveredTooltip.entryId) && (
+              <Medallion {...medallions.get(hoveredTooltip.entryId)!} size="sm" />
+            )}
+            <div className="min-w-0">
+              {/* Title — always shown (D-07, D-08) */}
+              <p className="font-display text-sm font-semibold text-ink truncate">
+                {hoveredTooltip.title}
+              </p>
+              {/* Entry type — shown when present (pin type; regions may not have it) */}
+              {hoveredTooltip.type && <TypeBadge type={hoveredTooltip.type} />}
+            </div>
+          </div>
           {/* Summary excerpt — ONLY when summary is a non-empty string (D-08).
               Empty string / null / undefined → NO excerpt, NO placeholder. */}
           {hasExcerpt && (

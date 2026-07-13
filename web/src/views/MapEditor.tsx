@@ -14,6 +14,7 @@ import { MapLegend } from '../components/MapLegend';
 import { MapToolbar } from '../components/MapToolbar';
 import { Toast } from '../components/Toast';
 import { useEntries } from '../hooks/useEntries';
+import { useEntryMedallions } from '../hooks/useEntryMedallions';
 import {
   useAddPin,
   useCreateRegion,
@@ -205,6 +206,9 @@ export function MapEditor() {
   // ── Data hooks ───────────────────────────────────────────────────────────────
   const { data: map, isLoading, isError } = useMap(uid, mid);
   const { data: entriesData } = useEntries(uid);
+  // Content-Forward Views §6 — tooltip identity: cover/icon/monogram for the hover tooltip,
+  // resolved from the same entries LIST cache as entriesData above (no second request).
+  const medallions = useEntryMedallions(uid);
   // Phase 44 GEOSHARE-01: enable the layers query in share mode.
   // The transparent client seam (api/client.ts) translates
   // /universes/share/map-layers → /api/share/map-layers, now served by 44-02.
@@ -1786,6 +1790,7 @@ export function MapEditor() {
         pendingVertices={isShare ? [] : pendingVertices}
         selectedPinId={isShare ? null : selectedPinId}
         universeId={uid}
+        medallions={medallions}
         onCanvasClick={isShare ? () => {} : handleCanvasClick}
         onPinDragEnd={isShare ? () => {} : handlePinDragEnd}
         onPinContextMenu={isShare ? () => {} : handlePinContextMenu}
