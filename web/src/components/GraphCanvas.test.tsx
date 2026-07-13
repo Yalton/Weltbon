@@ -2,7 +2,7 @@ import { afterEach, describe, it, expect, vi } from 'vitest';
 import { render } from '@testing-library/react';
 import { act } from 'react';
 import { select } from 'd3-selection';
-import { GraphCanvas } from './GraphCanvas';
+import { GraphCanvas, type GraphCanvasProps } from './GraphCanvas';
 import type { GraphNode, GraphEdge, GraphPosition } from '../hooks/useGraphData';
 import { NEUTRAL_EDGE_COLOR } from '../lib/linkTypeColor';
 
@@ -46,6 +46,19 @@ function tinyGraph() {
 function withView<T extends Event>(ev: T): T {
   Object.defineProperty(ev, 'view', { value: window, writable: false });
   return ev;
+}
+
+/**
+ * Content-Forward Views §4: a node is a <g data-node-id> positioned by a single
+ * `transform: translate(x, y)` (it holds a medallion + a label, so cx/cy no longer
+ * describe where it sits). Throws rather than returning NaN so a missing transform
+ * fails loudly instead of making a `.not.toBe()` assertion vacuously true.
+ */
+function translateOf(el: Element): { x: number; y: number } {
+  const t = el.getAttribute('transform') ?? '';
+  const m = /translate\(\s*([-\d.eE+]+)[ ,]+([-\d.eE+]+)\s*\)/.exec(t);
+  if (!m) throw new Error(`expected a translate() transform, got ${JSON.stringify(t)}`);
+  return { x: Number(m[1]), y: Number(m[2]) };
 }
 
 function dispatchPointerDown(circle: Element, clientX: number, clientY: number) {
@@ -115,7 +128,7 @@ afterEach(() => {
 });
 
 describe('GraphCanvas', () => {
-  it('renders one circle per node and one line per edge', () => {
+  it('renders one node group per node and one line per edge', () => {
     const { nodes, edges, positions } = tinyGraph();
     const { container } = render(
       <GraphCanvas
@@ -130,11 +143,14 @@ describe('GraphCanvas', () => {
         onLinkDragEnd={vi.fn()}
       />,
     );
-    expect(container.querySelectorAll('g.nodes circle')).toHaveLength(3);
+    expect(container.querySelectorAll('g.nodes g[data-node-id]')).toHaveLength(3);
     expect(container.querySelectorAll('g.links line')).toHaveLength(2);
   });
 
-  it('colors each circle by entryType using entryTypeHexColor', () => {
+  // Content-Forward Views §4: the entry-type hue moved from the node circle's FILL to the
+  // medallion disc's ring STROKE — the fill is now that same hue at 18% opacity, because a
+  // cover portrait has to show through the disc it is framed by.
+  it('rings each medallion disc with its entryType color from entryTypeHexColor', () => {
     const { nodes, edges, positions } = tinyGraph();
     const { container } = render(
       <GraphCanvas
@@ -149,11 +165,16 @@ describe('GraphCanvas', () => {
         onLinkDragEnd={vi.fn()}
       />,
     );
-    const circles = Array.from(container.querySelectorAll('g.nodes circle'));
-    const fills = circles.map((c) => c.getAttribute('fill'));
-    expect(fills).toContain('#3b82f6');
-    expect(fills).toContain('#f59e0b');
-    expect(fills).toContain('#a855f7');
+    const discs = Array.from(container.querySelectorAll('g.nodes circle.medallion-disc'));
+    expect(discs).toHaveLength(3);
+    const strokes = discs.map((c) => c.getAttribute('stroke'));
+    expect(strokes).toContain('#3b82f6');
+    expect(strokes).toContain('#f59e0b');
+    expect(strokes).toContain('#a855f7');
+    // The hue still tints the disc itself, just translucently.
+    for (const disc of discs) {
+      expect(disc.getAttribute('fill')).toBe(disc.getAttribute('stroke'));
+    }
   });
 
   it('renders edge labels for edges that have a label', () => {
@@ -244,8 +265,8 @@ describe('GraphCanvas', () => {
         onLinkDragEnd={vi.fn()}
       />,
     );
-    const circle = container.querySelectorAll('g.nodes circle')[0] as SVGCircleElement;
-    circle.dispatchEvent(new MouseEvent('click', { bubbles: true, shiftKey: false }));
+    const node = container.querySelectorAll('g.nodes g[data-node-id]')[0] as SVGGElement;
+    node.dispatchEvent(new MouseEvent('click', { bubbles: true, shiftKey: false }));
     expect(onNodeClick).toHaveBeenCalledTimes(1);
     expect(onPinNode).not.toHaveBeenCalled();
     expect(onNodeClick.mock.calls[0][0]).toMatchObject({ id: 'A' });
@@ -268,8 +289,8 @@ describe('GraphCanvas', () => {
         onLinkDragEnd={vi.fn()}
       />,
     );
-    const circle = container.querySelectorAll('g.nodes circle')[1] as SVGCircleElement;
-    circle.dispatchEvent(new MouseEvent('click', { bubbles: true, shiftKey: true }));
+    const node = container.querySelectorAll('g.nodes g[data-node-id]')[1] as SVGGElement;
+    node.dispatchEvent(new MouseEvent('click', { bubbles: true, shiftKey: true }));
     expect(onPinNode).toHaveBeenCalledTimes(1);
     expect(onNodeClick).not.toHaveBeenCalled();
     expect(onPinNode.mock.calls[0][0]).toMatchObject({ id: 'B' });
@@ -292,11 +313,10 @@ describe('GraphCanvas', () => {
         onLinkDragEnd={vi.fn()}
       />,
     );
-    const circles = Array.from(container.querySelectorAll('g.nodes circle')) as SVGCircleElement[];
-    const a = circles.find((c) => c.getAttribute('data-node-id') === 'A');
+    const a = container.querySelector('g.nodes g[data-node-id="A"]');
     expect(a).toBeTruthy();
-    expect(Number(a!.getAttribute('cx'))).toBeCloseTo(150, 0);
-    expect(Number(a!.getAttribute('cy'))).toBeCloseTo(250, 0);
+    expect(translateOf(a!).x).toBeCloseTo(150, 0);
+    expect(translateOf(a!).y).toBeCloseTo(250, 0);
   });
 
   // ---------- Phase 19 edit-mode tests ----------
@@ -402,11 +422,11 @@ describe('GraphCanvas', () => {
       // Before drag: no preview edge
       expect(container.querySelector('[data-testid="graph-preview-edge"]')).toBeNull();
 
-      const circleA = container.querySelector(
-        'g.nodes circle[data-node-id="A"]',
-      ) as SVGCircleElement;
-      const rect = circleA.getBoundingClientRect();
-      dispatchPointerDown(circleA, rect.left + rect.width / 2, rect.top + rect.height / 2);
+      const nodeA = container.querySelector(
+        'g.nodes g[data-node-id="A"]',
+      ) as SVGGElement;
+      const rect = nodeA.getBoundingClientRect();
+      dispatchPointerDown(nodeA, rect.left + rect.width / 2, rect.top + rect.height / 2);
 
       const preview = container.querySelector('[data-testid="graph-preview-edge"]');
       expect(preview).toBeTruthy();
@@ -431,11 +451,11 @@ describe('GraphCanvas', () => {
           onLinkDragEnd={vi.fn()}
         />,
       );
-      const circleA = container.querySelector(
-        'g.nodes circle[data-node-id="A"]',
-      ) as SVGCircleElement;
-      const aRect = circleA.getBoundingClientRect();
-      dispatchPointerDown(circleA, aRect.left + aRect.width / 2, aRect.top + aRect.height / 2);
+      const nodeA = container.querySelector(
+        'g.nodes g[data-node-id="A"]',
+      ) as SVGGElement;
+      const aRect = nodeA.getBoundingClientRect();
+      dispatchPointerDown(nodeA, aRect.left + aRect.width / 2, aRect.top + aRect.height / 2);
       dispatchPointerMove(aRect.left + 100, aRect.top + 50);
 
       const preview = container.querySelector('[data-testid="graph-preview-edge"]') as SVGLineElement;
@@ -446,8 +466,9 @@ describe('GraphCanvas', () => {
       // sourced from React state).
       expect(preview.getAttribute('x2')).not.toBeNull();
       expect(preview.getAttribute('y2')).not.toBeNull();
-      // x2 should differ from the starting simulation-space coordinate of circleA.
-      const ax = Number(circleA.getAttribute('cx'));
+      // x2 should differ from the starting simulation-space coordinate of nodeA.
+      // (The node is a <g> now: its position lives in the group transform, not cx/cy.)
+      const ax = translateOf(nodeA).x;
       expect(Number(preview.getAttribute('x2'))).not.toBe(ax);
 
       dispatchPointerUp(aRect.left + 100, aRect.top + 50);
@@ -471,20 +492,20 @@ describe('GraphCanvas', () => {
           onLinkDragEnd={onLinkDragEnd}
         />,
       );
-      const circleA = container.querySelector(
-        'g.nodes circle[data-node-id="A"]',
-      ) as SVGCircleElement;
-      const circleB = container.querySelector(
-        'g.nodes circle[data-node-id="B"]',
-      ) as SVGCircleElement;
-      const aRect = circleA.getBoundingClientRect();
-      const bRect = circleB.getBoundingClientRect();
+      const nodeA = container.querySelector(
+        'g.nodes g[data-node-id="A"]',
+      ) as SVGGElement;
+      const nodeB = container.querySelector(
+        'g.nodes g[data-node-id="B"]',
+      ) as SVGGElement;
+      const aRect = nodeA.getBoundingClientRect();
+      const bRect = nodeB.getBoundingClientRect();
 
-      vi.spyOn(document, 'elementFromPoint').mockReturnValue(circleB as Element);
+      vi.spyOn(document, 'elementFromPoint').mockReturnValue(nodeB as Element);
 
       const dropX = bRect.left + bRect.width / 2;
       const dropY = bRect.top + bRect.height / 2;
-      dispatchPointerDown(circleA, aRect.left + aRect.width / 2, aRect.top + aRect.height / 2);
+      dispatchPointerDown(nodeA, aRect.left + aRect.width / 2, aRect.top + aRect.height / 2);
       dispatchPointerMove(dropX, dropY);
       dispatchPointerUp(dropX, dropY);
 
@@ -513,16 +534,16 @@ describe('GraphCanvas', () => {
           onLinkDragEnd={onLinkDragEnd}
         />,
       );
-      const circleA = container.querySelector(
-        'g.nodes circle[data-node-id="A"]',
-      ) as SVGCircleElement;
-      const aRect = circleA.getBoundingClientRect();
+      const nodeA = container.querySelector(
+        'g.nodes g[data-node-id="A"]',
+      ) as SVGGElement;
+      const aRect = nodeA.getBoundingClientRect();
 
-      vi.spyOn(document, 'elementFromPoint').mockReturnValue(circleA as Element);
+      vi.spyOn(document, 'elementFromPoint').mockReturnValue(nodeA as Element);
 
       const dropX = aRect.left + aRect.width / 2 + 6;
       const dropY = aRect.top + aRect.height / 2 + 6;
-      dispatchPointerDown(circleA, aRect.left + aRect.width / 2, aRect.top + aRect.height / 2);
+      dispatchPointerDown(nodeA, aRect.left + aRect.width / 2, aRect.top + aRect.height / 2);
       // No move beyond 5px so it counts as click-ish but pointerup still triggers end
       dispatchPointerMove(dropX, dropY);
       dispatchPointerUp(dropX, dropY);
@@ -551,16 +572,16 @@ describe('GraphCanvas', () => {
           onLinkDragEnd={onLinkDragEnd}
         />,
       );
-      const circleA = container.querySelector(
-        'g.nodes circle[data-node-id="A"]',
-      ) as SVGCircleElement;
-      const aRect = circleA.getBoundingClientRect();
+      const nodeA = container.querySelector(
+        'g.nodes g[data-node-id="A"]',
+      ) as SVGGElement;
+      const aRect = nodeA.getBoundingClientRect();
 
       vi.spyOn(document, 'elementFromPoint').mockReturnValue(null);
 
       const dropX = aRect.left + 200;
       const dropY = aRect.top + 200;
-      dispatchPointerDown(circleA, aRect.left + aRect.width / 2, aRect.top + aRect.height / 2);
+      dispatchPointerDown(nodeA, aRect.left + aRect.width / 2, aRect.top + aRect.height / 2);
       dispatchPointerMove(dropX, dropY);
       dispatchPointerUp(dropX, dropY);
 
@@ -590,17 +611,17 @@ describe('GraphCanvas', () => {
           onLinkDragEnd={onLinkDragEnd}
         />,
       );
-      const circleA = container.querySelector(
-        'g.nodes circle[data-node-id="A"]',
-      ) as SVGCircleElement;
-      const circleB = container.querySelector(
-        'g.nodes circle[data-node-id="B"]',
-      ) as SVGCircleElement;
-      const aRect = circleA.getBoundingClientRect();
-      const bRect = circleB.getBoundingClientRect();
-      vi.spyOn(document, 'elementFromPoint').mockReturnValue(circleB as Element);
+      const nodeA = container.querySelector(
+        'g.nodes g[data-node-id="A"]',
+      ) as SVGGElement;
+      const nodeB = container.querySelector(
+        'g.nodes g[data-node-id="B"]',
+      ) as SVGGElement;
+      const aRect = nodeA.getBoundingClientRect();
+      const bRect = nodeB.getBoundingClientRect();
+      vi.spyOn(document, 'elementFromPoint').mockReturnValue(nodeB as Element);
 
-      dispatchPointerDown(circleA, aRect.left + aRect.width / 2, aRect.top + aRect.height / 2);
+      dispatchPointerDown(nodeA, aRect.left + aRect.width / 2, aRect.top + aRect.height / 2);
       dispatchPointerMove(bRect.left, bRect.top);
       // Preview edge mounted
       expect(container.querySelector('[data-testid="graph-preview-edge"]')).toBeTruthy();
@@ -631,24 +652,22 @@ describe('GraphCanvas', () => {
           onLinkDragEnd={vi.fn()}
         />,
       );
-      const circleA = container.querySelector(
-        'g.nodes circle[data-node-id="A"]',
-      ) as SVGCircleElement;
-      const cxBefore = circleA.getAttribute('cx');
-      const cyBefore = circleA.getAttribute('cy');
+      const nodeA = container.querySelector(
+        'g.nodes g[data-node-id="A"]',
+      ) as SVGGElement;
+      const transformBefore = nodeA.getAttribute('transform');
 
-      const aRect = circleA.getBoundingClientRect();
+      const aRect = nodeA.getBoundingClientRect();
       vi.spyOn(document, 'elementFromPoint').mockReturnValue(null);
-      dispatchPointerDown(circleA, aRect.left, aRect.top);
+      dispatchPointerDown(nodeA, aRect.left, aRect.top);
       dispatchPointerMove(aRect.left + 100, aRect.top + 100);
       dispatchEscape();
 
       // Pin state preserved structurally — edit-mode drag never mutated fx/fy.
-      // Assert via cx/cy still matching the pinned coordinates.
-      expect(circleA.getAttribute('cx')).toBe(cxBefore);
-      expect(circleA.getAttribute('cy')).toBe(cyBefore);
-      expect(Number(circleA.getAttribute('cx'))).toBeCloseTo(150, 0);
-      expect(Number(circleA.getAttribute('cy'))).toBeCloseTo(250, 0);
+      // Assert via the group transform still matching the pinned coordinates.
+      expect(nodeA.getAttribute('transform')).toBe(transformBefore);
+      expect(translateOf(nodeA).x).toBeCloseTo(150, 0);
+      expect(translateOf(nodeA).y).toBeCloseTo(250, 0);
     });
   });
 
@@ -669,10 +688,10 @@ describe('GraphCanvas', () => {
           onLinkDragEnd={vi.fn()}
         />,
       );
-      const circle = container.querySelector(
-        'g.nodes circle[data-node-id="B"]',
-      ) as SVGCircleElement;
-      circle.dispatchEvent(new MouseEvent('click', { bubbles: true, shiftKey: true }));
+      const node = container.querySelector(
+        'g.nodes g[data-node-id="B"]',
+      ) as SVGGElement;
+      node.dispatchEvent(new MouseEvent('click', { bubbles: true, shiftKey: true }));
       expect(onPinNode).toHaveBeenCalledTimes(1);
       expect(onPinNode.mock.calls[0][0]).toMatchObject({ id: 'B' });
     });
@@ -717,17 +736,17 @@ describe('GraphCanvas', () => {
           onDragSourceChange={onDragSourceChange}
         />,
       );
-      const circleA = container.querySelector(
-        'g.nodes circle[data-node-id="A"]',
-      ) as SVGCircleElement;
-      const circleB = container.querySelector(
-        'g.nodes circle[data-node-id="B"]',
-      ) as SVGCircleElement;
-      const aRect = circleA.getBoundingClientRect();
-      const bRect = circleB.getBoundingClientRect();
-      vi.spyOn(document, 'elementFromPoint').mockReturnValue(circleB as Element);
+      const nodeA = container.querySelector(
+        'g.nodes g[data-node-id="A"]',
+      ) as SVGGElement;
+      const nodeB = container.querySelector(
+        'g.nodes g[data-node-id="B"]',
+      ) as SVGGElement;
+      const aRect = nodeA.getBoundingClientRect();
+      const bRect = nodeB.getBoundingClientRect();
+      vi.spyOn(document, 'elementFromPoint').mockReturnValue(nodeB as Element);
 
-      dispatchPointerDown(circleA, aRect.left + aRect.width / 2, aRect.top + aRect.height / 2);
+      dispatchPointerDown(nodeA, aRect.left + aRect.width / 2, aRect.top + aRect.height / 2);
       expect(onDragSourceChange).toHaveBeenCalledTimes(1);
       expect(onDragSourceChange.mock.calls[0][0]).toBe('A');
 
@@ -757,12 +776,12 @@ describe('GraphCanvas', () => {
           onDragSourceChange={onDragSourceChange}
         />,
       );
-      const circleA = container.querySelector(
-        'g.nodes circle[data-node-id="A"]',
-      ) as SVGCircleElement;
-      const aRect = circleA.getBoundingClientRect();
+      const nodeA = container.querySelector(
+        'g.nodes g[data-node-id="A"]',
+      ) as SVGGElement;
+      const aRect = nodeA.getBoundingClientRect();
 
-      dispatchPointerDown(circleA, aRect.left + aRect.width / 2, aRect.top + aRect.height / 2);
+      dispatchPointerDown(nodeA, aRect.left + aRect.width / 2, aRect.top + aRect.height / 2);
       expect(onDragSourceChange).toHaveBeenCalledTimes(1);
       expect(onDragSourceChange.mock.calls[0][0]).toBe('A');
 
@@ -793,11 +812,11 @@ describe('GraphCanvas', () => {
           onDragSourceChange={onDragSourceChange}
         />,
       );
-      const circleA = container.querySelector(
-        'g.nodes circle[data-node-id="A"]',
-      ) as SVGCircleElement;
-      const aRect = circleA.getBoundingClientRect();
-      dispatchPointerDown(circleA, aRect.left, aRect.top);
+      const nodeA = container.querySelector(
+        'g.nodes g[data-node-id="A"]',
+      ) as SVGGElement;
+      const aRect = nodeA.getBoundingClientRect();
+      dispatchPointerDown(nodeA, aRect.left, aRect.top);
       dispatchPointerMove(aRect.left + 20, aRect.top + 20);
       dispatchPointerUp(aRect.left + 20, aRect.top + 20);
       expect(onDragSourceChange).not.toHaveBeenCalled();
@@ -819,17 +838,137 @@ describe('GraphCanvas', () => {
           // onDragSourceChange omitted
         />,
       );
-      const circleA = container.querySelector(
-        'g.nodes circle[data-node-id="A"]',
-      ) as SVGCircleElement;
-      const aRect = circleA.getBoundingClientRect();
+      const nodeA = container.querySelector(
+        'g.nodes g[data-node-id="A"]',
+      ) as SVGGElement;
+      const aRect = nodeA.getBoundingClientRect();
       vi.spyOn(document, 'elementFromPoint').mockReturnValue(null);
       expect(() => {
-        dispatchPointerDown(circleA, aRect.left, aRect.top);
+        dispatchPointerDown(nodeA, aRect.left, aRect.top);
         dispatchPointerMove(aRect.left + 30, aRect.top + 30);
         dispatchEscape();
         dispatchPointerUp(aRect.left + 30, aRect.top + 30);
       }).not.toThrow();
+    });
+  });
+
+  describe('Content-Forward Views §4 — medallion nodes', () => {
+    function renderGraph(extra: Partial<GraphCanvasProps> = {}) {
+      const { nodes, edges, positions } = tinyGraph();
+      return render(
+        <GraphCanvas
+          nodes={nodes}
+          edges={edges}
+          positions={positions}
+          width={800}
+          height={600}
+          onNodeClick={() => {}}
+          onPinNode={() => {}}
+          editMode={false}
+          onLinkDragEnd={() => {}}
+          {...extra}
+        />,
+      );
+    }
+
+    it('renders each node as a <g data-node-id> group containing a medallion disc', () => {
+      const { container } = renderGraph();
+      expect(container.querySelectorAll('g.nodes g[data-node-id]')).toHaveLength(3);
+      expect(container.querySelectorAll('g.nodes circle.medallion-disc')).toHaveLength(3);
+    });
+
+    it('renders a clipped cover image for nodes that have one, and a monogram otherwise', () => {
+      const medallions = new Map([
+        ['A', { title: 'Aldric', entryType: 'entity', icon: '', coverThumbUrl: '/thumb-a.png' }],
+        ['B', { title: 'Bare', entryType: 'location', icon: '', coverThumbUrl: null }],
+      ]);
+      const { container } = renderGraph({ medallions });
+      const a = container.querySelector('g[data-node-id="A"]')!;
+      const b = container.querySelector('g[data-node-id="B"]')!;
+      expect(a.querySelector('image')?.getAttribute('href')).toBe('/thumb-a.png');
+      expect(b.querySelector('image')).toBeNull();
+      expect(b.querySelector('text.medallion-glyph')?.textContent).toBe('B');
+    });
+
+    it('namespaces the clipPath id per surface, so two SVG surfaces cannot collide', () => {
+      // SVG url(#…) resolves to the FIRST matching id in the document. A bare entry id
+      // would collide with the timeline's medallion for the same entry.
+      const medallions = new Map([
+        ['A', { title: 'Aldric', entryType: 'entity', icon: '', coverThumbUrl: '/thumb-a.png' }],
+      ]);
+      const { container } = renderGraph({ medallions });
+      expect(container.querySelector('clipPath#medallion-clip-graph-A')).toBeTruthy();
+    });
+
+    it('renders an always-visible title label beneath every node', () => {
+      const { container } = renderGraph();
+      const labels = Array.from(container.querySelectorAll('text.node-label')).map((t) => t.textContent);
+      expect(labels).toHaveLength(3);
+      expect(labels).toContain('Node A');
+      expect(labels).toContain('Node B');
+    });
+
+    it('keeps the label after a re-render — appendMedallionNode must not purge it', () => {
+      // appendMedallionNode re-runs on the merged enter+update selection on every data
+      // change and purges what IT appended. The label is appended alongside it, so a purge
+      // that reached too far would silently strip every title on the second render.
+      const { nodes, edges, positions } = tinyGraph();
+      const props = {
+        nodes,
+        edges,
+        positions,
+        width: 800,
+        height: 600,
+        onNodeClick: () => {},
+        onPinNode: () => {},
+        editMode: false,
+        onLinkDragEnd: () => {},
+      };
+      const { container, rerender } = render(<GraphCanvas {...props} />);
+      rerender(<GraphCanvas {...props} positions={[{ entryId: 'A', x: 10, y: 20 }]} />);
+      expect(container.querySelectorAll('text.node-label')).toHaveLength(3);
+      // …and exactly one label per node, not a duplicate stacked on each re-render.
+      expect(
+        container.querySelectorAll('g[data-node-id="A"] text.node-label'),
+      ).toHaveLength(1);
+      expect(container.querySelectorAll('g.nodes circle.medallion-disc')).toHaveLength(3);
+    });
+
+    it('scales the node radius with degree — a hub is drawn bigger than a leaf', () => {
+      const { container } = renderGraph();
+      const r = (id: string) =>
+        Number(container.querySelector(`g[data-node-id="${id}"] circle.medallion-disc`)!.getAttribute('r'));
+      expect(r('A')).toBe(16); // degree 1 → clamp(14, 14 + 2*1, 26)
+      expect(r('B')).toBe(18); // degree 2 → clamp(14, 14 + 2*2, 26)
+      expect(r('B')).toBeGreaterThan(r('A'));
+    });
+
+    it('keeps the node clickable — the medallion art must not swallow the click', () => {
+      // The disc/art sit on top of the group. If the art intercepted pointer events, nodes
+      // would become click-dead-zones and NO existing test would catch it.
+      const onNodeClick = vi.fn();
+      const { container } = renderGraph({ onNodeClick });
+      const group = container.querySelector('g[data-node-id="A"]') as SVGGElement;
+      group.dispatchEvent(new MouseEvent('click', { bubbles: true }));
+      expect(onNodeClick).toHaveBeenCalledTimes(1);
+
+      // And a click that lands on the medallion art itself must still reach the node.
+      const disc = container.querySelector('g[data-node-id="B"] circle.medallion-disc') as SVGCircleElement;
+      disc.dispatchEvent(new MouseEvent('click', { bubbles: true }));
+      expect(onNodeClick).toHaveBeenCalledTimes(2);
+    });
+
+    it('marks the cover, the glyph and the label pointer-events:none so the disc stays the hit target', () => {
+      const medallions = new Map([
+        ['A', { title: 'Aldric', entryType: 'entity', icon: '', coverThumbUrl: '/thumb-a.png' }],
+      ]);
+      const { container } = renderGraph({ medallions });
+      const cover = container.querySelector('g[data-node-id="A"] image')!;
+      const glyph = container.querySelector('g[data-node-id="B"] text.medallion-glyph')!;
+      const label = container.querySelector('g[data-node-id="A"] text.node-label')!;
+      expect(cover.getAttribute('pointer-events')).toBe('none');
+      expect(glyph.getAttribute('pointer-events')).toBe('none');
+      expect(label.getAttribute('pointer-events')).toBe('none');
     });
   });
 });

@@ -33,13 +33,28 @@ type CapturedProps = {
     | null;
   onDragSourceChange: ((id: string | null) => void) | null;
   nodes: Array<{ id: string }>;
+  medallions: Map<string, unknown> | null;
 };
 const captured: CapturedProps = {
   editMode: null,
   onLinkDragEnd: null,
   onDragSourceChange: null,
   nodes: [],
+  medallions: null,
 };
+
+// Content-Forward Views §4 — GraphView resolves node cover art from the entries LIST
+// cache via useEntryMedallions. Mocked at the module boundary because this file's `api`
+// mock is path-agnostic (one mockResolvedValue answers every endpoint), so the entries
+// query would otherwise be handed the graph-data object instead of an Entry[]. The hook
+// itself is covered by useEntryMedallions.test.tsx; what GraphView owes is the wiring,
+// asserted below via captured.medallions.
+const medallionsStub = new Map<string, unknown>([
+  ['A', { title: 'A', entryType: 'concept', icon: '', coverThumbUrl: '/thumb-a.png' }],
+]);
+vi.mock('../hooks/useEntryMedallions', () => ({
+  useEntryMedallions: () => medallionsStub,
+}));
 
 vi.mock('../components/GraphCanvas', () => ({
   GraphCanvas: (props: {
@@ -52,6 +67,7 @@ vi.mock('../components/GraphCanvas', () => ({
     ) => void;
     onDragSourceChange?: (sourceId: string | null) => void;
     nodes: Array<{ id: string }>;
+    medallions?: Map<string, unknown>;
   }) => {
     captured.editMode = props.editMode;
     captured.onLinkDragEnd =
@@ -59,6 +75,7 @@ vi.mock('../components/GraphCanvas', () => ({
     captured.onDragSourceChange =
       props.onDragSourceChange ?? null;
     captured.nodes = props.nodes;
+    captured.medallions = props.medallions ?? null;
     return (
       <div
         data-testid="graph-canvas-stub"
@@ -126,6 +143,7 @@ function resetCaptured() {
   captured.onLinkDragEnd = null;
   captured.onDragSourceChange = null;
   captured.nodes = [];
+  captured.medallions = null;
 }
 
 describe('GraphView', () => {
@@ -158,6 +176,23 @@ describe('GraphView', () => {
 
     await screen.findByTestId('graph-canvas-stub');
     expect(captured.nodes).toHaveLength(3);
+  });
+
+  // Content-Forward Views §4 — /graph-data carries no cover field, so the canvas gets its
+  // node art from the entries LIST cache. If this prop stops being threaded through, every
+  // graph node silently falls back to a monogram and no other test notices.
+  it('passes the entry medallions from the entries cache down to GraphCanvas', async () => {
+    const response: GraphDataResponse = {
+      nodes: [makeNode('A'), makeNode('B')],
+      edges: [],
+      positions: [],
+    };
+    vi.mocked(api).mockResolvedValue(response);
+
+    renderGraphView();
+
+    await screen.findByTestId('graph-canvas-stub');
+    expect(captured.medallions).toBe(medallionsStub);
   });
 
   it('renders the subgraph filter banner when the universe has more than 300 nodes', async () => {
