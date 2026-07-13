@@ -345,7 +345,7 @@ export function TimelineCanvas({
     }
 
     // ---------- click dispatch ----------
-    // Pin click-to-open is handled by a React onClick on the <circle> JSX, NOT
+    // Pin click-to-open is handled by a React onClick on the <g> JSX, NOT
     // here. The pins are React-rendered, so this d3 selection carries NO datum
     // (`d` is undefined) — the old `d3 .on('click', (e,d) => onPinClick(d.pin))`
     // threw "Cannot read properties of undefined (reading 'pin')" AND its

@@ -187,6 +187,8 @@ const REACT_ATTR_NAME: Record<string, string> = {
   'pointer-events': 'pointerEvents',
   'font-size': 'fontSize',
   'font-family': 'fontFamily',
+  // Not emitted by describeMedallionSVG today; mapped so that adding a weight to the spec
+  // cannot silently reintroduce an "Invalid DOM property" warning.
   'font-weight': 'fontWeight',
   'clip-path': 'clipPath',
 };
