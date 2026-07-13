@@ -824,6 +824,26 @@ describe('Content-Forward Views §5 — editor hero', () => {
     expect(within(hero).getByRole('button', { name: /remove cover/i })).toBeInTheDocument();
   });
 
+  it('opens the set-cover asset picker from "Change cover" too (same handler, cover-set variant)', async () => {
+    const user = userEvent.setup();
+    renderEditorForExistingEntry({ coverImageId: 'a1' });
+
+    const hero = await screen.findByTestId('editor-hero');
+    await user.click(within(hero).getByRole('button', { name: /change cover/i }));
+
+    expect(await screen.findByRole('dialog')).toBeInTheDocument();
+  });
+
+  it('keeps the cover affordance when the cover image fails to load (signed URLs expire)', async () => {
+    // The button row is IN FLOW precisely so an onError'd image cannot collapse the hero.
+    // Without that, hiding the img would leave a zero-height box and the affordance would
+    // vanish — the bug the detail hero already had to fix.
+    renderEditorForExistingEntry({ coverImageId: 'a1' });
+    const hero = await screen.findByTestId('editor-hero');
+    fireEvent.error(within(hero).getByRole('img', { name: /cover/i }));
+    expect(within(hero).getByRole('button', { name: /change cover/i })).toBeInTheDocument();
+  });
+
   it('clears the cover and falls back to the monogram band when Remove is clicked', async () => {
     const user = userEvent.setup();
     renderEditorForExistingEntry({ coverImageId: 'a1', title: 'Aldric' });

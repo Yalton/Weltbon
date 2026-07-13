@@ -18,6 +18,7 @@ import { WikilinkAutocomplete, isInsideCodeSpan } from '../components/WikilinkAu
 import { ConfirmDialog } from '../components/ConfirmDialog';
 import { metaArrayToRecord } from '../lib/entryTemplates';
 import { resolveMedallion } from '../lib/medallion';
+import { EntryHero } from '../components/EntryHero';
 import type { Entry } from '../hooks/useEntries';
 import type { EntryTemplate } from '../lib/entryTemplates';
 
@@ -585,64 +586,28 @@ export function EntryEditor() {
         </div>
 
         {/* Hero (Content-Forward Views §5, Task 10) — the editor previews exactly what
-            EntryDetail's hero will render: a cover banner, or a type-hued band with a
-            watermark monogram/icon when there is no cover. Mirrors EntryDetail's hero
-            structure and — critically — its HEIGHT MODEL: the visual layer (img / hue
-            band) is `absolute inset-0`, and the button row is IN FLOW, so the CONTENT
-            defines the hero's height. Getting this backwards (fixed-height visual +
-            absolutely-positioned overlay) is the exact bug Task 9 fixed on EntryDetail:
-            an onError'd cover collapses the box to zero height and erases everything
-            inside it. min-h-24 floors the bare band; max-h-[300px] caps a tall cover.
+            EntryDetail's hero will render, so the author sees the result before saving.
+            It renders the SAME EntryHero shell the detail page does, which is what stops
+            the height model (absolute visual layer, in-flow children) from drifting
+            between the two surfaces — a drift whose failure mode is silent and visual.
 
-            The buttons are always visible rather than hover-revealed: this is a form,
-            not a display surface, so the ONLY way to attach/replace/remove a cover
+            The cover buttons are always visible rather than hover-revealed: this is a
+            form, not a display surface, so the ONLY way to attach/replace/remove a cover
             should not depend on a mouse hovering the hero — that would need extra
-            focus-visible plumbing to stay keyboard-reachable for no benefit here. */}
+            focus-visible plumbing to stay keyboard-reachable for no benefit here.
+            They sit in the shell's in-flow slot, so an onError'd cover (signed URLs
+            expire) can never collapse the box and take the affordance with it. */}
         <div>
           <label className="block text-sm mb-1">Cover image</label>
-          <div
-            data-testid="editor-hero"
-            className="relative min-h-24 max-h-[300px] overflow-hidden rounded-xl border border-glass-border"
+          <EntryHero
+            testId="editor-hero"
+            // The editor's draft carries only coverImageId — there is no signed cover URL
+            // on it — so the src is built directly. Authenticated-only surface: no share path.
+            coverSrc={coverImageId ? `/api/universes/${uid}/assets/${coverImageId}/thumb` : null}
+            coverAlt={`Cover image for ${watchedTitle || 'this entry'}`}
+            medallion={heroMedallion}
           >
-            {coverImageId ? (
-              <img
-                src={`/api/universes/${uid}/assets/${coverImageId}/thumb`}
-                alt={`Cover image for ${watchedTitle || 'this entry'}`}
-                className="absolute inset-0 h-full w-full object-cover"
-                onError={(e) => {
-                  (e.target as HTMLImageElement).style.display = 'none';
-                }}
-              />
-            ) : (
-              // No cover: the type-hued band + oversized watermark glyph, same identity
-              // contract (cover → icon → monogram) as every other surface that draws
-              // this entry's identity (lib/medallion).
-              <div
-                className="absolute inset-0"
-                style={{ background: heroMedallion.html.discBackground }}
-              >
-                <span
-                  aria-hidden="true"
-                  data-testid="hero-monogram"
-                  className="pointer-events-none absolute right-4 top-1/2 -translate-y-1/2 select-none font-display text-[5rem] font-semibold leading-none opacity-20"
-                  style={{ color: heroMedallion.hue }}
-                >
-                  {heroMedallion.kind === 'icon' ? heroMedallion.icon : heroMedallion.monogram}
-                </span>
-              </div>
-            )}
-
-            {/* Scrim — only over a cover, so the buttons read against arbitrary pixels
-                the same way the detail page's title does. pointer-events-none so it
-                never intercepts clicks meant for the buttons above it. */}
-            {coverImageId && (
-              <div className="pointer-events-none absolute inset-0 bg-gradient-to-t from-black/70 via-black/20 to-transparent" />
-            )}
-
-            {/* In flow (relative, so it stacks above the absolute visual layer): this
-                is what gives the hero its height, and what keeps the affordance from
-                ever being clipped by a failed image load. */}
-            <div className="relative flex items-center gap-2 p-4">
+            <div className="flex items-center gap-2 p-4">
               {coverImageId ? (
                 <>
                   <button
@@ -676,7 +641,7 @@ export function EntryEditor() {
                 </button>
               )}
             </div>
-          </div>
+          </EntryHero>
         </div>
 
         {/* Tags */}

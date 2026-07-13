@@ -16,6 +16,7 @@ import { TimelinePinSection } from '../components/TimelinePinSection';
 import { UnlinkedMentionsPanel } from '../components/UnlinkedMentionsPanel';
 import { useShareMode, useShareCalendar } from '../contexts/ShareModeContext';
 import { resolveMedallion } from '../lib/medallion';
+import { EntryHero } from '../components/EntryHero';
 import { Panel } from '../components/ui/Panel';
 
 export function EntryDetail() {
@@ -233,60 +234,18 @@ export function EntryDetail() {
             Either way the title sits inside it, so the page opens with an image-scale masthead
             instead of a form header.
 
-            HEIGHT MODEL: the visual layer (cover img / hue band) is ABSOLUTE and the title block
-            is IN FLOW, so the CONTENT defines the hero's height. Inverting that — a fixed-height
-            visual with an absolutely-positioned overlay — breaks in two ways this layout cannot
-            suffer: (a) the title block is taller than a 96px band, so overflow-hidden would shave
-            the ascenders off the serif; (b) a cover whose pre-signed url has expired hits onError,
-            which display:none's the img, collapsing the box and clipping the entry's entire
-            identity — title, type badge, Public chip — out of the page. min-h-24 keeps the bare
-            band from ever going slim; max-h-[300px] caps the banner (it moved here from the img,
-            which is now inset-0). */}
-        <div
-          data-testid="entry-hero"
-          className="relative mt-4 min-h-24 max-h-[300px] overflow-hidden rounded-xl border border-glass-border"
+            The shell (components/EntryHero) owns the height model and the layering, and is shared
+            with EntryEditor so the two can never drift apart: the visual layer is absolute, THESE
+            CHILDREN are in flow, and the content is what defines the hero's height. pt-16 reserves
+            the banner's headroom above the title. */}
+        <EntryHero
+          testId="entry-hero"
+          className="mt-4"
+          coverSrc={coverSrc}
+          coverAlt={`Cover image for ${entry.title}`}
+          medallion={hero}
         >
-          {coverSrc ? (
-            <img
-              src={coverSrc}
-              alt={`Cover image for ${entry.title}`}
-              className="absolute inset-0 h-full w-full object-cover"
-              onError={(e) => {
-                (e.target as HTMLImageElement).style.display = 'none';
-              }}
-            />
-          ) : (
-            // No cover: a band tinted with the entry-type hue, carrying an oversized watermark of
-            // the entry's identity glyph. Deliberately NO dark scrim over this branch — the band
-            // is already a low-alpha gradient on the page surface, and a from-black/70 wash would
-            // both mute the hue and swallow the watermark. The title reads on the band unaided.
-            <div
-              className="absolute inset-0"
-              style={{ background: hero.html.discBackground }}
-            >
-              {/* The identity contract (lib/medallion) resolves cover → icon → monogram, and the
-                  list rows and graph nodes draw the icon tier — so the watermark honours it too:
-                  an entry with an emoji watermarks the emoji, not a letter it never chose. */}
-              <span
-                aria-hidden="true"
-                data-testid="hero-monogram"
-                className="pointer-events-none absolute right-4 top-1/2 -translate-y-1/2 select-none font-display text-[5rem] font-semibold leading-none opacity-20"
-                style={{ color: hero.hue }}
-              >
-                {hero.kind === 'icon' ? hero.icon : hero.monogram}
-              </span>
-            </div>
-          )}
-
-          {/* Scrim — only over a cover, where the title would otherwise sit on arbitrary pixels.
-              pointer-events-none so it can never intercept clicks meant for the title block. */}
-          {coverSrc && (
-            <div className="pointer-events-none absolute inset-0 bg-gradient-to-t from-black/70 via-black/20 to-transparent" />
-          )}
-
-          {/* In flow (relative, so it stacks above the absolute visual layer): this is what gives
-              the hero its height. pt-16 reserves the banner's headroom above the title. */}
-          <div className="relative p-4 pt-16">
+          <div className="p-4 pt-16">
             <h1 className="font-display text-3xl font-semibold tracking-tight text-ink">
               {entry.title}
             </h1>
@@ -322,7 +281,7 @@ export function EntryDetail() {
               )}
             </div>
           </div>
-        </div>
+        </EntryHero>
 
         {/*
           Phase 29 D-18 / UI-SPEC §A Kept-affordances — in share mode the
