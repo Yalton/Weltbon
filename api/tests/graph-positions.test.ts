@@ -31,7 +31,7 @@ describe('graph-positions routes (GRAPH-05)', () => {
   }
 
   async function req(method: string, path: string, opts?: { headers?: Record<string, string>; body?: unknown }) {
-    const url = `http://localhost${path}`;
+    const url = `http://localhost/api${path}`;
     const init: RequestInit = { method, headers: { ...opts?.headers } };
     if (opts?.body !== undefined) {
       (init.headers as Record<string, string>)['Content-Type'] = 'application/json';

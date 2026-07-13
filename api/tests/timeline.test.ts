@@ -40,7 +40,7 @@ describe('Timeline API (TIME-01..04)', () => {
   }
 
   async function req(method: string, path: string, opts?: { headers?: Record<string, string>; body?: unknown }) {
-    const url = `http://localhost${path}`;
+    const url = `http://localhost/api${path}`;
     const init: RequestInit = { method, headers: { ...opts?.headers } };
     if (opts?.body !== undefined) {
       (init.headers as Record<string, string>)['Content-Type'] = 'application/json';
@@ -158,7 +158,7 @@ describe('Timeline API (TIME-01..04)', () => {
     // JSON cannot represent NaN/Infinity directly; send as string and as a JSON `null`
     // to confirm Zod rejects all of them with 400.
     const sendRaw = (body: string) =>
-      app.request(`http://localhost/universes/${universe.id}/entries/${entry.id}/pin`, {
+      app.request(`http://localhost/api/universes/${universe.id}/entries/${entry.id}/pin`, {
         method: 'POST',
         headers: { ...hdrs, 'Content-Type': 'application/json' },
         body,

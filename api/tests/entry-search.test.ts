@@ -36,7 +36,7 @@ describe('entry list filters + search (NAV-01..05)', () => {
   }
 
   async function fetchList(universeId: string, token: string, qs = ''): Promise<Response> {
-    const url = `http://t/universes/${universeId}/entries${qs ? `?${qs}` : ''}`;
+    const url = `http://t/api/universes/${universeId}/entries${qs ? `?${qs}` : ''}`;
     return app.fetch(new Request(url, { headers: authHeader(token) }));
   }
 
