@@ -79,15 +79,28 @@ describe('IssuesView', () => {
 
   it('re-fetches with ?severity=critical when the severity filter changes', async () => {
     const apiFn = vi.mocked(api);
+
+    /**
+     * Match on the parsed query, NOT on exact string equality: the view has
+     * added params over time (Phase 25's `includeDismissed`) and an
+     * exact-match mock silently falls through to `[]` every time that
+     * happens, rendering the empty state and failing for the wrong reason.
+     */
+    const parse = (path?: string) => {
+      const [pathname, qs = ''] = (path ?? '').split('?');
+      return { pathname, params: new URLSearchParams(qs) };
+    };
+
     apiFn.mockImplementation(async (path?: string) => {
-      if (path === '/universes/U1/issues?resolved=false') {
+      const { pathname, params } = parse(path);
+      if (pathname === '/universes/U1/issues') {
+        if (params.get('severity') === 'critical') {
+          return [mkIssue('i1', 'Broken magic', 'critical')];
+        }
         return [
           mkIssue('i1', 'Broken magic', 'critical'),
           mkIssue('i2', 'Typo', 'minor'),
         ];
-      }
-      if (path === '/universes/U1/issues?severity=critical&resolved=false') {
-        return [mkIssue('i1', 'Broken magic', 'critical')];
       }
       return [];
     });
@@ -105,9 +118,17 @@ describe('IssuesView', () => {
     await screen.findByText('Broken magic');
     expect(screen.queryByText('Typo')).toBeNull();
 
-    // The API was called with the critical-filter path
-    const calls = apiFn.mock.calls.map((c) => c[0]);
-    expect(calls.some((c) => c === '/universes/U1/issues?severity=critical&resolved=false')).toBe(true);
+    // The API was called with the critical-filter path (order-insensitive:
+    // assert on the parsed params, not on a brittle exact URL).
+    const calls = apiFn.mock.calls.map((c) => parse(c[0] as string | undefined));
+    expect(
+      calls.some(
+        ({ pathname, params }) =>
+          pathname === '/universes/U1/issues' &&
+          params.get('severity') === 'critical' &&
+          params.get('resolved') === 'false',
+      ),
+    ).toBe(true);
   });
 
   it('opens the IssueEditor dialog when "New issue" is clicked', async () => {
