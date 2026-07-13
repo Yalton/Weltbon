@@ -1261,6 +1261,21 @@ export const MapCanvas = forwardRef<MapCanvasHandle, MapCanvasProps>(function Ma
       ? hoveredTooltip!.summary!.slice(0, 120) + '…'
       : hoveredTooltip?.summary ?? '';
 
+  // Content-Forward Views §6 — the tooltip's identity disc.
+  // A cold entries cache (e.g. deep-link straight to a map — the list has not resolved when the
+  // map first paints) means the medallions map has no entry yet. Synthesize from the tooltip's
+  // own joined fields so the identity still renders as a monogram — matching GraphCanvas and
+  // TimelineCanvas, which both fall back the same way rather than rendering nothing.
+  // A map-only pin or a region has NO entryId at all: those render no medallion, by design.
+  const medallion: MedallionSource | undefined = hoveredTooltip?.entryId
+    ? (medallions?.get(hoveredTooltip.entryId) ?? {
+        title: hoveredTooltip.title,
+        entryType: hoveredTooltip.type ?? 'concept',
+        icon: null,
+        coverThumbUrl: null,
+      })
+    : undefined;
+
   return (
     // Container div: fills parent, provides positioning context for the tooltip overlay.
     // height/width inherit from the SVG's h-full w-full, matching prior layout.
@@ -1588,12 +1603,9 @@ export const MapCanvas = forwardRef<MapCanvasHandle, MapCanvasProps>(function Ma
           style={tooltipStyle}
         >
           {/* Identity row — Content-Forward Views §6. Regions and map-only pins have no
-              entryId, so the medallion renders only for an entry-linked item whose cover/
-              icon/monogram is resolvable from the medallions map. */}
+              entryId, so `medallion` is undefined for them and no disc renders (see above). */}
           <div className="flex items-center gap-2">
-            {hoveredTooltip.entryId && medallions?.get(hoveredTooltip.entryId) && (
-              <Medallion {...medallions.get(hoveredTooltip.entryId)!} size="sm" />
-            )}
+            {medallion && <Medallion {...medallion} size="sm" />}
             <div className="min-w-0">
               {/* Title — always shown (D-07, D-08) */}
               <p className="font-display text-sm font-semibold text-ink truncate">

@@ -750,6 +750,26 @@ describe('Content-Forward Views §6 — tooltip identity', () => {
     expect(tooltip.querySelector('[data-medallion="cover"]')).toBeNull();
   });
 
+  it('still shows a monogram when the entries cache is cold (entryId present, map empty)', async () => {
+    // Deep-linking to a map mounts it before the entries list resolves. The graph
+    // (GraphCanvas) and the timeline (TimelineCanvas) both fall back to a synthesized
+    // source here; the map tooltip must not be the odd one out and render nothing.
+    // The tooltip title for an entry-linked pin is pin.entryTitle ('Aldric').
+    const { container } = renderMapCanvas({
+      pins: [PIN_ENTITY_ALDRIC],
+      medallions: new Map(), // cold
+    });
+
+    const pinGroup = container.querySelector('.pins g[aria-label]');
+    expect(pinGroup).not.toBeNull();
+    fireEvent.pointerEnter(pinGroup!);
+
+    const tooltip = await screen.findByTestId('map-tooltip');
+    expect(tooltip.querySelector('[data-medallion="monogram"]')).not.toBeNull();
+    expect(tooltip.querySelector('[data-medallion="cover"]')).toBeNull();
+    expect(within(tooltip).getByText('Aldric')).toBeInTheDocument();
+  });
+
   it('renders NO medallion for a map-only pin (entryId: null) but still shows its title', async () => {
     // A pin need not link an entry. The tooltip must not break, and must not invent identity.
     const { container } = renderMapCanvas({
