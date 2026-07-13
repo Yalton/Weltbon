@@ -3,6 +3,7 @@ import { useDraggable } from '@dnd-kit/core';
 import { useFilteredEntries } from '../hooks/useFilteredEntries';
 import type { Entry } from '../hooks/useEntries';
 import type { TimelinePin } from '../hooks/useTimelinePins';
+import { Medallion } from './Medallion';
 import { TypeBadge } from './TypeBadge';
 
 /**
@@ -83,12 +84,16 @@ function PinnedEntryCard({ entry }: CardProps) {
       aria-disabled="true"
       className="flex items-center gap-3 px-4 py-3 rounded-md border border-neutral-200 dark:border-neutral-800"
     >
-      <span className="flex h-8 w-8 shrink-0 items-center justify-center text-xl">
-        {entry.icon || (
-          <span className="h-5 w-5 rounded-full bg-neutral-300 dark:bg-neutral-700" />
-        )}
+      <Medallion
+        title={entry.title}
+        entryType={entry.entryType}
+        icon={entry.icon}
+        coverThumbUrl={entry.coverThumbUrl}
+        size="sm"
+      />
+      <span className="font-display font-semibold text-ink text-base leading-[1.5] truncate">
+        {entry.title}
       </span>
-      <span className="text-base leading-[1.5] truncate font-semibold">{entry.title}</span>
       <TypeBadge type={entry.entryType} />
       <span
         aria-label="Already pinned to timeline"
@@ -114,12 +119,16 @@ function DraggableEntryCard({ entry }: CardProps) {
       {...attributes}
       {...listeners}
     >
-      <span className="flex h-8 w-8 shrink-0 items-center justify-center text-xl">
-        {entry.icon || (
-          <span className="h-5 w-5 rounded-full bg-neutral-300 dark:bg-neutral-700" />
-        )}
+      <Medallion
+        title={entry.title}
+        entryType={entry.entryType}
+        icon={entry.icon}
+        coverThumbUrl={entry.coverThumbUrl}
+        size="sm"
+      />
+      <span className="font-display font-semibold text-ink text-base leading-[1.5] truncate">
+        {entry.title}
       </span>
-      <span className="text-base leading-[1.5] truncate font-semibold">{entry.title}</span>
       <TypeBadge type={entry.entryType} />
     </div>
   );

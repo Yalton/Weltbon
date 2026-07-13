@@ -30,7 +30,9 @@ describe('typography contract (POL-04 Task 2)', () => {
   it('EntryCard.tsx uses §2.3 list-row sizing for title and meta', () => {
     const src = read('components/EntryCard.tsx');
     expect(src).toContain('text-base leading-[1.5]');
-    expect(src).toContain('text-sm text-neutral-600 dark:text-neutral-400');
+    // Content-Forward Views: summary color migrated from raw neutral utilities
+    // to the text-ink-secondary token (see Task 7 — border/text tokenization).
+    expect(src).toContain('text-sm text-ink-secondary');
   });
 
   it('MarkdownRenderer.tsx wraps content in the prose typography plugin classes', () => {

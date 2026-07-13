@@ -1,17 +1,22 @@
 import type { Entry } from '../hooks/useEntries';
+import { Medallion } from './Medallion';
 import { TypeBadge } from './TypeBadge';
 import { WipPill } from './WipPill';
 
 export function EntryCard({ entry }: { entry: Entry }) {
   return (
-    <div className="flex items-center gap-3 px-4 py-3 rounded-md border border-neutral-200 dark:border-neutral-800 hover:border-[color:var(--color-accent)] transition-colors">
-      <span className="flex h-8 w-8 shrink-0 items-center justify-center text-xl">
-        {entry.icon || (
-          <span className="h-5 w-5 rounded-full bg-neutral-300 dark:bg-neutral-700" />
-        )}
-      </span>
+    <div className="flex items-center gap-3 px-4 py-3 rounded-md border border-glass-border hover:border-[color:var(--color-accent)] transition-colors">
+      <Medallion
+        title={entry.title}
+        entryType={entry.entryType}
+        icon={entry.icon}
+        coverThumbUrl={entry.coverThumbUrl}
+        size="sm"
+      />
 
-      <span className="text-base leading-[1.5] truncate font-semibold">{entry.title}</span>
+      <span className="font-display font-semibold text-ink text-base leading-[1.5] truncate">
+        {entry.title}
+      </span>
 
       <TypeBadge type={entry.entryType} />
 
@@ -20,7 +25,7 @@ export function EntryCard({ entry }: { entry: Entry }) {
       {entry.wip === true && <WipPill wip />}
 
       {entry.summary && (
-        <span className="text-sm text-neutral-600 dark:text-neutral-400 truncate flex-1 min-w-0">
+        <span className="text-sm text-ink-secondary truncate flex-1 min-w-0">
           {entry.summary}
         </span>
       )}
