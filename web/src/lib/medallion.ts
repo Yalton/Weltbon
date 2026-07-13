@@ -20,6 +20,14 @@ export const MEDALLION_SIZES: Record<MedallionSize, number> = {
   lg: 52,
 };
 
+/**
+ * Glyph-to-disc size ratios. Shared so the HTML and SVG renderers cannot pick different
+ * proportions — an emoji and a monogram must sit the same way on the disc on every surface.
+ * The monogram is smaller than the emoji because a serif capital reads heavier at the same px.
+ */
+export const MEDALLION_ICON_RATIO = 0.5;
+export const MEDALLION_MONOGRAM_RATIO = 0.45;
+
 /** The minimum an entry must expose to be drawn as a medallion. */
 export interface MedallionSource {
   title: string;
@@ -30,10 +38,8 @@ export interface MedallionSource {
   coverThumbUrl?: string | null;
 }
 
-export interface ResolvedMedallion {
-  kind: MedallionKind;
-  coverUrl: string | null;
-  icon: string | null;
+/** The parts every medallion carries, whatever its kind. */
+interface MedallionPresentation {
   /** First grapheme of the title, uppercased. '?' when the title is empty. */
   monogram: string;
   /** Entry-type hex, e.g. '#f59e0b'. Shared: HTML tints with it, SVG strokes with it. */
@@ -53,6 +59,19 @@ export interface ResolvedMedallion {
     discFillOpacity: number;
   };
 }
+
+/**
+ * Discriminated on `kind`, so `kind === 'cover'` narrows `coverUrl` to a string with no
+ * non-null assertion at the call site — both renderers get that for free. A cover keeps
+ * its `icon` (the entry may have both; the cover simply wins), but an icon or monogram
+ * medallion provably has no cover, and a monogram provably has no icon.
+ */
+export type ResolvedMedallion = MedallionPresentation &
+  (
+    | { kind: 'cover'; coverUrl: string; icon: string | null }
+    | { kind: 'icon'; coverUrl: null; icon: string }
+    | { kind: 'monogram'; coverUrl: null; icon: null }
+  );
 
 /**
  * First *grapheme* — not first code unit. `'🜂Ash'[0]` is a lone surrogate half, which
@@ -85,12 +104,7 @@ export function resolveMedallion(src: MedallionSource): ResolvedMedallion {
   const coverUrl = src.coverThumbUrl ? src.coverThumbUrl : null;
   const icon = src.icon ? src.icon : null;
 
-  const kind: MedallionKind = coverUrl ? 'cover' : icon ? 'icon' : 'monogram';
-
-  return {
-    kind,
-    coverUrl,
-    icon,
+  const presentation: MedallionPresentation = {
     monogram: firstGrapheme(src.title),
     hue,
     html: {
@@ -104,4 +118,10 @@ export function resolveMedallion(src: MedallionSource): ResolvedMedallion {
       discFillOpacity: 0.18,
     },
   };
+
+  // Resolution order: cover > icon > monogram. Returning the matching union variant
+  // (rather than one wide object) is what lets callers narrow on `kind` alone.
+  if (coverUrl) return { ...presentation, kind: 'cover', coverUrl, icon };
+  if (icon) return { ...presentation, kind: 'icon', coverUrl: null, icon };
+  return { ...presentation, kind: 'monogram', coverUrl: null, icon: null };
 }

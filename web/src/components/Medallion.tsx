@@ -1,5 +1,7 @@
 import { useState } from 'react';
 import {
+  MEDALLION_ICON_RATIO,
+  MEDALLION_MONOGRAM_RATIO,
   MEDALLION_SIZES,
   resolveMedallion,
   type MedallionSize,
@@ -58,13 +60,21 @@ export function Medallion({
   const dims = { width: `${px}px`, height: `${px}px` };
 
   if (m.kind === 'cover') {
+    // `kind === 'cover'` narrows m.coverUrl to string via the discriminated union —
+    // no non-null assertion needed, and it is the only value that could have produced
+    // this branch, so it is also what we remember on failure.
+    const url = m.coverUrl;
     return (
       <img
         data-medallion="cover"
-        src={m.coverUrl!}
+        src={url}
         alt=""
         style={dims}
-        onError={() => setFailedUrl(coverThumbUrl ?? null)}
+        onError={() => setFailedUrl(url)}
+        // A load that succeeds proves the URL is good, so any remembered failure for it
+        // is stale. Without this, a URL that failed once stays suppressed forever if the
+        // exact same string ever comes back around.
+        onLoad={() => setFailedUrl(null)}
         className={cx(base, 'object-cover')}
       />
     );
@@ -82,11 +92,13 @@ export function Medallion({
       className={cx(base, 'inline-flex items-center justify-center select-none')}
     >
       {m.kind === 'icon' ? (
-        <span style={{ fontSize: `${Math.round(px * 0.5)}px`, lineHeight: 1 }}>{m.icon}</span>
+        <span style={{ fontSize: `${Math.round(px * MEDALLION_ICON_RATIO)}px`, lineHeight: 1 }}>
+          {m.icon}
+        </span>
       ) : (
         <span
           className="font-display font-semibold text-ink"
-          style={{ fontSize: `${Math.round(px * 0.45)}px`, lineHeight: 1 }}
+          style={{ fontSize: `${Math.round(px * MEDALLION_MONOGRAM_RATIO)}px`, lineHeight: 1 }}
         >
           {m.monogram}
         </span>

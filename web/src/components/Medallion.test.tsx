@@ -59,4 +59,21 @@ describe('Medallion (HTML)', () => {
     fireEvent.error(img);
     expect(container.querySelector('[data-medallion="monogram"]')).toBeInTheDocument();
   });
+
+  it('retries the cover when a NEW url arrives after a failure (e.g. the user uploads a new cover)', () => {
+    // This is why the failed URL is stored rather than a boolean: a plain `coverFailed`
+    // flag would suppress the cover forever on a row that stays mounted, so a freshly
+    // uploaded cover would never appear until a remount.
+    const { container, rerender } = render(
+      <Medallion title="Ghost" entryType="entity" coverThumbUrl="/old.png" size="sm" />,
+    );
+    fireEvent.error(container.querySelector('[data-medallion="cover"]')!);
+    expect(container.querySelector('[data-medallion="monogram"]')).toBeInTheDocument();
+
+    rerender(<Medallion title="Ghost" entryType="entity" coverThumbUrl="/new.png" size="sm" />);
+
+    const img = container.querySelector('[data-medallion="cover"]');
+    expect(img).toBeInTheDocument();
+    expect(img).toHaveAttribute('src', '/new.png');
+  });
 });
