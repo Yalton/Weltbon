@@ -1,5 +1,5 @@
 import { describe, it, expect, beforeEach, vi } from 'vitest';
-import { render, screen, within } from '@testing-library/react';
+import { render, screen, within, fireEvent } from '@testing-library/react';
 import userEvent from '@testing-library/user-event';
 import { MemoryRouter, Routes, Route } from 'react-router-dom';
 import { QueryClient, QueryClientProvider } from '@tanstack/react-query';
@@ -177,6 +177,28 @@ describe('Content-Forward Views §5 — hero + infobox', () => {
     renderDetail({ coverImageUrl: '/api/universes/u1/assets/a1/raw?e=1&s=ff' });
     await screen.findByTestId('entry-hero');
     expect(screen.getAllByRole('img', { name: /cover/i })).toHaveLength(1);
+  });
+
+  it('keeps the title and badges when the cover image fails to load (signed URLs expire)', async () => {
+    // Cover urls are pre-signed with a 24h TTL, so an expired/broken cover is a normal state,
+    // not an edge case. onError hides the <img>; because the img is the hero's only visual
+    // layer, the hero's height must come from its CONTENT — otherwise hiding the image
+    // collapses the box and overflow-hidden clips the entry's whole identity away.
+    renderDetail({ coverImageUrl: '/expired.png' });
+    const hero = await screen.findByTestId('entry-hero');
+    fireEvent.error(within(hero).getByRole('img', { name: /cover/i }));
+    // The hero must not collapse — the overlay is what carries the entry's identity.
+    expect(within(hero).getByRole('heading', { name: 'Aldric' })).toBeInTheDocument();
+    expect(within(hero).getByText('character')).toBeInTheDocument();
+  });
+
+  it('watermarks the entry emoji, not a letter, when the entry has an icon', async () => {
+    // The identity contract (lib/medallion) resolves cover → icon → monogram, and the list rows
+    // and graph nodes honour the icon tier. The hero's watermark slot honours it too.
+    renderDetail({ coverImageUrl: null, coverImageId: null, icon: '🜂' });
+    const mark = await screen.findByTestId('hero-monogram');
+    expect(mark).toHaveTextContent('🜂');
+    expect(mark).not.toHaveTextContent('A');
   });
 
   it('presents meta fields in a glass infobox', async () => {

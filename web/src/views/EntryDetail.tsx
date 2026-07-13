@@ -230,51 +230,66 @@ export function EntryDetail() {
         </Link>
 
         {/* Hero (§5) — a cover banner, or a type-hued watermark band when there is no cover.
-            Either way the title is overlaid inside it, so the page opens with an image-scale
-            masthead instead of a form header. */}
+            Either way the title sits inside it, so the page opens with an image-scale masthead
+            instead of a form header.
+
+            HEIGHT MODEL: the visual layer (cover img / hue band) is ABSOLUTE and the title block
+            is IN FLOW, so the CONTENT defines the hero's height. Inverting that — a fixed-height
+            visual with an absolutely-positioned overlay — breaks in two ways this layout cannot
+            suffer: (a) the title block is taller than a 96px band, so overflow-hidden would shave
+            the ascenders off the serif; (b) a cover whose pre-signed url has expired hits onError,
+            which display:none's the img, collapsing the box and clipping the entry's entire
+            identity — title, type badge, Public chip — out of the page. min-h-24 keeps the bare
+            band from ever going slim; max-h-[300px] caps the banner (it moved here from the img,
+            which is now inset-0). */}
         <div
           data-testid="entry-hero"
-          className="relative mt-4 overflow-hidden rounded-xl border border-glass-border"
+          className="relative mt-4 min-h-24 max-h-[300px] overflow-hidden rounded-xl border border-glass-border"
         >
           {coverSrc ? (
             <img
               src={coverSrc}
               alt={`Cover image for ${entry.title}`}
-              className="max-h-[300px] w-full object-cover"
+              className="absolute inset-0 h-full w-full object-cover"
               onError={(e) => {
                 (e.target as HTMLImageElement).style.display = 'none';
               }}
             />
           ) : (
-            // No cover: a slim band tinted with the entry-type hue, carrying an oversized monogram
-            // as a watermark. Deliberately NO dark scrim over this branch — the band is already a
-            // low-alpha gradient on the page surface, and a from-black/70 wash would both mute the
-            // hue and swallow the watermark. The title reads on the band unaided.
+            // No cover: a band tinted with the entry-type hue, carrying an oversized watermark of
+            // the entry's identity glyph. Deliberately NO dark scrim over this branch — the band
+            // is already a low-alpha gradient on the page surface, and a from-black/70 wash would
+            // both mute the hue and swallow the watermark. The title reads on the band unaided.
             <div
-              className="relative h-24 w-full"
+              className="absolute inset-0"
               style={{ background: hero.html.discBackground }}
             >
+              {/* The identity contract (lib/medallion) resolves cover → icon → monogram, and the
+                  list rows and graph nodes draw the icon tier — so the watermark honours it too:
+                  an entry with an emoji watermarks the emoji, not a letter it never chose. */}
               <span
                 aria-hidden="true"
                 data-testid="hero-monogram"
                 className="pointer-events-none absolute right-4 top-1/2 -translate-y-1/2 select-none font-display text-[5rem] font-semibold leading-none opacity-20"
                 style={{ color: hero.hue }}
               >
-                {hero.monogram}
+                {hero.kind === 'icon' ? hero.icon : hero.monogram}
               </span>
             </div>
           )}
 
           {/* Scrim — only over a cover, where the title would otherwise sit on arbitrary pixels.
-              pointer-events-none so it can never intercept clicks meant for the overlay. */}
+              pointer-events-none so it can never intercept clicks meant for the title block. */}
           {coverSrc && (
             <div className="pointer-events-none absolute inset-0 bg-gradient-to-t from-black/70 via-black/20 to-transparent" />
           )}
 
-          {/* Overlay: the page's real <h1> plus the badge row, bottom-left, identical with or
-              without a cover. */}
-          <div className="absolute inset-x-0 bottom-0 p-4">
-            <h1 className="font-display text-3xl font-semibold text-ink">{entry.title}</h1>
+          {/* In flow (relative, so it stacks above the absolute visual layer): this is what gives
+              the hero its height. pt-16 reserves the banner's headroom above the title. */}
+          <div className="relative p-4 pt-16">
+            <h1 className="font-display text-3xl font-semibold tracking-tight text-ink">
+              {entry.title}
+            </h1>
             <div className="mt-2 flex items-center gap-2">
               <TypeBadge type={entry.entryType} />
               {/* Phase 36 DATA-03 — non-interactive WIP badge next to the
@@ -457,7 +472,6 @@ export function EntryDetail() {
             />
           </>
         )}
-
       </div>
 
       {/* Infobox (§5) — meta/custom fields as a glass column beside the content on lg+,
