@@ -61,6 +61,33 @@ function translateOf(el: Element): { x: number; y: number } {
   return { x: Number(m[1]), y: Number(m[2]) };
 }
 
+/**
+ * Drive the component's OWN zoom behavior with a real wheel gesture — the only way to
+ * exercise its 'zoom' listener (a `zoom().transform` call on a fresh behavior would stamp
+ * the element's __zoom but never fire the component's handler, so the label fade would be
+ * "tested" by a test that a no-op implementation also passes).
+ *
+ * d3-zoom's default extent reads `svg.width.baseVal.value`; jsdom leaves SVGAnimatedLength
+ * unimplemented, so the gesture throws unless we stub the two lengths first.
+ *
+ * k' = k · 2^(-deltaY/500), so deltaY=1000 → k=0.25 (faded), deltaY=-1000 → back to k=1.
+ */
+function wheel(svg: SVGSVGElement, deltaY: number) {
+  for (const dim of ['width', 'height'] as const) {
+    if (!(svg[dim] as unknown as { baseVal?: unknown })?.baseVal) {
+      Object.defineProperty(svg, dim, {
+        value: { baseVal: { value: dim === 'width' ? 800 : 600 } },
+        configurable: true,
+      });
+    }
+  }
+  act(() => {
+    svg.dispatchEvent(
+      withView(new WheelEvent('wheel', { deltaY, bubbles: true, cancelable: true })),
+    );
+  });
+}
+
 function dispatchPointerDown(circle: Element, clientX: number, clientY: number) {
   act(() => {
     circle.dispatchEvent(
@@ -501,7 +528,11 @@ describe('GraphCanvas', () => {
       const aRect = nodeA.getBoundingClientRect();
       const bRect = nodeB.getBoundingClientRect();
 
-      vi.spyOn(document, 'elementFromPoint').mockReturnValue(nodeB as Element);
+      vi.spyOn(document, 'elementFromPoint').mockReturnValue(
+        // A real browser returns the TOPMOST element under the pointer — the medallion disc,
+        // never the <g> that carries data-node-id. hitTestNodeAt must walk up to it.
+        nodeB.querySelector('circle.medallion-disc')!,
+      );
 
       const dropX = bRect.left + bRect.width / 2;
       const dropY = bRect.top + bRect.height / 2;
@@ -539,7 +570,11 @@ describe('GraphCanvas', () => {
       ) as SVGGElement;
       const aRect = nodeA.getBoundingClientRect();
 
-      vi.spyOn(document, 'elementFromPoint').mockReturnValue(nodeA as Element);
+      vi.spyOn(document, 'elementFromPoint').mockReturnValue(
+        // A real browser returns the TOPMOST element under the pointer — the medallion disc,
+        // never the <g> that carries data-node-id. hitTestNodeAt must walk up to it.
+        nodeA.querySelector('circle.medallion-disc')!,
+      );
 
       const dropX = aRect.left + aRect.width / 2 + 6;
       const dropY = aRect.top + aRect.height / 2 + 6;
@@ -619,7 +654,11 @@ describe('GraphCanvas', () => {
       ) as SVGGElement;
       const aRect = nodeA.getBoundingClientRect();
       const bRect = nodeB.getBoundingClientRect();
-      vi.spyOn(document, 'elementFromPoint').mockReturnValue(nodeB as Element);
+      vi.spyOn(document, 'elementFromPoint').mockReturnValue(
+        // A real browser returns the TOPMOST element under the pointer — the medallion disc,
+        // never the <g> that carries data-node-id. hitTestNodeAt must walk up to it.
+        nodeB.querySelector('circle.medallion-disc')!,
+      );
 
       dispatchPointerDown(nodeA, aRect.left + aRect.width / 2, aRect.top + aRect.height / 2);
       dispatchPointerMove(bRect.left, bRect.top);
@@ -744,7 +783,11 @@ describe('GraphCanvas', () => {
       ) as SVGGElement;
       const aRect = nodeA.getBoundingClientRect();
       const bRect = nodeB.getBoundingClientRect();
-      vi.spyOn(document, 'elementFromPoint').mockReturnValue(nodeB as Element);
+      vi.spyOn(document, 'elementFromPoint').mockReturnValue(
+        // A real browser returns the TOPMOST element under the pointer — the medallion disc,
+        // never the <g> that carries data-node-id. hitTestNodeAt must walk up to it.
+        nodeB.querySelector('circle.medallion-disc')!,
+      );
 
       dispatchPointerDown(nodeA, aRect.left + aRect.width / 2, aRect.top + aRect.height / 2);
       expect(onDragSourceChange).toHaveBeenCalledTimes(1);
@@ -932,6 +975,56 @@ describe('GraphCanvas', () => {
         container.querySelectorAll('g[data-node-id="A"] text.node-label'),
       ).toHaveLength(1);
       expect(container.querySelectorAll('g.nodes circle.medallion-disc')).toHaveLength(3);
+    });
+
+    it('scales the edit-mode halo with the node, so a hub is still ringed', () => {
+      // Discs range 14–26 but the halo used to be a fixed 18 — on a hub the halo was buried
+      // inside the medallion and edit mode lost its affordance on the most-linked nodes.
+      const { container } = renderGraph({ editMode: true });
+      const haloR = Number(container.querySelector('g.halos circle[data-halo-id="B"]')!.getAttribute('r'));
+      const discR = Number(container.querySelector('g[data-node-id="B"] circle.medallion-disc')!.getAttribute('r'));
+      expect(haloR).toBeGreaterThan(discR);
+    });
+
+    it('fades labels below zoom 0.5 and restores them above it', () => {
+      // Driven through a REAL wheel gesture on the component's own zoom behavior. Calling
+      // `zoom().transform` from a fresh behavior would stamp __zoom but never invoke the
+      // component's 'zoom' listener — the fade would be untested and the test would pass on
+      // a no-op implementation.
+      const { container } = renderGraph();
+      const svg = container.querySelector('svg') as SVGSVGElement;
+      const labelOpacity = () =>
+        container.querySelector('text.node-label')!.getAttribute('opacity');
+
+      expect(labelOpacity()).toBe('1');
+      wheel(svg, 1000); // k = 2^(-1000/500) = 0.25 → below LABEL_FADE_ZOOM
+      expect(labelOpacity()).toBe('0');
+      wheel(svg, -1000); // back to k = 1
+      expect(labelOpacity()).toBe('1');
+    });
+
+    it('enters new labels already faded when the canvas is zoomed out', () => {
+      // Labels are otherwise only ever repainted by the zoom handler, so a node arriving
+      // while zoomed out would paint at full opacity beside its faded neighbours.
+      const { nodes, edges, positions } = tinyGraph();
+      const props = {
+        nodes,
+        edges,
+        positions,
+        width: 800,
+        height: 600,
+        onNodeClick: () => {},
+        onPinNode: () => {},
+        editMode: false,
+        onLinkDragEnd: () => {},
+      };
+      const { container, rerender } = render(<GraphCanvas {...props} />);
+      wheel(container.querySelector('svg') as SVGSVGElement, 1000);
+      // A re-run of the effect (here: a pin) rebuilds the joins while still zoomed out.
+      rerender(<GraphCanvas {...props} positions={[{ entryId: 'A', x: 10, y: 20 }]} />);
+      for (const label of Array.from(container.querySelectorAll('text.node-label'))) {
+        expect(label.getAttribute('opacity')).toBe('0');
+      }
     });
 
     it('scales the node radius with degree — a hub is drawn bigger than a leaf', () => {
