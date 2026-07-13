@@ -20,6 +20,7 @@ import {
   type TimelinePin,
 } from '../hooks/useTimelinePins';
 import { useCalendar } from '../hooks/useCalendar';
+import { useEntryMedallions } from '../hooks/useEntryMedallions';
 import { xToPos } from '../lib/timelineMath';
 import {
   useShareMode,
@@ -103,6 +104,10 @@ export function TimelineView() {
   const { calendar: authCalendar } = useCalendar(universeId);
   const shareCalendar = useShareCalendar();
   const calendar = isShareMode ? shareCalendar : authCalendar;
+  // Content-Forward Views §6 — pin medallions. The /timeline/pins projection carries no
+  // cover, so the canvas resolves identity art from the entries LIST cache (share mode
+  // included: the api-client seam rewrites the path).
+  const medallions = useEntryMedallions(universeId);
 
   const [toast, setToast] = useState<ToastState>(null);
   const [popoverState, setPopoverState] = useState<PopoverState>(null);
@@ -327,6 +332,7 @@ export function TimelineView() {
               width={size.width}
               height={size.height}
               calendar={calendar}
+              medallions={medallions}
               // Phase 33 — in share mode pins are read-only and must NOT be
               // draggable: attaching d3-drag suppresses the trailing click and
               // breaks the visitor's "CLICK TO OPEN" → entry navigation.

@@ -1,12 +1,19 @@
-import { useEffect, useRef, useState, type PointerEvent as ReactPointerEvent } from 'react';
+import {
+  useEffect,
+  useMemo,
+  useRef,
+  useState,
+  type PointerEvent as ReactPointerEvent,
+} from 'react';
 import { drag } from 'd3-drag';
 import { select } from 'd3-selection';
 import { zoom, zoomIdentity, type ZoomBehavior } from 'd3-zoom';
 import { posToX, xToPos, clampedPosToX } from '../lib/timelineMath';
 import { inferEraSpans, type EraSpan } from '../lib/groupByEra';
-import { entryTypeHexColor } from '../lib/entryTypeColor';
 import type { TimelinePin } from '../hooks/useTimelinePins';
 import { formatCalendar, type Calendar } from '../lib/calendarFormat';
+import { MedallionSVGNode } from './MedallionSVG';
+import type { MedallionSource } from '../lib/medallion';
 
 /**
  * Fixed parallax scroll-rate ratio between the era-layer and the pin-layer
@@ -15,8 +22,14 @@ import { formatCalendar, type Calendar } from '../lib/calendarFormat';
  */
 const PARALLAX_RATIO = 0.5;
 
-/** Pin circle radius in SVG units at k=1 (12px diameter per UI-SPEC §Spacing). */
-const PIN_RADIUS = 6;
+/**
+ * Pin medallion radius in SVG units at k=1 — an 18px disc (Content-Forward Views §6).
+ * Raised from 6 (the bare-dot era's 12px) now that the pin carries a cover, an emoji or a
+ * monogram and has to be legible. Everything downstream reads this constant: the stacked-pin
+ * vertical offset (STACK_OFFSET, 40 — still >2x the diameter, so stacked medallions clear
+ * each other), the proximity-label and hover-popover anchors, and the adjacent-label offset.
+ */
+const PIN_RADIUS = 9;
 
 /** Vertical offset between stacked pins at the same numeric position. */
 const STACK_OFFSET = 40;
@@ -40,6 +53,12 @@ export interface TimelineCanvasProps {
    * of the raw numeric value. When null, falls back to raw numeric (CALENDAR-03).
    */
   calendar: Calendar | null;
+  /**
+   * Content-Forward Views §6 — entryId → cover/icon/monogram, from useEntryMedallions
+   * (the entries LIST cache; the timeline-pins payload carries no cover). Falls back to the
+   * pin's own joined entryTitle/entryType/entryIcon when an id is absent.
+   */
+  medallions?: Map<string, MedallionSource>;
   /** Click handler — fires on pin click without modifier keys. */
   onPinClick?: (pin: TimelinePin) => void;
   /**
@@ -109,6 +128,7 @@ export function TimelineCanvas({
   width,
   height,
   calendar,
+  medallions,
   onPinClick,
   pinsDraggable = true,
   onPinDragEnd,
@@ -204,6 +224,23 @@ export function TimelineCanvas({
     return { span: s, x: xStart, width: Math.max(0, xEnd - xStart) };
   });
 
+  // Spec §6 — a label per pin only when there's room. A rough per-character width estimate is
+  // enough: being wrong costs a slightly-clipped label, not a broken axis. Crowded pins keep
+  // the existing hover tooltip as their only label.
+  const labelVisibleFor = useMemo(() => {
+    const visible = new Set<string>();
+    const sorted = [...renderedPins].sort((a, b) => a.x - b.x);
+    for (let i = 0; i < sorted.length; i++) {
+      const cur = sorted[i]!;
+      const next = sorted[i + 1];
+      const name = cur.pin.entryTitle || cur.pin.label || 'Pin';
+      const needed = PIN_RADIUS + 5 + name.length * 6;
+      if (!next || next.x - cur.x > needed) visible.add(cur.pin.id);
+    }
+    return visible;
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [renderedPins]);
+
   // d3-zoom + d3-drag wiring. Runs once per [pins, window, width, height]
   // change and tears down listeners on cleanup.
   useEffect(() => {
@@ -211,9 +248,12 @@ export function TimelineCanvas({
     const svg = select(svgRef.current);
     const eraLayer = svg.select<SVGGElement>('g.era-layer');
     const pinLayer = svg.select<SVGGElement>('g.pin-layer');
+    // Content-Forward Views §6: the pins are medallion <g> groups now, not bare <circle>s.
+    // This selection feeds the d3-DRAG behavior only — the click-to-open path stays React
+    // (see the "click dispatch" note below; a d3 handler here would carry no datum).
     const pinSel = pinLayer
       .select<SVGGElement>('g.pins')
-      .selectAll<SVGCircleElement, RenderedPin>('circle[data-pin-id]');
+      .selectAll<SVGGElement, RenderedPin>('g[data-pin-id]');
 
     const prefersReducedMotion =
       typeof globalThis.matchMedia === 'function' &&
@@ -264,7 +304,7 @@ export function TimelineCanvas({
       }
     };
 
-    const dragBehavior = drag<SVGCircleElement, RenderedPin>()
+    const dragBehavior = drag<SVGGElement, RenderedPin>()
       .on('start', (_evt, d) => {
         cancelledRef.current = false;
         onDragSourceChangeRef.current?.(d.pin.id);
@@ -276,8 +316,12 @@ export function TimelineCanvas({
         });
       })
       .on('drag', function (evt) {
-        // Imperative preview — write to the element's cx without React state.
-        select(this).attr('cx', evt.x);
+        // Imperative preview — rewrite the medallion group's translate-x without React
+        // state. The y is the stacked-baseline offset React already wrote into the
+        // transform; re-read it rather than re-deriving it here.
+        const el = select(this);
+        const cy = /translate\(\s*[-\d.]+\s*,\s*([-\d.]+)/.exec(el.attr('transform') ?? '')?.[1];
+        el.attr('transform', `translate(${evt.x}, ${cy ?? 0})`);
       })
       .on('end', (evt, d) => {
         if (cancelledRef.current) {
@@ -418,14 +462,18 @@ export function TimelineCanvas({
         <g className="pins">
           {renderedPins.map(({ pin, x, cy, clamped, clampSide }) => {
             const displayName = pin.entryTitle || pin.label || 'Pin';
-            const fillColor =
-              pin.precision === 'era'
-                ? 'var(--color-accent)'
-                : pin.entryType
-                  ? entryTypeHexColor(pin.entryType)
-                  : 'currentColor';
+            // The pins payload carries no cover, so the entries LIST cache supplies it.
+            // When the entry isn't in that map (still loading, or filtered out), fall back
+            // to the pin's own joined fields — the medallion degrades to emoji/monogram.
+            const source: MedallionSource =
+              medallions?.get(pin.entryId) ?? {
+                title: displayName,
+                entryType: pin.entryType ?? 'concept',
+                icon: pin.entryIcon ?? null,
+                coverThumbUrl: null,
+              };
             return (
-              <circle
+              <g
                 key={pin.id}
                 data-pin-id={pin.id}
                 data-position={String(pin.position)}
@@ -438,10 +486,7 @@ export function TimelineCanvas({
                       : `${displayName} is after the visible range`
                     : `${displayName} at position ${pin.position}`
                 }
-                cx={x}
-                cy={cy}
-                r={PIN_RADIUS}
-                fill={fillColor}
+                transform={`translate(${x}, ${cy})`}
                 // Phase 33: React onClick directly on the pin is the open path.
                 // The pins are React-rendered, so the imperative d3 selection
                 // carried no datum and its `.on('click')` threw on `d.pin`
@@ -457,7 +502,29 @@ export function TimelineCanvas({
                 <title>
                   {pin.label ? `${displayName} — ${pin.label}` : displayName}
                 </title>
-              </circle>
+                {/* The clipPath id is surface-prefixed: SVG url(#…) resolves to the FIRST
+                    match in the document, so an unprefixed `${pin.id}` could clip against
+                    the graph's circle of the same name (wrong radius, silently). */}
+                <MedallionSVGNode
+                  id={`timeline-${pin.id}`}
+                  radius={PIN_RADIUS}
+                  {...source}
+                />
+                {!clamped && labelVisibleFor.has(pin.id) && (
+                  <text
+                    className="timeline-pin-label"
+                    x={PIN_RADIUS + 5}
+                    y={0}
+                    dominantBaseline="central"
+                    fontSize={10}
+                    fontFamily="var(--font-sans)"
+                    fill="var(--color-ink-secondary)"
+                    pointerEvents="none"
+                  >
+                    {displayName}
+                  </text>
+                )}
+              </g>
             );
           })}
         </g>

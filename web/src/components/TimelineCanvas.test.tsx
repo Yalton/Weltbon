@@ -1,7 +1,7 @@
 import { afterEach, describe, it, expect, vi } from 'vitest';
 import { render } from '@testing-library/react';
 import { select } from 'd3-selection';
-import { TimelineCanvas } from './TimelineCanvas';
+import { TimelineCanvas, type TimelineCanvasProps } from './TimelineCanvas';
 import type { TimelinePin } from '../hooks/useTimelinePins';
 
 // d3-zoom/d3-drag install global listeners on `window` that can leak across
@@ -30,6 +30,17 @@ function pin(overrides: Partial<TimelinePin> & { id: string; position: number })
   };
 }
 
+/**
+ * Content-Forward Views §6: a pin is a medallion <g> translated into place, not a <circle>
+ * with cx/cy. Read its centre back out of the transform so the position assertions below keep
+ * asserting exactly what they always did.
+ */
+function pinCentre(el: Element): { x: number; y: number } {
+  const m = /translate\(\s*([-\d.]+)\s*,\s*([-\d.]+)\s*\)/.exec(el.getAttribute('transform') ?? '');
+  if (!m) throw new Error(`pin has no translate transform: ${el.getAttribute('transform')}`);
+  return { x: Number(m[1]), y: Number(m[2]) };
+}
+
 const DEFAULT_PROPS = {
   universeId: 'U1',
   width: 800,
@@ -37,6 +48,24 @@ const DEFAULT_PROPS = {
   window: { start: 0, end: 1000 },
   calendar: null,
 } as const;
+
+/**
+ * A pin whose id is `${entryId}-pin` and whose joined entry title is 'Aldric' — so the
+ * medallion tests can assert a monogram ('A') without restating the fixture each time.
+ */
+function pinFor(entryId: string, position: number): TimelinePin {
+  return pin({
+    id: `${entryId}-pin`,
+    entryId,
+    position,
+    entryTitle: 'Aldric',
+    entryType: 'entity',
+  });
+}
+
+function renderCanvas(props: Partial<TimelineCanvasProps> & { pins: TimelinePin[] }) {
+  return render(<TimelineCanvas {...DEFAULT_PROPS} {...props} />);
+}
 
 describe('TimelineCanvas', () => {
   it('renders an SVG with data-testid="timeline-canvas" and ARIA role/label', () => {
@@ -106,7 +135,7 @@ describe('TimelineCanvas', () => {
     expect(pinEls).toHaveLength(2);
     const positions = pinEls.map((el) => el.getAttribute('data-position'));
     expect(positions).toEqual(['400', '400']);
-    const cys = pinEls.map((el) => el.getAttribute('cy'));
+    const cys = pinEls.map((el) => pinCentre(el).y);
     // Both should be set, and they must differ (one at baseline, one stacked above).
     expect(cys[0]).not.toBeNull();
     expect(cys[1]).not.toBeNull();
@@ -148,7 +177,7 @@ describe('TimelineCanvas', () => {
     expect(el.getAttribute('aria-label')).toBe('Aelara is born at position 250');
   });
 
-  it('positions in-range pin cx via posToX (start at x=0, end at x=width)', () => {
+  it('positions in-range pins via posToX (start at x=0, end at x=width)', () => {
     const pins: TimelinePin[] = [
       pin({ id: 'start', position: 0 }), // x should be 0
       pin({ id: 'mid', position: 500 }), // x should be 400 (half of width 800)
@@ -160,9 +189,9 @@ describe('TimelineCanvas', () => {
     const start = container.querySelector('[data-pin-id="start"]') as SVGElement;
     const mid = container.querySelector('[data-pin-id="mid"]') as SVGElement;
     const end = container.querySelector('[data-pin-id="end"]') as SVGElement;
-    expect(Number(start.getAttribute('cx'))).toBeCloseTo(0, 5);
-    expect(Number(mid.getAttribute('cx'))).toBeCloseTo(400, 5);
-    expect(Number(end.getAttribute('cx'))).toBeCloseTo(800, 5);
+    expect(pinCentre(start).x).toBeCloseTo(0, 5);
+    expect(pinCentre(mid).x).toBeCloseTo(400, 5);
+    expect(pinCentre(end).x).toBeCloseTo(800, 5);
   });
 
   it('renders a baseline element inside the pin-layer', () => {
@@ -171,5 +200,63 @@ describe('TimelineCanvas', () => {
     );
     const baseline = container.querySelector('[data-testid="pin-layer"] [data-testid="baseline"]');
     expect(baseline).toBeTruthy();
+  });
+
+  describe('Content-Forward Views §6 — pin medallions', () => {
+    it('renders each pin as a medallion group, not a bare dot', () => {
+      const { container } = renderCanvas({ pins: [pinFor('e1', 100)] });
+      const pinEl = container.querySelector('g[data-pin-id="e1-pin"]')!;
+      expect(pinEl).toBeTruthy();
+      expect(pinEl.querySelector('circle.medallion-disc')).toBeTruthy();
+    });
+
+    it("clips the pinned entry's cover into the pin when it has one", () => {
+      const medallions = new Map([
+        ['e1', { title: 'Aldric', entryType: 'entity', icon: '', coverThumbUrl: '/thumb-1.png' }],
+      ]);
+      const { container } = renderCanvas({ pins: [pinFor('e1', 100)], medallions });
+      expect(container.querySelector('g[data-pin-id="e1-pin"] image')?.getAttribute('href'))
+        .toBe('/thumb-1.png');
+    });
+
+    it('falls back to the monogram when the pinned entry has no cover', () => {
+      const medallions = new Map([
+        ['e1', { title: 'Aldric', entryType: 'entity', icon: '', coverThumbUrl: null }],
+      ]);
+      const { container } = renderCanvas({ pins: [pinFor('e1', 100)], medallions });
+      const pinEl = container.querySelector('g[data-pin-id="e1-pin"]')!;
+      expect(pinEl.querySelector('text.medallion-glyph')?.textContent).toBe('A');
+      expect(pinEl.querySelector('image')).toBeNull();
+    });
+
+    it('namespaces the clipPath per surface so it cannot collide with the graph', () => {
+      // SVG url(#…) resolves to the FIRST matching id in the document.
+      const medallions = new Map([
+        ['e1', { title: 'Aldric', entryType: 'entity', icon: '', coverThumbUrl: '/thumb-1.png' }],
+      ]);
+      const { container } = renderCanvas({ pins: [pinFor('e1', 100)], medallions });
+      expect(container.querySelector('clipPath#medallion-clip-timeline-e1-pin')).toBeTruthy();
+    });
+
+    it('STILL opens the entry on a React click — the d3-datum pitfall must not return', () => {
+      // Recorded bug: a d3 .on('click') handler on these React-rendered pins receives
+      // d === undefined, throws, and its stopPropagation swallows the real click. The React
+      // onClick is the ONLY open path. If this test fails, that bug is back.
+      const onPinClick = vi.fn();
+      const { container } = renderCanvas({ pins: [pinFor('e1', 100)], onPinClick });
+      const pinEl = container.querySelector('g[data-pin-id="e1-pin"]') as SVGGElement;
+      pinEl.dispatchEvent(new MouseEvent('click', { bubbles: true }));
+      expect(onPinClick).toHaveBeenCalledTimes(1);
+    });
+
+    it('shows a label beside an isolated pin, and hides it when pins crowd together', () => {
+      const spaced = renderCanvas({ pins: [pinFor('e1', 100)] });
+      expect(spaced.container.querySelector('text.timeline-pin-label')).toBeTruthy();
+
+      // Two pins at nearly the same position have no room for both labels.
+      const crowded = renderCanvas({ pins: [pinFor('e1', 100), pinFor('e2', 101)] });
+      const labels = crowded.container.querySelectorAll('text.timeline-pin-label');
+      expect(labels.length).toBeLessThan(2);
+    });
   });
 });
