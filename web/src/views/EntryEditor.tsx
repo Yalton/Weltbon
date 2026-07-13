@@ -17,6 +17,7 @@ import { AssetPickerModal } from '../components/AssetPickerModal';
 import { WikilinkAutocomplete, isInsideCodeSpan } from '../components/WikilinkAutocomplete';
 import { ConfirmDialog } from '../components/ConfirmDialog';
 import { metaArrayToRecord } from '../lib/entryTemplates';
+import { resolveMedallion } from '../lib/medallion';
 import type { Entry } from '../hooks/useEntries';
 import type { EntryTemplate } from '../lib/entryTemplates';
 
@@ -101,6 +102,7 @@ export function EntryEditor() {
     handleSubmit,
     reset,
     getValues,
+    watch,
     formState: { errors },
   } = useForm<EntryFormValues>({
     resolver: zodResolver(entryFormSchema),
@@ -111,6 +113,19 @@ export function EntryEditor() {
       body: '',
       icon: '',
     },
+  });
+
+  // Content-Forward Views §5 (Task 10) — the editor hero previews exactly what the
+  // detail page will render, so the author sees the result before saving. Derived
+  // from watch() (not getValues()) so the medallion re-resolves on every keystroke —
+  // the DRAFT, not the last-saved entry, drives the preview.
+  const watchedTitle = watch('title');
+  const watchedEntryType = watch('entryType');
+  const watchedIcon = watch('icon');
+  const heroMedallion = resolveMedallion({
+    title: watchedTitle,
+    entryType: watchedEntryType,
+    icon: watchedIcon,
   });
 
   // Pre-fill in edit mode, or from template state in create mode.
@@ -569,51 +584,99 @@ export function EntryEditor() {
           </div>
         </div>
 
-        {/* Cover image (D-04/D-05) */}
+        {/* Hero (Content-Forward Views §5, Task 10) — the editor previews exactly what
+            EntryDetail's hero will render: a cover banner, or a type-hued band with a
+            watermark monogram/icon when there is no cover. Mirrors EntryDetail's hero
+            structure and — critically — its HEIGHT MODEL: the visual layer (img / hue
+            band) is `absolute inset-0`, and the button row is IN FLOW, so the CONTENT
+            defines the hero's height. Getting this backwards (fixed-height visual +
+            absolutely-positioned overlay) is the exact bug Task 9 fixed on EntryDetail:
+            an onError'd cover collapses the box to zero height and erases everything
+            inside it. min-h-24 floors the bare band; max-h-[300px] caps a tall cover.
+
+            The buttons are always visible rather than hover-revealed: this is a form,
+            not a display surface, so the ONLY way to attach/replace/remove a cover
+            should not depend on a mouse hovering the hero — that would need extra
+            focus-visible plumbing to stay keyboard-reachable for no benefit here. */}
         <div>
           <label className="block text-sm mb-1">Cover image</label>
-          {coverImageId ? (
-            <div className="flex items-start gap-3">
+          <div
+            data-testid="editor-hero"
+            className="relative min-h-24 max-h-[300px] overflow-hidden rounded-xl border border-glass-border"
+          >
+            {coverImageId ? (
               <img
                 src={`/api/universes/${uid}/assets/${coverImageId}/thumb`}
-                alt="Cover image preview"
-                className="w-24 h-24 object-contain rounded border border-neutral-200 dark:border-neutral-700 bg-neutral-100 dark:bg-neutral-800"
+                alt={`Cover image for ${watchedTitle || 'this entry'}`}
+                className="absolute inset-0 h-full w-full object-cover"
                 onError={(e) => {
                   (e.target as HTMLImageElement).style.display = 'none';
                 }}
               />
-              <div className="flex flex-col gap-2">
+            ) : (
+              // No cover: the type-hued band + oversized watermark glyph, same identity
+              // contract (cover → icon → monogram) as every other surface that draws
+              // this entry's identity (lib/medallion).
+              <div
+                className="absolute inset-0"
+                style={{ background: heroMedallion.html.discBackground }}
+              >
+                <span
+                  aria-hidden="true"
+                  data-testid="hero-monogram"
+                  className="pointer-events-none absolute right-4 top-1/2 -translate-y-1/2 select-none font-display text-[5rem] font-semibold leading-none opacity-20"
+                  style={{ color: heroMedallion.hue }}
+                >
+                  {heroMedallion.kind === 'icon' ? heroMedallion.icon : heroMedallion.monogram}
+                </span>
+              </div>
+            )}
+
+            {/* Scrim — only over a cover, so the buttons read against arbitrary pixels
+                the same way the detail page's title does. pointer-events-none so it
+                never intercepts clicks meant for the buttons above it. */}
+            {coverImageId && (
+              <div className="pointer-events-none absolute inset-0 bg-gradient-to-t from-black/70 via-black/20 to-transparent" />
+            )}
+
+            {/* In flow (relative, so it stacks above the absolute visual layer): this
+                is what gives the hero its height, and what keeps the affordance from
+                ever being clipped by a failed image load. */}
+            <div className="relative flex items-center gap-2 p-4">
+              {coverImageId ? (
+                <>
+                  <button
+                    type="button"
+                    onClick={() => {
+                      setPickerMode('set-cover');
+                      setPickerOpen(true);
+                    }}
+                    className="text-xs rounded-md border border-white/40 bg-black/40 text-white px-3 py-1.5 backdrop-blur hover:bg-black/60"
+                  >
+                    Change cover
+                  </button>
+                  <button
+                    type="button"
+                    onClick={() => setCoverImageId(null)}
+                    className="text-xs rounded-md border border-white/40 bg-black/40 text-red-300 px-3 py-1.5 backdrop-blur hover:bg-black/60"
+                  >
+                    Remove cover
+                  </button>
+                </>
+              ) : (
                 <button
                   type="button"
                   onClick={() => {
                     setPickerMode('set-cover');
                     setPickerOpen(true);
                   }}
-                  className="text-xs rounded-md border border-neutral-300 dark:border-neutral-700 px-3 py-1.5 hover:bg-neutral-50 dark:hover:bg-neutral-800"
+                  className="text-sm rounded-md border border-neutral-300 dark:border-neutral-700 px-3 py-1.5 hover:bg-neutral-50 dark:hover:bg-neutral-800"
                 >
-                  Change cover
+                  Set cover image
                 </button>
-                <button
-                  type="button"
-                  onClick={() => setCoverImageId(null)}
-                  className="text-xs text-red-500 hover:text-red-700"
-                >
-                  Remove cover
-                </button>
-              </div>
+              )}
             </div>
-          ) : (
-            <button
-              type="button"
-              onClick={() => {
-                setPickerMode('set-cover');
-                setPickerOpen(true);
-              }}
-              className="text-sm rounded-md border border-neutral-300 dark:border-neutral-700 px-3 py-1.5 hover:bg-neutral-50 dark:hover:bg-neutral-800"
-            >
-              Set cover image
-            </button>
-          )}
+          </div>
         </div>
 
         {/* Tags */}
