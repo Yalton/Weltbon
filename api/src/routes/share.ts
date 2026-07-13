@@ -86,12 +86,23 @@ export const shareThemeSchema = z.object({
 
 /**
  * T-29-21b minimal-disclosure binding: the universe banner schema declares
- * ONLY `name`, `ownerDisplayName`, and `calendar`. Any extra field flowing
- * from the service layer would fail zod validation at response serialisation
- * time. This is the second line of defense behind getPublicUniverseMeta's
- * explicit-projection query: even if a future refactor accidentally widened
- * the projection, the response would still be rejected before the visitor
- * saw it.
+ * ONLY `name`, `ownerDisplayName`, and `calendar`.
+ *
+ * WARNING — this schema is NOT a runtime privacy backstop. An earlier version of
+ * this comment claimed an extra field flowing from the service layer "would fail
+ * zod validation at response serialisation time" and "would still be rejected
+ * before the visitor saw it". That is FALSE. @hono/zod-openapi response schemas
+ * are OpenAPI documentation + compile-time typing only: they do not validate and
+ * do not strip response bodies. Whatever a handler passes to c.json() ships.
+ *
+ * The bare-.select()-and-spread in getPublicEntryById shipped the raw
+ * `search_vector` column to anonymous visitors for exactly this reason — the
+ * schema did not declare it, and the schema did not stop it.
+ *
+ * The explicit SELECT projection in each services/share-views.ts function is the
+ * ONLY real gate. Widening a projection widens the wire response, schema or no
+ * schema. Enforcement lives in tests (the key-set tripwires in
+ * tests/share-views.test.ts), never in this file.
  *
  * Phase 30 CALENDAR-02 / D-13 / SHARE-02: `calendar` is cosmetic display
  * data (no PII); intentional disclosure per the threat register (T-30-09 /
@@ -158,6 +169,14 @@ const publicEntriesResponseSchema = z.array(publicEntryListItemSchema);
  * contain entries whose source/target is public AND in the same universe
  * (silent drop per D-12 / T-29-18) — no placeholder rows, no count of dropped
  * links.
+ *
+ * THIS SCHEMA IS NOT A RUNTIME PRIVACY GATE. It is OpenAPI documentation plus
+ * compile-time typing; @hono/zod-openapi does NOT validate or strip response
+ * bodies, so any field the handler passes to c.json() ships regardless of what
+ * is declared here. The explicit SELECT projection in getPublicEntryById
+ * (services/share-views.ts) is the ONLY enforcement. Keep the two in sync, and
+ * keep the "leaks no undeclared columns" tripwire in tests/share-views.test.ts
+ * green — that test, not this schema, is what catches a widened projection.
  */
 const publicEntryDetailResponseSchema = z.object({
   id: z.string(),
@@ -167,10 +186,15 @@ const publicEntryDetailResponseSchema = z.object({
   summary: z.string(),
   body: z.string(),
   tags: z.array(z.string()),
+  // Declared to match the projection: the share detail genuinely returns these, and the
+  // web EntryDetail consumes `wip` (WIP pill) and `coverImageId` (cover-URL fallback).
+  aliases: z.array(z.string()),
   meta: z.record(z.string(), z.unknown()),
   icon: z.string(),
   categoryId: z.string().nullable(),
   isPublic: z.boolean(),
+  wip: z.boolean(),
+  coverImageId: z.string().nullable(),
   createdAt: z.string(),
   updatedAt: z.string(),
   outboundLinks: z.array(

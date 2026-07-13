@@ -188,6 +188,52 @@ describe('Phase 29 share-view privacy invariants', () => {
   });
 
   // ────────────────────────────────────────────────────────────────────
+  // Wire-shape tripwire — the runtime check the framework does NOT give us.
+  // ────────────────────────────────────────────────────────────────────
+  it('share entry detail leaks no undeclared columns (zod does NOT strip at runtime)', async () => {
+    // @hono/zod-openapi response schemas are typing + docs ONLY — they do not validate or
+    // strip response bodies. A bare .select() spread would ship raw DB columns (this test
+    // was added because it shipped `searchVector` to anonymous visitors). The projection is
+    // the only real gate, so pin the wire shape here.
+    const pub = await seedEntry({ isPublic: true, title: 'Shape Check' });
+    const { status, body } = await appRequest('GET', `/api/share/entries/${pub.id}`, {
+      headers: { 'share-token': activeTokenPlaintext },
+    });
+    expect(status).toBe(200);
+
+    const ALLOWED = new Set([
+      // Columns projected by getPublicEntryById (must mirror publicEntryDetailResponseSchema).
+      'id',
+      'universeId',
+      'title',
+      'entryType',
+      'summary',
+      'body',
+      'tags',
+      'aliases',
+      'meta',
+      'icon',
+      'categoryId',
+      'isPublic',
+      'wip',
+      'coverImageId',
+      'createdAt',
+      'updatedAt',
+      // Computed fields assembled by the service (not DB columns).
+      'outboundLinks',
+      'backlinks',
+      'coverImageUrl',
+      'assetUrls',
+    ]);
+    const unexpected = Object.keys(body).filter((k) => !ALLOWED.has(k));
+    expect(
+      unexpected,
+      `Share entry-detail is shipping undeclared fields: ${unexpected.join(', ')}. ` +
+        `zod does NOT strip them — fix the projection in getPublicEntryById.`,
+    ).toEqual([]);
+  });
+
+  // ────────────────────────────────────────────────────────────────────
   // Test C — T-29-24 + D-12: backlinks silent-drop on private source
   // ────────────────────────────────────────────────────────────────────
   it('GET /api/share/entries/{id} backlinks omit private-source backlinks (D-12, T-29-24)', async () => {
