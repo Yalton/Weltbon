@@ -56,6 +56,41 @@ describe('MedallionSVGNode (React)', () => {
     expect(disc.getAttribute('stroke')).toBe('#f59e0b');
     expect(disc.getAttribute('r')).toBe('9');
   });
+
+  it('lets pointer events fall through the glyph and the cover to the disc beneath', () => {
+    // The graph binds click/drag/hover to the node CIRCLE, not to a wrapping <g>. An overlay
+    // that accepts pointer events would silently swallow clicks aimed at the node — clicking
+    // an entry's portrait or its monogram letter would do nothing.
+    const cover = renderNode({
+      id: 'p1',
+      title: 'Aldric',
+      entryType: 'entity',
+      coverThumbUrl: '/thumb.png',
+      radius: 9,
+    });
+    expect(cover.querySelector('image')?.getAttribute('pointer-events')).toBe('none');
+
+    const mono = renderNode({ id: 'p2', title: 'Aldric', entryType: 'entity', radius: 9 });
+    expect(mono.querySelector('text')?.getAttribute('pointer-events')).toBe('none');
+    // The disc is the hit target — it must NOT opt out.
+    expect(mono.querySelector('circle.medallion-disc')?.getAttribute('pointer-events')).toBeNull();
+  });
+
+  it('marks the glyph and the cover decorative, like the HTML renderer', () => {
+    // SVG <text> is exposed to the a11y tree by default, unlike an HTML <img alt="">. The
+    // medallion always sits beside the already-announced title, so announcing it is noise.
+    const cover = renderNode({
+      id: 'a1',
+      title: 'Aldric',
+      entryType: 'entity',
+      coverThumbUrl: '/thumb.png',
+      radius: 9,
+    });
+    expect(cover.querySelector('image')?.getAttribute('aria-hidden')).toBe('true');
+
+    const mono = renderNode({ id: 'a2', title: 'Aldric', entryType: 'entity', radius: 9 });
+    expect(mono.querySelector('text')?.getAttribute('aria-hidden')).toBe('true');
+  });
 });
 
 describe('appendMedallionNode (imperative twin for the d3 join)', () => {
@@ -105,21 +140,46 @@ describe('appendMedallionNode (imperative twin for the d3 join)', () => {
   });
 });
 
+/**
+ * The whole reason MedallionSVG exists as one module is that its two shells cannot drift.
+ * Comparing a couple of hand-picked attributes did NOT enforce that — a `stroke-width` or
+ * `preserveAspectRatio` set in one shell and forgotten in the other would sail through.
+ * Comparing the full attribute tree does: ANY attribute either shell adds unilaterally fails
+ * this automatically. (Mutation-checked: setting RING_STROKE_WIDTH in only one shell turns
+ * all three cases red.)
+ */
+function serialize(el: Element): unknown {
+  return {
+    tag: el.tagName.toLowerCase(),
+    attrs: Object.fromEntries(
+      Array.from(el.attributes)
+        .map((a) => [a.name, a.value] as const)
+        .sort(([a], [b]) => a.localeCompare(b)),
+    ),
+    text: el.children.length === 0 ? el.textContent : undefined,
+    children: Array.from(el.children).map(serialize),
+  };
+}
+
+const AGREEMENT_CASES = {
+  cover: { title: 'Aldric', entryType: 'entity', coverThumbUrl: '/thumb.png' },
+  icon: { title: 'Aldric', entryType: 'entity', icon: '👑' },
+  monogram: { title: 'Vale', entryType: 'location' },
+} as const;
+
 describe('the two renderers agree', () => {
-  it('produce the same kind of glyph for the same input', () => {
-    // The contract exists so HTML/SVG cannot drift. These two paths are the SVG half of
-    // that promise: React and imperative must resolve identically.
-    const props = { id: 'same', title: 'Vale', entryType: 'location', radius: 12 } as const;
+  it.each(Object.keys(AGREEMENT_CASES) as (keyof typeof AGREEMENT_CASES)[])(
+    'React and imperative renderers produce an identical attribute tree (%s)',
+    (kind) => {
+      // Both shells get the SAME id, so the clipPath id and the clip-path url() reference
+      // are directly comparable too — nothing has to be filtered out of the comparison.
+      const props = { id: 'same', radius: 12, ...AGREEMENT_CASES[kind] };
 
-    const reactC = renderNode({ ...props });
-    const g = emptyGroup();
-    appendMedallionNode(g, { ...props });
+      const reactRoot = renderNode(props).querySelector('g.medallion-node')!;
+      const g = emptyGroup();
+      appendMedallionNode(g, props);
 
-    expect(g.querySelector('text.medallion-glyph')?.textContent).toBe(
-      reactC.querySelector('text')?.textContent,
-    );
-    expect(g.querySelector('circle.medallion-disc')?.getAttribute('stroke')).toBe(
-      reactC.querySelector('circle.medallion-disc')?.getAttribute('stroke'),
-    );
-  });
+      expect(serialize(g.firstElementChild!)).toEqual(serialize(reactRoot));
+    },
+  );
 });

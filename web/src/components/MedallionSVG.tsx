@@ -1,3 +1,4 @@
+import { createElement, type CSSProperties, type ReactElement } from 'react';
 import {
   MEDALLION_ICON_RATIO,
   MEDALLION_MONOGRAM_RATIO,
@@ -7,208 +8,216 @@ import {
 
 const SVG_NS = 'http://www.w3.org/2000/svg';
 
+/** Class names, hoisted so the two shells and their callers cannot spell them differently. */
+const CLASS_ROOT = 'medallion-node';
+const CLASS_DISC = 'medallion-disc';
+const CLASS_GLYPH = 'medallion-glyph';
+
+/** Ring weight. One literal, read by the disc spec only. */
+const RING_STROKE_WIDTH = 2;
+
+/**
+ * The glyph and the cover sit ON TOP of the disc. In the graph, the node's click / drag /
+ * hover handlers are bound to the node circle itself (GraphCanvas binds them to the circle,
+ * not to a wrapping <g>), so any overlay that accepts pointer events would silently eat
+ * clicks aimed at the node — you would click an entry's portrait or its monogram letter and
+ * nothing would happen. Every overlay in GraphCanvas already sets pointer-events="none" for
+ * exactly this reason; the medallion follows the convention. The disc keeps default pointer
+ * events: it may itself be the hit target.
+ *
+ * aria-hidden for the same reason the HTML renderer uses alt="" / aria-hidden: the medallion
+ * always sits beside the entry's already-announced title, so its cover, emoji, and monogram
+ * are decorative and redundant. Unlike an HTML <img>, SVG <text> IS exposed to the a11y tree
+ * by default, so this has to be explicit or the glyph gets announced.
+ */
+const DECORATIVE_OVERLAY = {
+  'pointer-events': 'none',
+  'aria-hidden': 'true',
+} as const;
+
+/** Text-centring on (0,0), shared by the emoji and the monogram. */
+const GLYPH_ANCHORING = {
+  'text-anchor': 'middle',
+  'dominant-baseline': 'central',
+} as const;
+
+/** Dragging a graph node must not start a text selection on its letter. */
+const GLYPH_STYLE: CSSProperties = { userSelect: 'none' };
+
+const COVER_FIT = 'xMidYMid slice';
+
 export interface MedallionSVGProps extends MedallionSource {
-  /** Stable identity for this node — becomes the clipPath id (`medallion-clip-${id}`). */
+  /**
+   * Stable id, unique across every medallion MOUNTED AT ONCE — it namespaces the <clipPath>.
+   * SVG url(#…) resolves to the first matching id in the document, so a duplicate would
+   * silently clip against the wrong circle (wrong radius, no error). Callers on distinct
+   * surfaces must prefix: `graph-${entry.id}`, `timeline-${pin.id}`. Safe today only because
+   * the graph and timeline live on mutually-exclusive routes (App.tsx) — do not rely on that
+   * if you ever co-mount them.
+   */
   id: string;
-  /** Disc radius in px. The medallion is drawn centred on (0,0); the caller positions it
-   * with a `transform` on the parent element. */
+  /**
+   * Disc radius in px. The medallion is drawn centred on (0,0); the caller positions it with
+   * a `transform` on the parent element.
+   */
   radius: number;
 }
 
 /**
- * The plain attribute values BOTH svg renderers need, derived once from resolveMedallion().
- * Neither MedallionSVGNode (JSX) nor appendMedallionNode (imperative DOM) computes fill,
- * opacity, or font-size itself — both read them from here, so the two cannot pick
- * different numbers for the same input. This is the "one helper, two shells" split: the
- * decisions live here, the DOM-construction style (JSX vs. createElementNS) is the only
- * thing that differs between the two renderers.
+ * A renderer-agnostic description of one SVG element. Attribute names are the real SVG ones
+ * (hyphenated); React passes those through verbatim on DOM elements, and the imperative
+ * builder setAttribute()s them, so ONE spec produces identical DOM through both shells.
  */
-interface MedallionSVGDescriptor {
-  clipId: string;
-  radius: number;
-  hue: string;
-  discFill: string;
-  discFillOpacity: number;
-  coverUrl: string | null;
-  glyph: string | null;
-  glyphFontSize: number;
-  glyphFontFamily: string | null;
+interface ElementSpec {
+  tag: string;
+  className?: string;
+  attrs?: Record<string, string | number>;
+  style?: CSSProperties;
+  text?: string;
+  children?: ElementSpec[];
 }
 
-function describeMedallionSVG(props: MedallionSVGProps): MedallionSVGDescriptor {
+/**
+ * The single source of truth for what an SVG medallion IS. Neither shell decides anything —
+ * they only walk this tree. That is what makes the anti-drift promise structural rather than
+ * aspirational: there is no attribute one shell could set and the other forget, because
+ * neither shell names an attribute at all.
+ */
+function describeMedallionSVG(props: MedallionSVGProps): ElementSpec {
   const m = resolveMedallion(props);
-  const diameter = props.radius * 2;
+  const { radius } = props;
+  const diameter = radius * 2;
   const clipId = `medallion-clip-${props.id}`;
+
+  // Fill must be transparent behind a cover — otherwise the tinted disc paints over the
+  // portrait it is meant to be framing. The ring still strokes on top.
+  const disc = (fillOpacity: number): ElementSpec => ({
+    tag: 'circle',
+    className: CLASS_DISC,
+    attrs: {
+      r: radius,
+      fill: m.svg.discFill,
+      'fill-opacity': fillOpacity,
+      stroke: m.hue,
+      'stroke-width': RING_STROKE_WIDTH,
+    },
+  });
 
   if (m.kind === 'cover') {
     return {
-      clipId,
-      radius: props.radius,
-      hue: m.hue,
-      discFill: m.svg.discFill,
-      // Transparent fill: the disc's ring still strokes over the image, but its fill
-      // must not paint over the cover it's clipping.
-      discFillOpacity: 0,
-      coverUrl: m.coverUrl,
-      glyph: null,
-      glyphFontSize: 0,
-      glyphFontFamily: null,
+      tag: 'g',
+      className: CLASS_ROOT,
+      children: [
+        {
+          tag: 'defs',
+          children: [
+            {
+              tag: 'clipPath',
+              attrs: { id: clipId },
+              children: [{ tag: 'circle', attrs: { r: radius } }],
+            },
+          ],
+        },
+        {
+          tag: 'image',
+          attrs: {
+            href: m.coverUrl,
+            x: -radius,
+            y: -radius,
+            width: diameter,
+            height: diameter,
+            preserveAspectRatio: COVER_FIT,
+            'clip-path': `url(#${clipId})`,
+            ...DECORATIVE_OVERLAY,
+          },
+        },
+        disc(0),
+      ],
     };
   }
 
-  // Ratios are relative to the diameter (Medallion.tsx applies them to `px`, the HTML
-  // disc's diameter) — radius * 2 gets the SVG renderer the same proportion.
-  const glyph = m.kind === 'icon' ? m.icon : m.monogram;
-  const ratio = m.kind === 'icon' ? MEDALLION_ICON_RATIO : MEDALLION_MONOGRAM_RATIO;
+  // The ratios are relative to the DIAMETER — Medallion.tsx applies them to `px`, the HTML
+  // disc's diameter — so the SVG renderer multiplies the radius by 2 to land on the same
+  // glyph-to-disc proportion.
+  const isIcon = m.kind === 'icon';
+  const ratio = isIcon ? MEDALLION_ICON_RATIO : MEDALLION_MONOGRAM_RATIO;
 
   return {
-    clipId,
-    radius: props.radius,
-    hue: m.hue,
-    discFill: m.svg.discFill,
-    discFillOpacity: m.svg.discFillOpacity,
-    coverUrl: null,
-    glyph,
-    glyphFontSize: diameter * ratio,
-    // Only the monogram follows the universe's display font — an emoji has no font-family
-    // opinion of its own.
-    glyphFontFamily: m.kind === 'monogram' ? 'var(--font-display)' : null,
+    tag: 'g',
+    className: CLASS_ROOT,
+    children: [
+      disc(m.svg.discFillOpacity),
+      {
+        tag: 'text',
+        className: CLASS_GLYPH,
+        attrs: {
+          ...GLYPH_ANCHORING,
+          ...DECORATIVE_OVERLAY,
+          'font-size': diameter * ratio,
+          // Only the monogram takes the universe's display font; an emoji has no
+          // font-family opinion of its own.
+          ...(isIcon ? {} : { 'font-family': 'var(--font-display)' }),
+        },
+        style: GLYPH_STYLE,
+        text: isIcon ? m.icon : m.monogram,
+      },
+    ],
   };
 }
 
-/**
- * React SVG identity node for surfaces that MUST stay React-rendered — timeline pins.
- * (Recorded bug: a d3 `.on('click', (e, d) => …)` handler attached to a React-owned SVG
- * element sees `d === undefined` and throws, silently swallowing the click. See
- * appendMedallionNode below for the d3-owned twin.)
- *
- * Draws centred on (0,0); the caller positions the medallion with a `transform` on the
- * parent element (e.g. the pin's `<g transform="translate(x, y)">`).
- */
-export function MedallionSVGNode(props: MedallionSVGProps) {
-  const d = describeMedallionSVG(props);
-
-  if (d.coverUrl) {
-    return (
-      <>
-        <defs>
-          <clipPath id={d.clipId}>
-            <circle r={d.radius} />
-          </clipPath>
-        </defs>
-        <image
-          href={d.coverUrl}
-          x={-d.radius}
-          y={-d.radius}
-          width={d.radius * 2}
-          height={d.radius * 2}
-          preserveAspectRatio="xMidYMid slice"
-          clipPath={`url(#${d.clipId})`}
-        />
-        <circle
-          className="medallion-disc"
-          r={d.radius}
-          fill={d.discFill}
-          fillOpacity={d.discFillOpacity}
-          stroke={d.hue}
-          strokeWidth={2}
-        />
-      </>
-    );
-  }
-
-  return (
-    <>
-      <circle
-        className="medallion-disc"
-        r={d.radius}
-        fill={d.discFill}
-        fillOpacity={d.discFillOpacity}
-        stroke={d.hue}
-        strokeWidth={2}
-      />
-      <text
-        className="medallion-glyph"
-        textAnchor="middle"
-        dominantBaseline="central"
-        fontSize={d.glyphFontSize}
-        fontFamily={d.glyphFontFamily ?? undefined}
-        style={{ userSelect: 'none' }}
-      >
-        {d.glyph}
-      </text>
-    </>
+function toReact(spec: ElementSpec, key?: number): ReactElement {
+  return createElement(
+    spec.tag,
+    { key, className: spec.className, style: spec.style, ...spec.attrs },
+    spec.text ?? spec.children?.map((child, i) => toReact(child, i)),
   );
 }
 
-function buildDisc(d: MedallionSVGDescriptor): SVGCircleElement {
-  const circle = document.createElementNS(SVG_NS, 'circle');
-  circle.setAttribute('class', 'medallion-disc');
-  circle.setAttribute('r', String(d.radius));
-  circle.setAttribute('fill', d.discFill);
-  circle.setAttribute('fill-opacity', String(d.discFillOpacity));
-  circle.setAttribute('stroke', d.hue);
-  circle.setAttribute('stroke-width', '2');
-  return circle;
-}
-
-function buildGlyph(d: MedallionSVGDescriptor): SVGTextElement {
-  const text = document.createElementNS(SVG_NS, 'text');
-  text.setAttribute('class', 'medallion-glyph');
-  text.setAttribute('text-anchor', 'middle');
-  text.setAttribute('dominant-baseline', 'central');
-  text.setAttribute('font-size', String(d.glyphFontSize));
-  if (d.glyphFontFamily) text.setAttribute('font-family', d.glyphFontFamily);
-  text.textContent = d.glyph ?? '';
-  return text;
+function toDOM(spec: ElementSpec): SVGElement {
+  const el = document.createElementNS(SVG_NS, spec.tag) as SVGElement;
+  if (spec.className) el.setAttribute('class', spec.className);
+  for (const [name, value] of Object.entries(spec.attrs ?? {})) {
+    el.setAttribute(name, String(value));
+  }
+  // Written through CSSOM (not setAttribute) so the serialized `style` attribute matches
+  // what React produces from the same object — the tree-equality test depends on it.
+  for (const [name, value] of Object.entries(spec.style ?? {})) {
+    el.style.setProperty(name.replace(/[A-Z]/g, (c) => `-${c.toLowerCase()}`), String(value));
+  }
+  if (spec.text !== undefined) el.textContent = spec.text;
+  for (const child of spec.children ?? []) el.appendChild(toDOM(child));
+  return el;
 }
 
 /**
- * Imperative twin of MedallionSVGNode for surfaces owned by a d3 join — the graph —
- * which manages its own DOM and cannot mount React children into it. Builds the same
- * element shape from the same describeMedallionSVG() output, so the two renderers cannot
- * drift on fill, opacity, or glyph size.
+ * React SVG identity node, for surfaces that MUST stay React-rendered — the timeline pins.
+ * (Recorded bug: a d3 `.on('click', (e, d) => …)` handler bound to a React-owned SVG element
+ * sees `d === undefined` and throws, silently swallowing the click.)
  *
- * Idempotent: a d3 update selection re-runs this on every data change (a node's cover can
- * appear or disappear between renders), so every call first purges whatever a previous
- * call appended — wrapped in one `.medallion-node` group — before rebuilding.
+ * Drawn centred on (0,0); the caller positions it with a `transform` on the parent.
+ */
+export function MedallionSVGNode(props: MedallionSVGProps): ReactElement {
+  return toReact(describeMedallionSVG(props));
+}
+
+/**
+ * Imperative twin of MedallionSVGNode, for surfaces owned by a d3 join — the graph — which
+ * manages its own DOM and cannot mount React children into it. Walks the SAME spec tree, so
+ * the two shells produce identical DOM by construction (MedallionSVG.test.tsx compares their
+ * full attribute trees, so an attribute added to one shell and not the other cannot pass).
+ *
+ * Idempotent: a d3 update selection re-runs this on the same group on every data change (an
+ * entry's cover can appear or disappear between renders), so each call first purges the
+ * `.medallion-node` group a previous call appended, then rebuilds.
  */
 export function appendMedallionNode(group: SVGGElement, props: MedallionSVGProps): void {
+  // Direct children only — a `.medallion-node` deeper in the group is not ours to remove.
+  // NOT `querySelectorAll(':scope > .medallion-node')`: jsdom's selector engine matches
+  // `:scope >` against zero SVG elements (classList.contains and Element.matches both work
+  // on them, only the `:scope` combinator does not), which silently defeated the purge and
+  // turned both idempotence tests red.
   for (const child of Array.from(group.children)) {
-    if (child instanceof SVGElement && child.classList.contains('medallion-node')) {
-      group.removeChild(child);
-    }
+    if (child.classList.contains(CLASS_ROOT)) child.remove();
   }
-
-  const d = describeMedallionSVG(props);
-  const node = document.createElementNS(SVG_NS, 'g');
-  node.setAttribute('class', 'medallion-node');
-
-  if (d.coverUrl) {
-    const defs = document.createElementNS(SVG_NS, 'defs');
-    const clipPath = document.createElementNS(SVG_NS, 'clipPath');
-    clipPath.setAttribute('id', d.clipId);
-    const clipCircle = document.createElementNS(SVG_NS, 'circle');
-    clipCircle.setAttribute('r', String(d.radius));
-    clipPath.appendChild(clipCircle);
-    defs.appendChild(clipPath);
-    node.appendChild(defs);
-
-    const image = document.createElementNS(SVG_NS, 'image');
-    image.setAttribute('href', d.coverUrl);
-    image.setAttribute('x', String(-d.radius));
-    image.setAttribute('y', String(-d.radius));
-    image.setAttribute('width', String(d.radius * 2));
-    image.setAttribute('height', String(d.radius * 2));
-    image.setAttribute('preserveAspectRatio', 'xMidYMid slice');
-    image.setAttribute('clip-path', `url(#${d.clipId})`);
-    node.appendChild(image);
-
-    node.appendChild(buildDisc(d));
-  } else {
-    node.appendChild(buildDisc(d));
-    node.appendChild(buildGlyph(d));
-  }
-
-  group.appendChild(node);
+  group.appendChild(toDOM(describeMedallionSVG(props)));
 }
