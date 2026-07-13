@@ -8,9 +8,13 @@ const SRC = resolve(__dirname, '..', 'src');
 const read = (rel: string) => readFileSync(resolve(SRC, rel), 'utf8');
 
 describe('typography contract (POL-04 Task 2)', () => {
-  it('EntryDetail.tsx applies tracking-tight + neutral-700/300 body color, NOT the contrast-bug pattern', () => {
+  it('EntryDetail.tsx applies the hero display heading + neutral-700/300 body color, NOT the contrast-bug pattern', () => {
     const src = read('views/EntryDetail.tsx');
-    expect(src).toContain('tracking-tight');
+    // Content-Forward Views §5: the page title moved out of the old form-style header
+    // (a `tracking-tight` sans <h1>) and into the hero overlay, where it is set in the
+    // universe display serif. `tracking-tight` is a sans-stack correction and does not
+    // apply to the serif face, so the contract now pins the display heading instead.
+    expect(src).toContain('font-display text-3xl font-semibold text-ink');
     expect(src).toContain('text-neutral-700 dark:text-neutral-300');
     // Anti-regression: the light-mode contrast bug from POL-04 fix #3 must not return.
     expect(src).not.toContain('text-neutral-300 dark:text-neutral-300');

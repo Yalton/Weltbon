@@ -15,6 +15,8 @@ import { IssueSection } from '../components/IssueSection';
 import { TimelinePinSection } from '../components/TimelinePinSection';
 import { UnlinkedMentionsPanel } from '../components/UnlinkedMentionsPanel';
 import { useShareMode, useShareCalendar } from '../contexts/ShareModeContext';
+import { resolveMedallion } from '../lib/medallion';
+import { Panel } from '../components/ui/Panel';
 
 export function EntryDetail() {
   // Phase 29 — share-mode awareness. In share mode the route is
@@ -189,62 +191,130 @@ export function EntryDetail() {
     // = embeds expand (D-05 flatten: depth-1 is set by EntryEmbed's recursive call).
   };
 
-  return (
-    <div className="max-w-3xl mx-auto">
-      {/* Back link */}
-      <Link
-        to={
-          isShareMode
-            ? `/share/${token ?? ''}`
-            : `/universes/${uid}/entries`
-        }
-        className="text-sm text-neutral-400 hover:text-neutral-200"
-      >
-        &larr; Back to entries
-      </Link>
+  // Content-Forward Views §5 — every entry gets a hero. A cover becomes a scrimmed banner; a
+  // bare entry gets a slim band in its type hue with a watermark monogram, so the page reads
+  // as an article either way rather than as a form with a title stuck on top.
+  //
+  // The hero draws entry.coverImageUrl — the DETAIL endpoint's pre-signed RAW url. It is NOT
+  // coverThumbUrl (list-only), so the hero is NOT a Medallion; resolveMedallion supplies only the
+  // no-cover identity (monogram + type hue), keeping that fallback consistent with every other
+  // surface that draws this entry.
+  const hero = resolveMedallion({
+    title: entry.title,
+    entryType: entry.entryType,
+    icon: entry.icon,
+  });
+  // The pre-signed url wins; the coverImageId fallback is retained for older API responses that
+  // predate coverImageUrl (and preserves the share-vs-auth raw path difference).
+  const coverSrc =
+    entry.coverImageUrl ??
+    (entry.coverImageId
+      ? isShareMode
+        ? `/api/share/assets/${entry.coverImageId}/raw`
+        : `/api/universes/${uid}/assets/${entry.coverImageId}/raw`
+      : null);
 
-      {/* Header block */}
-      <div className="mt-4">
-        <div className="flex items-center gap-3">
-          {entry.icon && <span className="text-[28px] leading-none">{entry.icon}</span>}
-          <h1 className="text-2xl font-semibold tracking-tight">{entry.title}</h1>
-        </div>
-        <div className="mt-1 flex items-center gap-2">
-          <TypeBadge type={entry.entryType} />
-          {/* Phase 36 DATA-03 — non-interactive WIP badge next to the
-              TypeBadge / Public chip when entry.wip === true. */}
-          {entry.wip && <WipPill wip />}
-          {/*
-            Phase 29 SHARE-04 / UI-SPEC §C / D-16 — accent-tint Public chip
-            rendered next to TypeBadge ONLY when entry.isPublic === true.
-            Visible in BOTH authenticated and share-view contexts per
-            UI-SPEC §A Kept-affordances + T-29-34 (accept): the chip helps
-            the visitor understand they're viewing a public entry, and
-            helps the owner see which entries are marked public from the
-            detail view. Eye icon (10×10 SVG) is aria-hidden="true"
-            (decorative); the <span>Public</span> text remains readable
-            by screen readers (Accessibility Checklist §C).
-          */}
-          {entry.isPublic && (
-            <span className="inline-flex items-center gap-1 rounded px-2 py-1 text-sm font-semibold bg-[color:var(--color-accent)]/10 text-[color:var(--color-accent)]">
-              <svg
+  return (
+    <div className="mx-auto max-w-5xl lg:grid lg:grid-cols-[minmax(0,1fr)_18rem] lg:gap-8 lg:items-start">
+      <div className="min-w-0">
+        {/* Back link */}
+        <Link
+          to={
+            isShareMode
+              ? `/share/${token ?? ''}`
+              : `/universes/${uid}/entries`
+          }
+          className="text-sm text-neutral-400 hover:text-neutral-200"
+        >
+          &larr; Back to entries
+        </Link>
+
+        {/* Hero (§5) — a cover banner, or a type-hued watermark band when there is no cover.
+            Either way the title is overlaid inside it, so the page opens with an image-scale
+            masthead instead of a form header. */}
+        <div
+          data-testid="entry-hero"
+          className="relative mt-4 overflow-hidden rounded-xl border border-glass-border"
+        >
+          {coverSrc ? (
+            <img
+              src={coverSrc}
+              alt={`Cover image for ${entry.title}`}
+              className="max-h-[300px] w-full object-cover"
+              onError={(e) => {
+                (e.target as HTMLImageElement).style.display = 'none';
+              }}
+            />
+          ) : (
+            // No cover: a slim band tinted with the entry-type hue, carrying an oversized monogram
+            // as a watermark. Deliberately NO dark scrim over this branch — the band is already a
+            // low-alpha gradient on the page surface, and a from-black/70 wash would both mute the
+            // hue and swallow the watermark. The title reads on the band unaided.
+            <div
+              className="relative h-24 w-full"
+              style={{ background: hero.html.discBackground }}
+            >
+              <span
                 aria-hidden="true"
-                width="10"
-                height="10"
-                viewBox="0 0 16 16"
-                fill="currentColor"
+                data-testid="hero-monogram"
+                className="pointer-events-none absolute right-4 top-1/2 -translate-y-1/2 select-none font-display text-[5rem] font-semibold leading-none opacity-20"
+                style={{ color: hero.hue }}
               >
-                <path d="M8 3C4.667 3 1.787 5.013 .5 8c1.287 2.987 4.167 5 7.5 5s6.213-2.013 7.5-5C14.213 5.013 11.333 3 8 3zm0 8.333A3.333 3.333 0 1 1 8 4.667a3.333 3.333 0 0 1 0 6.666zm0-5.333a2 2 0 1 0 0 4 2 2 0 0 0 0-4z" />
-              </svg>
-              <span>Public</span>
-            </span>
+                {hero.monogram}
+              </span>
+            </div>
           )}
+
+          {/* Scrim — only over a cover, where the title would otherwise sit on arbitrary pixels.
+              pointer-events-none so it can never intercept clicks meant for the overlay. */}
+          {coverSrc && (
+            <div className="pointer-events-none absolute inset-0 bg-gradient-to-t from-black/70 via-black/20 to-transparent" />
+          )}
+
+          {/* Overlay: the page's real <h1> plus the badge row, bottom-left, identical with or
+              without a cover. */}
+          <div className="absolute inset-x-0 bottom-0 p-4">
+            <h1 className="font-display text-3xl font-semibold text-ink">{entry.title}</h1>
+            <div className="mt-2 flex items-center gap-2">
+              <TypeBadge type={entry.entryType} />
+              {/* Phase 36 DATA-03 — non-interactive WIP badge next to the
+                  TypeBadge / Public chip when entry.wip === true. */}
+              {entry.wip && <WipPill wip />}
+              {/*
+                Phase 29 SHARE-04 / UI-SPEC §C / D-16 — accent-tint Public chip
+                rendered next to TypeBadge ONLY when entry.isPublic === true.
+                Visible in BOTH authenticated and share-view contexts per
+                UI-SPEC §A Kept-affordances + T-29-34 (accept): the chip helps
+                the visitor understand they're viewing a public entry, and
+                helps the owner see which entries are marked public from the
+                detail view. Eye icon (10×10 SVG) is aria-hidden="true"
+                (decorative); the <span>Public</span> text remains readable
+                by screen readers (Accessibility Checklist §C).
+              */}
+              {entry.isPublic && (
+                <span className="inline-flex items-center gap-1 rounded px-2 py-1 text-sm font-semibold bg-[color:var(--color-accent)]/10 text-[color:var(--color-accent)]">
+                  <svg
+                    aria-hidden="true"
+                    width="10"
+                    height="10"
+                    viewBox="0 0 16 16"
+                    fill="currentColor"
+                  >
+                    <path d="M8 3C4.667 3 1.787 5.013 .5 8c1.287 2.987 4.167 5 7.5 5s6.213-2.013 7.5-5C14.213 5.013 11.333 3 8 3zm0 8.333A3.333 3.333 0 1 1 8 4.667a3.333 3.333 0 0 1 0 6.666zm0-5.333a2 2 0 1 0 0 4 2 2 0 0 0 0-4z" />
+                  </svg>
+                  <span>Public</span>
+                </span>
+              )}
+            </div>
+          </div>
         </div>
+
         {/*
           Phase 29 D-18 / UI-SPEC §A Kept-affordances — in share mode the
           Edit and Delete buttons are hidden entirely. The visitor has no
           authenticated session and the share read namespace exposes no
           mutation surface; surfacing these controls would mislead.
+          §5: they now sit BELOW the hero, not inside the old header block.
         */}
         {!isShareMode && (
           <div className="flex gap-2 mt-3">
@@ -263,165 +333,149 @@ export function EntryDetail() {
             </button>
           </div>
         )}
-      </div>
 
-      {/*
-        Phase 30 EVENTS-02 / D-11 — Calendar date + "View on timeline →".
-        Rendered when this entry has a timeline pin AND (for calendar date)
-        the universe has a calendar. When no calendar → falls back to the
-        raw position (CALENDAR-03). When no pin → section is omitted.
-        Read-only-safe: no edit chrome; works identically in share mode.
-      */}
-      {entryPin && (
-        <div className="mt-4 flex flex-col gap-1">
-          {/* Calendar date (full form) or raw position fallback */}
-          <div className="text-sm text-neutral-600 dark:text-neutral-400">
-            {calendarDate ? (
-              <>
-                {calendarDate.weekday && (
-                  <span className="mr-1">{calendarDate.weekday},</span>
-                )}
-                <span>
-                  {calendarDate.day} {calendarDate.monthName},{' '}
-                  {calendarDate.year} {calendarDate.eraAbbr}
-                </span>
-                {calendarDate.moonPhases.length > 0 && (
-                  <span className="ml-2 text-neutral-500">
-                    {calendarDate.moonPhases
-                      .map((mp) => `${mp.name}: ${mp.phase}`)
-                      .join(', ')}
+        {/*
+          Phase 30 EVENTS-02 / D-11 — Calendar date + "View on timeline →".
+          Rendered when this entry has a timeline pin AND (for calendar date)
+          the universe has a calendar. When no calendar → falls back to the
+          raw position (CALENDAR-03). When no pin → section is omitted.
+          Read-only-safe: no edit chrome; works identically in share mode.
+        */}
+        {entryPin && (
+          <div className="mt-4 flex flex-col gap-1">
+            {/* Calendar date (full form) or raw position fallback */}
+            <div className="text-sm text-neutral-600 dark:text-neutral-400">
+              {calendarDate ? (
+                <>
+                  {calendarDate.weekday && (
+                    <span className="mr-1">{calendarDate.weekday},</span>
+                  )}
+                  <span>
+                    {calendarDate.day} {calendarDate.monthName},{' '}
+                    {calendarDate.year} {calendarDate.eraAbbr}
                   </span>
-                )}
-              </>
-            ) : (
-              <span className="tabular-nums font-mono">
-                Position: {entryPin.position}
-              </span>
-            )}
-          </div>
-          {/* "View on timeline →" accent link */}
-          <Link
-            to={`/universes/${uid}/timeline`}
-            className="text-sm text-[color:var(--color-accent)] hover:underline"
-          >
-            View on timeline &rarr;
-          </Link>
-        </div>
-      )}
-
-      {/* Summary */}
-      {entry.summary && (
-        <p className="text-base leading-[1.6] text-neutral-700 dark:text-neutral-300 mt-4">
-          {entry.summary}
-        </p>
-      )}
-
-      {/* Tags */}
-      {entry.tags && entry.tags.length > 0 && (
-        <div className="mt-4 flex flex-wrap gap-2">
-          {entry.tags.map((tag) => (
-            <span
-              key={tag}
-              className="rounded-full bg-neutral-800 dark:bg-neutral-800 px-2 py-1 text-sm"
+                  {calendarDate.moonPhases.length > 0 && (
+                    <span className="ml-2 text-neutral-500">
+                      {calendarDate.moonPhases
+                        .map((mp) => `${mp.name}: ${mp.phase}`)
+                        .join(', ')}
+                    </span>
+                  )}
+                </>
+              ) : (
+                <span className="tabular-nums font-mono">
+                  Position: {entryPin.position}
+                </span>
+              )}
+            </div>
+            {/* "View on timeline →" accent link */}
+            <Link
+              to={`/universes/${uid}/timeline`}
+              className="text-sm text-[color:var(--color-accent)] hover:underline"
             >
-              {tag}
-            </span>
-          ))}
-        </div>
-      )}
+              View on timeline &rarr;
+            </Link>
+          </div>
+        )}
 
-      {/* Cover image (D-06) — between header block and body markdown (Phase 38 MEDIA-04).
-          Phase 38 UAT-fix: use the pre-signed coverImageUrl from the API response so
-          <img src> can load without Authorization: Bearer (which browsers can't attach
-          to image tag fetches). Falls back to building the URL from coverImageId for
-          older API responses that don't yet include coverImageUrl. */}
-      {(entry.coverImageUrl ?? entry.coverImageId) && (
-        <div className="mt-4 mb-4">
-          <img
-            src={
-              entry.coverImageUrl ??
-              (isShareMode
-                ? `/api/share/assets/${entry.coverImageId}/raw`
-                : `/api/universes/${uid}/assets/${entry.coverImageId}/raw`)
-            }
-            alt={`Cover image for ${entry.title}`}
-            className="max-w-full rounded-lg"
-            onError={(e) => {
-              (e.target as HTMLImageElement).style.display = 'none';
-            }}
-          />
-        </div>
-      )}
+        {/* Summary */}
+        {entry.summary && (
+          <p className="text-base leading-[1.6] text-neutral-700 dark:text-neutral-300 mt-4">
+            {entry.summary}
+          </p>
+        )}
 
-      {/* Body (Markdown) — Phase 32 Plan 04 D-01/D-02/D-03/D-04 [[word]] resolution.
-          wikis is always provided: authenticated branch includes onAddWord;
-          share branch omits onAddWord (T-32-11 read-only, no mutation surface).
-          entryTitles + dictionaryWords are derived from public-scoped data in
-          share mode (via the api-client seam → /api/share/entries + /api/share/dictionary).
-          Phase 38 MEDIA-05: assets prop threads universeId + shareToken + assetUrls so the
-          components.img resolver uses pre-signed URLs from the API response (UAT-fix) and
-          can build the correct authed/share raw URL as fallback. */}
-      {entry.body && (
-        <div className="mt-6">
-          <MarkdownRenderer
-            content={entry.body}
-            wikis={wikis}
-            assets={{ universeId: uid!, shareToken: token ?? null, assetUrls: entry.assetUrls }}
-          />
-        </div>
-      )}
-
-      {/* Links + Backlinks */}
-      <LinkSection
-        outboundLinks={entry.outboundLinks}
-        backlinks={entry.backlinks}
-        universeId={uid!}
-        entryId={entryId!}
-        onLinkCreated={() => refetch()}
-      />
-
-      {/*
-        Phase 29 D-18 / UI-SPEC §A Kept-affordances — IssueSection is
-        hidden in share mode (issues are an owner workflow surface;
-        visitor must not see or affect them). TimelinePinSection on the
-        detail view exposes the pin label + a manage control to upsert
-        the pin position; the entire mutation surface is removed, so we
-        omit the section. The visitor still sees timeline pin context on
-        the dedicated TimelineView (pin click navigates to entry).
-      */}
-      {!isShareMode && (
-        <>
-          <IssueSection
-            universeId={uid!}
-            entryId={entryId!}
-            issues={entry.issues ?? []}
-            onChanged={() => refetch()}
-          />
-          <TimelinePinSection universeId={uid!} entryId={entryId!} />
-          {/* Phase 48 XREF-06 (D-11/D-12): unlinked mentions panel — authoring-only.
-              Scans the cached useEntries corpus; no new query key. */}
-          <UnlinkedMentionsPanel
-            universeId={uid!}
-            entry={entry}
-            allEntries={allEntries ?? []}
-            onLinked={() => refetch()}
-          />
-        </>
-      )}
-
-      {/* Meta section */}
-      {metaEntries.length > 0 && (
-        <div className="mt-6 pt-6 border-t border-neutral-200 dark:border-neutral-800">
-          <h2 className="text-xl font-semibold">Details</h2>
-          <div className="mt-4 grid grid-cols-2 gap-2">
-            {metaEntries.map(([key, val]) => (
-              <div key={key} className="contents">
-                <span className="text-sm text-neutral-400">{key}</span>
-                <span className="text-sm text-right">{val}</span>
-              </div>
+        {/* Tags */}
+        {entry.tags && entry.tags.length > 0 && (
+          <div className="mt-4 flex flex-wrap gap-2">
+            {entry.tags.map((tag) => (
+              <span
+                key={tag}
+                className="rounded-full bg-neutral-800 dark:bg-neutral-800 px-2 py-1 text-sm"
+              >
+                {tag}
+              </span>
             ))}
           </div>
-        </div>
+        )}
+
+        {/* The cover image is no longer rendered here — §5 promoted it into the hero above.
+            Rendering it in both places would show the same image twice. */}
+
+        {/* Body (Markdown) — Phase 32 Plan 04 D-01/D-02/D-03/D-04 [[word]] resolution.
+            wikis is always provided: authenticated branch includes onAddWord;
+            share branch omits onAddWord (T-32-11 read-only, no mutation surface).
+            entryTitles + dictionaryWords are derived from public-scoped data in
+            share mode (via the api-client seam → /api/share/entries + /api/share/dictionary).
+            Phase 38 MEDIA-05: assets prop threads universeId + shareToken + assetUrls so the
+            components.img resolver uses pre-signed URLs from the API response (UAT-fix) and
+            can build the correct authed/share raw URL as fallback. */}
+        {entry.body && (
+          <div className="mt-6">
+            <MarkdownRenderer
+              content={entry.body}
+              wikis={wikis}
+              assets={{ universeId: uid!, shareToken: token ?? null, assetUrls: entry.assetUrls }}
+            />
+          </div>
+        )}
+
+        {/* Links + Backlinks */}
+        <LinkSection
+          outboundLinks={entry.outboundLinks}
+          backlinks={entry.backlinks}
+          universeId={uid!}
+          entryId={entryId!}
+          onLinkCreated={() => refetch()}
+        />
+
+        {/*
+          Phase 29 D-18 / UI-SPEC §A Kept-affordances — IssueSection is
+          hidden in share mode (issues are an owner workflow surface;
+          visitor must not see or affect them). TimelinePinSection on the
+          detail view exposes the pin label + a manage control to upsert
+          the pin position; the entire mutation surface is removed, so we
+          omit the section. The visitor still sees timeline pin context on
+          the dedicated TimelineView (pin click navigates to entry).
+        */}
+        {!isShareMode && (
+          <>
+            <IssueSection
+              universeId={uid!}
+              entryId={entryId!}
+              issues={entry.issues ?? []}
+              onChanged={() => refetch()}
+            />
+            <TimelinePinSection universeId={uid!} entryId={entryId!} />
+            {/* Phase 48 XREF-06 (D-11/D-12): unlinked mentions panel — authoring-only.
+                Scans the cached useEntries corpus; no new query key. */}
+            <UnlinkedMentionsPanel
+              universeId={uid!}
+              entry={entry}
+              allEntries={allEntries ?? []}
+              onLinked={() => refetch()}
+            />
+          </>
+        )}
+
+      </div>
+
+      {/* Infobox (§5) — meta/custom fields as a glass column beside the content on lg+,
+          stacking below it on narrow screens. Replaces the old bottom "Details" grid.
+          lg:sticky only travels if the grid item is height-auto rather than stretched — that is
+          what lg:items-start on the grid container buys it; lg:top-6 is its anchor. */}
+      {metaEntries.length > 0 && (
+        <Panel data-testid="entry-infobox" className="mt-6 p-4 lg:sticky lg:top-6 lg:mt-4">
+          <h2 className="font-display text-lg font-semibold text-ink">Details</h2>
+          <dl className="mt-3 space-y-2">
+            {metaEntries.map(([key, val]) => (
+              <div key={key} className="flex items-baseline justify-between gap-3">
+                <dt className="text-sm text-ink-muted">{key}</dt>
+                <dd className="text-sm text-right text-ink">{val}</dd>
+              </div>
+            ))}
+          </dl>
+        </Panel>
       )}
 
       {/* Delete confirmation dialog */}
