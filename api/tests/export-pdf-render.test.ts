@@ -23,6 +23,9 @@ function buildMinimalPayload(): ExportPayload {
       name: 'Render Test',
       description: '',
       entryTypes: ['entity'],
+      // Phase 20 D-01 + Phase 35 REL-01: required fields on ExportPayloadUniverse.
+      timelineWindow: null,
+      linkTypes: {},
     },
     categories: [],
     entries: [],
@@ -30,7 +33,16 @@ function buildMinimalPayload(): ExportPayload {
     openIssues: [],
     fullIssues: [],
     graphPositions: [],
+    timelinePins: [],
     entrySlugMap: new Map(),
+    // Phase 38 MEDIA-06 (D-07) + Phase 41/44/51: required collections on ExportPayload.
+    assets: [],
+    maps: [],
+    mapPins: [],
+    mapRegions: [],
+    mapRoutes: [],
+    mapLayersData: [],
+    terrainTypesData: [],
   };
 }
 
