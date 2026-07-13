@@ -53,13 +53,18 @@ const DEFAULT_PROPS = {
  * A pin whose id is `${entryId}-pin` and whose joined entry title is 'Aldric' — so the
  * medallion tests can assert a monogram ('A') without restating the fixture each time.
  */
-function pinFor(entryId: string, position: number): TimelinePin {
+function pinFor(
+  entryId: string,
+  position: number,
+  overrides: Partial<TimelinePin> = {},
+): TimelinePin {
   return pin({
     id: `${entryId}-pin`,
     entryId,
     position,
     entryTitle: 'Aldric',
     entryType: 'entity',
+    ...overrides,
   });
 }
 
@@ -247,6 +252,14 @@ describe('TimelineCanvas', () => {
       const pinEl = container.querySelector('g[data-pin-id="e1-pin"]') as SVGGElement;
       pinEl.dispatchEvent(new MouseEvent('click', { bubbles: true }));
       expect(onPinClick).toHaveBeenCalledTimes(1);
+    });
+
+    it('marks era-precision pins with an accent ring so approximate dates are visible without hovering', () => {
+      const { container } = renderCanvas({ pins: [pinFor('e1', 100, { precision: 'era' })] });
+      expect(container.querySelector('g[data-pin-id="e1-pin"] circle.pin-era-ring')).toBeTruthy();
+
+      const exact = renderCanvas({ pins: [pinFor('e2', 200, { precision: 'exact' })] });
+      expect(exact.container.querySelector('circle.pin-era-ring')).toBeNull();
     });
 
     it('shows a label beside an isolated pin, and hides it when pins crowd together', () => {

@@ -502,6 +502,23 @@ export function TimelineCanvas({
                 <title>
                   {pin.label ? `${displayName} — ${pin.label}` : displayName}
                 </title>
+                {/* Era-precision pins carry an accent outer ring. The medallion owns the
+                    disc's own fill/stroke (entry-type hue), so precision rides OUTSIDE it —
+                    otherwise the only signal that a date is an approximate era would be
+                    hover-only. Dashed reads as "approximate" and cannot be confused with the
+                    medallion's own solid type-hued stroke. Painted first, so it sits behind
+                    the disc it surrounds and cannot cover it. */}
+                {pin.precision === 'era' && (
+                  <circle
+                    className="pin-era-ring"
+                    r={PIN_RADIUS + 3}
+                    fill="none"
+                    stroke="var(--color-accent)"
+                    strokeWidth={1.5}
+                    strokeDasharray="3 2"
+                    pointerEvents="none"
+                  />
+                )}
                 {/* The clipPath id is surface-prefixed: SVG url(#…) resolves to the FIRST
                     match in the document, so an unprefixed `${pin.id}` could clip against
                     the graph's circle of the same name (wrong radius, silently). */}

@@ -165,10 +165,44 @@ function describeMedallionSVG(props: MedallionSVGProps): ElementSpec {
   };
 }
 
+/**
+ * The spec names attributes the way SVG does (hyphenated) because the imperative shell
+ * setAttribute()s them verbatim. React, on a DOM element, wants camelCase for every SVG
+ * attribute it knows — hand it `fill-opacity` and it logs "Invalid DOM property
+ * `fill-opacity`. Did you mean `fillOpacity`?" on EVERY render, then passes it through
+ * anyway. That pass-through is what made both shells agree; it is React tolerating us, not
+ * React agreeing with us, so translate at the boundary instead of relying on it.
+ *
+ * Only the React shell translates. The DOM shell keeps emitting the hyphenated names, and
+ * React serializes the camelCase props back to those same hyphenated DOM attributes — which
+ * is why the two-shell attribute-tree equality test still holds (it reads el.attributes, not
+ * the props). An attribute absent from this map (e.g. `preserveAspectRatio`, `href`, `id`,
+ * `x`/`y`/`r`) is already spelled the way React wants it and passes through untouched.
+ */
+const REACT_ATTR_NAME: Record<string, string> = {
+  'fill-opacity': 'fillOpacity',
+  'stroke-width': 'strokeWidth',
+  'text-anchor': 'textAnchor',
+  'dominant-baseline': 'dominantBaseline',
+  'pointer-events': 'pointerEvents',
+  'font-size': 'fontSize',
+  'font-family': 'fontFamily',
+  'font-weight': 'fontWeight',
+  'clip-path': 'clipPath',
+};
+
+function toReactAttrs(attrs: ElementSpec['attrs']): Record<string, string | number> {
+  const out: Record<string, string | number> = {};
+  for (const [name, value] of Object.entries(attrs ?? {})) {
+    out[REACT_ATTR_NAME[name] ?? name] = value;
+  }
+  return out;
+}
+
 function toReact(spec: ElementSpec, key?: number): ReactElement {
   return createElement(
     spec.tag,
-    { key, className: spec.className, style: spec.style, ...spec.attrs },
+    { key, className: spec.className, style: spec.style, ...toReactAttrs(spec.attrs) },
     spec.text ?? spec.children?.map((child, i) => toReact(child, i)),
   );
 }
