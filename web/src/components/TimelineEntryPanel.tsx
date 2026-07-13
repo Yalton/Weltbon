@@ -3,7 +3,7 @@ import { useDraggable } from '@dnd-kit/core';
 import { useFilteredEntries } from '../hooks/useFilteredEntries';
 import type { Entry } from '../hooks/useEntries';
 import type { TimelinePin } from '../hooks/useTimelinePins';
-import { Medallion } from './Medallion';
+import { EntryIdentity } from './EntryIdentity';
 import { TypeBadge } from './TypeBadge';
 
 /**
@@ -84,16 +84,7 @@ function PinnedEntryCard({ entry }: CardProps) {
       aria-disabled="true"
       className="flex items-center gap-3 px-4 py-3 rounded-md border border-neutral-200 dark:border-neutral-800"
     >
-      <Medallion
-        title={entry.title}
-        entryType={entry.entryType}
-        icon={entry.icon}
-        coverThumbUrl={entry.coverThumbUrl}
-        size="sm"
-      />
-      <span className="font-display font-semibold text-ink text-base leading-[1.5] truncate">
-        {entry.title}
-      </span>
+      <EntryIdentity entry={entry} />
       <TypeBadge type={entry.entryType} />
       <span
         aria-label="Already pinned to timeline"
@@ -119,16 +110,7 @@ function DraggableEntryCard({ entry }: CardProps) {
       {...attributes}
       {...listeners}
     >
-      <Medallion
-        title={entry.title}
-        entryType={entry.entryType}
-        icon={entry.icon}
-        coverThumbUrl={entry.coverThumbUrl}
-        size="sm"
-      />
-      <span className="font-display font-semibold text-ink text-base leading-[1.5] truncate">
-        {entry.title}
-      </span>
+      <EntryIdentity entry={entry} />
       <TypeBadge type={entry.entryType} />
     </div>
   );

@@ -1,22 +1,12 @@
 import type { Entry } from '../hooks/useEntries';
-import { Medallion } from './Medallion';
+import { EntryIdentity } from './EntryIdentity';
 import { TypeBadge } from './TypeBadge';
 import { WipPill } from './WipPill';
 
 export function EntryCard({ entry }: { entry: Entry }) {
   return (
     <div className="flex items-center gap-3 px-4 py-3 rounded-md border border-glass-border hover:border-[color:var(--color-accent)] transition-colors">
-      <Medallion
-        title={entry.title}
-        entryType={entry.entryType}
-        icon={entry.icon}
-        coverThumbUrl={entry.coverThumbUrl}
-        size="sm"
-      />
-
-      <span className="font-display font-semibold text-ink text-base leading-[1.5] truncate">
-        {entry.title}
-      </span>
+      <EntryIdentity entry={entry} />
 
       <TypeBadge type={entry.entryType} />
 

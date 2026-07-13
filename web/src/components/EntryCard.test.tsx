@@ -45,9 +45,11 @@ describe('EntryCard', () => {
 
   it('no longer renders the gray placeholder circle', () => {
     // The whole point of the change: an entry with no art used to show a dead gray dot.
+    // Asserted as "exactly one medallion leads the row" rather than as the absence of a
+    // renameable utility class — the row can only be right if the medallion is what's there.
     const { container } = render(<EntryCard entry={makeEntry()} />);
+    expect(container.querySelectorAll('[data-medallion]')).toHaveLength(1);
     expect(container.querySelector('.bg-neutral-300')).toBeNull();
-    expect(container.querySelector('.dark\\:bg-neutral-700')).toBeNull();
   });
 
   it('sets the title in the display serif', () => {

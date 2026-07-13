@@ -27,12 +27,14 @@ describe('typography contract (POL-04 Task 2)', () => {
     expect(src).toContain('leading-[1.5]');
   });
 
-  it('EntryCard.tsx uses §2.3 list-row sizing for title and meta', () => {
-    const src = read('components/EntryCard.tsx');
-    expect(src).toContain('text-base leading-[1.5]');
-    // Content-Forward Views: summary color migrated from raw neutral utilities
-    // to the text-ink-secondary token (see Task 7 — border/text tokenization).
-    expect(src).toContain('text-sm text-ink-secondary');
+  it('the entry list row uses §2.3 list-row sizing for title and meta', () => {
+    // Content-Forward Views: the row's title moved into the shared EntryIdentity
+    // component (medallion + serif title), which EntryCard and both timeline card
+    // variants render — so the title's sizing now lives there, not in EntryCard.
+    expect(read('components/EntryIdentity.tsx')).toContain('text-base leading-[1.5]');
+    // The summary stays in EntryCard, its color migrated from raw neutral utilities
+    // to the text-ink-secondary token.
+    expect(read('components/EntryCard.tsx')).toContain('text-sm text-ink-secondary');
   });
 
   it('MarkdownRenderer.tsx wraps content in the prose typography plugin classes', () => {
