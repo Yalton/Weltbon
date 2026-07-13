@@ -14,8 +14,14 @@
  * Why we assert structure (pointerEvents), not the full click→onCanvasClick chain:
  * The real chain is:
  *   fireEvent.click → root <svg> onClick (handleSvgClick) → screenToImage()
- *   → svgEl.createSVGPoint()/getScreenCTM() → BOTH return null/undefined in jsdom 25
+ *   → svgEl.createSVGPoint()/getScreenCTM() → jsdom implements NEITHER
+ *   → screenToImage feature-detects them and returns null
  *   → handleSvgClick early-returns at `if (!pos) return;` → onCanvasClick is never reached.
+ *
+ * (This comment used to claim those APIs "return null/undefined" in jsdom. They do not — they
+ *  are absent, so an unguarded call THROWS. Because it fires from an event handler the throw
+ *  escaped as a vitest *unhandled error*, which exits non-zero even with every test passing —
+ *  that is how CI's web lane stayed red at 1095/1095 green. screenToImage now feature-detects.)
  * Asserting onCanvasClick would therefore be permanently RED in jsdom regardless of the fix.
  * Stubbing the SVG geometry pipeline (createSVGPoint + getScreenCTM + DOMMatrix) would only
  * re-test a hand-rolled copy of the coordinate math, not the actual bug.

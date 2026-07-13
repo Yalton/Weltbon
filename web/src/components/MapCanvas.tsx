@@ -1076,6 +1076,14 @@ export const MapCanvas = forwardRef<MapCanvasHandle, MapCanvasProps>(function Ma
     const svgEl = svgRef.current;
     if (!svgEl) return null;
 
+    // Feature-detect the SVG geometry APIs before calling them. Environments without a layout
+    // engine (jsdom) implement NEITHER, and an unguarded call does not return null — it THROWS,
+    // from inside an event handler, so it escapes as an unhandled error rather than degrading.
+    // Same class of guard as the `if (!screenCTM)` check below; both are no-ops in a browser.
+    if (typeof svgEl.createSVGPoint !== 'function' || typeof svgEl.getScreenCTM !== 'function') {
+      return null;
+    }
+
     const pt = svgEl.createSVGPoint();
     pt.x = clientX;
     pt.y = clientY;
