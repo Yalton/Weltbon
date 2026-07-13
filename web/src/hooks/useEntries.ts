@@ -96,6 +96,19 @@ export interface Entry {
    * deleted (ON DELETE SET NULL).
    */
   coverImageId?: string | null;
+  /**
+   * Content-Forward Views §1.1.
+   * Pre-signed thumb URL for the cover, or null (no cover, or the asset is gone — the
+   * projection is dangling-tolerant). Use this rather than building a URL from
+   * coverImageId: browsers cannot attach an Authorization header to an <img src>, so only
+   * the signed URL loads.
+   *
+   * LIST-ONLY. The API declares it on a list-specific schema — create/patch/detail do NOT
+   * return it (detail has its own `coverImageUrl`, the full-size raw URL). Hence optional.
+   * Present on both the authenticated and the share list — API-side parity is enforced by
+   * a key-set tripwire test.
+   */
+  coverThumbUrl?: string | null;
   createdAt: string;
   updatedAt: string;
 }
