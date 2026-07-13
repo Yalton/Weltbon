@@ -2,7 +2,7 @@ import { OpenAPIHono, createRoute, z } from '@hono/zod-openapi';
 import { and, eq, ne, desc, isNull, sql, arrayContains, type SQL } from 'drizzle-orm';
 import { HTTPException } from 'hono/http-exception';
 import { db } from '../db/client.js';
-import { entries, links, categories, issues, issueEntries, entryTemplates } from '../db/schema.js';
+import { entries, links, categories, issues, issueEntries, entryTemplates, assets } from '../db/schema.js';
 import { requireUniverse } from '../utils/ownership.js';
 import { signAssetUrl } from '../services/asset-signing.js';
 import { rewriteWikilinks } from '../services/rewrite-wikilinks.js';
@@ -134,6 +134,26 @@ async function categoryBelongsToUniverse(categoryId: string, universeId: string)
     .from(categories)
     .where(and(eq(categories.id, categoryId), eq(categories.universeId, universeId)));
   return !!cat;
+}
+
+/**
+ * Phase 38 MEDIA-04 (D-06) write-time ownership gate for `coverImageId`.
+ *
+ * The FK `entries_cover_image_id_assets_id_fk` only requires the asset to exist
+ * SOMEWHERE — it does NOT constrain the asset to the entry's universe. Without this
+ * check, POST/PATCH persist a cover owned by a different universe: an invalid row that
+ * later mints a signed asset URL the entry's universe does not own (broken <img>, and
+ * the byte-serving scope checks in routes/assets.ts become the sole defense).
+ *
+ * Mirrors categoryBelongsToUniverse — same shape, same 400 contract.
+ */
+async function assetBelongsToUniverse(assetId: string, universeId: string): Promise<boolean> {
+  const [asset] = await db()
+    .select({ id: assets.id })
+    .from(assets)
+    .where(and(eq(assets.id, assetId), eq(assets.universeId, universeId)))
+    .limit(1);
+  return !!asset;
 }
 
 /**
@@ -538,6 +558,14 @@ export const entryRoutes = new OpenAPIHono<AppEnv>()
       }
     }
 
+    // Cross-universe cover guard: the FK alone accepts an asset from ANY universe.
+    // `null`/omitted means "no cover" and skips the check (nothing to own).
+    if (data.coverImageId) {
+      if (!(await assetBelongsToUniverse(data.coverImageId, uid))) {
+        return c.json({ error: 'Cover image not found in universe' }, 400);
+      }
+    }
+
     // Phase 45 XREF-04 (D-07): Normalize aliases — trim, drop empties, case-fold de-dupe.
     const normalizedAliases = normalizeAliases(data.aliases ?? []);
 
@@ -689,6 +717,15 @@ export const entryRoutes = new OpenAPIHono<AppEnv>()
     if (typeof patch.categoryId === 'string') {
       if (!(await categoryBelongsToUniverse(patch.categoryId, uid))) {
         return c.json({ error: 'Category not found in universe' }, 400);
+      }
+    }
+
+    // Cross-universe cover guard (PATCH semantics): only validate when the caller
+    // actually supplies an asset id. `undefined` = field untouched (skip), `null` =
+    // clear the cover (nothing to own) — both must remain allowed.
+    if (typeof patch.coverImageId === 'string') {
+      if (!(await assetBelongsToUniverse(patch.coverImageId, uid))) {
+        return c.json({ error: 'Cover image not found in universe' }, 400);
       }
     }
 

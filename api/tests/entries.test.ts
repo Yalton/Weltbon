@@ -4,7 +4,7 @@ import { createTestDb, cleanDb, createTestUser, authHeader, type TestDbHandle } 
 import { issueAccessToken } from '../src/services/auth.js';
 import { setTestDb } from '../src/db/client.js';
 import { eq, and } from 'drizzle-orm';
-import { entryTemplates } from '../src/db/schema.js';
+import { assets, entryTemplates } from '../src/db/schema.js';
 
 describe('entry routes (ENT-01..06)', () => {
   let handle: TestDbHandle;
@@ -1375,6 +1375,149 @@ describe('entry routes (ENT-01..06)', () => {
       // Universe B entry must be untouched
       const crossBody = await fetchEntryBody(hdrs, univB.id, other.id);
       expect(crossBody).toBe('The [[Empire]] from another world.');
+    });
+  });
+
+  // ─────────────────────────────────────────────────────────────────────────
+  // coverImageId cross-universe ownership validation (write-time gate).
+  //
+  // The FK on entries.cover_image_id only requires the asset to exist SOMEWHERE.
+  // Without an explicit check, POST/PATCH happily persist a coverImageId owned by
+  // a DIFFERENT universe — an invalid row that later mints a signed URL pointing
+  // at an asset the entry's universe does not own. Mirrors the categoryId gate.
+  // ─────────────────────────────────────────────────────────────────────────
+  describe('coverImageId must belong to the entry\'s universe', () => {
+    /** Insert an asset row directly (upload pipeline is out of scope here). */
+    async function seedAsset(universeId: string, filename = 'cover.png') {
+      const [row] = await handle.db
+        .insert(assets)
+        .values({
+          universeId,
+          filename,
+          mimeType: 'image/png',
+          extension: 'png',
+          sizeBytes: 1024,
+          thumbSizeBytes: 256,
+        })
+        .returning();
+      return row!;
+    }
+
+    it('POST rejects a coverImageId from a DIFFERENT universe (400)', async () => {
+      const { hdrs } = await userWithToken('cover-post-foreign@test.com');
+      const univA = await createUniverse(hdrs, 'CoverA');
+      const univB = await createUniverse(hdrs, 'CoverB');
+      const foreignAsset = await seedAsset(univA.id);
+
+      const res = await req('POST', `/api/universes/${univB.id}/entries`, {
+        headers: hdrs,
+        body: { title: 'Foreign Cover', entryType: 'concept', coverImageId: foreignAsset.id },
+      });
+
+      expect(res.status).toBe(400);
+      const body = await json(res);
+      expect(body.error).toMatch(/cover image/i);
+    });
+
+    it('PATCH rejects a coverImageId from a DIFFERENT universe (400)', async () => {
+      const { hdrs } = await userWithToken('cover-patch-foreign@test.com');
+      const univA = await createUniverse(hdrs, 'CoverA');
+      const univB = await createUniverse(hdrs, 'CoverB');
+      const foreignAsset = await seedAsset(univA.id);
+
+      const createRes = await req('POST', `/api/universes/${univB.id}/entries`, {
+        headers: hdrs,
+        body: { title: 'Target', entryType: 'concept' },
+      });
+      const entry = await json(createRes);
+
+      const res = await req('PATCH', `/api/universes/${univB.id}/entries/${entry.id}`, {
+        headers: hdrs,
+        body: { coverImageId: foreignAsset.id },
+      });
+
+      expect(res.status).toBe(400);
+      const body = await json(res);
+      expect(body.error).toMatch(/cover image/i);
+    });
+
+    it('POST accepts a coverImageId from the SAME universe (regression guard)', async () => {
+      const { hdrs } = await userWithToken('cover-post-same@test.com');
+      const universe = await createUniverse(hdrs, 'CoverSame');
+      const ownAsset = await seedAsset(universe.id);
+
+      const res = await req('POST', `/api/universes/${universe.id}/entries`, {
+        headers: hdrs,
+        body: { title: 'Own Cover', entryType: 'concept', coverImageId: ownAsset.id },
+      });
+
+      expect(res.status).toBe(201);
+      const body = await json(res);
+      expect(body.coverImageId).toBe(ownAsset.id);
+    });
+
+    it('PATCH accepts a coverImageId from the SAME universe (regression guard)', async () => {
+      const { hdrs } = await userWithToken('cover-patch-same@test.com');
+      const universe = await createUniverse(hdrs, 'CoverSame');
+      const ownAsset = await seedAsset(universe.id);
+
+      const createRes = await req('POST', `/api/universes/${universe.id}/entries`, {
+        headers: hdrs,
+        body: { title: 'Target', entryType: 'concept' },
+      });
+      const entry = await json(createRes);
+
+      const res = await req('PATCH', `/api/universes/${universe.id}/entries/${entry.id}`, {
+        headers: hdrs,
+        body: { coverImageId: ownAsset.id },
+      });
+
+      expect(res.status).toBe(200);
+      const body = await json(res);
+      expect(body.coverImageId).toBe(ownAsset.id);
+    });
+
+    it('PATCH with coverImageId: null clears the cover (must stay allowed)', async () => {
+      const { hdrs } = await userWithToken('cover-patch-null@test.com');
+      const universe = await createUniverse(hdrs, 'CoverClear');
+      const ownAsset = await seedAsset(universe.id);
+
+      const createRes = await req('POST', `/api/universes/${universe.id}/entries`, {
+        headers: hdrs,
+        body: { title: 'Target', entryType: 'concept', coverImageId: ownAsset.id },
+      });
+      const entry = await json(createRes);
+
+      const res = await req('PATCH', `/api/universes/${universe.id}/entries/${entry.id}`, {
+        headers: hdrs,
+        body: { coverImageId: null },
+      });
+
+      expect(res.status).toBe(200);
+      const body = await json(res);
+      expect(body.coverImageId).toBeNull();
+    });
+
+    it('PATCH that omits coverImageId leaves the existing cover untouched', async () => {
+      const { hdrs } = await userWithToken('cover-patch-omit@test.com');
+      const universe = await createUniverse(hdrs, 'CoverOmit');
+      const ownAsset = await seedAsset(universe.id);
+
+      const createRes = await req('POST', `/api/universes/${universe.id}/entries`, {
+        headers: hdrs,
+        body: { title: 'Target', entryType: 'concept', coverImageId: ownAsset.id },
+      });
+      const entry = await json(createRes);
+
+      const res = await req('PATCH', `/api/universes/${universe.id}/entries/${entry.id}`, {
+        headers: hdrs,
+        body: { title: 'Renamed' },
+      });
+
+      expect(res.status).toBe(200);
+      const body = await json(res);
+      expect(body.title).toBe('Renamed');
+      expect(body.coverImageId).toBe(ownAsset.id);
     });
   });
 });
