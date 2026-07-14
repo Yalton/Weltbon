@@ -35,6 +35,7 @@ import {
   type TestDbHandle,
 } from './helpers.js';
 import { universes, entries, links, categories } from '../src/db/schema.js';
+import { CHUNK_SIZE, MAX_CHUNKS_PER_TABLE } from '../src/services/ingest-commit.js';
 
 // ─── Test scaffolding ──────────────────────────────────────────────────────
 
@@ -551,10 +552,21 @@ describe('POST /api/universes/:uid/ingest/commit (Phase 12-01)', () => {
     const { userId, jwt } = await createUserAndJwt('size-01@commit.test');
     const u = await createUniverse(userId);
 
-    // Build > CHUNK_SIZE * MAX_CHUNKS_PER_TABLE * 3 entries (50_000+) — body is
-    // tiny per row so JSON encode is not the bottleneck. Each entry has
-    // a unique title and path to dodge in-batch collision pre-check.
-    const N = 50_001;
+    // The cap is on ROWS, not entries:
+    //   cap            = CHUNK_SIZE * MAX_CHUNKS_PER_TABLE * 3   (= 150_000)
+    //   totalRowsBound = accepted.length          (entries table)
+    //                  + accepted.length          (categories upper bound)
+    //                  + acceptedLinkCount        (links table; 0 here)
+    // so each link-free entry contributes TWO rows. The original fixture used
+    // N = 50_001 on the assumption that the cap was 50_000 ENTRIES; that only
+    // bounds to 100_002 rows, comfortably UNDER the 150_000-row cap, so the
+    // service correctly returned 200 and the test read it as a missing cap.
+    // Derive N from the exported constants so this can never drift again.
+    //
+    // Body is tiny per row so JSON encode is not the bottleneck. Each entry has
+    // a unique title and path to dodge the in-batch collision pre-check.
+    const cap = CHUNK_SIZE * MAX_CHUNKS_PER_TABLE * 3;
+    const N = Math.floor(cap / 2) + 1; // 2 rows per link-free entry -> 2N > cap
     const ents: ReturnType<typeof makeEntry>[] = [];
     for (let i = 0; i < N; i++) {
       ents.push(
