@@ -219,7 +219,9 @@ export async function commitIngest(
     }
   }
 
-  // 8. Compute size cap. Defense-in-depth — body parser is the OS guard.
+  // 8. Compute the LOGICAL row cap. This is defense-in-depth, NOT an OOM guard:
+  //    it runs after the whole body is already parsed into memory. The pre-parse
+  //    raw-body OOM guard is the commit route's bodyLimit (INGEST_MAX_BODY_BYTES).
   const acceptedLinkCount = accepted.reduce(
     (sum, e) => sum + e.linksOut.filter((l) => l.resolved).length,
     0,

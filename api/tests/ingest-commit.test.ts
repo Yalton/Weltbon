@@ -582,6 +582,43 @@ describe('POST /api/universes/:uid/ingest/commit (Phase 12-01)', () => {
     expect(String(res.body.error)).toMatch(/commit_size/);
   });
 
+  // T-SIZE-02: the raw-body bodyLimit rejects an oversize body via Content-Length
+  // BEFORE it is buffered/parsed into memory — the real pre-parse OOM guard the
+  // commit_size row cap (which runs post-parse) is not. Shrink
+  // INGEST_MAX_BODY_BYTES so we don't allocate 150 MB; send an explicit
+  // Content-Length (as a real HTTP client does) so bodyLimit takes its early
+  // 413 path rather than the streaming path.
+  it('T-SIZE-02: returns 413 when the raw body exceeds INGEST_MAX_BODY_BYTES (pre-parse)', async () => {
+    const { userId, jwt } = await createUserAndJwt('size-02@commit.test');
+    const u = await createUniverse(userId);
+
+    const original = process.env.INGEST_MAX_BODY_BYTES;
+    process.env.INGEST_MAX_BODY_BYTES = '100'; // 100 bytes — any real commit body exceeds it
+    try {
+      // Body content is irrelevant: bodyLimit rejects on Content-Length before
+      // the handler ever parses it.
+      const bodyStr = JSON.stringify(
+        makeBody([makeEntry({ title: 'Big', path: 'entries/Big.md', entryType: 'concept' })]),
+      );
+      expect(bodyStr.length).toBeGreaterThan(100);
+      const req = new Request(`http://localhost/api/universes/${u.id}/ingest/commit`, {
+        method: 'POST',
+        headers: {
+          'Content-Type': 'application/json',
+          'Content-Length': String(bodyStr.length),
+          Authorization: `Bearer ${jwt}`,
+        },
+        body: bodyStr,
+      });
+      const res = await app.fetch(req);
+      expect(res.status).toBe(413);
+      expect(String((await res.json()).error)).toMatch(/too large/i);
+    } finally {
+      if (original === undefined) delete process.env.INGEST_MAX_BODY_BYTES;
+      else process.env.INGEST_MAX_BODY_BYTES = original;
+    }
+  });
+
   // ─── OpenAPI doc presence (T-OPENAPI-01) ────────────────────────────────
 
   it('T-OPENAPI-01: GET /api/openapi.json includes /universes/{uid}/ingest/commit with bearerAuth and full response set', async () => {
