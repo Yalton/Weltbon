@@ -1,5 +1,5 @@
 import { describe, it, expect, beforeAll, afterAll } from 'vitest';
-import { mkdirSync, writeFileSync, rmSync } from 'node:fs';
+import { mkdirSync, writeFileSync, rmSync, existsSync } from 'node:fs';
 import { resolve } from 'node:path';
 import { createTestDb, type TestDbHandle } from './helpers.js';
 
@@ -9,8 +9,13 @@ describe('createApp() route mounts (CONT-01 /api prefix + SPA fallback)', () => 
   let app: any;
 
   const originalNodeEnv = process.env.NODE_ENV;
-  const originalWebDistDir = process.env.WEB_DIST_DIR;
-  const stubDir = resolve(process.cwd(), '.test-web-dist');
+  // index.ts serves the SPA from a hard-coded `./web-dist` (relative to cwd) —
+  // there is no WEB_DIST_DIR override in the product, so the static/SPA tests
+  // must stub the real path. We only create + remove it when it is absent
+  // (the case in CI and local source checkouts, where web-dist is a Docker-only
+  // build artifact) so we never clobber a real build a developer may have.
+  const distDir = resolve(process.cwd(), 'web-dist');
+  let createdDist = false;
 
   beforeAll(async () => {
     handle = await createTestDb();
@@ -18,20 +23,21 @@ describe('createApp() route mounts (CONT-01 /api prefix + SPA fallback)', () => 
     // eslint-disable-next-line @typescript-eslint/no-explicit-any
     setTestDb(handle.db as any, handle.pool);
 
-    // Stub web-dist for SPA-fallback test BEFORE createApp() reads env.
-    mkdirSync(stubDir, { recursive: true });
-    mkdirSync(resolve(stubDir, 'assets'), { recursive: true });
-    writeFileSync(
-      resolve(stubDir, 'index.html'),
-      '<!doctype html><html><body>Stub SPA</body></html>'
-    );
-    writeFileSync(
-      resolve(stubDir, 'assets', 'app.abc123.js'),
-      'console.log("hashed bundle stub");'
-    );
+    // Stub web-dist for the SPA-fallback + static-serve tests BEFORE createApp().
+    if (!existsSync(distDir)) {
+      mkdirSync(resolve(distDir, 'assets'), { recursive: true });
+      writeFileSync(
+        resolve(distDir, 'index.html'),
+        '<!doctype html><html><body>Stub SPA</body></html>'
+      );
+      writeFileSync(
+        resolve(distDir, 'assets', 'app.abc123.js'),
+        'console.log("hashed bundle stub");'
+      );
+      createdDist = true;
+    }
 
     process.env.NODE_ENV = 'production';
-    process.env.WEB_DIST_DIR = stubDir;
 
     const indexModule = await import('../src/index.js');
     app = indexModule.createApp();
@@ -40,16 +46,14 @@ describe('createApp() route mounts (CONT-01 /api prefix + SPA fallback)', () => 
   afterAll(async () => {
     if (originalNodeEnv === undefined) delete process.env.NODE_ENV;
     else process.env.NODE_ENV = originalNodeEnv;
-    if (originalWebDistDir === undefined) delete process.env.WEB_DIST_DIR;
-    else process.env.WEB_DIST_DIR = originalWebDistDir;
-    rmSync(stubDir, { recursive: true, force: true });
+    if (createdDist) rmSync(distDir, { recursive: true, force: true });
     await handle.cleanup();
   });
 
-  it('GET /api/health → 200 {ok:true} (confirms /api prefix mount)', async () => {
-    const res = await app.fetch(new Request('http://t/api/health'));
+  it('GET /api/openapi.json → 200 (confirms the /api prefix mount is reachable)', async () => {
+    const res = await app.fetch(new Request('http://t/api/openapi.json'));
     expect(res.status).toBe(200);
-    expect(await res.json()).toEqual({ ok: true });
+    expect((await res.json()).openapi).toBe('3.0.0');
   });
 
   it('GET /health → 200 {ok:true} (legacy un-prefixed preserved for HEALTHCHECK)', async () => {
