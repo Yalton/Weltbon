@@ -3,7 +3,7 @@ import { createApp } from '../src/index.js';
 import { createTestDb, cleanDb, createTestUser, authHeader, type TestDbHandle } from './helpers.js';
 import { issueAccessToken } from '../src/services/auth.js';
 import { setTestDb } from '../src/db/client.js';
-import { exportUniverseJson } from '../src/services/export/json.js';
+import { loadUniverseExportPayload } from '../src/services/export/payload.js';
 import { importUniverseJson } from '../src/services/import-json.js';
 
 /**
@@ -126,15 +126,19 @@ describe('Timeline window (Phase 20 D-01)', () => {
       body: { timelineWindow: { start: -50000, end: 2050 } },
     });
 
-    // Export via the service directly to avoid pulling in the full /export route surface.
-    const exported = await exportUniverseJson(universe.id);
+    // Load the raw export payload directly (D-07: exportUniverseJson now emits a
+    // ZIP stream, so we go one seam lower to the in-memory payload) to avoid
+    // pulling in the full /export route surface.
+    const exported = await loadUniverseExportPayload(universe.id);
     expect(exported.universe.timelineWindow).toEqual({ start: -50000, end: 2050 });
 
     // Import as the SAME user (universe-name uniqueness isn't enforced at the
     // schema level, so this is safe). Use a slightly different name to make
-    // the assertion target unambiguous.
+    // the assertion target unambiguous. The payload carries no weltbon_version
+    // (that key lives in the ZIP manifest), so supply it for importSchema.
     const importedSummary = await importUniverseJson(user.id, {
       ...exported,
+      weltbon_version: '2.0.0',
       universe: { ...exported.universe, name: 'ImportedWorld' },
     });
 
