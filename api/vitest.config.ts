@@ -101,6 +101,13 @@ export default defineConfig({
     environment: 'node',
     setupFiles: ['./tests/setup.ts'],
     testTimeout: 10_000,
+    // Hooks default to the same 10s as testTimeout. The DB-gated beforeAll/afterAll
+    // (createTestDb spins up a per-file schema) run 10/10 in isolation but tip over
+    // 10s under CPU contention on a loaded CI runner — cors.test.ts and
+    // spa-fallback.test.ts then fail as "Hook timed out in 10000ms": 2 failed FILES,
+    // 0 failed tests, exit 1. That is the exact phantom-red shape that hid the CI
+    // breakage for months, so give hooks a wider ceiling than the per-test one.
+    hookTimeout: 30_000,
     projects: [
       {
         extends: true,
