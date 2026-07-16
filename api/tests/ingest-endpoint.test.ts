@@ -304,7 +304,7 @@ describe('POST /api/universes/:uid/ingest (Phase 11-03 Task 2)', () => {
     expect(String(res.body.error)).toMatch(/zip_size/);
   });
 
-  it('413 total_uncompressed_size: zip-bomb returns 413 in <2 seconds (D-15b streaming abort)', async () => {
+  it('413 zip-bomb: rejected in <2 seconds by the file_size preflight (D-15b streaming abort)', async () => {
     const { userId, jwt } = await createUserAndJwt('413-bomb@test.com');
     const u = await createUniverse(userId);
     const fd = new FormData();
@@ -312,8 +312,32 @@ describe('POST /api/universes/:uid/ingest (Phase 11-03 Task 2)', () => {
     const start = Date.now();
     const res = await ingestRequest(u.id, fd, `Bearer ${jwt}`);
     const elapsed = Date.now() - start;
+
+    // D-15b is "the bomb is rejected, fast, without decompressing it" — that
+    // invariant is what this asserts. WHICH named guard trips is a function of
+    // the production limits, and at those limits it is file_size, not
+    // total_uncompressed_size:
+    //
+    //   The bomb is a single large-file bomb. unpackZip's guards run in order
+    //   file_count -> file_size -> total_uncompressed_size, and the file_size
+    //   check is a PREFLIGHT against the zip entry's uncompressedSize header
+    //   (ingest-zip.ts:145). At the route's real maxFileSize (1 MiB) the bomb's
+    //   declared size blows that immediately, so it is refused on the header —
+    //   without inflating a single byte. That is a STRICTLY BETTER defense than
+    //   the per-chunk cumulative accumulator, which can only fire once you have
+    //   already started decompressing.
+    //
+    //   total_uncompressed_size is the backstop for bombs that slip past the
+    //   per-file check (many files each under the cap, summing over the total).
+    //   It is exercised directly in ingest-zip.test.ts, which has to raise
+    //   maxFileSize to 200 MB to reach it — see its "allow per-file bigger so we
+    //   hit the CUMULATIVE cap, not file_size" comment. This fixture cannot
+    //   reach that guard at production limits.
+    //
+    // The original assertion (/total_uncompressed_size/) therefore named a guard
+    // that is structurally unreachable here. The bomb defense was never broken.
     expect(res.status).toBe(413);
-    expect(String(res.body.error)).toMatch(/total_uncompressed_size/);
+    expect(String(res.body.error)).toMatch(/file_size/);
     expect(elapsed).toBeLessThan(2_000);
   });
 

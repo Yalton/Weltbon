@@ -28,6 +28,8 @@
 
 import path from 'node:path';
 import { OpenAPIHono, createRoute, z } from '@hono/zod-openapi';
+import { bodyLimit } from 'hono/body-limit';
+import type { MiddlewareHandler } from 'hono';
 import { eq } from 'drizzle-orm';
 import { ZodError } from 'zod';
 import { db } from '../db/client.js';
@@ -227,9 +229,35 @@ const commitResultDocSchema = z.object({
   categoriesCreated: z.number().int().nonnegative(),
 });
 
+// Raw-body cap for the /commit JSON endpoint (T-… OOM defense). Unlike the
+// commit_size cap — which is a LOGICAL row cap (CHUNK_SIZE × MAX_CHUNKS_PER_TABLE
+// × 3 = 150_000 rows) enforced only AFTER Hono has parsed the whole JSON body into
+// memory — this bodyLimit rejects an oversize body BEFORE it is buffered, so it is
+// the actual pre-parse OOM guard the commit_size cap is not.
+//
+// Default 150 MB: the ingest PREVIEW path already accepts up to 100 MB of
+// uncompressed markdown, and that content re-serialised to a commit JSON body
+// (structural + escaping overhead) lands near it — 150 MB guarantees any batch
+// that legitimately passed preview can also commit. Operators tune it via
+// INGEST_MAX_BODY_BYTES (mirrors assets' MEDIA_MAX_FILE_BYTES), read lazily so a
+// late override is honored. Number()+isFinite guard so a malformed env var
+// (e.g. "150mb") falls back to the default rather than disabling the cap.
+const DEFAULT_MAX_COMMIT_BODY_BYTES = 150 * 1024 * 1024;
+function maxCommitBodyBytes(): number {
+  const n = Number(process.env.INGEST_MAX_BODY_BYTES);
+  return Number.isFinite(n) && n > 0 ? n : DEFAULT_MAX_COMMIT_BODY_BYTES;
+}
+const commitBodyLimit: MiddlewareHandler = (c, next) =>
+  bodyLimit({
+    maxSize: maxCommitBodyBytes(),
+    // 413 matches the existing commit_size 413 so the client needs no new branch.
+    onError: (ctx) => ctx.json({ error: 'Commit body too large' }, 413),
+  })(c, next);
+
 const commitRoute = createRoute({
   method: 'post',
   path: '/commit',
+  middleware: [commitBodyLimit] as const,
   tags: ['Ingest'],
   summary: 'Commit a reviewed markdown batch (atomic transaction)',
   description:
@@ -276,7 +304,7 @@ const commitRoute = createRoute({
     413: {
       content: { 'application/json': { schema: errorSchema } },
       description:
-        'Batch size exceeds the commit_size cap. Split the batch and retry.',
+        'Raw body exceeds INGEST_MAX_BODY_BYTES, or the batch exceeds the commit_size row cap. Split the batch and retry.',
     },
     500: {
       content: { 'application/json': { schema: errorSchema } },

@@ -179,26 +179,36 @@ export async function estimateAudit(input: EstimateInput): Promise<AuditEstimate
   // tokenize to a different number; the estimator documents this in the
   // dialog as a range, never a point estimate.
   // -------------------------------------------------------------------------
-  let basePromptTokens = 0;
-  try {
-    basePromptTokens = await getProvider(input.provider as LlmProvider).estimate({
-      apiKey: input.apiKey,
-      messages: [
-        // T-26-02-01: apiKey is the only sensitive value in this call — it
-        // travels into the provider's local tokenizer, never to the network.
-        {
-          role: 'user',
-          content:
-            'Audit estimate placeholder — full structural digest not materialized for the cost-range UI.',
-        },
-      ],
-      model: input.model,
-    });
-  } catch {
-    // T-24-04-09 / T-26-02-01: never log raw provider error text; fall through
-    // with basePromptTokens=0 (the UI shows a degenerate but non-fatal range).
-    basePromptTokens = 0;
-  }
+  // Provider failure PROPAGATES — it is deliberately NOT swallowed here. Each
+  // caller owns its own failure policy, and both have already chosen one:
+  //
+  //   - GET /audits/estimate (routes/audits.ts) catches and returns 502 with
+  //     generic copy — the T-26-08-02 invariant. The user is told we could not
+  //     reach their provider BEFORE they commit to a billed run, rather than
+  //     being shown a confident-looking cost range built on a silent failure.
+  //   - POST /audits (trigger) catches and degrades to a {0,0} placeholder —
+  //     "estimate failure must NOT block the run".
+  //
+  // Swallowing here would rob both callers of that choice: it made the estimate
+  // route's 502 branch dead code (it could never observe a provider error), and
+  // it was redundant for the trigger route, which catches regardless.
+  //
+  // T-24-04-09 / T-26-02-01 (never leak raw provider error text) is preserved by
+  // the callers: both discard the error object and emit only generic copy — the
+  // provider's message and stack never reach the client or a log sink.
+  const basePromptTokens = await getProvider(input.provider as LlmProvider).estimate({
+    apiKey: input.apiKey,
+    messages: [
+      // T-26-02-01: apiKey is the only sensitive value in this call — it
+      // travels into the provider's tokenizer surface, never into a log.
+      {
+        role: 'user',
+        content:
+          'Audit estimate placeholder — full structural digest not materialized for the cost-range UI.',
+      },
+    ],
+    model: input.model,
+  });
 
   // -------------------------------------------------------------------------
   // Step 4: LLMUI-04 formula

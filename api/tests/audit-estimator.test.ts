@@ -359,4 +359,36 @@ describe('estimateAudit (Phase 26-02 Task 1, LLMUI-04 formula)', () => {
       errorSpy.mockRestore();
     }
   });
+
+  // =========================================================================
+  // Test 10 (REGRESSION): provider.estimate() failure PROPAGATES.
+  //
+  // The estimator used to wrap the getProvider().estimate() call in a
+  // `catch { basePromptTokens = 0 }`. That swallow made the GET
+  // /audits/estimate route's 502 branch (T-26-08-02) DEAD CODE — the route
+  // could never observe a provider error, so a user whose API key was
+  // invalid or whose provider was unreachable was shown a confident-looking
+  // cost range instead of an error, then billed for a run that failed.
+  //
+  // Each caller owns its own failure policy and both have already chosen one
+  // (estimate route -> 502; trigger route -> best-effort {0,0} placeholder),
+  // so the service must NOT decide for them. If someone reintroduces the
+  // swallow, this test fails.
+  // =========================================================================
+  it('REGRESSION: propagates provider.estimate() failure instead of swallowing it to 0', async () => {
+    const tracker: DbCallTracker = { updateCalls: 0, insertCalls: 0, deleteCalls: 0 };
+    mockEstimate.mockRejectedValueOnce(new Error('Anthropic 401 invalid x-api-key'));
+
+    await expect(
+      estimateAudit({
+        universeId: UNIVERSE_ID,
+        scope: 'universe',
+        provider: 'anthropic',
+        model: 'claude-haiku-4-5-20251001',
+        apiKey: API_KEY,
+        userId: USER_ID,
+        _db: makeDbStub({ entryCount: 47, tracker }) as unknown as typeof import('../src/db/client.js').db,
+      }),
+    ).rejects.toThrow(/invalid x-api-key/);
+  });
 });

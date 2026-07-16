@@ -111,7 +111,7 @@ describe('GET /api/universes/:uid/audits/estimate (Phase 26 Plan 08 Task 1)', ()
     uid: string,
     hdrs: Record<string, string>,
     provider: 'anthropic' | 'openai' = 'anthropic',
-    model = 'claude-haiku-4-5',
+    model = 'claude-haiku-4-5-20251001',
   ) {
     const res = await req('PATCH', `/api/universes/${uid}`, {
       headers: hdrs,
@@ -159,7 +159,7 @@ describe('GET /api/universes/:uid/audits/estimate (Phase 26 Plan 08 Task 1)', ()
         minOutputTokens: expect.any(Number),
         scopeEntryCount: expect.any(Number),
       },
-      model: { provider: 'anthropic', name: 'claude-haiku-4-5' },
+      model: { provider: 'anthropic', name: 'claude-haiku-4-5-20251001' },
     });
     expect(body.lower).toBeLessThan(body.upper);
     expect(body.lower).toBeGreaterThan(0);
