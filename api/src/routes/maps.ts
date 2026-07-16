@@ -131,6 +131,11 @@ const createRegionSchema = z.object({
   color: z.string().nullable().optional(),
   // Phase 43: terrain discriminator (T-43-01: UUID shape validated; FK constraint handles referential integrity)
   terrainTypeId: z.string().uuid().nullable().optional(),
+}).refine((data) => !(data.entryId && data.terrainTypeId), {
+  // CR-01: entryId XOR terrainTypeId — a terrain area carries no entry link. Share
+  // terrain-area queries don't privacy-gate on entries.isPublic, so a both-set region
+  // would expose a private entry's UUID to share visitors.
+  message: 'A region may link an entry or a terrain type, not both',
 });
 
 const updateRegionSchema = z.object({
@@ -152,7 +157,11 @@ const updateRegionSchema = z.object({
     data.secret !== undefined ||
     data.targetMapId !== undefined,
   { message: 'At least one field must be provided' },
-);
+).refine((data) => !(data.entryId && data.terrainTypeId), {
+  // CR-01: entryId XOR terrainTypeId (see createRegionSchema). The cross-request
+  // combination is caught in the PATCH handler against the stored row.
+  message: 'A region may link an entry or a terrain type, not both',
+});
 
 // Phase 51 ROUTE-01: Route Zod schemas (mirror region schemas; drop terrainTypeId; add lineStyle/width/showArrow)
 const routeSchema = z.object({
@@ -954,6 +963,25 @@ export const mapsRouter = new OpenAPIHono<AppEnv>()
         .where(and(eq(terrainTypes.id, data.terrainTypeId), eq(mapLayers.universeId, uid)));
       if (typeRows.length === 0) {
         return c.json({ error: 'Terrain type not found in this universe' }, 404);
+      }
+    }
+
+    // CR-01: entryId XOR terrainTypeId must also hold across requests — the schema
+    // refine only sees one PATCH body, so setting terrainTypeId on an entry-linked
+    // region (or entryId on a terrain area) has to be checked against the stored row.
+    if (data.entryId || data.terrainTypeId) {
+      const [existing] = await db()
+        .select({ entryId: mapRegions.entryId, terrainTypeId: mapRegions.terrainTypeId })
+        .from(mapRegions)
+        .where(and(eq(mapRegions.id, regionId), eq(mapRegions.mapId, mid)));
+      if (!existing) {
+        return c.json({ error: 'Region not found' }, 404);
+      }
+      const effectiveEntryId = 'entryId' in data ? (data.entryId ?? null) : existing.entryId;
+      const effectiveTerrainTypeId =
+        'terrainTypeId' in data ? (data.terrainTypeId ?? null) : existing.terrainTypeId;
+      if (effectiveEntryId && effectiveTerrainTypeId) {
+        return c.json({ error: 'A region may link an entry or a terrain type, not both' }, 400);
       }
     }
 

@@ -580,8 +580,19 @@ export async function getPublicMapLayers(universeId: string) {
   }
 
   const layerIds = layerRows.map((l) => l.id);
+  // Explicit projection — a bare .select() auto-widens the share response when a
+  // column lands on terrain_types (zod response schemas are docs/typing only, not a
+  // runtime strip; see getPublicEntryById header comment).
   const typeRows = await getDb()
-    .select()
+    .select({
+      id: terrainTypes.id,
+      layerId: terrainTypes.layerId,
+      name: terrainTypes.name,
+      color: terrainTypes.color,
+      label: terrainTypes.label,
+      sortOrder: terrainTypes.sortOrder,
+      createdAt: terrainTypes.createdAt,
+    })
     .from(terrainTypes)
     .where(inArray(terrainTypes.layerId, layerIds))
     .orderBy(terrainTypes.sortOrder);
@@ -608,8 +619,17 @@ export async function getPublicMapLayers(universeId: string) {
 // Image URLs use signShareAssetUrl (same pattern as getPublicEntryById coverImageUrl).
 //
 export async function getPublicMaps(universeId: string) {
+  // Explicit projection — a bare .select() auto-widens the share response when a
+  // column lands on maps (zod response schemas are docs/typing only, not a runtime strip).
   const rows = await getDb()
-    .select()
+    .select({
+      id: maps.id,
+      universeId: maps.universeId,
+      name: maps.name,
+      imageAssetId: maps.imageAssetId,
+      createdAt: maps.createdAt,
+      legendLabels: maps.legendLabels,
+    })
     .from(maps)
     .where(eq(maps.universeId, universeId));
 
@@ -639,8 +659,16 @@ export async function getPublicMaps(universeId: string) {
 //
 export async function getPublicMap(universeId: string, mapId: string) {
   // Verify the map belongs to this universe (D-03: no uid in URL; universeId from token)
+  // Explicit projection — same rationale as getPublicMaps above.
   const [map] = await getDb()
-    .select()
+    .select({
+      id: maps.id,
+      universeId: maps.universeId,
+      name: maps.name,
+      imageAssetId: maps.imageAssetId,
+      createdAt: maps.createdAt,
+      legendLabels: maps.legendLabels,
+    })
     .from(maps)
     .where(and(eq(maps.id, mapId), eq(maps.universeId, universeId)))
     .limit(1);
@@ -707,7 +735,9 @@ export async function getPublicMap(universeId: string, mapId: string) {
   //   - standalone (entryId null): always included (D-11).
   //
   // Terrain areas (terrainTypeId IS NOT NULL):
-  //   - always public (D-11 / D-44-05: no per-area privacy gate; entryId=null).
+  //   - no per-area privacy gate (D-11 / D-44-05) BECAUSE entryId must be null —
+  //     enforced below by isNull(entryId) (CR-01). A hand-crafted row carrying both
+  //     terrainTypeId and a private entryId is dropped rather than leaking the UUID.
   //   - enriched with terrainTypeColor / layerId / layerSortOrder via JOIN.
   //
   const [linkedRegions, standaloneRegions, terrainAreas] = await Promise.all([
@@ -788,6 +818,10 @@ export async function getPublicMap(universeId: string, mapId: string) {
         and(
           eq(mapRegions.mapId, mapId),
           isNotNull(mapRegions.terrainTypeId),
+          // CR-01: terrain areas carry no entry link — without this guard a row with
+          // both terrainTypeId and a private entryId would ship that entry's UUID to
+          // share visitors (this branch has no entries.isPublic join).
+          isNull(mapRegions.entryId),
           eq(mapLayers.universeId, universeId),
           eq(mapRegions.secret, false),
           eq(mapLayers.secret, false),

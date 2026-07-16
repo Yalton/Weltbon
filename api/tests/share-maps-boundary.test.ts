@@ -664,6 +664,35 @@ describe('D-44-03 / D-44-04: terrain area discrimination + map-layers bare array
     // Each layer carries a nested terrainTypes array (bare-array-of-layers-with-nested-types)
     expect(Array.isArray(res.body[0].terrainTypes)).toBe(true);
   });
+
+  it('CR-01: a region carrying BOTH terrainTypeId and a private entryId never reaches share callers', async () => {
+    // The API now rejects both-set writes (entryId XOR terrainTypeId), but a row
+    // can predate the gate or arrive via raw import. The terrain-areas branch of
+    // getPublicMap has no entries.isPublic join, so without its isNull(entryId)
+    // guard this row would ship the private entry's UUID to any share visitor.
+    const mid = await seedMap();
+    const layerId = await seedLayer('Biomes');
+    const typeId = await seedTerrainType(layerId, 'Forest', '#228b22');
+    const privateEntryId = await seedEntry({ isPublic: false, title: 'Secret Place' });
+
+    // Hand-crafted both-set row, inserted directly (bypasses the write-time gate)
+    await seedRegion(mid, privateEntryId, 'Leaky Area', typeId);
+    // Control: a clean terrain area that must still render
+    await seedRegion(mid, null, 'Clean Area', typeId);
+
+    const res = await appRequest('GET', `/api/share/maps/${mid}`, {
+      headers: { 'share-token': activeTokenPlaintext },
+    });
+
+    expect(res.status).toBe(200);
+    // The both-set row is dropped from terrainAreas (isNull(entryId) guard) …
+    expect(res.body.terrainAreas.length).toBe(1);
+    expect(res.body.terrainAreas[0].name).toBe('Clean Area');
+    // … and it must not fall through to regions either (it has terrainTypeId set)
+    expect(res.body.regions.length).toBe(0);
+    // The private entry UUID appears nowhere in the whole payload
+    expect(JSON.stringify(res.body)).not.toContain(privateEntryId);
+  });
 });
 
 async function seedRoute(

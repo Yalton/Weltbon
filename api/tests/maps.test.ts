@@ -622,6 +622,92 @@ describe('map routes (MAPS-04/05 regions + pin style)', () => {
     expect(updated.name).toBe('Renamed');
   });
 
+  // ─── CR-01: entryId XOR terrainTypeId mutual exclusion ─────────────────────
+  // A both-set region would ship a (possibly private) entry UUID through the
+  // share terrain-areas branch, which has no entries.isPublic join.
+
+  it('POST /regions with BOTH entryId and terrainTypeId returns 400 (CR-01)', async () => {
+    const { hdrs, uid, mid } = await seedMap();
+    const entryId = await createEntry(uid, hdrs);
+    const { terrainTypeId } = await createTerrainType(uid, hdrs);
+    const points = JSON.stringify([{ x: 0.1, y: 0.1 }, { x: 0.5, y: 0.1 }, { x: 0.5, y: 0.5 }]);
+
+    const res = await req('POST', `/api/universes/${uid}/maps/${mid}/regions`, {
+      headers: hdrs,
+      body: { name: 'Both', points, entryId, terrainTypeId },
+    });
+
+    expect(res.status).toBe(400);
+  });
+
+  it('PATCH setting terrainTypeId on an entry-linked region returns 400 (CR-01 cross-request)', async () => {
+    const { hdrs, uid, mid } = await seedMap();
+    const entryId = await createEntry(uid, hdrs);
+    const { terrainTypeId } = await createTerrainType(uid, hdrs);
+    const points = JSON.stringify([{ x: 0.1, y: 0.1 }, { x: 0.5, y: 0.1 }, { x: 0.5, y: 0.5 }]);
+
+    const createRes = await req('POST', `/api/universes/${uid}/maps/${mid}/regions`, {
+      headers: hdrs,
+      body: { name: 'Linked', points, entryId },
+    });
+    expect(createRes.status).toBe(201);
+    const region = await json(createRes);
+
+    const patchRes = await req('PATCH', `/api/universes/${uid}/maps/${mid}/regions/${region.id}`, {
+      headers: hdrs,
+      body: { terrainTypeId },
+    });
+
+    expect(patchRes.status).toBe(400);
+  });
+
+  it('PATCH setting entryId on a terrain area returns 400 (CR-01 cross-request)', async () => {
+    const { hdrs, uid, mid } = await seedMap();
+    const entryId = await createEntry(uid, hdrs);
+    const { terrainTypeId } = await createTerrainType(uid, hdrs);
+    const points = JSON.stringify([{ x: 0.1, y: 0.1 }, { x: 0.5, y: 0.1 }, { x: 0.5, y: 0.5 }]);
+
+    const createRes = await req('POST', `/api/universes/${uid}/maps/${mid}/regions`, {
+      headers: hdrs,
+      body: { name: '', points, entryId: null, color: null, terrainTypeId },
+    });
+    expect(createRes.status).toBe(201);
+    const region = await json(createRes);
+
+    const patchRes = await req('PATCH', `/api/universes/${uid}/maps/${mid}/regions/${region.id}`, {
+      headers: hdrs,
+      body: { entryId },
+    });
+
+    expect(patchRes.status).toBe(400);
+  });
+
+  it('PATCH swapping entryId→terrainTypeId in ONE request (entryId: null) still works', async () => {
+    // Reclassify must stay possible: clearing the entry link and setting the
+    // terrain type in the same PATCH is legal — only the both-set end state is not.
+    const { hdrs, uid, mid } = await seedMap();
+    const entryId = await createEntry(uid, hdrs);
+    const { terrainTypeId } = await createTerrainType(uid, hdrs);
+    const points = JSON.stringify([{ x: 0.1, y: 0.1 }, { x: 0.5, y: 0.1 }, { x: 0.5, y: 0.5 }]);
+
+    const createRes = await req('POST', `/api/universes/${uid}/maps/${mid}/regions`, {
+      headers: hdrs,
+      body: { name: 'Linked', points, entryId },
+    });
+    expect(createRes.status).toBe(201);
+    const region = await json(createRes);
+
+    const patchRes = await req('PATCH', `/api/universes/${uid}/maps/${mid}/regions/${region.id}`, {
+      headers: hdrs,
+      body: { entryId: null, terrainTypeId },
+    });
+
+    expect(patchRes.status).toBe(200);
+    const updated = await json(patchRes);
+    expect(updated.entryId).toBeNull();
+    expect(updated.terrainTypeId).toBe(terrainTypeId);
+  });
+
   // ─── WR-04: Cross-universe terrainTypeId IDOR regression tests ────────────
 
   it('POST /regions with cross-universe terrainTypeId returns 404', async () => {
