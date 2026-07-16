@@ -17,9 +17,19 @@
  *   - Expiry-enforced: signatures are refused after TTL (default 24 h).
  *   - Scoped: HMAC message binds uid + id + variant — a thumb sig is rejected on the
  *     raw endpoint and vice-versa; a sig for one universe/id pair is rejected for any other.
+ *
+ * Also owns the ownership predicate the URL minters gate on (assetOwners); that DB read
+ * takes a `reader` param so this module never imports db/client — the pure-signing unit
+ * lane stays pool-free.
  */
 
 import { createHmac, timingSafeEqual } from 'node:crypto';
+import { and, eq, inArray } from 'drizzle-orm';
+import type { NodePgDatabase } from 'drizzle-orm/node-postgres';
+import * as schema from '../db/schema.js';
+import { assets } from '../db/schema.js';
+
+type Schema = typeof schema;
 
 /** Return the raw signing secret string (not the Uint8Array used by JWT). */
 function signingSecret(): string {
@@ -150,4 +160,36 @@ export function verifyShareAssetSig(
   } catch {
     return { valid: false, uid: '' };
   }
+}
+
+/**
+ * Batched asset-ownership lookup shared by the LIST resolvers
+ * (entries.ts withCoverThumbUrls, share-views.ts getPublicEntries) and by
+ * share-views.ts getPublicUniverseMeta.
+ *
+ * Returns the subset of `ids` that exist AND belong to `universeId`. Callers gate on it
+ * to decide whether to mint a signed URL: an id that is missing (dangling FK) or owned by
+ * another universe resolves to null, never to a URL. Deliberately NOT a URL builder —
+ * the authed and share paths differ in URL shape and signer, and unifying those would need
+ * a config object nobody wants to read.
+ *
+ * NOTE — not universal: the DETAIL resolvers (share-views.ts getPublicEntryById,
+ * entries.ts detail handler) and the map-image resolvers currently sign cover/image ids
+ * WITHOUT this check, relying on the asset route's own universe gate to 404 them at serve
+ * time. That is a broken-<img>, not a leak — but it is inconsistent with the list path.
+ * Captured in project documentation
+ *
+ * One query for the whole page; an empty `ids` issues no query at all.
+ */
+export async function assetOwners(
+  reader: NodePgDatabase<Schema>,
+  ids: string[],
+  universeId: string,
+): Promise<Set<string>> {
+  if (ids.length === 0) return new Set();
+  const rows = await reader
+    .select({ id: assets.id })
+    .from(assets)
+    .where(and(eq(assets.universeId, universeId), inArray(assets.id, ids)));
+  return new Set(rows.map((r) => r.id));
 }

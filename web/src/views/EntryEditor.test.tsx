@@ -1,5 +1,5 @@
 import { describe, it, expect, beforeEach, vi } from 'vitest';
-import { render, screen, waitFor, fireEvent } from '@testing-library/react';
+import { render, screen, waitFor, fireEvent, within } from '@testing-library/react';
 import userEvent from '@testing-library/user-event';
 import { MemoryRouter, Routes, Route } from 'react-router-dom';
 import { QueryClient, QueryClientProvider } from '@tanstack/react-query';
@@ -723,6 +723,145 @@ function renderEditModeForRename({
     </QueryClientProvider>,
   );
 }
+
+// ---------------------------------------------------------------------------
+// Content-Forward Views §5 (Task 10) — editor hero
+// ---------------------------------------------------------------------------
+
+// Render EntryEditor in edit mode for a fixture entry with caller-supplied
+// overrides (coverImageId / title / icon), following the file's existing
+// renderEditModeForRename pattern. Editor drafts carry coverImageId only (no
+// signed cover URL), so the hero's <img> src is built directly in production
+// code — this fixture mirrors that (no coverImageUrl field).
+function renderEditorForExistingEntry(overrides: Partial<Entry> = {}) {
+  const fixtureEntry: Entry = {
+    ...BASE_ENTRY_FIXTURE,
+    id: 'HERO-ID',
+    title: 'Existing Entry',
+    aliases: [],
+    updatedAt: '2026-01-01T00:00:00Z',
+    ...overrides,
+  };
+
+  vi.mocked(api).mockImplementation(async (path?: string, init?: RequestInit) => {
+    if (!path) return undefined;
+    if (path === '/universes/U1') return { entryTypes: ['character', 'place'] };
+    if (path.startsWith('/universes/U1/categories')) {
+      return { categories: [], uncategorizedCount: 0 };
+    }
+    if (path === '/universes/U1/entries' && !init?.method) {
+      return [fixtureEntry];
+    }
+    if (path === '/universes/U1/entries/HERO-ID' && !init?.method) {
+      return { ...fixtureEntry, outboundLinks: [], backlinks: [], issues: [] };
+    }
+    return undefined;
+  });
+
+  const qc = new QueryClient({
+    defaultOptions: { queries: { retry: false }, mutations: { retry: false } },
+  });
+
+  return render(
+    <QueryClientProvider client={qc}>
+      <MemoryRouter initialEntries={['/universes/U1/entries/HERO-ID/edit']}>
+        <Routes>
+          <Route path="/universes/:uid/entries/:entryId/edit" element={<EntryEditor />} />
+          <Route path="/universes/:uid/entries/:entryId" element={<div>Entry detail</div>} />
+        </Routes>
+      </MemoryRouter>
+    </QueryClientProvider>,
+  );
+}
+
+describe('Content-Forward Views §5 — editor hero', () => {
+  beforeEach(() => {
+    vi.mocked(api).mockReset();
+    document.body.style.removeProperty('pointer-events');
+    document.body.removeAttribute('data-scroll-locked');
+  });
+
+  it('shows a monogram hero for a new entry, reflecting the title as you type', async () => {
+    setupApi({
+      universe: { entryTypes: ['character', 'place'] },
+      categories: [],
+      createResponse: { id: 'new-id' },
+    });
+    const user = userEvent.setup();
+    renderEditor(); // existing helper — new-entry mode
+
+    await user.type(screen.getByLabelText(/title/i), 'Aldric');
+
+    const hero = screen.getByTestId('editor-hero');
+    // The hero previews what the DETAIL page will render — it must track the draft live.
+    expect(within(hero).getByTestId('hero-monogram')).toHaveTextContent('A');
+  });
+
+  it('offers the cover affordance and opens the EXISTING set-cover asset picker', async () => {
+    setupApi({
+      universe: { entryTypes: ['character', 'place'] },
+      categories: [],
+      createResponse: { id: 'new-id' },
+    });
+    const user = userEvent.setup();
+    renderEditor();
+
+    const hero = screen.getByTestId('editor-hero');
+    await user.click(within(hero).getByRole('button', { name: /set cover image/i }));
+
+    // AssetPickerModal is the pre-existing flow — this task only changed the trigger.
+    expect(await screen.findByRole('dialog')).toBeInTheDocument();
+  });
+
+  it('shows the cover in the hero, with Change and Remove, once one is set', async () => {
+    // Editor drafts carry coverImageId only (no signed URL), so the src is built directly.
+    renderEditorForExistingEntry({ coverImageId: 'a1' });
+
+    const hero = await screen.findByTestId('editor-hero');
+    const img = within(hero).getByRole('img', { name: /cover/i });
+    expect(img).toHaveAttribute('src', expect.stringContaining('/assets/a1/thumb'));
+    expect(within(hero).getByRole('button', { name: /change cover/i })).toBeInTheDocument();
+    expect(within(hero).getByRole('button', { name: /remove cover/i })).toBeInTheDocument();
+  });
+
+  it('opens the set-cover asset picker from "Change cover" too (same handler, cover-set variant)', async () => {
+    const user = userEvent.setup();
+    renderEditorForExistingEntry({ coverImageId: 'a1' });
+
+    const hero = await screen.findByTestId('editor-hero');
+    await user.click(within(hero).getByRole('button', { name: /change cover/i }));
+
+    expect(await screen.findByRole('dialog')).toBeInTheDocument();
+  });
+
+  it('keeps the cover affordance when the cover image fails to load (signed URLs expire)', async () => {
+    // The button row is IN FLOW precisely so an onError'd image cannot collapse the hero.
+    // Without that, hiding the img would leave a zero-height box and the affordance would
+    // vanish — the bug the detail hero already had to fix.
+    renderEditorForExistingEntry({ coverImageId: 'a1' });
+    const hero = await screen.findByTestId('editor-hero');
+    fireEvent.error(within(hero).getByRole('img', { name: /cover/i }));
+    expect(within(hero).getByRole('button', { name: /change cover/i })).toBeInTheDocument();
+  });
+
+  it('clears the cover and falls back to the monogram band when Remove is clicked', async () => {
+    const user = userEvent.setup();
+    renderEditorForExistingEntry({ coverImageId: 'a1', title: 'Aldric' });
+
+    const hero = await screen.findByTestId('editor-hero');
+    await user.click(within(hero).getByRole('button', { name: /remove cover/i }));
+
+    expect(within(hero).queryByRole('img')).not.toBeInTheDocument();
+    expect(within(hero).getByTestId('hero-monogram')).toHaveTextContent('A');
+  });
+
+  it('watermarks the draft emoji rather than a letter when the entry has an icon', async () => {
+    renderEditorForExistingEntry({ icon: '🜂', title: 'Aldric' });
+    const hero = await screen.findByTestId('editor-hero');
+    // Matches EntryDetail: the contract resolves cover → icon → monogram.
+    expect(within(hero).getByTestId('hero-monogram')).toHaveTextContent('🜂');
+  });
+});
 
 describe('EntryEditor rename-propagation two-phase save (Phase 48 XREF-05)', () => {
   beforeEach(() => {

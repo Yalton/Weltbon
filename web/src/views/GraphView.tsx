@@ -15,6 +15,7 @@ import {
   usePinNode,
   useResetGraphLayout,
 } from '../hooks/useGraphPositions';
+import { useEntryMedallions } from '../hooks/useEntryMedallions';
 import { useUniverse, useUpdateUniverse } from '../hooks/useUniverse';
 import { neighborhood } from '../lib/neighborhood';
 import { useShareMode } from '../contexts/ShareModeContext';
@@ -92,6 +93,9 @@ export function GraphView() {
   const { data: universe } = useUniverse(universeId);
   const updateUniverse = useUpdateUniverse(universeId);
   const linkTypeRegistry = universe?.linkTypes ?? {};
+
+  // Cover art comes from the entries LIST cache — /graph-data has no cover field.
+  const medallions = useEntryMedallions(universeId);
 
   // Legend visibility persisted to localStorage (default: true).
   const [legendVisible, setLegendVisible] = useState<boolean>(() => {
@@ -384,6 +388,8 @@ export function GraphView() {
           onDragSourceChange={setDragSourceId}
           // Phase 28 REL-02 — link-type color registry.
           linkTypeRegistry={linkTypeRegistry}
+          // Content-Forward Views §4 — cover/emoji/monogram per node.
+          medallions={medallions}
         />
       )}
 

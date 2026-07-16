@@ -123,6 +123,37 @@ describe('TimelineEntryPanel', () => {
     expect(card).toHaveAttribute('role', 'button');
   });
 
+  it('renders a medallion on a pinned entry row', () => {
+    // PinnedEntryCard and DraggableEntryCard are separate components with separate markup —
+    // a regression in one would not be caught by a test of the other, so both are guarded.
+    vi.mocked(useFilteredEntries).mockReturnValue({
+      data: [makeEntry('e1', 'Aldric')],
+      isLoading: false,
+    // eslint-disable-next-line @typescript-eslint/no-explicit-any
+    } as any);
+
+    renderPanel({ pins: [makePin('e1')] });
+
+    const row = screen.getByTestId('timeline-entry-card-e1');
+    expect(row.querySelector('[data-medallion]')).toBeInTheDocument();
+  });
+
+  it('renders a medallion on a draggable (unpinned) entry row, with the cover when it has one', () => {
+    // Asserting the cover URL (not just the medallion's presence) is what guards the prop
+    // wiring: a Medallion rendered without coverThumbUrl would still satisfy [data-medallion].
+    vi.mocked(useFilteredEntries).mockReturnValue({
+      data: [makeEntry('e2', 'Vale', { coverThumbUrl: '/thumb-2.png' })],
+      isLoading: false,
+    // eslint-disable-next-line @typescript-eslint/no-explicit-any
+    } as any);
+
+    renderPanel({ pins: [] });
+
+    const row = screen.getByTestId('timeline-entry-card-e2');
+    const cover = row.querySelector('[data-medallion="cover"]');
+    expect(cover).toHaveAttribute('src', '/thumb-2.png');
+  });
+
   it('typing in the search input updates filter state and re-queries useFilteredEntries with the new q', async () => {
     vi.mocked(useFilteredEntries).mockReturnValue({
       data: [],

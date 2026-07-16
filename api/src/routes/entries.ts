@@ -4,7 +4,7 @@ import { HTTPException } from 'hono/http-exception';
 import { db } from '../db/client.js';
 import { entries, links, categories, issues, issueEntries, entryTemplates, assets } from '../db/schema.js';
 import { requireUniverse } from '../utils/ownership.js';
-import { signAssetUrl } from '../services/asset-signing.js';
+import { assetOwners, signAssetUrl } from '../services/asset-signing.js';
 import { rewriteWikilinks } from '../services/rewrite-wikilinks.js';
 import type { AuthVariables } from '../middleware/auth.js';
 
@@ -92,6 +92,21 @@ const entrySchema = z.object({
   // Phase 45 XREF-04 (D-06): present only on create/patch when an alias matches an existing
   // entry's canonical title. The canonical title still wins at resolution (D-01).
   aliasWarnings: z.array(z.string()).optional(),
+  // Content-Forward Views §1.1 — cover surface on every entry read.
+  // coverImageId was projected since Phase 38 but never declared. Honest on every
+  // endpoint that uses this schema: create/patch `.returning()` and the detail select
+  // all include the column.
+  coverImageId: z.string().nullable(),
+});
+
+/**
+ * Content-Forward Views §1.1 — LIST-only. coverThumbUrl is a LIST-projection
+ * concern: only the list handler resolves it (via withCoverThumbUrls). Declaring
+ * it on the shared entrySchema would promise the field on create/patch/detail,
+ * which do not emit it — the projection-drift trap this repo has hit twice.
+ */
+const entryListItemSchema = entrySchema.extend({
+  coverThumbUrl: z.string().nullable(),
 });
 
 const entryDetailSchema = entrySchema.extend({
@@ -270,7 +285,7 @@ const listRoute = createRoute({
     200: {
       content: {
         'application/json': {
-          schema: z.array(entrySchema),
+          schema: z.array(entryListItemSchema),
         },
       },
       description: 'List of entries (no body field in list view)',
@@ -451,6 +466,33 @@ const deleteRoute = createRoute({
   },
 });
 
+/**
+ * Content-Forward Views §1.1 — resolve a signed thumb URL per row.
+ *
+ * One batched `assetOwners` query per response (never N+1). The LIST route is
+ * already universe-scoped (`eq(entries.universeId, uid)` is conditions[0]), so
+ * every row shares one universeId — passed explicitly rather than read per-row.
+ * Dangling-tolerant: an id with no surviving (or owned) asset row yields null,
+ * never a broken <img> src or a signed URL leaking into another universe.
+ */
+async function withCoverThumbUrls<T extends { coverImageId: string | null }>(
+  rows: T[],
+  uid: string,
+): Promise<(T & { coverThumbUrl: string | null })[]> {
+  const live = await assetOwners(
+    db(),
+    rows.map((r) => r.coverImageId).filter((v): v is string => !!v),
+    uid,
+  );
+  return rows.map((r) => ({
+    ...r,
+    coverThumbUrl:
+      r.coverImageId && live.has(r.coverImageId)
+        ? `/api/universes/${uid}/assets/${r.coverImageId}/thumb${signAssetUrl(uid, r.coverImageId, 'thumb')}`
+        : null,
+  }));
+}
+
 // ─── Router ──────────────────────────────────────────────────────────────────
 
 export const entryRoutes = new OpenAPIHono<AppEnv>()
@@ -529,7 +571,7 @@ export const entryRoutes = new OpenAPIHono<AppEnv>()
         .from(entries)
         .where(and(...conditions))
         .orderBy(sql`ts_rank(search_vector, websearch_to_tsquery('english', ${q})) DESC`, desc(entries.updatedAt));
-      return c.json(rows as any, 200);
+      return c.json((await withCoverThumbUrls(rows, uid)) as any, 200);
     }
 
     const rows = await db()
@@ -538,7 +580,7 @@ export const entryRoutes = new OpenAPIHono<AppEnv>()
       .where(and(...conditions))
       .orderBy(desc(entries.updatedAt));
 
-    return c.json(rows as any, 200);
+    return c.json((await withCoverThumbUrls(rows, uid)) as any, 200);
   })
 
   // POST / -- create entry

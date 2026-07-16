@@ -73,14 +73,23 @@ type MockMapCanvasProps = {
   routes?: MockMapRoute[];
   onRouteClick?: (route: MockMapRoute) => void;
   onRouteContextMenu?: (route: MockMapRoute, clientX: number, clientY: number) => void;
+  /** Content-Forward Views §6 — tooltip identity map threaded in by MapEditor (Task 12). */
+  medallions?: Map<string, { title: string; entryType: string; icon: string; coverThumbUrl: string | null }>;
   [key: string]: unknown;
 };
 
 vi.mock('../components/MapCanvas', () => ({
   MapCanvas: (props: MockMapCanvasProps) => {
-    const { pins = [], terrainAreas = [], layers = [], layerViewerState = {}, routes = [], onRouteClick, onRouteContextMenu } = props;
+    const { pins = [], terrainAreas = [], layers = [], layerViewerState = {}, routes = [], onRouteClick, onRouteContextMenu, medallions } = props;
     return (
       <div data-testid="map-canvas-stub">
+        {/* Content-Forward Views §6 (Task 12): expose the medallions prop so wiring tests can
+            assert MapEditor threaded useEntryMedallions(uid) through to MapCanvas. */}
+        <span data-testid="map-canvas-medallions" data-size={medallions?.size ?? 0}>
+          {medallions ? Array.from(medallions.entries()).map(([id, m]) => (
+            <span key={id} data-testid="map-canvas-medallion-entry" data-entry-id={id} data-cover={m.coverThumbUrl ?? ''} />
+          )) : null}
+        </span>
         {/* Expose pin summaries so Plan 04 Task 3 share-parity test can assert on them */}
         {pins.map((pin) =>
           pin.summary ? (
@@ -630,6 +639,52 @@ describe('MapEditor share mode (GEOSHARE-01 / 44-03)', () => {
       expect(summaryEl).toBeInTheDocument();
       expect(summaryEl.textContent).toContain(SHARE_PIN_SUMMARY);
     });
+  });
+
+  /**
+   * Test 8: MapEditor threads useEntryMedallions(uid) into MapCanvas as the `medallions` prop
+   * (Content-Forward Views §6 / Task 12). The entries LIST cache (same query useEntries(uid)
+   * already reads) is the single source for the tooltip's cover/icon/monogram — no second
+   * request, no new query key (memory: react-query-key-change-blast-radius).
+   */
+  it('Test 8: threads useEntryMedallions(uid) into MapCanvas as the medallions prop', async () => {
+    vi.mocked(api).mockImplementation(async (path: string) => {
+      if (path.includes('/map-layers')) return [] as never;
+      if (path.includes('/entries')) {
+        return [
+          {
+            id: 'entry-medallion-1',
+            universeId: 'share',
+            title: 'North Castle',
+            entryType: 'location',
+            summary: '',
+            tags: [],
+            aliases: [],
+            meta: {},
+            icon: '',
+            categoryId: null,
+            isPublic: true,
+            wip: false,
+            coverThumbUrl: '/thumb-north-castle.png',
+            createdAt: '2026-01-01T00:00:00Z',
+            updatedAt: '2026-01-01T00:00:00Z',
+          },
+        ] as never;
+      }
+      return makeMapDetail() as never;
+    });
+
+    renderShareEditor();
+
+    await screen.findByTestId('map-canvas-stub');
+
+    await waitFor(() => {
+      const medallionsEl = screen.getByTestId('map-canvas-medallions');
+      expect(medallionsEl).toHaveAttribute('data-size', '1');
+    });
+    const entry = screen.getByTestId('map-canvas-medallion-entry');
+    expect(entry).toHaveAttribute('data-entry-id', 'entry-medallion-1');
+    expect(entry).toHaveAttribute('data-cover', '/thumb-north-castle.png');
   });
 });
 

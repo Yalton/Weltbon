@@ -37,12 +37,13 @@
  */
 import { describe, it, expect, beforeEach, vi, afterEach } from 'vitest';
 import React from 'react';
-import { render, fireEvent, cleanup } from '@testing-library/react';
+import { render, fireEvent, cleanup, screen, within } from '@testing-library/react';
 import { MemoryRouter } from 'react-router-dom';
 import { QueryClient, QueryClientProvider } from '@tanstack/react-query';
 import { MapCanvas } from './MapCanvas';
 import type { TerrainAreaRegion, MapRegion, MapPin, MapRoute } from '../hooks/useMap';
 import type { MapLayer } from '../hooks/useMapLayers';
+import type { MedallionSource } from '../lib/medallion';
 
 // Mock ShareModeContext — MapCanvas imports useShareToken; not under test here.
 // Use plain arrow functions (not vi.fn()) so clearAllMocks does not wipe the returns.
@@ -653,6 +654,157 @@ describe('MapCanvas — pin/region hover tooltip (D-07, D-08, Plan 04 Task 2)', 
     expect(onPinDragEnd).toHaveBeenCalledTimes(1);
     const [id] = onPinDragEnd.mock.calls[0] as [string, number, number];
     expect(id).toBe('tip1');
+  });
+});
+
+// ── Content-Forward Views §6: tooltip identity (Task 12) ──────────────────────
+// The map's hover tooltip (this file's `hoveredTooltip` overlay) leads with the linked
+// entry's medallion (cover → icon → monogram) and a serif title, resolved from the
+// `medallions` prop (a Map<entryId, MedallionSource> from useEntryMedallions, threaded
+// in by MapEditor). Regions and map-only pins have no entryId, so they render no medallion —
+// this is a regression risk this describe block explicitly guards.
+
+const PIN_ENTITY_ALDRIC: MapPin = {
+  id: 'p1',
+  mapId: 'm1',
+  entryId: 'e1',
+  x: 0.5,
+  y: 0.5,
+  color: '#ff0000',
+  icon: null,
+  secret: false,
+  entryTitle: 'Aldric',
+  entryType: 'entity',
+  summary: null,
+};
+
+const PIN_LOCATION_VALE: MapPin = {
+  id: 'p2',
+  mapId: 'm1',
+  entryId: 'e2',
+  x: 0.4,
+  y: 0.4,
+  color: '#0000ff',
+  icon: null,
+  secret: false,
+  entryTitle: 'Vale',
+  entryType: 'location',
+  summary: null,
+};
+
+const PIN_MAP_ONLY_NO_ENTRY: MapPin = {
+  id: 'p3',
+  mapId: 'm1',
+  entryId: null,
+  x: 0.6,
+  y: 0.6,
+  color: '#00ff00',
+  icon: null,
+  secret: false,
+  entryTitle: 'A place with no entry',
+  entryType: undefined,
+  summary: null,
+};
+
+// A region with NO entryId (standalone, not linked to any entry) — the regression risk
+// this suite must guard against. (POLITICAL_REGION/REGION_FOR_HOVER above both carry an
+// entryId, so they do not exercise this path.)
+const REGION_NO_ENTRY: MapRegion = {
+  id: 'r_no_entry',
+  mapId: 'm1',
+  entryId: null,
+  name: 'Unclaimed Wilds',
+  points: SQUARE_POINTS,
+  color: '#6b7280',
+  createdAt: CREATED_AT,
+  secret: false,
+  terrainTypeId: null,
+};
+
+describe('Content-Forward Views §6 — tooltip identity', () => {
+  it("leads the tooltip with the linked entry's cover and a serif title", async () => {
+    const medallions = new Map<string, MedallionSource>([
+      ['e1', { title: 'Aldric', entryType: 'entity', icon: '', coverThumbUrl: '/thumb-1.png' }],
+    ]);
+    const { container } = renderMapCanvas({ pins: [PIN_ENTITY_ALDRIC], medallions });
+
+    const pinGroup = container.querySelector('.pins g[aria-label]');
+    expect(pinGroup).not.toBeNull();
+    fireEvent.pointerEnter(pinGroup!);
+
+    const tooltip = await screen.findByTestId('map-tooltip');
+    // The Medallion's cover is decorative (alt=""), so it has no img role.
+    const cover = tooltip.querySelector('[data-medallion="cover"]');
+    expect(cover).not.toBeNull();
+    expect(cover).toHaveAttribute('src', '/thumb-1.png');
+    expect(within(tooltip).getByText('Aldric').className).toContain('font-display');
+    expect(within(tooltip).getByText('entity')).toBeInTheDocument(); // TypeBadge
+  });
+
+  it('falls back to a monogram when the linked entry has no cover', async () => {
+    const medallions = new Map<string, MedallionSource>([
+      ['e2', { title: 'Vale', entryType: 'location', icon: '', coverThumbUrl: null }],
+    ]);
+    const { container } = renderMapCanvas({ pins: [PIN_LOCATION_VALE], medallions });
+
+    const pinGroup = container.querySelector('.pins g[aria-label]');
+    expect(pinGroup).not.toBeNull();
+    fireEvent.pointerEnter(pinGroup!);
+
+    const tooltip = await screen.findByTestId('map-tooltip');
+    expect(tooltip.querySelector('[data-medallion="monogram"]')).not.toBeNull();
+    expect(tooltip.querySelector('[data-medallion="cover"]')).toBeNull();
+  });
+
+  it('still shows a monogram when the entries cache is cold (entryId present, map empty)', async () => {
+    // Deep-linking to a map mounts it before the entries list resolves. The graph
+    // (GraphCanvas) and the timeline (TimelineCanvas) both fall back to a synthesized
+    // source here; the map tooltip must not be the odd one out and render nothing.
+    // The tooltip title for an entry-linked pin is pin.entryTitle ('Aldric').
+    const { container } = renderMapCanvas({
+      pins: [PIN_ENTITY_ALDRIC],
+      medallions: new Map(), // cold
+    });
+
+    const pinGroup = container.querySelector('.pins g[aria-label]');
+    expect(pinGroup).not.toBeNull();
+    fireEvent.pointerEnter(pinGroup!);
+
+    const tooltip = await screen.findByTestId('map-tooltip');
+    expect(tooltip.querySelector('[data-medallion="monogram"]')).not.toBeNull();
+    expect(tooltip.querySelector('[data-medallion="cover"]')).toBeNull();
+    expect(within(tooltip).getByText('Aldric')).toBeInTheDocument();
+  });
+
+  it('renders NO medallion for a map-only pin (entryId: null) but still shows its title', async () => {
+    // A pin need not link an entry. The tooltip must not break, and must not invent identity.
+    const { container } = renderMapCanvas({
+      pins: [PIN_MAP_ONLY_NO_ENTRY],
+      medallions: new Map(),
+    });
+
+    const pinGroup = container.querySelector('.pins g[aria-label]');
+    expect(pinGroup).not.toBeNull();
+    fireEvent.pointerEnter(pinGroup!);
+
+    const tooltip = await screen.findByTestId('map-tooltip');
+    expect(tooltip.querySelector('[data-medallion]')).toBeNull();
+    expect(within(tooltip).getByText('A place with no entry')).toBeInTheDocument();
+  });
+
+  it('renders a REGION tooltip (no entryId) with its title and no medallion, unchanged', async () => {
+    const medallions = new Map<string, MedallionSource>([
+      ['e1', { title: 'Aldric', entryType: 'entity', icon: '', coverThumbUrl: '/thumb-1.png' }],
+    ]);
+    const { container } = renderMapCanvas({ regions: [REGION_NO_ENTRY], medallions });
+
+    const polygon = container.querySelector('.regions polygon');
+    expect(polygon).not.toBeNull();
+    fireEvent.pointerEnter(polygon!);
+
+    const tooltip = await screen.findByTestId('map-tooltip');
+    expect(tooltip.querySelector('[data-medallion]')).toBeNull();
+    expect(within(tooltip).getByText('Unclaimed Wilds')).toBeInTheDocument();
   });
 });
 

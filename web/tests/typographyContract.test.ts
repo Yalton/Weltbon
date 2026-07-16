@@ -8,9 +8,14 @@ const SRC = resolve(__dirname, '..', 'src');
 const read = (rel: string) => readFileSync(resolve(SRC, rel), 'utf8');
 
 describe('typography contract (POL-04 Task 2)', () => {
-  it('EntryDetail.tsx applies tracking-tight + neutral-700/300 body color, NOT the contrast-bug pattern', () => {
+  it('EntryDetail.tsx applies the hero display heading + neutral-700/300 body color, NOT the contrast-bug pattern', () => {
     const src = read('views/EntryDetail.tsx');
+    // Content-Forward Views §5: the page title moved out of the old form-style header and into
+    // the hero, where it is set in the universe display serif. It keeps `tracking-tight` — the
+    // repo's display headings take it too (see EmptyState.tsx, asserted below) — so the contract
+    // still pins tracking-tight, now as part of the full display-heading string.
     expect(src).toContain('tracking-tight');
+    expect(src).toContain('font-display text-3xl font-semibold tracking-tight text-ink');
     expect(src).toContain('text-neutral-700 dark:text-neutral-300');
     // Anti-regression: the light-mode contrast bug from POL-04 fix #3 must not return.
     expect(src).not.toContain('text-neutral-300 dark:text-neutral-300');
@@ -27,10 +32,14 @@ describe('typography contract (POL-04 Task 2)', () => {
     expect(src).toContain('leading-[1.5]');
   });
 
-  it('EntryCard.tsx uses §2.3 list-row sizing for title and meta', () => {
-    const src = read('components/EntryCard.tsx');
-    expect(src).toContain('text-base leading-[1.5]');
-    expect(src).toContain('text-sm text-neutral-600 dark:text-neutral-400');
+  it('the entry list row uses §2.3 list-row sizing for title and meta', () => {
+    // Content-Forward Views: the row's title moved into the shared EntryIdentity
+    // component (medallion + serif title), which EntryCard and both timeline card
+    // variants render — so the title's sizing now lives there, not in EntryCard.
+    expect(read('components/EntryIdentity.tsx')).toContain('text-base leading-[1.5]');
+    // The summary stays in EntryCard, its color migrated from raw neutral utilities
+    // to the text-ink-secondary token.
+    expect(read('components/EntryCard.tsx')).toContain('text-sm text-ink-secondary');
   });
 
   it('MarkdownRenderer.tsx wraps content in the prose typography plugin classes', () => {

@@ -40,7 +40,7 @@ import {
   type Calendar,
   type UniverseTheme,
 } from '../db/schema.js';
-import { signShareAssetUrl } from './asset-signing.js';
+import { assetOwners, signShareAssetUrl } from './asset-signing.js';
 
 // ─── Function 1: getPublicUniverseMeta ──────────────────────────────────────
 //
@@ -91,18 +91,12 @@ export async function getPublicUniverseMeta(
   if (rows.length === 0) return null;
 
   const row = rows[0];
-  let backdropUrl: string | null = null;
   const aid = row.theme?.backdropAssetId;
-  if (aid) {
-    const owned = await getDb()
-      .select({ id: assets.id })
-      .from(assets)
-      .where(and(eq(assets.id, aid), eq(assets.universeId, universeId)))
-      .limit(1);
-    if (owned.length > 0) {
-      backdropUrl = `/api/share/assets/${aid}/raw${signShareAssetUrl(universeId, aid, 'raw')}`;
-    }
-  }
+  const live = await assetOwners(getDb(), aid ? [aid] : [], universeId);
+  const backdropUrl =
+    aid && live.has(aid)
+      ? `/api/share/assets/${aid}/raw${signShareAssetUrl(universeId, aid, 'raw')}`
+      : null;
   return { ...row, backdropUrl };
 }
 
@@ -127,7 +121,7 @@ export async function getPublicEntries(universeId: string, entryType?: string) {
   const whereClause = entryType
     ? and(baseCondition, eq(entries.entryType, entryType))
     : baseCondition;
-  return getDb()
+  const rows = await getDb()
     .select({
       id: entries.id,
       universeId: entries.universeId,
@@ -140,12 +134,35 @@ export async function getPublicEntries(universeId: string, entryType?: string) {
       icon: entries.icon,
       categoryId: entries.categoryId,
       isPublic: entries.isPublic,
+      // Phase 36 DATA-03: the WIP pill was always meant to render on the list as well as
+      // the detail. Discloses nothing new: getPublicEntryById already returns `wip` to
+      // share visitors (bare .select() of the row) — this only makes the list consistent
+      // with the detail. Caught by the parity tripwire (test H), not by a human.
+      wip: entries.wip,
+      // Content-Forward Views §1.2
+      coverImageId: entries.coverImageId,
       createdAt: entries.createdAt,
       updatedAt: entries.updatedAt,
     })
     .from(entries)
     .where(whereClause)
     .orderBy(desc(entries.updatedAt));
+
+  // Batched ownership lookup (one query, never N+1), dangling-tolerant: an id whose
+  // asset row is gone yields null rather than a signed URL that 404s in an <img>.
+  // The universe filter is load-bearing, not decorative: create/patch accept a
+  // coverImageId from ANOTHER universe with no validation, so without it a visitor
+  // could be handed a signed URL into a universe they cannot see.
+  const wanted = rows.map((r) => r.coverImageId).filter((v): v is string => !!v);
+  const live = await assetOwners(getDb(), wanted, universeId);
+
+  return rows.map((r) => ({
+    ...r,
+    coverThumbUrl:
+      r.coverImageId && live.has(r.coverImageId)
+        ? `/api/share/assets/${r.coverImageId}/thumb${signShareAssetUrl(universeId, r.coverImageId, 'thumb')}`
+        : null,
+  }));
 }
 
 // ─── Function 3: getPublicEntryById ──────────────────────────────────────────

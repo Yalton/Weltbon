@@ -152,6 +152,13 @@ const publicEntryListItemSchema = z.object({
   icon: z.string(),
   categoryId: z.string().nullable(),
   isPublic: z.boolean(),
+  // Phase 36 DATA-03: WIP flag, mirrored from the auth list. Already exposed to share
+  // visitors on the detail endpoint (getPublicEntryById), so listing it discloses nothing new.
+  wip: z.boolean(),
+  // Content-Forward Views §1.2 — mirrors entryListItemSchema in routes/entries.ts.
+  // Declared locally (D-04): the share schema never imports from the auth routes.
+  coverImageId: z.string().nullable(),
+  coverThumbUrl: z.string().nullable(),
   createdAt: z.string(),
   updatedAt: z.string(),
 });

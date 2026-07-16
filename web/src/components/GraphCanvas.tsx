@@ -10,10 +10,11 @@ import {
 } from 'd3-force';
 import { drag } from 'd3-drag';
 import { select } from 'd3-selection';
-import { zoom, type ZoomBehavior } from 'd3-zoom';
+import { zoom, zoomTransform, type ZoomBehavior } from 'd3-zoom';
 import type { GraphEdge, GraphNode, GraphPosition } from '../hooks/useGraphData';
-import { entryTypeHexColor } from '../lib/entryTypeColor';
 import { getLinkTypeColor, type LinkTypeRegistry } from '../lib/linkTypeColor';
+import { appendMedallionNode } from './MedallionSVG';
+import type { MedallionSource } from '../lib/medallion';
 
 export interface GraphCanvasProps {
   nodes: GraphNode[];
@@ -67,6 +68,12 @@ export interface GraphCanvasProps {
    * Defaults to {} (no overrides) so existing callers do not need to pass it.
    */
   linkTypeRegistry?: LinkTypeRegistry;
+  /**
+   * Content-Forward Views §4 — entry id → cover/icon/monogram, from useEntryMedallions
+   * (the entries LIST cache; /graph-data carries no cover). An id absent from the map falls
+   * back to the node's own title/type/icon, so a cold entries cache still paints.
+   */
+  medallions?: Map<string, MedallionSource>;
 }
 
 // d3 mutates the node objects in-place, adding x/y/vx/vy and fx/fy. We keep
@@ -85,7 +92,19 @@ interface SimEdge {
 }
 
 const NODE_RADIUS = 14;
-const HALO_RADIUS = NODE_RADIUS + 4;
+/** Clearance between a node's disc and its edit-mode halo / its collide radius. */
+const HALO_GAP = 4;
+
+/** Spec §4 — radius grows with edge count, capped so a hub can't dominate the canvas. */
+function radiusForDegree(degree: number): number {
+  return Math.min(26, Math.max(NODE_RADIUS, NODE_RADIUS + 2 * degree));
+}
+
+/** Below this zoom, labels fade out — on a large graph every label is on screen at once. */
+const LABEL_FADE_ZOOM = 0.5;
+
+/** Baseline distance from the disc's edge down to the title label. */
+const LABEL_OFFSET = 13;
 
 export function GraphCanvas({
   nodes,
@@ -100,6 +119,7 @@ export function GraphCanvas({
   onLinkDragEnd,
   onDragSourceChange,
   linkTypeRegistry = {},
+  medallions,
 }: GraphCanvasProps) {
   const svgRef = useRef<SVGSVGElement>(null);
   // Latest callback refs so the useEffect doesn't need to re-run when the
@@ -151,6 +171,15 @@ export function GraphCanvas({
       return copy;
     });
     simNodesRef.current = simNodes;
+
+    // Degree = edge count in the CURRENT view. Computed once per data change, never per tick.
+    const degree = new Map<string, number>();
+    for (const e of edges) {
+      degree.set(e.source, (degree.get(e.source) ?? 0) + 1);
+      degree.set(e.target, (degree.get(e.target) ?? 0) + 1);
+    }
+    const radiusOf = (id: string) => radiusForDegree(degree.get(id) ?? 0);
+
     const simEdges: SimEdge[] = edges.map((e) => ({
       id: e.id,
       source: e.source,
@@ -208,6 +237,11 @@ export function GraphCanvas({
     // Halo JOIN — populated only when editMode is true; empty array otherwise
     // so the <g class="halos"> group renders empty (no structural mount/unmount
     // on toggle; UI-SPEC §B Lifecycle, Pitfall 4 idempotence).
+    //
+    // The radius is set on the MERGED selection, not on enter: discs are now degree-scaled
+    // (14–26), so a fixed halo radius would sit on or inside a hub's medallion ring — edit
+    // mode's primary affordance would vanish on exactly the nodes users link the most. And
+    // because degree changes with the data, an enter-only radius would go stale.
     const haloSel = g
       .select<SVGGElement>('g.halos')
       .selectAll<SVGCircleElement, SimNode>('circle')
@@ -217,7 +251,6 @@ export function GraphCanvas({
           enter
             .append('circle')
             .attr('data-halo-id', (d) => d.id)
-            .attr('r', HALO_RADIUS)
             .attr('fill', 'none')
             .attr('stroke', 'var(--color-accent)')
             .attr('stroke-width', 2)
@@ -225,25 +258,81 @@ export function GraphCanvas({
             .attr('pointer-events', 'none'),
         (update) => update,
         (exit) => exit.remove(),
-      );
+      )
+      .attr('r', (d) => radiusOf(d.id) + HALO_GAP);
 
+    // Content-Forward Views §4 — a node is a <g>, not a circle: it carries a medallion
+    // (disc + cover/emoji/monogram) AND its title label, and the tick handler moves the
+    // whole group with a single transform.
     const nodeSel = g
       .select<SVGGElement>('g.nodes')
-      .selectAll<SVGCircleElement, SimNode>('circle')
+      .selectAll<SVGGElement, SimNode>('g[data-node-id]')
       .data(simNodes, (d) => d.id)
       .join(
         (enter) =>
           enter
-            .append('circle')
+            .append('g')
             .attr('data-node-id', (d) => d.id)
-            .attr('r', NODE_RADIUS)
-            .attr('stroke', '#111827')
-            .attr('stroke-width', 1)
             .style('cursor', 'pointer'),
         (update) => update,
         (exit) => exit.remove(),
+      );
+
+    // Labels are only ever repainted by the zoom handler, so a node ENTERING while the user
+    // is zoomed out would paint its label at full opacity beside its faded neighbours. Seed
+    // from the live transform instead of assuming k === 1.
+    const labelsFaded = zoomTransform(svgRef.current).k < LABEL_FADE_ZOOM;
+
+    // Label sub-join — one <text> per node, inside the node's own <g>, so the tick handler's
+    // single transform moves the disc, the art AND the label together. Written BEFORE the
+    // medallion so DOM order is always [label, medallion]: appendMedallionNode re-appends
+    // its group after each purge, and painting the label first is the only order that stays
+    // stable across re-renders (a label appended after the medallion would flip under it on
+    // the second render).
+    nodeSel
+      .selectAll<SVGTextElement, SimNode>('text.node-label')
+      .data(
+        (d) => [d],
+        (d) => d.id,
       )
-      .attr('fill', (d) => entryTypeHexColor(d.entryType));
+      .join(
+        (enter) =>
+          enter
+            .append('text')
+            .attr('class', 'node-label')
+            .attr('text-anchor', 'middle')
+            .attr('font-size', 11)
+            .attr('font-family', 'var(--font-sans)')
+            .attr('fill', 'var(--color-ink-secondary)')
+            .attr('pointer-events', 'none'),
+        (update) => update,
+        (exit) => exit.remove(),
+      )
+      .attr('y', (d) => radiusOf(d.id) + LABEL_OFFSET)
+      .attr('opacity', labelsFaded ? 0 : 1)
+      .text((d) => d.title);
+
+    nodeSel.each(function (d) {
+      const group = this as SVGGElement;
+      const r = radiusOf(d.id);
+      const source: MedallionSource = medallions?.get(d.id) ?? {
+        title: d.title,
+        entryType: d.entryType,
+        icon: d.icon,
+        coverThumbUrl: null,
+      };
+      // appendMedallionNode purges and rebuilds the whole subtree, which restarts the cover
+      // <image>'s load. `positions` is in the effect deps, so pinning ONE node would
+      // otherwise re-fetch every cover on the canvas. Rebuild only when what the medallion
+      // draws has actually changed.
+      const sig = `${r}|${source.coverThumbUrl}|${source.icon}|${source.title}|${source.entryType}`;
+      if (group.dataset.medallionSig !== sig) {
+        // `graph-` prefix namespaces the <clipPath> id: SVG url(#…) hits the FIRST match in
+        // the document, so a bare entry id would collide with the timeline's medallion.
+        appendMedallionNode(group, { id: `graph-${d.id}`, radius: r, ...source });
+        group.dataset.medallionSig = sig;
+      }
+    });
 
     // Click dispatch — shift+click pins, plain click navigates.
     nodeSel.on('click', (evt: MouseEvent, d) => {
@@ -276,14 +365,14 @@ export function GraphCanvas({
       )
       .force('charge', forceManyBody<SimNode>().strength(-220))
       .force('center', forceCenter(width / 2, height / 2))
-      .force('collide', forceCollide<SimNode>(NODE_RADIUS + 4));
+      .force('collide', forceCollide<SimNode>((d) => radiusOf(d.id) + HALO_GAP));
 
     // Drag — dual intent gated by editModeRef.current per the mirrored-ref
     // pattern. View-mode keeps the existing pin-and-position behavior; edit-
     // mode tracks the pointer for a link-creation preview edge and emits
     // lifecycle callbacks. Pin state (fx/fy) is NEVER touched in edit mode
     // so cancel/self-drop "snap-back" is a structural no-op (Pitfall 2).
-    const dragBehavior = drag<SVGCircleElement, SimNode>()
+    const dragBehavior = drag<SVGGElement, SimNode>()
       .on('start', (evt, d) => {
         if (editModeRef.current) {
           // Edit-mode drag: do NOT pin. Reset cancel flag, surface drag
@@ -352,6 +441,11 @@ export function GraphCanvas({
       .scaleExtent([0.1, 4])
       .on('zoom', (evt) => {
         g.attr('transform', evt.transform.toString());
+        // Spec §4: fade labels below ~0.5 zoom so a large graph doesn't become label soup.
+        // No collision layout in v1 — overlaps at high density are accepted.
+        g.select('g.nodes')
+          .selectAll<SVGTextElement, unknown>('text.node-label')
+          .attr('opacity', evt.transform.k < LABEL_FADE_ZOOM ? 0 : 1);
       });
     // Swallow clicks-inside-zoom via the default; d3-zoom suppresses click
     // after a drag of > 3px automatically.
@@ -378,7 +472,8 @@ export function GraphCanvas({
           const ty = (d.target as SimNode).y ?? 0;
           return (sy + ty) / 2;
         });
-      nodeSel.attr('cx', (d) => d.x ?? 0).attr('cy', (d) => d.y ?? 0);
+      // One transform per node moves the disc, the art AND the label together.
+      nodeSel.attr('transform', (d) => `translate(${d.x ?? 0}, ${d.y ?? 0})`);
       haloSel.attr('cx', (d) => d.x ?? 0).attr('cy', (d) => d.y ?? 0);
     };
 
@@ -397,7 +492,7 @@ export function GraphCanvas({
       nodeSel.on('.drag', null);
     };
     // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [nodes, edges, positions, width, height, editMode, linkTypeRegistry]);
+  }, [nodes, edges, positions, width, height, editMode, linkTypeRegistry, medallions]);
 
   // Mid-drag Esc cancel — window keydown listener installed only while a
   // drag is in flight. Removes the preview-edge, sets the cancelled flag so
@@ -460,12 +555,13 @@ export function GraphCanvas({
 /**
  * Hit-test the node under the pointer at pointerup. Uses
  * document.elementFromPoint (O(1), respects rendered z-order — halos and
- * preview-edge are pointer-events:none so the underlying node circle is the
- * hit target). Returns the matching SimNode or null if no node circle is
- * under the pointer.
+ * preview-edge are pointer-events:none so the underlying node group is the
+ * hit target). Returns the matching SimNode or null if no node is under the
+ * pointer.
  *
- * Reads `data-node-id` from the closest ancestor circle to future-proof
- * against wrapping the node in a <g> later.
+ * The node is a <g data-node-id> whose children (medallion disc, cover image,
+ * glyph, label) are what the pointer actually lands on — so the id is read
+ * from the closest ancestor carrying it, whatever element that is.
  */
 function hitTestNodeAt(
   sourceEvent: Event | undefined,
@@ -476,9 +572,9 @@ function hitTestNodeAt(
   if (typeof me.clientX !== 'number' || typeof me.clientY !== 'number') return null;
   const el = document.elementFromPoint(me.clientX, me.clientY);
   if (!el) return null;
-  const circle = (el as Element).closest('circle[data-node-id]');
-  if (!circle) return null;
-  const id = circle.getAttribute('data-node-id');
+  const group = (el as Element).closest('[data-node-id]');
+  if (!group) return null;
+  const id = group.getAttribute('data-node-id');
   if (!id) return null;
   return simNodes.find((n) => n.id === id) ?? null;
 }

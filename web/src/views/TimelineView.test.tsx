@@ -59,18 +59,32 @@ vi.mock('../hooks/useTimelinePins', () => ({
   }),
 }));
 
+// Content-Forward Views §6 — TimelineView resolves pin cover art from the entries LIST cache
+// via useEntryMedallions (the /timeline/pins projection carries no cover). Mocked at the
+// module boundary: this suite stubs no `api`, so the real hook's query would sit pending and
+// tell us nothing. The hook itself is covered by useEntryMedallions.test.tsx; what
+// TimelineView owes is the wiring, asserted below via the stub's data-medallion-count.
+const medallionsStub = new Map<string, unknown>([
+  ['E1', { title: 'Aldric', entryType: 'entity', icon: '', coverThumbUrl: '/thumb-1.png' }],
+]);
+vi.mock('../hooks/useEntryMedallions', () => ({
+  useEntryMedallions: () => medallionsStub,
+}));
+
 // Stub the heavy children — exposes props as data-* attributes.
 vi.mock('../components/TimelineCanvas', () => ({
   TimelineCanvas: (props: {
     pins: Array<{ id: string }>;
     width: number;
     height: number;
+    medallions?: Map<string, unknown>;
   }) => (
     <div
       data-testid="timeline-canvas-stub"
       data-pin-count={props.pins.length}
       data-width={props.width}
       data-height={props.height}
+      data-medallion-count={props.medallions?.size ?? -1}
     />
   ),
 }));
@@ -155,6 +169,15 @@ describe('TimelineView orchestrator', () => {
     const panel = screen.getByTestId('timeline-entry-panel-stub');
     expect(canvas).toHaveAttribute('data-pin-count', '3');
     expect(panel).toHaveAttribute('data-pin-count', '3');
+  });
+
+  it('hands the canvas the entry medallions so pins can wear their cover art', () => {
+    windowState.window = { start: 0, end: 1000 };
+    renderAt();
+    expect(screen.getByTestId('timeline-canvas-stub')).toHaveAttribute(
+      'data-medallion-count',
+      String(medallionsStub.size),
+    );
   });
 
   it('clicking Configure range opens the dialog', async () => {
