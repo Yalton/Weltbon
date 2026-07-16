@@ -48,6 +48,9 @@ function buildFixturePayload(): ExportPayload {
         summary: 'A short summary',
         body: '## Body Heading\n\nSome **bold** text and a [link](http://example.com).',
         tags: ['tag1', 'tag2'],
+        // Phase 45 XREF-04 (D-08) + Phase 38 MEDIA-04 (D-06): required on ExportPayloadEntry.
+        aliases: [],
+        coverImageId: null,
         meta: {},
         icon: '',
         categoryId: 'c1',
@@ -62,6 +65,8 @@ function buildFixturePayload(): ExportPayload {
         summary: '',
         body: 'plain body',
         tags: [],
+        aliases: [],
+        coverImageId: null,
         meta: {},
         icon: '',
         categoryId: 'c2',
@@ -76,6 +81,8 @@ function buildFixturePayload(): ExportPayload {
         summary: 'orphan summary',
         body: '',
         tags: ['solo'],
+        aliases: [],
+        coverImageId: null,
         meta: {},
         icon: '',
         categoryId: null,
@@ -109,7 +116,16 @@ function buildFixturePayload(): ExportPayload {
     ],
     fullIssues: [],
     graphPositions: [],
+    timelinePins: [],
     entrySlugMap: slugMap,
+    // Phase 38 MEDIA-06 (D-07) + Phase 41/44/51: required collections on ExportPayload.
+    assets: [],
+    maps: [],
+    mapPins: [],
+    mapRegions: [],
+    mapRoutes: [],
+    mapLayersData: [],
+    terrainTypesData: [],
   };
 }
 

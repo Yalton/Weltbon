@@ -38,7 +38,7 @@ describe('Timeline perf (TIME-04 sort-at-scale)', () => {
     for (let i = 0; i < 5; i++) {
       const start = performance.now();
       const res = await app.fetch(
-        new Request(`http://test/universes/${universeId}/timeline`, {
+        new Request(`http://test/api/universes/${universeId}/timeline`, {
           headers: authHeader(token),
         })
       );

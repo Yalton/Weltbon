@@ -19,6 +19,7 @@
  */
 
 import fs from 'node:fs';
+import yauzl from 'yauzl';
 import { describe, it, expect, beforeAll, afterAll, beforeEach } from 'vitest';
 import { createApp } from '../src/index.js';
 import { createTestDb, cleanDb, createTestUser, type TestDbHandle } from './helpers.js';
@@ -69,6 +70,47 @@ describe('PAT parity round-trip (API-04)', () => {
       // no body or non-JSON
     }
     return { status: res.status, body: json as any };
+  }
+
+  /**
+   * Extract and parse manifest.json from an export ZIP buffer (D-07: JSON export
+   * is now a `application/zip` bundle of manifest.json + assets/).
+   */
+  // eslint-disable-next-line @typescript-eslint/no-explicit-any
+  async function extractManifest(zipBytes: Buffer): Promise<Record<string, any>> {
+    return new Promise((resolve, reject) => {
+      yauzl.fromBuffer(zipBytes, { lazyEntries: true }, (err, zipfile) => {
+        if (err || !zipfile) return reject(err ?? new Error('yauzl.fromBuffer returned no zipfile'));
+        zipfile.on('error', reject);
+        zipfile.on('entry', (entry: yauzl.Entry) => {
+          if (entry.fileName !== 'manifest.json') {
+            zipfile.readEntry();
+            return;
+          }
+          zipfile.openReadStream(entry, (streamErr, rs) => {
+            if (streamErr || !rs) return reject(streamErr ?? new Error('no readStream'));
+            const chunks: Buffer[] = [];
+            rs.on('data', (c: Buffer) => chunks.push(c));
+            rs.on('end', () => {
+              try { resolve(JSON.parse(Buffer.concat(chunks).toString())); }
+              catch (parseErr) { reject(parseErr); }
+            });
+            rs.on('error', reject);
+          });
+        });
+        zipfile.on('end', () => reject(new Error('manifest.json not found in ZIP')));
+        zipfile.readEntry();
+      });
+    });
+  }
+
+  /** GET the JSON export ZIP and return its parsed manifest. */
+  async function exportManifest(uid: string, headers: Record<string, string>) {
+    const res = await app.fetch(
+      new Request(`http://localhost/api/universes/${uid}/export?format=json`, { headers })
+    );
+    const manifest = res.status === 200 ? await extractManifest(Buffer.from(await res.arrayBuffer())) : null;
+    return { status: res.status, manifest };
   }
 
   async function createUserAndJwt(email = 'parity@test.com') {
@@ -223,13 +265,11 @@ describe('PAT parity round-trip (API-04)', () => {
     // The pin from Step 8 used label: 'Year 0 — The Sundering'
     expect(JSON.stringify(timelineRes.body)).toContain('Year 0 — The Sundering');
 
-    // Step 10: Export universe as JSON (PAT)
-    const exportRes = await appRequest('GET', `/api/universes/${uid}/export?format=json`, {
-      headers: patHdr,
-    });
+    // Step 10: Export universe as JSON (PAT) — now a ZIP; assert against manifest.json.
+    const exportRes = await exportManifest(uid, patHdr);
     expect(exportRes.status, 'export json').toBe(200);
-    const exportedJson = exportRes.body;
-    expect(exportedJson.weltbon_version).toBe('1.0.0');
+    const exportedJson = exportRes.manifest!;
+    expect(exportedJson.weltbon_version).toBe('2.0.0');
     expect(exportedJson.entries).toHaveLength(2);
     expect(exportedJson.links).toHaveLength(1);
 
@@ -281,11 +321,9 @@ describe('PAT parity round-trip (API-04)', () => {
     expect(importedUid).not.toBe(uid);
 
     // Step 12: Re-export the imported universe (PAT)
-    const reExportRes = await appRequest('GET', `/api/universes/${importedUid}/export?format=json`, {
-      headers: patHdr,
-    });
+    const reExportRes = await exportManifest(importedUid, patHdr);
     expect(reExportRes.status, 're-export imported universe').toBe(200);
-    const reExportedJson = reExportRes.body;
+    const reExportedJson = reExportRes.manifest!;
 
     // ─── Round-trip identity assertion (D-10) ────────────────────────────────
     // Entry titles must be preserved (modulo new IDs/timestamps)

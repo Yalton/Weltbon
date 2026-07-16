@@ -44,7 +44,7 @@ describe('EXP-05: markdown ZIP response is streamed (Transfer-Encoding chunked O
     const token = await issueAccessToken(user.id);
     const hdrs = authHeader(token);
 
-    const createRes = await app.request('http://localhost/universes', {
+    const createRes = await app.request('http://localhost/api/universes', {
       method: 'POST',
       headers: { ...hdrs, 'Content-Type': 'application/json' },
       body: JSON.stringify({ name: 'Stream Test World' }),
@@ -52,7 +52,7 @@ describe('EXP-05: markdown ZIP response is streamed (Transfer-Encoding chunked O
     const universe = await createRes.json();
 
     const res = await app.request(
-      `http://localhost/universes/${universe.id}/export?format=markdown`,
+      `http://localhost/api/universes/${universe.id}/export?format=markdown`,
       { headers: hdrs },
     );
 
@@ -103,7 +103,7 @@ describe('EXP-05: DOCX response carries the wordprocessingml mime type and a dat
     const token = await issueAccessToken(user.id);
     const hdrs = authHeader(token);
 
-    const createRes = await app.request('http://localhost/universes', {
+    const createRes = await app.request('http://localhost/api/universes', {
       method: 'POST',
       headers: { ...hdrs, 'Content-Type': 'application/json' },
       body: JSON.stringify({ name: 'Docx Stream World' }),
@@ -111,7 +111,7 @@ describe('EXP-05: DOCX response carries the wordprocessingml mime type and a dat
     const universe = (await createRes.json()) as { id: string };
 
     const res = await app.request(
-      `http://localhost/universes/${universe.id}/export?format=docx`,
+      `http://localhost/api/universes/${universe.id}/export?format=docx`,
       { headers: hdrs },
     );
 
@@ -156,7 +156,7 @@ dPdf('EXP-05: PDF response is streamed (Transfer-Encoding chunked OR no Content-
     const token = await issueAccessToken(user.id);
     const hdrs = authHeader(token);
 
-    const createRes = await app.request('http://localhost/universes', {
+    const createRes = await app.request('http://localhost/api/universes', {
       method: 'POST',
       headers: { ...hdrs, 'Content-Type': 'application/json' },
       body: JSON.stringify({ name: 'Pdf Stream World' }),
@@ -164,7 +164,7 @@ dPdf('EXP-05: PDF response is streamed (Transfer-Encoding chunked OR no Content-
     const universe = (await createRes.json()) as { id: string };
 
     const res = await app.request(
-      `http://localhost/universes/${universe.id}/export?format=pdf`,
+      `http://localhost/api/universes/${universe.id}/export?format=pdf`,
       { headers: hdrs },
     );
 

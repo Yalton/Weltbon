@@ -1,3 +1,4 @@
+import yauzl from 'yauzl';
 import { describe, it, expect, beforeAll, afterAll, beforeEach } from 'vitest';
 import { createApp } from '../src/index.js';
 import { createTestDb, cleanDb, createTestUser, authHeader, type TestDbHandle } from './helpers.js';
@@ -45,6 +46,46 @@ describe('export/import (EXP-01, IMP-01..03)', () => {
     return res.json();
   }
 
+  /**
+   * Extract and parse manifest.json from an export ZIP buffer. Since Phase 38
+   * MEDIA-06 (D-07) the ?format=json export is an `application/zip` bundle of
+   * manifest.json + assets/, so every "read the exported JSON" assertion below
+   * goes through here instead of res.json() on the raw ZIP bytes.
+   */
+  // eslint-disable-next-line @typescript-eslint/no-explicit-any
+  async function extractManifest(zipBytes: Buffer): Promise<Record<string, any>> {
+    return new Promise((resolve, reject) => {
+      yauzl.fromBuffer(zipBytes, { lazyEntries: true }, (err, zipfile) => {
+        if (err || !zipfile) return reject(err ?? new Error('yauzl.fromBuffer returned no zipfile'));
+        zipfile.on('error', reject);
+        zipfile.on('entry', (entry: yauzl.Entry) => {
+          if (entry.fileName !== 'manifest.json') {
+            zipfile.readEntry();
+            return;
+          }
+          zipfile.openReadStream(entry, (streamErr, rs) => {
+            if (streamErr || !rs) return reject(streamErr ?? new Error('no readStream'));
+            const chunks: Buffer[] = [];
+            rs.on('data', (c: Buffer) => chunks.push(c));
+            rs.on('end', () => {
+              try { resolve(JSON.parse(Buffer.concat(chunks).toString())); }
+              catch (parseErr) { reject(parseErr); }
+            });
+            rs.on('error', reject);
+          });
+        });
+        zipfile.on('end', () => reject(new Error('manifest.json not found in ZIP')));
+        zipfile.readEntry();
+      });
+    });
+  }
+
+  /** GET the ?format=json export ZIP and return its parsed manifest.json. */
+  // eslint-disable-next-line @typescript-eslint/no-explicit-any
+  async function exportManifest(uid: string, hdrs: Record<string, string>): Promise<Record<string, any>> {
+    return extractManifest(await exportAsZipBuffer(uid, hdrs));
+  }
+
   async function createUniverse(hdrs: Record<string, string>, name = 'TestWorld') {
     const res = await req('POST', '/api/universes', { headers: hdrs, body: { name } });
     return json(res);
@@ -80,11 +121,8 @@ describe('export/import (EXP-01, IMP-01..03)', () => {
     const { hdrs } = await userWithToken('exp1@test.com');
     const universe = await createUniverse(hdrs, 'EmptyWorld');
 
-    const res = await req('GET', `/api/universes/${universe.id}/export?format=json`, { headers: hdrs });
-    expect(res.status).toBe(200);
-
-    const data = await json(res);
-    expect(data.weltbon_version).toBe('1.0.0');
+    const data = await exportManifest(universe.id, hdrs);
+    expect(data.weltbon_version).toBe('2.0.0');
     expect(data.exported_at).toBeTruthy();
     expect(data.universe.name).toBe('EmptyWorld');
     expect(data.entries).toEqual([]);
@@ -103,10 +141,7 @@ describe('export/import (EXP-01, IMP-01..03)', () => {
     await insertLink(universe.id, entry1.id, entry2.id, 'affected');
     await insertLink(universe.id, entry2.id, entry3.id, 'resides in');
 
-    const res = await req('GET', `/api/universes/${universe.id}/export?format=json`, { headers: hdrs });
-    expect(res.status).toBe(200);
-
-    const data = await json(res);
+    const data = await exportManifest(universe.id, hdrs);
     expect(data.entries).toHaveLength(3);
     expect(data.links).toHaveLength(2);
     expect(data.entries[0].title).toBeTruthy();
@@ -114,18 +149,22 @@ describe('export/import (EXP-01, IMP-01..03)', () => {
   });
 
   // EXP-01: export includes Content-Disposition header
+  // D-07: ?format=json is now a ZIP bundle, so the filename extension is .zip.
   it('export returns Content-Disposition header', async () => {
     const { hdrs } = await userWithToken('exp3@test.com');
     const universe = await createUniverse(hdrs, 'HeaderWorld');
 
     const res = await req('GET', `/api/universes/${universe.id}/export?format=json`, { headers: hdrs });
     expect(res.status).toBe(200);
-    expect(res.headers.get('content-disposition')).toContain('.json');
+    expect(res.headers.get('content-disposition')).toContain('.zip');
+    // Drain so the archiver stream finalizes cleanly.
+    await res.arrayBuffer();
   });
 
   // 04-01: Phase 4 dated filename in Content-Disposition.
   // Filenames now go through exportFilename() (slug + YYYY-MM-DD) so successive
   // exports of the same universe coexist in Downloads without manual rename.
+  // D-07: the JSON export is a ZIP bundle, so the extension is .zip.
   it('export?format=json filename uses slug + ISO date', async () => {
     const { hdrs } = await userWithToken('exp-fname@test.com');
     const universe = await createUniverse(hdrs, 'Post Sundering');
@@ -133,7 +172,8 @@ describe('export/import (EXP-01, IMP-01..03)', () => {
     const res = await req('GET', `/api/universes/${universe.id}/export?format=json`, { headers: hdrs });
     expect(res.status).toBe(200);
     const cd = res.headers.get('content-disposition') ?? '';
-    expect(cd).toMatch(/filename="post-sundering-\d{4}-\d{2}-\d{2}\.json"/);
+    expect(cd).toMatch(/filename="post-sundering-\d{4}-\d{2}-\d{2}\.zip"/);
+    await res.arrayBuffer();
   });
 
   // 04-02: ?format=markdown returns 200 ZIP (replaced the 04-01 503 stub).
@@ -221,8 +261,9 @@ describe('export/import (EXP-01, IMP-01..03)', () => {
 
     const res = await req('GET', `/api/universes/${universe.id}/export`, { headers: hdrs });
     expect(res.status).toBe(200);
-    const data = await json(res);
-    expect(data.weltbon_version).toBe('1.0.0');
+    expect(res.headers.get('content-type')).toBe('application/zip');
+    const data = await extractManifest(Buffer.from(await res.arrayBuffer()));
+    expect(data.weltbon_version).toBe('2.0.0');
   });
 
   // IMP-01: import valid JSON creates universe
@@ -261,18 +302,16 @@ describe('export/import (EXP-01, IMP-01..03)', () => {
     await insertLink(universe.id, entry1.id, entry2.id, 'relates to');
     await insertLink(universe.id, entry2.id, entry3.id, 'located in');
 
-    // Export original
-    const exportRes = await req('GET', `/api/universes/${universe.id}/export?format=json`, { headers: hdrs });
-    const exportData = await json(exportRes);
+    // Export original as a ZIP, read the manifest, then re-import the same bytes.
+    const zipBytes = await exportAsZipBuffer(universe.id, hdrs);
+    const exportData = await extractManifest(zipBytes);
 
-    // Import to create new universe
-    const importRes = await req('POST', '/api/universes/import', { headers: hdrs, body: exportData });
-    expect(importRes.status).toBe(201);
-    const importResult = await json(importRes);
+    // Import to create new universe (ZIP multipart — the real download→upload flow).
+    const { status: importStatus, body: importResult } = await importZipBuffer(zipBytes, hdrs);
+    expect(importStatus).toBe(201);
 
     // Export the new universe
-    const reExportRes = await req('GET', `/api/universes/${importResult.universeId}/export?format=json`, { headers: hdrs });
-    const reExportData = await json(reExportRes);
+    const reExportData = await exportManifest(importResult.universeId, hdrs);
 
     // Compare counts
     expect(reExportData.entries).toHaveLength(exportData.entries.length);
@@ -372,9 +411,7 @@ describe('export/import (EXP-01, IMP-01..03)', () => {
     await createCategory(universe.id, hdrs, { label: 'Locations', icon: '🗺️' });
     await createCategory(universe.id, hdrs, { label: 'Factions', icon: '⚔️' });
 
-    const res = await req('GET', `/api/universes/${universe.id}/export?format=json`, { headers: hdrs });
-    expect(res.status).toBe(200);
-    const data = await json(res);
+    const data = await exportManifest(universe.id, hdrs);
     expect(Array.isArray(data.categories)).toBe(true);
     expect(data.categories).toHaveLength(2);
     const labels = data.categories.map((c: { label: string }) => c.label).sort();
@@ -399,14 +436,10 @@ describe('export/import (EXP-01, IMP-01..03)', () => {
     await patchEntry(universe.id, e3.id, hdrs, { categoryId: factions.id });
     // e4 stays uncategorized
 
-    // Export
-    const exportRes = await req('GET', `/api/universes/${universe.id}/export?format=json`, { headers: hdrs });
-    const exportData = await json(exportRes);
-
-    // Import under same user
-    const importRes = await req('POST', '/api/universes/import', { headers: hdrs, body: exportData });
-    expect(importRes.status).toBe(201);
-    const importResult = await json(importRes);
+    // Export as ZIP and re-import the same bytes under the same user.
+    const zipBytes = await exportAsZipBuffer(universe.id, hdrs);
+    const { status: importStatus, body: importResult } = await importZipBuffer(zipBytes, hdrs);
+    expect(importStatus).toBe(201);
     expect(importResult.categoryCount).toBe(2);
 
     // List imported categories with counts
@@ -420,8 +453,7 @@ describe('export/import (EXP-01, IMP-01..03)', () => {
     expect(listData.uncategorizedCount).toBe(1);
 
     // Sanity: the newly-imported entries point at the NEWLY created category ids
-    const reExportRes = await req('GET', `/api/universes/${importResult.universeId}/export?format=json`, { headers: hdrs });
-    const reExport = await json(reExportRes);
+    const reExport = await exportManifest(importResult.universeId, hdrs);
     const newLocationsId = byLabel.get('Locations')!.id;
     const newFactionsId = byLabel.get('Factions')!.id;
     const entryCatByTitle = new Map<string, string | null>(
@@ -486,9 +518,7 @@ describe('export/import (EXP-01, IMP-01..03)', () => {
     const iss2 = await createIssue(universe.id, hdrs, { title: 'Will resolve', severity: 'minor', entryIds: [e1.id, e2.id] });
     await patchIssue(universe.id, iss2.id, hdrs, { resolved: true });
 
-    const res = await req('GET', `/api/universes/${universe.id}/export?format=json`, { headers: hdrs });
-    expect(res.status).toBe(200);
-    const data = await json(res);
+    const data = await exportManifest(universe.id, hdrs);
     expect(Array.isArray(data.issues)).toBe(true);
     expect(data.issues).toHaveLength(2);
     // Each issue exposes entryIds array
@@ -514,9 +544,9 @@ describe('export/import (EXP-01, IMP-01..03)', () => {
     await patchIssue(universe.id, iss2.id, hdrs, { resolved: true });
     void e3; // not associated with any issue
 
-    // Export
-    const exportRes = await req('GET', `/api/universes/${universe.id}/export?format=json`, { headers: hdrs });
-    const exportData = await json(exportRes);
+    // Export as ZIP, read the manifest, then re-import the same bytes.
+    const zipBytes = await exportAsZipBuffer(universe.id, hdrs);
+    const exportData = await extractManifest(zipBytes);
     expect(exportData.issues).toHaveLength(2);
     const origAssocCount = exportData.issues.reduce(
       (sum: number, i: { entryIds: string[] }) => sum + i.entryIds.length,
@@ -525,14 +555,12 @@ describe('export/import (EXP-01, IMP-01..03)', () => {
     expect(origAssocCount).toBe(3);
 
     // Import
-    const importRes = await req('POST', '/api/universes/import', { headers: hdrs, body: exportData });
-    expect(importRes.status).toBe(201);
-    const importResult = await json(importRes);
+    const { status: importStatus, body: importResult } = await importZipBuffer(zipBytes, hdrs);
+    expect(importStatus).toBe(201);
     expect(importResult.issueCount).toBe(2);
 
     // Re-export
-    const reExportRes = await req('GET', `/api/universes/${importResult.universeId}/export?format=json`, { headers: hdrs });
-    const reExport = await json(reExportRes);
+    const reExport = await exportManifest(importResult.universeId, hdrs);
 
     expect(reExport.issues).toHaveLength(2);
     const byTitle = new Map<string, { severity: string; resolved: boolean; entryIds: string[] }>(
@@ -601,9 +629,7 @@ describe('export/import (EXP-01, IMP-01..03)', () => {
     await db().insert(graphPositions).values({ universeId: universe.id, entryId: e1.id, x: 10.5, y: -5.25 });
     await db().insert(graphPositions).values({ universeId: universe.id, entryId: e2.id, x: 100, y: 200 });
 
-    const res = await req('GET', `/api/universes/${universe.id}/export?format=json`, { headers: hdrs });
-    expect(res.status).toBe(200);
-    const data = await json(res);
+    const data = await exportManifest(universe.id, hdrs);
     expect(Array.isArray(data.graphPositions)).toBe(true);
     expect(data.graphPositions).toHaveLength(2);
     const byEntry = new Map<string, { x: number; y: number }>(
@@ -622,13 +648,12 @@ describe('export/import (EXP-01, IMP-01..03)', () => {
     await db().insert(graphPositions).values({ universeId: universe.id, entryId: e1.id, x: 1.25, y: 2.75 });
     await db().insert(graphPositions).values({ universeId: universe.id, entryId: e2.id, x: -42, y: 99.5 });
 
-    const exportRes = await req('GET', `/api/universes/${universe.id}/export?format=json`, { headers: hdrs });
-    const exportData = await json(exportRes);
+    const zipBytes = await exportAsZipBuffer(universe.id, hdrs);
+    const exportData = await extractManifest(zipBytes);
     expect(exportData.graphPositions).toHaveLength(2);
 
-    const importRes = await req('POST', '/api/universes/import', { headers: hdrs, body: exportData });
-    expect(importRes.status).toBe(201);
-    const importResult = await json(importRes);
+    const { status: importStatus, body: importResult } = await importZipBuffer(zipBytes, hdrs);
+    expect(importStatus).toBe(201);
     expect(importResult.positionCount).toBe(2);
 
     // Positions in the new universe use the NEW entry UUIDs
@@ -636,8 +661,7 @@ describe('export/import (EXP-01, IMP-01..03)', () => {
     expect(newPositions).toHaveLength(2);
 
     // Cross-reference by title -> new entry id
-    const reExportRes = await req('GET', `/api/universes/${importResult.universeId}/export?format=json`, { headers: hdrs });
-    const reExport = await json(reExportRes);
+    const reExport = await exportManifest(importResult.universeId, hdrs);
     const titleToNewId = new Map<string, string>(
       reExport.entries.map((e: { id: string; title: string }) => [e.title, e.id])
     );
@@ -669,9 +693,7 @@ describe('export/import (EXP-01, IMP-01..03)', () => {
       { entryId: e3.id, label: 'Far future', position: 4.35e17, precision: 'approximate' },
     ]);
 
-    const res = await req('GET', `/api/universes/${universe.id}/export?format=json`, { headers: hdrs });
-    expect(res.status).toBe(200);
-    const data = await json(res);
+    const data = await exportManifest(universe.id, hdrs);
     expect(Array.isArray(data.timelinePins)).toBe(true);
     expect(data.timelinePins).toHaveLength(3);
     const positions = data.timelinePins.map((p: { position: number }) => p.position);
@@ -693,20 +715,18 @@ describe('export/import (EXP-01, IMP-01..03)', () => {
       { entryId: e3.id, label: 'Far future', position: 4.35e17, precision: 'approximate' },
     ]);
 
-    // Export
-    const exportRes = await req('GET', `/api/universes/${universe.id}/export?format=json`, { headers: hdrs });
-    const exportData = await json(exportRes);
+    // Export as ZIP, read the manifest, then re-import the same bytes.
+    const zipBytes = await exportAsZipBuffer(universe.id, hdrs);
+    const exportData = await extractManifest(zipBytes);
     expect(exportData.timelinePins).toHaveLength(3);
 
     // Import
-    const importRes = await req('POST', '/api/universes/import', { headers: hdrs, body: exportData });
-    expect(importRes.status).toBe(201);
-    const importResult = await json(importRes);
+    const { status: importStatus, body: importResult } = await importZipBuffer(zipBytes, hdrs);
+    expect(importStatus).toBe(201);
     expect(importResult.pinCount).toBe(3);
 
     // Re-export and assert preservation
-    const reExportRes = await req('GET', `/api/universes/${importResult.universeId}/export?format=json`, { headers: hdrs });
-    const reExport = await json(reExportRes);
+    const reExport = await exportManifest(importResult.universeId, hdrs);
     expect(reExport.timelinePins).toHaveLength(3);
 
     // Each (label, position, precision) triple from the original is present in the re-export.
@@ -800,18 +820,13 @@ describe('export/import (EXP-01, IMP-01..03)', () => {
     const entry = await createEntry(universe.id, hdrs, { title: 'Original', entryType: 'concept' });
     const originalEntryId = entry.id;
 
-    // Export
-    const exportRes = await req('GET', `/api/universes/${universe.id}/export?format=json`, { headers: hdrs });
-    const exportData = await json(exportRes);
-
-    // Import
-    const importRes = await req('POST', '/api/universes/import', { headers: hdrs, body: exportData });
-    expect(importRes.status).toBe(201);
-    const importResult = await json(importRes);
+    // Export as ZIP and re-import the same bytes.
+    const zipBytes = await exportAsZipBuffer(universe.id, hdrs);
+    const { status: importStatus, body: importResult } = await importZipBuffer(zipBytes, hdrs);
+    expect(importStatus).toBe(201);
 
     // Export the new universe and check IDs differ
-    const reExportRes = await req('GET', `/api/universes/${importResult.universeId}/export?format=json`, { headers: hdrs });
-    const reExportData = await json(reExportRes);
+    const reExportData = await exportManifest(importResult.universeId, hdrs);
 
     expect(reExportData.entries).toHaveLength(1);
     expect(reExportData.entries[0].id).not.toBe(originalEntryId);
