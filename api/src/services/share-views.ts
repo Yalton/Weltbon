@@ -166,8 +166,33 @@ export async function getPublicEntries(universeId: string, entryType?: string) {
 // backlink exists.
 //
 export async function getPublicEntryById(universeId: string, entryId: string) {
+  // Explicit projection — NOT a bare .select(). @hono/zod-openapi response schemas are
+  // compile-time typing + OpenAPI docs ONLY: they neither validate nor strip response
+  // bodies at runtime, so whatever this function returns is exactly what ships to the
+  // visitor. A bare .select() spread shipped the raw `search_vector` tsvector column to
+  // anonymous share visitors. This projection is the ONLY real gate on the wire shape;
+  // it must stay in sync with publicEntryDetailResponseSchema in routes/share.ts.
+  // Pinned by the "leaks no undeclared columns" tripwire in tests/share-views.test.ts.
   const [entry] = await getDb()
-    .select()
+    .select({
+      id: entries.id,
+      universeId: entries.universeId,
+      title: entries.title,
+      entryType: entries.entryType,
+      summary: entries.summary,
+      body: entries.body,
+      tags: entries.tags,
+      aliases: entries.aliases,
+      meta: entries.meta,
+      icon: entries.icon,
+      categoryId: entries.categoryId,
+      isPublic: entries.isPublic,
+      wip: entries.wip,
+      coverImageId: entries.coverImageId,
+      createdAt: entries.createdAt,
+      updatedAt: entries.updatedAt,
+      // `searchVector` intentionally omitted — internal tsvector, never a share field.
+    })
     .from(entries)
     .where(
       and(
