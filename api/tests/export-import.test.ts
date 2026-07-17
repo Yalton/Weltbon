@@ -122,7 +122,7 @@ describe('export/import (EXP-01, IMP-01..03)', () => {
     const universe = await createUniverse(hdrs, 'EmptyWorld');
 
     const data = await exportManifest(universe.id, hdrs);
-    expect(data.weltbon_version).toBe('2.0.0');
+    expect(data.weltbon_version).toBe('2.1.0');
     expect(data.exported_at).toBeTruthy();
     expect(data.universe.name).toBe('EmptyWorld');
     expect(data.entries).toEqual([]);
@@ -263,7 +263,7 @@ describe('export/import (EXP-01, IMP-01..03)', () => {
     expect(res.status).toBe(200);
     expect(res.headers.get('content-type')).toBe('application/zip');
     const data = await extractManifest(Buffer.from(await res.arrayBuffer()));
-    expect(data.weltbon_version).toBe('2.0.0');
+    expect(data.weltbon_version).toBe('2.1.0');
   });
 
   // IMP-01: import valid JSON creates universe
