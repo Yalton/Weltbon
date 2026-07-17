@@ -24,6 +24,12 @@ export const importSchema = z.object({
   ),
   exported_at: z.string().optional(),
   universe: z.object({
+    // Plan B (Task 1): accepted-and-IGNORED. Import always mints a fresh universe
+    // id (crypto.randomUUID() via the DB default) — sync (not import) is what
+    // preserves ids across devices (S-05). createdAt/updatedAt are likewise
+    // accepted but not read: the DB stamps fresh timestamps on insert (A2-03
+    // re-stamping idiom, same as every other collection below).
+    id: z.string().uuid().optional(),
     name: z.string().min(1).max(80),
     description: z.string().max(500).optional().default(''),
     entryTypes: z.array(z.string()).optional(),
@@ -79,6 +85,9 @@ export const importSchema = z.object({
     categoryId: z.string().uuid().nullable().optional().default(null),
     // Phase 38 MEDIA-06 (D-07): cover image asset ID reference (may be null).
     coverImageId: z.string().uuid().nullable().optional().default(null),
+    // Plan B (Task 1): pre-Task-1 exports lack this field — default false (mirrors
+    // isPublic/aliases backward-compat idiom; matches the entries.wip DB default).
+    wip: z.boolean().optional().default(false),
   })),
   links: z.array(z.object({
     id: z.string().uuid(),
@@ -544,6 +553,10 @@ export async function importUniverseJson(
           // zod default is ever changed.
           isPublic: entry.isPublic ?? false,
           coverImageId: mappedCoverImageId,
+          // Plan B (Task 1): zod default already converts missing → false; the
+          // `?? false` survives schema-coupling drift (defense-in-depth, same
+          // idiom as isPublic above).
+          wip: entry.wip ?? false,
         })
         .returning({ id: entries.id });
       entryIdMap.set(entry.id, created.id);

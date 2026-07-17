@@ -180,6 +180,8 @@ describe('export/import completeness (Plan A2)', () => {
     const langEntry = await createEntry(universe.id, hdrs, { title: 'Quenya' });
     const subjectA = await createEntry(universe.id, hdrs, { title: 'Diagram Subject A' });
     const subjectB = await createEntry(universe.id, hdrs, { title: 'Diagram Subject B' });
+    // Plan B (Task 1): wip entry — asserts the manifest no longer drops entries.wip.
+    const wipEntry = await createEntry(universe.id, hdrs, { title: 'Draft Entry', wip: true });
 
     // Dictionary: one entry-scoped word, one universe-level (languageEntryId: null).
     await db().insert(dictionaryWords).values([
@@ -248,6 +250,21 @@ describe('export/import completeness (Plan A2)', () => {
     expect(data.universe.auditProvider).toBe('anthropic');
     expect(data.universe.auditModel).toBe('claude-test-model');
 
+    // Plan B (Task 1): universe singleton identity/timestamps — the manifest
+    // used to omit id/createdAt/updatedAt entirely (B-06 merge prerequisite).
+    expect(data.universe.id).toBe(universe.id);
+    expect(data.universe.createdAt).toBeTruthy();
+    expect(data.universe.updatedAt).toBeTruthy();
+
+    // Plan B (Task 1): entries.wip — the manifest used to drop this DB column.
+    // eslint-disable-next-line @typescript-eslint/no-explicit-any
+    const draftEntry = data.entries.find((e: any) => e.id === wipEntry.id);
+    expect(draftEntry).toBeTruthy();
+    expect(draftEntry.wip).toBe(true);
+    // eslint-disable-next-line @typescript-eslint/no-explicit-any
+    const langEntryManifest = data.entries.find((e: any) => e.id === langEntry.id);
+    expect(langEntryManifest.wip).toBe(false);
+
     // updatedAt spot-checks: entries + dictionaryWords.
     expect(data.entries[0].updatedAt).toBeTruthy();
     // eslint-disable-next-line @typescript-eslint/no-explicit-any
@@ -274,6 +291,8 @@ describe('export/import completeness (Plan A2)', () => {
 
     const langEntry = await createEntry(universe.id, hdrs1, { title: 'Quenya' });
     const diagramSubject = await createEntry(universe.id, hdrs1, { title: 'Diagram Subject' });
+    // Plan B (Task 1): wip entry — asserts entries.wip round-trips through export+import.
+    await createEntry(universe.id, hdrs1, { title: 'Draft Entry', wip: true });
 
     await db().insert(dictionaryWords).values([
       { universeId: universe.id, languageEntryId: langEntry.id, word: 'quenya-word', gloss: 'star' },
@@ -332,6 +351,12 @@ describe('export/import completeness (Plan A2)', () => {
     expect(newSubjectEntry).toBeTruthy();
     expect(newLangEntry!.id).not.toBe(langEntry.id);
 
+    // Plan B (Task 1): entries.wip round-trips through export+import.
+    const newDraftEntry = importedEntries.find((e) => e.title === 'Draft Entry');
+    expect(newDraftEntry).toBeTruthy();
+    expect(newDraftEntry!.wip).toBe(true);
+    expect(newLangEntry!.wip).toBe(false);
+
     const importedWords = await db().select().from(dictionaryWords).where(eq(dictionaryWords.universeId, importResult.universeId));
     const scopedWord = importedWords.find((w) => w.word === 'quenya-word');
     const universalWord = importedWords.find((w) => w.word === 'universal-word');
@@ -362,6 +387,11 @@ describe('export/import completeness (Plan A2)', () => {
     expect((importedUniverse!.theme as UniverseTheme).palette).toBe('ember');
     expect((importedUniverse!.fieldRegistry as FieldRegistryEntry[])[0]!.name).toBe('Power Level');
     expect(importedUniverse!.auditEnabled).toBe(true);
+
+    // Plan B (Task 1): the manifest's universe.id is accepted-and-IGNORED —
+    // import always mints a fresh universe id (sync, not import, preserves ids).
+    expect(importedUniverse!.id).not.toBe(universe.id);
+    expect(importedUniverse!.id).toBe(importResult.universeId);
   });
 
   // ── Scenario 3: timestamps re-stamped on import (A2-03) ───────────────────

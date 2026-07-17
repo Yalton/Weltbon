@@ -34,6 +34,10 @@ export function exportUniverseJsonAsZip(
     weltbon_version: '2.1.0' as const,
     exported_at: new Date().toISOString(),
     universe: {
+      // Plan B (Task 1): universe singleton identity/timestamps for the merge engine
+      // (B-06). Import ignores `id` — a fresh universe id is always minted on import;
+      // sync (not import) is what preserves ids (S-05).
+      id: payload.universe.id,
       name: payload.universe.name,
       description: payload.universe.description,
       entryTypes: payload.universe.entryTypes,
@@ -46,6 +50,8 @@ export function exportUniverseJsonAsZip(
       auditEnabled: payload.universe.auditEnabled,
       auditProvider: payload.universe.auditProvider,
       auditModel: payload.universe.auditModel,
+      createdAt: payload.universe.createdAt.toISOString(),
+      updatedAt: payload.universe.updatedAt.toISOString(),
     },
     categories: payload.categories.map((c) => ({
       id: c.id,
@@ -69,6 +75,8 @@ export function exportUniverseJsonAsZip(
       categoryId: e.categoryId,
       // Phase 38 MEDIA-06: cover image reference (may be null).
       coverImageId: e.coverImageId ?? null,
+      // Plan B (Task 1): per-entry WIP/draft flag (Phase 36 DATA-03) — was dropped by the manifest.
+      wip: e.wip,
       createdAt: e.createdAt.toISOString(),
       updatedAt: e.updatedAt.toISOString(),
     })),
