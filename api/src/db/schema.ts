@@ -1,5 +1,6 @@
 import { pgTable, uuid, text, timestamp, jsonb, boolean, integer, doublePrecision, primaryKey, unique, numeric, uniqueIndex } from 'drizzle-orm/pg-core';
 import { relations, sql } from 'drizzle-orm';
+import type { EncryptedSecret } from '../services/crypto.js';
 
 /**
  * Phase 20 D-01: per-universe horizontal timeline window persisted as JSONB
@@ -118,7 +119,7 @@ export const universes = pgTable('universes', {
   // Universe theming (2026-07-10 spec): nullable JSONB, null = default theme.
   theme: jsonb('theme').$type<UniverseTheme | null>(),
   createdAt:    timestamp('created_at').defaultNow().notNull(),
-  updatedAt:    timestamp('updated_at').defaultNow().notNull(),
+  updatedAt:    timestamp('updated_at', { withTimezone: true }).defaultNow().notNull().$onUpdate(() => new Date()),
   // Phase 24 AUDIT-03: per-universe LLM audit opt-in (default OFF).
   // audit_provider and audit_model are nullable until the user enables auditing.
   auditEnabled: boolean('audit_enabled').default(false).notNull(),
@@ -229,6 +230,9 @@ export const shareTokens = pgTable('share_tokens', {
   lastAccessedAt: timestamp('last_accessed_at', { withTimezone: true }),
   accessCount:    integer('access_count').default(0).notNull(),
   createdAt:      timestamp('created_at', { withTimezone: true }).defaultNow().notNull(),
+  // Sync LWW timestamp (Plan A, sync spec S-03). $onUpdate bumps it on every
+  // ORM .update() without touching route code.
+  updatedAt: timestamp('updated_at', { withTimezone: true }).defaultNow().notNull().$onUpdate(() => new Date()),
 });
 
 export const shareTokensRelations = relations(shareTokens, ({ one }) => ({
@@ -262,7 +266,7 @@ export const entryTemplates = pgTable('entry_templates', {
   clonedFrom:  text('cloned_from'),                     // D-02 — nullable; references in-tree default id string (NOT a FK)
   lastUsedAt:  timestamp('last_used_at', { withTimezone: true }),
   createdAt:   timestamp('created_at', { withTimezone: true }).defaultNow().notNull(),
-  updatedAt:   timestamp('updated_at', { withTimezone: true }).defaultNow().notNull(),
+  updatedAt:   timestamp('updated_at', { withTimezone: true }).defaultNow().notNull().$onUpdate(() => new Date()),
 }, (t) => ({
   userTypeNameUnique: unique('entry_templates_user_id_entry_type_name_unique').on(t.userId, t.entryType, t.name),  // D-04
 }));
@@ -274,6 +278,9 @@ export const categories = pgTable('categories', {
   icon:       text('icon').default('').notNull(),
   sortOrder:  integer('sort_order').default(0).notNull(),
   createdAt:  timestamp('created_at').defaultNow().notNull(),
+  // Sync LWW timestamp (Plan A, sync spec S-03). $onUpdate bumps it on every
+  // ORM .update() without touching route code.
+  updatedAt: timestamp('updated_at', { withTimezone: true }).defaultNow().notNull().$onUpdate(() => new Date()),
 });
 
 export const entries = pgTable('entries', {
@@ -290,7 +297,7 @@ export const entries = pgTable('entries', {
   searchVector: text('search_vector'),
   categoryId:   uuid('category_id').references(() => categories.id, { onDelete: 'set null' }),
   createdAt:    timestamp('created_at').defaultNow().notNull(),
-  updatedAt:    timestamp('updated_at').defaultNow().notNull(),
+  updatedAt:    timestamp('updated_at', { withTimezone: true }).defaultNow().notNull().$onUpdate(() => new Date()),
   // Phase 29 D-10: per-entry public flag for share-link visibility.
   // Default flipped to TRUE by 0023_share_public_by_default.sql — sharing a universe
   // shows every entry without manual per-entry toggling. The flag is now an opt-OUT:
@@ -320,6 +327,9 @@ export const links = pgTable('links', {
   // Phase 35 REL-01: direction replaces bidirectional; CHECK constraint in migration SQL
   direction:     text('direction').notNull(),
   createdAt:     timestamp('created_at').defaultNow().notNull(),
+  // Sync LWW timestamp (Plan A, sync spec S-03). $onUpdate bumps it on every
+  // ORM .update() without touching route code.
+  updatedAt: timestamp('updated_at', { withTimezone: true }).defaultNow().notNull().$onUpdate(() => new Date()),
   // Phase 31 DIAGRAM-02: diagram back-reference + edge styling write-through.
   // diagramId is nullable so a link with no diagram_id still renders in the force graph.
   // lineStyle + color are constrained server-side (solid/dashed/dotted; fixed palette).
@@ -405,7 +415,7 @@ export const issues = pgTable('issues', {
   severity:    text('severity').default('minor').notNull(),
   resolved:    boolean('resolved').default(false).notNull(),
   createdAt:   timestamp('created_at').defaultNow().notNull(),
-  updatedAt:   timestamp('updated_at').defaultNow().notNull(),
+  updatedAt:   timestamp('updated_at', { withTimezone: true }).defaultNow().notNull().$onUpdate(() => new Date()),
   // Phase 24 AUDIT-02: additive columns for AI-sourced issues.
   // Existing creation paths remain byte-identical: source defaults to 'human',
   // all other new columns are nullable, preserving the existing row shape for human inserts.
@@ -439,7 +449,7 @@ export const graphPositions = pgTable('graph_positions', {
   entryId:    uuid('entry_id').references(() => entries.id, { onDelete: 'cascade' }).notNull(),
   x:          doublePrecision('x').notNull(),
   y:          doublePrecision('y').notNull(),
-  updatedAt:  timestamp('updated_at').defaultNow().notNull(),
+  updatedAt:  timestamp('updated_at', { withTimezone: true }).defaultNow().notNull().$onUpdate(() => new Date()),
 }, (t) => ({
   pk: primaryKey({ columns: [t.universeId, t.entryId] }),
 }));
@@ -453,6 +463,9 @@ export const timelinePins = pgTable('timeline_pins', {
   label:     text('label').notNull(),
   position:  doublePrecision('position').notNull(),
   precision: text('precision').default('exact').notNull(),
+  // Sync LWW timestamp (Plan A, sync spec S-03). $onUpdate bumps it on every
+  // ORM .update() without touching route code.
+  updatedAt: timestamp('updated_at', { withTimezone: true }).defaultNow().notNull().$onUpdate(() => new Date()),
 });
 
 /**
@@ -468,6 +481,9 @@ export const diagrams = pgTable('diagrams', {
   name:        text('name').notNull(),
   description: text('description'),
   createdAt:   timestamp('created_at').defaultNow().notNull(),
+  // Sync LWW timestamp (Plan A, sync spec S-03). $onUpdate bumps it on every
+  // ORM .update() without touching route code.
+  updatedAt: timestamp('updated_at', { withTimezone: true }).defaultNow().notNull().$onUpdate(() => new Date()),
 });
 
 /**
@@ -483,6 +499,9 @@ export const diagramNodes = pgTable('diagram_nodes', {
   entryId:   uuid('entry_id').references(() => entries.id, { onDelete: 'cascade' }).notNull(),
   x:         doublePrecision('x').notNull(),
   y:         doublePrecision('y').notNull(),
+  // Sync LWW timestamp (Plan A, sync spec S-03). $onUpdate bumps it on every
+  // ORM .update() without touching route code.
+  updatedAt: timestamp('updated_at', { withTimezone: true }).defaultNow().notNull().$onUpdate(() => new Date()),
 }, (t) => ({
   diagramNodesUniqueIdx: uniqueIndex('diagram_nodes_unique_idx').on(t.diagramId, t.entryId),
 }));
@@ -526,7 +545,7 @@ export const assets = pgTable('assets', {
   thumbSizeBytes: integer('thumb_size_bytes').notNull(),
   altText:        text('alt_text'),
   createdAt:      timestamp('created_at', { withTimezone: true }).defaultNow().notNull(),
-  updatedAt:      timestamp('updated_at', { withTimezone: true }).defaultNow().notNull(),
+  updatedAt:      timestamp('updated_at', { withTimezone: true }).defaultNow().notNull().$onUpdate(() => new Date()),
 });
 
 export const dictionaryWords = pgTable('dictionary_words', {
@@ -541,7 +560,7 @@ export const dictionaryWords = pgTable('dictionary_words', {
   tags:            text('tags').array().default([]).notNull(),
   searchVector:    text('search_vector'),  // GENERATED in SQL migration (same as entries.searchVector ln ~243)
   createdAt:       timestamp('created_at').defaultNow().notNull(),
-  updatedAt:       timestamp('updated_at').defaultNow().notNull(),
+  updatedAt:       timestamp('updated_at', { withTimezone: true }).defaultNow().notNull().$onUpdate(() => new Date()),
   // NOTE: scope-unique index with lower(word) + COALESCE sentinel lives in migration 0018 only —
   // Drizzle TS uniqueIndex() cannot express COALESCE-sentinel or lower() expressions.
 });
@@ -562,6 +581,9 @@ export const maps = pgTable('maps', {
   // eslint-disable-next-line @typescript-eslint/no-use-before-define
   imageAssetId: uuid('image_asset_id').references((): any => assets.id, { onDelete: 'set null' }),
   createdAt:    timestamp('created_at').defaultNow().notNull(),
+  // Sync LWW timestamp (Plan A, sync spec S-03). $onUpdate bumps it on every
+  // ORM .update() without touching route code.
+  updatedAt: timestamp('updated_at', { withTimezone: true }).defaultNow().notNull().$onUpdate(() => new Date()),
   // Phase 40 MAPS-05 (D-03): nullable JSON legend caption overrides.
   // A Record<string, string> keyed by color/icon combo stored as text.
   legendLabels: text('legend_labels'),  // nullable JSON: Record<string, string>
@@ -596,6 +618,9 @@ export const mapPins = pgTable('map_pins', {
   // so deleting a target map nulls the link rather than cascade-deleting the source pin.
   // eslint-disable-next-line @typescript-eslint/no-use-before-define
   targetMapId: uuid('target_map_id').references((): any => maps.id, { onDelete: 'set null' }),
+  // Sync LWW timestamp (Plan A, sync spec S-03). $onUpdate bumps it on every
+  // ORM .update() without touching route code.
+  updatedAt: timestamp('updated_at', { withTimezone: true }).defaultNow().notNull().$onUpdate(() => new Date()),
 });
 
 /**
@@ -621,6 +646,9 @@ export const mapRegions = pgTable('map_regions', {
   points:        text('points').notNull(),  // JSON: [{x:number,y:number}, ...]
   color:         text('color'),             // nullable hex (D-01)
   createdAt:     timestamp('created_at').defaultNow().notNull(),
+  // Sync LWW timestamp (Plan A, sync spec S-03). $onUpdate bumps it on every
+  // ORM .update() without touching route code.
+  updatedAt: timestamp('updated_at', { withTimezone: true }).defaultNow().notNull().$onUpdate(() => new Date()),
   // eslint-disable-next-line @typescript-eslint/no-use-before-define
   terrainTypeId: uuid('terrain_type_id').references((): any => terrainTypes.id, { onDelete: 'set null' }),  // nullable discriminator (Phase 42)
   // Phase 52 SECRET-01/02: owner-only secret flag (default false = not secret).
@@ -656,6 +684,9 @@ export const mapRoutes = pgTable('map_routes', {
   width:     integer('width').notNull().default(4),           // discrete preset px (D-03)
   showArrow: boolean('show_arrow').notNull().default(false),  // end-arrowhead (D-04)
   createdAt: timestamp('created_at').defaultNow().notNull(),
+  // Sync LWW timestamp (Plan A, sync spec S-03). $onUpdate bumps it on every
+  // ORM .update() without touching route code.
+  updatedAt: timestamp('updated_at', { withTimezone: true }).defaultNow().notNull().$onUpdate(() => new Date()),
   // Phase 52 SECRET-01/02: owner-only secret flag (default false = not secret).
   // Server-side share filter in share-views.ts drops items where secret=true.
   // Inverse polarity of entries.isPublic: false = visible, true = excluded from share.
@@ -679,6 +710,9 @@ export const mapLayers = pgTable('map_layers', {
   defaultOpacity: doublePrecision('default_opacity').notNull().default(0.6),
   sortOrder:      integer('sort_order').notNull().default(0),
   createdAt:      timestamp('created_at').defaultNow().notNull(),
+  // Sync LWW timestamp (Plan A, sync spec S-03). $onUpdate bumps it on every
+  // ORM .update() without touching route code.
+  updatedAt: timestamp('updated_at', { withTimezone: true }).defaultNow().notNull().$onUpdate(() => new Date()),
   // Phase 52 SECRET-01/02: owner-only secret flag (default false = not secret).
   // Server-side share filter in share-views.ts drops items where secret=true.
   // Inverse polarity of entries.isPublic: false = visible, true = excluded from share.
@@ -702,4 +736,49 @@ export const terrainTypes = pgTable('terrain_types', {
   label:     text('label'),             // nullable free-text height-range label (D-42-06)
   sortOrder: integer('sort_order').notNull().default(0),
   createdAt: timestamp('created_at').defaultNow().notNull(),
+  // Sync LWW timestamp (Plan A, sync spec S-03). $onUpdate bumps it on every
+  // ORM .update() without touching route code.
+  updatedAt: timestamp('updated_at', { withTimezone: true }).defaultNow().notNull().$onUpdate(() => new Date()),
+});
+
+/**
+ * Sync Foundation (Plan A — sync spec "Data model", decisions S-01..S-10).
+ * sync_remotes: a remote Weltbon instance this user syncs with. The PAT is
+ * stored AES-256-GCM-encrypted (services/crypto.ts), same at-rest posture as
+ * llm_api_keys.
+ */
+export const syncRemotes = pgTable('sync_remotes', {
+  id:           uuid('id').primaryKey().defaultRandom(),
+  userId:       uuid('user_id').references(() => users.id, { onDelete: 'cascade' }).notNull(),
+  label:        text('label').default('').notNull(),
+  baseUrl:      text('base_url').notNull(),
+  encryptedPat: jsonb('encrypted_pat').$type<EncryptedSecret>().notNull(),
+  createdAt:    timestamp('created_at', { withTimezone: true }).defaultNow().notNull(),
+});
+
+/** One (universe × remote) sync relationship; base_snapshot_key points into storageBackend. */
+export const syncLinks = pgTable('sync_links', {
+  id:              uuid('id').primaryKey().defaultRandom(),
+  universeId:      uuid('universe_id').references(() => universes.id, { onDelete: 'cascade' }).notNull(),
+  remoteId:        uuid('remote_id').references(() => syncRemotes.id, { onDelete: 'cascade' }).notNull(),
+  baseSnapshotKey: text('base_snapshot_key'),
+  lastSyncedAt:    timestamp('last_synced_at', { withTimezone: true }),
+  status:          text('status').default('idle').notNull(),   // 'idle' | 'syncing' | 'error'
+  lastError:       text('last_error'),
+  createdAt:       timestamp('created_at', { withTimezone: true }).defaultNow().notNull(),
+  updatedAt:       timestamp('updated_at', { withTimezone: true }).defaultNow().notNull().$onUpdate(() => new Date()),
+}, (t) => ({
+  universeRemoteUnique: uniqueIndex('sync_links_universe_remote_unique').on(t.universeId, t.remoteId),
+}));
+
+/** LWW losers, kept for the non-blocking review list (S-03). */
+export const syncConflicts = pgTable('sync_conflicts', {
+  id:            uuid('id').primaryKey().defaultRandom(),
+  universeId:    uuid('universe_id').references(() => universes.id, { onDelete: 'cascade' }).notNull(),
+  tableName:     text('table_name').notNull(),
+  rowId:         uuid('row_id').notNull(),
+  winner:        text('winner').notNull(),                     // 'local' | 'remote'
+  loserPayload:  jsonb('loser_payload').notNull(),
+  resolvedAt:    timestamp('resolved_at', { withTimezone: true }),
+  createdAt:     timestamp('created_at', { withTimezone: true }).defaultNow().notNull(),
 });
