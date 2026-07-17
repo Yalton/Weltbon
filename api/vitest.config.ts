@@ -64,6 +64,8 @@ const DB_GATED_TESTS = [
   'tests/tokens.test.ts',
   'tests/universe-types.test.ts',
   'tests/universes.test.ts',
+  // Plan A (sync foundation) — updatedAt timestamptz + $onUpdate regression coverage.
+  'tests/updated-at-bump.test.ts',
   // Phase 29 Plan 05 — share-token security boundary + share-view privacy
   // invariants. Both files use createTestDb/setTestDb (DB-gated lane required).
   'tests/share-boundary.test.ts',
