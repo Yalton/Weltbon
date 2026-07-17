@@ -266,6 +266,9 @@ export const entryTemplates = pgTable('entry_templates', {
   clonedFrom:  text('cloned_from'),                     // D-02 — nullable; references in-tree default id string (NOT a FK)
   lastUsedAt:  timestamp('last_used_at', { withTimezone: true }),
   createdAt:   timestamp('created_at', { withTimezone: true }).defaultNow().notNull(),
+  // $onUpdate means the best-effort lastUsedAt bump (entries.ts "template used")
+  // now also floats the template in the updatedAt-ordered list — accepted as
+  // "recently touched" semantics (Plan A final review, Minor #2).
   updatedAt:   timestamp('updated_at', { withTimezone: true }).defaultNow().notNull().$onUpdate(() => new Date()),
 }, (t) => ({
   userTypeNameUnique: unique('entry_templates_user_id_entry_type_name_unique').on(t.userId, t.entryType, t.name),  // D-04
