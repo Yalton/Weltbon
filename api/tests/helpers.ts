@@ -14,6 +14,43 @@ export interface TestDbHandle {
 }
 
 export async function createTestDb(): Promise<TestDbHandle> {
+  // ── D-07 spike branch: WELTBON_TEST_DRIVER=pglite runs this file's tests on
+  // an in-memory PGlite instead of live Postgres. One fresh instance per test
+  // file (createTestDb is called once per file) = perfect isolation, no schema
+  // juggling, no DATABASE_URL needed. Types are cast: PgliteDatabase and
+  // NodePgDatabase share the PgDatabase query API; the pool shim covers the
+  // only two members tests use (query/end). Productionizing this seam happens
+  // in the desktop-app plan, not the spike.
+  if (process.env.WELTBON_TEST_DRIVER === 'pglite') {
+    const { PGlite } = await import('@electric-sql/pglite');
+    const { drizzle: drizzlePglite } = await import('drizzle-orm/pglite');
+    const { migrate: migratePglite } = await import('drizzle-orm/pglite/migrator');
+
+    const client = new PGlite();
+    // Real Postgres deployments (docker containers, CI) run with a UTC session
+    // TimeZone; PGlite defaults to the HOST zone, which skews the app's
+    // naive-timestamp AT TIME ZONE 'UTC' round-trips (proven by issues-dismiss
+    // test 18). Pin UTC to mirror the real environment. The desktop app must
+    // uphold the same invariant (spike report records this).
+    await client.exec(`SET TIME ZONE 'UTC'`);
+    const pgliteDb = drizzlePglite(client, { schema });
+    await migratePglite(pgliteDb, { migrationsFolder: './drizzle' });
+
+    const poolShim = {
+      query: (text: string, params?: unknown[]) => client.query(text, params),
+      end: () => client.close(),
+    } as unknown as pg.Pool;
+
+    return {
+      db: pgliteDb as unknown as TestDbHandle['db'],
+      pool: poolShim,
+      schemaName: 'public',
+      cleanup: async () => {
+        await client.close();
+      },
+    };
+  }
+
   const schemaName = `test_${Date.now()}_${Math.floor(Math.random() * 1000)}`;
   const url = process.env.DATABASE_URL!;
 

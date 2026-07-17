@@ -4,4 +4,5 @@
 -- entry from share links); the server-side share privacy filter
 -- (entries.is_public = true in share-views.ts) is UNCHANGED — only the default flips.
 ALTER TABLE "entries" ALTER COLUMN "is_public" SET DEFAULT true;
+--> statement-breakpoint
 UPDATE "entries" SET "is_public" = true WHERE "is_public" = false;
