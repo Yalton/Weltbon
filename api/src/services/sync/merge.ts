@@ -9,10 +9,12 @@
  * toward REMOTE (B-03) — arbitrary but symmetric, so A→B and B→A converge.
  */
 import {
+  COLLECTIONS,
   NON_CONTENT_FIELDS,
   UNORDERED_ARRAY_FIELDS,
   type CollectionDescriptor,
   type ManifestRow,
+  type SyncManifest,
 } from './manifest.js';
 
 export interface CollectionMergeResult {
@@ -294,4 +296,141 @@ export function mergeCollection(
   conflicts.sort((a, b) => (a.key < b.key ? -1 : a.key > b.key ? 1 : 0));
 
   return { merged: mergedRows, localOps, remoteOps, conflicts };
+}
+
+// --- whole-manifest merge (Task 5) ----------------------------------------
+
+/**
+ * Thrown when the manifests being merged declare different `weltbon_version`s
+ * (B-09). The handshake (Plan C) is the primary gate; this is defense in depth
+ * so the pure engine never silently merges incompatible schemas.
+ */
+export class SyncVersionMismatchError extends Error {
+  constructor(
+    readonly versions: { base: string | null; local: string; remote: string },
+  ) {
+    super(
+      `weltbon_version mismatch: base=${versions.base ?? 'null'} local=${versions.local} remote=${versions.remote}`,
+    );
+    this.name = 'SyncVersionMismatchError';
+  }
+}
+
+export interface ManifestMergeResult {
+  merged: SyncManifest;
+  localOps: Record<string, { upserts: ManifestRow[]; deletes: string[] }>;
+  remoteOps: Record<string, { upserts: ManifestRow[]; deletes: string[] }>;
+  /** upsert-or-nothing per side for the universe singleton (B-06). */
+  universeOp: { local: ManifestRow | null; remote: ManifestRow | null };
+  conflicts: RowConflict[];
+}
+
+/**
+ * The universe is a singleton row, not a collection — merged via the SAME
+ * three-way logic (B-06) by keying every candidate to one constant so
+ * mergeCollection treats {base?, local, remote} as a single row. Conflicts it
+ * raises carry collection name 'universe'; it never deletes (universe is always
+ * present on both sides), so its ops reduce to an upsert-or-nothing per side.
+ */
+const UNIVERSE_DESC: CollectionDescriptor = {
+  name: 'universe',
+  key: () => 'universe',
+  naturalKey: null,
+};
+
+/** ISO-string field access on a typed manifest without fighting the exact type. */
+function collectionRows(manifest: SyncManifest, name: string): ManifestRow[] {
+  return (manifest as unknown as Record<string, ManifestRow[]>)[name];
+}
+function universeRow(manifest: SyncManifest): ManifestRow {
+  return (manifest as unknown as Record<string, ManifestRow>).universe;
+}
+
+/**
+ * Three-way merge over a whole manifest (sync spec S-01..S-05). Iterates every
+ * collection descriptor delegating to mergeCollection (base `null` → `undefined`
+ * arrays), merges the universe singleton (B-06), and assembles one converged
+ * manifest in buildManifest's key order. Each side's ops are the mechanical
+ * delta to that converged state (B-07). Pure: no DB, no clock, no I/O.
+ *
+ * `weltbon_version`/`exported_at` are METADATA, not merged state: the version is
+ * gated equal (B-09) and passed through; `exported_at` is set to the later of
+ * the two inputs (arbitrary — it is not a row and has no LWW meaning).
+ */
+export function mergeManifests(
+  base: SyncManifest | null,
+  local: SyncManifest,
+  remote: SyncManifest,
+): ManifestMergeResult {
+  // B-09: version gate (defense in depth — Plan C's handshake is the primary gate).
+  if (
+    local.weltbon_version !== remote.weltbon_version ||
+    (base !== null && base.weltbon_version !== local.weltbon_version)
+  ) {
+    throw new SyncVersionMismatchError({
+      base: base === null ? null : base.weltbon_version,
+      local: local.weltbon_version,
+      remote: remote.weltbon_version,
+    });
+  }
+
+  const localOps: Record<string, { upserts: ManifestRow[]; deletes: string[] }> = {};
+  const remoteOps: Record<string, { upserts: ManifestRow[]; deletes: string[] }> = {};
+  const mergedCollections: Record<string, ManifestRow[]> = {};
+  const conflicts: RowConflict[] = [];
+
+  for (const desc of COLLECTIONS) {
+    const baseRows = base === null ? undefined : collectionRows(base, desc.name);
+    const res = mergeCollection(desc, baseRows, collectionRows(local, desc.name), collectionRows(remote, desc.name));
+    mergedCollections[desc.name] = res.merged;
+    localOps[desc.name] = res.localOps;
+    remoteOps[desc.name] = res.remoteOps;
+    conflicts.push(...res.conflicts);
+  }
+
+  // universe singleton (B-06): reuse the row core over single-element arrays.
+  const uRes = mergeCollection(
+    UNIVERSE_DESC,
+    base === null ? undefined : [universeRow(base)],
+    [universeRow(local)],
+    [universeRow(remote)],
+  );
+  const mergedUniverse = uRes.merged[0]; // always present — universe is never deleted
+  conflicts.push(...uRes.conflicts);
+  const universeOp = {
+    local: uRes.localOps.upserts[0] ?? null,
+    remote: uRes.remoteOps.upserts[0] ?? null,
+  };
+
+  // Metadata: later exported_at (not state); version already gated equal.
+  const exportedAt =
+    Date.parse(local.exported_at) >= Date.parse(remote.exported_at)
+      ? local.exported_at
+      : remote.exported_at;
+
+  // Assemble in buildManifest's exact key order.
+  const merged = {
+    weltbon_version: local.weltbon_version,
+    exported_at: exportedAt,
+    universe: mergedUniverse,
+    categories: mergedCollections.categories,
+    entries: mergedCollections.entries,
+    links: mergedCollections.links,
+    issues: mergedCollections.issues,
+    graphPositions: mergedCollections.graphPositions,
+    timelinePins: mergedCollections.timelinePins,
+    assets: mergedCollections.assets,
+    maps: mergedCollections.maps,
+    mapPins: mergedCollections.mapPins,
+    mapRegions: mergedCollections.mapRegions,
+    mapRoutes: mergedCollections.mapRoutes,
+    mapLayers: mergedCollections.mapLayers,
+    terrainTypes: mergedCollections.terrainTypes,
+    dictionaryWords: mergedCollections.dictionaryWords,
+    diagrams: mergedCollections.diagrams,
+    diagramNodes: mergedCollections.diagramNodes,
+    shareTokens: mergedCollections.shareTokens,
+  } as unknown as SyncManifest;
+
+  return { merged, localOps, remoteOps, universeOp, conflicts };
 }
