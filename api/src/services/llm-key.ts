@@ -28,22 +28,19 @@
  *     plaintext, ciphertext, iv, authTag, encryptionKeyHex, keyBuf, or err.message.
  */
 
-import { randomBytes, createCipheriv, createDecipheriv } from 'node:crypto';
 import { eq, and } from 'drizzle-orm';
 import { db as getDb } from '../db/client.js';
 import { llmApiKeys } from '../db/schema.js';
+import { encryptSecret, decryptSecret, type EncryptedSecret } from './crypto.js';
 
 // ---------------------------------------------------------------------------
 // Public types
 // ---------------------------------------------------------------------------
 
-export interface EncryptedKey {
-  ciphertext: string;   // hex of AES-256-GCM ciphertext
-  iv: string;           // 24 hex chars (12 random bytes — never reused)
-  authTag: string;      // 32 hex chars (16-byte GCM auth tag)
-  bodySuffix: string;   // last 4 chars of plaintext (D-14)
-  version: 1;           // D-12 — always 1 in v3.0
-}
+// Plan A (2026-07-17): the AES-256-GCM envelope shape is now owned by
+// crypto.ts (EncryptedSecret). EncryptedKey keeps its exported name/shape —
+// callers and stored DB rows are untouched — but is now an alias.
+export type EncryptedKey = EncryptedSecret;
 
 export type LlmProvider = 'anthropic' | 'openai';
 
@@ -62,18 +59,7 @@ export type LlmProvider = 'anthropic' | 'openai';
  * boot via the LLMKEY-08 fail-fast.
  */
 export function encryptKey(plaintext: string, encryptionKeyHex: string): EncryptedKey {
-  const keyBuf = Buffer.from(encryptionKeyHex, 'hex');
-  const iv = randomBytes(12);
-  const cipher = createCipheriv('aes-256-gcm', keyBuf, iv);
-  const ciphertextBuf = Buffer.concat([cipher.update(plaintext, 'utf8'), cipher.final()]);
-  const authTag = cipher.getAuthTag();
-  return {
-    ciphertext: ciphertextBuf.toString('hex'),
-    iv: iv.toString('hex'),
-    authTag: authTag.toString('hex'),
-    bodySuffix: plaintext.slice(-4),
-    version: 1,
-  };
+  return encryptSecret(plaintext, encryptionKeyHex);
 }
 
 // ---------------------------------------------------------------------------
@@ -139,18 +125,23 @@ export const getDecryptedKey = async (
       return null;
     }
 
-    const keyBuf = Buffer.from(encryptionKeyHex, 'hex');
-    const ivBuf = Buffer.from(row.iv, 'hex');
-    const authTagBuf = Buffer.from(row.authTag, 'hex');
-    const ciphertextBuf = Buffer.from(row.ciphertext, 'hex');
-
-    const decipher = createDecipheriv('aes-256-gcm', keyBuf, ivBuf);
-    // CRITICAL: setAuthTag MUST be called BEFORE the first update() call.
-    // Out-of-order produces silently-wrong output on success and "Unsupported state"
-    // on failure (the same silent-on-failure footgun the round-trip test pins).
-    decipher.setAuthTag(authTagBuf);
-    const decrypted =
-      decipher.update(ciphertextBuf, undefined, 'utf8') + decipher.final('utf8');
+    const decrypted = decryptSecret(
+      {
+        ciphertext: row.ciphertext,
+        iv: row.iv,
+        authTag: row.authTag,
+        bodySuffix: '', // not needed for decryption — display-only field
+        version: 1,
+      },
+      encryptionKeyHex,
+    );
+    if (decrypted === null) {
+      // Metadata-only warn. NEVER reference err.message, plaintext, ciphertext,
+      // iv, authTag, keyBuf, encryptionKeyHex. The userId + provider tuple is
+      // the only diagnostic surface we expose (operator can correlate to the
+      // DB row).
+      console.warn('[llm-key] decryption failed for user', userId, 'provider', provider);
+    }
     return decrypted;
   } catch {
     // Metadata-only warn. NEVER reference err.message, plaintext, ciphertext, iv,
