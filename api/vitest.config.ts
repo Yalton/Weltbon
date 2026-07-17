@@ -34,6 +34,8 @@ const DB_GATED_TESTS = [
   'tests/entries.test.ts',
   'tests/entry-search.test.ts',
   'tests/export-docx.test.ts',
+  // Plan A2 (Export-Payload Completeness) — manifest 2.1.0 round-trip coverage.
+  'tests/export-import-completeness.test.ts',
   'tests/export-import.test.ts',
   'tests/export-markdown.test.ts',
   'tests/export-pdf.test.ts',
