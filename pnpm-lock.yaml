@@ -36,7 +36,7 @@ importers:
         version: 9.6.1
       drizzle-orm:
         specifier: 0.45.2
-        version: 0.45.2(@types/pg@8.11.10)(pg@8.20.0)
+        version: 0.45.2(@electric-sql/pglite@0.5.4)(@types/pg@8.11.10)(pg@8.20.0)
       file-type:
         specifier: ^22.0.1
         version: 22.0.1
@@ -98,6 +98,9 @@ importers:
         specifier: 4.1.4
         version: 4.1.4
     devDependencies:
+      '@electric-sql/pglite':
+        specifier: ^0.5.4
+        version: 0.5.4
       '@types/archiver':
         specifier: ^7.0.0
         version: 7.0.0
@@ -456,6 +459,9 @@ packages:
 
   '@drizzle-team/brocli@0.10.2':
     resolution: {integrity: sha512-z33Il7l5dKjUgGULTqBsQBQwckHh5AbIuxhdsIxDDiZAzBOrZO6q9ogcWC65kU382AfynTfgNumVcNIjuIua6w==}
+
+  '@electric-sql/pglite@0.5.4':
+    resolution: {integrity: sha512-yYZUyyXrHU7tPlCjwZQJ6hIG9DscdCCn7Uk0mYKwC1FeHX286AbcmFveMiRBEak8e9iPupjsoVImN3yJZVed2g==}
 
   '@emnapi/core@1.9.2':
     resolution: {integrity: sha512-UC+ZhH3XtczQYfOlu3lNEkdW/p4dsJ1r/bP7H8+rhao3TTTMO1ATq/4DdIi23XuGoFY+Cz0JmCbdVl0hz9jZcA==}
@@ -4659,6 +4665,8 @@ snapshots:
 
   '@drizzle-team/brocli@0.10.2': {}
 
+  '@electric-sql/pglite@0.5.4': {}
+
   '@emnapi/core@1.9.2':
     dependencies:
       '@emnapi/wasi-threads': 1.2.1
@@ -6419,8 +6427,9 @@ snapshots:
       esbuild: 0.25.12
       tsx: 4.21.0
 
-  drizzle-orm@0.45.2(@types/pg@8.11.10)(pg@8.20.0):
+  drizzle-orm@0.45.2(@electric-sql/pglite@0.5.4)(@types/pg@8.11.10)(pg@8.20.0):
     optionalDependencies:
+      '@electric-sql/pglite': 0.5.4
       '@types/pg': 8.11.10
       pg: 8.20.0
 
