@@ -1,7 +1,7 @@
 import { z } from 'zod';
 import sharp from 'sharp';
 import { db } from '../db/client.js';
-import { universes, entries, links, categories, issues, issueEntries, graphPositions, timelinePins, assets, maps, mapPins, mapRegions, mapRoutes, mapLayers, terrainTypes } from '../db/schema.js';
+import { universes, entries, links, categories, issues, issueEntries, graphPositions, timelinePins, assets, maps, mapPins, mapRegions, mapRoutes, mapLayers, terrainTypes, dictionaryWords, diagrams, diagramNodes, shareTokens, type Calendar, type UniverseTheme, type FieldRegistryEntry } from '../db/schema.js';
 import { storageBackend } from './storage/local.js';
 import { isValidRoutePoints, ROUTE_POINTS_ERROR } from '../utils/route-points.js';
 
@@ -19,8 +19,8 @@ const ALLOWED_MIME_LIST = Array.from(ALLOWED_MIME).join(', ');
 
 export const importSchema = z.object({
   weltbon_version: z.string().refine(
-    (v) => v === '1.0.0' || v === '2.0.0',
-    { message: 'Incompatible export version. Expected 1.0.0 or 2.0.0' }
+    (v) => v === '1.0.0' || v === '2.0.0' || v === '2.1.0',
+    { message: 'Incompatible export version. Expected 1.0.0, 2.0.0, or 2.1.0' }
   ),
   exported_at: z.string().optional(),
   universe: z.object({
@@ -40,6 +40,14 @@ export const importSchema = z.object({
     // Phase 35 REL-01: round-trip the per-universe link-type registry;
     // pre-Phase-35 exports lack this field — default to {} (empty registry).
     linkTypes: z.record(z.string(), z.any()).optional().default({}),
+    // Plan A2 (A2-06): previously-dropped universe-level product state.
+    // Pre-2.1.0 exports lack these fields — default to the schema's own defaults.
+    calendar: z.unknown().nullable().optional().default(null),
+    theme: z.unknown().nullable().optional().default(null),
+    fieldRegistry: z.array(z.unknown()).optional().default([]),
+    auditEnabled: z.boolean().optional().default(false),
+    auditProvider: z.string().nullable().optional().default(null),
+    auditModel: z.string().nullable().optional().default(null),
   }),
   categories: z
     .array(
@@ -254,6 +262,68 @@ export const importSchema = z.object({
     )
     .optional()
     .default([]),
+  // Plan A2: per-universe conlang dictionary from v5.5+ exports (weltbon_version 2.1.0).
+  // Backward-compat: pre-Plan-A2 exports lack this field → default [] for zero inserts.
+  dictionaryWords: z
+    .array(
+      z.object({
+        id: z.string().uuid(),
+        languageEntryId: z.string().uuid().nullable().optional().default(null),
+        word: z.string().min(1),
+        ipa: z.string().optional().default(''),
+        partOfSpeech: z.string().optional().default(''),
+        gloss: z.string(),
+        etymology: z.string().optional().default(''),
+        tags: z.array(z.string()).optional().default([]),
+        // createdAt/updatedAt not validated — ignored on import (A2-03)
+      })
+    )
+    .optional()
+    .default([]),
+  // Plan A2: named diagrams from v5.5+ exports (weltbon_version 2.1.0).
+  // Backward-compat: pre-Plan-A2 exports lack this field → default [] for zero inserts.
+  diagrams: z
+    .array(
+      z.object({
+        id: z.string().uuid(),
+        name: z.string().min(1),
+        description: z.string().nullable().optional().default(null),
+      })
+    )
+    .optional()
+    .default([]),
+  // Plan A2: diagram nodes from v5.5+ exports (weltbon_version 2.1.0).
+  // Backward-compat: pre-Plan-A2 exports lack this field → default [] for zero inserts.
+  diagramNodes: z
+    .array(
+      z.object({
+        id: z.string().uuid().optional(),
+        diagramId: z.string().uuid(),
+        entryId: z.string().uuid(),
+        x: z.number().finite(),
+        y: z.number().finite(),
+      })
+    )
+    .optional()
+    .default([]),
+  // Plan A2 (A2-04): share tokens from v5.5+ exports (weltbon_version 2.1.0).
+  // Backward-compat: pre-Plan-A2 exports lack this field → default [] for zero inserts.
+  shareTokens: z
+    .array(
+      z.object({
+        id: z.string().uuid().optional(),
+        scope: z.string().optional().default('universe'),
+        scopeEntryId: z.string().uuid().nullable().optional().default(null),
+        label: z.string().optional().default(''),
+        hash: z.string().min(1),
+        bodySuffix: z.string(),
+        expiresAt: z.string().nullable().optional().default(null),
+        revokedAt: z.string().nullable().optional().default(null),
+        accessCount: z.number().int().optional().default(0),
+      })
+    )
+    .optional()
+    .default([]),
 });
 
 const DEFAULT_ENTRY_TYPES = [
@@ -321,6 +391,16 @@ export async function importUniverseJson(
         // Phase 35 REL-01: round-trip the per-universe link-type registry;
         // pre-Phase-35 exports default to {} (no custom types).
         linkTypes: data.universe.linkTypes ?? {},
+        // Plan A2 (A2-06): previously-dropped universe-level product state;
+        // pre-2.1.0 exports lack these fields — zod defaults already cover the
+        // missing case, `?? ...` survives schema-coupling drift (defense-in-depth,
+        // same idiom as isPublic above).
+        calendar: (data.universe.calendar ?? null) as Calendar | null,
+        theme: (data.universe.theme ?? null) as UniverseTheme | null,
+        fieldRegistry: (data.universe.fieldRegistry ?? []) as FieldRegistryEntry[],
+        auditEnabled: data.universe.auditEnabled ?? false,
+        auditProvider: data.universe.auditProvider ?? null,
+        auditModel: data.universe.auditModel ?? null,
       })
       .returning();
 
@@ -687,6 +767,78 @@ export async function importUniverseJson(
       });
     }
 
+    // Plan A2: dictionary words (A2-05 lenient — nullable languageEntryId FK,
+    // orphan → null, matches mapPins/mapRegions nullable-entryId asymmetry).
+    // Placed after step 4 entry inserts so entryIdMap is fully populated.
+    for (const w of data.dictionaryWords) {
+      let languageEntryId: string | null = null;
+      if (w.languageEntryId) {
+        languageEntryId = entryIdMap.get(w.languageEntryId) ?? null;
+      }
+      await tx.insert(dictionaryWords).values({
+        universeId: universe.id,
+        languageEntryId,
+        word: w.word,
+        ipa: w.ipa,
+        partOfSpeech: w.partOfSpeech,
+        gloss: w.gloss,
+        etymology: w.etymology,
+        tags: w.tags,
+      });
+    }
+
+    // Plan A2: diagrams then nodes (A2-05 strict — both diagramId and entryId
+    // are NOT-NULL FKs; orphan → throw, aborting the transaction).
+    const diagramIdMap = new Map<string, string>();
+    for (const d of data.diagrams) {
+      const [created] = await tx
+        .insert(diagrams)
+        .values({
+          universeId: universe.id,
+          name: d.name,
+          description: d.description,
+        })
+        .returning({ id: diagrams.id });
+      diagramIdMap.set(d.id, created.id);
+    }
+    for (const n of data.diagramNodes) {
+      const newDiagramId = diagramIdMap.get(n.diagramId);
+      if (!newDiagramId) throw new Error('Diagram node references unknown diagram ID');
+      const newEntryId = entryIdMap.get(n.entryId);
+      if (!newEntryId) throw new Error('Diagram node references unknown entry ID');
+      await tx.insert(diagramNodes).values({
+        diagramId: newDiagramId,
+        entryId: newEntryId,
+        x: n.x,
+        y: n.y,
+      });
+    }
+
+    // Plan A2 (A2-04): share tokens — userId remapped to the importing user;
+    // scopeEntryId is a nullable FK, resolved leniently (orphan → null, A2-05).
+    // Duplicate hash (re-importing the same backup twice) is skipped, not thrown.
+    for (const t of data.shareTokens) {
+      let scopeEntryId: string | null = null;
+      if (t.scopeEntryId) {
+        scopeEntryId = entryIdMap.get(t.scopeEntryId) ?? null;
+      }
+      await tx
+        .insert(shareTokens)
+        .values({
+          userId,
+          universeId: universe.id,
+          scope: t.scope,
+          scopeEntryId,
+          label: t.label,
+          hash: t.hash,
+          bodySuffix: t.bodySuffix,
+          expiresAt: t.expiresAt ? new Date(t.expiresAt) : null,
+          revokedAt: t.revokedAt ? new Date(t.revokedAt) : null,
+          accessCount: t.accessCount,
+        })
+        .onConflictDoNothing({ target: shareTokens.hash });
+    }
+
     return {
       universeId: universe.id,
       universeName: universe.name,
@@ -705,6 +857,11 @@ export async function importUniverseJson(
       // Phase 44 GEOSHARE-02: terrain palette counts for import result.
       mapLayerCount: data.mapLayers.length,
       terrainTypeCount: data.terrainTypes.length,
+      // Plan A2: counts for the new collections.
+      dictionaryWordCount: data.dictionaryWords.length,
+      diagramCount: data.diagrams.length,
+      diagramNodeCount: data.diagramNodes.length,
+      shareTokenCount: data.shareTokens.length,
     };
   });
 
