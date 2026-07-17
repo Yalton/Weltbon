@@ -269,7 +269,7 @@ describe('PAT parity round-trip (API-04)', () => {
     const exportRes = await exportManifest(uid, patHdr);
     expect(exportRes.status, 'export json').toBe(200);
     const exportedJson = exportRes.manifest!;
-    expect(exportedJson.weltbon_version).toBe('2.0.0');
+    expect(exportedJson.weltbon_version).toBe('2.1.0');
     expect(exportedJson.entries).toHaveLength(2);
     expect(exportedJson.links).toHaveLength(1);
 
