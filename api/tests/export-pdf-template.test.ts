@@ -35,10 +35,17 @@ function buildFixturePayload(): ExportPayload {
       // Phase 20 D-01 + Phase 35 REL-01: required fields on ExportPayloadUniverse
       timelineWindow: null,
       linkTypes: {},
+      // Plan A2 (A2-06): required universe-level fields on ExportPayloadUniverse
+      calendar: null,
+      theme: null,
+      fieldRegistry: [],
+      auditEnabled: false,
+      auditProvider: null,
+      auditModel: null,
     },
     categories: [
-      { id: 'c1', label: 'People', icon: '', sortOrder: 0 },
-      { id: 'c2', label: 'Places', icon: '', sortOrder: 1 },
+      { id: 'c1', label: 'People', icon: '', sortOrder: 0, createdAt: new Date(), updatedAt: new Date() },
+      { id: 'c2', label: 'Places', icon: '', sortOrder: 1, createdAt: new Date(), updatedAt: new Date() },
     ],
     entries: [
       {
@@ -101,6 +108,7 @@ function buildFixturePayload(): ExportPayload {
         direction: 'undirected',
         linkType: null,
         createdAt: new Date(),
+        updatedAt: new Date(),
       },
     ],
     openIssues: [
@@ -111,6 +119,7 @@ function buildFixturePayload(): ExportPayload {
         severity: 'critical',
         resolved: false,
         createdAt: new Date(),
+        updatedAt: new Date(),
         entryIds: ['e1'],
       },
     ],
@@ -126,6 +135,11 @@ function buildFixturePayload(): ExportPayload {
     mapRoutes: [],
     mapLayersData: [],
     terrainTypesData: [],
+    // Plan A2: required new collections on ExportPayload (dictionary/diagrams/shareTokens).
+    dictionaryWords: [],
+    diagrams: [],
+    diagramNodes: [],
+    shareTokens: [],
   };
 }
 

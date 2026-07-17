@@ -7,12 +7,12 @@ import { storageBackend } from '../storage/local.js';
  * JSON exporter (Phase 38 MEDIA-06 — D-07).
  *
  * Produces a ZIP stream containing:
- *   - manifest.json  — full universe payload at weltbon_version '2.0.0', including
+ *   - manifest.json  — full universe payload at weltbon_version '2.1.0', including
  *                      an `assets[]` array with entry↔asset reference metadata.
  *   - assets/<uuid>.<ext>  — raw bytes for each asset in the universe.
  *
- * Legacy plain-JSON import (weltbon_version '1.0.0') is still accepted by the
- * import route and importUniverseJson service — this ZIP format is additive.
+ * Legacy plain-JSON import (weltbon_version '1.0.0' / '2.0.0') is still accepted
+ * by the import route and importUniverseJson service — this ZIP format is additive.
  *
  * Date columns: payload returns Date objects; we coerce to ISO strings here
  * so each format-specific exporter is free to format dates as it wishes.
@@ -31,7 +31,7 @@ export function exportUniverseJsonAsZip(
   });
 
   const manifest = {
-    weltbon_version: '2.0.0' as const,
+    weltbon_version: '2.1.0' as const,
     exported_at: new Date().toISOString(),
     universe: {
       name: payload.universe.name,
@@ -39,12 +39,21 @@ export function exportUniverseJsonAsZip(
       entryTypes: payload.universe.entryTypes,
       timelineWindow: payload.universe.timelineWindow,
       linkTypes: payload.universe.linkTypes,
+      // Plan A2 (A2-06): previously-dropped universe-level product state.
+      calendar: payload.universe.calendar,
+      theme: payload.universe.theme,
+      fieldRegistry: payload.universe.fieldRegistry,
+      auditEnabled: payload.universe.auditEnabled,
+      auditProvider: payload.universe.auditProvider,
+      auditModel: payload.universe.auditModel,
     },
     categories: payload.categories.map((c) => ({
       id: c.id,
       label: c.label,
       icon: c.icon,
       sortOrder: c.sortOrder,
+      createdAt: c.createdAt.toISOString(),
+      updatedAt: c.updatedAt.toISOString(),
     })),
     entries: payload.entries.map((e) => ({
       id: e.id,
@@ -71,6 +80,7 @@ export function exportUniverseJsonAsZip(
       link_type: l.linkType,
       direction: l.direction,
       createdAt: l.createdAt.toISOString(),
+      updatedAt: l.updatedAt.toISOString(),
     })),
     issues: payload.fullIssues.map((i) => ({
       id: i.id,
@@ -79,12 +89,14 @@ export function exportUniverseJsonAsZip(
       severity: i.severity,
       resolved: i.resolved,
       createdAt: i.createdAt.toISOString(),
+      updatedAt: i.updatedAt.toISOString(),
       entryIds: i.entryIds,
     })),
     graphPositions: payload.graphPositions.map((g) => ({
       entryId: g.entryId,
       x: g.x,
       y: g.y,
+      updatedAt: g.updatedAt.toISOString(),
     })),
     timelinePins: payload.timelinePins.map((t) => ({
       id: t.id,
@@ -92,6 +104,7 @@ export function exportUniverseJsonAsZip(
       label: t.label,
       position: t.position,
       precision: t.precision,
+      updatedAt: t.updatedAt.toISOString(),
     })),
     // Phase 38 MEDIA-06 (D-07): asset registry with entry↔asset references.
     assets: payload.assets.map((a) => ({
@@ -101,6 +114,8 @@ export function exportUniverseJsonAsZip(
       extension: a.extension,
       sizeBytes: a.sizeBytes,
       usedAsCoverByEntryId: a.usedAsCoverByEntryId,
+      createdAt: a.createdAt.toISOString(),
+      updatedAt: a.updatedAt.toISOString(),
     })),
     // Phase 41 D-01: maps + pins + regions for the universe.
     maps: payload.maps.map((m) => ({
@@ -110,6 +125,7 @@ export function exportUniverseJsonAsZip(
       imageAssetId: m.imageAssetId,
       legendLabels: m.legendLabels,
       createdAt: m.createdAt.toISOString(),
+      updatedAt: m.updatedAt.toISOString(),
     })),
     mapPins: payload.mapPins.map((p) => ({
       id: p.id,
@@ -123,6 +139,7 @@ export function exportUniverseJsonAsZip(
       secret: p.secret,
       // Phase 53 NEST-01: carry for round-trip remap on import.
       targetMapId: p.targetMapId,
+      updatedAt: p.updatedAt.toISOString(),
     })),
     mapRegions: payload.mapRegions.map((r) => ({
       id: r.id,
@@ -138,6 +155,7 @@ export function exportUniverseJsonAsZip(
       // Phase 53 NEST-01: carry for round-trip remap on import.
       targetMapId: r.targetMapId,
       createdAt: r.createdAt.toISOString(),
+      updatedAt: r.updatedAt.toISOString(),
     })),
     // Phase 51 ROUTE-03: all routes scoped to this universe via maps FK.
     mapRoutes: payload.mapRoutes.map((r) => ({
@@ -153,6 +171,7 @@ export function exportUniverseJsonAsZip(
       // Phase 52 SECRET-02: carry owner-only flag into export so re-import preserves it.
       secret: r.secret,
       createdAt: r.createdAt.toISOString(),
+      updatedAt: r.updatedAt.toISOString(),
     })),
     // Phase 44 GEOSHARE-02 D-44-08: full universe palette — all layers + types.
     mapLayers: payload.mapLayersData.map((l) => ({
@@ -164,6 +183,7 @@ export function exportUniverseJsonAsZip(
       // Phase 52 SECRET-02: carry owner-only flag into export so re-import preserves it.
       secret: l.secret,
       createdAt: l.createdAt.toISOString(),
+      updatedAt: l.updatedAt.toISOString(),
     })),
     terrainTypes: payload.terrainTypesData.map((t) => ({
       id: t.id,
@@ -173,6 +193,52 @@ export function exportUniverseJsonAsZip(
       label: t.label,
       sortOrder: t.sortOrder,
       createdAt: t.createdAt.toISOString(),
+      updatedAt: t.updatedAt.toISOString(),
+    })),
+    // Plan A2: per-universe conlang dictionary (searchVector deliberately absent).
+    dictionaryWords: payload.dictionaryWords.map((w) => ({
+      id: w.id,
+      languageEntryId: w.languageEntryId,
+      word: w.word,
+      ipa: w.ipa,
+      partOfSpeech: w.partOfSpeech,
+      gloss: w.gloss,
+      etymology: w.etymology,
+      tags: w.tags,
+      createdAt: w.createdAt.toISOString(),
+      updatedAt: w.updatedAt.toISOString(),
+    })),
+    // Plan A2: named diagrams scoped to this universe.
+    diagrams: payload.diagrams.map((d) => ({
+      id: d.id,
+      name: d.name,
+      description: d.description,
+      createdAt: d.createdAt.toISOString(),
+      updatedAt: d.updatedAt.toISOString(),
+    })),
+    // Plan A2: diagram nodes — no createdAt column.
+    diagramNodes: payload.diagramNodes.map((n) => ({
+      id: n.id,
+      diagramId: n.diagramId,
+      entryId: n.entryId,
+      x: n.x,
+      y: n.y,
+      updatedAt: n.updatedAt.toISOString(),
+    })),
+    // Plan A2 (A2-04): share tokens — hash only (SHA-256, plaintext not derivable);
+    // userId is NOT exported (instance-local, remapped to importer on import).
+    shareTokens: payload.shareTokens.map((t) => ({
+      id: t.id,
+      scope: t.scope,
+      scopeEntryId: t.scopeEntryId,
+      label: t.label,
+      hash: t.hash,
+      bodySuffix: t.bodySuffix,
+      expiresAt: t.expiresAt ? t.expiresAt.toISOString() : null,
+      revokedAt: t.revokedAt ? t.revokedAt.toISOString() : null,
+      accessCount: t.accessCount,
+      createdAt: t.createdAt.toISOString(),
+      updatedAt: t.updatedAt.toISOString(),
     })),
   };
 

@@ -16,6 +16,13 @@ import {
   mapRoutes,
   mapLayers,
   terrainTypes,
+  dictionaryWords,
+  diagrams,
+  diagramNodes,
+  shareTokens,
+  type Calendar,
+  type UniverseTheme,
+  type FieldRegistryEntry,
 } from '../../db/schema.js';
 import { buildSlugMap } from './slug.js';
 
@@ -45,6 +52,7 @@ export interface ExportPayloadIssue {
   severity: string;
   resolved: boolean;
   createdAt: Date;
+  updatedAt: Date;
   entryIds: string[];
 }
 
@@ -78,6 +86,8 @@ export interface ExportPayloadAsset {
   sizeBytes: number;
   /** Entry ID that uses this asset as its cover image (null if not a cover). */
   usedAsCoverByEntryId: string | null;
+  createdAt: Date;
+  updatedAt: Date;
 }
 
 /** Phase 41 D-01: map metadata exported alongside the universe payload. */
@@ -90,9 +100,16 @@ export interface ExportPayloadMap {
   /** Nullable JSON string: Record<string, string> legend caption overrides. */
   legendLabels: string | null;
   createdAt: Date;
+  updatedAt: Date;
 }
 
-/** Phase 41 D-01: map pin exported alongside the universe payload. */
+/**
+ * Phase 41 D-01: map pin exported alongside the universe payload.
+ *
+ * NOTE (Plan A2 ground truth, deviates from the plan doc's Step 4 matrix):
+ * map_pins has NO createdAt column — migration 0033 only ADDED updatedAt to
+ * this table; there was never a createdAt. Only updatedAt is exported.
+ */
 export interface ExportPayloadMapPin {
   id: string;
   mapId: string;
@@ -105,6 +122,7 @@ export interface ExportPayloadMapPin {
   secret: boolean;
   /** Phase 53 NEST-01: target nested map (null = not a map link). */
   targetMapId: string | null;
+  updatedAt: Date;
 }
 
 /** Phase 41 D-01: map region exported alongside the universe payload. */
@@ -122,6 +140,7 @@ export interface ExportPayloadMapRegion {
   /** Phase 53 NEST-01: target nested map (null = not a map link). */
   targetMapId: string | null;
   createdAt: Date;
+  updatedAt: Date;
 }
 
 /** Phase 51 ROUTE-03: map route exported alongside the universe payload. */
@@ -138,6 +157,7 @@ export interface ExportPayloadMapRoute {
   /** Phase 52 SECRET-02: owner-only flag; false = visible to share visitors. */
   secret: boolean;
   createdAt: Date;
+  updatedAt: Date;
 }
 
 /** Phase 44 GEOSHARE-02: map layer exported as full universe palette (D-44-08). */
@@ -151,6 +171,7 @@ export interface ExportPayloadMapLayer {
   /** Phase 52 SECRET-02: owner-only flag; false = visible to share visitors. */
   secret: boolean;
   createdAt: Date;
+  updatedAt: Date;
 }
 
 /** Phase 44 GEOSHARE-02: terrain type exported as full universe palette (D-44-08). */
@@ -162,6 +183,54 @@ export interface ExportPayloadTerrainType {
   label: string | null;
   sortOrder: number;
   createdAt: Date;
+  updatedAt: Date;
+}
+
+/** Plan A2: dictionary — searchVector (GENERATED) deliberately absent. */
+export interface ExportPayloadDictionaryWord {
+  id: string;
+  languageEntryId: string | null;
+  word: string;
+  ipa: string;
+  partOfSpeech: string;
+  gloss: string;
+  etymology: string;
+  tags: string[];
+  createdAt: Date;
+  updatedAt: Date;
+}
+
+export interface ExportPayloadDiagram {
+  id: string;
+  name: string;
+  description: string | null;
+  createdAt: Date;
+  updatedAt: Date;
+}
+
+/** diagram_nodes has no createdAt column. */
+export interface ExportPayloadDiagramNode {
+  id: string;
+  diagramId: string;
+  entryId: string;
+  x: number;
+  y: number;
+  updatedAt: Date;
+}
+
+/** Plan A2 (A2-04): hash is SHA-256 — plaintext not derivable. userId is NOT exported (instance-local). */
+export interface ExportPayloadShareToken {
+  id: string;
+  scope: string;
+  scopeEntryId: string | null;
+  label: string;
+  hash: string;
+  bodySuffix: string;
+  expiresAt: Date | null;
+  revokedAt: Date | null;
+  accessCount: number;
+  createdAt: Date;
+  updatedAt: Date;
 }
 
 export interface ExportPayloadCategory {
@@ -169,6 +238,8 @@ export interface ExportPayloadCategory {
   label: string;
   icon: string;
   sortOrder: number;
+  createdAt: Date;
+  updatedAt: Date;
 }
 
 export interface ExportPayloadLink {
@@ -180,20 +251,34 @@ export interface ExportPayloadLink {
   direction: string;
   linkType: string | null;
   createdAt: Date;
+  updatedAt: Date;
 }
 
+/**
+ * NOTE (Plan A2 ground truth, deviates from the plan doc's Step 4 matrix):
+ * graph_positions has NO createdAt column — migration 0033 only converted
+ * updatedAt to timestamptz on this table, it never added createdAt. Only
+ * updatedAt is exported.
+ */
 export interface ExportPayloadGraphPosition {
   entryId: string;
   x: number;
   y: number;
+  updatedAt: Date;
 }
 
+/**
+ * NOTE (Plan A2 ground truth, deviates from the plan doc's Step 4 matrix):
+ * timeline_pins has NO createdAt column — migration 0033 only ADDED
+ * updatedAt to this table; there was never a createdAt. Only updatedAt is exported.
+ */
 export interface ExportPayloadTimelinePin {
   id: string;
   entryId: string;
   label: string;
   position: number;
   precision: string;
+  updatedAt: Date;
 }
 
 export interface ExportPayloadUniverse {
@@ -205,6 +290,13 @@ export interface ExportPayloadUniverse {
   timelineWindow: { start: number; end: number } | null;
   /** Phase 35 REL-01: per-universe link-type registry (empty object = no custom types). */
   linkTypes: Record<string, unknown>;
+  // Plan A2 (A2-06): previously-dropped universe-level product state.
+  calendar: Calendar | null;
+  theme: UniverseTheme | null;
+  fieldRegistry: FieldRegistryEntry[];
+  auditEnabled: boolean;
+  auditProvider: string | null;
+  auditModel: string | null;
 }
 
 export interface ExportPayload {
@@ -236,6 +328,14 @@ export interface ExportPayload {
   mapLayersData: ExportPayloadMapLayer[];
   /** Phase 44 GEOSHARE-02 D-44-08: full universe terrain-type palette (scoped via layers FK). */
   terrainTypesData: ExportPayloadTerrainType[];
+  /** Plan A2: per-universe conlang dictionary (searchVector deliberately absent). */
+  dictionaryWords: ExportPayloadDictionaryWord[];
+  /** Plan A2: named diagrams scoped to this universe. */
+  diagrams: ExportPayloadDiagram[];
+  /** Plan A2: diagram nodes, scoped via INNER JOIN diagrams (no direct universeId column). */
+  diagramNodes: ExportPayloadDiagramNode[];
+  /** Plan A2 (A2-04): share tokens — hash only, no userId/lastAccessedAt. */
+  shareTokens: ExportPayloadShareToken[];
 }
 
 /**
@@ -293,6 +393,7 @@ export async function loadUniverseExportPayload(universeId: string): Promise<Exp
       entryId: graphPositions.entryId,
       x: graphPositions.x,
       y: graphPositions.y,
+      updatedAt: graphPositions.updatedAt,
     })
     .from(graphPositions)
     .where(eq(graphPositions.universeId, universeId));
@@ -306,10 +407,61 @@ export async function loadUniverseExportPayload(universeId: string): Promise<Exp
       label: timelinePins.label,
       position: timelinePins.position,
       precision: timelinePins.precision,
+      updatedAt: timelinePins.updatedAt,
     })
     .from(timelinePins)
     .innerJoin(entries, eq(entries.id, timelinePins.entryId))
     .where(eq(entries.universeId, universeId));
+
+  // Plan A2: dictionary words, ordered by word for deterministic export.
+  const dictionaryWordRows = await db()
+    .select()
+    .from(dictionaryWords)
+    .where(eq(dictionaryWords.universeId, universeId))
+    .orderBy(dictionaryWords.word);
+
+  // Plan A2: diagrams for this universe.
+  const diagramRows = await db()
+    .select()
+    .from(diagrams)
+    .where(eq(diagrams.universeId, universeId));
+
+  // Plan A2: diagram nodes have no direct universeId column — scope through
+  // INNER JOIN diagrams, ordered by diagrams.createdAt then node id for
+  // deterministic export.
+  const diagramNodeRows = await db()
+    .select({
+      id: diagramNodes.id,
+      diagramId: diagramNodes.diagramId,
+      entryId: diagramNodes.entryId,
+      x: diagramNodes.x,
+      y: diagramNodes.y,
+      updatedAt: diagramNodes.updatedAt,
+    })
+    .from(diagramNodes)
+    .innerJoin(diagrams, eq(diagrams.id, diagramNodes.diagramId))
+    .where(eq(diagrams.universeId, universeId))
+    .orderBy(diagrams.createdAt, diagramNodes.id);
+
+  // Plan A2 (A2-04): share tokens — userId/lastAccessedAt deliberately excluded
+  // from the select (never leave this function).
+  const shareTokenRows = await db()
+    .select({
+      id: shareTokens.id,
+      scope: shareTokens.scope,
+      scopeEntryId: shareTokens.scopeEntryId,
+      label: shareTokens.label,
+      hash: shareTokens.hash,
+      bodySuffix: shareTokens.bodySuffix,
+      expiresAt: shareTokens.expiresAt,
+      revokedAt: shareTokens.revokedAt,
+      accessCount: shareTokens.accessCount,
+      createdAt: shareTokens.createdAt,
+      updatedAt: shareTokens.updatedAt,
+    })
+    .from(shareTokens)
+    .where(eq(shareTokens.universeId, universeId))
+    .orderBy(shareTokens.createdAt);
 
   const issuePayloads: ExportPayloadIssue[] = issueRows.map((i) => ({
     id: i.id,
@@ -318,6 +470,7 @@ export async function loadUniverseExportPayload(universeId: string): Promise<Exp
     severity: i.severity,
     resolved: i.resolved,
     createdAt: i.createdAt,
+    updatedAt: i.updatedAt,
     entryIds: assocByIssue.get(i.id) ?? [],
   }));
 
@@ -348,6 +501,7 @@ export async function loadUniverseExportPayload(universeId: string): Promise<Exp
       secret: mapPins.secret,
       // Phase 53 NEST-01: target map link for nested-map navigation round-trip.
       targetMapId: mapPins.targetMapId,
+      updatedAt: mapPins.updatedAt,
     })
     .from(mapPins)
     .innerJoin(maps, eq(maps.id, mapPins.mapId))
@@ -370,6 +524,7 @@ export async function loadUniverseExportPayload(universeId: string): Promise<Exp
       // Phase 53 NEST-01: target map link for nested-map navigation round-trip.
       targetMapId: mapRegions.targetMapId,
       createdAt: mapRegions.createdAt,
+      updatedAt: mapRegions.updatedAt,
     })
     .from(mapRegions)
     .innerJoin(maps, eq(maps.id, mapRegions.mapId))
@@ -391,6 +546,7 @@ export async function loadUniverseExportPayload(universeId: string): Promise<Exp
       // Phase 52 SECRET-02: owner-only flag — carried in owner export, not share path.
       secret: mapRoutes.secret,
       createdAt: mapRoutes.createdAt,
+      updatedAt: mapRoutes.updatedAt,
     })
     .from(mapRoutes)
     .innerJoin(maps, eq(maps.id, mapRoutes.mapId))
@@ -418,6 +574,7 @@ export async function loadUniverseExportPayload(universeId: string): Promise<Exp
           label: terrainTypes.label,
           sortOrder: terrainTypes.sortOrder,
           createdAt: terrainTypes.createdAt,
+          updatedAt: terrainTypes.updatedAt,
         })
         .from(terrainTypes)
         .innerJoin(mapLayers, eq(mapLayers.id, terrainTypes.layerId))
@@ -463,12 +620,21 @@ export async function loadUniverseExportPayload(universeId: string): Promise<Exp
       timelineWindow: universe.timelineWindow ?? null,
       // Phase 35 REL-01: round-trip the per-universe link-type registry
       linkTypes: (universe.linkTypes ?? {}) as Record<string, unknown>,
+      // Plan A2 (A2-06): previously-dropped universe-level product state.
+      calendar: universe.calendar ?? null,
+      theme: universe.theme ?? null,
+      fieldRegistry: universe.fieldRegistry ?? [],
+      auditEnabled: universe.auditEnabled,
+      auditProvider: universe.auditProvider ?? null,
+      auditModel: universe.auditModel ?? null,
     },
     categories: categoryRows.map((c) => ({
       id: c.id,
       label: c.label,
       icon: c.icon,
       sortOrder: c.sortOrder,
+      createdAt: c.createdAt,
+      updatedAt: c.updatedAt,
     })),
     entries: entryPayloads,
     links: linkRows.map((l) => ({
@@ -480,6 +646,7 @@ export async function loadUniverseExportPayload(universeId: string): Promise<Exp
       direction: l.direction,
       linkType: l.linkType,
       createdAt: l.createdAt,
+      updatedAt: l.updatedAt,
     })),
     openIssues: issuePayloads.filter((i) => i.resolved === false),
     fullIssues: issuePayloads,
@@ -487,6 +654,7 @@ export async function loadUniverseExportPayload(universeId: string): Promise<Exp
       entryId: p.entryId,
       x: p.x,
       y: p.y,
+      updatedAt: p.updatedAt,
     })),
     timelinePins: pinRows.map((p) => ({
       id: p.id,
@@ -494,6 +662,7 @@ export async function loadUniverseExportPayload(universeId: string): Promise<Exp
       label: p.label,
       position: p.position,
       precision: p.precision,
+      updatedAt: p.updatedAt,
     })),
     entrySlugMap,
     // Phase 38 MEDIA-06 (D-07): asset list with entry↔asset references.
@@ -505,6 +674,8 @@ export async function loadUniverseExportPayload(universeId: string): Promise<Exp
       extension: a.extension,
       sizeBytes: a.sizeBytes,
       usedAsCoverByEntryId: coverByAssetId.get(a.id) ?? null,
+      createdAt: a.createdAt,
+      updatedAt: a.updatedAt,
     })),
     // Phase 41 D-01: maps + pins + regions for the universe.
     maps: mapRows.map((m) => ({
@@ -514,6 +685,7 @@ export async function loadUniverseExportPayload(universeId: string): Promise<Exp
       imageAssetId: m.imageAssetId ?? null,
       legendLabels: m.legendLabels ?? null,
       createdAt: m.createdAt,
+      updatedAt: m.updatedAt,
     })),
     mapPins: mapPinRows.map((p) => ({
       id: p.id,
@@ -527,6 +699,7 @@ export async function loadUniverseExportPayload(universeId: string): Promise<Exp
       secret: p.secret,
       // Phase 53 NEST-01: carry for round-trip remap on import.
       targetMapId: p.targetMapId ?? null,
+      updatedAt: p.updatedAt,
     })),
     mapRegions: mapRegionRows.map((r) => ({
       id: r.id,
@@ -542,6 +715,7 @@ export async function loadUniverseExportPayload(universeId: string): Promise<Exp
       // Phase 53 NEST-01: carry for round-trip remap on import.
       targetMapId: r.targetMapId ?? null,
       createdAt: r.createdAt,
+      updatedAt: r.updatedAt,
     })),
     // Phase 51 ROUTE-03: all routes scoped to this universe via maps FK.
     mapRoutes: mapRouteRows.map((r) => ({
@@ -557,6 +731,7 @@ export async function loadUniverseExportPayload(universeId: string): Promise<Exp
       // Phase 52 SECRET-02: plain boolean pass-through — no remap needed.
       secret: r.secret,
       createdAt: r.createdAt,
+      updatedAt: r.updatedAt,
     })),
     // Phase 44 GEOSHARE-02 D-44-08: full palette — export ALL layers/types for the universe.
     mapLayersData: mapLayerRows.map((l) => ({
@@ -570,6 +745,7 @@ export async function loadUniverseExportPayload(universeId: string): Promise<Exp
       // explicit inclusion here keeps the interface contract satisfied.
       secret: l.secret,
       createdAt: l.createdAt,
+      updatedAt: l.updatedAt,
     })),
     terrainTypesData: terrainTypeRows.map((t) => ({
       id: t.id,
@@ -579,6 +755,52 @@ export async function loadUniverseExportPayload(universeId: string): Promise<Exp
       label: t.label ?? null,
       sortOrder: t.sortOrder,
       createdAt: t.createdAt,
+      updatedAt: t.updatedAt,
+    })),
+    // Plan A2: dictionary words — searchVector (GENERATED) deliberately absent.
+    dictionaryWords: dictionaryWordRows.map((w) => ({
+      id: w.id,
+      languageEntryId: w.languageEntryId ?? null,
+      word: w.word,
+      ipa: w.ipa,
+      partOfSpeech: w.partOfSpeech,
+      gloss: w.gloss,
+      etymology: w.etymology,
+      tags: w.tags,
+      createdAt: w.createdAt,
+      updatedAt: w.updatedAt,
+    })),
+    // Plan A2: named diagrams for this universe.
+    diagrams: diagramRows.map((d) => ({
+      id: d.id,
+      name: d.name,
+      description: d.description ?? null,
+      createdAt: d.createdAt,
+      updatedAt: d.updatedAt,
+    })),
+    // Plan A2: diagram nodes — no createdAt column; scoped via INNER JOIN diagrams.
+    diagramNodes: diagramNodeRows.map((n) => ({
+      id: n.id,
+      diagramId: n.diagramId,
+      entryId: n.entryId,
+      x: n.x,
+      y: n.y,
+      updatedAt: n.updatedAt,
+    })),
+    // Plan A2 (A2-04): share tokens — hash only (SHA-256, plaintext not derivable);
+    // userId/lastAccessedAt deliberately excluded.
+    shareTokens: shareTokenRows.map((t) => ({
+      id: t.id,
+      scope: t.scope,
+      scopeEntryId: t.scopeEntryId ?? null,
+      label: t.label,
+      hash: t.hash,
+      bodySuffix: t.bodySuffix,
+      expiresAt: t.expiresAt ?? null,
+      revokedAt: t.revokedAt ?? null,
+      accessCount: t.accessCount,
+      createdAt: t.createdAt,
+      updatedAt: t.updatedAt,
     })),
   };
 }

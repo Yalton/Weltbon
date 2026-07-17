@@ -26,6 +26,13 @@ function buildMinimalPayload(): ExportPayload {
       // Phase 20 D-01 + Phase 35 REL-01: required fields on ExportPayloadUniverse.
       timelineWindow: null,
       linkTypes: {},
+      // Plan A2 (A2-06): required universe-level fields on ExportPayloadUniverse
+      calendar: null,
+      theme: null,
+      fieldRegistry: [],
+      auditEnabled: false,
+      auditProvider: null,
+      auditModel: null,
     },
     categories: [],
     entries: [],
@@ -43,6 +50,11 @@ function buildMinimalPayload(): ExportPayload {
     mapRoutes: [],
     mapLayersData: [],
     terrainTypesData: [],
+    // Plan A2: required new collections on ExportPayload (dictionary/diagrams/shareTokens).
+    dictionaryWords: [],
+    diagrams: [],
+    diagramNodes: [],
+    shareTokens: [],
   };
 }
 
