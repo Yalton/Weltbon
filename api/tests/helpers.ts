@@ -27,6 +27,12 @@ export async function createTestDb(): Promise<TestDbHandle> {
     const { migrate: migratePglite } = await import('drizzle-orm/pglite/migrator');
 
     const client = new PGlite();
+    // Real Postgres deployments (docker containers, CI) run with a UTC session
+    // TimeZone; PGlite defaults to the HOST zone, which skews the app's
+    // naive-timestamp AT TIME ZONE 'UTC' round-trips (proven by issues-dismiss
+    // test 18). Pin UTC to mirror the real environment. The desktop app must
+    // uphold the same invariant (spike report records this).
+    await client.exec(`SET TIME ZONE 'UTC'`);
     const pgliteDb = drizzlePglite(client, { schema });
     await migratePglite(pgliteDb, { migrationsFolder: './drizzle' });
 
