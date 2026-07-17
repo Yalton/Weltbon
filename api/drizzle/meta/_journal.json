@@ -232,6 +232,13 @@
       "when": 1783744187578,
       "tag": "0032_universe_theme",
       "breakpoints": true
+    },
+    {
+      "idx": 33,
+      "version": "7",
+      "when": 1784303566954,
+      "tag": "0033_sync_foundation",
+      "breakpoints": true
     }
   ]
 }
