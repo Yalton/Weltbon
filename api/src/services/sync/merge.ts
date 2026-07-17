@@ -47,6 +47,16 @@ export interface RowConflict {
 function deepEqual(a: unknown, b: unknown): boolean {
   if (a === b) return true; // handles identical primitives, both-null, both-undefined
   if (a === null || b === null || a === undefined || b === undefined) return false;
+
+  // Date guard (M1): two distinct Date instances with the same instant must be
+  // equal. Without this they'd fall through to the object branch, where Date has
+  // no OWN enumerable keys — so every pair of Dates would compare equal (the
+  // empty-keys artifact). Unreachable via the typed manifest (ISO strings) today,
+  // but ManifestRow is Record<string, unknown>, so guard it explicitly.
+  if (a instanceof Date || b instanceof Date) {
+    return a instanceof Date && b instanceof Date && a.getTime() === b.getTime();
+  }
+
   if (typeof a !== 'object' || typeof b !== 'object') return false;
 
   const aArr = Array.isArray(a);
@@ -274,6 +284,20 @@ export function mergeCollection(
       const winner = candidates[0];
       for (const loser of candidates.slice(1)) {
         merged.delete(loser.rk);
+
+        // COMPOSITION HAZARD (I1): the per-row matrix above may already have
+        // emitted a conflict for THIS key — e.g. a changed/deleted resurrect that
+        // put loser.rk into `merged` as a "winner". Now that dedupe drops it, that
+        // earlier record is a PHANTOM: it names a winner that is no longer in
+        // merged. Plan D persists conflicts as the restorable loser-review ledger
+        // (spec S-03), and restoring a phantom winner would violate the row's
+        // UNIQUE natural key. Reconcile the ledger: strip any prior record for this
+        // key so the final disposition is ONE coherent record — it lost, reason
+        // natural-key, with the true surviving winner.
+        for (let i = conflicts.length - 1; i >= 0; i--) {
+          if (conflicts[i].key === loser.rk) conflicts.splice(i, 1);
+        }
+
         conflicts.push({
           collection: desc.name,
           key: loser.rk,

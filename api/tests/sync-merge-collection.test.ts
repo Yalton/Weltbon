@@ -320,6 +320,42 @@ describe('mergeCollection matrix (Plan B, Task 4)', () => {
     ]);
   });
 
+  // I1 regression — resurrect meets natural-key dedupe: the ledger must NOT keep
+  // a phantom conflict for a row that dedupe dropped from merged.
+  it('I1 — resurrect + natural-key dedupe: exactly ONE conflict, no phantom winner', () => {
+    // base has pin id:1 for entry E; local changes it (resurrect candidate);
+    // remote deletes id:1 AND creates id:2 for the same entry E, later → wins.
+    const base = [tpin({ id: '1', entryId: 'E' })];
+    const local = [tpin({ id: '1', entryId: 'E', label: 'changed', updatedAt: T1 })];
+    const remote = [tpin({ id: '2', entryId: 'E', updatedAt: T2 })]; // id:1 deleted, id:2 created
+    const res = mergeCollection(timelinePins, base, local, remote);
+
+    // merged holds ONLY id:2 (constraint + convergence)
+    expect(res.merged).toEqual(remote);
+
+    // exactly one conflict, for id:1's disposition — it LOST via natural-key.
+    expect(res.conflicts).toHaveLength(1);
+    expect(res.conflicts[0]).toEqual({
+      collection: 'timelinePins',
+      key: '1',
+      winner: 'remote',
+      winnerRow: remote[0],
+      loserRow: local[0],
+      reason: 'natural-key',
+    });
+    // no record may claim a non-merged row won
+    const mergedKeys = new Set(res.merged.map((r) => String(r.id)));
+    for (const c of res.conflicts) {
+      expect(mergedKeys.has(String(c.winnerRow.id))).toBe(true);
+    }
+    // NO stale change-vs-delete phantom survives
+    expect(res.conflicts.some((c) => c.reason === 'change-vs-delete')).toBe(false);
+
+    // local restores nothing for id:1 (deletes it) and upserts the winner id:2
+    expect(res.localOps).toEqual({ upserts: remote, deletes: ['1'] });
+    expect(res.remoteOps).toEqual({ upserts: [], deletes: [] });
+  });
+
   // Cell 14 (B-02 touch): only updatedAt differs → unchanged
   it('cell 14 — touch-only (updatedAt differs, content identical): unchanged, no ops, no conflict', () => {
     const base = [pin({ updatedAt: T0 })];
@@ -442,5 +478,15 @@ describe('contentEqual (Plan B, Task 4)', () => {
   it('treats null and undefined strictly (manifest uses explicit nulls)', () => {
     // one row has an explicit null, the other omits the field entirely
     expect(contentEqual(pin({ targetMapId: null }), pin({ targetMapId: undefined }))).toBe(false);
+  });
+
+  it('compares Date values by instant, not identity (M1 guard)', () => {
+    // ManifestRow is Record<string, unknown>; a non-ISO Date must not collapse to
+    // "equal" via the empty-own-keys artifact.
+    const d1 = new Date('2026-01-01T00:00:00.000Z');
+    const d2 = new Date('2026-01-01T00:00:00.000Z'); // same instant, different instance
+    const d3 = new Date('2026-06-01T00:00:00.000Z');
+    expect(contentEqual(pin({ targetMapId: d1 }), pin({ targetMapId: d2 }))).toBe(true);
+    expect(contentEqual(pin({ targetMapId: d1 }), pin({ targetMapId: d3 }))).toBe(false);
   });
 });

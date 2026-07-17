@@ -109,6 +109,10 @@ function gmap(over: Partial<ManifestRow> = {}): ManifestRow {
   return { id: 'M1', name: 'World', imageAssetId: null, legendLabels: [], createdAt: T0, updatedAt: T0, ...over };
 }
 
+function tpin(over: Partial<ManifestRow> = {}): ManifestRow {
+  return { id: 'TP1', entryId: 'TE1', label: 'Founding', position: 100, precision: 'year', updatedAt: T0, ...over };
+}
+
 /** A structurally complete manifest (every collection key present), overridable. */
 function manifest(over: Record<string, unknown> = {}): SyncManifest {
   const base = {
@@ -345,17 +349,26 @@ describe('mergeManifests (Plan B, Task 5)', () => {
         return new Date(clock).toISOString();
       };
 
-      // base: 15 categories + 20 entries + 15 maps = 50 rows, all id-keyed.
+      // base: 15 categories + 20 entries + 15 maps + 10 timeline pins = 60 rows.
+      // timelinePins carry a natural key (entryId, UNIQUE) so they exercise the
+      // dedupe post-pass and the I1 composition when a base pin is resurrected
+      // while a colliding new pin wins.
       const baseCats = Array.from({ length: 15 }, (_, i) => category({ id: `C${i}`, sortOrder: i }));
       const baseEntries = Array.from({ length: 20 }, (_, i) => entry({ id: `E${i}`, title: `T${i}` }));
       const baseMaps = Array.from({ length: 15 }, (_, i) => gmap({ id: `M${i}`, name: `Map${i}` }));
-      const base = manifest({ categories: baseCats, entries: baseEntries, maps: baseMaps });
+      const baseTpins = Array.from({ length: 10 }, (_, i) => tpin({ id: `TP${i}`, entryId: `TE${i}`, label: `L${i}` }));
+      const base = manifest({ categories: baseCats, entries: baseEntries, maps: baseMaps, timelinePins: baseTpins });
 
       const specs: { name: string; mutate: (r: ManifestRow) => ManifestRow }[] = [
         { name: 'categories', mutate: (r) => ({ ...r, sortOrder: (r.sortOrder as number) + 100, updatedAt: nextTs() }) },
         { name: 'entries', mutate: (r) => ({ ...r, title: `${String(r.title)}*`, updatedAt: nextTs() }) },
         { name: 'maps', mutate: (r) => ({ ...r, name: `${String(r.name)}*`, updatedAt: nextTs() }) },
+        { name: 'timelinePins', mutate: (r) => ({ ...r, label: `${String(r.label)}*`, updatedAt: nextTs() }) },
       ];
+
+      // entryIds contested by BOTH sides — each side creates a pin (different id)
+      // for the same entry → guaranteed created-created natural-key collisions (B-05).
+      const contestedEntryIds = ['TEc0', 'TEc1', 'TEc2'];
 
       const makeSide = (tag: string): SyncManifest => {
         const over: Record<string, unknown> = {};
@@ -374,12 +387,33 @@ describe('mergeManifests (Plan B, Task 5)', () => {
           }
           over[spec.name] = rows;
         }
+
+        // Created-created SAME id (B-04): both sides create these ids with side-
+        // specific content + timestamps → LWW, must merge once (not duplicate).
+        for (let k = 0; k < 3; k++) {
+          (over.entries as ManifestRow[]).push(
+            entry({ id: `E-shared-${k}`, title: `shared ${tag} ${k}`, updatedAt: nextTs() }),
+          );
+        }
+
+        // Created-created DIFFERENT ids, colliding natural key (B-05): both sides
+        // add a pin for each contested entry with a side-tagged id.
+        for (const ce of contestedEntryIds) {
+          (over.timelinePins as ManifestRow[]).push(
+            tpin({ id: `tp-${tag}-${ce}`, entryId: ce, label: `${tag} ${ce}`, updatedAt: nextTs() }),
+          );
+        }
+
         return manifest(over);
       };
 
       const local = makeSide('L');
       const remote = makeSide('R');
       const res = mergeManifests(base, local, remote);
+
+      // sanity: the fixture actually exercised the hard paths.
+      expect(res.conflicts.some((c) => c.reason === 'natural-key')).toBe(true);
+      expect(res.conflicts.some((c) => c.reason === 'both-created')).toBe(true);
 
       expectConverges(applyOps(local, res.localOps, res.universeOp.local), res.merged);
       expectConverges(applyOps(remote, res.remoteOps, res.universeOp.remote), res.merged);
