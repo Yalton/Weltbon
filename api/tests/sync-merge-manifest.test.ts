@@ -415,6 +415,19 @@ describe('mergeManifests (Plan B, Task 5)', () => {
       expect(res.conflicts.some((c) => c.reason === 'natural-key')).toBe(true);
       expect(res.conflicts.some((c) => c.reason === 'both-created')).toBe(true);
 
+      // I1 invariant, asserted globally over the whole fuzz run: every conflict's
+      // winner must actually exist in the merged state — a "winner" that isn't in
+      // merged is a phantom ledger record (Plan B review I1).
+      for (const c of res.conflicts) {
+        if (c.collection === 'universe') continue;
+        const rows = (res.merged as unknown as Record<string, Array<Record<string, unknown>>>)[c.collection] ?? [];
+        const winnerKey = String((c.winnerRow as Record<string, unknown>).id ?? (c.winnerRow as Record<string, unknown>).entryId);
+        expect(
+          rows.some((r) => String(r.id ?? r.entryId) === winnerKey),
+          `conflict winner ${c.collection}/${winnerKey} missing from merged`,
+        ).toBe(true);
+      }
+
       expectConverges(applyOps(local, res.localOps, res.universeOp.local), res.merged);
       expectConverges(applyOps(remote, res.remoteOps, res.universeOp.remote), res.merged);
     });
