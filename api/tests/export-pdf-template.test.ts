@@ -42,6 +42,9 @@ function buildFixturePayload(): ExportPayload {
       auditEnabled: false,
       auditProvider: null,
       auditModel: null,
+      // Plan B (Task 1): required universe identity/timestamps on ExportPayloadUniverse.
+      createdAt: new Date('2026-01-01T00:00:00Z'),
+      updatedAt: new Date('2026-01-01T00:00:00Z'),
     },
     categories: [
       { id: 'c1', label: 'People', icon: '', sortOrder: 0, createdAt: new Date(), updatedAt: new Date() },
@@ -62,6 +65,7 @@ function buildFixturePayload(): ExportPayload {
         icon: '',
         categoryId: 'c1',
         isPublic: false,
+        wip: false,
         createdAt: new Date('2026-01-01T00:00:00Z'),
         updatedAt: new Date('2026-01-01T00:00:00Z'),
       },
@@ -78,6 +82,7 @@ function buildFixturePayload(): ExportPayload {
         icon: '',
         categoryId: 'c2',
         isPublic: false,
+        wip: false,
         createdAt: new Date('2026-01-02T00:00:00Z'),
         updatedAt: new Date('2026-01-02T00:00:00Z'),
       },
@@ -94,6 +99,7 @@ function buildFixturePayload(): ExportPayload {
         icon: '',
         categoryId: null,
         isPublic: false,
+        wip: false,
         createdAt: new Date('2026-01-03T00:00:00Z'),
         updatedAt: new Date('2026-01-03T00:00:00Z'),
       },

@@ -72,6 +72,8 @@ export interface ExportPayloadEntry {
   isPublic: boolean;
   /** Phase 38 MEDIA-04 (D-06): optional cover image asset ID. */
   coverImageId: string | null;
+  /** Plan B (Task 1): per-entry WIP/draft flag (Phase 36 DATA-03) — was dropped by the manifest. */
+  wip: boolean;
   createdAt: Date;
   updatedAt: Date;
 }
@@ -297,6 +299,9 @@ export interface ExportPayloadUniverse {
   auditEnabled: boolean;
   auditProvider: string | null;
   auditModel: string | null;
+  /** Plan B (Task 1): universe identity/timestamps — closes the manifest's universe-singleton hole. */
+  createdAt: Date;
+  updatedAt: Date;
 }
 
 export interface ExportPayload {
@@ -603,6 +608,8 @@ export async function loadUniverseExportPayload(universeId: string): Promise<Exp
     isPublic: e.isPublic,
     // Phase 38 MEDIA-04 (D-06): cover image FK.
     coverImageId: e.coverImageId ?? null,
+    // Plan B (Task 1): per-entry WIP/draft flag (Phase 36 DATA-03) — was dropped by the manifest.
+    wip: e.wip,
     createdAt: e.createdAt,
     updatedAt: e.updatedAt,
   }));
@@ -627,6 +634,9 @@ export async function loadUniverseExportPayload(universeId: string): Promise<Exp
       auditEnabled: universe.auditEnabled,
       auditProvider: universe.auditProvider ?? null,
       auditModel: universe.auditModel ?? null,
+      // Plan B (Task 1): universe singleton identity/timestamps for the merge engine.
+      createdAt: universe.createdAt,
+      updatedAt: universe.updatedAt,
     },
     categories: categoryRows.map((c) => ({
       id: c.id,

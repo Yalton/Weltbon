@@ -1,39 +1,22 @@
 import archiver from 'archiver';
 import { Readable } from 'node:stream';
-import { loadUniverseExportPayload } from './payload.js';
+import { loadUniverseExportPayload, type ExportPayload } from './payload.js';
 import { storageBackend } from '../storage/local.js';
 
 /**
- * JSON exporter (Phase 38 MEDIA-06 — D-07).
- *
- * Produces a ZIP stream containing:
- *   - manifest.json  — full universe payload at weltbon_version '2.1.0', including
- *                      an `assets[]` array with entry↔asset reference metadata.
- *   - assets/<uuid>.<ext>  — raw bytes for each asset in the universe.
- *
- * Legacy plain-JSON import (weltbon_version '1.0.0' / '2.0.0') is still accepted
- * by the import route and importUniverseJson service — this ZIP format is additive.
- *
- * Date columns: payload returns Date objects; we coerce to ISO strings here
- * so each format-specific exporter is free to format dates as it wishes.
- *
- * The full issue list (resolved + open) is exported, NOT just openIssues —
- * round-trip import would silently drop resolved-issue history otherwise.
+ * Plan B: manifest construction, decoupled from ZIP writing so the sync engine
+ * (base snapshots, merge, protocol) and the ZIP export share ONE format.
+ * The returned object is the canonical SyncManifest shape.
  */
-export function exportUniverseJsonAsZip(
-  payload: Awaited<ReturnType<typeof loadUniverseExportPayload>>,
-): ReadableStream<Uint8Array> {
-  const archive = archiver('zip', { zlib: { level: 6 } });
-
-  // Attach error listener before finalize (mirrors buildMarkdownZip pattern).
-  archive.on('error', (err) => {
-    archive.destroy(err);
-  });
-
-  const manifest = {
+export function buildManifest(payload: ExportPayload) {
+  return {
     weltbon_version: '2.1.0' as const,
     exported_at: new Date().toISOString(),
     universe: {
+      // Plan B (Task 1): universe singleton identity/timestamps for the merge engine
+      // (B-06). Import ignores `id` — a fresh universe id is always minted on import;
+      // sync (not import) is what preserves ids (S-05).
+      id: payload.universe.id,
       name: payload.universe.name,
       description: payload.universe.description,
       entryTypes: payload.universe.entryTypes,
@@ -46,6 +29,8 @@ export function exportUniverseJsonAsZip(
       auditEnabled: payload.universe.auditEnabled,
       auditProvider: payload.universe.auditProvider,
       auditModel: payload.universe.auditModel,
+      createdAt: payload.universe.createdAt.toISOString(),
+      updatedAt: payload.universe.updatedAt.toISOString(),
     },
     categories: payload.categories.map((c) => ({
       id: c.id,
@@ -69,6 +54,8 @@ export function exportUniverseJsonAsZip(
       categoryId: e.categoryId,
       // Phase 38 MEDIA-06: cover image reference (may be null).
       coverImageId: e.coverImageId ?? null,
+      // Plan B (Task 1): per-entry WIP/draft flag (Phase 36 DATA-03) — was dropped by the manifest.
+      wip: e.wip,
       createdAt: e.createdAt.toISOString(),
       updatedAt: e.updatedAt.toISOString(),
     })),
@@ -241,6 +228,39 @@ export function exportUniverseJsonAsZip(
       updatedAt: t.updatedAt.toISOString(),
     })),
   };
+}
+
+/** Plan B: the merge engine and base snapshots key off this manifest shape. */
+export type SyncManifestShape = ReturnType<typeof buildManifest>;
+
+/**
+ * JSON exporter (Phase 38 MEDIA-06 — D-07).
+ *
+ * Produces a ZIP stream containing:
+ *   - manifest.json  — full universe payload at weltbon_version '2.1.0', including
+ *                      an `assets[]` array with entry↔asset reference metadata.
+ *   - assets/<uuid>.<ext>  — raw bytes for each asset in the universe.
+ *
+ * Legacy plain-JSON import (weltbon_version '1.0.0' / '2.0.0') is still accepted
+ * by the import route and importUniverseJson service — this ZIP format is additive.
+ *
+ * Date columns: payload returns Date objects; we coerce to ISO strings here
+ * so each format-specific exporter is free to format dates as it wishes.
+ *
+ * The full issue list (resolved + open) is exported, NOT just openIssues —
+ * round-trip import would silently drop resolved-issue history otherwise.
+ */
+export function exportUniverseJsonAsZip(
+  payload: Awaited<ReturnType<typeof loadUniverseExportPayload>>,
+): ReadableStream<Uint8Array> {
+  const archive = archiver('zip', { zlib: { level: 6 } });
+
+  // Attach error listener before finalize (mirrors buildMarkdownZip pattern).
+  archive.on('error', (err) => {
+    archive.destroy(err);
+  });
+
+  const manifest = buildManifest(payload);
 
   archive.append(JSON.stringify(manifest, null, 2), { name: 'manifest.json' });
 
