@@ -14,7 +14,7 @@
  */
 import { OpenAPIHono, createRoute, z } from '@hono/zod-openapi';
 import { HTTPException } from 'hono/http-exception';
-import { and, eq, sql } from 'drizzle-orm';
+import { and, eq, inArray, sql } from 'drizzle-orm';
 import { bodyLimit } from 'hono/body-limit';
 import type { MiddlewareHandler } from 'hono';
 import sharp from 'sharp';
@@ -52,6 +52,46 @@ export function syncBlobKey(uid: string, hash: string): string {
   // staged-blob fallthrough serve another universe's in-flight bytes. uid + hash
   // are both hex/dashes — they pass storage safeJoin.
   return `sync-blob-${uid}-${hash}`;
+}
+
+/**
+ * Committed assets of `uid` whose `content_hash` is one of `hashes`, as
+ * hash → { id, mimeType }. The single place the sync surface answers "does this
+ * universe already own the bytes for this content hash?" — shared by `missing`,
+ * `GET`, and apply's C-12 pre-check so the three cannot drift on that answer
+ * (drift is not cosmetic here: if `missing` says "you have it" by hash and apply
+ * decides "missing" by id, a legitimate transfer deadlocks).
+ *
+ * ONE `inArray` query, not one per hash (Task 5 review N+1 fix): the caller may
+ * pass up to the route's 5000-hash cap, and StorageBackend is an interface a
+ * remote backend can implement — a per-hash SELECT loop would be thousands of
+ * serial round-trips.
+ */
+async function findOwnedAssetsByHash(
+  uid: string,
+  hashes: string[],
+): Promise<Map<string, { id: string; mimeType: string }>> {
+  const byHash = new Map<string, { id: string; mimeType: string }>();
+  const distinct = [...new Set(hashes)];
+  if (distinct.length === 0) return byHash;
+  const rows = await db()
+    .select({ id: assets.id, mimeType: assets.mimeType, contentHash: assets.contentHash })
+    .from(assets)
+    .where(and(eq(assets.universeId, uid), inArray(assets.contentHash, distinct)));
+  for (const r of rows) {
+    if (r.contentHash && !byHash.has(r.contentHash)) {
+      byHash.set(r.contentHash, { id: r.id, mimeType: r.mimeType });
+    }
+  }
+  return byHash;
+}
+
+/** Single-hash convenience over findOwnedAssetsByHash (used by GET). */
+async function findOwnedAssetByHash(
+  uid: string,
+  hash: string,
+): Promise<{ id: string; mimeType: string } | undefined> {
+  return (await findOwnedAssetsByHash(uid, [hash])).get(hash);
 }
 
 // ── handshake ────────────────────────────────────────────────────────────────
@@ -181,6 +221,69 @@ const putBlobRoute = createRoute({
   },
 });
 
+// ── apply (C-10/C-11/C-12) ───────────────────────────────────────────────────
+
+const collectionOpsSchema = z.object({
+  upserts: z.array(z.record(z.string(), z.any())).default([]),
+  deletes: z.array(z.string()).default([]),
+});
+
+const applyRoute = createRoute({
+  method: 'post',
+  path: '/universes/{uid}/apply',
+  tags: ['Sync'],
+  summary: 'Apply a merge delta transactionally',
+  security: [{ bearerAuth: [] }],
+  request: {
+    params: uidParams,
+    body: {
+      content: {
+        'application/json': {
+          schema: z.object({
+            weltbonVersion: z.string(),
+            universe: z.record(z.string(), z.any()).nullable().default(null),
+            ops: z.record(z.string(), collectionOpsSchema).default({}),
+          }),
+        },
+      },
+      required: true,
+    },
+  },
+  responses: {
+    200: {
+      content: {
+        'application/json': {
+          schema: z.object({
+            upserted: z.record(z.string(), z.number()),
+            deleted: z.record(z.string(), z.number()),
+            materializedAssets: z.number(),
+          }),
+        },
+      },
+      description: 'Delta applied',
+    },
+    400: {
+      content: { 'application/json': { schema: errorSchema } },
+      description: 'Malformed delta — unknown collection, missing row id, or invalid timestamp',
+    },
+    401: err401,
+    403: err403,
+    404: err404,
+    409: {
+      content: {
+        'application/json': {
+          schema: z.object({
+            error: z.string(),
+            missingAssetHashes: z.array(z.string()).optional(),
+            collisions: z.array(z.object({ collection: z.string(), count: z.number() })).optional(),
+          }),
+        },
+      },
+      description: 'Version mismatch, missing blobs, or a cross-universe id collision',
+    },
+  },
+});
+
 export const syncRoutes = new OpenAPIHono<AppEnv>()
   .openapi(handshakeRoute, async (c) => {
     const body = c.req.valid('json');
@@ -228,19 +331,20 @@ export const syncRoutes = new OpenAPIHono<AppEnv>()
     await requireUniverse(uid, c.var.userId);
     const { hashes } = c.req.valid('json');
 
-    const missing: string[] = [];
-    for (const hash of hashes) {
-      // Present means either an existing asset row's bytes OR a staged blob
-      // from an earlier PUT in this same sync.
-      const [owned] = await db()
-        .select({ id: assets.id })
-        .from(assets)
-        .where(and(eq(assets.universeId, uid), eq(assets.contentHash, hash)))
-        .limit(1);
-      if (owned && (await storageBackend.exists(owned.id))) continue;
-      if (await storageBackend.exists(syncBlobKey(uid, hash))) continue;
-      missing.push(hash);
-    }
+    // Present means either an existing asset row's bytes OR a staged blob from an
+    // earlier PUT in this same sync. One inArray query resolves ownership for the
+    // whole batch (Task 5 review N+1 fix), then the storage existence checks fan
+    // out in parallel rather than up to 5000 serial round-trips.
+    const owned = await findOwnedAssetsByHash(uid, hashes);
+    const results = await Promise.all(
+      hashes.map(async (hash) => {
+        const committed = owned.get(hash);
+        if (committed && (await storageBackend.exists(committed.id))) return null;
+        if (await storageBackend.exists(syncBlobKey(uid, hash))) return null;
+        return hash;
+      }),
+    );
+    const missing = results.filter((h): h is string => h !== null);
     return c.json({ missing }, 200);
   })
 
@@ -252,14 +356,9 @@ export const syncRoutes = new OpenAPIHono<AppEnv>()
     // universeId, and the staged fallthrough key is universe-scoped (C-12), so a
     // caller can only pull bytes for assets/blobs belonging to this universe. A
     // bare content-addressed GET would be an oracle over every user's blobs.
-    const [owned] = await db()
-      .select({ id: assets.id, mimeType: assets.mimeType })
-      .from(assets)
-      .where(and(eq(assets.universeId, uid), eq(assets.contentHash, hash)))
-      .limit(1);
-
+    const owned = await findOwnedAssetByHash(uid, hash);
     const key = owned ? owned.id : syncBlobKey(uid, hash);
-    const bytes = owned ? await storageBackend.get(owned.id) : await storageBackend.get(key);
+    const bytes = await storageBackend.get(key);
     if (!bytes) return c.json({ error: 'Blob not found' }, 404);
 
     c.header('Content-Type', owned?.mimeType ?? 'application/octet-stream');
@@ -296,4 +395,165 @@ export const syncRoutes = new OpenAPIHono<AppEnv>()
 
     await storageBackend.put(syncBlobKey(uid, hash), bytes);
     return c.json({ hash, bytes: bytes.length }, 201);
+  })
+
+  .openapi(applyRoute, async (c) => {
+    const { uid } = c.req.valid('param');
+    const body = c.req.valid('json');
+    const userId = c.var.userId;
+
+    // C-14 defense in depth: the handshake is the primary gate, but an apply
+    // that slipped past it must not write a foreign manifest shape.
+    const local = await localIdentity();
+    if (body.weltbonVersion !== local.weltbonVersion) {
+      return c.json(
+        {
+          error: `Manifest version mismatch: this instance speaks ${local.weltbonVersion}, the caller sent ${body.weltbonVersion}`,
+        },
+        409,
+      );
+    }
+
+    // C-11 bootstrap: an unknown universe is created from the body, keeping its
+    // id (S-05) and owned by the caller. An existing one must belong to them.
+    // (The engine re-checks ownership under its advisory lock — C-16 — so this
+    // is only about which STATUS CODE to return, not the invariant itself.)
+    const [existing] = await db()
+      .select({ userId: universes.userId })
+      .from(universes)
+      .where(eq(universes.id, uid))
+      .limit(1);
+    if (existing) {
+      if (existing.userId !== userId) throw new HTTPException(403, { message: 'Forbidden' });
+    } else if (!body.universe) {
+      throw new HTTPException(404, { message: 'Universe not found and no universe row supplied to create it' });
+    }
+
+    // ── C-12 blob pre-check: every asset being upserted must have its bytes
+    // available BEFORE any row is written. Bytes are available if they are
+    // already stored under the asset's own id, staged by a PUT under
+    // syncBlobKey, OR already committed in this universe under a SIBLING asset
+    // with the same content hash (an identical blob uploaded twice keeps one
+    // copy per id). The sibling case is why "available" is answered by HASH, the
+    // same way `missing` answers it — otherwise a client that `missing` told
+    // "you already have this hash" (so it never PUT the blob) would be refused
+    // here for the new asset's id, deadlocking a legitimate transfer.
+    const assetUpserts = body.ops.assets?.upserts ?? [];
+    const wantedHashes = assetUpserts
+      .map((r) => r.contentHash)
+      .filter((h): h is string => typeof h === 'string' && h.length > 0);
+    const committedByHash = await findOwnedAssetsByHash(uid, wantedHashes);
+
+    // Bytes to copy onto an asset id once the rows commit; the source is either a
+    // staged blob (deleted after consuming) or a committed sibling (left alone).
+    type Materialization = { assetId: string; hash: string; source: 'staged' | string };
+    const toMaterialize: Materialization[] = [];
+    const missingAssetHashes: string[] = [];
+    for (const row of assetUpserts) {
+      const hash = row.contentHash as string | null | undefined;
+      const id = String(row.id);
+      if (!hash) continue; // pre-2.2.0 row: nothing to fetch
+      if (await storageBackend.exists(id)) continue; // bytes already under this id
+      if (await storageBackend.exists(syncBlobKey(uid, hash))) {
+        toMaterialize.push({ assetId: id, hash, source: 'staged' });
+        continue;
+      }
+      const sibling = committedByHash.get(hash);
+      if (sibling && sibling.id !== id && (await storageBackend.exists(sibling.id))) {
+        toMaterialize.push({ assetId: id, hash, source: sibling.id });
+        continue;
+      }
+      missingAssetHashes.push(hash);
+    }
+    if (missingAssetHashes.length > 0) {
+      return c.json(
+        { error: 'Asset bytes missing — PUT them before applying', missingAssetHashes },
+        409,
+      );
+    }
+
+    let result;
+    try {
+      result = await applyManifestOps(
+        { universe: body.universe as any, ops: body.ops as any },
+        { universeId: uid, ownerId: userId },
+      );
+    } catch (err) {
+      // Every engine error derives from SyncApplyError and carries its own
+      // `status` (C-19), so ONE branch maps them all — a later error class that
+      // forgets a status is a compile error, not a silent 500 here. What each
+      // error is safe to put in the BODY is this route's call, not the engine's:
+      //  - UniverseOwnershipError (403): return a bare Forbidden — its fields
+      //    name the real owner and must not be echoed.
+      //  - CrossUniverseCollisionError (409): its `collisions` name rows in OTHER
+      //    universes — return {collection, count}, never the ids.
+      //  - ConstraintCollisionError (409), UnknownCollectionError /
+      //    MissingRowIdError / InvalidSyncTimestampError (400): caller-fault and
+      //    self-referential, safe to return.
+      // Anything NOT a SyncApplyError — notably a raw 23503 — is a genuine 500:
+      // apply does not repair referential integrity (B-10), so an FK violation
+      // means the peer sent an inconsistent manifest, not a describable request.
+      if (err instanceof UniverseOwnershipError) {
+        return c.json({ error: 'Forbidden' }, 403);
+      }
+      if (err instanceof CrossUniverseCollisionError) {
+        return c.json(
+          {
+            error: err.message,
+            collisions: err.collisions.map((col) => ({ collection: col.collection, count: col.ids.length })),
+          },
+          err.status,
+        );
+      }
+      if (err instanceof SyncApplyError) {
+        // ConstraintCollisionError → 409; UnknownCollection/MissingRowId/
+        // InvalidSyncTimestamp → 400. Both are declared responses; the base's
+        // `status` is a plain number, so narrow it for c.json's typed overload.
+        return c.json({ error: err.message }, err.status as 400 | 409);
+      }
+      throw err;
+    }
+
+    // Rows are committed; NOW materialize bytes (the import-json CR-02 order —
+    // storage writes never happen inside the transaction). A failure here leaves
+    // an asset row whose bytes are absent, which is exactly the state a retry of
+    // this same idempotent apply repairs.
+    let materializedAssets = 0;
+    const consumedStaged = new Set<string>();
+    for (const m of toMaterialize) {
+      const bytes =
+        m.source === 'staged'
+          ? await storageBackend.get(syncBlobKey(uid, m.hash))
+          : await storageBackend.get(m.source);
+      if (!bytes) continue;
+      await storageBackend.put(m.assetId, bytes);
+      // Thumbnails are re-derived, never transferred (C-03). SHARP_OPTS is the
+      // SAME pixel-bomb guard the upload path uses — a peer's blob is no more
+      // trusted than a browser upload. A blob sharp cannot read still gets its
+      // original stored: the thumb endpoint 404s, which is strictly better than
+      // failing the whole sync over a derived artifact.
+      try {
+        const thumb = await sharp(bytes, SHARP_OPTS)
+          .resize(400, 400, { fit: 'inside', withoutEnlargement: true })
+          .toBuffer();
+        await storageBackend.put(`${m.assetId}_thumb`, thumb);
+        await db().update(assets).set({ thumbSizeBytes: thumb.length }).where(eq(assets.id, m.assetId));
+      } catch {
+        // leave thumbSizeBytes as applied; the original bytes are what matter
+      }
+      if (m.source === 'staged') consumedStaged.add(m.hash);
+      materializedAssets += 1;
+    }
+    // Staged blobs are consumed (Task 5 review: make the PUT comment true).
+    // Best-effort: a leftover costs disk, never correctness. Sibling-sourced
+    // materializations have no staged blob to remove.
+    for (const hash of consumedStaged) {
+      try {
+        await storageBackend.delete(syncBlobKey(uid, hash));
+      } catch {
+        // ignore
+      }
+    }
+
+    return c.json({ ...result, materializedAssets }, 200);
   });
