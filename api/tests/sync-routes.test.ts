@@ -180,6 +180,35 @@ describe('/api/sync surface (Plan C)', () => {
     expect(denied.status).toBe(403);
   });
 
+  it('does not serve a blob staged under another universe of the same owner (C-12)', async () => {
+    // Stage under universe A.
+    const put = await app.request(`/api/sync/universes/${universeId}/assets/${BLOB_HASH}`, {
+      method: 'PUT',
+      headers: { 'Content-Type': 'application/octet-stream', ...authHeader(ownerToken) },
+      body: BLOB,
+    });
+    expect(put.status).toBe(201);
+
+    // Same owner, a DIFFERENT universe B.
+    const { universes } = await import('../src/db/schema.js');
+    const [b] = await handle.db.insert(universes).values({ userId: ownerId, name: 'Other Universe' }).returning();
+
+    // The staged blob belongs to A, not B: B must not see it (this is the hole a
+    // global sync-blob-<hash> key left open — the fallthrough would serve A's
+    // in-flight bytes). Universe-scoped staging makes it a 404.
+    const cross = await app.request(`/api/sync/universes/${b.id}/assets/${BLOB_HASH}`, {
+      headers: authHeader(ownerToken),
+    });
+    expect(cross.status).toBe(404);
+
+    // And A still serves its own staged blob.
+    const own = await app.request(`/api/sync/universes/${universeId}/assets/${BLOB_HASH}`, {
+      headers: authHeader(ownerToken),
+    });
+    expect(own.status).toBe(200);
+    expect(Buffer.from(await own.arrayBuffer()).equals(BLOB)).toBe(true);
+  });
+
   it('enforces the universe quota on PUT', async () => {
     const previous = process.env.MEDIA_UNIVERSE_QUOTA_BYTES;
     process.env.MEDIA_UNIVERSE_QUOTA_BYTES = '5';

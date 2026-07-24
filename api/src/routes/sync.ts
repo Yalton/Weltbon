@@ -47,8 +47,11 @@ const err403 = { content: { 'application/json': { schema: errorSchema } }, descr
 const err404 = { content: { 'application/json': { schema: errorSchema } }, description: 'Not found' };
 
 /** Staging key for a transferred blob (C-12). Hex + dashes pass storage safeJoin. */
-export function syncBlobKey(hash: string): string {
-  return `sync-blob-${hash}`;
+export function syncBlobKey(uid: string, hash: string): string {
+  // Universe-scoped (C-12): a global sync-blob-<hash> would let the GET route's
+  // staged-blob fallthrough serve another universe's in-flight bytes. uid + hash
+  // are both hex/dashes — they pass storage safeJoin.
+  return `sync-blob-${uid}-${hash}`;
 }
 
 // ── handshake ────────────────────────────────────────────────────────────────
@@ -235,7 +238,7 @@ export const syncRoutes = new OpenAPIHono<AppEnv>()
         .where(and(eq(assets.universeId, uid), eq(assets.contentHash, hash)))
         .limit(1);
       if (owned && (await storageBackend.exists(owned.id))) continue;
-      if (await storageBackend.exists(syncBlobKey(hash))) continue;
+      if (await storageBackend.exists(syncBlobKey(uid, hash))) continue;
       missing.push(hash);
     }
     return c.json({ missing }, 200);
@@ -245,15 +248,17 @@ export const syncRoutes = new OpenAPIHono<AppEnv>()
     const { uid, hash } = c.req.valid('param');
     await requireUniverse(uid, c.var.userId);
 
-    // Scoped by universe, so a caller can only pull bytes for assets they own —
-    // a bare content-addressed GET would be an oracle over every user's blobs.
+    // Scoped by universe on BOTH paths: the committed lookup filters on
+    // universeId, and the staged fallthrough key is universe-scoped (C-12), so a
+    // caller can only pull bytes for assets/blobs belonging to this universe. A
+    // bare content-addressed GET would be an oracle over every user's blobs.
     const [owned] = await db()
       .select({ id: assets.id, mimeType: assets.mimeType })
       .from(assets)
       .where(and(eq(assets.universeId, uid), eq(assets.contentHash, hash)))
       .limit(1);
 
-    const key = owned ? owned.id : syncBlobKey(hash);
+    const key = owned ? owned.id : syncBlobKey(uid, hash);
     const bytes = owned ? await storageBackend.get(owned.id) : await storageBackend.get(key);
     if (!bytes) return c.json({ error: 'Blob not found' }, 404);
 
@@ -284,6 +289,6 @@ export const syncRoutes = new OpenAPIHono<AppEnv>()
       return c.json({ error: 'Universe storage quota exceeded' }, 413);
     }
 
-    await storageBackend.put(syncBlobKey(hash), bytes);
+    await storageBackend.put(syncBlobKey(uid, hash), bytes);
     return c.json({ hash, bytes: bytes.length }, 201);
   });
