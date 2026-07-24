@@ -40,6 +40,9 @@ describe('apply registry (Plan C, C-07/C-13)', () => {
     before('maps', 'mapPins');
     before('maps', 'mapRegions');
     before('maps', 'mapRoutes');
+    before('entries', 'mapPins');        // map_pins.entry_id
+    before('entries', 'mapRegions');     // map_regions.entry_id
+    before('entries', 'mapRoutes');      // map_routes.entry_id
     before('entries', 'dictionaryWords'); // dictionary_words.language_entry_id
     before('diagrams', 'diagramNodes');
     before('entries', 'diagramNodes');   // diagram_nodes.entry_id
