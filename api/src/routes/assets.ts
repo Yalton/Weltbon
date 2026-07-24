@@ -56,18 +56,18 @@ const DEFAULT_MAX_UNIVERSE_QUOTA = 500 * 1024 * 1024;
 // WR-02: parseInt returns NaN for empty strings or non-numeric values (e.g. "10mb"),
 // which would silently disable the caps. Use Number() + isFinite guard so malformed
 // env vars fall back to the safe default rather than producing NaN.
-function maxFileBytes(): number {
+export function maxFileBytes(): number {
   const n = Number(process.env.MEDIA_MAX_FILE_BYTES);
   return Number.isFinite(n) && n > 0 ? n : DEFAULT_MAX_FILE_BYTES;
 }
-function maxUniverseQuota(): number {
+export function maxUniverseQuota(): number {
   const n = Number(process.env.MEDIA_UNIVERSE_QUOTA_BYTES);
   return Number.isFinite(n) && n > 0 ? n : DEFAULT_MAX_UNIVERSE_QUOTA;
 }
 
 // failOn 'truncated' aborts on truncated/corrupt pixel data (T-38-12, D-11);
 // limitInputPixels caps decoded pixel count to defuse decompression/pixel bombs.
-const SHARP_OPTS = { limitInputPixels: 25_000_000, failOn: 'truncated' as const };
+export const SHARP_OPTS = { limitInputPixels: 25_000_000, failOn: 'truncated' as const };
 
 // ─── Shared param schemas ─────────────────────────────────────────────────────
 

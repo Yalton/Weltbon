@@ -100,6 +100,8 @@ const DB_GATED_TESTS = [
   'tests/sync-asset-hash.test.ts',
   // Plan C Task 3 — the transactional apply engine (C-07/C-09/C-10/C-15).
   'tests/sync-apply.test.ts',
+  // Plan C Task 4 — the /api/sync HTTP surface (handshake + snapshot).
+  'tests/sync-routes.test.ts',
 ];
 
 export default defineConfig({
