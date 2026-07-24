@@ -32,6 +32,7 @@ import { mapsRouter } from './routes/maps.js';
 import { mapLayersRouter } from './routes/map-layers.js';
 import { assetsRouter } from './routes/assets.js';
 import { dictionaryRoutes } from './routes/dictionary.js';
+import { syncRoutes } from './routes/sync.js';
 import { recoverOrphanAuditRuns } from './services/audit-recovery.js';
 import { wireSigtermDrain } from './services/audit-shutdown.js';
 import { requireAuth } from './middleware/auth.js';
@@ -106,6 +107,11 @@ export function createApp() {
   // cannot mint or revoke share tokens). Keeping it outside the global `requireAuth`
   // ensures the global gate never interferes with per-route auth semantics.
   apiR.route('/shares', shareCrudRoutes);
+  // Plan C (sync spec "Protocol"): the peer-facing sync surface, PAT-or-JWT
+  // authenticated. Mounted at its own /sync prefix with its own gate so it
+  // never interacts with the /universes/* auth block below.
+  apiR.use('/sync/*', requireAuth);
+  apiR.route('/sync', syncRoutes);
   apiR.use('/universes/*', requireAuth);
   // Phase 26 Plan 03 — D-06 cross-universe in-flight rollup.
   // Mounted at root /api prefix (NOT under /universes/:uid) because it

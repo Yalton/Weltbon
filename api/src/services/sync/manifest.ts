@@ -2,7 +2,16 @@
  * Plan B: the merge engine's model of the manifest (sync spec S-01..S-05).
  * SyncManifest rows are the manifest JSON shape — ISO strings, snake_case
  * link_type quirk and all. Descriptors give the engine identity + natural-key
- * knowledge; they are the ONLY place per-collection facts live.
+ * knowledge; they are the ONLY place per-collection IDENTITY facts live.
+ *
+ * The field-name sets below are deliberately global and may name a field that
+ * exists on a single collection (`usedAsCoverByEntryId`, C-06, is on assets
+ * only). They are keyed by field name rather than by collection because the
+ * comparison they drive is field-wise: a name in the set is excluded wherever
+ * it appears, and a name that appears nowhere costs nothing. Adding a
+ * per-descriptor override would buy nothing today — but if a name in these
+ * sets ever becomes ambiguous across collections (the same key meaning
+ * different things), THAT is the point to move it onto the descriptor.
  */
 import type { SyncManifestShape } from '../export/json.js';
 
@@ -44,8 +53,17 @@ export const COLLECTIONS: CollectionDescriptor[] = [
   { name: 'shareTokens',     key: id, naturalKey: (r) => String(r.hash) },       // UNIQUE(hash)
 ];
 
-/** Fields excluded from content comparison (B-02). */
-export const NON_CONTENT_FIELDS = new Set(['updatedAt', 'createdAt']);
+/**
+ * Fields excluded from content comparison (B-02).
+ *
+ * `usedAsCoverByEntryId` (C-06) is DERIVED from entries.cover_image_id, not an
+ * assets column, so it is not applicable — and comparing it would manufacture
+ * asset ops out of an entries-side change. One side moves a cover: a spurious
+ * asset UPSERT that apply cannot execute (no such column to write). Both sides
+ * move it: a phantom asset CONFLICT on top. The one-sided case is the common
+ * one. The real state merges on the entries row.
+ */
+export const NON_CONTENT_FIELDS = new Set(['updatedAt', 'createdAt', 'usedAsCoverByEntryId']);
 
 /** Array fields compared order-insensitively (B-02). */
 export const UNORDERED_ARRAY_FIELDS = new Set(['entryIds']);

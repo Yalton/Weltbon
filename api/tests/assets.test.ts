@@ -18,7 +18,7 @@
  */
 
 import { mkdtempSync, rmSync } from 'node:fs';
-import { randomBytes } from 'node:crypto';
+import { createHash, randomBytes } from 'node:crypto';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 
@@ -172,6 +172,10 @@ describe('asset routes (MEDIA-01/02/03/04)', () => {
     expect(rawRes.headers.get('content-type')).toBe('image/png');
     const rawBytes = Buffer.from(await rawRes.arrayBuffer());
     expect(rawBytes.length).toBe(asset.sizeBytes);
+
+    // Plan C (S-10, C-03): the upload records the SHA-256 of the ORIGINAL stored
+    // bytes — the post-sharp re-encode served by /raw — not of the thumbnail.
+    expect(asset.contentHash).toBe(createHash('sha256').update(rawBytes).digest('hex'));
 
     // GET /thumb → 200 (thumbnail key exists)
     const thumbRes = await app.request(`http://localhost${asset.thumbUrl}`, { headers: hdrs });

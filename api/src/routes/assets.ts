@@ -36,6 +36,7 @@ import { assets, entries } from '../db/schema.js';
 import { requireUniverse } from '../utils/ownership.js';
 import { storageBackend } from '../services/storage/local.js';
 import { signAssetUrl, verifyAssetSig } from '../services/asset-signing.js';
+import { sha256Hex } from '../services/sync/asset-hash.js';
 import type { AuthVariables } from '../middleware/auth.js';
 
 type AppEnv = { Variables: AuthVariables };
@@ -55,18 +56,18 @@ const DEFAULT_MAX_UNIVERSE_QUOTA = 500 * 1024 * 1024;
 // WR-02: parseInt returns NaN for empty strings or non-numeric values (e.g. "10mb"),
 // which would silently disable the caps. Use Number() + isFinite guard so malformed
 // env vars fall back to the safe default rather than producing NaN.
-function maxFileBytes(): number {
+export function maxFileBytes(): number {
   const n = Number(process.env.MEDIA_MAX_FILE_BYTES);
   return Number.isFinite(n) && n > 0 ? n : DEFAULT_MAX_FILE_BYTES;
 }
-function maxUniverseQuota(): number {
+export function maxUniverseQuota(): number {
   const n = Number(process.env.MEDIA_UNIVERSE_QUOTA_BYTES);
   return Number.isFinite(n) && n > 0 ? n : DEFAULT_MAX_UNIVERSE_QUOTA;
 }
 
 // failOn 'truncated' aborts on truncated/corrupt pixel data (T-38-12, D-11);
 // limitInputPixels caps decoded pixel count to defuse decompression/pixel bombs.
-const SHARP_OPTS = { limitInputPixels: 25_000_000, failOn: 'truncated' as const };
+export const SHARP_OPTS = { limitInputPixels: 25_000_000, failOn: 'truncated' as const };
 
 // ─── Shared param schemas ─────────────────────────────────────────────────────
 
@@ -84,6 +85,11 @@ const assetSchema = z.object({
   sizeBytes: z.number(),
   thumbSizeBytes: z.number(),
   altText: z.string().nullable(),
+  // Plan C (S-10): toAssetResponse spreads the DB row, so the sync content hash
+  // ships in every owner-facing asset response. Declared so the OpenAPI contract
+  // matches what is actually served. Never reaches share routes — those serve
+  // bytes only, never asset metadata JSON.
+  contentHash: z.string().nullable(),
   rawUrl: z.string(),
   thumbUrl: z.string(),
   createdAt: z.string().or(z.date()),
@@ -383,6 +389,9 @@ export const assetsRouter = new OpenAPIHono<AppEnv>()
           extension,
           sizeBytes: safeBytes.length,
           thumbSizeBytes: thumbBytes.length,
+          // Plan C (S-10): record the content hash at write time so
+          // ensureAssetHashes() never has to touch a freshly uploaded blob.
+          contentHash: sha256Hex(safeBytes),
         })
         .returning();
 

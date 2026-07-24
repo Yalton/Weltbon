@@ -17,10 +17,24 @@ const SHARP_OPTS = { limitInputPixels: 25_000_000, failOn: 'truncated' as const 
 const ALLOWED_MIME = new Set(['image/png', 'image/jpeg', 'image/webp', 'image/gif']);
 const ALLOWED_MIME_LIST = Array.from(ALLOWED_MIME).join(', ');
 
+/**
+ * Manifest versions this instance can import.
+ *
+ * THE single source of truth: routes/import.ts's error handler needs the same
+ * list (its hardcoded string SHADOWS the Zod message on every import route), and
+ * keeping two copies in lockstep by comment already failed once — the shadowing
+ * string still read "1.0.0 or 2.0.0" three manifest versions later.
+ */
+export const ACCEPTED_EXPORT_VERSIONS = ['1.0.0', '2.0.0', '2.1.0', '2.2.0'] as const;
+
+/** User-facing rejection message; derived so it can never name a stale set. */
+export const INCOMPATIBLE_VERSION_MESSAGE =
+  `Incompatible export version. Expected ${ACCEPTED_EXPORT_VERSIONS.slice(0, -1).join(', ')}, or ${ACCEPTED_EXPORT_VERSIONS.at(-1)}`;
+
 export const importSchema = z.object({
   weltbon_version: z.string().refine(
-    (v) => v === '1.0.0' || v === '2.0.0' || v === '2.1.0',
-    { message: 'Incompatible export version. Expected 1.0.0, 2.0.0, or 2.1.0' }
+    (v) => (ACCEPTED_EXPORT_VERSIONS as readonly string[]).includes(v),
+    { message: INCOMPATIBLE_VERSION_MESSAGE }
   ),
   exported_at: z.string().optional(),
   universe: z.object({
@@ -102,6 +116,11 @@ export const importSchema = z.object({
     // JSON export uses snake_case 'link_type' key — accept both camelCase and snake_case
     link_type: z.string().nullable().optional(),
     direction: z.enum(['directed', 'undirected']).optional(),
+    // Plan C (manifest 2.2.0): edge styling round-trips on import. `diagramId`
+    // is deliberately NOT accepted here — import mints fresh diagram ids, so an
+    // incoming manifest diagramId is meaningless; sync (S-05) carries it instead.
+    lineStyle: z.string().nullable().optional(),
+    color: z.string().nullable().optional(),
   })),
   issues: z
     .array(
@@ -149,6 +168,10 @@ export const importSchema = z.object({
         mimeType: z.string(),
         extension: z.string(),
         sizeBytes: z.number(),
+        // Plan C (manifest 2.2.0): alt text round-trips on import. contentHash
+        // and thumbSizeBytes are deliberately NOT imported — import re-encodes
+        // and re-thumbnails the bytes itself, so both are recomputed locally.
+        altText: z.string().nullable().optional(),
         usedAsCoverByEntryId: z.string().uuid().nullable().optional().default(null),
       })
     )
@@ -463,6 +486,7 @@ export async function importUniverseJson(
           extension: asset.extension,
           sizeBytes: asset.sizeBytes,
           thumbSizeBytes: 0,
+          altText: asset.altText ?? null,
         });
         assetIdMap.set(asset.id, newId);
         continue;
@@ -494,6 +518,7 @@ export async function importUniverseJson(
         extension: asset.extension,
         sizeBytes: bytes.length,
         thumbSizeBytes: thumbBytes ? thumbBytes.length : 0,
+        altText: asset.altText ?? null,
       });
       assetIdMap.set(asset.id, newId);
     }
@@ -579,6 +604,9 @@ export async function importUniverseJson(
         // Accept both camelCase (linkType) and snake_case (link_type) from JSON exports.
         direction: link.direction ?? (link.bidirectional ? 'undirected' : 'directed'),
         linkType: link.linkType ?? link.link_type ?? null,
+        // Plan C (manifest 2.2.0): edge styling.
+        lineStyle: link.lineStyle ?? null,
+        color: link.color ?? null,
       });
     }
 

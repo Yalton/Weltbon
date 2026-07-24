@@ -96,6 +96,14 @@ const DB_GATED_TESTS = [
   'tests/map-layers.test.ts',
   // Phase 52 Plan 04 — SECRET-02 export→import round-trip integration tests.
   'tests/export-import-roundtrip.test.ts',
+  // Plan C (sync protocol) — asset content hash + manifest 2.2.0.
+  'tests/sync-asset-hash.test.ts',
+  // Plan C Task 3 — the transactional apply engine (C-07/C-09/C-10/C-15).
+  'tests/sync-apply.test.ts',
+  // Plan C Task 4 — the /api/sync HTTP surface (handshake + snapshot).
+  'tests/sync-routes.test.ts',
+  // Plan C Task 7 — two-instance convergence over the real /api/sync surface.
+  'tests/sync-convergence.test.ts',
 ];
 
 export default defineConfig({

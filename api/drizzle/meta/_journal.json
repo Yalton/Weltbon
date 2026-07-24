@@ -239,6 +239,13 @@
       "when": 1784303566954,
       "tag": "0033_sync_foundation",
       "breakpoints": true
+    },
+    {
+      "idx": 34,
+      "version": "7",
+      "when": 1784908800000,
+      "tag": "0034_sync_asset_hash",
+      "breakpoints": true
     }
   ]
 }

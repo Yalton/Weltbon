@@ -86,6 +86,12 @@ export interface ExportPayloadAsset {
   mimeType: string;
   extension: string;
   sizeBytes: number;
+  /** Plan C: ~400px thumbnail size. NOT NULL in the DB — apply cannot insert without it. */
+  thumbSizeBytes: number;
+  /** Plan C: user-editable alt text (D-05 accessibility). Was dropped by the manifest. */
+  altText: string | null;
+  /** Plan C (S-10): SHA-256 hex of the original bytes; null until ensureAssetHashes() runs. */
+  contentHash: string | null;
   /** Entry ID that uses this asset as its cover image (null if not a cover). */
   usedAsCoverByEntryId: string | null;
   createdAt: Date;
@@ -252,6 +258,10 @@ export interface ExportPayloadLink {
   // Phase 35 REL-01: replaces bidirectional; 'directed' | 'undirected'
   direction: string;
   linkType: string | null;
+  /** Plan C: diagram edge membership + styling. Was dropped by the manifest. */
+  diagramId: string | null;
+  lineStyle: string | null;
+  color: string | null;
   createdAt: Date;
   updatedAt: Date;
 }
@@ -654,7 +664,11 @@ export async function loadUniverseExportPayload(universeId: string): Promise<Exp
       label: l.label,
       // Phase 35 REL-01: direction replaces bidirectional
       direction: l.direction,
-      linkType: l.linkType,
+      linkType: l.linkType ?? null,
+      // Plan C: diagram edge membership + styling — dropped by manifest 2.1.0.
+      diagramId: l.diagramId ?? null,
+      lineStyle: l.lineStyle ?? null,
+      color: l.color ?? null,
       createdAt: l.createdAt,
       updatedAt: l.updatedAt,
     })),
@@ -683,6 +697,9 @@ export async function loadUniverseExportPayload(universeId: string): Promise<Exp
       mimeType: a.mimeType,
       extension: a.extension,
       sizeBytes: a.sizeBytes,
+      thumbSizeBytes: a.thumbSizeBytes,
+      altText: a.altText ?? null,
+      contentHash: a.contentHash ?? null,
       usedAsCoverByEntryId: coverByAssetId.get(a.id) ?? null,
       createdAt: a.createdAt,
       updatedAt: a.updatedAt,

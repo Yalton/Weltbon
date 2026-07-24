@@ -1,4 +1,4 @@
-import { pgTable, uuid, text, timestamp, jsonb, boolean, integer, doublePrecision, primaryKey, unique, numeric, uniqueIndex } from 'drizzle-orm/pg-core';
+import { pgTable, uuid, text, timestamp, jsonb, boolean, integer, doublePrecision, primaryKey, unique, numeric, uniqueIndex, index } from 'drizzle-orm/pg-core';
 import { relations, sql } from 'drizzle-orm';
 import type { EncryptedSecret } from '../services/crypto.js';
 
@@ -547,9 +547,18 @@ export const assets = pgTable('assets', {
   sizeBytes:      integer('size_bytes').notNull(),
   thumbSizeBytes: integer('thumb_size_bytes').notNull(),
   altText:        text('alt_text'),
+  // Plan C (sync spec S-10): SHA-256 hex of the ORIGINAL stored bytes (the
+  // post-sharp re-encode written under storage key `<id>`), never the thumbnail.
+  // NULLABLE by necessity: the bytes live in storageBackend, not in SQL, so
+  // migration 0034 cannot compute it. ensureAssetHashes() backfills lazily
+  // before any sync snapshot is built (C-04/C-05).
+  contentHash:    text('content_hash'),
   createdAt:      timestamp('created_at', { withTimezone: true }).defaultNow().notNull(),
   updatedAt:      timestamp('updated_at', { withTimezone: true }).defaultNow().notNull().$onUpdate(() => new Date()),
-});
+}, (t) => ({
+  // Lookup key for GET/PUT /api/sync/universes/:uid/assets/:hash.
+  contentHashIdx: index('assets_content_hash_idx').on(t.universeId, t.contentHash),
+}));
 
 export const dictionaryWords = pgTable('dictionary_words', {
   id:              uuid('id').primaryKey().defaultRandom(),

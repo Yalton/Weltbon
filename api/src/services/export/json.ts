@@ -10,7 +10,7 @@ import { storageBackend } from '../storage/local.js';
  */
 export function buildManifest(payload: ExportPayload) {
   return {
-    weltbon_version: '2.1.0' as const,
+    weltbon_version: '2.2.0' as const,
     exported_at: new Date().toISOString(),
     universe: {
       // Plan B (Task 1): universe singleton identity/timestamps for the merge engine
@@ -66,6 +66,11 @@ export function buildManifest(payload: ExportPayload) {
       label: l.label,
       link_type: l.linkType,
       direction: l.direction,
+      // Plan C (manifest 2.2.0): diagram edge membership + styling. Dropped by
+      // 2.1.0, which made every sync silently discard diagram edges.
+      diagramId: l.diagramId,
+      lineStyle: l.lineStyle,
+      color: l.color,
       createdAt: l.createdAt.toISOString(),
       updatedAt: l.updatedAt.toISOString(),
     })),
@@ -94,12 +99,17 @@ export function buildManifest(payload: ExportPayload) {
       updatedAt: t.updatedAt.toISOString(),
     })),
     // Phase 38 MEDIA-06 (D-07): asset registry with entry↔asset references.
+    // Plan C (manifest 2.2.0): + contentHash (S-10 transfer key), altText, and
+    // thumbSizeBytes (NOT NULL in the DB — sync apply cannot insert without it).
     assets: payload.assets.map((a) => ({
       id: a.id,
       filename: a.filename,
       mimeType: a.mimeType,
       extension: a.extension,
       sizeBytes: a.sizeBytes,
+      thumbSizeBytes: a.thumbSizeBytes,
+      altText: a.altText,
+      contentHash: a.contentHash,
       usedAsCoverByEntryId: a.usedAsCoverByEntryId,
       createdAt: a.createdAt.toISOString(),
       updatedAt: a.updatedAt.toISOString(),
@@ -237,7 +247,7 @@ export type SyncManifestShape = ReturnType<typeof buildManifest>;
  * JSON exporter (Phase 38 MEDIA-06 — D-07).
  *
  * Produces a ZIP stream containing:
- *   - manifest.json  — full universe payload at weltbon_version '2.1.0', including
+ *   - manifest.json  — full universe payload at weltbon_version '2.2.0', including
  *                      an `assets[]` array with entry↔asset reference metadata.
  *   - assets/<uuid>.<ext>  — raw bytes for each asset in the universe.
  *
