@@ -388,6 +388,104 @@ describe('applyManifestOps (Plan C, C-07/C-09/C-10/C-15)', () => {
     expect(rows[0].gloss).toBe('the sun');
   });
 
+  it('refuses an issue whose entryIds reach into another universe', async () => {
+    const { applyManifestOps, CrossUniverseCollisionError } = await import('../src/services/sync/apply.js');
+    const { universes, entries, issues, issueEntries } = await import('../src/db/schema.js');
+    const issueId = 'dddddddd-dddd-4ddd-8ddd-ddddddddddf1';
+    const mine = 'dddddddd-dddd-4ddd-8ddd-ddddddddddf2';
+
+    const [foreign] = await handle.db.insert(universes).values({ userId: otherId, name: 'Theirs' }).returning();
+    const [theirEntry] = await handle.db
+      .insert(entries)
+      .values({ universeId: foreign.id, title: 'Not yours', entryType: 'concept' })
+      .returning();
+
+    // entryIds[] is the one manifest field naming a row the C-09 pre-flight
+    // never sees — this id appears in no ops.entries upsert or delete, so
+    // nothing else checks it. The FK to entries.id is satisfied, so without the
+    // guard there is no 23503: the batch COMMITS a join row binding this
+    // universe's issue to another universe's entry.
+    await expect(
+      applyManifestOps(
+        {
+          universe: null,
+          ops: {
+            entries: { upserts: [entryRow(mine, 'Mine', '2026-01-01')], deletes: [] },
+            issues: {
+              upserts: [{
+                id: issueId, title: 'I', description: '', severity: 'minor', resolved: false,
+                entryIds: [mine, theirEntry.id],
+                createdAt: ISO('2026-01-01'), updatedAt: ISO('2026-01-02'),
+              }],
+              deletes: [],
+            },
+          },
+        },
+        { universeId, ownerId },
+      ),
+    ).rejects.toBeInstanceOf(CrossUniverseCollisionError);
+
+    // All-or-nothing: the issue, the entry and the join row are all absent.
+    expect(await handle.db.select().from(issueEntries)).toHaveLength(0);
+    expect(await handle.db.select().from(issues).where(eq(issues.id, issueId))).toHaveLength(0);
+    expect(await handle.db.select().from(entries).where(eq(entries.id, mine))).toHaveLength(0);
+  });
+
+  it('still associates an issue with an entry created in the same batch', async () => {
+    const { applyManifestOps } = await import('../src/services/sync/apply.js');
+    const { issueEntries } = await import('../src/db/schema.js');
+    const issueId = 'dddddddd-dddd-4ddd-8ddd-ddddddddddf3';
+    const brandNew = 'dddddddd-dddd-4ddd-8ddd-ddddddddddf4';
+
+    // The ordinary case the guard must not break: `entries` is applied before
+    // `issues`, so an entry born in this same transaction is already written
+    // (uncommitted, but visible here) and scoped to this universe.
+    await applyManifestOps(
+      {
+        universe: null,
+        ops: {
+          entries: { upserts: [entryRow(brandNew, 'Fresh', '2026-01-01')], deletes: [] },
+          issues: {
+            upserts: [{
+              id: issueId, title: 'I', description: '', severity: 'minor', resolved: false,
+              entryIds: [brandNew], createdAt: ISO('2026-01-01'), updatedAt: ISO('2026-01-02'),
+            }],
+            deletes: [],
+          },
+        },
+      },
+      { universeId, ownerId },
+    );
+
+    const assoc = await handle.db.select().from(issueEntries);
+    expect(assoc).toHaveLength(1);
+    expect(assoc[0].entryId).toBe(brandNew);
+  });
+
+  it('rejects an upsert row with no id instead of letting "undefined" reach the driver', async () => {
+    const { applyManifestOps, MissingRowIdError } = await import('../src/services/sync/apply.js');
+    const { entries } = await import('../src/db/schema.js');
+    const ok = 'dddddddd-dddd-4ddd-8ddd-ddddddddddf5';
+
+    // Without the check this is a 22P02 ("invalid input syntax for type uuid:
+    // \"undefined\"") — an untyped driver error, so a 500 for what is plainly a
+    // malformed peer manifest.
+    const idless = { ...entryRow('placeholder', 'No id', '2026-01-01') } as Record<string, unknown>;
+    delete idless.id;
+
+    await expect(
+      applyManifestOps(
+        {
+          universe: null,
+          ops: { entries: { upserts: [entryRow(ok, 'Fine', '2026-01-01'), idless], deletes: [] } },
+        },
+        { universeId, ownerId },
+      ),
+    ).rejects.toBeInstanceOf(MissingRowIdError);
+
+    expect(await handle.db.select().from(entries).where(eq(entries.universeId, universeId))).toHaveLength(0);
+  });
+
   it('refuses to write into — or transfer — a universe owned by another user', async () => {
     const { applyManifestOps, UniverseOwnershipError } = await import('../src/services/sync/apply.js');
     const { universes, entries } = await import('../src/db/schema.js');

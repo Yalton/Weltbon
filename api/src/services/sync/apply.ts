@@ -24,9 +24,9 @@
  * route's unavoidable TOCTOU window because it runs under the same lock that
  * serializes every other writer.
  */
-import { eq, sql } from 'drizzle-orm';
+import { and, eq, inArray, ne, sql } from 'drizzle-orm';
 import { db } from '../../db/client.js';
-import { issueEntries, universes } from '../../db/schema.js';
+import { entries, issueEntries, universes } from '../../db/schema.js';
 import {
   APPLY_ORDER,
   UNIVERSE_APPLY,
@@ -113,6 +113,24 @@ export class UniverseOwnershipError extends Error {
   }
 }
 
+/**
+ * Raised when an upsert row in an id-keyed collection carries no usable `id`.
+ * The route maps this to **400** — a manifest row without an identity is caller
+ * error, and without this the value reaches Postgres as the text "undefined"
+ * and comes back as an untyped `22P02`, i.e. a 500.
+ *
+ * `indices` are positions within that collection's `upserts` array, because a
+ * row with no id has nothing else to name it by. graphPositions is exempt: it
+ * has no `id` column at all (it keys on `entryId`), and it is precisely the
+ * collection this pre-flight skips.
+ */
+export class MissingRowIdError extends Error {
+  constructor(readonly collection: string, readonly indices: number[]) {
+    super(`${collection}: upsert row(s) at index ${indices.join(', ')} have no id`);
+    this.name = 'MissingRowIdError';
+  }
+}
+
 /** Chunk size for `inArray` delete predicates and multi-row join inserts. */
 const CHUNK = 200;
 
@@ -154,17 +172,61 @@ async function runDeletes(
  * un-linked from an issue on the winning side stays linked forever on every
  * peer — a de-association could never propagate.
  *
- * Ordering is already safe: `issues` sits after `entries` in APPLY_ORDER, so
- * every entry an incoming issue names has been written by the time we get here
- * (unless it is genuinely absent, which raises 23503 and aborts — B-10: the
- * merge, not apply, owns referential repair).
- *
  * The DELETE is keyed on issue_id alone, with no universe scoping of its own —
  * it does not need one. `issues` is `ownScoped`, so the C-09 pre-flight has
- * already refused the batch if any incoming issue id belongs to another
- * universe; the ids reaching here are this universe's or nobody's.
+ * already refused the batch if any incoming ISSUE id belongs to another
+ * universe; the issue ids reaching here are this universe's or nobody's.
+ *
+ * That is NOT true of the ENTRY ids, which is why they are checked below.
+ * `entryIds[]` is the one place a manifest names a row that the C-09 pre-flight
+ * never sees: an entry id appearing only inside an issue's associations, and
+ * never as an `ops.entries` upsert or delete, is not pre-flighted by anything.
+ * If it names an entry in a DIFFERENT local universe the FK to `entries.id` is
+ * satisfied, so no 23503 fires — and the batch commits a join row binding this
+ * universe's issue to a foreign universe's entry. `POST /apply` takes `ops`
+ * verbatim from the request body (C-01 puts the merge on the initiating
+ * client), so a hostile or simply buggy peer can reach it.
+ *
+ * The check is scoped to "exists AND belongs to another universe", not "not
+ * found here": an entry id that exists NOWHERE still falls through to the FK
+ * and raises 23503, exactly as an orphan link does, because B-10 gives
+ * referential repair to the merge rather than to apply. Rejecting only the
+ * cross-universe case keeps that contract intact and gives the new error one
+ * unambiguous meaning.
+ *
+ * Ordering works in our favour: `issues` sits after `entries` in APPLY_ORDER,
+ * so entries created in this same batch are already written (uncommitted, but
+ * visible to this transaction) and correctly scoped by the time we look.
  */
-async function rewriteIssueEntries(tx: ApplyTx, rows: ManifestRow[]): Promise<void> {
+async function rewriteIssueEntries(
+  tx: ApplyTx,
+  rows: ManifestRow[],
+  universeId: string,
+): Promise<void> {
+  const referenced = new Set<string>();
+  for (const row of rows) {
+    if (Array.isArray(row.entryIds)) for (const e of row.entryIds) referenced.add(String(e));
+  }
+
+  // Mirrors the entries descriptor's `foreignKeysWhere` (apply-tables.ts
+  // `ownScoped`), spelled out here because issue_entries has no descriptor of
+  // its own and so never passes through the registry's pre-flight loop.
+  const foreign: string[] = [];
+  for (const batch of chunk([...referenced])) {
+    const found = await tx
+      .select({ id: entries.id })
+      .from(entries)
+      .where(and(inArray(entries.id, batch), ne(entries.universeId, universeId)));
+    foreign.push(...found.map((r) => r.id));
+  }
+  if (foreign.length > 0) {
+    // Same class as C-09 — "this batch tries to touch another universe's data,
+    // so the whole batch is refused" — and the same 409, so the route needs no
+    // new branch. The label is the physical table, which has no manifest
+    // collection name to use instead.
+    throw new CrossUniverseCollisionError([{ collection: 'issue_entries', ids: foreign }]);
+  }
+
   for (const row of rows) {
     const issueId = String(row.id);
     // Deduped: two identical pairs in one INSERT are legal under DO NOTHING but
@@ -228,7 +290,20 @@ export async function applyManifestOps(
     for (const desc of APPLY_ORDER) {
       const op = req.ops[desc.collection];
       if (!op || desc.foreignKeysWhere === null) continue;
-      const keys = [...op.upserts.map((r) => String(r.id)), ...op.deletes];
+
+      // A row with no usable `id` is not something to quietly skip: it would
+      // reach `toValues` and then Postgres as the literal text "undefined",
+      // surfacing as an untyped 22P02 (a 500) for what is plainly caller error.
+      // Rejected here, named by position, since a row with no id has nothing
+      // else to identify it by.
+      const keys: string[] = [];
+      const idless: number[] = [];
+      op.upserts.forEach((r, i) => {
+        if (typeof r.id === 'string' && r.id.length > 0) keys.push(r.id);
+        else idless.push(i);
+      });
+      if (idless.length > 0) throw new MissingRowIdError(desc.collection, idless);
+      keys.push(...op.deletes);
       if (keys.length === 0) continue;
 
       // Accumulated across batches and pushed once, so a >CHUNK batch cannot
@@ -300,7 +375,7 @@ export async function applyManifestOps(
       }
       upserted[desc.collection] = op.upserts.length;
 
-      if (desc.collection === 'issues') await rewriteIssueEntries(tx, op.upserts);
+      if (desc.collection === 'issues') await rewriteIssueEntries(tx, op.upserts, ctx.universeId);
     }
 
     // ── remaining deletes, children before parents (reverse order, C-07) ────
