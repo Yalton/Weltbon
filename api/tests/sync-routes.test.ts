@@ -371,4 +371,53 @@ describe('/api/sync surface (Plan C)', () => {
     const stored = await storageBackend.get(newId);
     expect(stored && stored.equals(BLOB)).toBe(true);
   });
+
+  it('maps a real engine MissingRowIdError to 400 through the catch (C-19 fallthrough)', async () => {
+    // An id-less ENTRY upsert skips the asset pre-check and reaches
+    // applyManifestOps, whose pre-transaction guard throws MissingRowIdError.
+    // This is the only test that drives the generic `instanceof SyncApplyError`
+    // → err.status branch with a genuine engine error.
+    const res = await postApply(universeId, ownerToken, applyBody({
+      entries: {
+        upserts: [{ title: 'No Id', entryType: 'concept' }],
+        deletes: [],
+      },
+    }));
+    expect(res.status).toBe(400);
+    expect((await res.json()).error).toMatch(/no id/i);
+  });
+
+  it('drives a cross-universe collision through its own branch and never leaks the foreign id (C-09)', async () => {
+    const { universes, entries } = await import('../src/db/schema.js');
+    // A row that already lives in universe A (the seeded `universeId`).
+    const foreignId = '16161616-1616-4161-8161-161616161616';
+    await handle.db.insert(entries).values({
+      id: foreignId, universeId, title: 'A-only', entryType: 'concept',
+    });
+    // The SAME owner also holds universe B.
+    const [b] = await handle.db.insert(universes).values({ userId: ownerId, name: 'B' }).returning();
+
+    // Apply an entry upsert to B reusing A's id → the C-09 pre-flight raises
+    // CrossUniverseCollisionError, which must hit its OWN branch (before the
+    // generic SyncApplyError branch) and return {collection, count} only.
+    const res = await postApply(b.id, ownerToken, applyBody({
+      entries: {
+        upserts: [{
+          id: foreignId, title: 'stolen', entryType: 'concept', summary: '', body: '',
+          tags: [], aliases: [], meta: {}, icon: '', isPublic: true, wip: false,
+          categoryId: null, coverImageId: null,
+          createdAt: '2026-01-01T00:00:00.000Z', updatedAt: '2026-01-01T00:00:00.000Z',
+        }],
+        deletes: [],
+      },
+    }));
+    expect(res.status).toBe(409);
+    const body = await res.json();
+    // C-09 non-disclosure, asserted FIRST so a branch reorder trips HERE: the
+    // foreign id must appear NOWHERE in the response — not in `collisions`, and
+    // not smuggled into `error`. Dropping this into the generic SyncApplyError
+    // branch would echo err.message, which embeds the id.
+    expect(JSON.stringify(body)).not.toContain(foreignId);
+    expect(body.collisions).toEqual([{ collection: 'entries', count: 1 }]);
+  });
 });

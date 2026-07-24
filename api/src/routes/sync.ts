@@ -497,9 +497,14 @@ export const syncRoutes = new OpenAPIHono<AppEnv>()
         return c.json({ error: 'Forbidden' }, 403);
       }
       if (err instanceof CrossUniverseCollisionError) {
+        // NB: err.message embeds the foreign ids (apply.ts builds it as
+        // `collection[id, id]`), so it must NOT be echoed — the C-09 guard is
+        // non-disclosure of other universes' row ids. Return only {collection,
+        // count}; the ids are logged server-side for the operator.
+        console.warn('[sync/apply] cross-universe collision:', err.message);
         return c.json(
           {
-            error: err.message,
+            error: 'Cross-universe id collision — some incoming ids already exist in another universe',
             collisions: err.collisions.map((col) => ({ collection: col.collection, count: col.ids.length })),
           },
           err.status,
