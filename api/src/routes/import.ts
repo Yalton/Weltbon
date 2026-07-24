@@ -1,5 +1,5 @@
 import { OpenAPIHono, z } from '@hono/zod-openapi';
-import { importUniverseJson, importSchema } from '../services/import-json.js';
+import { importUniverseJson, importSchema, INCOMPATIBLE_VERSION_MESSAGE } from '../services/import-json.js';
 import type { AuthVariables } from '../middleware/auth.js';
 import { ZodError } from 'zod';
 import yauzl from 'yauzl';
@@ -145,10 +145,11 @@ function handleImportError(err: unknown): { status: 400 | 500; body: object } {
     const issues = err.issues as Array<{ path: Array<string | number>; message: string }>;
     const versionError = issues.find((e) => e.path.includes('weltbon_version'));
     if (versionError) {
-      // Keep in lockstep with the accepted set in import-json.ts's weltbon_version
-      // refine — this string SHADOWS the Zod message on every import route, so a
-      // stale list here is what the user actually reads.
-      return { status: 400, body: { error: 'Incompatible export version. Expected 1.0.0, 2.0.0, 2.1.0, or 2.2.0' } };
+      // This message SHADOWS the Zod one on every import route, so it is what the
+      // user actually reads. Shared with the refine (ACCEPTED_EXPORT_VERSIONS) so
+      // the two can no longer drift — a hand-copied list here went stale for three
+      // manifest versions before anyone noticed.
+      return { status: 400, body: { error: INCOMPATIBLE_VERSION_MESSAGE } };
     }
     return { status: 400, body: { error: 'Invalid import format', details: issues } };
   }

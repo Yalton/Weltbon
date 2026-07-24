@@ -17,10 +17,24 @@ const SHARP_OPTS = { limitInputPixels: 25_000_000, failOn: 'truncated' as const 
 const ALLOWED_MIME = new Set(['image/png', 'image/jpeg', 'image/webp', 'image/gif']);
 const ALLOWED_MIME_LIST = Array.from(ALLOWED_MIME).join(', ');
 
+/**
+ * Manifest versions this instance can import.
+ *
+ * THE single source of truth: routes/import.ts's error handler needs the same
+ * list (its hardcoded string SHADOWS the Zod message on every import route), and
+ * keeping two copies in lockstep by comment already failed once — the shadowing
+ * string still read "1.0.0 or 2.0.0" three manifest versions later.
+ */
+export const ACCEPTED_EXPORT_VERSIONS = ['1.0.0', '2.0.0', '2.1.0', '2.2.0'] as const;
+
+/** User-facing rejection message; derived so it can never name a stale set. */
+export const INCOMPATIBLE_VERSION_MESSAGE =
+  `Incompatible export version. Expected ${ACCEPTED_EXPORT_VERSIONS.slice(0, -1).join(', ')}, or ${ACCEPTED_EXPORT_VERSIONS.at(-1)}`;
+
 export const importSchema = z.object({
   weltbon_version: z.string().refine(
-    (v) => ['1.0.0', '2.0.0', '2.1.0', '2.2.0'].includes(v),
-    { message: 'Incompatible export version. Expected 1.0.0, 2.0.0, 2.1.0, or 2.2.0' }
+    (v) => (ACCEPTED_EXPORT_VERSIONS as readonly string[]).includes(v),
+    { message: INCOMPATIBLE_VERSION_MESSAGE }
   ),
   exported_at: z.string().optional(),
   universe: z.object({

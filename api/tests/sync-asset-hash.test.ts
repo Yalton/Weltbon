@@ -93,15 +93,38 @@ describe('sync asset hashing (Plan C, S-10)', () => {
     expect(manifest.assets[0].thumbSizeBytes).toBe(10);
   });
 
-  it('usedAsCoverByEntryId is not a content field (C-06)', async () => {
-    const { NON_CONTENT_FIELDS } = await import('../src/services/sync/manifest.js');
-    const { contentEqual } = await import('../src/services/sync/merge.js');
-    expect(NON_CONTENT_FIELDS.has('usedAsCoverByEntryId')).toBe(true);
-    expect(
-      contentEqual(
-        { id: 'a', filename: 'x.png', usedAsCoverByEntryId: null },
-        { id: 'a', filename: 'x.png', usedAsCoverByEntryId: 'entry-1' },
-      ),
-    ).toBe(true);
+  it('moving an entry cover produces no asset op and no conflict (C-06)', async () => {
+    // End-to-end through mergeManifests on REAL manifest rows: usedAsCoverByEntryId
+    // is derived from entries.cover_image_id, so a cover move changes the asset row's
+    // rendering of it while the asset itself is untouched. If it were a content field,
+    // the peer's row would read as "changed" and win, producing an asset upsert that
+    // apply cannot execute (there is no such column to write).
+    const { universeId, assetId } = await seedUniverseWithAsset(Buffer.from('pretend png bytes'));
+    const { entries } = await import('../src/db/schema.js');
+    const [coverEntry, otherEntry] = await handle.db
+      .insert(entries)
+      .values([
+        { universeId, title: 'Cover Holder', entryType: 'entity', coverImageId: assetId },
+        { universeId, title: 'New Cover Holder', entryType: 'entity' },
+      ])
+      .returning();
+
+    const { buildSyncManifest } = await import('../src/services/sync/snapshot.js');
+    const base = await buildSyncManifest(universeId);
+    expect(base.assets[0].usedAsCoverByEntryId).toBe(coverEntry!.id);
+
+    const local = structuredClone(base);
+    const remote = structuredClone(base);
+    // The peer moved the cover to the other entry — the derived field, and ONLY it,
+    // differs on the asset row. The real state change lives on the entries rows.
+    remote.assets[0].usedAsCoverByEntryId = otherEntry!.id;
+
+    const { mergeManifests } = await import('../src/services/sync/merge.js');
+    const res = mergeManifests(base, local, remote);
+
+    expect(res.conflicts).toEqual([]);
+    expect(res.localOps.assets!.upserts).toEqual([]);
+    expect(res.localOps.assets!.deletes).toEqual([]);
+    expect(res.remoteOps.assets!.upserts).toEqual([]);
   });
 });

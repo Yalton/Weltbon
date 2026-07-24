@@ -23,6 +23,15 @@ export function sha256Hex(bytes: Buffer): string {
  * from storage (an orphan) keeps a null hash and is skipped rather than failing
  * the sweep — a missing blob is a pre-existing data problem, not a sync error.
  *
+ * KNOWN EDGE of that skip (not fixed here — it belongs to apply, Task 6, if
+ * anywhere): `contentHash` is NOT in NON_CONTENT_FIELDS, so an orphan row's null
+ * hash compares UNEQUAL against a peer's hashed copy of the same logical asset,
+ * manufacturing a conflict the way `usedAsCoverByEntryId` used to before C-06.
+ * And if the null-hash row wins LWW, it propagates `contentHash: null` onto a
+ * peer whose bytes are perfectly fine. Excluding the hash from comparison is NOT
+ * the fix: it is the S-10 transfer key, so two genuinely different blobs must
+ * compare unequal. The warning below is what makes the orphan visible.
+ *
  * Returns the number of rows updated (used by tests; callers ignore it).
  */
 export async function ensureAssetHashes(universeId: string): Promise<number> {
@@ -34,7 +43,13 @@ export async function ensureAssetHashes(universeId: string): Promise<number> {
   let updated = 0;
   for (const { id } of pending) {
     const bytes = await storageBackend.get(id);
-    if (!bytes) continue;
+    if (!bytes) {
+      // Swallow-and-warn (house idiom, cf. services/pat.ts + services/share-token.ts):
+      // a missing blob must not fail the sweep, but it must not be silent either —
+      // the row keeps a null hash and will compare unequal on the next merge.
+      console.warn('[sync-asset-hash] no stored bytes for asset id', id, '— content hash left null');
+      continue;
+    }
     await db()
       .update(assets)
       .set({ contentHash: sha256Hex(bytes), updatedAt: new Date() })

@@ -216,13 +216,17 @@ describe('export/import completeness (Plan A2)', () => {
       { diagramId: diagram!.id, entryId: subjectB.id, x: 30, y: 40 },
     ]);
 
-    // Plan C (manifest 2.2.0): edge styling — 2.1.0 dropped lineStyle/color.
+    // Plan C (manifest 2.2.0): 2.1.0 dropped diagramId/lineStyle/color. diagramId
+    // is asserted HERE and only here: it is deliberately not importable (import
+    // mints fresh diagram ids), so the round-trip scenario structurally cannot
+    // catch its removal from the manifest.
     await db().insert(links).values({
       universeId: universe.id,
       sourceEntryId: subjectA.id,
       targetEntryId: subjectB.id,
       direction: 'directed',
       linkType: 'sibling',
+      diagramId: diagram!.id,
       lineStyle: 'dashed',
       color: '#ff0000',
     });
@@ -299,6 +303,8 @@ describe('export/import completeness (Plan A2)', () => {
     expect(exportedLink.lineStyle).toBe('dashed');
     expect(exportedLink.color).toBe('#ff0000');
     expect(exportedLink.link_type).toBe('sibling');
+    // Diagram edge membership — carried by sync (S-05 preserves ids), never by import.
+    expect(exportedLink.diagramId).toBe(diagram!.id);
 
     expect(data.diagrams[0].updatedAt).toBeTruthy();
     expect(data.diagramNodes[0].updatedAt).toBeTruthy();
@@ -336,6 +342,7 @@ describe('export/import completeness (Plan A2)', () => {
       sourceEntryId: langEntry.id,
       targetEntryId: diagramSubject.id,
       direction: 'directed',
+      diagramId: diagram!.id,
       lineStyle: 'dashed',
       color: '#ff0000',
     });
@@ -414,6 +421,9 @@ describe('export/import completeness (Plan A2)', () => {
     expect(importedLinks).toHaveLength(1);
     expect(importedLinks[0]!.lineStyle).toBe('dashed');
     expect(importedLinks[0]!.color).toBe('#ff0000');
+    // ...but diagramId does NOT: the seeded link belonged to a diagram, and import
+    // mints fresh diagram ids, so the incoming value is meaningless here by design.
+    expect(importedLinks[0]!.diagramId).toBeNull();
     expect(importedLinks[0]!.sourceEntryId).toBe(newLangEntry!.id);
     expect(importedLinks[0]!.targetEntryId).toBe(newSubjectEntry!.id);
 
