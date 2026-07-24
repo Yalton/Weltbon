@@ -278,9 +278,14 @@ export const syncRoutes = new OpenAPIHono<AppEnv>()
       return c.json({ error: 'Bytes do not match the given content hash' }, 400);
     }
 
-    // Same quota rule as upload: the universe's committed asset bytes plus this
-    // blob must fit. Staged-but-unapplied blobs are not counted (they are
-    // deleted after a successful apply) — a bounded slack, not a hole.
+    // Same quota rule as upload: the universe's COMMITTED asset bytes plus this
+    // blob must fit. Staged-but-unapplied blobs are deliberately NOT counted —
+    // so this bounds committed storage, not staged storage. Task 6's apply
+    // deletes each staged blob once it materializes it; a sync that stages blobs
+    // and never applies leaks them until the universe is deleted (a known limit,
+    // see "Not in this plan" — a staging sweeper belongs with Plan D). The floor
+    // that keeps that from being unbounded per request is blobSizeLimit; there
+    // is no cap on the NUMBER of distinct blobs an owner may stage pre-apply.
     const [{ total }] = await db()
       .select({ total: sql<number>`COALESCE(SUM(${assets.sizeBytes}), 0)` })
       .from(assets)
