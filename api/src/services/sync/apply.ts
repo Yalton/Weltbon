@@ -147,18 +147,24 @@ export class UniverseOwnershipError extends SyncApplyError {
  * Raised when an upsert row in an id-keyed collection carries no usable `id`.
  * The route maps this to **400**.
  *
- * This guard is NOT cosmetic error-typing, and the failure it prevents is worse
- * than the 500 you might expect. Drizzle omits an `undefined` property from the
- * INSERT (it emits `DEFAULT`), and every id-keyed table here is
- * `uuid().primaryKey().defaultRandom()` — so without this check the apply
- * SUCCEEDS and writes the row under a **freshly generated id**. That is
- * identity substitution:
- *   - the peer can never address the row again, because it holds a different id;
- *   - `onConflictDoUpdate` never matches, so every retry inserts ANOTHER copy —
- *     C-10's idempotence is broken, silently;
- *   - the row can never be deleted or merged by any future sync.
- * A 500 would at least have been visible. Do not remove this without replacing
- * it with something that rejects an id-less row.
+ * This guard is NOT cosmetic error-typing; it does two load-bearing jobs.
+ *
+ * 1. It upholds the C-09 pre-flight's `String(r.id)` assumption below ("Every id
+ *    is a non-empty string by now"). Without this check a missing id reaches
+ *    that SELECT as the literal text `"undefined"` and Postgres rejects it with
+ *    an untyped `22P02` — a 500 with nothing written, and no collection or row
+ *    to name. The guard turns that into a clean 400 that says which rows.
+ * 2. It heads off a WORSE latent failure the pre-flight only accidentally masks.
+ *    Drizzle omits an `undefined` property from an INSERT (emitting `DEFAULT`),
+ *    and every id-keyed table here is `uuid().primaryKey().defaultRandom()`. So
+ *    if the pre-flight ever stopped catching this first, an id-less row would be
+ *    written under a **freshly generated id** — identity substitution: the peer
+ *    can never address it, `onConflictDoUpdate` never matches so every retry
+ *    inserts another copy (C-10 idempotence silently broken), and it can never
+ *    be deleted or merged. That is why the check lives at the top rather than
+ *    relying on the pre-flight's incidental 22P02.
+ * Do not remove this without replacing it with something that rejects an
+ * id-less row before any write.
  *
  * `indices` are positions within that collection's `upserts` array, because a
  * row with no id has nothing else to name it by.
