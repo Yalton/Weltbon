@@ -110,6 +110,74 @@ const snapshotRoute = createRoute({
   },
 });
 
+// ── asset transfer (S-10, C-12) ──────────────────────────────────────────────
+
+/**
+ * Per-blob size cap. Same lazily-rebuilt bodyLimit idiom as the upload route
+ * (assets.ts:119-123) so MEDIA_MAX_FILE_BYTES overrides set after module load
+ * are honored, and the SAME limit — a peer push is not privileged over a
+ * browser upload.
+ */
+const blobSizeLimit: MiddlewareHandler = (c, next) =>
+  bodyLimit({
+    maxSize: maxFileBytes(),
+    onError: (ctx) => ctx.json({ error: 'Blob too large' }, 413),
+  })(c, next);
+
+const missingAssetsRoute = createRoute({
+  method: 'post',
+  path: '/universes/{uid}/assets/missing',
+  tags: ['Sync'],
+  summary: 'Which of these content hashes does this instance lack?',
+  security: [{ bearerAuth: [] }],
+  request: {
+    params: uidParams,
+    body: {
+      content: { 'application/json': { schema: z.object({ hashes: z.array(z.string().regex(/^[0-9a-f]{64}$/)).max(5000) }) } },
+      required: true,
+    },
+  },
+  responses: {
+    200: { content: { 'application/json': { schema: z.object({ missing: z.array(z.string()) }) } }, description: 'Absent hashes' },
+    401: err401,
+    403: err403,
+    404: err404,
+  },
+});
+
+const getBlobRoute = createRoute({
+  method: 'get',
+  path: '/universes/{uid}/assets/{hash}',
+  tags: ['Sync'],
+  summary: 'Serve original asset bytes by content hash',
+  security: [{ bearerAuth: [] }],
+  request: { params: uidHashParams },
+  responses: {
+    200: { content: { 'application/octet-stream': { schema: z.any() } }, description: 'Blob bytes' },
+    401: err401,
+    403: err403,
+    404: err404,
+  },
+});
+
+const putBlobRoute = createRoute({
+  method: 'put',
+  path: '/universes/{uid}/assets/{hash}',
+  tags: ['Sync'],
+  summary: 'Stage original asset bytes ahead of an apply',
+  security: [{ bearerAuth: [] }],
+  middleware: [blobSizeLimit] as const,
+  request: { params: uidHashParams },
+  responses: {
+    201: { content: { 'application/json': { schema: z.object({ hash: z.string(), bytes: z.number() }) } }, description: 'Blob staged' },
+    400: { content: { 'application/json': { schema: errorSchema } }, description: 'Bytes do not hash to the given hash' },
+    401: err401,
+    403: err403,
+    404: err404,
+    413: { content: { 'application/json': { schema: errorSchema } }, description: 'Blob too large or quota exceeded' },
+  },
+});
+
 export const syncRoutes = new OpenAPIHono<AppEnv>()
   .openapi(handshakeRoute, async (c) => {
     const body = c.req.valid('json');
@@ -150,4 +218,72 @@ export const syncRoutes = new OpenAPIHono<AppEnv>()
     // caching layer in front of /snapshot must account for that.
     const manifest = await buildSyncManifest(uid);
     return c.json(manifest as any, 200);
+  })
+
+  .openapi(missingAssetsRoute, async (c) => {
+    const { uid } = c.req.valid('param');
+    await requireUniverse(uid, c.var.userId);
+    const { hashes } = c.req.valid('json');
+
+    const missing: string[] = [];
+    for (const hash of hashes) {
+      // Present means either an existing asset row's bytes OR a staged blob
+      // from an earlier PUT in this same sync.
+      const [owned] = await db()
+        .select({ id: assets.id })
+        .from(assets)
+        .where(and(eq(assets.universeId, uid), eq(assets.contentHash, hash)))
+        .limit(1);
+      if (owned && (await storageBackend.exists(owned.id))) continue;
+      if (await storageBackend.exists(syncBlobKey(hash))) continue;
+      missing.push(hash);
+    }
+    return c.json({ missing }, 200);
+  })
+
+  .openapi(getBlobRoute, async (c) => {
+    const { uid, hash } = c.req.valid('param');
+    await requireUniverse(uid, c.var.userId);
+
+    // Scoped by universe, so a caller can only pull bytes for assets they own —
+    // a bare content-addressed GET would be an oracle over every user's blobs.
+    const [owned] = await db()
+      .select({ id: assets.id, mimeType: assets.mimeType })
+      .from(assets)
+      .where(and(eq(assets.universeId, uid), eq(assets.contentHash, hash)))
+      .limit(1);
+
+    const key = owned ? owned.id : syncBlobKey(hash);
+    const bytes = owned ? await storageBackend.get(owned.id) : await storageBackend.get(key);
+    if (!bytes) return c.json({ error: 'Blob not found' }, 404);
+
+    c.header('Content-Type', owned?.mimeType ?? 'application/octet-stream');
+    c.header('Content-Length', String(bytes.length));
+    return c.body(bytes as any, 200);
+  })
+
+  .openapi(putBlobRoute, async (c) => {
+    const { uid, hash } = c.req.valid('param');
+    await requireUniverse(uid, c.var.userId);
+
+    const bytes = Buffer.from(await c.req.arrayBuffer());
+    // The hash is the name; a mismatch means the transfer is corrupt or a
+    // caller is trying to poison the content-addressed namespace.
+    if (sha256Hex(bytes) !== hash) {
+      return c.json({ error: 'Bytes do not match the given content hash' }, 400);
+    }
+
+    // Same quota rule as upload: the universe's committed asset bytes plus this
+    // blob must fit. Staged-but-unapplied blobs are not counted (they are
+    // deleted after a successful apply) — a bounded slack, not a hole.
+    const [{ total }] = await db()
+      .select({ total: sql<number>`COALESCE(SUM(${assets.sizeBytes}), 0)` })
+      .from(assets)
+      .where(eq(assets.universeId, uid));
+    if (Number(total) + bytes.length > maxUniverseQuota()) {
+      return c.json({ error: 'Universe storage quota exceeded' }, 413);
+    }
+
+    await storageBackend.put(syncBlobKey(hash), bytes);
+    return c.json({ hash, bytes: bytes.length }, 201);
   });

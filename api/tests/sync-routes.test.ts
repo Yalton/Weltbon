@@ -124,4 +124,75 @@ describe('/api/sync surface (Plan C)', () => {
     );
     expect(missing.status).toBe(404);
   });
+
+  // ── asset transfer ─────────────────────────────────────────────────────────
+
+  const BLOB = Buffer.from('original asset bytes');
+  const BLOB_HASH = createHash('sha256').update(BLOB).digest('hex');
+
+  it('reports an unknown hash as missing, then not missing after a PUT', async () => {
+    const ask = async () => {
+      const res = await app.request(`/api/sync/universes/${universeId}/assets/missing`, {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json', ...authHeader(ownerToken) },
+        body: JSON.stringify({ hashes: [BLOB_HASH] }),
+      });
+      return (await res.json()).missing;
+    };
+
+    expect(await ask()).toEqual([BLOB_HASH]);
+
+    const put = await app.request(`/api/sync/universes/${universeId}/assets/${BLOB_HASH}`, {
+      method: 'PUT',
+      headers: { 'Content-Type': 'application/octet-stream', ...authHeader(ownerToken) },
+      body: BLOB,
+    });
+    expect(put.status).toBe(201);
+
+    expect(await ask()).toEqual([]);
+  });
+
+  it('rejects bytes that do not hash to the given name', async () => {
+    const res = await app.request(`/api/sync/universes/${universeId}/assets/${BLOB_HASH}`, {
+      method: 'PUT',
+      headers: { 'Content-Type': 'application/octet-stream', ...authHeader(ownerToken) },
+      body: Buffer.from('different bytes entirely'),
+    });
+    expect(res.status).toBe(400);
+  });
+
+  it('serves a staged blob back and refuses a cross-tenant fetch', async () => {
+    await app.request(`/api/sync/universes/${universeId}/assets/${BLOB_HASH}`, {
+      method: 'PUT',
+      headers: { 'Content-Type': 'application/octet-stream', ...authHeader(ownerToken) },
+      body: BLOB,
+    });
+
+    const ok = await app.request(`/api/sync/universes/${universeId}/assets/${BLOB_HASH}`, {
+      headers: authHeader(ownerToken),
+    });
+    expect(ok.status).toBe(200);
+    expect(Buffer.from(await ok.arrayBuffer()).equals(BLOB)).toBe(true);
+
+    const denied = await app.request(`/api/sync/universes/${universeId}/assets/${BLOB_HASH}`, {
+      headers: authHeader(otherToken),
+    });
+    expect(denied.status).toBe(403);
+  });
+
+  it('enforces the universe quota on PUT', async () => {
+    const previous = process.env.MEDIA_UNIVERSE_QUOTA_BYTES;
+    process.env.MEDIA_UNIVERSE_QUOTA_BYTES = '5';
+    try {
+      const res = await app.request(`/api/sync/universes/${universeId}/assets/${BLOB_HASH}`, {
+        method: 'PUT',
+        headers: { 'Content-Type': 'application/octet-stream', ...authHeader(ownerToken) },
+        body: BLOB,
+      });
+      expect(res.status).toBe(413);
+    } finally {
+      if (previous === undefined) delete process.env.MEDIA_UNIVERSE_QUOTA_BYTES;
+      else process.env.MEDIA_UNIVERSE_QUOTA_BYTES = previous;
+    }
+  });
 });
