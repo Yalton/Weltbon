@@ -144,6 +144,10 @@ export const syncRoutes = new OpenAPIHono<AppEnv>()
   .openapi(snapshotRoute, async (c) => {
     const { uid } = c.req.valid('param');
     await requireUniverse(uid, c.var.userId);
+    // NB: this GET is not read-only on first call. buildSyncManifest runs
+    // ensureAssetHashes (C-05), which backfills assets.content_hash for a
+    // pre-2.2.0 universe — a write, though an idempotent one. A read-replica or
+    // caching layer in front of /snapshot must account for that.
     const manifest = await buildSyncManifest(uid);
     return c.json(manifest as any, 200);
   });

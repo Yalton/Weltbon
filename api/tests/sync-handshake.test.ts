@@ -5,11 +5,11 @@
  * throws MigrationHeadUnavailableError, and the handshake handler maps that to 503
  * rather than a permissive default that would let mismatched instances sync.
  *
- * This lives in its own file — separate from sync-routes.test.ts — precisely
- * because migrationHead()'s cache is process-global: sync-routes warms it early,
- * so the cold read the failure branches need can only be forced in a worker that
- * has not touched it. DRIZZLE_DIR is restored and the cache reset after each test
- * so this file cannot poison a sibling sharing the worker.
+ * migrationHead()'s cache is process-global, so any sibling test in this worker
+ * that calls localIdentity() warms it and would hide the cold-read failure this
+ * file needs. The beforeEach/afterEach resetMigrationHeadCache() (plus restoring
+ * DRIZZLE_DIR) is what actually isolates it — not the file boundary — and also
+ * keeps this file from poisoning a sibling.
  */
 import { describe, it, expect, beforeEach, afterEach } from 'vitest';
 import { mkdtemp, mkdir, writeFile, rm } from 'node:fs/promises';
