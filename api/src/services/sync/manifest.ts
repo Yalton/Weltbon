@@ -57,9 +57,11 @@ export const COLLECTIONS: CollectionDescriptor[] = [
  * Fields excluded from content comparison (B-02).
  *
  * `usedAsCoverByEntryId` (C-06) is DERIVED from entries.cover_image_id, not an
- * assets column: it is not applicable and comparing it would raise a phantom
- * asset conflict every time an entry's cover changed. The real state merges on
- * the entries row.
+ * assets column, so it is not applicable — and comparing it would manufacture
+ * asset ops out of an entries-side change. One side moves a cover: a spurious
+ * asset UPSERT that apply cannot execute (no such column to write). Both sides
+ * move it: a phantom asset CONFLICT on top. The one-sided case is the common
+ * one. The real state merges on the entries row.
  */
 export const NON_CONTENT_FIELDS = new Set(['updatedAt', 'createdAt', 'usedAsCoverByEntryId']);
 
