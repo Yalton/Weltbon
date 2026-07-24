@@ -98,6 +98,8 @@ const DB_GATED_TESTS = [
   'tests/export-import-roundtrip.test.ts',
   // Plan C (sync protocol) — asset content hash + manifest 2.2.0.
   'tests/sync-asset-hash.test.ts',
+  // Plan C Task 3 — the transactional apply engine (C-07/C-09/C-10/C-15).
+  'tests/sync-apply.test.ts',
 ];
 
 export default defineConfig({

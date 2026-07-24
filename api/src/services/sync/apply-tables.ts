@@ -70,6 +70,36 @@ export interface ApplyDescriptor extends ApplyTarget {
    * is typed `ApplyDescriptor[]`.
    */
   foreignKeysWhere: ((keys: string[], universeId: string) => SQL) | null;
+  /**
+   * Name of this table's UNIQUE constraint/index OTHER than its primary key, or
+   * null when it has none. Purely declarative — nothing renders it into SQL —
+   * but it is what makes apply.ts run this collection's deletes immediately
+   * BEFORE its own upserts (C-15) instead of in the trailing reverse-order
+   * delete pass.
+   *
+   * Why the fact lives here rather than as a set in the engine: this module is
+   * the one place per-collection DB knowledge lives, and the property is
+   * REQUIRED, so a new descriptor cannot be added without its author answering
+   * "does this table have a second UNIQUE?" — TS2739 fires on omission, exactly
+   * as it does for the `...ownScoped(...)` spread above. A set in apply.ts
+   * would have been a lookup that stays silently empty for a new collection.
+   * The string (rather than a boolean) names the constraint, so the claim can
+   * be checked against `pg_constraint` / the migration that created it.
+   *
+   * SAFETY PRECONDITION — every collection naming a constraint here MUST be a
+   * leaf table (no synced table has a foreign key into it). Running a parent's
+   * deletes early would cascade away rows a later collection is about to
+   * upsert. All four current members are leaves; see the C-15 test in
+   * tests/sync-apply-tables.test.ts, which pins the membership so widening it
+   * is a deliberate act.
+   *
+   * NOT the same thing as manifest.ts's `naturalKey` (B-05), even though the
+   * two name the same four collections today: `naturalKey` dedupes two rows
+   * *within* a merge, this orders a delete against an incoming row *inside the
+   * receiver's table*. They are kept apart because they answer to different
+   * layers — a merge-side change must not silently reorder writes.
+   */
+  secondaryUnique: string | null;
 }
 
 /**
@@ -195,6 +225,7 @@ export const APPLY_ORDER: ApplyDescriptor[] = [
       updatedAt: ts(r.updatedAt, 'assets.updatedAt'),
     }),
     ...ownScoped(assets),
+    secondaryUnique: null,
   },
   {
     collection: 'categories',
@@ -210,6 +241,7 @@ export const APPLY_ORDER: ApplyDescriptor[] = [
       updatedAt: ts(r.updatedAt, 'categories.updatedAt'),
     }),
     ...ownScoped(categories),
+    secondaryUnique: null,
   },
   {
     // MUST stay before `links` — links.diagram_id references diagrams.id (schema.ts:340,
@@ -228,6 +260,7 @@ export const APPLY_ORDER: ApplyDescriptor[] = [
       updatedAt: ts(r.updatedAt, 'diagrams.updatedAt'),
     }),
     ...ownScoped(diagrams),
+    secondaryUnique: null,
   },
   {
     collection: 'entries',
@@ -253,6 +286,7 @@ export const APPLY_ORDER: ApplyDescriptor[] = [
       // searchVector is GENERATED — never written.
     }),
     ...ownScoped(entries),
+    secondaryUnique: null,
   },
   {
     collection: 'links',
@@ -273,6 +307,7 @@ export const APPLY_ORDER: ApplyDescriptor[] = [
       updatedAt: ts(r.updatedAt, 'links.updatedAt'),
     }),
     ...ownScoped(links),
+    secondaryUnique: null,
   },
   {
     collection: 'issues',
@@ -295,6 +330,10 @@ export const APPLY_ORDER: ApplyDescriptor[] = [
       // band, after the issues upsert, directly against issue_entries.
     }),
     ...ownScoped(issues),
+    // issues_universe_gap_key_unique exists, but it is NULLS DISTINCT since
+    // 0019 and the mapper above deliberately never writes gapKey, so every
+    // synced issue row has gap_key IS NULL and cannot collide (C-15).
+    secondaryUnique: null,
   },
   {
     collection: 'graphPositions',
@@ -311,6 +350,9 @@ export const APPLY_ORDER: ApplyDescriptor[] = [
       and(inArray(graphPositions.entryId, keys), eq(graphPositions.universeId, universeId))!,
     // Identity is (universeId, entryId) — a foreign row cannot be addressed.
     foreignKeysWhere: null,
+    // Identity IS the natural key: (universe_id, entry_id) is the PRIMARY KEY,
+    // already the onConflict target above, so there is no second constraint.
+    secondaryUnique: null,
   },
   {
     collection: 'timelinePins',
@@ -325,6 +367,10 @@ export const APPLY_ORDER: ApplyDescriptor[] = [
       updatedAt: ts(r.updatedAt, 'timelinePins.updatedAt'),
     }),
     ...parentScoped(timelinePins, entries, timelinePins.entryId),
+    // UNIQUE(entry_id) (schema.ts:465, 0003_phase5_schema.sql:3). Re-pinning an
+    // entry — delete the old pin, create a new one — is ordinary editing, and
+    // emits delete X + upsert Y both carrying the same entry_id (C-15).
+    secondaryUnique: 'timeline_pins_entry_id_key',
   },
   {
     collection: 'mapLayers',
@@ -342,6 +388,7 @@ export const APPLY_ORDER: ApplyDescriptor[] = [
       updatedAt: ts(r.updatedAt, 'mapLayers.updatedAt'),
     }),
     ...ownScoped(mapLayers),
+    secondaryUnique: null,
   },
   {
     collection: 'terrainTypes',
@@ -358,6 +405,7 @@ export const APPLY_ORDER: ApplyDescriptor[] = [
       updatedAt: ts(r.updatedAt, 'terrainTypes.updatedAt'),
     }),
     ...parentScoped(terrainTypes, mapLayers, terrainTypes.layerId),
+    secondaryUnique: null,
   },
   {
     collection: 'maps',
@@ -373,6 +421,7 @@ export const APPLY_ORDER: ApplyDescriptor[] = [
       updatedAt: ts(r.updatedAt, 'maps.updatedAt'),
     }),
     ...ownScoped(maps),
+    secondaryUnique: null,
   },
   {
     collection: 'mapPins',
@@ -391,6 +440,8 @@ export const APPLY_ORDER: ApplyDescriptor[] = [
       updatedAt: ts(r.updatedAt, 'mapPins.updatedAt'),
     }),
     ...parentScoped(mapPins, maps, mapPins.mapId),
+    // Deliberately NO unique (map_id, entry_id) — several pins may mark one entry.
+    secondaryUnique: null,
   },
   {
     collection: 'mapRegions',
@@ -410,6 +461,7 @@ export const APPLY_ORDER: ApplyDescriptor[] = [
       updatedAt: ts(r.updatedAt, 'mapRegions.updatedAt'),
     }),
     ...parentScoped(mapRegions, maps, mapRegions.mapId),
+    secondaryUnique: null,
   },
   {
     collection: 'mapRoutes',
@@ -430,6 +482,7 @@ export const APPLY_ORDER: ApplyDescriptor[] = [
       updatedAt: ts(r.updatedAt, 'mapRoutes.updatedAt'),
     }),
     ...parentScoped(mapRoutes, maps, mapRoutes.mapId),
+    secondaryUnique: null,
   },
   {
     collection: 'dictionaryWords',
@@ -450,6 +503,10 @@ export const APPLY_ORDER: ApplyDescriptor[] = [
       // searchVector is GENERATED — never written.
     }),
     ...ownScoped(dictionaryWords),
+    // 0018_phase32_dictionary.sql:33 — UNIQUE(universe_id,
+    // COALESCE(language_entry_id, <sentinel>), lower(word)). Renaming a word to
+    // one that was just deleted, or re-adding a deleted word, hits it (C-15).
+    secondaryUnique: 'dictionary_words_scope_word_unique',
   },
   {
     collection: 'diagramNodes',
@@ -464,6 +521,9 @@ export const APPLY_ORDER: ApplyDescriptor[] = [
       updatedAt: ts(r.updatedAt, 'diagramNodes.updatedAt'),
     }),
     ...parentScoped(diagramNodes, diagrams, diagramNodes.diagramId),
+    // 0017_secret_argent.sql:26 — UNIQUE(diagram_id, entry_id). Dropping a node
+    // from a diagram and re-adding it produces the same delete/upsert pair (C-15).
+    secondaryUnique: 'diagram_nodes_unique_idx',
   },
   {
     collection: 'shareTokens',
@@ -486,6 +546,9 @@ export const APPLY_ORDER: ApplyDescriptor[] = [
       // lastAccessedAt is per-instance telemetry — deliberately not synced.
     }),
     ...ownScoped(shareTokens),
+    // 0015_phase29_share_tokens.sql:15 — UNIQUE(hash). Effectively immune in
+    // practice (the hash is random, not user-chosen), but the constraint is real.
+    secondaryUnique: 'share_tokens_hash_unique',
   },
 ];
 

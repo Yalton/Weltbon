@@ -83,6 +83,49 @@ describe('apply registry (Plan C, C-07/C-13)', () => {
     before('entries', 'shareTokens');    // share_tokens.scope_entry_id
   });
 
+  /**
+   * C-15 membership, pinned. `secondaryUnique` decides which collections run
+   * their deletes BEFORE their own upserts, and the only thing that makes that
+   * safe is every member being a LEAF table — no synced table holds a foreign
+   * key into it — so an early delete cannot cascade away a row a later
+   * collection is about to upsert.
+   *
+   * TypeScript forces a new descriptor to declare the field; it cannot check
+   * leafness. This list is that check: widening it must be a deliberate edit
+   * accompanied by the proof, not a side effect of adding a constraint.
+   */
+  it('runs deletes early for exactly the four leaf collections with a secondary UNIQUE (C-15)', () => {
+    const early = APPLY_ORDER.filter((d) => d.secondaryUnique !== null);
+    expect(early.map((d) => d.collection).sort())
+      .toEqual(['diagramNodes', 'dictionaryWords', 'shareTokens', 'timelinePins']);
+    expect(early.map((d) => d.secondaryUnique).sort()).toEqual([
+      'diagram_nodes_unique_idx',
+      'dictionary_words_scope_word_unique',
+      'share_tokens_hash_unique',
+      'timeline_pins_entry_id_key',
+    ]);
+  });
+
+  /**
+   * apply.ts's C-09 pre-flight derives its keys as `String(row.id)` for every
+   * descriptor with a non-null `foreignKeysWhere`, on the strength of exactly
+   * one claim: the only collection identified by something other than `id`
+   * (graphPositions) is also the only one exempt from the pre-flight. If that
+   * ever stops holding, the pre-flight starts probing the wrong column and
+   * either 409s on everything or waves a foreign row through.
+   */
+  it('keys every pre-flighted collection on id (the apply.ts C-09 assumption)', () => {
+    const byName = new Map(COLLECTIONS.map((c) => [c.name, c]));
+    for (const desc of APPLY_ORDER) {
+      if (desc.foreignKeysWhere === null) continue;
+      const key = byName.get(desc.collection)!.key;
+      expect(key({ id: 'THE-ID', entryId: 'not-it', hash: 'not-it' }), desc.collection).toBe('THE-ID');
+    }
+    // …and the exempt one is graphPositions, nothing else.
+    expect(APPLY_ORDER.filter((d) => d.foreignKeysWhere === null).map((d) => d.collection))
+      .toEqual(['graphPositions']);
+  });
+
   it('maps the manifest link_type quirk onto the linkType column', () => {
     const links = APPLY_ORDER.find((d) => d.collection === 'links')!;
     const values = links.toValues(

@@ -1,0 +1,270 @@
+/**
+ * Plan C (Task 3): apply a merge delta to this instance's database.
+ *
+ * Contract (C-10): all-or-nothing inside ONE transaction, serialized per
+ * universe by a transaction-scoped advisory lock, idempotent (upsert by PK +
+ * delete by key), and loud about anything it cannot do safely.
+ *
+ * What this function does NOT do: fetch anything, move asset bytes, or decide
+ * what should be applied. The caller (the route) has already established
+ * ownership, staged blobs, and computed the ops via mergeManifests.
+ *
+ * CALLER PRECONDITION — ownership. `ctx.ownerId` is written into every
+ * userId-bearing row, including `universes.user_id` (C-08). This engine does
+ * NOT verify that `ctx.universeId` is unowned or already owned by `ctx.ownerId`;
+ * C-11 assigns that check to the route, which must perform it before calling
+ * (404 when absent with no universe row supplied, 403 when owned by someone
+ * else). Calling this with a universe id belonging to another user would
+ * transfer that universe.
+ */
+import { eq, sql } from 'drizzle-orm';
+import { db } from '../../db/client.js';
+import { issueEntries } from '../../db/schema.js';
+import {
+  APPLY_ORDER,
+  UNIVERSE_APPLY,
+  updateSetFor,
+  type ApplyContext,
+  type ApplyDescriptor,
+} from './apply-tables.js';
+import type { ManifestRow } from './manifest.js';
+
+export interface CollectionOps {
+  upserts: ManifestRow[];
+  deletes: string[];
+}
+
+export interface ApplyRequest {
+  /** upsert-or-nothing for the universe singleton (B-06 universeOp). */
+  universe: ManifestRow | null;
+  /** keyed by manifest collection name; absent collections are a no-op. */
+  ops: Record<string, CollectionOps>;
+}
+
+export interface ApplyResult {
+  /** collection → rows upserted. */
+  upserted: Record<string, number>;
+  /**
+   * collection → keys whose delete was ISSUED. Deletes ignore absent rows
+   * (idempotence, C-10), so this is the requested count, not rows removed.
+   */
+  deleted: Record<string, number>;
+}
+
+/**
+ * Raised when an incoming key already exists on this instance but belongs to a
+ * DIFFERENT universe (C-09). Applying it would silently rewrite another
+ * universe's row, so the whole batch is refused. The route maps this to 409.
+ */
+export class CrossUniverseCollisionError extends Error {
+  constructor(readonly collisions: Array<{ collection: string; ids: string[] }>) {
+    super(
+      `cross-universe id collision: ${collisions
+        .map((c) => `${c.collection}[${c.ids.join(', ')}]`)
+        .join('; ')}`,
+    );
+    this.name = 'CrossUniverseCollisionError';
+  }
+}
+
+/**
+ * Raised when `ops` names a collection the registry does not know. Refusing is
+ * the same reflex as C-09: quietly skipping the key would let the caller
+ * believe it converged while an entire collection was dropped. Both peers are
+ * pinned to one manifest version and migration head by the C-14 handshake, so
+ * an unknown name means a malformed body or a rename that missed APPLY_ORDER.
+ * The route should map this to 400.
+ */
+export class UnknownCollectionError extends Error {
+  constructor(readonly collections: string[]) {
+    super(`unknown sync collection(s): ${collections.join(', ')}`);
+    this.name = 'UnknownCollectionError';
+  }
+}
+
+/** Chunk size for `inArray` delete predicates and multi-row join inserts. */
+const CHUNK = 200;
+
+function chunk<T>(items: T[], size = CHUNK): T[][] {
+  const out: T[][] = [];
+  for (let i = 0; i < items.length; i += size) out.push(items.slice(i, i + size));
+  return out;
+}
+
+/** The transaction handle `db().transaction()` hands its callback. */
+type ApplyTx = Parameters<Parameters<ReturnType<typeof db>['transaction']>[0]>[0];
+
+/**
+ * Scoped delete for one collection. `keys` are `COLLECTIONS[].key(row)` values
+ * — ids everywhere except graphPositions, which keys on entryId — and the
+ * descriptor's `keysWhere` confines them to this universe, so a key naming
+ * another universe's row deletes nothing rather than something.
+ */
+async function runDeletes(
+  tx: ApplyTx,
+  desc: ApplyDescriptor,
+  keys: string[],
+  universeId: string,
+): Promise<number> {
+  for (const batch of chunk(keys)) {
+    await tx.delete(desc.table).where(desc.keysWhere(batch, universeId));
+  }
+  return keys.length;
+}
+
+/**
+ * `issue_entries` is a pure join table with no manifest collection of its own —
+ * it rides inside each issue row's `entryIds[]` (json.ts:80), and the issues
+ * mapper deliberately drops it because there is no column to hold it. So it is
+ * written here, out of band, right after the issues upserts.
+ *
+ * REPLACE, never merge: the association set is deleted and rebuilt for every
+ * issue actually upserted. Adding without removing would mean an entry
+ * un-linked from an issue on the winning side stays linked forever on every
+ * peer — a de-association could never propagate.
+ *
+ * Ordering is already safe: `issues` sits after `entries` in APPLY_ORDER, so
+ * every entry an incoming issue names has been written by the time we get here
+ * (unless it is genuinely absent, which raises 23503 and aborts — B-10: the
+ * merge, not apply, owns referential repair).
+ *
+ * The DELETE is keyed on issue_id alone, with no universe scoping of its own —
+ * it does not need one. `issues` is `ownScoped`, so the C-09 pre-flight has
+ * already refused the batch if any incoming issue id belongs to another
+ * universe; the ids reaching here are this universe's or nobody's.
+ */
+async function rewriteIssueEntries(tx: ApplyTx, rows: ManifestRow[]): Promise<void> {
+  for (const row of rows) {
+    const issueId = String(row.id);
+    // Deduped: two identical pairs in one INSERT are legal under DO NOTHING but
+    // pointless, and the manifest's entryIds is a set by intent
+    // (UNORDERED_ARRAY_FIELDS in manifest.ts).
+    const entryIds = Array.isArray(row.entryIds)
+      ? [...new Set(row.entryIds.map((e) => String(e)))]
+      : [];
+
+    await tx.delete(issueEntries).where(eq(issueEntries.issueId, issueId));
+    for (const batch of chunk(entryIds)) {
+      await tx
+        .insert(issueEntries)
+        .values(batch.map((entryId) => ({ issueId, entryId })))
+        .onConflictDoNothing();
+    }
+  }
+}
+
+export async function applyManifestOps(
+  req: ApplyRequest,
+  ctx: ApplyContext,
+): Promise<ApplyResult> {
+  const upserted: Record<string, number> = {};
+  const deleted: Record<string, number> = {};
+
+  const known = new Set(APPLY_ORDER.map((d) => d.collection));
+  const unknown = Object.keys(req.ops).filter((name) => !known.has(name));
+  if (unknown.length > 0) throw new UnknownCollectionError(unknown);
+
+  return await db().transaction(async (tx) => {
+    // Serialize concurrent syncs of the SAME universe (C-10). Transaction-scoped:
+    // released automatically at commit or rollback, so a crashed apply cannot
+    // wedge the universe. hashtext() is stable across sessions within a cluster.
+    // Verified available on BOTH engines — Postgres 17 and PGlite (which ships
+    // the same lock manager); no 42883 guard is needed.
+    await tx.execute(sql`SELECT pg_advisory_xact_lock(hashtext(${ctx.universeId})::bigint)`);
+
+    // ── C-09 pre-flight: refuse foreign ids BEFORE writing anything ──────────
+    // Every collection with a non-null foreignKeysWhere keys on `id`;
+    // graphPositions, the sole collection keyed on something else, is also the
+    // sole one with foreignKeysWhere === null (its identity carries the
+    // universe, so a foreign row cannot be addressed at all). The registry test
+    // pins that correspondence.
+    const collisions: Array<{ collection: string; ids: string[] }> = [];
+    for (const desc of APPLY_ORDER) {
+      const op = req.ops[desc.collection];
+      if (!op || desc.foreignKeysWhere === null) continue;
+      const keys = [...op.upserts.map((r) => String(r.id)), ...op.deletes];
+      if (keys.length === 0) continue;
+
+      // Accumulated across batches and pushed once, so a >CHUNK batch cannot
+      // report the same collection twice in the 409 body.
+      const foreignIds: string[] = [];
+      for (const batch of chunk(keys)) {
+        const foreign = await tx
+          .select({ id: desc.table.id })
+          .from(desc.table)
+          .where(desc.foreignKeysWhere(batch, ctx.universeId));
+        foreignIds.push(...foreign.map((r: { id: string }) => r.id));
+      }
+      if (foreignIds.length > 0) {
+        collisions.push({ collection: desc.collection, ids: foreignIds });
+      }
+    }
+    if (collisions.length > 0) throw new CrossUniverseCollisionError(collisions);
+
+    // ── universe singleton first (C-13) ─────────────────────────────────────
+    if (req.universe) {
+      const values = UNIVERSE_APPLY.toValues(req.universe, ctx);
+      await tx
+        .insert(UNIVERSE_APPLY.table)
+        .values(values)
+        .onConflictDoUpdate({
+          target: UNIVERSE_APPLY.conflictTarget,
+          set: updateSetFor(UNIVERSE_APPLY, values),
+        });
+      upserted.universe = 1;
+    }
+
+    // ── upserts, parents before children ────────────────────────────────────
+    for (const desc of APPLY_ORDER) {
+      const op = req.ops[desc.collection];
+      if (!op) continue;
+
+      // C-15: a collection carrying a UNIQUE besides its PK runs its own
+      // deletes HERE, immediately before its own upserts, instead of in the
+      // trailing reverse pass. Otherwise the everyday "delete pin X, create pin
+      // Y for the same entry" delta inserts Y while X still holds entry_id →
+      // 23505 → the whole transaction aborts, permanently, on every retry.
+      //
+      // Safe only because all four such collections are leaf tables (see
+      // ApplyDescriptor.secondaryUnique): an early delete here cannot cascade
+      // away a row a later collection is about to upsert. Do NOT widen this to
+      // every collection — deleting a parent early would do exactly that.
+      //
+      // Self-interference is impossible: deriveOps (merge.ts:143-163) builds
+      // `upserts ⊆ merged` and `deletes = side.keys() \ merged`, so a
+      // collection's two key sets are disjoint by construction.
+      if (desc.secondaryUnique !== null && op.deletes.length > 0) {
+        deleted[desc.collection] = await runDeletes(tx, desc, op.deletes, ctx.universeId);
+      }
+
+      if (op.upserts.length === 0) continue;
+
+      // One statement per row: onConflictDoUpdate's `set` references that row's
+      // own values, so a multi-row VALUES clause would have to be rewritten in
+      // terms of `excluded.*`. Syncs move deltas, not whole universes.
+      for (const row of op.upserts) {
+        const values = desc.toValues(row, ctx);
+        await tx
+          .insert(desc.table)
+          .values(values)
+          .onConflictDoUpdate({
+            target: desc.conflictTarget,
+            set: updateSetFor(desc, values),
+          });
+      }
+      upserted[desc.collection] = op.upserts.length;
+
+      if (desc.collection === 'issues') await rewriteIssueEntries(tx, op.upserts);
+    }
+
+    // ── remaining deletes, children before parents (reverse order, C-07) ────
+    for (const desc of [...APPLY_ORDER].reverse()) {
+      const op = req.ops[desc.collection];
+      // secondaryUnique collections already ran theirs above (C-15).
+      if (!op || op.deletes.length === 0 || desc.secondaryUnique !== null) continue;
+      deleted[desc.collection] = await runDeletes(tx, desc, op.deletes, ctx.universeId);
+    }
+
+    return { upserted, deleted };
+  });
+}
