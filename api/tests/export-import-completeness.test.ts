@@ -12,6 +12,7 @@ import {
   diagramNodes,
   shareTokens,
   entries,
+  links,
   universes,
   type Calendar,
   type UniverseTheme,
@@ -27,6 +28,9 @@ import {
  * tokens, and the universe-level calendar/theme/fieldRegistry/audit
  * settings — plus the A2-03 (timestamps re-stamped) and A2-04 (duplicate
  * hash skip) semantics.
+ *
+ * Plan C (manifest 2.2.0) extends this with link edge styling (lineStyle +
+ * color), which 2.1.0 dropped on export and therefore on every sync.
  *
  * Setup/helpers are modeled on tests/export-import.test.ts (createTestDb +
  * setTestDb bootstrap, same ZIP manifest-extraction approach). Distinctive
@@ -173,7 +177,7 @@ describe('export/import completeness (Plan A2)', () => {
 
   // ── Scenario 1: manifest completeness ─────────────────────────────────────
 
-  it('manifest completeness: version 2.1.0 + dictionary/diagrams/shareTokens + universe state + updatedAt spot-checks', async () => {
+  it('manifest completeness: version 2.2.0 + dictionary/diagrams/shareTokens + link styling + universe state + updatedAt spot-checks', async () => {
     const { hdrs, user } = await userWithToken('completeness-exp@test.com');
     const universe = await createUniverse(hdrs, 'CompletenessWorld');
 
@@ -212,6 +216,17 @@ describe('export/import completeness (Plan A2)', () => {
       { diagramId: diagram!.id, entryId: subjectB.id, x: 30, y: 40 },
     ]);
 
+    // Plan C (manifest 2.2.0): edge styling — 2.1.0 dropped lineStyle/color.
+    await db().insert(links).values({
+      universeId: universe.id,
+      sourceEntryId: subjectA.id,
+      targetEntryId: subjectB.id,
+      direction: 'directed',
+      linkType: 'sibling',
+      lineStyle: 'dashed',
+      color: '#ff0000',
+    });
+
     const seed = generateShareToken();
     await db().insert(shareTokens).values({
       userId: user.id,
@@ -237,7 +252,7 @@ describe('export/import completeness (Plan A2)', () => {
 
     const data = await exportManifest(universe.id, hdrs);
 
-    expect(data.weltbon_version).toBe('2.1.0');
+    expect(data.weltbon_version).toBe('2.2.0');
     expect(data.dictionaryWords).toHaveLength(2);
     expect(data.diagrams).toHaveLength(1);
     expect(data.diagramNodes).toHaveLength(2);
@@ -277,6 +292,14 @@ describe('export/import completeness (Plan A2)', () => {
     expect(scopedWord.languageEntryId).toBe(langEntry.id);
     expect(universalWord.languageEntryId).toBeNull();
 
+    // Plan C (manifest 2.2.0): link edge styling survives the export.
+    // eslint-disable-next-line @typescript-eslint/no-explicit-any
+    const exportedLink = data.links.find((l: any) => l.lineStyle !== null);
+    expect(exportedLink).toBeDefined();
+    expect(exportedLink.lineStyle).toBe('dashed');
+    expect(exportedLink.color).toBe('#ff0000');
+    expect(exportedLink.link_type).toBe('sibling');
+
     expect(data.diagrams[0].updatedAt).toBeTruthy();
     expect(data.diagramNodes[0].updatedAt).toBeTruthy();
     expect(data.shareTokens[0].updatedAt).toBeTruthy();
@@ -306,6 +329,16 @@ describe('export/import completeness (Plan A2)', () => {
     await db().insert(diagramNodes).values([
       { diagramId: diagram!.id, entryId: diagramSubject.id, x: 1, y: 2 },
     ]);
+
+    // Plan C (manifest 2.2.0): edge styling must survive export + re-import.
+    await db().insert(links).values({
+      universeId: universe.id,
+      sourceEntryId: langEntry.id,
+      targetEntryId: diagramSubject.id,
+      direction: 'directed',
+      lineStyle: 'dashed',
+      color: '#ff0000',
+    });
 
     const seed = generateShareToken();
     await db().insert(shareTokens).values({
@@ -374,6 +407,15 @@ describe('export/import completeness (Plan A2)', () => {
     expect(importedNodes).toHaveLength(1);
     expect(importedNodes[0]!.entryId).toBe(newSubjectEntry!.id);
     expect(importedNodes[0]!.entryId).not.toBe(diagramSubject.id);
+
+    // Plan C (manifest 2.2.0): lineStyle + color round-trip. diagramId does NOT
+    // (import mints fresh diagram ids — sync, not import, preserves it).
+    const importedLinks = await db().select().from(links).where(eq(links.universeId, importResult.universeId));
+    expect(importedLinks).toHaveLength(1);
+    expect(importedLinks[0]!.lineStyle).toBe('dashed');
+    expect(importedLinks[0]!.color).toBe('#ff0000');
+    expect(importedLinks[0]!.sourceEntryId).toBe(newLangEntry!.id);
+    expect(importedLinks[0]!.targetEntryId).toBe(newSubjectEntry!.id);
 
     const importedTokens = await db().select().from(shareTokens).where(eq(shareTokens.universeId, importResult.universeId));
     expect(importedTokens).toHaveLength(1);
@@ -554,7 +596,7 @@ describe('export/import completeness (Plan A2)', () => {
     const countBefore = beforeUniverses.length;
 
     const importData = {
-      weltbon_version: '2.1.0',
+      weltbon_version: '2.2.0',
       exported_at: new Date().toISOString(),
       universe: { name: 'DiagramAtomicFail', description: '' },
       entries: [],

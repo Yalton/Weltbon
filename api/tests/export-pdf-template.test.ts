@@ -113,6 +113,10 @@ function buildFixturePayload(): ExportPayload {
         // Phase 35 REL-01: direction replaces bidirectional; 'undirected' = was bidirectional=true
         direction: 'undirected',
         linkType: null,
+        // Plan C (manifest 2.2.0): diagram edge membership + styling.
+        diagramId: null,
+        lineStyle: null,
+        color: null,
         createdAt: new Date(),
         updatedAt: new Date(),
       },

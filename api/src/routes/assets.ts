@@ -36,6 +36,7 @@ import { assets, entries } from '../db/schema.js';
 import { requireUniverse } from '../utils/ownership.js';
 import { storageBackend } from '../services/storage/local.js';
 import { signAssetUrl, verifyAssetSig } from '../services/asset-signing.js';
+import { sha256Hex } from '../services/sync/asset-hash.js';
 import type { AuthVariables } from '../middleware/auth.js';
 
 type AppEnv = { Variables: AuthVariables };
@@ -383,6 +384,9 @@ export const assetsRouter = new OpenAPIHono<AppEnv>()
           extension,
           sizeBytes: safeBytes.length,
           thumbSizeBytes: thumbBytes.length,
+          // Plan C (S-10): record the content hash at write time so
+          // ensureAssetHashes() never has to touch a freshly uploaded blob.
+          contentHash: sha256Hex(safeBytes),
         })
         .returning();
 

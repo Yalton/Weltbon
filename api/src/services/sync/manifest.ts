@@ -44,8 +44,15 @@ export const COLLECTIONS: CollectionDescriptor[] = [
   { name: 'shareTokens',     key: id, naturalKey: (r) => String(r.hash) },       // UNIQUE(hash)
 ];
 
-/** Fields excluded from content comparison (B-02). */
-export const NON_CONTENT_FIELDS = new Set(['updatedAt', 'createdAt']);
+/**
+ * Fields excluded from content comparison (B-02).
+ *
+ * `usedAsCoverByEntryId` (C-06) is DERIVED from entries.cover_image_id, not an
+ * assets column: it is not applicable and comparing it would raise a phantom
+ * asset conflict every time an entry's cover changed. The real state merges on
+ * the entries row.
+ */
+export const NON_CONTENT_FIELDS = new Set(['updatedAt', 'createdAt', 'usedAsCoverByEntryId']);
 
 /** Array fields compared order-insensitively (B-02). */
 export const UNORDERED_ARRAY_FIELDS = new Set(['entryIds']);
