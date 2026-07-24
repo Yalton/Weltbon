@@ -124,8 +124,16 @@ describe('two-instance convergence (Plan C acceptance)', () => {
 
   const token = (which: 'A' | 'B') => (which === 'A' ? tokenA : tokenB);
 
-  /** Snapshot the CURRENTLY selected instance. Returns null on 404 (never synced). */
+  // The three request helpers below take `which` and select BOTH the auth token
+  // AND the database from it: each calls `use(which)` first so the instance a
+  // helper writes to can never drift from the token it authenticates with. This
+  // is idempotent for the (correct) existing call sites that already `use(which)`
+  // beforehand, and it removes the footgun where a future `seedEntry('B', …)`
+  // without a preceding `use('B')` would hit A's database with B's token.
+
+  /** Snapshot instance `which`. Returns null on 404 (never synced). */
   async function snapshot(which: 'A' | 'B'): Promise<any | null> {
+    await use(which);
     const res = await app.request(`/api/sync/universes/${universeId}/snapshot`, {
       headers: authHeader(token(which)),
     });
@@ -135,6 +143,7 @@ describe('two-instance convergence (Plan C acceptance)', () => {
   }
 
   async function apply(which: 'A' | 'B', universe: unknown, ops: unknown) {
+    await use(which);
     const res = await app.request(`/api/sync/universes/${universeId}/apply`, {
       method: 'POST',
       headers: { 'Content-Type': 'application/json', ...authHeader(token(which)) },
@@ -145,6 +154,7 @@ describe('two-instance convergence (Plan C acceptance)', () => {
   }
 
   async function seedEntry(which: 'A' | 'B', title: string, opts: { isPublic?: boolean } = {}) {
+    await use(which);
     // NB (route contract): POST /entries defaults isPublic to FALSE (entries.ts
     // zod `.default(false)`), overriding the DB column default of true. So any
     // entry a share test expects to be visible must ask for it explicitly.
@@ -297,7 +307,10 @@ describe('two-instance convergence (Plan C acceptance)', () => {
     expect(both.a.entries).toHaveLength(0);
     expect(both.b.entries).toHaveLength(0);
 
-    // A converged base advances; a further round must not bring the row back.
+    // Both sides and the advanced base are now empty — no tombstone remains, so
+    // this round is not a resurrection test. It asserts the weaker but still
+    // worthwhile property that a converged, empty-state sync is a stable
+    // fixpoint: a further round re-derives no phantom rows and stays empty.
     await use('A');
     const base2 = await snapshot('A');
     await syncRound(base2);
@@ -411,7 +424,10 @@ describe('two-instance convergence (Plan C acceptance)', () => {
     // A secret map pin too: `secret` is the inverse-polarity flag (Phase 52),
     // so this checks apply preserves BOTH filter columns, not just one.
     const [map] = await A.db.insert(maps).values({ universeId, name: 'Atlas' }).returning();
-    await A.db.insert(mapPins).values({ mapId: map.id, entryId: null, x: 0.5, y: 0.5, secret: true });
+    const [secretPin] = await A.db
+      .insert(mapPins)
+      .values({ mapId: map.id, entryId: null, x: 0.5, y: 0.5, secret: true })
+      .returning();
 
     const mint = await app.request('/api/shares', {
       method: 'POST',
@@ -430,10 +446,22 @@ describe('two-instance convergence (Plan C acceptance)', () => {
     expect(syncedPins).toHaveLength(1);
     expect(syncedPins[0].secret).toBe(true);
 
-    // …and B's share projection still honours them. This is the guard against
-    // apply writing rows in some shape the share filters do not see.
+    // …and B's share projections still honour them on the synced rows — the guard
+    // against apply writing a row in some shape the share filters cannot read.
+    // Two DISTINCT filters, so we exercise both:
+    //   isPublic — via /api/share/entries (the secret entry is dropped)…
     const shared = await app.request('/api/share/entries', { headers: { 'share-token': plaintext } });
     expect(shared.status).toBe(200);
     expect((await shared.json()).map((e: any) => e.title)).toEqual(['Visible lore']);
+
+    //   …and `secret` — via /api/share/maps/{mid} (getPublicMap drops secret pins,
+    // Phase 52 SECRET-01). The map's only pin is secret, so the projected pins
+    // must be empty, and the secret pin id must not appear anywhere in them. This
+    // is the half that a raw B.db.select (column survival) cannot prove.
+    const mapDetail = await app.request(`/api/share/maps/${map.id}`, { headers: { 'share-token': plaintext } });
+    expect(mapDetail.status).toBe(200);
+    const projectedPins = (await mapDetail.json()).pins as any[];
+    expect(projectedPins.map((p) => p.id)).not.toContain(secretPin.id);
+    expect(projectedPins).toHaveLength(0);
   });
 });
