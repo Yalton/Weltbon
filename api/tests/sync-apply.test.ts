@@ -56,6 +56,11 @@ describe('applyManifestOps (Plan C, C-07/C-09/C-10/C-15)', () => {
 
     const [row] = await handle.db.select().from(entries).where(eq(entries.id, id));
     expect(row.updatedAt.toISOString()).toBe('2026-02-03T04:05:06.007Z');
+    // createdAt is `timestamp` WITHOUT time zone while updatedAt is
+    // `withTimezone` — and apply is the first path to write an arbitrary
+    // historical createdAt supplied by a peer, so the two are asserted
+    // separately rather than assumed to behave alike.
+    expect(row.createdAt.toISOString()).toBe(ISO('2026-01-01'));
 
     // The UPDATE branch of the upsert has its own $onUpdate hazard: an explicit
     // updatedAt must win in onConflictDoUpdate's SET list too, or the second
@@ -157,6 +162,19 @@ describe('applyManifestOps (Plan C, C-07/C-09/C-10/C-15)', () => {
     expect(await handle.db.select().from(issueEntries)).toHaveLength(0);
   });
 
+  /**
+   * DOCUMENTS INTENT; CANNOT CURRENTLY FAIL. Reversing APPLY_ORDER in the
+   * delete pass leaves this green, for two independent reasons: `timelinePins`
+   * is a C-15 collection, so its delete runs in the early pass and never
+   * reaches the reverse loop at all; and every FK between synced tables is
+   * `cascade` or `set null` (pinned by the RESTRICT guard in
+   * sync-apply-tables.test.ts), so a parent-first delete cascades the child
+   * away and the child's own delete is a harmless no-op.
+   *
+   * It is kept because it asserts the OUTCOME users care about — a mixed
+   * parent/child delete batch succeeds and leaves nothing behind — and because
+   * it would start failing the moment a non-cascading FK made order matter.
+   */
   it('deletes children before parents so a batch delete does not trip FKs', async () => {
     const { applyManifestOps } = await import('../src/services/sync/apply.js');
     const { entries, timelinePins } = await import('../src/db/schema.js');
@@ -575,6 +593,131 @@ describe('applyManifestOps (Plan C, C-07/C-09/C-10/C-15)', () => {
     );
     expect(await handle.db.select().from(graphPositions).where(eq(graphPositions.entryId, entryId))).toHaveLength(0);
   });
+
+  it('renames a word and reuses its old spelling in one apply — no deletes (C-15)', async () => {
+    const { applyManifestOps } = await import('../src/services/sync/apply.js');
+    const { dictionaryWords } = await import('../src/db/schema.js');
+    // `a…` sorts before `b…`, which is what makes this fail without the
+    // update-before-insert ordering: deriveOps emits upserts in key order, so
+    // the NEW `sol` is written while the OLD row still holds `sol`.
+    const created = 'a0000000-0000-4000-8000-000000000001';
+    const renamed = 'b0000000-0000-4000-8000-000000000002';
+
+    await handle.db.insert(dictionaryWords).values({
+      id: renamed, universeId, languageEntryId: null, word: 'sol', gloss: 'sun',
+    });
+
+    const word = (id: string, w: string, gloss: string) => ({
+      id, languageEntryId: null, word: w, ipa: '', partOfSpeech: 'noun',
+      gloss, etymology: '', tags: [],
+      createdAt: ISO('2026-01-01'), updatedAt: ISO('2026-03-03'),
+    });
+
+    // Ordinary editing: rename `sol`→`solis`, then create a new `sol`. The
+    // merge emits TWO UPSERTS AND ZERO DELETES, so C-15's delete-before-upsert
+    // does nothing here — this is the second half of the same hazard.
+    await applyManifestOps(
+      {
+        universe: null,
+        ops: {
+          dictionaryWords: {
+            upserts: [word(created, 'sol', 'the sun, again'), word(renamed, 'solis', 'of the sun')],
+            deletes: [],
+          },
+        },
+      },
+      { universeId, ownerId },
+    );
+
+    const rows = await handle.db.select().from(dictionaryWords).where(eq(dictionaryWords.universeId, universeId));
+    expect(rows.map((r) => r.word).sort()).toEqual(['sol', 'solis']);
+    expect(rows.find((r) => r.id === renamed)!.word).toBe('solis');
+  });
+
+  it('translates an unorderable 23505 into a typed 409 rather than an opaque 500', async () => {
+    const { applyManifestOps, ConstraintCollisionError, SyncApplyError } = await import('../src/services/sync/apply.js');
+    const { dictionaryWords } = await import('../src/db/schema.js');
+    const alpha = 'a0000000-0000-4000-8000-00000000000a';
+    const beta = 'b0000000-0000-4000-8000-00000000000b';
+
+    await handle.db.insert(dictionaryWords).values([
+      { id: alpha, universeId, languageEntryId: null, word: 'alpha', gloss: 'first' },
+      { id: beta, universeId, languageEntryId: null, word: 'beta', gloss: 'second' },
+    ]);
+
+    const word = (id: string, w: string) => ({
+      id, languageEntryId: null, word: w, ipa: '', partOfSpeech: 'noun',
+      gloss: 'g', etymology: '', tags: [],
+      createdAt: ISO('2026-01-01'), updatedAt: ISO('2026-03-03'),
+    });
+
+    // A true SWAP: both rows exist, so update-before-insert cannot help — they
+    // are both updates, and they collide in either order. Unresolvable without
+    // DEFERRABLE constraints (see the module docstring). What must NOT happen is
+    // an opaque 500 that recurs identically on every retry.
+    const err = await applyManifestOps(
+      {
+        universe: null,
+        ops: { dictionaryWords: { upserts: [word(alpha, 'beta'), word(beta, 'alpha')], deletes: [] } },
+      },
+      { universeId, ownerId },
+    ).catch((e: unknown) => e);
+
+    expect(err).toBeInstanceOf(ConstraintCollisionError);
+    expect(err).toBeInstanceOf(SyncApplyError);
+    const collision = err as InstanceType<typeof ConstraintCollisionError>;
+    expect(collision.status).toBe(409);
+    expect(collision.constraint).toBe('dictionary_words_scope_word_unique');
+    expect(collision.collection).toBe('dictionaryWords');
+
+    // All-or-nothing still holds: neither rename took.
+    const rows = await handle.db.select().from(dictionaryWords).where(eq(dictionaryWords.universeId, universeId));
+    expect(rows.map((r) => r.word).sort()).toEqual(['alpha', 'beta']);
+  });
+
+  /**
+   * The advisory lock is the sole basis of C-10's per-universe serialization
+   * and of C-16's TOCTOU closure, and until this test nothing exercised it —
+   * every other test proves only that the function EXISTS on both engines.
+   *
+   * Postgres only: PGlite is a single connection, so nothing there can contend
+   * for a lock. That asymmetry is exactly why the claim needed testing where it
+   * can be tested rather than inferred from the call not throwing.
+   */
+  it.skipIf(process.env.WELTBON_TEST_DRIVER === 'pglite')(
+    'blocks a second apply on the same universe until the lock is released (C-10)',
+    async () => {
+      const { applyManifestOps } = await import('../src/services/sync/apply.js');
+      const { entries } = await import('../src/db/schema.js');
+      const pg = (await import('pg')).default;
+      const id = 'f0000000-0000-4000-8000-00000000000c';
+
+      // Session-level lock on the same key the engine computes, held by an
+      // independent connection.
+      const blocker = new pg.Client({ connectionString: process.env.DATABASE_URL });
+      await blocker.connect();
+      try {
+        await blocker.query('SELECT pg_advisory_lock(hashtext($1)::bigint)', [universeId]);
+
+        let settled = false;
+        const pending = applyManifestOps(
+          { universe: null, ops: { entries: { upserts: [entryRow(id, 'Queued', '2026-01-01')], deletes: [] } } },
+          { universeId, ownerId },
+        ).then(() => { settled = true; });
+
+        await new Promise((resolve) => setTimeout(resolve, 300));
+        expect(settled, 'apply proceeded while another session held the universe lock').toBe(false);
+        expect(await handle.db.select().from(entries).where(eq(entries.id, id))).toHaveLength(0);
+
+        await blocker.query('SELECT pg_advisory_unlock(hashtext($1)::bigint)', [universeId]);
+        await pending;
+        expect(settled).toBe(true);
+        expect(await handle.db.select().from(entries).where(eq(entries.id, id))).toHaveLength(1);
+      } finally {
+        await blocker.end();
+      }
+    },
+  );
 
   it('refuses an ops key the registry does not know instead of silently dropping it', async () => {
     const { applyManifestOps, UnknownCollectionError } = await import('../src/services/sync/apply.js');

@@ -3,7 +3,7 @@
  */
 import { describe, it, expect } from 'vitest';
 import { getTableColumns } from 'drizzle-orm';
-import { PgDialect } from 'drizzle-orm/pg-core';
+import { PgDialect, getTableConfig } from 'drizzle-orm/pg-core';
 import { COLLECTIONS } from '../src/services/sync/manifest.js';
 import { APPLY_ORDER, UNIVERSE_APPLY, updateSetFor, type ApplyContext } from '../src/services/sync/apply-tables.js';
 
@@ -124,6 +124,40 @@ describe('apply registry (Plan C, C-07/C-13)', () => {
     // …and the exempt one is graphPositions, nothing else.
     expect(APPLY_ORDER.filter((d) => d.foreignKeysWhere === null).map((d) => d.collection))
       .toEqual(['graphPositions']);
+  });
+
+  /**
+   * The precondition that makes apply.ts's reverse-order delete pass (C-07)
+   * currently UNOBSERVABLE — and therefore the thing that must be guarded
+   * instead of the ordering itself.
+   *
+   * Every FK between synced tables is `cascade` or `set null`; none is RESTRICT
+   * or NO ACTION. So deleting a parent before its child does not raise 23503 —
+   * the child is cascaded away and its own delete becomes a harmless no-op.
+   * Forward and reverse order are indistinguishable at runtime, which is why
+   * reversing APPLY_ORDER in the delete pass leaves every test passing.
+   *
+   * That is fine TODAY. The danger is that it stops being fine silently: the
+   * day someone adds a RESTRICT/NO ACTION foreign key, reverse order becomes
+   * genuinely load-bearing and nothing would have said so. This test fires on
+   * that day, forcing the requirement to be re-derived and reviewed rather than
+   * quietly inherited.
+   */
+  it('has no RESTRICT foreign key, which is what makes delete order unobservable (C-07)', () => {
+    const offenders: string[] = [];
+    for (const desc of [...APPLY_ORDER, UNIVERSE_APPLY]) {
+      for (const fk of getTableConfig(desc.table).foreignKeys) {
+        const onDelete = fk.onDelete ?? 'no action';
+        if (onDelete !== 'cascade' && onDelete !== 'set null') {
+          offenders.push(`${desc.collection}: ${fk.getName()} ON DELETE ${onDelete}`);
+        }
+      }
+    }
+    expect(
+      offenders,
+      'A non-cascading FK makes APPLY_ORDER\'s reverse delete pass load-bearing. ' +
+        'Re-derive the delete ordering and give it a test that can actually fail.',
+    ).toEqual([]);
   });
 
   it('maps the manifest link_type quirk onto the linkType column', () => {

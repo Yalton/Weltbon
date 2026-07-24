@@ -20,6 +20,7 @@ import {
   dictionaryWords, diagrams, diagramNodes, shareTokens,
 } from '../../db/schema.js';
 import type { ManifestRow } from './manifest.js';
+import { SyncApplyError } from './errors.js';
 
 export type ApplyValues = Record<string, unknown>;
 
@@ -109,7 +110,8 @@ export interface ApplyDescriptor extends ApplyTarget {
  * `SyncVersionMismatchError`'s `readonly versions` (merge.ts) — so a route can
  * build a typed error body without parsing the message string.
  */
-export class InvalidSyncTimestampError extends Error {
+export class InvalidSyncTimestampError extends SyncApplyError {
+  readonly status = 400;
   constructor(readonly field: string, readonly value: unknown) {
     super(`invalid timestamp for ${field}: ${JSON.stringify(value)}`);
     this.name = 'InvalidSyncTimestampError';
@@ -564,13 +566,21 @@ export const APPLY_ORDER: ApplyDescriptor[] = [
  * column inside onConflictDoUpdate's SET list — `SET id = id` is a no-op — so
  * this exclusion is a tidiness nicety, not a correctness requirement.
  */
+const pkPropCache = new WeakMap<ApplyTarget, Set<string>>();
+
 export function updateSetFor(desc: ApplyTarget, values: ApplyValues): ApplyValues {
-  const pkNames = new Set(desc.conflictTarget.map((c: { name: string }) => c.name));
-  const pkPropNames = new Set(
-    Object.entries(getTableColumns(desc.table))
-      .filter(([, c]) => pkNames.has((c as { name: string }).name))
-      .map(([k]) => k),
-  );
+  // Derived once per descriptor: the answer depends only on the table and its
+  // conflict target, both fixed at module load, while this runs once per ROW.
+  let pkPropNames = pkPropCache.get(desc);
+  if (!pkPropNames) {
+    const pkNames = new Set(desc.conflictTarget.map((c: { name: string }) => c.name));
+    pkPropNames = new Set(
+      Object.entries(getTableColumns(desc.table))
+        .filter(([, c]) => pkNames.has((c as { name: string }).name))
+        .map(([k]) => k),
+    );
+    pkPropCache.set(desc, pkPropNames);
+  }
   const out: ApplyValues = {};
   for (const [k, v] of Object.entries(values)) {
     if (pkPropNames.has(k)) continue;
