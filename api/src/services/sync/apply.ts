@@ -167,9 +167,11 @@ export async function applyManifestOps(
   return await db().transaction(async (tx) => {
     // Serialize concurrent syncs of the SAME universe (C-10). Transaction-scoped:
     // released automatically at commit or rollback, so a crashed apply cannot
-    // wedge the universe. hashtext() is stable across sessions within a cluster.
-    // Verified available on BOTH engines — Postgres 17 and PGlite (which ships
-    // the same lock manager); no 42883 guard is needed.
+    // wedge the universe. hashtext() is stable across sessions within a cluster;
+    // a hash collision between two universe ids over-serializes, never
+    // mis-serializes. Both functions were verified present on BOTH engines
+    // (Postgres 16 and PGlite, which ships the same lock manager), so the
+    // 42883 fallback the plan allowed for is not needed.
     await tx.execute(sql`SELECT pg_advisory_xact_lock(hashtext(${ctx.universeId})::bigint)`);
 
     // ── C-09 pre-flight: refuse foreign ids BEFORE writing anything ──────────

@@ -388,6 +388,36 @@ describe('applyManifestOps (Plan C, C-07/C-09/C-10/C-15)', () => {
     expect(rows[0].gloss).toBe('the sun');
   });
 
+  it('upserts and deletes graphPositions by entryId, not id', async () => {
+    const { applyManifestOps } = await import('../src/services/sync/apply.js');
+    const { entries, graphPositions } = await import('../src/db/schema.js');
+    const entryId = 'ffffffff-ffff-4fff-8fff-ffffffffff01';
+
+    await handle.db.insert(entries).values({ id: entryId, universeId, title: 'Node', entryType: 'concept' });
+
+    // graphPositions is the one collection whose merge key is entryId rather
+    // than id (it has no id — the PK is (universe_id, entry_id)), so both the
+    // composite onConflict target and the entryId-keyed delete predicate differ
+    // from every other collection and are exercised nowhere else.
+    const place = (x: number, y: number, updatedAt: string) => ({
+      universe: null,
+      ops: { graphPositions: { upserts: [{ entryId, x, y, updatedAt: ISO(updatedAt) }], deletes: [] } },
+    });
+
+    await applyManifestOps(place(1, 2, '2026-01-01'), { universeId, ownerId });
+    await applyManifestOps(place(9, 8, '2026-01-02'), { universeId, ownerId });
+
+    const placed = await handle.db.select().from(graphPositions).where(eq(graphPositions.entryId, entryId));
+    expect(placed).toHaveLength(1);          // updated in place, not duplicated
+    expect(placed[0].x).toBe(9);
+
+    await applyManifestOps(
+      { universe: null, ops: { graphPositions: { upserts: [], deletes: [entryId] } } },
+      { universeId, ownerId },
+    );
+    expect(await handle.db.select().from(graphPositions).where(eq(graphPositions.entryId, entryId))).toHaveLength(0);
+  });
+
   it('refuses an ops key the registry does not know instead of silently dropping it', async () => {
     const { applyManifestOps, UnknownCollectionError } = await import('../src/services/sync/apply.js');
     const { entries } = await import('../src/db/schema.js');
