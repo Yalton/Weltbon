@@ -157,6 +157,24 @@ export const APPLY_ORDER: ApplyDescriptor[] = [
     ...ownScoped(categories),
   },
   {
+    // MUST stay before `links` — links.diagram_id references diagrams.id (schema.ts:340,
+    // constraint in 0017_secret_argent.sql:34). That edge only became live on the apply
+    // path when manifest 2.2.0 started carrying links.diagramId, which is why the first
+    // draft of this order had diagrams near the end. See C-13.
+    collection: 'diagrams',
+    table: diagrams,
+    conflictTarget: [diagrams.id],
+    toValues: (r, ctx) => ({
+      id: r.id,
+      universeId: ctx.universeId,
+      name: r.name,
+      description: r.description ?? null,
+      createdAt: ts(r.createdAt),
+      updatedAt: ts(r.updatedAt),
+    }),
+    ...ownScoped(diagrams),
+  },
+  {
     collection: 'entries',
     table: entries,
     conflictTarget: [entries.id],
@@ -373,20 +391,6 @@ export const APPLY_ORDER: ApplyDescriptor[] = [
       // searchVector is GENERATED — never written.
     }),
     ...ownScoped(dictionaryWords),
-  },
-  {
-    collection: 'diagrams',
-    table: diagrams,
-    conflictTarget: [diagrams.id],
-    toValues: (r, ctx) => ({
-      id: r.id,
-      universeId: ctx.universeId,
-      name: r.name,
-      description: r.description ?? null,
-      createdAt: ts(r.createdAt),
-      updatedAt: ts(r.updatedAt),
-    }),
-    ...ownScoped(diagrams),
   },
   {
     collection: 'diagramNodes',
