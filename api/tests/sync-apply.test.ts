@@ -388,6 +388,66 @@ describe('applyManifestOps (Plan C, C-07/C-09/C-10/C-15)', () => {
     expect(rows[0].gloss).toBe('the sun');
   });
 
+  it('refuses to write into — or transfer — a universe owned by another user', async () => {
+    const { applyManifestOps, UniverseOwnershipError } = await import('../src/services/sync/apply.js');
+    const { universes, entries } = await import('../src/db/schema.js');
+    const smuggled = 'eeeeeeee-eeee-4eee-8eee-eeeeeeeeeee2';
+
+    const [foreign] = await handle.db.insert(universes).values({ userId: otherId, name: 'Theirs' }).returning();
+
+    // The engine writes universes.user_id = ctx.ownerId unconditionally (C-08),
+    // so an apply aimed at someone else's universe would TRANSFER it, not just
+    // pollute it. The route checks ownership too, but outside the lock; this
+    // guard is what makes the outcome unreachable regardless of the caller.
+    await expect(
+      applyManifestOps(
+        {
+          universe: {
+            id: foreign.id, name: 'Stolen', description: '', entryTypes: ['concept'],
+            timelineWindow: null, linkTypes: {}, calendar: null, theme: null,
+            fieldRegistry: [], auditEnabled: false, auditProvider: null, auditModel: null,
+            createdAt: ISO('2026-01-01'), updatedAt: ISO('2026-06-06'),
+          },
+          ops: { entries: { upserts: [entryRow(smuggled, 'Trojan', '2026-01-01')], deletes: [] } },
+        },
+        { universeId: foreign.id, ownerId },
+      ),
+    ).rejects.toBeInstanceOf(UniverseOwnershipError);
+
+    const [untouched] = await handle.db.select().from(universes).where(eq(universes.id, foreign.id));
+    expect(untouched.name).toBe('Theirs');
+    expect(untouched.userId).toBe(otherId);
+    expect(await handle.db.select().from(entries).where(eq(entries.universeId, foreign.id))).toHaveLength(0);
+  });
+
+  it('still bootstraps a universe id that does not exist yet (C-11 is not blocked by the guard)', async () => {
+    const { applyManifestOps } = await import('../src/services/sync/apply.js');
+    const { universes, entries } = await import('../src/db/schema.js');
+    const fresh = 'eeeeeeee-eeee-4eee-8eee-eeeeeeeeeee3';
+    const entryId = 'eeeeeeee-eeee-4eee-8eee-eeeeeeeeeee4';
+
+    // The ownership guard must key off "exists AND owned by someone else", not
+    // "not owned by the caller" — an absent row is the first sync to a peer
+    // that has never seen this universe, which is the normal bootstrap.
+    const result = await applyManifestOps(
+      {
+        universe: {
+          id: fresh, name: 'First contact', description: '', entryTypes: ['concept'],
+          timelineWindow: null, linkTypes: {}, calendar: null, theme: null,
+          fieldRegistry: [], auditEnabled: false, auditProvider: null, auditModel: null,
+          createdAt: ISO('2026-01-01'), updatedAt: ISO('2026-06-06'),
+        },
+        ops: { entries: { upserts: [entryRow(entryId, 'Seeded', '2026-01-01')], deletes: [] } },
+      },
+      { universeId: fresh, ownerId },
+    );
+
+    expect(result.upserted.universe).toBe(1);
+    const [row] = await handle.db.select().from(universes).where(eq(universes.id, fresh));
+    expect(row.userId).toBe(ownerId);
+    expect(await handle.db.select().from(entries).where(eq(entries.universeId, fresh))).toHaveLength(1);
+  });
+
   it('upserts and deletes graphPositions by entryId, not id', async () => {
     const { applyManifestOps } = await import('../src/services/sync/apply.js');
     const { entries, graphPositions } = await import('../src/db/schema.js');

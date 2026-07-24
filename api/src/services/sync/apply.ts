@@ -6,20 +6,27 @@
  * delete by key), and loud about anything it cannot do safely.
  *
  * What this function does NOT do: fetch anything, move asset bytes, or decide
- * what should be applied. The caller (the route) has already established
- * ownership, staged blobs, and computed the ops via mergeManifests.
+ * what should be applied. The caller (the route) has already staged blobs and
+ * computed the ops via mergeManifests.
  *
- * CALLER PRECONDITION — ownership. `ctx.ownerId` is written into every
- * userId-bearing row, including `universes.user_id` (C-08). This engine does
- * NOT verify that `ctx.universeId` is unowned or already owned by `ctx.ownerId`;
- * C-11 assigns that check to the route, which must perform it before calling
- * (404 when absent with no universe row supplied, 403 when owned by someone
- * else). Calling this with a universe id belonging to another user would
- * transfer that universe.
+ * OWNERSHIP IS ENFORCED HERE. `ctx.ownerId` is written into every userId-bearing
+ * row, including `universes.user_id` (C-08), so a caller that got its
+ * authorization wrong would not merely write to the wrong universe — it would
+ * TRANSFER that universe to itself. The guard therefore lives inside the
+ * transaction, after the advisory lock: an existing universe owned by anyone
+ * other than `ctx.ownerId` raises `UniverseOwnershipError` before a single
+ * write. An ABSENT universe proceeds — that is the C-11 bootstrap path.
+ *
+ * The route still performs its own check to choose the response (404 when the
+ * universe is absent and no universe row was supplied, 403 when it belongs to
+ * someone else — C-11). That check is about where the STATUS CODE is decided;
+ * this one is about where the invariant is protected, and it closes the
+ * route's unavoidable TOCTOU window because it runs under the same lock that
+ * serializes every other writer.
  */
 import { eq, sql } from 'drizzle-orm';
 import { db } from '../../db/client.js';
-import { issueEntries } from '../../db/schema.js';
+import { issueEntries, universes } from '../../db/schema.js';
 import {
   APPLY_ORDER,
   UNIVERSE_APPLY,
@@ -79,6 +86,30 @@ export class UnknownCollectionError extends Error {
   constructor(readonly collections: string[]) {
     super(`unknown sync collection(s): ${collections.join(', ')}`);
     this.name = 'UnknownCollectionError';
+  }
+}
+
+/**
+ * Raised when `ctx.universeId` names a universe owned by someone other than
+ * `ctx.ownerId`. The route maps this to **403**.
+ *
+ * This is the engine's own guard, not a duplicate of the route's: because
+ * `universes.user_id` is rewritten to `ctx.ownerId` on every apply (C-08), a
+ * caller that skipped or lost its authorization check would transfer the
+ * universe rather than merely write to it. Checking here — inside the
+ * transaction, under the advisory lock — makes that outcome unreachable no
+ * matter what a future caller does, and closes the window between the route's
+ * pre-check and the write.
+ *
+ * `callerId` is the rejected actor, which the caller already knows. The real
+ * owner's user id is deliberately NOT exposed: a route that echoed these fields
+ * into a 403 body would otherwise disclose account identifiers to whoever
+ * guessed a universe id.
+ */
+export class UniverseOwnershipError extends Error {
+  constructor(readonly universeId: string, readonly callerId: string) {
+    super(`universe ${universeId} belongs to another user`);
+    this.name = 'UniverseOwnershipError';
   }
 }
 
@@ -173,6 +204,19 @@ export async function applyManifestOps(
     // (Postgres 16 and PGlite, which ships the same lock manager), so the
     // 42883 fallback the plan allowed for is not needed.
     await tx.execute(sql`SELECT pg_advisory_xact_lock(hashtext(${ctx.universeId})::bigint)`);
+
+    // ── ownership: refuse someone else's universe BEFORE writing anything ───
+    // Under the lock, so no concurrent writer can change the answer between
+    // here and the universe upsert below. An ABSENT row is the C-11 bootstrap
+    // path and must proceed — the universe is created, owned by the caller.
+    const [existing] = await tx
+      .select({ userId: universes.userId })
+      .from(universes)
+      .where(eq(universes.id, ctx.universeId))
+      .limit(1);
+    if (existing && existing.userId !== ctx.ownerId) {
+      throw new UniverseOwnershipError(ctx.universeId, ctx.ownerId);
+    }
 
     // ── C-09 pre-flight: refuse foreign ids BEFORE writing anything ──────────
     // Every collection with a non-null foreignKeysWhere keys on `id`;
