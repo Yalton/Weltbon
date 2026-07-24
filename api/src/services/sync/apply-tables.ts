@@ -13,7 +13,7 @@
  *  - GENERATED columns (entries.search_vector, dictionary_words.search_vector)
  *    are never written.
  */
-import { and, eq, inArray, sql, type SQL } from 'drizzle-orm';
+import { and, eq, getTableColumns, inArray, ne, sql, type AnyColumn, type SQL } from 'drizzle-orm';
 import {
   universes, categories, entries, links, issues, graphPositions, timelinePins,
   assets, maps, mapPins, mapRegions, mapRoutes, mapLayers, terrainTypes,
@@ -29,8 +29,14 @@ export interface ApplyContext {
   ownerId: string;
 }
 
-export interface ApplyDescriptor {
-  /** manifest collection name — must match a manifest.ts COLLECTIONS entry */
+/**
+ * The shape every apply target has, including the universe singleton
+ * (`UNIVERSE_APPLY`), which has no key predicates because it is applied once
+ * and never deleted. `ApplyDescriptor` below adds the per-row predicates that
+ * real (deletable, keyed) collections need.
+ */
+export interface ApplyTarget {
+  /** manifest collection name — must match a manifest.ts COLLECTIONS entry ('universe' for UNIVERSE_APPLY, which has no COLLECTIONS counterpart) */
   collection: string;
   // eslint-disable-next-line @typescript-eslint/no-explicit-any
   table: any;
@@ -38,36 +44,58 @@ export interface ApplyDescriptor {
   // eslint-disable-next-line @typescript-eslint/no-explicit-any
   conflictTarget: any[];
   toValues: (row: ManifestRow, ctx: ApplyContext) => ApplyValues;
-  /** WHERE selecting exactly `keys` WITHIN this universe — the scoped delete predicate. */
+}
+
+export interface ApplyDescriptor extends ApplyTarget {
+  /**
+   * WHERE selecting exactly `keys` WITHIN this universe — the scoped delete
+   * predicate. `keys` are `COLLECTIONS[].key(row)` values (e.g. entryId for
+   * graphPositions, not id — passing ids there would compile and silently
+   * delete nothing).
+   */
   keysWhere: (keys: string[], universeId: string) => SQL;
   /**
    * WHERE selecting `keys` that exist OUTSIDE this universe — the C-09 pre-flight.
    * null when identity already carries the universe (graphPositions), which
    * makes cross-universe addressing structurally impossible.
+   *
+   * `keysWhere`/`foreignKeysWhere` are supplied per-descriptor by the
+   * `...ownScoped(table)` / `...parentScoped(table, parent, fkCol)` spread below
+   * — easy to miss visually under 10-15 lines of `toValues`, but not easy to
+   * miss silently: a descriptor object literal missing the spread fails to
+   * satisfy `ApplyDescriptor` (TS2739: missing properties), because `APPLY_ORDER`
+   * is typed `ApplyDescriptor[]`.
    */
-  foreignKeysWhere: ((keys: string[], universeId: string) => SQL | undefined) | null;
+  foreignKeysWhere: ((keys: string[], universeId: string) => SQL) | null;
 }
 
-/** Manifest ISO string → Date. Timestamps are never optional on synced rows. */
-const ts = (v: unknown): Date => new Date(String(v));
+/** Thrown by `ts`/`tsOrNull` when a manifest row's timestamp doesn't parse. */
+export class InvalidSyncTimestampError extends Error {
+  constructor(field: string, value: unknown) {
+    super(`invalid timestamp for ${field}: ${JSON.stringify(value)}`);
+    this.name = 'InvalidSyncTimestampError';
+  }
+}
+
+/**
+ * Manifest ISO string → Date. Timestamps are never optional on synced rows.
+ * `field` is `<collection>.<column>` — named so a malformed peer manifest
+ * surfaces as a diagnosable 4xx/5xx instead of an opaque driver RangeError
+ * inside the apply transaction, which (C-10) would otherwise abort the whole
+ * sync with no collection or row id in the message.
+ */
+const ts = (v: unknown, field: string): Date => {
+  const d = new Date(String(v));
+  if (Number.isNaN(d.getTime())) throw new InvalidSyncTimestampError(field, v);
+  return d;
+};
 /** Nullable manifest ISO string → Date | null (expiresAt, revokedAt). */
-const tsOrNull = (v: unknown): Date | null => (v == null ? null : new Date(String(v)));
+const tsOrNull = (v: unknown, field: string): Date | null => (v == null ? null : ts(v, field));
 
 // ── scope predicates ────────────────────────────────────────────────────────
 // Tables without their own universe_id are scoped through their parent with a
 // sql-template subquery rather than a db()-built subquery, so this module stays
 // free of a DB-handle import and works identically inside a transaction.
-
-type ScopeVia = (col: unknown, universeId: string) => SQL;
-
-const viaEntries: ScopeVia = (col, universeId) =>
-  sql`${col} IN (SELECT ${entries.id} FROM ${entries} WHERE ${entries.universeId} = ${universeId})`;
-const viaMaps: ScopeVia = (col, universeId) =>
-  sql`${col} IN (SELECT ${maps.id} FROM ${maps} WHERE ${maps.universeId} = ${universeId})`;
-const viaLayers: ScopeVia = (col, universeId) =>
-  sql`${col} IN (SELECT ${mapLayers.id} FROM ${mapLayers} WHERE ${mapLayers.universeId} = ${universeId})`;
-const viaDiagrams: ScopeVia = (col, universeId) =>
-  sql`${col} IN (SELECT ${diagrams.id} FROM ${diagrams} WHERE ${diagrams.universeId} = ${universeId})`;
 
 /** Direct universe_id column: in-scope / out-of-scope key predicates. */
 // eslint-disable-next-line @typescript-eslint/no-explicit-any
@@ -76,18 +104,32 @@ function ownScoped(table: any) {
     keysWhere: (keys: string[], universeId: string) =>
       and(inArray(table.id, keys), eq(table.universeId, universeId))!,
     foreignKeysWhere: (keys: string[], universeId: string) =>
-      and(inArray(table.id, keys), sql`${table.universeId} <> ${universeId}`),
+      and(inArray(table.id, keys), ne(table.universeId, universeId))!,
   };
 }
 
-/** Parent-scoped table: in-scope via the parent subquery, out-of-scope is its negation. */
+/**
+ * Parent-scoped table: in-scope via a subquery over `parent`'s own universe_id,
+ * out-of-scope is its negation. `parent` and `fkCol` (the column on `table`
+ * that references `parent.id`) are taken together in one call — deliberately,
+ * so there is no separate "which parent does this column belong to" pairing to
+ * get wrong. An earlier draft passed a `via` function and `parentCol`
+ * separately: `parentScoped(mapPins, viaEntries, mapPins.mapId)` typechecked
+ * (both `unknown`-typed) while scoping through the wrong parent, and a
+ * non-Column `parentCol` silently got bound as a query *parameter* instead of
+ * rendered as a column — `keysWhere` then matched nothing (deletes silently
+ * no-op) and `foreignKeysWhere`, its negation, matched everything (every apply
+ * would 409).
+ */
 // eslint-disable-next-line @typescript-eslint/no-explicit-any
-function parentScoped(table: any, via: ScopeVia, parentCol: unknown) {
+function parentScoped(table: any, parent: any, fkCol: AnyColumn) {
+  const via = (universeId: string): SQL =>
+    sql`${fkCol} IN (SELECT ${parent.id} FROM ${parent} WHERE ${parent.universeId} = ${universeId})`;
   return {
     keysWhere: (keys: string[], universeId: string) =>
-      and(inArray(table.id, keys), via(parentCol, universeId))!,
+      and(inArray(table.id, keys), via(universeId))!,
     foreignKeysWhere: (keys: string[], universeId: string) =>
-      and(inArray(table.id, keys), sql`NOT (${via(parentCol, universeId)})`),
+      and(inArray(table.id, keys), sql`NOT (${via(universeId)})`)!,
   };
 }
 
@@ -95,11 +137,11 @@ function parentScoped(table: any, via: ScopeVia, parentCol: unknown) {
  * The universe row itself (B-06 singleton). Applied before every collection and
  * never deleted, so it carries no key predicates.
  */
-export const UNIVERSE_APPLY = {
+export const UNIVERSE_APPLY: ApplyTarget = {
   collection: 'universe',
   table: universes,
   conflictTarget: [universes.id],
-  toValues: (r: ManifestRow, ctx: ApplyContext): ApplyValues => ({
+  toValues: (r, ctx) => ({
     id: ctx.universeId,
     userId: ctx.ownerId,                       // C-08: never from the manifest
     name: r.name,
@@ -113,8 +155,8 @@ export const UNIVERSE_APPLY = {
     auditEnabled: r.auditEnabled ?? false,
     auditProvider: r.auditProvider ?? null,
     auditModel: r.auditModel ?? null,
-    createdAt: ts(r.createdAt),
-    updatedAt: ts(r.updatedAt),
+    createdAt: ts(r.createdAt, 'universe.createdAt'),
+    updatedAt: ts(r.updatedAt, 'universe.updatedAt'),
   }),
 };
 
@@ -131,13 +173,17 @@ export const APPLY_ORDER: ApplyDescriptor[] = [
       mimeType: r.mimeType,
       extension: r.extension,
       sizeBytes: r.sizeBytes,
-      // 2.1.0 manifests lack thumbSizeBytes but the column is NOT NULL; 0 is an
-      // honest "unknown" and is corrected the next time the thumb is rewritten.
-      thumbSizeBytes: r.thumbSizeBytes ?? 0,
+      // NOT NULL, no fallback: C-14's handshake refuses to sync a 2.1.0
+      // manifest (the only shape that lacked this field) against a 2.2.0
+      // instance, so a real sync never observes r.thumbSizeBytes missing.
+      // If it ever is, that's corruption — let the NOT NULL violation abort
+      // loudly rather than silently writing a wrong-but-valid 0 (matches
+      // mapPins.secret below, which has never had a fallback either).
+      thumbSizeBytes: r.thumbSizeBytes,
       altText: r.altText ?? null,
       contentHash: r.contentHash ?? null,
-      createdAt: ts(r.createdAt),
-      updatedAt: ts(r.updatedAt),
+      createdAt: ts(r.createdAt, 'assets.createdAt'),
+      updatedAt: ts(r.updatedAt, 'assets.updatedAt'),
     }),
     ...ownScoped(assets),
   },
@@ -151,8 +197,8 @@ export const APPLY_ORDER: ApplyDescriptor[] = [
       label: r.label,
       icon: r.icon,
       sortOrder: r.sortOrder,
-      createdAt: ts(r.createdAt),
-      updatedAt: ts(r.updatedAt),
+      createdAt: ts(r.createdAt, 'categories.createdAt'),
+      updatedAt: ts(r.updatedAt, 'categories.updatedAt'),
     }),
     ...ownScoped(categories),
   },
@@ -169,8 +215,8 @@ export const APPLY_ORDER: ApplyDescriptor[] = [
       universeId: ctx.universeId,
       name: r.name,
       description: r.description ?? null,
-      createdAt: ts(r.createdAt),
-      updatedAt: ts(r.updatedAt),
+      createdAt: ts(r.createdAt, 'diagrams.createdAt'),
+      updatedAt: ts(r.updatedAt, 'diagrams.updatedAt'),
     }),
     ...ownScoped(diagrams),
   },
@@ -193,8 +239,8 @@ export const APPLY_ORDER: ApplyDescriptor[] = [
       wip: r.wip,
       categoryId: r.categoryId ?? null,
       coverImageId: r.coverImageId ?? null,
-      createdAt: ts(r.createdAt),
-      updatedAt: ts(r.updatedAt),
+      createdAt: ts(r.createdAt, 'entries.createdAt'),
+      updatedAt: ts(r.updatedAt, 'entries.updatedAt'),
       // searchVector is GENERATED — never written.
     }),
     ...ownScoped(entries),
@@ -214,8 +260,8 @@ export const APPLY_ORDER: ApplyDescriptor[] = [
       diagramId: r.diagramId ?? null,
       lineStyle: r.lineStyle ?? null,
       color: r.color ?? null,
-      createdAt: ts(r.createdAt),
-      updatedAt: ts(r.updatedAt),
+      createdAt: ts(r.createdAt, 'links.createdAt'),
+      updatedAt: ts(r.updatedAt, 'links.updatedAt'),
     }),
     ...ownScoped(links),
   },
@@ -230,10 +276,14 @@ export const APPLY_ORDER: ApplyDescriptor[] = [
       description: r.description,
       severity: r.severity,
       resolved: r.resolved,
-      createdAt: ts(r.createdAt),
-      updatedAt: ts(r.updatedAt),
+      createdAt: ts(r.createdAt, 'issues.createdAt'),
+      updatedAt: ts(r.updatedAt, 'issues.updatedAt'),
       // source/gapKey/auditRunId/dismissal* are audit-engine state, not synced
       // (audit_runs is not a synced table). Column defaults apply.
+      // entryIds IS synced (it's part of the manifest issue row) but is NOT
+      // mapped here — issue_entries is a separate join table with no single
+      // FK column on `issues` to carry it. Task 3's apply.ts writes it out of
+      // band, after the issues upsert, directly against issue_entries.
     }),
     ...ownScoped(issues),
   },
@@ -246,7 +296,7 @@ export const APPLY_ORDER: ApplyDescriptor[] = [
       entryId: r.entryId,
       x: r.x,
       y: r.y,
-      updatedAt: ts(r.updatedAt),
+      updatedAt: ts(r.updatedAt, 'graphPositions.updatedAt'),
     }),
     keysWhere: (keys, universeId) =>
       and(inArray(graphPositions.entryId, keys), eq(graphPositions.universeId, universeId))!,
@@ -263,9 +313,9 @@ export const APPLY_ORDER: ApplyDescriptor[] = [
       label: r.label,
       position: r.position,
       precision: r.precision,
-      updatedAt: ts(r.updatedAt),
+      updatedAt: ts(r.updatedAt, 'timelinePins.updatedAt'),
     }),
-    ...parentScoped(timelinePins, viaEntries, timelinePins.entryId),
+    ...parentScoped(timelinePins, entries, timelinePins.entryId),
   },
   {
     collection: 'mapLayers',
@@ -279,8 +329,8 @@ export const APPLY_ORDER: ApplyDescriptor[] = [
       defaultOpacity: r.defaultOpacity,
       sortOrder: r.sortOrder,
       secret: r.secret,
-      createdAt: ts(r.createdAt),
-      updatedAt: ts(r.updatedAt),
+      createdAt: ts(r.createdAt, 'mapLayers.createdAt'),
+      updatedAt: ts(r.updatedAt, 'mapLayers.updatedAt'),
     }),
     ...ownScoped(mapLayers),
   },
@@ -295,10 +345,10 @@ export const APPLY_ORDER: ApplyDescriptor[] = [
       color: r.color,
       label: r.label ?? null,
       sortOrder: r.sortOrder,
-      createdAt: ts(r.createdAt),
-      updatedAt: ts(r.updatedAt),
+      createdAt: ts(r.createdAt, 'terrainTypes.createdAt'),
+      updatedAt: ts(r.updatedAt, 'terrainTypes.updatedAt'),
     }),
-    ...parentScoped(terrainTypes, viaLayers, terrainTypes.layerId),
+    ...parentScoped(terrainTypes, mapLayers, terrainTypes.layerId),
   },
   {
     collection: 'maps',
@@ -310,8 +360,8 @@ export const APPLY_ORDER: ApplyDescriptor[] = [
       name: r.name,
       imageAssetId: r.imageAssetId ?? null,
       legendLabels: r.legendLabels ?? null,
-      createdAt: ts(r.createdAt),
-      updatedAt: ts(r.updatedAt),
+      createdAt: ts(r.createdAt, 'maps.createdAt'),
+      updatedAt: ts(r.updatedAt, 'maps.updatedAt'),
     }),
     ...ownScoped(maps),
   },
@@ -329,9 +379,9 @@ export const APPLY_ORDER: ApplyDescriptor[] = [
       icon: r.icon ?? null,
       secret: r.secret,
       targetMapId: r.targetMapId ?? null,
-      updatedAt: ts(r.updatedAt),
+      updatedAt: ts(r.updatedAt, 'mapPins.updatedAt'),
     }),
-    ...parentScoped(mapPins, viaMaps, mapPins.mapId),
+    ...parentScoped(mapPins, maps, mapPins.mapId),
   },
   {
     collection: 'mapRegions',
@@ -347,10 +397,10 @@ export const APPLY_ORDER: ApplyDescriptor[] = [
       terrainTypeId: r.terrainTypeId ?? null,
       secret: r.secret,
       targetMapId: r.targetMapId ?? null,
-      createdAt: ts(r.createdAt),
-      updatedAt: ts(r.updatedAt),
+      createdAt: ts(r.createdAt, 'mapRegions.createdAt'),
+      updatedAt: ts(r.updatedAt, 'mapRegions.updatedAt'),
     }),
-    ...parentScoped(mapRegions, viaMaps, mapRegions.mapId),
+    ...parentScoped(mapRegions, maps, mapRegions.mapId),
   },
   {
     collection: 'mapRoutes',
@@ -367,10 +417,10 @@ export const APPLY_ORDER: ApplyDescriptor[] = [
       width: r.width,
       showArrow: r.showArrow,
       secret: r.secret,
-      createdAt: ts(r.createdAt),
-      updatedAt: ts(r.updatedAt),
+      createdAt: ts(r.createdAt, 'mapRoutes.createdAt'),
+      updatedAt: ts(r.updatedAt, 'mapRoutes.updatedAt'),
     }),
-    ...parentScoped(mapRoutes, viaMaps, mapRoutes.mapId),
+    ...parentScoped(mapRoutes, maps, mapRoutes.mapId),
   },
   {
     collection: 'dictionaryWords',
@@ -386,8 +436,8 @@ export const APPLY_ORDER: ApplyDescriptor[] = [
       gloss: r.gloss,
       etymology: r.etymology,
       tags: r.tags,
-      createdAt: ts(r.createdAt),
-      updatedAt: ts(r.updatedAt),
+      createdAt: ts(r.createdAt, 'dictionaryWords.createdAt'),
+      updatedAt: ts(r.updatedAt, 'dictionaryWords.updatedAt'),
       // searchVector is GENERATED — never written.
     }),
     ...ownScoped(dictionaryWords),
@@ -402,9 +452,9 @@ export const APPLY_ORDER: ApplyDescriptor[] = [
       entryId: r.entryId,
       x: r.x,
       y: r.y,
-      updatedAt: ts(r.updatedAt),
+      updatedAt: ts(r.updatedAt, 'diagramNodes.updatedAt'),
     }),
-    ...parentScoped(diagramNodes, viaDiagrams, diagramNodes.diagramId),
+    ...parentScoped(diagramNodes, diagrams, diagramNodes.diagramId),
   },
   {
     collection: 'shareTokens',
@@ -419,25 +469,39 @@ export const APPLY_ORDER: ApplyDescriptor[] = [
       label: r.label,
       hash: r.hash,
       bodySuffix: r.bodySuffix,
-      expiresAt: tsOrNull(r.expiresAt),
-      revokedAt: tsOrNull(r.revokedAt),
+      expiresAt: tsOrNull(r.expiresAt, 'shareTokens.expiresAt'),
+      revokedAt: tsOrNull(r.revokedAt, 'shareTokens.revokedAt'),
       accessCount: r.accessCount,
-      createdAt: ts(r.createdAt),
-      updatedAt: ts(r.updatedAt),
+      createdAt: ts(r.createdAt, 'shareTokens.createdAt'),
+      updatedAt: ts(r.updatedAt, 'shareTokens.updatedAt'),
       // lastAccessedAt is per-instance telemetry — deliberately not synced.
     }),
     ...ownScoped(shareTokens),
   },
 ];
 
-/** Columns of `values` that onConflictDoUpdate should overwrite (everything but the PK). */
-export function updateSetFor(desc: ApplyDescriptor | typeof UNIVERSE_APPLY, values: ApplyValues): ApplyValues {
+/**
+ * Columns of `values` that onConflictDoUpdate should overwrite (everything but
+ * the PK). Matches on `.name` (the DB column name) rather than munging
+ * camelCase into snake_case: `getTableColumns` keys its result by TS property
+ * name, so filtering those entries down to the ones whose column `.name`
+ * appears in `conflictTarget` gives the exact property names to exclude, with
+ * no string transformation to get wrong.
+ *
+ * A miss here is benign, not load-bearing: Postgres allows the conflict-target
+ * column inside onConflictDoUpdate's SET list — `SET id = id` is a no-op — so
+ * this exclusion is a tidiness nicety, not a correctness requirement.
+ */
+export function updateSetFor(desc: ApplyTarget, values: ApplyValues): ApplyValues {
   const pkNames = new Set(desc.conflictTarget.map((c: { name: string }) => c.name));
+  const pkPropNames = new Set(
+    Object.entries(getTableColumns(desc.table))
+      .filter(([, c]) => pkNames.has((c as { name: string }).name))
+      .map(([k]) => k),
+  );
   const out: ApplyValues = {};
   for (const [k, v] of Object.entries(values)) {
-    // conflictTarget carries DB column names (snake_case); values are keyed by
-    // the TS property name. Compare on both so composite PKs are excluded too.
-    if (pkNames.has(k) || pkNames.has(k.replace(/[A-Z]/g, (m) => `_${m.toLowerCase()}`))) continue;
+    if (pkPropNames.has(k)) continue;
     out[k] = v;
   }
   return out;

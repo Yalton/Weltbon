@@ -2,10 +2,43 @@
  * Plan C Task 2 — the apply registry. Pure: no DB, no I/O.
  */
 import { describe, it, expect } from 'vitest';
+import { getTableColumns } from 'drizzle-orm';
 import { COLLECTIONS } from '../src/services/sync/manifest.js';
 import { APPLY_ORDER, UNIVERSE_APPLY, updateSetFor, type ApplyContext } from '../src/services/sync/apply-tables.js';
 
 const CTX: ApplyContext = { universeId: 'u-1', ownerId: 'owner-1' };
+
+/**
+ * One row shape generous enough to feed every descriptor's `toValues`: each
+ * mapper only reads the properties it cares about, so unused keys here are
+ * simply ignored by the others. Every timestamp is a valid ISO string — `ts`
+ * now throws on anything that isn't (M1), so this fixture has to be complete
+ * on that front for all 18 targets to run without one throwing.
+ */
+const KITCHEN_SINK_ROW = {
+  id: 'row-1', entryId: 'row-1', mapId: 'row-1', diagramId: 'row-1', layerId: 'row-1',
+  languageEntryId: null, categoryId: null, coverImageId: null, imageAssetId: null,
+  scopeEntryId: null, terrainTypeId: null, targetMapId: null,
+  filename: 'f', mimeType: 'image/png', extension: 'png', sizeBytes: 1, thumbSizeBytes: 1,
+  altText: null, contentHash: null,
+  label: 'L', icon: 'i', sortOrder: 0,
+  name: 'N', description: null,
+  title: 'T', entryType: 'concept', summary: '', body: '', tags: [], aliases: [], meta: {},
+  isPublic: true, wip: false,
+  sourceEntryId: 'e-1', targetEntryId: 'e-2', link_type: 'ally', direction: 'directed',
+  lineStyle: 'solid', color: '#fff',
+  severity: 'minor', resolved: false,
+  x: 0, y: 0,
+  position: 0, precision: 'exact',
+  ordered: false, defaultOpacity: 0.6, secret: false,
+  legendLabels: null,
+  points: '[]', width: 4, showArrow: false,
+  word: 'w', ipa: '', partOfSpeech: '', gloss: 'g', etymology: '',
+  scope: 'universe', hash: 'h', bodySuffix: 'x', expiresAt: null, revokedAt: null, accessCount: 0,
+  entryTypes: ['concept'], timelineWindow: null, calendar: null, theme: null, linkTypes: {},
+  fieldRegistry: [], auditEnabled: false, auditProvider: null, auditModel: null,
+  createdAt: '2026-01-01T00:00:00.000Z', updatedAt: '2026-01-01T00:00:00.000Z',
+};
 
 describe('apply registry (Plan C, C-07/C-13)', () => {
   it('covers exactly the merge engine collections — no drift', () => {
@@ -165,5 +198,31 @@ describe('apply registry (Plan C, C-07/C-13)', () => {
     expect(universeSet).not.toHaveProperty('id');
     // C-08: userId is not part of the PK and must still be overwritten on every apply.
     expect(universeSet.userId).toBe('owner-1');
+  });
+
+  /**
+   * Regression insurance for a registry whose SQL predicates stay unexecuted
+   * until Task 3 wires up a DB: every key `toValues` emits must be a real
+   * column (the `link_type` class — a mapper writing a key that isn't a
+   * column, silently ignored by nothing but caught here), and every NOT NULL
+   * column with no DB default must be emitted (the `assets.thumb_size_bytes`
+   * class — a NOT NULL column the mapper forgot, which only ever surfaced as
+   * a live INSERT failure).
+   */
+  it('every toValues() output matches real columns, and covers every required one', () => {
+    for (const desc of [...APPLY_ORDER, UNIVERSE_APPLY]) {
+      const values = desc.toValues(KITCHEN_SINK_ROW, CTX);
+      const columns = getTableColumns(desc.table);
+
+      for (const key of Object.keys(values)) {
+        expect(columns, `${desc.collection}.toValues() emitted unknown key "${key}"`).toHaveProperty(key);
+      }
+
+      for (const [prop, col] of Object.entries(columns) as [string, { notNull: boolean; hasDefault: boolean }][]) {
+        if (col.notNull && !col.hasDefault) {
+          expect(values, `${desc.collection}.toValues() is missing required column "${prop}"`).toHaveProperty(prop);
+        }
+      }
+    }
   });
 });
