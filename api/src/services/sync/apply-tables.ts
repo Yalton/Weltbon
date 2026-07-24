@@ -36,7 +36,10 @@ export interface ApplyContext {
  * real (deletable, keyed) collections need.
  */
 export interface ApplyTarget {
-  /** manifest collection name — must match a manifest.ts COLLECTIONS entry ('universe' for UNIVERSE_APPLY, which has no COLLECTIONS counterpart) */
+  /**
+   * Manifest collection name — must match a manifest.ts COLLECTIONS entry.
+   * ('universe' for UNIVERSE_APPLY, which has no COLLECTIONS counterpart.)
+   */
   collection: string;
   // eslint-disable-next-line @typescript-eslint/no-explicit-any
   table: any;
@@ -69,9 +72,15 @@ export interface ApplyDescriptor extends ApplyTarget {
   foreignKeysWhere: ((keys: string[], universeId: string) => SQL) | null;
 }
 
-/** Thrown by `ts`/`tsOrNull` when a manifest row's timestamp doesn't parse. */
+/**
+ * Thrown by `ts`/`tsOrNull` when a manifest row's timestamp doesn't parse.
+ *
+ * `field` and `value` are exposed as structured properties — matching
+ * `SyncVersionMismatchError`'s `readonly versions` (merge.ts) — so a route can
+ * build a typed error body without parsing the message string.
+ */
 export class InvalidSyncTimestampError extends Error {
-  constructor(field: string, value: unknown) {
+  constructor(readonly field: string, readonly value: unknown) {
     super(`invalid timestamp for ${field}: ${JSON.stringify(value)}`);
     this.name = 'InvalidSyncTimestampError';
   }

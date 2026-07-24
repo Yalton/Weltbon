@@ -3,6 +3,7 @@
  */
 import { describe, it, expect } from 'vitest';
 import { getTableColumns } from 'drizzle-orm';
+import { PgDialect } from 'drizzle-orm/pg-core';
 import { COLLECTIONS } from '../src/services/sync/manifest.js';
 import { APPLY_ORDER, UNIVERSE_APPLY, updateSetFor, type ApplyContext } from '../src/services/sync/apply-tables.js';
 
@@ -221,8 +222,49 @@ describe('apply registry (Plan C, C-07/C-13)', () => {
       for (const [prop, col] of Object.entries(columns) as [string, { notNull: boolean; hasDefault: boolean }][]) {
         if (col.notNull && !col.hasDefault) {
           expect(values, `${desc.collection}.toValues() is missing required column "${prop}"`).toHaveProperty(prop);
+          // toHaveProperty passes for an own property whose value is undefined,
+          // which Drizzle then drops from .values() — so the NOT NULL violation
+          // would surface at the DB rather than here. Assert the value too.
+          expect(values[prop], `${desc.collection}.toValues() emitted undefined for required column "${prop}"`).not.toBeUndefined();
         }
       }
+    }
+  });
+
+  /**
+   * The last silent failure mode in this module: `parentScoped(table, parent, fkCol)`
+   * takes `table` and `parent` as `any`, so scoping a collection through the WRONG
+   * parent — `parentScoped(mapPins, entries, mapPins.mapId)` — typechecks, passes
+   * every other test here, and renders type-correct but semantically empty SQL:
+   * `keysWhere` then deletes nothing and `foreignKeysWhere` matches everything, so
+   * deletes silently no-op and every apply 409s.
+   *
+   * Rendering the predicates is the only way to catch it without a generics rabbit
+   * hole. PgDialect.sqlToQuery is pure — no database involved.
+   */
+  it('scopes every collection through the correct parent (rendered SQL)', () => {
+    const dialect = new PgDialect();
+    const rendered = Object.fromEntries(
+      APPLY_ORDER.filter((d) => d.foreignKeysWhere !== null).map((d) => [
+        d.collection,
+        dialect.sqlToQuery(d.keysWhere(['k1'], 'U')).sql,
+      ]),
+    );
+
+    // Collections scoped through a parent table — the pairing that must not drift.
+    // The FK column and the parent it resolves against are both asserted, because
+    // the failure mode is a pair that is individually valid but wrong together.
+    expect(rendered.timelinePins).toContain('"timeline_pins"."entry_id" IN (SELECT "entries"."id" FROM "entries"');
+    expect(rendered.terrainTypes).toContain('"terrain_types"."layer_id" IN (SELECT "map_layers"."id" FROM "map_layers"');
+    expect(rendered.mapPins).toContain('"map_pins"."map_id" IN (SELECT "maps"."id" FROM "maps"');
+    expect(rendered.mapRegions).toContain('"map_regions"."map_id" IN (SELECT "maps"."id" FROM "maps"');
+    expect(rendered.mapRoutes).toContain('"map_routes"."map_id" IN (SELECT "maps"."id" FROM "maps"');
+    expect(rendered.diagramNodes).toContain('"diagram_nodes"."diagram_id" IN (SELECT "diagrams"."id" FROM "diagrams"');
+
+    // Collections carrying their own universe_id scope directly — no subquery at all.
+    for (const collection of ['entries', 'categories', 'assets', 'links', 'maps', 'diagrams', 'issues', 'mapLayers', 'dictionaryWords', 'shareTokens']) {
+      expect(rendered[collection], collection).toContain('"universe_id" = ');
+      expect(rendered[collection], collection).not.toContain('SELECT');
     }
   });
 });
