@@ -85,6 +85,11 @@ const assetSchema = z.object({
   sizeBytes: z.number(),
   thumbSizeBytes: z.number(),
   altText: z.string().nullable(),
+  // Plan C (S-10): toAssetResponse spreads the DB row, so the sync content hash
+  // ships in every owner-facing asset response. Declared so the OpenAPI contract
+  // matches what is actually served. Never reaches share routes — those serve
+  // bytes only, never asset metadata JSON.
+  contentHash: z.string().nullable(),
   rawUrl: z.string(),
   thumbUrl: z.string(),
   createdAt: z.string().or(z.date()),

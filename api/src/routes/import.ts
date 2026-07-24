@@ -145,7 +145,10 @@ function handleImportError(err: unknown): { status: 400 | 500; body: object } {
     const issues = err.issues as Array<{ path: Array<string | number>; message: string }>;
     const versionError = issues.find((e) => e.path.includes('weltbon_version'));
     if (versionError) {
-      return { status: 400, body: { error: 'Incompatible export version. Expected 1.0.0 or 2.0.0' } };
+      // Keep in lockstep with the accepted set in import-json.ts's weltbon_version
+      // refine — this string SHADOWS the Zod message on every import route, so a
+      // stale list here is what the user actually reads.
+      return { status: 400, body: { error: 'Incompatible export version. Expected 1.0.0, 2.0.0, 2.1.0, or 2.2.0' } };
     }
     return { status: 400, body: { error: 'Invalid import format', details: issues } };
   }
