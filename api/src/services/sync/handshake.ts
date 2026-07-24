@@ -48,6 +48,17 @@ export async function migrationHead(): Promise<string> {
   return cachedHead;
 }
 
+/**
+ * Clears the memoized migration head so a subsequent migrationHead() re-reads
+ * disk. Exists SOLELY for the 503 journal-unavailable test (sync-handshake.test.ts):
+ * cachedHead is process-global, so a test that points DRIZZLE_DIR at a broken
+ * journal must be able to force a cold read and then un-poison the cache for any
+ * sibling test sharing the worker. Not part of the runtime contract.
+ */
+export function resetMigrationHeadCache(): void {
+  cachedHead = null;
+}
+
 /** The manifest version this build emits — kept in lockstep with json.ts. */
 export const WELTBON_MANIFEST_VERSION = '2.2.0';
 
