@@ -102,6 +102,8 @@ const DB_GATED_TESTS = [
   'tests/sync-apply.test.ts',
   // Plan C Task 4 — the /api/sync HTTP surface (handshake + snapshot).
   'tests/sync-routes.test.ts',
+  // Plan C Task 7 — two-instance convergence over the real /api/sync surface.
+  'tests/sync-convergence.test.ts',
 ];
 
 export default defineConfig({
