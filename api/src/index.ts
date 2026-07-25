@@ -33,6 +33,7 @@ import { mapLayersRouter } from './routes/map-layers.js';
 import { assetsRouter } from './routes/assets.js';
 import { dictionaryRoutes } from './routes/dictionary.js';
 import { syncRoutes } from './routes/sync.js';
+import { syncClientRoutes } from './routes/sync-client.js';
 import { recoverOrphanAuditRuns } from './services/audit-recovery.js';
 import { wireSigtermDrain } from './services/audit-shutdown.js';
 import { requireAuth } from './middleware/auth.js';
@@ -112,6 +113,10 @@ export function createApp() {
   // never interacts with the /universes/* auth block below.
   apiR.use('/sync/*', requireAuth);
   apiR.route('/sync', syncRoutes);
+  // Plan D: the owner-facing half at the SAME prefix, from its own file so the
+  // peer surface above stays exactly Plan C's six routes. Each route here adds
+  // requireJwtAuth on top of the /sync/* requireAuth gate (D-10).
+  apiR.route('/sync', syncClientRoutes);
   apiR.use('/universes/*', requireAuth);
   // Phase 26 Plan 03 — D-06 cross-universe in-flight rollup.
   // Mounted at root /api prefix (NOT under /universes/:uid) because it

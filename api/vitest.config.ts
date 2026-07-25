@@ -108,6 +108,8 @@ const DB_GATED_TESTS = [
   'tests/sync-conflicts.test.ts',
   // Plan D Task 4 — extracted asset materialization.
   'tests/sync-materialize.test.ts',
+  // Plan D Task 5 — sync remotes/links CRUD.
+  'tests/sync-client-crud.test.ts',
 ];
 
 export default defineConfig({
