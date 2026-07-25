@@ -18,8 +18,10 @@ import sharp from 'sharp';
 import { db } from '../../db/client.js';
 import { assets } from '../../db/schema.js';
 import { storageBackend } from '../storage/local.js';
-// Reused from the upload path so the pixel-bomb guard is one definition, not two.
-import { SHARP_OPTS } from '../../routes/assets.js';
+// Shared with routes/assets.ts and import-json.ts so the pixel-bomb guard is
+// ONE definition, not three — and so this service (reusable by Plan D's
+// in-process local apply) doesn't drag in the HTTP route module.
+import { SHARP_OPTS } from '../media/sharp-opts.js';
 import type { ManifestRow } from './manifest.js';
 
 /** Staging key for a transferred blob (C-12). Hex + dashes pass storage safeJoin. */

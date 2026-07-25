@@ -4,6 +4,7 @@ import { db } from '../db/client.js';
 import { universes, entries, links, categories, issues, issueEntries, graphPositions, timelinePins, assets, maps, mapPins, mapRegions, mapRoutes, mapLayers, terrainTypes, dictionaryWords, diagrams, diagramNodes, shareTokens, type Calendar, type UniverseTheme, type FieldRegistryEntry } from '../db/schema.js';
 import { storageBackend } from './storage/local.js';
 import { isValidRoutePoints, ROUTE_POINTS_ERROR } from '../utils/route-points.js';
+import { SHARP_OPTS } from './media/sharp-opts.js';
 
 // CR-02: quota enforcement on the import path (same cap as the upload path).
 const DEFAULT_MAX_UNIVERSE_QUOTA = 500 * 1024 * 1024; // 500 MB
@@ -12,8 +13,6 @@ function maxUniverseQuota(): number {
   return Number.isFinite(n) && n > 0 ? n : DEFAULT_MAX_UNIVERSE_QUOTA;
 }
 
-// WR-05: thumbnail generation options (same as upload path, D-11).
-const SHARP_OPTS = { limitInputPixels: 25_000_000, failOn: 'truncated' as const };
 const ALLOWED_MIME = new Set(['image/png', 'image/jpeg', 'image/webp', 'image/gif']);
 const ALLOWED_MIME_LIST = Array.from(ALLOWED_MIME).join(', ');
 

@@ -160,4 +160,85 @@ describe('sync materialization service (Plan D Task 4)', () => {
     expect(syncBlobKey('u-1', hash)).toBe(`sync-blob-u-1-${hash}`);
     expect(syncBlobKey('u-2', hash)).not.toBe(syncBlobKey('u-1', hash));
   });
+
+  it('materializes a SIBLING-sourced plan entry end to end: bytes copied under the new id, thumbnail re-derived, sibling untouched, no staged blob deleted (C-20)', async () => {
+    const sharp = (await import('sharp')).default;
+    const png = await sharp({
+      create: { width: 640, height: 480, channels: 3, background: { r: 5, g: 6, b: 7 } },
+    })
+      .png()
+      .toBuffer();
+    const hash = sha(png);
+
+    const { storageBackend } = await import('../src/services/storage/local.js');
+    const { syncBlobKey, materializeAssets } = await import('../src/services/sync/materialize.js');
+    const { assets } = await import('../src/db/schema.js');
+
+    // The committed sibling that actually holds the bytes.
+    const sibling = await seedAsset(png);
+
+    // A DECOY staged blob under the SAME hash, with DIFFERENT bytes. If the
+    // sibling branch ever read from — or deleted — the staged key instead of
+    // the sibling's own id, this decoy makes that bug visible instead of
+    // silently passing.
+    const decoy = Buffer.from('decoy staged bytes, must not be used or touched');
+    await storageBackend.put(syncBlobKey(universeId, hash), decoy);
+
+    const [row] = await handle.db
+      .insert(assets)
+      .values({
+        universeId,
+        filename: 'sib-target.png',
+        mimeType: 'image/png',
+        extension: 'png',
+        sizeBytes: png.length,
+        thumbSizeBytes: 1,
+        contentHash: hash,
+      })
+      .returning();
+
+    const count = await materializeAssets(universeId, [
+      { assetId: row.id, hash, source: { kind: 'sibling', assetId: sibling.id } },
+    ]);
+    expect(count).toBe(1);
+
+    // Bytes came from the SIBLING, not the decoy staged blob.
+    expect((await storageBackend.get(row.id))!.equals(png)).toBe(true);
+    // Thumbnail was re-derived here (C-03).
+    const thumb = await storageBackend.get(`${row.id}_thumb`);
+    expect(thumb).not.toBeNull();
+    const meta = await sharp(thumb!).metadata();
+    expect(Math.max(meta.width!, meta.height!)).toBeLessThanOrEqual(400);
+    const [after] = await handle.db.select().from(assets).where(eq(assets.id, row.id));
+    expect(after.thumbSizeBytes).toBe(thumb!.length);
+
+    // The sibling's own bytes are untouched.
+    expect((await storageBackend.get(sibling.id))!.equals(png)).toBe(true);
+    // A sibling-sourced materialization must not delete ANY staged blob —
+    // there is nothing for it to consume, so the decoy must survive.
+    expect((await storageBackend.get(syncBlobKey(universeId, hash)))!.equals(decoy)).toBe(true);
+  });
+
+  it('does not count or throw when a planned source vanishes before materialize runs', async () => {
+    const bytes = Buffer.from('here at plan time, gone at materialize time');
+    const hash = sha(bytes);
+    const { storageBackend } = await import('../src/services/storage/local.js');
+    const { syncBlobKey, planAssetMaterialization, materializeAssets } = await import(
+      '../src/services/sync/materialize.js'
+    );
+
+    await storageBackend.put(syncBlobKey(universeId, hash), bytes);
+    const id = crypto.randomUUID();
+    const plan = await planAssetMaterialization(universeId, [{ id, contentHash: hash }]);
+    expect(plan.toMaterialize).toEqual([{ assetId: id, hash, source: { kind: 'staged' } }]);
+
+    // The staged blob vanishes between planning and materializing (e.g. an
+    // operator sweep, or a concurrent apply that already consumed it).
+    await storageBackend.delete(syncBlobKey(universeId, hash));
+
+    await expect(materializeAssets(universeId, plan.toMaterialize)).resolves.toBe(0);
+    // Nothing was written under the asset id — the skip must be silent AND uncounted.
+    expect(await storageBackend.exists(id)).toBe(false);
+    expect(await storageBackend.exists(`${id}_thumb`)).toBe(false);
+  });
 });

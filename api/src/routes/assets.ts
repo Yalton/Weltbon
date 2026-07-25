@@ -37,6 +37,7 @@ import { requireUniverse } from '../utils/ownership.js';
 import { storageBackend } from '../services/storage/local.js';
 import { signAssetUrl, verifyAssetSig } from '../services/asset-signing.js';
 import { sha256Hex } from '../services/sync/asset-hash.js';
+import { SHARP_OPTS } from '../services/media/sharp-opts.js';
 import type { AuthVariables } from '../middleware/auth.js';
 
 type AppEnv = { Variables: AuthVariables };
@@ -65,9 +66,10 @@ export function maxUniverseQuota(): number {
   return Number.isFinite(n) && n > 0 ? n : DEFAULT_MAX_UNIVERSE_QUOTA;
 }
 
-// failOn 'truncated' aborts on truncated/corrupt pixel data (T-38-12, D-11);
-// limitInputPixels caps decoded pixel count to defuse decompression/pixel bombs.
-export const SHARP_OPTS = { limitInputPixels: 25_000_000, failOn: 'truncated' as const };
+// Re-exported for backward compatibility — the single definition now lives in
+// services/media/sharp-opts.ts so a non-HTTP caller (Plan D's local apply) can
+// depend on the guard without dragging in this whole route module.
+export { SHARP_OPTS } from '../services/media/sharp-opts.js';
 
 // ─── Shared param schemas ─────────────────────────────────────────────────────
 
