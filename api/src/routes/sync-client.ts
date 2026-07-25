@@ -384,6 +384,15 @@ const restoreConflictRoute = createRoute({
     // (e.g. an unknown collection name), not the D-04 base-URL wording.
     400: { content: { 'application/json': { schema: errorSchema } }, description: 'Apply engine rejected the restore (SyncApplyError, e.g. unknown collection).' },
     401: err401,
+    // Declared for truthfulness, not reachability: applyManifestOps can throw
+    // UniverseOwnershipError (status 403) if the universe's ownership changed
+    // out from under this conflict row. ownedConflict's join means the caller
+    // was verified as the owner moments earlier, so this is latent rather than
+    // reachable today — but the route's own `err.status as ...` cast asserts
+    // every status applyManifestOps can produce, and an undeclared status in a
+    // generated OpenAPI schema is exactly the kind of promise a client trusts
+    // and then breaks on.
+    403: err403,
     404: { content: { 'application/json': { schema: errorSchema } }, description: 'Conflict not found / not owned.' },
     409: { content: { 'application/json': { schema: errorSchema } }, description: 'Apply-time conflict (SyncApplyError, e.g. unique constraint).' },
   },
@@ -652,7 +661,7 @@ export const syncClientRoutes = new OpenAPIHono<AppEnv>()
       // instanceof chain silently returns 500 the day a new SyncApplyError
       // subclass is added.
       if (err instanceof SyncApplyError) {
-        return c.json({ error: err.message }, err.status as 400 | 409);
+        return c.json({ error: err.message }, err.status as 400 | 403 | 409);
       }
       throw err;
     }

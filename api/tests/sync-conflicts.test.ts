@@ -275,6 +275,75 @@ describe('sync_conflicts ledger (Plan D, D-03)', () => {
       expect(conflictRow.resolvedAt).not.toBeNull();
     });
 
+    it('restores a UNIVERSE-collection conflict through the singleton branch, and ignores a bogus id/userId in the payload', async () => {
+      // merge.ts keys the universe singleton on the literal 'universe' — the
+      // same quirk that forced migration 0035 (D-03). restoreConflict's
+      // `tableName === 'universe'` branch is the only code that consumes a
+      // universe-shaped ledger row, and nothing else in this file exercises it.
+      const { universes: universesTable, syncConflicts: sc } = await import('../src/db/schema.js');
+      const [existingUniverse] = await handle.db.select().from(universesTable).where(eq(universesTable.id, universeId));
+
+      const bogusUniverseId = '99999999-9999-9999-9999-999999999999';
+      const bogusUserId = '88888888-8888-8888-8888-888888888888';
+
+      // Manifest-shaped universe row (json.ts's `universe` block), PLUS a
+      // bogus `id`/`userId` that a hostile or buggy payload might carry.
+      // UNIVERSE_APPLY.toValues takes id from ctx.universeId and userId from
+      // ctx.ownerId (C-08) — NEVER from the row — so neither should take
+      // effect even though `row` is spread straight from stored JSON.
+      const loserPayload = {
+        id: bogusUniverseId,
+        userId: bogusUserId,
+        name: 'Loser Universe Name',
+        description: 'loser description',
+        entryTypes: existingUniverse.entryTypes,
+        timelineWindow: null,
+        calendar: null,
+        theme: null,
+        linkTypes: {},
+        fieldRegistry: [],
+        auditEnabled: false,
+        auditProvider: null,
+        auditModel: null,
+        createdAt: existingUniverse.createdAt.toISOString(),
+        updatedAt: new Date(Date.now() - 60_000).toISOString(),
+      };
+
+      const [conflict] = await handle.db
+        .insert(sc)
+        .values({
+          universeId,
+          tableName: 'universe',
+          rowId: 'universe',
+          winner: 'remote',
+          loserPayload,
+        })
+        .returning();
+
+      const before = new Date();
+      const res = await app.request(`/api/sync/conflicts/${conflict.id}/restore`, {
+        method: 'POST',
+        headers: authHeader(token),
+      });
+      expect(res.status).toBe(200);
+      const body = await res.json();
+      expect(body.resolvedAt).not.toBeNull();
+
+      const [row] = await handle.db.select().from(universesTable).where(eq(universesTable.id, universeId));
+      expect(row.name).toBe('Loser Universe Name'); // loser content restored
+      expect(row.id).toBe(universeId); // NOT the bogus id from the payload
+      expect(row.userId).toBe(userId); // NOT the bogus userId from the payload
+      // Fresh updatedAt, same rule as the entries restore above.
+      expect(row.updatedAt.getTime()).toBeGreaterThanOrEqual(before.getTime());
+
+      // The bogus id must not have created a SECOND universe row.
+      const bogusRows = await handle.db.select().from(universesTable).where(eq(universesTable.id, bogusUniverseId));
+      expect(bogusRows).toHaveLength(0);
+
+      const [conflictRow] = await handle.db.select().from(sc).where(eq(sc.id, conflict.id));
+      expect(conflictRow.resolvedAt).not.toBeNull();
+    });
+
     it('404s on another user\'s conflict rather than leaking its existence', async () => {
       const { conflict } = await seedEntryConflict();
       const other = await createTestUser(handle, { email: 'other-conflict@test.dev', password: 'password123' });
