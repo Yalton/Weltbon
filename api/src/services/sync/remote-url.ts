@@ -42,6 +42,30 @@ export function isPrivateHostname(hostname: string): boolean {
   if (h === '::1' || h === '::') return true;
   if (/^f[cd][0-9a-f]*:/.test(h)) return true;   // fc00::/7 unique-local
   if (h.startsWith('fe80:')) return true;        // link-local
+
+  // IPv4-mapped IPv6 (::ffff:a.b.c.d). Node's WHATWG URL parser canonicalizes a
+  // mapped literal into hex-group form BEFORE this function ever sees it — e.g.
+  // ::ffff:169.254.169.254 becomes ::ffff:a9fe:a9fe — so both spellings must be
+  // recognized or the cloud-metadata address this flag exists to stop slips
+  // through untouched. Decode either form back to plain IPv4 and recurse into
+  // the same CIDR table above rather than duplicating it.
+  const mappedDotted = h.match(/^::ffff:(\d{1,3}\.\d{1,3}\.\d{1,3}\.\d{1,3})$/);
+  if (mappedDotted) return isPrivateHostname(mappedDotted[1]);
+  const mappedHex = h.match(/^::ffff:([0-9a-f]{1,4}):([0-9a-f]{1,4})$/);
+  if (mappedHex) {
+    const hi = parseInt(mappedHex[1], 16);
+    const lo = parseInt(mappedHex[2], 16);
+    // Extract bytes from each 16-bit group independently rather than combining
+    // hi/lo into one 32-bit value first: `hi << 16` flips negative for any group
+    // above 0x7fff under JS's 32-bit signed bitwise ops. `>>> 8` / `& 0xff` on
+    // each group alone never needs more than 16 bits, so it can't overflow.
+    const a = (hi >>> 8) & 0xff;
+    const b = hi & 0xff;
+    const c = (lo >>> 8) & 0xff;
+    const d = lo & 0xff;
+    return isPrivateHostname(`${a}.${b}.${c}.${d}`);
+  }
+
   const m = h.match(/^(\d{1,3})\.(\d{1,3})\.(\d{1,3})\.(\d{1,3})$/);
   if (!m) return false;
   const a = Number(m[1]);

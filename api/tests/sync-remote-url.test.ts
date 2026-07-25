@@ -53,17 +53,27 @@ describe('normalizeRemoteUrl (D-04)', () => {
     // Public hosts still pass with the flag on.
     expect(normalizeRemoteUrl('https://weltbon.example.com')).toBe('https://weltbon.example.com');
   });
+
+  it('blocks an IPv4-mapped IPv6 literal for cloud metadata when the flag is set', () => {
+    process.env.SYNC_BLOCK_PRIVATE_HOSTS = 'true';
+    expect(() => normalizeRemoteUrl('http://[::ffff:169.254.169.254]/')).toThrow(/private/);
+  });
+
+  it('still allows that same mapped literal by DEFAULT — the opt-in default is unchanged', () => {
+    expect(normalizeRemoteUrl('http://[::ffff:169.254.169.254]/')).toBe('http://[::ffff:a9fe:a9fe]');
+  });
 });
 
 describe('isPrivateHostname', () => {
   it.each([
     'localhost', '127.0.0.1', '127.53.1.9', '10.0.0.1', '172.16.0.1', '172.31.255.255',
     '192.168.0.1', '169.254.169.254', '0.0.0.0', '[::1]', '::1', 'fd00::1', 'fe80::1',
+    '[::ffff:127.0.0.1]', '::ffff:7f00:1', '::ffff:a9fe:a9fe', '::ffff:c0a8:101',
   ])('treats %s as private', (h) => {
     expect(isPrivateHostname(h)).toBe(true);
   });
 
-  it.each(['weltbon.example.com', '8.8.8.8', '172.32.0.1', '172.15.0.1', '193.168.0.1'])(
+  it.each(['weltbon.example.com', '8.8.8.8', '172.32.0.1', '172.15.0.1', '193.168.0.1', '::ffff:808:808'])(
     'treats %s as public',
     (h) => {
       expect(isPrivateHostname(h)).toBe(false);
