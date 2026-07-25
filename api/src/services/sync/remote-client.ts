@@ -107,6 +107,17 @@ export class SyncRemoteClient {
   private async send(method: string, path: string, init: RequestInit = {}): Promise<Response> {
     let res: Response;
     try {
+      // HTTP header names are case-insensitive, but plain-object keys are not:
+      // a caller-supplied `authorization` (lowercase) would otherwise survive
+      // this spread as a distinct own-property alongside `Authorization`, and
+      // Node's `Headers` constructor append-joins same-name-different-case
+      // entries from a plain object into a corrupted comma-separated value
+      // instead of letting either one win. Strip any case-variant of the key
+      // first so the PAT set below is the only credential that can go out.
+      const callerHeaders = { ...(init.headers as Record<string, string> | undefined) };
+      for (const key of Object.keys(callerHeaders)) {
+        if (key.toLowerCase() === 'authorization') delete callerHeaders[key];
+      }
       res = await this.doFetch(this.url(path), {
         ...init,
         method,
@@ -114,7 +125,7 @@ export class SyncRemoteClient {
         // and it would also replay the Authorization header at the new target.
         redirect: 'manual',
         signal: AbortSignal.timeout(this.timeoutMs),
-        headers: { ...(init.headers as Record<string, string> | undefined), Authorization: `Bearer ${this.pat}` },
+        headers: { ...callerHeaders, Authorization: `Bearer ${this.pat}` },
       });
     } catch (err) {
       throw new SyncUnreachableError(`${method} ${path} (${(err as Error).name})`, err);
