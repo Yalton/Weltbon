@@ -264,6 +264,28 @@ describe('sync client CRUD (Plan D)', () => {
     expect(res.status).toBe(403);
   });
 
+  it('404s a link whose remoteId belongs to another user, rather than linking to it', async () => {
+    // This is the boundary Task 7's drive loop trusts when deciding whose PAT
+    // to decrypt and which URL to dial. If ownedRemote's check were dropped,
+    // a caller could link their own universe to another user's registered
+    // remote and trigger an outbound sync using that other user's stored PAT.
+    const other = await createTestUser(handle, { email: 'other4@test.dev', password: 'password123' });
+    const { syncRemotes } = await import('../src/db/schema.js');
+    const { encryptSecret } = await import('../src/services/crypto.js');
+    const [theirRemote] = await handle.db
+      .insert(syncRemotes)
+      .values({
+        userId: other.id,
+        label: 'Their server',
+        baseUrl: 'https://theirs.example',
+        encryptedPat: encryptSecret('wbn_pat_notyours', '0'.repeat(64)),
+      })
+      .returning();
+
+    const res = await post('/api/sync/links', { universeId, remoteId: theirRemote.id });
+    expect(res.status).toBe(404);
+  });
+
   it('does not disturb Plan C peer routes at the same prefix', async () => {
     // Both routers mount at /api/sync; the peer surface must still answer.
     const res = await post('/api/sync/handshake', { weltbonVersion: 'nope', migrationHead: 'nope' });

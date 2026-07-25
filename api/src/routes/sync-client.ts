@@ -37,7 +37,19 @@ type AppEnv = { Variables: AuthVariables };
 
 const errorSchema = z.object({ error: z.string() });
 
-const idParamSchema = z.object({ id: z.string().uuid() });
+const idParams = z.object({ id: z.string().uuid() });
+
+// Shared response-object constants (Task 6/7 also reference these). Each holds
+// the text that is ACTUALLY duplicated verbatim across two or more routes
+// today — not a generic placeholder — so a route whose wording differs
+// meaningfully (e.g. postRemoteRoute's 401 calls out the D-10 PAT rule by
+// name) keeps its own specific inline response object instead of being
+// flattened into one of these.
+const err400 = { content: { 'application/json': { schema: errorSchema } }, description: 'Invalid base URL (D-04).' };
+const err401 = { content: { 'application/json': { schema: errorSchema } }, description: 'Missing or invalid JWT bearer.' };
+const err403 = { content: { 'application/json': { schema: errorSchema } }, description: 'Universe belongs to another user.' };
+const err404 = { content: { 'application/json': { schema: errorSchema } }, description: 'Remote not found / not owned.' };
+const err503 = { content: { 'application/json': { schema: errorSchema } }, description: 'Server not configured for encryption.' };
 
 const createRemoteBodySchema = z.object({
   label: z.string().trim().default(''),
@@ -79,8 +91,6 @@ const linkSchema = z.object({
   lastError: z.string().nullable(),
   createdAt: z.string(),
 });
-
-const server503Schema = errorSchema;
 
 // ─── Masked-row helper ──────────────────────────────────────────────────────
 
@@ -158,9 +168,11 @@ const postRemoteRoute = createRoute({
   },
   responses: {
     201: { content: { 'application/json': { schema: maskedRemoteSchema } }, description: 'Remote registered. Response is masked.' },
-    400: { content: { 'application/json': { schema: errorSchema } }, description: 'Invalid base URL (D-04).' },
+    400: err400,
+    // Specific rather than the shared err401: this is the one route whose 401
+    // wording calls out the D-10 PAT rule by name.
     401: { content: { 'application/json': { schema: errorSchema } }, description: 'Missing or invalid JWT bearer (or PAT — D-10).' },
-    503: { content: { 'application/json': { schema: server503Schema } }, description: 'Server not configured for encryption.' },
+    503: err503,
   },
 });
 
@@ -174,7 +186,7 @@ const getRemotesRoute = createRoute({
   middleware: [requireJwtAuth] as const,
   responses: {
     200: { content: { 'application/json': { schema: z.array(maskedRemoteSchema) } }, description: 'Array of masked remotes.' },
-    401: { content: { 'application/json': { schema: errorSchema } }, description: 'Missing or invalid JWT bearer.' },
+    401: err401,
   },
 });
 
@@ -187,7 +199,7 @@ const patchRemoteRoute = createRoute({
   security: [{ bearerJwtAuth: [] }],
   middleware: [requireJwtAuth] as const,
   request: {
-    params: idParamSchema,
+    params: idParams,
     body: {
       content: { 'application/json': { schema: updateRemoteBodySchema } },
       required: true,
@@ -195,10 +207,10 @@ const patchRemoteRoute = createRoute({
   },
   responses: {
     200: { content: { 'application/json': { schema: maskedRemoteSchema } }, description: 'Remote updated. Response is masked.' },
-    400: { content: { 'application/json': { schema: errorSchema } }, description: 'Invalid base URL (D-04).' },
-    401: { content: { 'application/json': { schema: errorSchema } }, description: 'Missing or invalid JWT bearer.' },
-    404: { content: { 'application/json': { schema: errorSchema } }, description: 'Remote not found / not owned.' },
-    503: { content: { 'application/json': { schema: server503Schema } }, description: 'Server not configured for encryption.' },
+    400: err400,
+    401: err401,
+    404: err404,
+    503: err503,
   },
 });
 
@@ -213,11 +225,11 @@ const deleteRemoteRoute = createRoute({
     'the remote row — otherwise it is an orphaned blob nothing will ever collect.',
   security: [{ bearerJwtAuth: [] }],
   middleware: [requireJwtAuth] as const,
-  request: { params: idParamSchema },
+  request: { params: idParams },
   responses: {
     200: { content: { 'application/json': { schema: z.object({ deleted: z.literal(true) }) } }, description: 'Remote (and its links\' base snapshots) deleted.' },
-    401: { content: { 'application/json': { schema: errorSchema } }, description: 'Missing or invalid JWT bearer.' },
-    404: { content: { 'application/json': { schema: errorSchema } }, description: 'Remote not found / not owned.' },
+    401: err401,
+    404: err404,
   },
 });
 
@@ -241,8 +253,11 @@ const postLinkRoute = createRoute({
   },
   responses: {
     201: { content: { 'application/json': { schema: linkSchema } }, description: 'Link created.' },
-    401: { content: { 'application/json': { schema: errorSchema } }, description: 'Missing or invalid JWT bearer.' },
-    403: { content: { 'application/json': { schema: errorSchema } }, description: 'Universe belongs to another user.' },
+    401: err401,
+    403: err403,
+    // Specific rather than the shared err404: this route's 404 covers TWO
+    // different not-found causes (universe or remote), distinct from every
+    // other route's single-cause 404 wording.
     404: { content: { 'application/json': { schema: errorSchema } }, description: 'Universe or remote not found / not owned.' },
     409: { content: { 'application/json': { schema: errorSchema } }, description: 'This universe is already linked to this remote.' },
   },
@@ -259,8 +274,10 @@ const getLinksRoute = createRoute({
   request: { query: linkListQuerySchema },
   responses: {
     200: { content: { 'application/json': { schema: z.array(linkSchema) } }, description: 'Array of links with remote metadata.' },
-    401: { content: { 'application/json': { schema: errorSchema } }, description: 'Missing or invalid JWT bearer.' },
-    403: { content: { 'application/json': { schema: errorSchema } }, description: 'Universe belongs to another user.' },
+    401: err401,
+    403: err403,
+    // Specific rather than the shared err404: this route only ever 404s for
+    // the universe (it has no remoteId to be missing), unlike postLinkRoute.
     404: { content: { 'application/json': { schema: errorSchema } }, description: 'Universe not found.' },
   },
 });
@@ -273,10 +290,12 @@ const deleteLinkRoute = createRoute({
   description: 'Drops the link\'s base snapshot from storageBackend before deleting the row. JWT auth required.',
   security: [{ bearerJwtAuth: [] }],
   middleware: [requireJwtAuth] as const,
-  request: { params: idParamSchema },
+  request: { params: idParams },
   responses: {
     200: { content: { 'application/json': { schema: z.object({ deleted: z.literal(true) }) } }, description: 'Link (and its base snapshot) deleted.' },
-    401: { content: { 'application/json': { schema: errorSchema } }, description: 'Missing or invalid JWT bearer.' },
+    401: err401,
+    // Specific rather than the shared err404: "link" here, not "remote" —
+    // deleteRemoteRoute's err404 wording would be wrong for this row type.
     404: { content: { 'application/json': { schema: errorSchema } }, description: 'Link not found / not owned.' },
   },
 });
