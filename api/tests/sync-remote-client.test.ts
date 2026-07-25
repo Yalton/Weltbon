@@ -72,6 +72,20 @@ describe('SyncRemoteClient transport invariants', () => {
     const { fetchImpl } = stub(() => json({ blob: 'x'.repeat(5000) }));
     await expect(client(fetchImpl, { maxJsonBytes: 100 }).snapshot('u-1')).rejects.toThrow(/too large|exceeded/i);
   });
+
+  it('rejects via the declared content-length fast path before reading any bytes', async () => {
+    // new Response(string) does not populate content-length, so the streaming
+    // over-cap test above never exercises this branch — a regression flipping
+    // `>` to `>=` or dropping the check entirely would be invisible without it.
+    const { fetchImpl } = stub(
+      () =>
+        new Response('{}', {
+          status: 200,
+          headers: { 'Content-Type': 'application/json', 'Content-Length': '1000' },
+        }),
+    );
+    await expect(client(fetchImpl, { maxJsonBytes: 100 }).snapshot('u-1')).rejects.toThrow(/too large|exceeded/i);
+  });
 });
 
 describe('SyncRemoteClient status mapping', () => {
@@ -96,6 +110,20 @@ describe('SyncRemoteClient status mapping', () => {
   it('returns null for a snapshot 404 rather than throwing', async () => {
     const { fetchImpl } = stub(() => json({ error: 'Universe not found' }, 404));
     expect(await client(fetchImpl).snapshot('u-1')).toBeNull();
+  });
+
+  it('sanitizes a hostile handshake 409 identity rather than echoing it (D-09/D-16)', async () => {
+    const hostile = {
+      weltbonVersion: 'LEAKED-SECRET-TEXT '.repeat(200),
+      appVersion: 'x',
+      migrationHead: 'y',
+    };
+    const { fetchImpl } = stub(() => json({ error: 'mismatch', local: IDENTITY, remote: hostile }, 409));
+    const err = await client(fetchImpl).handshake(IDENTITY).catch((e) => e);
+
+    expect(err).toBeInstanceOf(SyncIncompatibleError);
+    expect(err.remote).toBeNull();
+    expect(safeErrorSummary(err)).not.toContain('LEAKED-SECRET-TEXT');
   });
 
   it('keeps only Plan C sanitized fields off a rejected apply (D-09)', async () => {

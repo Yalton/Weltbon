@@ -74,13 +74,47 @@ function sanitizeApplyDetail(body: unknown): RemoteApplyDetail {
     if (hashes.length > 0) out.missingAssetHashes = hashes;
   }
   if (Array.isArray(b.collisions)) {
+    // A bounded PATTERN, not an allowlist of manifest.ts's known collections:
+    // Plan C's C-17 already emits a label (`issue_entries`) that is not a
+    // manifest collection, so an enum would silently discard a legitimate
+    // diagnostic the day another such label is added. The pattern bounds the
+    // risk fully (charset + length) without coupling this module to a list
+    // that is not authoritative for this field.
     const cols = b.collisions
       .filter((c): c is Record<string, unknown> => typeof c === 'object' && c !== null)
       .map((c) => ({ collection: String(c.collection ?? ''), count: Number(c.count ?? 0) }))
-      .filter((c) => c.collection !== '' && Number.isFinite(c.count));
+      .filter((c) => /^[A-Za-z_][A-Za-z0-9_]{0,63}$/.test(c.collection) && Number.isFinite(c.count));
     if (cols.length > 0) out.collisions = cols;
   }
   return out;
+}
+
+/**
+ * The handshake 409 body is a peer's own construction and, unlike apply's
+ * fields, was never given a defined shape by anything on our side — a bare
+ * cast here is exactly C-21's mistake one path over. Require all three
+ * identity fields to be strings matching a bounded pattern (this codebase's
+ * real values look like `2.2.0` or `0035_sync_conflict_row_id_text`); if ANY
+ * field fails, return null rather than partially repair it — an identity you
+ * cannot trust is one you do not have. The caller's null path already exists
+ * and SyncIncompatibleError already renders `?` for a missing remote.
+ */
+function sanitizeIdentity(body: unknown): InstanceIdentityLike | null {
+  if (typeof body !== 'object' || body === null) return null;
+  const b = body as Record<string, unknown>;
+  const pattern = /^[A-Za-z0-9._-]{1,64}$/;
+  const { weltbonVersion, appVersion, migrationHead } = b;
+  if (
+    typeof weltbonVersion !== 'string' ||
+    typeof appVersion !== 'string' ||
+    typeof migrationHead !== 'string' ||
+    !pattern.test(weltbonVersion) ||
+    !pattern.test(appVersion) ||
+    !pattern.test(migrationHead)
+  ) {
+    return null;
+  }
+  return { weltbonVersion, appVersion, migrationHead };
 }
 
 export class SyncRemoteClient {
@@ -183,7 +217,7 @@ export class SyncRemoteClient {
     });
     const body = (await this.readJson(res, 'handshake')) as Record<string, unknown>;
     if (res.status === 409) {
-      throw new SyncIncompatibleError(local, (body.remote as InstanceIdentityLike | undefined) ?? null);
+      throw new SyncIncompatibleError(local, sanitizeIdentity(body.remote));
     }
     if (res.status !== 200) throw new SyncUnreachableError(`handshake returned ${res.status}`);
     return body.remote as InstanceIdentityLike;

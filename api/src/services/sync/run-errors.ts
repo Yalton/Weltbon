@@ -19,8 +19,8 @@ export abstract class SyncRunError extends Error {
   /** Operator-safe, never derived from a remote response body (D-09). */
   abstract readonly safeDetail: string;
 
-  constructor(message: string) {
-    super(message);
+  constructor(message: string, options?: ErrorOptions) {
+    super(message, options);
     this.name = new.target.name;
   }
 }
@@ -66,8 +66,10 @@ export class SyncUnreachableError extends SyncRunError {
   readonly code = 'remote-unreachable';
   readonly status = 502;
   readonly safeDetail: string;
-  constructor(what: string, readonly cause?: unknown) {
-    super(`Remote unreachable: ${what}`);
+  constructor(what: string, cause?: unknown) {
+    // Native ES2022 Error.cause rather than a shadowing field of the same
+    // name — same observable behavior, one less "why is this here".
+    super(`Remote unreachable: ${what}`, { cause });
     // `what` is composed by the client from the METHOD and PATH it called plus
     // the transport error's name — never from a response body.
     this.safeDetail = what;
@@ -116,8 +118,11 @@ export class SyncIncompatibleError extends SyncRunError {
     readonly remote: InstanceIdentityLike | null,
   ) {
     super('Instances are not compatible — update the older instance before syncing');
-    // Both identities are version strings this codebase defines (S-08), not
-    // free-form remote text, so they are safe to record.
+    // Safe to record NOT because these are inherently trustworthy — `remote`
+    // is a peer's own 409 body and the peer controls it completely — but
+    // because remote-client.ts's `sanitizeIdentity` validates every field
+    // against a bounded pattern at the boundary before it ever reaches this
+    // constructor, and substitutes null (rendered as `?` below) on failure.
     this.safeDetail =
       `local ${local.weltbonVersion}/${local.migrationHead} vs ` +
       `remote ${remote?.weltbonVersion ?? '?'}/${remote?.migrationHead ?? '?'}`;
