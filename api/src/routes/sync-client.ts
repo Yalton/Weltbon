@@ -39,6 +39,8 @@ import {
   type SyncConflictRow,
 } from '../services/sync/conflicts.js';
 import { SyncApplyError } from '../services/sync/errors.js';
+import { runSync, testRemote } from '../services/sync/run-sync.js';
+import { SyncRunError } from '../services/sync/run-errors.js';
 import { env } from '../config.js';
 
 type AppEnv = { Variables: AuthVariables };
@@ -119,6 +121,55 @@ const conflictSchema = z.object({
   resolvedAt: z.string().nullable(),
   createdAt: z.string(),
 });
+
+// Task 7: the drive loop's two routes. A SyncRunError carries its own `code`
+// (machine-readable, for Plan E's UI) alongside the human message, so this
+// error body has one more field than the plain errorSchema used elsewhere.
+const syncErrorSchema = z.object({ error: z.string(), code: z.string() });
+
+const identitySchema = z.object({
+  weltbonVersion: z.string(),
+  appVersion: z.string(),
+  migrationHead: z.string(),
+});
+
+const testRemoteResponseSchema = z.object({ ok: z.literal(true), remote: identitySchema });
+
+const runQuerySchema = z.object({
+  force: z.enum(['true', 'false']).optional(),
+});
+
+const countsSchema = z.object({
+  upserted: z.record(z.string(), z.number()),
+  deleted: z.record(z.string(), z.number()),
+});
+
+const syncRunResultSchema = z.object({
+  linkId: z.string().uuid(),
+  bootstrapped: z.boolean(),
+  conflicts: z.number(),
+  blobsPushed: z.number(),
+  blobsPulled: z.number(),
+  pushed: countsSchema,
+  appliedLocally: countsSchema,
+});
+
+// Every status a SyncRunError subclass can carry (run-errors.ts). Declaring
+// each here is the C-19 lesson: a per-class instanceof chain silently 500s
+// the day a class is added, so the route's single branch below narrows on
+// `err.status` — but the OpenAPI schema must still promise every value that
+// cast can actually produce.
+const syncRunErrorResponses = {
+  400: { content: { 'application/json': { schema: syncErrorSchema } }, description: 'Malformed request the apply engine rejected.' },
+  401: { content: { 'application/json': { schema: syncErrorSchema } }, description: 'Missing or invalid JWT bearer.' },
+  402: { content: { 'application/json': { schema: syncErrorSchema } }, description: 'The remote requires an active subscription (S-09).' },
+  403: { content: { 'application/json': { schema: syncErrorSchema } }, description: 'Caller does not own this universe.' },
+  404: { content: { 'application/json': { schema: syncErrorSchema } }, description: 'Sync link or remote not found / not owned.' },
+  409: { content: { 'application/json': { schema: syncErrorSchema } }, description: 'Busy, incompatible, severed link, blob unavailable, or remote-rejected apply.' },
+  413: { content: { 'application/json': { schema: syncErrorSchema } }, description: 'The remote is out of storage quota (S-09).' },
+  500: { content: { 'application/json': { schema: syncErrorSchema } }, description: 'The stored remote credential could not be decrypted.' },
+  502: { content: { 'application/json': { schema: syncErrorSchema } }, description: 'The remote was unreachable.' },
+} as const;
 
 // ─── Masked-row helper ──────────────────────────────────────────────────────
 
@@ -261,6 +312,31 @@ const deleteRemoteRoute = createRoute({
   },
 });
 
+const testRemoteRoute = createRoute({
+  method: 'post',
+  path: '/remotes/{id}/test',
+  tags: ['Sync Remotes'],
+  summary: 'Test a registered remote by running the S-08 handshake',
+  description:
+    'Decrypts the stored PAT and calls the remote\'s handshake. Touches no ' +
+    'universe or link. JWT auth required.',
+  security: [{ bearerJwtAuth: [] }],
+  middleware: [requireJwtAuth] as const,
+  request: { params: idParams },
+  responses: {
+    200: { content: { 'application/json': { schema: testRemoteResponseSchema } }, description: 'Handshake succeeded; the peer\'s identity.' },
+    400: syncRunErrorResponses[400],
+    401: syncRunErrorResponses[401],
+    402: syncRunErrorResponses[402],
+    403: syncRunErrorResponses[403],
+    404: syncRunErrorResponses[404],
+    409: syncRunErrorResponses[409],
+    413: syncRunErrorResponses[413],
+    500: syncRunErrorResponses[500],
+    502: syncRunErrorResponses[502],
+  },
+});
+
 // ─── Routes: /links ─────────────────────────────────────────────────────────
 
 const postLinkRoute = createRoute({
@@ -325,6 +401,33 @@ const deleteLinkRoute = createRoute({
     // Specific rather than the shared err404: "link" here, not "remote" —
     // deleteRemoteRoute's err404 wording would be wrong for this row type.
     404: { content: { 'application/json': { schema: errorSchema } }, description: 'Link not found / not owned.' },
+  },
+});
+
+const runLinkRoute = createRoute({
+  method: 'post',
+  path: '/links/{id}/run',
+  tags: ['Sync Links'],
+  summary: 'Run the sync drive loop for a link (Plan D, the centrepiece)',
+  description:
+    'Pulls the remote snapshot, three-way merges against the stored base, ' +
+    'applies the merged delta locally AND pushes the mirror-image delta to ' +
+    'remote (remote first — D-06), then advances the base. `?force=true` skips ' +
+    'the busy-lease check for a claim stuck by a crashed prior run. JWT auth required.',
+  security: [{ bearerJwtAuth: [] }],
+  middleware: [requireJwtAuth] as const,
+  request: { params: idParams, query: runQuerySchema },
+  responses: {
+    200: { content: { 'application/json': { schema: syncRunResultSchema } }, description: 'Sync completed; the base has advanced.' },
+    400: syncRunErrorResponses[400],
+    401: syncRunErrorResponses[401],
+    402: syncRunErrorResponses[402],
+    403: syncRunErrorResponses[403],
+    404: syncRunErrorResponses[404],
+    409: syncRunErrorResponses[409],
+    413: syncRunErrorResponses[413],
+    500: syncRunErrorResponses[500],
+    502: syncRunErrorResponses[502],
   },
 });
 
@@ -550,6 +653,24 @@ export const syncClientRoutes = new OpenAPIHono<AppEnv>()
     return c.json({ deleted: true as const }, 200);
   })
 
+  .openapi(testRemoteRoute, async (c) => {
+    const userId = c.var.userId;
+    const { id } = c.req.valid('param');
+
+    try {
+      const remote = await testRemote(id, userId);
+      return c.json({ ok: true as const, remote }, 200);
+    } catch (err) {
+      // ONE branch reading the error's own status/code (C-19 lesson): a
+      // per-class instanceof chain silently returns 500 the day a new
+      // SyncRunError subclass is added.
+      if (err instanceof SyncRunError) {
+        return c.json({ error: err.message, code: err.code }, err.status as 400 | 401 | 402 | 403 | 404 | 409 | 413 | 500 | 502);
+      }
+      throw err;
+    }
+  })
+
   .openapi(postLinkRoute, async (c) => {
     const userId = c.var.userId;
     const { universeId, remoteId } = c.req.valid('json');
@@ -620,6 +741,25 @@ export const syncClientRoutes = new OpenAPIHono<AppEnv>()
     await deleteBaseSnapshot(link.id);
     await getDb().delete(syncLinks).where(eq(syncLinks.id, id));
     return c.json({ deleted: true as const }, 200);
+  })
+
+  .openapi(runLinkRoute, async (c) => {
+    const userId = c.var.userId;
+    const { id } = c.req.valid('param');
+    const { force } = c.req.valid('query');
+
+    try {
+      const result = await runSync(id, userId, { force: force === 'true' });
+      return c.json(result, 200);
+    } catch (err) {
+      // ONE branch reading the error's own status/code (C-19 lesson): a
+      // per-class instanceof chain silently returns 500 the day a new
+      // SyncRunError subclass is added.
+      if (err instanceof SyncRunError) {
+        return c.json({ error: err.message, code: err.code }, err.status as 400 | 401 | 402 | 403 | 404 | 409 | 413 | 500 | 502);
+      }
+      throw err;
+    }
   })
 
   .openapi(getConflictsRoute, async (c) => {
