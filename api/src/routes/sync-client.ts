@@ -16,9 +16,11 @@
  *   POST   /links                  create {universeId, remoteId}
  *   GET    /links?universeId=      list
  *   DELETE /links/{id}             delete + drop the base snapshot
+ *   GET    /conflicts?universeId=  list LWW-loser conflicts (S-03)
+ *   POST   /conflicts/{id}/resolve mark resolved without restoring
+ *   POST   /conflicts/{id}/restore write the loser back as a fresh local edit
  *
- * Task 6 (conflict endpoints) and Task 7 (the drive loop) land in this same
- * file, so keep it clean.
+ * Task 7 (the drive loop) lands in this same file, so keep it clean.
  */
 import { OpenAPIHono, createRoute, z } from '@hono/zod-openapi';
 import { and, eq } from 'drizzle-orm';

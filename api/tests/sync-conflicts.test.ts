@@ -151,6 +151,106 @@ describe('sync_conflicts ledger (Plan D, D-03)', () => {
       const rows = await handle.db.select().from(sc).where(eq(sc.universeId, universeId));
       expect(rows).toHaveLength(1);
     });
+
+    it('is idempotent against a jsonb-round-tripped row even when the replay keys are reordered (the actual D-13 crash-replay scenario)', async () => {
+      // The two tests above each cover ONE half of D-13: the idempotency test
+      // reuses the same JS object across both calls, and the key-order test
+      // dedupes two in-memory objects that were never persisted. Neither
+      // exercises what a real crash-and-replay produces: an already-PERSISTED
+      // (jsonb round-tripped) row compared against a freshly-reconstructed
+      // replay payload whose keys are in a different order. Postgres reorders
+      // jsonb keys on storage — verified via psql:
+      //   '{"z":1,"a":2,"m":3}'::jsonb::text -> {"a": 2, "m": 3, "z": 1}
+      // — so this is a real representation mismatch, not a hypothetical one.
+      const { recordConflicts } = await import('../src/services/sync/conflicts.js');
+      const { syncConflicts: sc } = await import('../src/db/schema.js');
+      const entryId = '55555555-5555-5555-5555-555555555555';
+      const updatedAt = new Date().toISOString();
+
+      const first: RowConflict = {
+        collection: 'graphPositions',
+        key: entryId,
+        winner: 'remote',
+        winnerRow: { entryId, x: 1, y: 1, updatedAt },
+        loserRow: { entryId, x: 2, y: 3, updatedAt },
+        reason: 'both-changed',
+      };
+      expect(await recordConflicts(universeId, [first])).toBe(1);
+
+      // A freshly-reconstructed replay payload, keys in a DIFFERENT order from
+      // `first.loserRow` above, compared against the now-PERSISTED (jsonb
+      // round-tripped) row from the first call.
+      const replay: RowConflict = {
+        ...first,
+        loserRow: { y: 3, updatedAt, x: 2, entryId },
+      };
+      expect(await recordConflicts(universeId, [replay])).toBe(0);
+
+      const rows = await handle.db.select().from(sc).where(eq(sc.universeId, universeId));
+      expect(rows).toHaveLength(1);
+    });
+
+    it('records a batch of 3 DISTINCT conflicts in one call, each landing with its own tableName/rowId/winner/payload', async () => {
+      // Every other multi-item test above uses duplicates of the SAME key, so
+      // the multi-row insert().values(toInsert) path for genuinely distinct
+      // rows (the normal case Task 7's drive loop actually calls) was
+      // unexercised. A batch-building bug that transposed fields across rows
+      // would still pass a bare count assertion, so this checks each row's
+      // full identity, not just how many landed.
+      const { recordConflicts } = await import('../src/services/sync/conflicts.js');
+      const { syncConflicts: sc } = await import('../src/db/schema.js');
+      const updatedAt = new Date().toISOString();
+
+      const entryIdA = 'a1111111-1111-1111-1111-111111111111';
+      const entryIdB = 'b2222222-2222-2222-2222-222222222222';
+      const graphEntryId = 'c3333333-3333-3333-3333-333333333333';
+
+      const conflicts: RowConflict[] = [
+        {
+          collection: 'entries',
+          key: entryIdA,
+          winner: 'local',
+          winnerRow: { id: entryIdA, title: 'Winner A', updatedAt },
+          loserRow: { id: entryIdA, title: 'Loser A', updatedAt },
+          reason: 'both-changed',
+        },
+        {
+          collection: 'entries',
+          key: entryIdB,
+          winner: 'remote',
+          winnerRow: { id: entryIdB, title: 'Winner B', updatedAt },
+          loserRow: { id: entryIdB, title: 'Loser B', updatedAt },
+          reason: 'both-changed',
+        },
+        {
+          collection: 'graphPositions',
+          key: graphEntryId,
+          winner: 'remote',
+          winnerRow: { entryId: graphEntryId, x: 1, y: 1, updatedAt },
+          loserRow: { entryId: graphEntryId, x: 9, y: 9, updatedAt },
+          reason: 'both-changed',
+        },
+      ];
+
+      expect(await recordConflicts(universeId, conflicts)).toBe(3);
+
+      const rows = await handle.db.select().from(sc).where(eq(sc.universeId, universeId));
+      expect(rows).toHaveLength(3);
+
+      const byRowId = new Map(rows.map((r) => [r.rowId, r]));
+
+      expect(byRowId.get(entryIdA)?.tableName).toBe('entries');
+      expect(byRowId.get(entryIdA)?.winner).toBe('local');
+      expect((byRowId.get(entryIdA)?.loserPayload as Record<string, unknown>).title).toBe('Loser A');
+
+      expect(byRowId.get(entryIdB)?.tableName).toBe('entries');
+      expect(byRowId.get(entryIdB)?.winner).toBe('remote');
+      expect((byRowId.get(entryIdB)?.loserPayload as Record<string, unknown>).title).toBe('Loser B');
+
+      expect(byRowId.get(graphEntryId)?.tableName).toBe('graphPositions');
+      expect(byRowId.get(graphEntryId)?.winner).toBe('remote');
+      expect((byRowId.get(graphEntryId)?.loserPayload as Record<string, unknown>).y).toBe(9);
+    });
   });
 
   describe('/api/sync/conflicts routes', () => {
