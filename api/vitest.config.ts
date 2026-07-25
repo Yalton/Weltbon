@@ -110,6 +110,8 @@ const DB_GATED_TESTS = [
   'tests/sync-materialize.test.ts',
   // Plan D Task 5 — sync remotes/links CRUD.
   'tests/sync-client-crud.test.ts',
+  // Plan D Task 8 — two-instance acceptance for the sync drive loop.
+  'tests/sync-run.test.ts',
 ];
 
 export default defineConfig({
