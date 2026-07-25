@@ -39,7 +39,7 @@ import {
   type SyncConflictRow,
 } from '../services/sync/conflicts.js';
 import { SyncApplyError } from '../services/sync/errors.js';
-import { UniverseOwnershipError, CrossUniverseCollisionError } from '../services/sync/apply.js';
+import { mapSyncApplyError } from '../services/sync/apply-error-response.js';
 import { runSync, testRemote } from '../services/sync/run-sync.js';
 import { SyncRunError } from '../services/sync/run-errors.js';
 import { env } from '../config.js';
@@ -779,33 +779,12 @@ export const syncClientRoutes = new OpenAPIHono<AppEnv>()
       // SyncApplyError — a SEPARATE hierarchy from SyncRunError (its own C-19
       // lesson: routes/sync.ts already needed one branch for this tree, and
       // this route needs its own, because the two hierarchies do not share a
-      // common base). Checked FIRST and mirrored from routes/sync.ts's apply
-      // handler exactly, including its C-21 non-disclosure of foreign ids —
-      // UniverseOwnershipError and CrossUniverseCollisionError are narrowed
-      // before the generic SyncApplyError catch-all, or they would fall
-      // through to it and leak their own fields.
-      if (err instanceof UniverseOwnershipError) {
-        return c.json({ error: 'Forbidden' }, 403);
-      }
-      if (err instanceof CrossUniverseCollisionError) {
-        // NB: err.message embeds the foreign ids (apply.ts builds it as
-        // `collection[id, id]`), so it must NOT be echoed — return only
-        // {collection, count}; the ids are logged server-side for the operator.
-        console.warn('[sync-client/run] cross-universe collision:', err.message);
-        return c.json(
-          {
-            error: 'Cross-universe id collision — some incoming ids already exist in another universe',
-            collisions: err.collisions.map((col) => ({ collection: col.collection, count: col.ids.length })),
-          },
-          err.status,
-        );
-      }
+      // common base). Checked FIRST, via the ONE shared mapper (C-21) that
+      // routes/sync.ts and restoreConflictRoute also use — see its docstring
+      // for why hand-rolling this per call site is exactly what re-leaks C-21.
       if (err instanceof SyncApplyError) {
-        // ConstraintCollisionError → 409; UnknownCollection/MissingRowId/
-        // InvalidSyncTimestamp → 400. Both declared responses; every OTHER
-        // SyncApplyError message is self-referential (names only this
-        // universe's own rows), so it is safe to echo verbatim.
-        return c.json({ error: err.message }, err.status as 400 | 409);
+        const mapped = mapSyncApplyError(err, 'sync-client/run');
+        return c.json(mapped.body, mapped.status as 400 | 403 | 409);
       }
       // ONE branch reading the error's own status/code (C-19 lesson): a
       // per-class instanceof chain silently returns 500 the day a new
@@ -854,31 +833,16 @@ export const syncClientRoutes = new OpenAPIHono<AppEnv>()
     try {
       await restoreConflict(conflict, userId);
     } catch (err) {
-      // C-19 says "one branch reading the error's own status, so a new
-      // SyncApplyError subclass can't silently 500" — but applying THAT rule
-      // without C-21's exception is exactly what leaked here: restoreConflict
-      // feeds a stored loserPayload into applyManifestOps, whose C-09
-      // pre-flight checks incoming ids against EVERY universe on the
-      // instance, not just the caller's — so CrossUniverseCollisionError is
-      // genuinely reachable here, and its .message embeds another universe's
-      // row ids (apply.ts:97, `collection[id, id]`). Echoing it verbatim was
-      // the bug. Mirror runLinkRoute's treatment exactly: narrow the two
-      // unsafe classes first, THEN fall through to the C-19 catch-all.
-      if (err instanceof UniverseOwnershipError) {
-        return c.json({ error: 'Forbidden' }, 403);
-      }
-      if (err instanceof CrossUniverseCollisionError) {
-        console.warn('[sync-client/restore] cross-universe collision:', err.message);
-        return c.json(
-          {
-            error: 'Cross-universe id collision — some incoming ids already exist in another universe',
-            collisions: err.collisions.map((col) => ({ collection: col.collection, count: col.ids.length })),
-          },
-          err.status,
-        );
-      }
+      // restoreConflict feeds a STORED loserPayload into applyManifestOps,
+      // whose C-09 pre-flight checks incoming ids against EVERY universe on
+      // the instance, not just the caller's — so CrossUniverseCollisionError
+      // is genuinely reachable here. Routed through the ONE shared mapper
+      // (C-21) that routes/sync.ts and runLinkRoute also use — see its
+      // docstring for why hand-rolling this per call site is exactly what
+      // re-leaks C-21.
       if (err instanceof SyncApplyError) {
-        return c.json({ error: err.message }, err.status as 400 | 409);
+        const mapped = mapSyncApplyError(err, 'sync-client/restore');
+        return c.json(mapped.body, mapped.status as 400 | 403 | 409);
       }
       throw err;
     }

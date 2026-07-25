@@ -28,12 +28,9 @@ import { maxFileBytes, maxUniverseQuota } from '../services/media/limits.js';
 import { buildSyncManifest } from '../services/sync/snapshot.js';
 import { sha256Hex } from '../services/sync/asset-hash.js';
 import { localIdentity, MigrationHeadUnavailableError } from '../services/sync/handshake.js';
-import {
-  applyManifestOps,
-  CrossUniverseCollisionError,
-  UniverseOwnershipError,
-} from '../services/sync/apply.js';
+import { applyManifestOps } from '../services/sync/apply.js';
 import { SyncApplyError } from '../services/sync/errors.js';
+import { mapSyncApplyError } from '../services/sync/apply-error-response.js';
 import {
   syncBlobKey,
   findOwnedAssetsByHash,
@@ -409,41 +406,17 @@ export const syncRoutes = new OpenAPIHono<AppEnv>()
       );
     } catch (err) {
       // Every engine error derives from SyncApplyError and carries its own
-      // `status` (C-19), so ONE branch maps them all — a later error class that
-      // forgets a status is a compile error, not a silent 500 here. What each
-      // error is safe to put in the BODY is this route's call, not the engine's:
-      //  - UniverseOwnershipError (403): return a bare Forbidden — its fields
-      //    name the real owner and must not be echoed.
-      //  - CrossUniverseCollisionError (409): its `collisions` name rows in OTHER
-      //    universes — return {collection, count}, never the ids.
-      //  - ConstraintCollisionError (409), UnknownCollectionError /
-      //    MissingRowIdError / InvalidSyncTimestampError (400): caller-fault and
-      //    self-referential, safe to return.
-      // Anything NOT a SyncApplyError — notably a raw 23503 — is a genuine 500:
-      // apply does not repair referential integrity (B-10), so an FK violation
-      // means the peer sent an inconsistent manifest, not a describable request.
-      if (err instanceof UniverseOwnershipError) {
-        return c.json({ error: 'Forbidden' }, 403);
-      }
-      if (err instanceof CrossUniverseCollisionError) {
-        // NB: err.message embeds the foreign ids (apply.ts builds it as
-        // `collection[id, id]`), so it must NOT be echoed — the C-09 guard is
-        // non-disclosure of other universes' row ids. Return only {collection,
-        // count}; the ids are logged server-side for the operator.
-        console.warn('[sync/apply] cross-universe collision:', err.message);
-        return c.json(
-          {
-            error: 'Cross-universe id collision — some incoming ids already exist in another universe',
-            collisions: err.collisions.map((col) => ({ collection: col.collection, count: col.ids.length })),
-          },
-          err.status,
-        );
-      }
+      // `status` (C-19). What each error is safe to put in the BODY (C-21 —
+      // CrossUniverseCollisionError's `.message` embeds another universe's row
+      // ids and must never be echoed) is centralized in mapSyncApplyError so
+      // this route cannot re-diverge from routes/sync-client.ts's two call
+      // sites into the same engine. Anything NOT a SyncApplyError — notably a
+      // raw 23503 — is a genuine 500: apply does not repair referential
+      // integrity (B-10), so an FK violation means the peer sent an
+      // inconsistent manifest, not a describable request.
       if (err instanceof SyncApplyError) {
-        // ConstraintCollisionError → 409; UnknownCollection/MissingRowId/
-        // InvalidSyncTimestamp → 400. Both are declared responses; the base's
-        // `status` is a plain number, so narrow it for c.json's typed overload.
-        return c.json({ error: err.message }, err.status as 400 | 409);
+        const mapped = mapSyncApplyError(err, 'sync/apply');
+        return c.json(mapped.body, mapped.status as 400 | 403 | 409);
       }
       throw err;
     }
