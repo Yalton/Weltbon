@@ -788,7 +788,11 @@ export const syncConflicts = pgTable('sync_conflicts', {
   id:            uuid('id').primaryKey().defaultRandom(),
   universeId:    uuid('universe_id').references(() => universes.id, { onDelete: 'cascade' }).notNull(),
   tableName:     text('table_name').notNull(),
-  rowId:         uuid('row_id').notNull(),
+  // D-03: the ledger records MERGE keys, and the merge's key space is not the
+  // DB's — merge.ts keys the universe singleton on the literal 'universe', and a
+  // future collection may key on a composite string. Typing this `uuid` encoded
+  // an assumption the merge engine never made.
+  rowId:         text('row_id').notNull(),
   winner:        text('winner').notNull(),                     // 'local' | 'remote'
   loserPayload:  jsonb('loser_payload').notNull(),
   resolvedAt:    timestamp('resolved_at', { withTimezone: true }),
