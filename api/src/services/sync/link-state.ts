@@ -22,8 +22,14 @@ export function syncLeaseMs(): number {
  * Take the link. Throws SyncBusyError if a run is already in flight for this
  * link OR for any other link of the same universe (D-17).
  *
- * `force` skips the condition — the deliberate escape hatch for a claim stuck
- * by a crash, rather than making the user wait out the lease.
+ * `force` narrows to ONE precise meaning: "ignore the lease on THIS link's own
+ * claim." It does NOT mean "ignore the guard" — a FRESH claim held by a
+ * DIFFERENT link of the same universe still refuses, force or not. A user
+ * forcing a stuck sync has no way to know a sibling link is mid-write right
+ * now, so no manual override may punch through the cross-link protection that
+ * exists specifically to prevent that (see D-17 below). What force actually
+ * unsticks is the mundane case: a run that crashed and left ITS OWN link on
+ * 'syncing' forever, before its lease has aged out.
  *
  * The caller MUST have already verified the link exists and is owned; a
  * non-existent id would otherwise match zero rows and be reported as "busy".
@@ -36,10 +42,19 @@ export function syncLeaseMs(): number {
  * update, and it persists: link A's next sync reads the reverted row as a
  * genuine local change and pushes the revert on to remote A.
  * applyManifestOps' own pg_advisory_xact_lock does NOT prevent this — it makes
- * each apply atomic, not the read-merge-write cycle wrapped around it.
+ * each apply atomic, not the read-merge-write cycle wrapped around it. This is
+ * exactly the scenario `force` must never be able to cause, so the sibling
+ * exclusion below is unconditional — only the self-row's own staleness check
+ * is what `force` is allowed to skip.
  */
 export async function claimLink(linkId: string, force = false): Promise<void> {
   const cutoff = new Date(Date.now() - syncLeaseMs());
+
+  // Under force, exclude THIS link's own row from the blocking set — a fresh
+  // (or stale) claim on ITSELF may be stolen. A row belonging to a DIFFERENT
+  // link (sibling.id <> linkId) is NEVER excluded, force or not: that is the
+  // D-17 cross-link protection, and it must survive every override.
+  const selfExclusion = force ? sql`AND sibling.id <> ${linkId}` : sql``;
 
   // Correlated NOT EXISTS so the check and the claim are ONE atomic statement —
   // a read-then-write pair would reintroduce the very race this closes.
@@ -49,9 +64,7 @@ export async function claimLink(linkId: string, force = false): Promise<void> {
     .where(
       and(
         eq(syncLinks.id, linkId),
-        force
-          ? undefined
-          : sql`NOT EXISTS (
+        sql`NOT EXISTS (
               SELECT 1 FROM ${syncLinks} sibling
               WHERE sibling.universe_id = (
                       SELECT inner_link.universe_id FROM ${syncLinks} inner_link
@@ -59,6 +72,7 @@ export async function claimLink(linkId: string, force = false): Promise<void> {
                     )
                 AND sibling.status = 'syncing'
                 AND sibling.updated_at >= ${cutoff}
+                ${selfExclusion}
             )`,
       ),
     )

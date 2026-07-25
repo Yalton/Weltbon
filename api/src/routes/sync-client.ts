@@ -336,10 +336,12 @@ const testRemoteRoute = createRoute({
   request: { params: idParams },
   responses: {
     200: { content: { 'application/json': { schema: testRemoteResponseSchema } }, description: 'Handshake succeeded; the peer\'s identity.' },
-    400: syncRunErrorResponses[400],
+    // 400 and 403 deliberately absent: testRemote() never touches the apply
+    // engine (no 400 source) and folds "not owned" into SyncLinkNotFoundError
+    // → 404, never a bare 403 (see testRemote's own docstring). Declaring an
+    // unreachable status is worse than a terse contract.
     401: syncRunErrorResponses[401],
     402: syncRunErrorResponses[402],
-    403: syncRunErrorResponses[403],
     404: syncRunErrorResponses[404],
     409: syncRunErrorResponses[409],
     413: syncRunErrorResponses[413],
@@ -423,8 +425,11 @@ const runLinkRoute = createRoute({
   description:
     'Pulls the remote snapshot, three-way merges against the stored base, ' +
     'applies the merged delta locally AND pushes the mirror-image delta to ' +
-    'remote (remote first — D-06), then advances the base. `?force=true` skips ' +
-    'the busy-lease check for a claim stuck by a crashed prior run. JWT auth required.',
+    'remote (remote first — D-06), then advances the base. `?force=true` ignores ' +
+    'the lease on THIS link\'s OWN stuck claim (e.g. left mid-flight by a crashed ' +
+    'prior run) — it does NOT bypass the cross-link guard (D-17): a fresh claim ' +
+    'held by a DIFFERENT link of the same universe still refuses the run even ' +
+    'with force:true. JWT auth required.',
   security: [{ bearerJwtAuth: [] }],
   middleware: [requireJwtAuth] as const,
   request: { params: idParams, query: runQuerySchema },
@@ -674,9 +679,11 @@ export const syncClientRoutes = new OpenAPIHono<AppEnv>()
     } catch (err) {
       // ONE branch reading the error's own status/code (C-19 lesson): a
       // per-class instanceof chain silently returns 500 the day a new
-      // SyncRunError subclass is added.
+      // SyncRunError subclass is added. Narrower than runLinkRoute's cast:
+      // testRemote() cannot raise 400 or 403 (see the route's declared
+      // responses above), so those are deliberately excluded here too.
       if (err instanceof SyncRunError) {
-        return c.json({ error: err.message, code: err.code }, err.status as 400 | 401 | 402 | 403 | 404 | 409 | 413 | 500 | 502);
+        return c.json({ error: err.message, code: err.code }, err.status as 401 | 402 | 404 | 409 | 413 | 500 | 502);
       }
       throw err;
     }

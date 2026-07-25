@@ -62,6 +62,13 @@ import {
 } from './run-errors.js';
 
 export interface RunSyncOptions {
+  /**
+   * Ignore the lease on THIS link's own stuck claim (see claimLink's docstring
+   * in link-state.ts). Does NOT bypass the D-17 cross-link guard: a fresh
+   * claim held by a DIFFERENT link of the same universe still refuses the run
+   * even with force:true, because no manual override may risk the lost-update
+   * scenario D-17 exists to prevent.
+   */
   force?: boolean;
   /** D-05: the peer transport. Defaults to global fetch; Task 8 injects a Hono app. */
   fetchImpl?: FetchLike;
@@ -199,7 +206,14 @@ async function drive(
   let plan = await planAssetMaterialization(universeId, mergeResult.localOps.assets?.upserts ?? []);
   let blobsPulled = 0;
   if (plan.missingHashes.length > 0) {
-    for (const hash of plan.missingHashes) {
+    // planAssetMaterialization's missingHashes is per-ROW by design (correct
+    // for its own purpose — materialize.ts is not touched here), so two asset
+    // rows sharing one contentHash (the exact C-20 case) appear twice. Dedupe
+    // at this point of use, mirroring pushBlobs' [...new Set(...)] on the push
+    // side — otherwise the same blob is fetched from the peer twice and
+    // blobsPulled overcounts a single pulled blob as two.
+    const distinctMissing = [...new Set(plan.missingHashes)];
+    for (const hash of distinctMissing) {
       const bytes = await client.getBlob(universeId, hash);
       await storageBackend.put(syncBlobKey(universeId, hash), bytes);
       blobsPulled += 1;
@@ -301,7 +315,16 @@ async function safeRelease(linkId: string, outcome: ReleaseOutcome): Promise<voi
   try {
     await releaseLink(linkId, outcome);
   } catch (releaseErr) {
-    console.error(`[sync] releaseLink failed for link ${linkId}:`, releaseErr);
+    // The attempted outcome (status + lastError) is included deliberately: an
+    // operator reading this log line otherwise cannot tell a lost SUCCESS
+    // (data converged, base advanced, row merely stuck on 'syncing') apart
+    // from a lost FAILURE (a real sync error whose last_error never got
+    // written) — exactly the distinction this whole function exists to
+    // protect the caller from losing.
+    console.error(
+      `[sync] releaseLink failed for link ${linkId} (attempted status=${outcome.status}, lastError=${JSON.stringify(outcome.lastError ?? null)}):`,
+      releaseErr,
+    );
   }
 }
 
