@@ -21,9 +21,10 @@ import { db } from '../db/client.js';
 import { assets, universes } from '../db/schema.js';
 import { requireUniverse } from '../utils/ownership.js';
 import { storageBackend } from '../services/storage/local.js';
-// Reused from the upload path so the two never drift: both size limits are one
-// definition, not two.
-import { maxFileBytes, maxUniverseQuota } from './assets.js';
+// Shared with routes/assets.ts and services/sync/remote-client.ts so both size
+// limits are one definition, not two — and this route module no longer needs
+// to be the canonical home just because it was the first consumer.
+import { maxFileBytes, maxUniverseQuota } from '../services/media/limits.js';
 import { buildSyncManifest } from '../services/sync/snapshot.js';
 import { sha256Hex } from '../services/sync/asset-hash.js';
 import { localIdentity, MigrationHeadUnavailableError } from '../services/sync/handshake.js';

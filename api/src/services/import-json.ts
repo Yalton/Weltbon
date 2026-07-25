@@ -5,13 +5,10 @@ import { universes, entries, links, categories, issues, issueEntries, graphPosit
 import { storageBackend } from './storage/local.js';
 import { isValidRoutePoints, ROUTE_POINTS_ERROR } from '../utils/route-points.js';
 import { SHARP_OPTS } from './media/sharp-opts.js';
-
 // CR-02: quota enforcement on the import path (same cap as the upload path).
-const DEFAULT_MAX_UNIVERSE_QUOTA = 500 * 1024 * 1024; // 500 MB
-function maxUniverseQuota(): number {
-  const n = Number(process.env.MEDIA_UNIVERSE_QUOTA_BYTES);
-  return Number.isFinite(n) && n > 0 ? n : DEFAULT_MAX_UNIVERSE_QUOTA;
-}
+// This used to be a second hand-copied definition of the same formula — see
+// services/media/limits.ts for why that's the actual defect, not just style.
+import { maxUniverseQuota } from './media/limits.js';
 
 const ALLOWED_MIME = new Set(['image/png', 'image/jpeg', 'image/webp', 'image/gif']);
 const ALLOWED_MIME_LIST = Array.from(ALLOWED_MIME).join(', ');

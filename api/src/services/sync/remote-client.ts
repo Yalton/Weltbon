@@ -13,7 +13,7 @@
  */
 import { Buffer } from 'node:buffer';
 import { normalizeRemoteUrl } from './remote-url.js';
-import { maxFileBytes } from '../../routes/assets.js';
+import { maxFileBytes } from '../media/limits.js';
 import {
   SyncApplyRejectedError,
   SyncAuthError,
