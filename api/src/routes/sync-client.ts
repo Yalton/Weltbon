@@ -29,6 +29,14 @@ import { requireUniverse } from '../utils/ownership.js';
 import { encryptSecret, type EncryptedSecret } from '../services/crypto.js';
 import { normalizeRemoteUrl, InvalidRemoteUrlError } from '../services/sync/remote-url.js';
 import { deleteBaseSnapshot } from '../services/sync/base-snapshot.js';
+import {
+  ownedConflict,
+  listConflicts,
+  resolveConflict,
+  restoreConflict,
+  type SyncConflictRow,
+} from '../services/sync/conflicts.js';
+import { SyncApplyError } from '../services/sync/errors.js';
 import { env } from '../config.js';
 
 type AppEnv = { Variables: AuthVariables };
@@ -89,6 +97,24 @@ const linkSchema = z.object({
   status: z.string(),
   lastSyncedAt: z.string().nullable(),
   lastError: z.string().nullable(),
+  createdAt: z.string(),
+});
+
+const listConflictsQuerySchema = z.object({
+  universeId: z.string().uuid(),
+  includeResolved: z.enum(['true', 'false']).optional(),
+});
+
+// rowId/tableName are `text` (D-03/D-14), not `uuid` — the merge engine keys
+// the universe singleton on the literal string 'universe'.
+const conflictSchema = z.object({
+  id: z.string().uuid(),
+  universeId: z.string().uuid(),
+  tableName: z.string(),
+  rowId: z.string(),
+  winner: z.string(), // 'local' | 'remote' — stored as `text`, matches `status` above
+  loserPayload: z.unknown(),
+  resolvedAt: z.string().nullable(),
   createdAt: z.string(),
 });
 
@@ -300,6 +326,69 @@ const deleteLinkRoute = createRoute({
   },
 });
 
+// ─── Routes: /conflicts (S-03) ──────────────────────────────────────────────
+
+const getConflictsRoute = createRoute({
+  method: 'get',
+  path: '/conflicts',
+  tags: ['Sync Conflicts'],
+  summary: 'List LWW-loser conflicts for a universe',
+  description:
+    'Newest first. Only UNRESOLVED conflicts by default; pass ?includeResolved=true ' +
+    'to also see ones already resolved or restored. JWT auth required.',
+  security: [{ bearerJwtAuth: [] }],
+  middleware: [requireJwtAuth] as const,
+  request: { query: listConflictsQuerySchema },
+  responses: {
+    200: { content: { 'application/json': { schema: z.array(conflictSchema) } }, description: 'Array of conflicts, newest first.' },
+    401: err401,
+    // Specific rather than the shared err403: this route's 403 names the
+    // universe, matching its own 404 wording below, not a "remote" concept.
+    403: err403,
+    404: { content: { 'application/json': { schema: errorSchema } }, description: 'Universe not found.' },
+  },
+});
+
+const resolveConflictRoute = createRoute({
+  method: 'post',
+  path: '/conflicts/{id}/resolve',
+  tags: ['Sync Conflicts'],
+  summary: 'Mark a conflict resolved without restoring the loser',
+  description: 'Sets resolvedAt. Does NOT touch the underlying row. JWT auth required.',
+  security: [{ bearerJwtAuth: [] }],
+  middleware: [requireJwtAuth] as const,
+  request: { params: idParams },
+  responses: {
+    200: { content: { 'application/json': { schema: conflictSchema } }, description: 'Conflict marked resolved.' },
+    401: err401,
+    // Specific rather than the shared err404: "conflict" here, not "remote".
+    404: { content: { 'application/json': { schema: errorSchema } }, description: 'Conflict not found / not owned.' },
+  },
+});
+
+const restoreConflictRoute = createRoute({
+  method: 'post',
+  path: '/conflicts/{id}/restore',
+  tags: ['Sync Conflicts'],
+  summary: 'Restore the LWW loser as a fresh local edit (S-03)',
+  description:
+    'Writes the loser payload back through the apply engine, stamped with a FRESH ' +
+    'updatedAt so it does not immediately lose LWW again on the next sync, then ' +
+    'marks the conflict resolved. JWT auth required.',
+  security: [{ bearerJwtAuth: [] }],
+  middleware: [requireJwtAuth] as const,
+  request: { params: idParams },
+  responses: {
+    200: { content: { 'application/json': { schema: conflictSchema } }, description: 'Loser restored; conflict marked resolved.' },
+    // Specific rather than the shared err400: this is an apply-time rejection
+    // (e.g. an unknown collection name), not the D-04 base-URL wording.
+    400: { content: { 'application/json': { schema: errorSchema } }, description: 'Apply engine rejected the restore (SyncApplyError, e.g. unknown collection).' },
+    401: err401,
+    404: { content: { 'application/json': { schema: errorSchema } }, description: 'Conflict not found / not owned.' },
+    409: { content: { 'application/json': { schema: errorSchema } }, description: 'Apply-time conflict (SyncApplyError, e.g. unique constraint).' },
+  },
+});
+
 // ─── Link row → wire shape ──────────────────────────────────────────────────
 
 function toLinkWire(row: {
@@ -320,6 +409,21 @@ function toLinkWire(row: {
     status: row.status,
     lastSyncedAt: row.lastSyncedAt ? row.lastSyncedAt.toISOString() : null,
     lastError: row.lastError,
+    createdAt: row.createdAt.toISOString(),
+  };
+}
+
+// ─── Conflict row → wire shape ──────────────────────────────────────────────
+
+function toConflictWire(row: SyncConflictRow) {
+  return {
+    id: row.id,
+    universeId: row.universeId,
+    tableName: row.tableName,
+    rowId: row.rowId,
+    winner: row.winner,
+    loserPayload: row.loserPayload,
+    resolvedAt: row.resolvedAt ? row.resolvedAt.toISOString() : null,
     createdAt: row.createdAt.toISOString(),
   };
 }
@@ -505,4 +609,54 @@ export const syncClientRoutes = new OpenAPIHono<AppEnv>()
     await deleteBaseSnapshot(link.id);
     await getDb().delete(syncLinks).where(eq(syncLinks.id, id));
     return c.json({ deleted: true as const }, 200);
+  })
+
+  .openapi(getConflictsRoute, async (c) => {
+    const userId = c.var.userId;
+    const { universeId, includeResolved } = c.req.valid('query');
+
+    // requireUniverse throws 404 if absent, 403 if another user's.
+    await requireUniverse(universeId, userId);
+
+    const rows = await listConflicts(universeId, includeResolved === 'true');
+    return c.json(rows.map(toConflictWire), 200);
+  })
+
+  .openapi(resolveConflictRoute, async (c) => {
+    const userId = c.var.userId;
+    const { id } = c.req.valid('param');
+
+    const conflict = await ownedConflict(id, userId);
+    if (!conflict) {
+      return c.json({ error: 'Conflict not found' }, 404);
+    }
+
+    await resolveConflict(id);
+    const updated = await ownedConflict(id, userId);
+    return c.json(toConflictWire(updated!), 200);
+  })
+
+  .openapi(restoreConflictRoute, async (c) => {
+    const userId = c.var.userId;
+    const { id } = c.req.valid('param');
+
+    const conflict = await ownedConflict(id, userId);
+    if (!conflict) {
+      return c.json({ error: 'Conflict not found' }, 404);
+    }
+
+    try {
+      await restoreConflict(conflict, userId);
+    } catch (err) {
+      // ONE branch reading the error's own status (C-19 lesson): a per-class
+      // instanceof chain silently returns 500 the day a new SyncApplyError
+      // subclass is added.
+      if (err instanceof SyncApplyError) {
+        return c.json({ error: err.message }, err.status as 400 | 409);
+      }
+      throw err;
+    }
+
+    const updated = await ownedConflict(id, userId);
+    return c.json(toConflictWire(updated!), 200);
   });
