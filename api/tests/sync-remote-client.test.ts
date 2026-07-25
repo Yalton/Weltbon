@@ -126,6 +126,15 @@ describe('SyncRemoteClient status mapping', () => {
     expect(safeErrorSummary(err)).not.toContain('LEAKED-SECRET-TEXT');
   });
 
+  it('rejects a successful handshake carrying a malformed identity rather than returning it (D-16)', async () => {
+    const hostile = { weltbonVersion: 'LEAKED-SECRET-TEXT '.repeat(200), appVersion: 'x', migrationHead: 'y' };
+    const { fetchImpl } = stub(() => json({ ok: true, remote: hostile }));
+    const err = await client(fetchImpl).handshake(IDENTITY).catch((e) => e);
+
+    expect(err).toBeInstanceOf(SyncUnreachableError);
+    expect(String((err as Error).message)).not.toContain('LEAKED-SECRET-TEXT');
+  });
+
   it('keeps only Plan C sanitized fields off a rejected apply (D-09)', async () => {
     const { fetchImpl } = stub(() =>
       json(

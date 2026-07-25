@@ -209,7 +209,15 @@ export class SyncRemoteClient {
     }
   }
 
-  /** S-08 compatibility gate. Returns the peer's identity; throws SyncIncompatibleError on 409. */
+  /**
+   * S-08 compatibility gate. Returns the peer's identity; throws SyncIncompatibleError
+   * on 409. `remote` is sanitized on BOTH branches, not just the error path: Task 7's
+   * testRemote() serializes a successful handshake's `remote` straight into an HTTP
+   * response body the web UI renders, so an unvalidated 200 is just as exposed as an
+   * unvalidated 409 (D-16). A peer that cannot state a well-formed identity on the
+   * success path is not one we can safely hand to a caller — this throws rather than
+   * inventing placeholder values or returning a partial object.
+   */
   async handshake(local: InstanceIdentityLike): Promise<InstanceIdentityLike> {
     const res = await this.send('POST', '/handshake', {
       headers: { 'Content-Type': 'application/json' },
@@ -220,7 +228,9 @@ export class SyncRemoteClient {
       throw new SyncIncompatibleError(local, sanitizeIdentity(body.remote));
     }
     if (res.status !== 200) throw new SyncUnreachableError(`handshake returned ${res.status}`);
-    return body.remote as InstanceIdentityLike;
+    const remote = sanitizeIdentity(body.remote);
+    if (!remote) throw new SyncUnreachableError('handshake returned a malformed identity');
+    return remote;
   }
 
   /** Null means the peer has never seen this universe — the caller decides what that means (D-07). */
