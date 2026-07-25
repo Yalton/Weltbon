@@ -515,7 +515,12 @@ const restoreConflictRoute = createRoute({
     // and then breaks on.
     403: err403,
     404: { content: { 'application/json': { schema: errorSchema } }, description: 'Conflict not found / not owned.' },
-    409: { content: { 'application/json': { schema: errorSchema } }, description: 'Apply-time conflict (SyncApplyError, e.g. unique constraint).' },
+    // syncErrorSchema (not the bare errorSchema): a CrossUniverseCollisionError
+    // here — reachable because the C-09 pre-flight checks the loserPayload's
+    // ids against every universe on the instance, not just the caller's — adds
+    // an optional {collisions:[{collection,count}]} alongside `error` (C-21:
+    // never the ids themselves). Every other apply-time 409 stays bare `error`.
+    409: { content: { 'application/json': { schema: syncErrorSchema } }, description: 'Apply-time conflict (SyncApplyError, e.g. unique constraint or a cross-universe id collision — C-21 safe).' },
   },
 });
 
@@ -849,11 +854,31 @@ export const syncClientRoutes = new OpenAPIHono<AppEnv>()
     try {
       await restoreConflict(conflict, userId);
     } catch (err) {
-      // ONE branch reading the error's own status (C-19 lesson): a per-class
-      // instanceof chain silently returns 500 the day a new SyncApplyError
-      // subclass is added.
+      // C-19 says "one branch reading the error's own status, so a new
+      // SyncApplyError subclass can't silently 500" — but applying THAT rule
+      // without C-21's exception is exactly what leaked here: restoreConflict
+      // feeds a stored loserPayload into applyManifestOps, whose C-09
+      // pre-flight checks incoming ids against EVERY universe on the
+      // instance, not just the caller's — so CrossUniverseCollisionError is
+      // genuinely reachable here, and its .message embeds another universe's
+      // row ids (apply.ts:97, `collection[id, id]`). Echoing it verbatim was
+      // the bug. Mirror runLinkRoute's treatment exactly: narrow the two
+      // unsafe classes first, THEN fall through to the C-19 catch-all.
+      if (err instanceof UniverseOwnershipError) {
+        return c.json({ error: 'Forbidden' }, 403);
+      }
+      if (err instanceof CrossUniverseCollisionError) {
+        console.warn('[sync-client/restore] cross-universe collision:', err.message);
+        return c.json(
+          {
+            error: 'Cross-universe id collision — some incoming ids already exist in another universe',
+            collisions: err.collisions.map((col) => ({ collection: col.collection, count: col.ids.length })),
+          },
+          err.status,
+        );
+      }
       if (err instanceof SyncApplyError) {
-        return c.json({ error: err.message }, err.status as 400 | 403 | 409);
+        return c.json({ error: err.message }, err.status as 400 | 409);
       }
       throw err;
     }

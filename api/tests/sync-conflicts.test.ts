@@ -482,5 +482,67 @@ describe('sync_conflicts ledger (Plan D, D-03)', () => {
       });
       expect(res.status).toBe(400);
     });
+
+    // ── C-21 (third occurrence): restore must not echo a foreign row id ──────
+    it('restore of a conflict whose loserPayload collides with another universe 409s without leaking the foreign id (C-21)', async () => {
+      const { universes: universesTable, entries: entriesTable, syncConflicts: sc } = await import('../src/db/schema.js');
+
+      // A SECOND universe owned by the SAME caller, containing a row whose id
+      // we control — restoreConflict feeds the loserPayload straight through
+      // applyManifestOps, whose C-09 pre-flight checks incoming ids against
+      // EVERY universe on the instance, not just the caller's.
+      const [universe2] = await handle.db.insert(universesTable).values({ userId, name: 'Other universe' }).returning();
+      const foreignId = crypto.randomUUID();
+      await handle.db.insert(entriesTable).values({
+        id: foreignId,
+        universeId: universe2.id,
+        title: 'Lives in universe 2',
+        entryType: 'concept',
+      });
+
+      // A conflict ledger row in the MAIN universe whose loserPayload claims
+      // that SAME id, exactly as a real merge loss would if the loser row's id
+      // happened to already exist elsewhere on this instance.
+      const loserPayload = {
+        id: foreignId,
+        title: 'Collides with universe 2',
+        entryType: 'concept',
+        summary: '',
+        body: '',
+        tags: [],
+        aliases: [],
+        meta: {},
+        icon: '',
+        isPublic: true,
+        wip: false,
+        categoryId: null,
+        coverImageId: null,
+        createdAt: new Date().toISOString(),
+        updatedAt: new Date().toISOString(),
+      };
+      const [conflict] = await handle.db
+        .insert(sc)
+        .values({
+          universeId,
+          tableName: 'entries',
+          rowId: foreignId,
+          winner: 'remote',
+          loserPayload,
+        })
+        .returning();
+
+      const res = await app.request(`/api/sync/conflicts/${conflict.id}/restore`, {
+        method: 'POST',
+        headers: authHeader(token),
+      });
+
+      // Assert against the real wire JSON, not a constructed error object —
+      // what matters is that the SERIALIZATION layer is clean.
+      expect(res.status).toBe(409);
+      const bodyText = await res.text();
+      expect(bodyText).not.toContain(foreignId);
+      const body = JSON.parse(bodyText);
+      expect(body.collisions).toEqual([{ collection: 'entries', count: 1 }]);
+    });
   });
 });

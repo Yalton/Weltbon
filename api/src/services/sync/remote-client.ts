@@ -20,6 +20,7 @@ import {
   SyncIncompatibleError,
   SyncPaymentError,
   SyncQuotaError,
+  SyncRunError,
   SyncUnreachableError,
   type InstanceIdentityLike,
   type RemoteApplyDetail,
@@ -173,31 +174,51 @@ export class SyncRemoteClient {
     return res;
   }
 
-  /** Read a body with a hard byte ceiling, streaming so an oversize reply is cut off early. */
+  /**
+   * Read a body with a hard byte ceiling, streaming so an oversize reply is
+   * cut off early. Wrapped in its own try/catch — send()'s try only covers
+   * the fetch() call itself, but a connection dropped mid-stream, or the
+   * AbortSignal firing DURING this read rather than before fetch() even
+   * returns, throws from inside arrayBuffer()/reader.read() too. Without this,
+   * that failure would escape untyped and surface as an opaque 500 instead of
+   * the typed 502 this module promises every caller (no caller outside this
+   * file branches on transport failures).
+   */
   private async readCapped(res: Response, cap: number, what: string): Promise<Buffer> {
-    const declared = Number(res.headers.get('content-length'));
-    if (Number.isFinite(declared) && declared > cap) {
-      throw new SyncUnreachableError(`${what} response too large (${declared} > ${cap} bytes)`);
-    }
-    const reader = res.body?.getReader();
-    if (!reader) {
-      const buf = Buffer.from(await res.arrayBuffer());
-      if (buf.length > cap) throw new SyncUnreachableError(`${what} response too large (> ${cap} bytes)`);
-      return buf;
-    }
-    const chunks: Buffer[] = [];
-    let total = 0;
-    for (;;) {
-      const { done, value } = await reader.read();
-      if (done) break;
-      total += value.byteLength;
-      if (total > cap) {
-        await reader.cancel();
-        throw new SyncUnreachableError(`${what} response exceeded ${cap} bytes`);
+    try {
+      const declared = Number(res.headers.get('content-length'));
+      if (Number.isFinite(declared) && declared > cap) {
+        throw new SyncUnreachableError(`${what} response too large (${declared} > ${cap} bytes)`);
       }
-      chunks.push(Buffer.from(value));
+      const reader = res.body?.getReader();
+      if (!reader) {
+        const buf = Buffer.from(await res.arrayBuffer());
+        if (buf.length > cap) throw new SyncUnreachableError(`${what} response too large (> ${cap} bytes)`);
+        return buf;
+      }
+      const chunks: Buffer[] = [];
+      let total = 0;
+      for (;;) {
+        const { done, value } = await reader.read();
+        if (done) break;
+        total += value.byteLength;
+        if (total > cap) {
+          await reader.cancel();
+          throw new SyncUnreachableError(`${what} response exceeded ${cap} bytes`);
+        }
+        chunks.push(Buffer.from(value));
+      }
+      return Buffer.concat(chunks);
+    } catch (err) {
+      // The cap-violation throws above are already a SyncUnreachableError —
+      // pass them through unchanged. Anything else here is a genuine transport
+      // failure DURING the read; classify it the same as send()'s own fetch()
+      // catch. safeDetail is built from `what` (the method/path this client
+      // itself composed) — NEVER from whatever partial bytes were read, which
+      // could be anything a peer sent.
+      if (err instanceof SyncRunError) throw err;
+      throw new SyncUnreachableError(`${what} body read failed (${(err as Error)?.name ?? 'Error'})`, err);
     }
-    return Buffer.concat(chunks);
   }
 
   private async readJson(res: Response, what: string): Promise<unknown> {
