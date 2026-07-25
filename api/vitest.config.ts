@@ -106,6 +106,8 @@ const DB_GATED_TESTS = [
   'tests/sync-convergence.test.ts',
   // Plan D (sync client) — conflict ledger.
   'tests/sync-conflicts.test.ts',
+  // Plan D Task 4 — extracted asset materialization.
+  'tests/sync-materialize.test.ts',
 ];
 
 export default defineConfig({

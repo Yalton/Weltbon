@@ -14,17 +14,16 @@
  */
 import { OpenAPIHono, createRoute, z } from '@hono/zod-openapi';
 import { HTTPException } from 'hono/http-exception';
-import { and, eq, inArray, sql } from 'drizzle-orm';
+import { eq, sql } from 'drizzle-orm';
 import { bodyLimit } from 'hono/body-limit';
 import type { MiddlewareHandler } from 'hono';
-import sharp from 'sharp';
 import { db } from '../db/client.js';
 import { assets, universes } from '../db/schema.js';
 import { requireUniverse } from '../utils/ownership.js';
 import { storageBackend } from '../services/storage/local.js';
-// Reused from the upload path so the two never drift: the pixel-bomb guard and
-// both size limits are one definition, not two.
-import { SHARP_OPTS, maxFileBytes, maxUniverseQuota } from './assets.js';
+// Reused from the upload path so the two never drift: both size limits are one
+// definition, not two.
+import { maxFileBytes, maxUniverseQuota } from './assets.js';
 import { buildSyncManifest } from '../services/sync/snapshot.js';
 import { sha256Hex } from '../services/sync/asset-hash.js';
 import { localIdentity, MigrationHeadUnavailableError } from '../services/sync/handshake.js';
@@ -34,6 +33,13 @@ import {
   UniverseOwnershipError,
 } from '../services/sync/apply.js';
 import { SyncApplyError } from '../services/sync/errors.js';
+import {
+  syncBlobKey,
+  findOwnedAssetsByHash,
+  findOwnedAssetByHash,
+  planAssetMaterialization,
+  materializeAssets,
+} from '../services/sync/materialize.js';
 import type { AuthVariables } from '../middleware/auth.js';
 
 type AppEnv = { Variables: AuthVariables };
@@ -45,54 +51,6 @@ const uidHashParams = z.object({ uid: z.string().uuid(), hash: z.string().regex(
 const err401 = { content: { 'application/json': { schema: errorSchema } }, description: 'Unauthorized' };
 const err403 = { content: { 'application/json': { schema: errorSchema } }, description: 'Forbidden' };
 const err404 = { content: { 'application/json': { schema: errorSchema } }, description: 'Not found' };
-
-/** Staging key for a transferred blob (C-12). Hex + dashes pass storage safeJoin. */
-export function syncBlobKey(uid: string, hash: string): string {
-  // Universe-scoped (C-12): a global sync-blob-<hash> would let the GET route's
-  // staged-blob fallthrough serve another universe's in-flight bytes. uid + hash
-  // are both hex/dashes — they pass storage safeJoin.
-  return `sync-blob-${uid}-${hash}`;
-}
-
-/**
- * Committed assets of `uid` whose `content_hash` is one of `hashes`, as
- * hash → { id, mimeType }. The single place the sync surface answers "does this
- * universe already own the bytes for this content hash?" — shared by `missing`,
- * `GET`, and apply's C-12 pre-check so the three cannot drift on that answer
- * (drift is not cosmetic here: if `missing` says "you have it" by hash and apply
- * decides "missing" by id, a legitimate transfer deadlocks).
- *
- * ONE `inArray` query, not one per hash (Task 5 review N+1 fix): the caller may
- * pass up to the route's 5000-hash cap, and StorageBackend is an interface a
- * remote backend can implement — a per-hash SELECT loop would be thousands of
- * serial round-trips.
- */
-async function findOwnedAssetsByHash(
-  uid: string,
-  hashes: string[],
-): Promise<Map<string, { id: string; mimeType: string }>> {
-  const byHash = new Map<string, { id: string; mimeType: string }>();
-  const distinct = [...new Set(hashes)];
-  if (distinct.length === 0) return byHash;
-  const rows = await db()
-    .select({ id: assets.id, mimeType: assets.mimeType, contentHash: assets.contentHash })
-    .from(assets)
-    .where(and(eq(assets.universeId, uid), inArray(assets.contentHash, distinct)));
-  for (const r of rows) {
-    if (r.contentHash && !byHash.has(r.contentHash)) {
-      byHash.set(r.contentHash, { id: r.id, mimeType: r.mimeType });
-    }
-  }
-  return byHash;
-}
-
-/** Single-hash convenience over findOwnedAssetsByHash (used by GET). */
-async function findOwnedAssetByHash(
-  uid: string,
-  hash: string,
-): Promise<{ id: string; mimeType: string } | undefined> {
-  return (await findOwnedAssetsByHash(uid, [hash])).get(hash);
-}
 
 // ── handshake ────────────────────────────────────────────────────────────────
 
@@ -430,44 +388,14 @@ export const syncRoutes = new OpenAPIHono<AppEnv>()
     }
 
     // ── C-12 blob pre-check: every asset being upserted must have its bytes
-    // available BEFORE any row is written. Bytes are available if they are
-    // already stored under the asset's own id, staged by a PUT under
-    // syncBlobKey, OR already committed in this universe under a SIBLING asset
-    // with the same content hash (an identical blob uploaded twice keeps one
-    // copy per id). The sibling case is why "available" is answered by HASH, the
-    // same way `missing` answers it — otherwise a client that `missing` told
-    // "you already have this hash" (so it never PUT the blob) would be refused
-    // here for the new asset's id, deadlocking a legitimate transfer.
-    const assetUpserts = body.ops.assets?.upserts ?? [];
-    const wantedHashes = assetUpserts
-      .map((r) => r.contentHash)
-      .filter((h): h is string => typeof h === 'string' && h.length > 0);
-    const committedByHash = await findOwnedAssetsByHash(uid, wantedHashes);
-
-    // Bytes to copy onto an asset id once the rows commit; the source is either a
-    // staged blob (deleted after consuming) or a committed sibling (left alone).
-    type Materialization = { assetId: string; hash: string; source: 'staged' | string };
-    const toMaterialize: Materialization[] = [];
-    const missingAssetHashes: string[] = [];
-    for (const row of assetUpserts) {
-      const hash = row.contentHash as string | null | undefined;
-      const id = String(row.id);
-      if (!hash) continue; // pre-2.2.0 row: nothing to fetch
-      if (await storageBackend.exists(id)) continue; // bytes already under this id
-      if (await storageBackend.exists(syncBlobKey(uid, hash))) {
-        toMaterialize.push({ assetId: id, hash, source: 'staged' });
-        continue;
-      }
-      const sibling = committedByHash.get(hash);
-      if (sibling && sibling.id !== id && (await storageBackend.exists(sibling.id))) {
-        toMaterialize.push({ assetId: id, hash, source: sibling.id });
-        continue;
-      }
-      missingAssetHashes.push(hash);
-    }
-    if (missingAssetHashes.length > 0) {
+    // available BEFORE any row is written. Availability is answered by HASH —
+    // including committed siblings — so a client that `missing` told "you
+    // already have this hash" is never refused here (C-20). See
+    // services/sync/materialize.ts.
+    const plan = await planAssetMaterialization(uid, body.ops.assets?.upserts ?? []);
+    if (plan.missingHashes.length > 0) {
       return c.json(
-        { error: 'Asset bytes missing — PUT them before applying', missingAssetHashes },
+        { error: 'Asset bytes missing — PUT them before applying', missingAssetHashes: plan.missingHashes },
         409,
       );
     }
@@ -519,46 +447,9 @@ export const syncRoutes = new OpenAPIHono<AppEnv>()
       throw err;
     }
 
-    // Rows are committed; NOW materialize bytes (the import-json CR-02 order —
-    // storage writes never happen inside the transaction). A failure here leaves
-    // an asset row whose bytes are absent, which is exactly the state a retry of
-    // this same idempotent apply repairs.
-    let materializedAssets = 0;
-    const consumedStaged = new Set<string>();
-    for (const m of toMaterialize) {
-      const bytes =
-        m.source === 'staged'
-          ? await storageBackend.get(syncBlobKey(uid, m.hash))
-          : await storageBackend.get(m.source);
-      if (!bytes) continue;
-      await storageBackend.put(m.assetId, bytes);
-      // Thumbnails are re-derived, never transferred (C-03). SHARP_OPTS is the
-      // SAME pixel-bomb guard the upload path uses — a peer's blob is no more
-      // trusted than a browser upload. A blob sharp cannot read still gets its
-      // original stored: the thumb endpoint 404s, which is strictly better than
-      // failing the whole sync over a derived artifact.
-      try {
-        const thumb = await sharp(bytes, SHARP_OPTS)
-          .resize(400, 400, { fit: 'inside', withoutEnlargement: true })
-          .toBuffer();
-        await storageBackend.put(`${m.assetId}_thumb`, thumb);
-        await db().update(assets).set({ thumbSizeBytes: thumb.length }).where(eq(assets.id, m.assetId));
-      } catch {
-        // leave thumbSizeBytes as applied; the original bytes are what matter
-      }
-      if (m.source === 'staged') consumedStaged.add(m.hash);
-      materializedAssets += 1;
-    }
-    // Staged blobs are consumed (Task 5 review: make the PUT comment true).
-    // Best-effort: a leftover costs disk, never correctness. Sibling-sourced
-    // materializations have no staged blob to remove.
-    for (const hash of consumedStaged) {
-      try {
-        await storageBackend.delete(syncBlobKey(uid, hash));
-      } catch {
-        // ignore
-      }
-    }
+    // Rows are committed; NOW materialize bytes (storage writes never happen
+    // inside the transaction). Staged blobs are consumed on the way through.
+    const materializedAssets = await materializeAssets(uid, plan.toMaterialize);
 
     return c.json({ ...result, materializedAssets }, 200);
   });
