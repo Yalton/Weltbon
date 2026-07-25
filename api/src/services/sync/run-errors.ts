@@ -12,6 +12,7 @@
  * response body, because a peer's error body can embed that peer's row ids
  * (exactly the leak C-21 closed one layer in).
  */
+import { SyncApplyError } from './errors.js';
 
 export abstract class SyncRunError extends Error {
   abstract readonly code: string;
@@ -187,8 +188,19 @@ export class SyncApplyRejectedError extends SyncRunError {
  * The ONLY thing that may be written to sync_links.last_error (D-09).
  * An unrecognized throw is reduced to a constant — its message could be anything,
  * including a remote body someone concatenated in by accident.
+ *
+ * SyncApplyError (the LOCAL apply's own hierarchy — a separate class tree from
+ * SyncRunError, thrown by applyManifestOps inside the drive loop) gets its own
+ * branch here rather than falling into the 'unexpected-error' catch-all: an
+ * operator staring at last_error deserves to know "a local apply constraint
+ * collision" from "the remote was unreachable". Only the class NAME is used,
+ * never `.message` — some subclasses' messages embed row ids from ANOTHER
+ * universe (CrossUniverseCollisionError), exactly the C-21 leak this column
+ * must not reintroduce. The class name alone (e.g. "ConstraintCollisionError")
+ * is self-describing and carries no row identity.
  */
 export function safeErrorSummary(err: unknown): string {
   if (err instanceof SyncRunError) return `${err.code}: ${err.safeDetail}`;
+  if (err instanceof SyncApplyError) return `apply-error: ${err.name}`;
   return 'unexpected-error';
 }

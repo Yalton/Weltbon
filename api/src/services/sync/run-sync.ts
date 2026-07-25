@@ -48,7 +48,7 @@ import {
 } from './materialize.js';
 import { recordConflicts } from './conflicts.js';
 import { localIdentity } from './handshake.js';
-import { claimLink, releaseLink } from './link-state.js';
+import { claimLink, releaseLink, type ReleaseOutcome } from './link-state.js';
 import { COLLECTIONS, type ManifestRow, type SyncManifest } from './manifest.js';
 import {
   SyncLinkNotFoundError,
@@ -259,18 +259,49 @@ export async function runSync(linkId: string, ownerId: string, opts: RunSyncOpti
 
   await claimLink(linkId, opts.force ?? false);
 
+  let result: SyncRunResult;
   try {
-    const result = await drive(row.link, row.remote, ownerId, opts);
-    await releaseLink(linkId, {
-      status: 'idle',
-      lastError: null,
-      lastSyncedAt: new Date(),
-      baseAdvanced: true,
-    });
-    return result;
+    result = await drive(row.link, row.remote, ownerId, opts);
   } catch (err) {
-    await releaseLink(linkId, { status: 'error', lastError: safeErrorSummary(err) });
+    // safeRelease can never throw, so `err` — the ONLY error that matters here
+    // — always reaches the caller. A failure-path release that raced with the
+    // real cause and threw would otherwise replace it with a strictly less
+    // useful "release failed" error, losing both the true `last_error` and the
+    // caller's ability to react to what actually went wrong.
+    await safeRelease(linkId, { status: 'error', lastError: safeErrorSummary(err) });
     throw err;
+  }
+
+  // Deliberately OUTSIDE the try: the sync already succeeded — remote applied,
+  // local applied, base advanced — by the time we get here. If this release
+  // throws, it must NOT be caught by the block above and reported as a sync
+  // failure; that would tell the user their converged data failed to sync.
+  await safeRelease(linkId, {
+    status: 'idle',
+    lastError: null,
+    lastSyncedAt: new Date(),
+    baseAdvanced: true,
+  });
+  return result;
+}
+
+/**
+ * releaseLink, but a failure to WRITE the outcome is swallowed rather than
+ * propagated. Swallowing is the deliberate choice, not a shortcut: a failed
+ * release leaves sync_links.status stuck at 'syncing', and that is already
+ * self-healing — the lease expiry in claimLink() (or an explicit `force`)
+ * recovers it on the next run. Letting a release failure escape instead would
+ * let it masquerade as (or overwrite) the real sync outcome, which is NOT
+ * recoverable — the caller has already been told the wrong thing, and
+ * last_error may now say "release failed" instead of the actual cause. A
+ * stuck claim for one lease period is the cheaper failure, exactly as D-13
+ * chose a duplicate conflict-ledger row over a lost one.
+ */
+async function safeRelease(linkId: string, outcome: ReleaseOutcome): Promise<void> {
+  try {
+    await releaseLink(linkId, outcome);
+  } catch (releaseErr) {
+    console.error(`[sync] releaseLink failed for link ${linkId}:`, releaseErr);
   }
 }
 

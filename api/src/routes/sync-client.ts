@@ -39,6 +39,7 @@ import {
   type SyncConflictRow,
 } from '../services/sync/conflicts.js';
 import { SyncApplyError } from '../services/sync/errors.js';
+import { UniverseOwnershipError, CrossUniverseCollisionError } from '../services/sync/apply.js';
 import { runSync, testRemote } from '../services/sync/run-sync.js';
 import { SyncRunError } from '../services/sync/run-errors.js';
 import { env } from '../config.js';
@@ -124,8 +125,18 @@ const conflictSchema = z.object({
 
 // Task 7: the drive loop's two routes. A SyncRunError carries its own `code`
 // (machine-readable, for Plan E's UI) alongside the human message, so this
-// error body has one more field than the plain errorSchema used elsewhere.
-const syncErrorSchema = z.object({ error: z.string(), code: z.string() });
+// error body has more fields than the plain errorSchema used elsewhere.
+// `code` and `collisions` are both OPTIONAL because /links/{id}/run maps TWO
+// separate error hierarchies into this one shape: SyncRunError bodies always
+// carry `code`; a local SyncApplyError (a DIFFERENT hierarchy — applyManifestOps'
+// own errors, mirrored from routes/sync.ts's apply handler) does not, and its
+// CrossUniverseCollisionError variant instead carries `collisions` — {collection,
+// count} ONLY, never the foreign ids themselves (C-21).
+const syncErrorSchema = z.object({
+  error: z.string(),
+  code: z.string().optional(),
+  collisions: z.array(z.object({ collection: z.string(), count: z.number() })).optional(),
+});
 
 const identitySchema = z.object({
   weltbonVersion: z.string(),
@@ -752,6 +763,38 @@ export const syncClientRoutes = new OpenAPIHono<AppEnv>()
       const result = await runSync(id, userId, { force: force === 'true' });
       return c.json(result, 200);
     } catch (err) {
+      // The LOCAL apply (applyManifestOps, inside runSync's drive loop) throws
+      // SyncApplyError — a SEPARATE hierarchy from SyncRunError (its own C-19
+      // lesson: routes/sync.ts already needed one branch for this tree, and
+      // this route needs its own, because the two hierarchies do not share a
+      // common base). Checked FIRST and mirrored from routes/sync.ts's apply
+      // handler exactly, including its C-21 non-disclosure of foreign ids —
+      // UniverseOwnershipError and CrossUniverseCollisionError are narrowed
+      // before the generic SyncApplyError catch-all, or they would fall
+      // through to it and leak their own fields.
+      if (err instanceof UniverseOwnershipError) {
+        return c.json({ error: 'Forbidden' }, 403);
+      }
+      if (err instanceof CrossUniverseCollisionError) {
+        // NB: err.message embeds the foreign ids (apply.ts builds it as
+        // `collection[id, id]`), so it must NOT be echoed — return only
+        // {collection, count}; the ids are logged server-side for the operator.
+        console.warn('[sync-client/run] cross-universe collision:', err.message);
+        return c.json(
+          {
+            error: 'Cross-universe id collision — some incoming ids already exist in another universe',
+            collisions: err.collisions.map((col) => ({ collection: col.collection, count: col.ids.length })),
+          },
+          err.status,
+        );
+      }
+      if (err instanceof SyncApplyError) {
+        // ConstraintCollisionError → 409; UnknownCollection/MissingRowId/
+        // InvalidSyncTimestamp → 400. Both declared responses; every OTHER
+        // SyncApplyError message is self-referential (names only this
+        // universe's own rows), so it is safe to echo verbatim.
+        return c.json({ error: err.message }, err.status as 400 | 409);
+      }
       // ONE branch reading the error's own status/code (C-19 lesson): a
       // per-class instanceof chain silently returns 500 the day a new
       // SyncRunError subclass is added.
