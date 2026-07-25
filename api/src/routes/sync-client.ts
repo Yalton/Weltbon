@@ -377,6 +377,14 @@ export const syncClientRoutes = new OpenAPIHono<AppEnv>()
       updateValues.encryptedPat = encryptSecret(pat, cfg.llmKeyEncryptionKey);
     }
 
+    // No updatable field was supplied (e.g. body `{}`) — drizzle's mapUpdateSet
+    // throws a plain `Error: No values to set` for an empty SET clause, which
+    // is not an HTTPException and would surface as an undeclared 500. Treat an
+    // empty update as a no-op: return the existing row unchanged, no UPDATE issued.
+    if (Object.keys(updateValues).length === 0) {
+      return c.json(toMaskedRemote(existing), 200);
+    }
+
     const [row] = await getDb()
       .update(syncRemotes)
       .set(updateValues)
@@ -431,11 +439,22 @@ export const syncClientRoutes = new OpenAPIHono<AppEnv>()
       return c.json({ error: 'This universe is already linked to this remote' }, 409);
     }
 
-    const [row] = await getDb()
-      .insert(syncLinks)
-      .values({ universeId, remoteId })
-      .returning();
-    return c.json(toLinkWire(row, remote), 201);
+    // The pre-check above is the common path (better message, no wasted INSERT
+    // attempt), but two concurrent requests can both pass it — the catch below
+    // is the race guard, same shape as llm-keys.ts / tokens.ts / audits.ts /
+    // templates.ts / shares.ts / dictionary.ts / invites.ts / auth.ts.
+    try {
+      const [row] = await getDb()
+        .insert(syncLinks)
+        .values({ universeId, remoteId })
+        .returning();
+      return c.json(toLinkWire(row, remote), 201);
+    } catch (err: any) {
+      if (err?.code === '23505') {
+        return c.json({ error: 'This universe is already linked to this remote' }, 409);
+      }
+      throw err;
+    }
   })
 
   .openapi(getLinksRoute, async (c) => {

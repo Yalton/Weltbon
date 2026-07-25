@@ -162,6 +162,22 @@ describe('sync client CRUD (Plan D)', () => {
     expect(updated.patSuffix).toBe('9999');
   });
 
+  it('PATCH with an empty body is a no-op that returns the row unchanged (not a 500)', async () => {
+    // Every field on the update schema is optional, so `{}` parses fine and
+    // drizzle's mapUpdateSet would throw a bare `Error: No values to set` for
+    // an empty SET clause — a plain Error, not an HTTPException, which
+    // app.onError would otherwise map to an undeclared 500.
+    const { body: before } = await createRemote();
+    const res = await app.request(`/api/sync/remotes/${before.id}`, {
+      method: 'PATCH',
+      headers: { 'Content-Type': 'application/json', ...authHeader(token) },
+      body: JSON.stringify({}),
+    });
+    expect(res.status).toBe(200);
+    const after = await res.json();
+    expect(after).toEqual(before);
+  });
+
   it('404s on another user remote rather than leaking its existence', async () => {
     const other = await createTestUser(handle, { email: 'other2@test.dev', password: 'password123' });
     const { syncRemotes } = await import('../src/db/schema.js');
@@ -180,6 +196,20 @@ describe('sync client CRUD (Plan D)', () => {
   });
 
   it('creates a link, refuses a duplicate, and lists it with remote metadata', async () => {
+    // This exercises the PRE-CHECK 409 path (the common case). The route also
+    // carries a `code === '23505'` catch around the INSERT itself as a race
+    // guard for two concurrent requests that both pass the pre-check — the
+    // same shape as llm-keys.ts / tokens.ts / audits.ts / templates.ts /
+    // shares.ts / dictionary.ts / invites.ts / auth.ts. That catch branch is
+    // deliberately left untested here: a genuine concurrent race is too flaky
+    // to simulate reliably, and reaching it any other way means either
+    // mocking the DB client's `select` to lie to the route's own pre-check
+    // while the real INSERT still hits the unique index, or factoring the
+    // catch into a helper purely so a test can call it directly — both would
+    // contort the route for the test's benefit rather than testing behavior.
+    // This mirrors existing precedent: llm-keys.test.ts's "UNIQUE(user_id,
+    // provider) collision -> 409" test (tests/llm-keys.test.ts:314) also only
+    // exercises the pre-check path, never the insert-catch race guard.
     const { body: remote } = await createRemote();
     const created = await post('/api/sync/links', { universeId, remoteId: remote.id });
     expect(created.status).toBe(201);
