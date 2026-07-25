@@ -1,0 +1,179 @@
+/**
+ * Plan D Task 8 — unit-lane coverage for run-sync.ts branches that are
+ * IMPOSSIBLE to reach through the two-instance harness (tests/sync-run.test.ts)
+ * because no genuine two-peer condition can produce them:
+ *
+ *   15. safeRelease swallowing a failure after a SUCCESSFUL drive. No real
+ *       two-peer condition makes a healthy release UPDATE fail — this needs
+ *       releaseLink itself to throw, which only a mock can force.
+ *   16. SyncVersionMismatchError → SyncIncompatibleError (defense in depth).
+ *       Two real peers built from the SAME codebase always agree on the
+ *       manifest version (the handshake is the primary gate) — reaching
+ *       mergeManifests with mismatched versions needs a local+remote pair
+ *       manufactured by hand.
+ *
+ * NOT registered in vitest.config.ts's DB_GATED_TESTS — this file touches no
+ * database at all; every dependency of run-sync.ts that would otherwise open
+ * one is replaced with a vi.mock stub.
+ */
+import { describe, it, expect, vi, beforeEach, type Mock } from 'vitest';
+
+vi.mock('../src/db/client.js', () => ({ db: vi.fn() }));
+vi.mock('../src/config.js', () => ({ env: vi.fn() }));
+vi.mock('../src/services/crypto.js', () => ({ decryptSecret: vi.fn() }));
+vi.mock('../src/services/sync/snapshot.js', () => ({ buildSyncManifest: vi.fn() }));
+vi.mock('../src/services/sync/base-snapshot.js', () => ({
+  saveBaseSnapshot: vi.fn(),
+  loadBaseSnapshot: vi.fn(),
+}));
+vi.mock('../src/services/sync/link-state.js', () => ({
+  claimLink: vi.fn(),
+  releaseLink: vi.fn(),
+}));
+
+const remoteClientMocks = {
+  handshake: vi.fn(),
+  snapshot: vi.fn(),
+  apply: vi.fn(),
+};
+vi.mock('../src/services/sync/remote-client.js', () => ({
+  SyncRemoteClient: vi.fn().mockImplementation(() => remoteClientMocks),
+}));
+
+import { db } from '../src/db/client.js';
+import { env } from '../src/config.js';
+import { decryptSecret } from '../src/services/crypto.js';
+import { buildSyncManifest } from '../src/services/sync/snapshot.js';
+import { saveBaseSnapshot, loadBaseSnapshot } from '../src/services/sync/base-snapshot.js';
+import { claimLink, releaseLink } from '../src/services/sync/link-state.js';
+import { runSync } from '../src/services/sync/run-sync.js';
+import { SyncIncompatibleError } from '../src/services/sync/run-errors.js';
+import { COLLECTIONS } from '../src/services/sync/manifest.js';
+
+const LINK_ID = 'link-1';
+const OWNER_ID = 'owner-1';
+const UNIVERSE_ID = 'universe-1';
+const REMOTE_ID = 'remote-1';
+
+const fakeLink = {
+  id: LINK_ID,
+  universeId: UNIVERSE_ID,
+  remoteId: REMOTE_ID,
+  baseSnapshotKey: null,
+  lastSyncedAt: null,
+  status: 'idle',
+  lastError: null,
+  createdAt: new Date(),
+  updatedAt: new Date(),
+};
+
+const fakeRemote = {
+  id: REMOTE_ID,
+  userId: OWNER_ID,
+  label: '',
+  baseUrl: 'https://peer.example',
+  encryptedPat: { ciphertext: '', iv: '', authTag: '', bodySuffix: '', version: 1 as const },
+  createdAt: new Date(),
+};
+
+/** The chainable fake `db().select(...).from(...).innerJoin(...).innerJoin(...).where(...).limit(1)`. */
+function makeFakeDb(rows: unknown[]) {
+  const chain: any = {};
+  for (const m of ['select', 'from', 'innerJoin', 'where', 'limit']) {
+    chain[m] = () => chain;
+  }
+  chain.then = (resolve: (v: unknown) => void, reject?: (e: unknown) => void) =>
+    Promise.resolve(rows).then(resolve, reject);
+  return { select: () => chain };
+}
+
+function emptyManifest(version: string) {
+  const out: Record<string, unknown> = {
+    weltbon_version: version,
+    exported_at: new Date().toISOString(),
+    universe: { id: UNIVERSE_ID, name: 'Test Universe', userId: OWNER_ID },
+  };
+  for (const { name } of COLLECTIONS) out[name] = [];
+  return out;
+}
+
+describe('run-sync unit-lane coverage (Plan D Task 8, scenarios 15/16)', () => {
+  beforeEach(() => {
+    vi.clearAllMocks();
+    (db as unknown as Mock).mockReturnValue(
+      makeFakeDb([{ link: fakeLink, remote: fakeRemote, universeOwnerId: OWNER_ID }]),
+    );
+    (env as unknown as Mock).mockReturnValue({ llmKeyEncryptionKey: '0'.repeat(64) });
+    (decryptSecret as unknown as Mock).mockReturnValue('wbn_pat_fake');
+    (claimLink as unknown as Mock).mockResolvedValue(undefined);
+    (loadBaseSnapshot as unknown as Mock).mockResolvedValue(null);
+    (saveBaseSnapshot as unknown as Mock).mockResolvedValue(undefined);
+    remoteClientMocks.handshake.mockResolvedValue({
+      weltbonVersion: '2.2.0',
+      appVersion: '1.0.0',
+      migrationHead: 'deadbeef',
+    });
+  });
+
+  // ── Scenario 15 ────────────────────────────────────────────────────────
+
+  it('a failed release after a SUCCESSFUL drive does not turn success into a reported failure', async () => {
+    (buildSyncManifest as unknown as Mock).mockResolvedValue(emptyManifest('2.2.0'));
+    remoteClientMocks.snapshot.mockResolvedValue(null); // bootstrap: peer has never seen the universe
+    remoteClientMocks.apply.mockResolvedValue({ upserted: { universe: 1 }, deleted: {} });
+    (releaseLink as unknown as Mock).mockRejectedValue(new Error('release UPDATE failed'));
+
+    const consoleError = vi.spyOn(console, 'error').mockImplementation(() => {});
+
+    const result = await runSync(LINK_ID, OWNER_ID, {});
+
+    // runSync RESOLVES — the drive genuinely succeeded, and a release failure
+    // must not be reported as a sync failure (run-sync.ts's own docstring: a
+    // failed release leaves status stuck at 'syncing', which is self-healing
+    // via the lease/force, and is the cheaper failure than misreporting).
+    expect(result.bootstrapped).toBe(true);
+
+    // releaseLink was called with the SUCCESS outcome (not 'error') — proving
+    // the failure was NOT misreported as a sync error before being swallowed.
+    expect(releaseLink).toHaveBeenCalledTimes(1);
+    expect((releaseLink as unknown as Mock).mock.calls[0][1]).toMatchObject({ status: 'idle', lastError: null });
+
+    // The failure was logged, not silently dropped.
+    expect(consoleError).toHaveBeenCalledTimes(1);
+    const [logLine] = consoleError.mock.calls[0];
+    expect(String(logLine)).toContain('releaseLink failed');
+    expect(String(logLine)).toContain('status=idle');
+
+    consoleError.mockRestore();
+  });
+
+  // ── Scenario 16 ────────────────────────────────────────────────────────
+
+  it('SyncVersionMismatchError from a real mergeManifests call maps to SyncIncompatibleError', async () => {
+    // A genuinely impossible peer pairing for two real builds (the handshake
+    // is the primary gate against this) — manufactured by hand to drive
+    // mergeManifests' own defense-in-depth version gate (B-09).
+    (buildSyncManifest as unknown as Mock).mockResolvedValue(emptyManifest('2.2.0'));
+    remoteClientMocks.snapshot.mockResolvedValue(emptyManifest('9.9.9'));
+    (releaseLink as unknown as Mock).mockResolvedValue(undefined);
+
+    let caught: unknown;
+    try {
+      await runSync(LINK_ID, OWNER_ID, {});
+    } catch (err) {
+      caught = err;
+    }
+
+    expect(caught).toBeInstanceOf(SyncIncompatibleError);
+    const err = caught as SyncIncompatibleError;
+    expect(err.status).toBe(409);
+    expect(err.code).toBe('remote-incompatible');
+    expect(err.local.weltbonVersion).toBe('2.2.0');
+    expect(err.remote).toBeNull(); // drive() passes null — it never had a real handshake body for this
+
+    // The failure path release ran with status 'error', and the base never advanced.
+    expect(releaseLink).toHaveBeenCalledTimes(1);
+    expect((releaseLink as unknown as Mock).mock.calls[0][1]).toMatchObject({ status: 'error' });
+    expect(saveBaseSnapshot).not.toHaveBeenCalled();
+  });
+});

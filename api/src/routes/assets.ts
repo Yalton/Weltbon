@@ -37,6 +37,8 @@ import { requireUniverse } from '../utils/ownership.js';
 import { storageBackend } from '../services/storage/local.js';
 import { signAssetUrl, verifyAssetSig } from '../services/asset-signing.js';
 import { sha256Hex } from '../services/sync/asset-hash.js';
+import { SHARP_OPTS } from '../services/media/sharp-opts.js';
+import { maxFileBytes, maxUniverseQuota } from '../services/media/limits.js';
 import type { AuthVariables } from '../middleware/auth.js';
 
 type AppEnv = { Variables: AuthVariables };
@@ -45,29 +47,12 @@ type AppEnv = { Variables: AuthVariables };
 
 const ALLOWED_MIME = new Set(['image/png', 'image/jpeg', 'image/webp', 'image/gif']);
 
-// Caps are env-tunable (D-10) and resolved LAZILY at call time rather than captured
-// as module-level constants. Reason: ES modules hoist `import` above other top-level
-// code, so a consumer (e.g. a test) that sets these env vars before importing this
-// router still runs that assignment AFTER this module evaluates. Reading them lazily
-// makes the overrides take effect.
-const DEFAULT_MAX_FILE_BYTES = 10 * 1024 * 1024;
-const DEFAULT_MAX_UNIVERSE_QUOTA = 500 * 1024 * 1024;
-
-// WR-02: parseInt returns NaN for empty strings or non-numeric values (e.g. "10mb"),
-// which would silently disable the caps. Use Number() + isFinite guard so malformed
-// env vars fall back to the safe default rather than producing NaN.
-export function maxFileBytes(): number {
-  const n = Number(process.env.MEDIA_MAX_FILE_BYTES);
-  return Number.isFinite(n) && n > 0 ? n : DEFAULT_MAX_FILE_BYTES;
-}
-export function maxUniverseQuota(): number {
-  const n = Number(process.env.MEDIA_UNIVERSE_QUOTA_BYTES);
-  return Number.isFinite(n) && n > 0 ? n : DEFAULT_MAX_UNIVERSE_QUOTA;
-}
-
-// failOn 'truncated' aborts on truncated/corrupt pixel data (T-38-12, D-11);
-// limitInputPixels caps decoded pixel count to defuse decompression/pixel bombs.
-export const SHARP_OPTS = { limitInputPixels: 25_000_000, failOn: 'truncated' as const };
+// Re-exported for backward compatibility — the single definitions now live in
+// services/media/ so a non-HTTP caller (Plan D's local apply, via
+// services/sync/remote-client.ts) can depend on them without dragging in this
+// whole route module (@hono/zod-openapi, hono/body-limit, file-type, ...).
+export { maxFileBytes, maxUniverseQuota } from '../services/media/limits.js';
+export { SHARP_OPTS } from '../services/media/sharp-opts.js';
 
 // ─── Shared param schemas ─────────────────────────────────────────────────────
 

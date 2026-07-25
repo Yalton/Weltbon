@@ -33,12 +33,13 @@ import { mapLayersRouter } from './routes/map-layers.js';
 import { assetsRouter } from './routes/assets.js';
 import { dictionaryRoutes } from './routes/dictionary.js';
 import { syncRoutes } from './routes/sync.js';
+import { syncClientRoutes } from './routes/sync-client.js';
 import { recoverOrphanAuditRuns } from './services/audit-recovery.js';
 import { wireSigtermDrain } from './services/audit-shutdown.js';
 import { requireAuth } from './middleware/auth.js';
 import { forwarded } from './middleware/forwarded.js';
 import { db } from './db/client.js';
-import { llmApiKeys } from './db/schema.js';
+import { llmApiKeys, syncRemotes } from './db/schema.js';
 import { seedInviteCode } from './db/seedInviteCode.js';
 import { createApiRouter } from './openapi/app.js';
 import { scalarHtml } from './openapi/scalar.js';
@@ -112,6 +113,10 @@ export function createApp() {
   // never interacts with the /universes/* auth block below.
   apiR.use('/sync/*', requireAuth);
   apiR.route('/sync', syncRoutes);
+  // Plan D: the owner-facing half at the SAME prefix, from its own file so the
+  // peer surface above stays exactly Plan C's six routes. Each route here adds
+  // requireJwtAuth on top of the /sync/* requireAuth gate (D-10).
+  apiR.route('/sync', syncClientRoutes);
   apiR.use('/universes/*', requireAuth);
   // Phase 26 Plan 03 — D-06 cross-universe in-flight rollup.
   // Mounted at root /api prefix (NOT under /universes/:uid) because it
@@ -213,25 +218,33 @@ export const app = createApp();
 /**
  * LLMKEY-08 boot-time conditional fail-fast.
  *
- * Aborts startup if the llm_api_keys table has any rows but
- * `LLM_KEY_ENCRYPTION_KEY` is unset. Exported as a callable function so
- * Plan 22-04's behavioral test can exercise the throw path directly with a
- * stubbed db + empty cfg, instead of relying on a grep gate.
+ * Aborts startup if EITHER llm_api_keys OR sync_remotes has any rows but
+ * `LLM_KEY_ENCRYPTION_KEY` is unset. Both tables encrypt at rest under the
+ * SAME key (sync_remotes.encrypted_pat — see routes/sync-client.ts's own
+ * docstring), so a key lost or unset covers both silently until the first use:
+ * an audit run 503s, or a sync run throws SyncRemoteKeyError at the first
+ * /links/{id}/run. This check exists so that failure surfaces at boot, not at
+ * the first attempted sync. Exported as a callable function so Plan 22-04's
+ * (and now Plan D's) behavioral tests can exercise the throw path directly
+ * with a stubbed db + empty cfg, instead of relying on a grep gate.
  *
- * Semantics:
- *   - rows=0 + key unset → no-op (operator hasn't enabled BYOK yet)
+ * Semantics (either table counts identically):
+ *   - rows=0 + key unset → no-op (operator hasn't enabled BYOK / sync yet)
  *   - rows=0 + key set → no-op (key present, no rows yet — fine)
  *   - rows>0 + key set → no-op (normal operation)
- *   - rows>0 + key unset → throw (would silently 503 every audit; LLMKEY-08 violation)
+ *   - rows>0 + key unset → throw (would silently 503/500 at first use; LLMKEY-08 violation)
  */
 export async function assertLlmKeyEncryptionKey(deps: {
   db: ReturnType<typeof db>;
   cfg: Env;
 }): Promise<void> {
+  if (deps.cfg.llmKeyEncryptionKey) return;
   const hasKeys = await deps.db.select({ id: llmApiKeys.id }).from(llmApiKeys).limit(1);
-  if (hasKeys.length > 0 && !deps.cfg.llmKeyEncryptionKey) {
+  const hasRemotes = await deps.db.select({ id: syncRemotes.id }).from(syncRemotes).limit(1);
+  if (hasKeys.length > 0 || hasRemotes.length > 0) {
     throw new Error(
-      'LLM_KEY_ENCRYPTION_KEY must be set when llm_api_keys rows exist. ' +
+      'LLM_KEY_ENCRYPTION_KEY must be set when llm_api_keys or sync_remotes rows exist ' +
+      '(sync_remotes.encrypted_pat uses the same key). ' +
       'See README ## Self-Host for the backup callout (the key is unrecoverable if lost). ' +
       'Generate one with: openssl rand -hex 32'
     );
