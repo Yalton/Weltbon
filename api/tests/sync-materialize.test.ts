@@ -654,6 +654,48 @@ describe('sync materialization service (Plan D Task 4)', () => {
       }
     });
   });
+  it('finalizeMaterialization will not touch an asset row belonging to another universe', async () => {
+    const { finalizeMaterialization } = await import('../src/services/sync/materialize.js');
+    const { assets, universes } = await import('../src/db/schema.js');
+
+    // writeAssetBytes' C-09 guard makes this unreachable through either apply
+    // path — but finalizeMaterialization is exported and independently callable,
+    // and the guard's whole posture is "protected by construction, not by the
+    // caller being careful". Scoping the UPDATE by universe is what makes that
+    // true here too, and it turns the zero-row warning from "no such asset" into
+    // the far stronger "no such asset IN THIS UNIVERSE".
+    const [other] = await handle.db
+      .insert(universes)
+      .values({ userId, name: 'Someone else\'s world' })
+      .returning();
+    const [foreign] = await handle.db
+      .insert(assets)
+      .values({
+        universeId: other.id, filename: 'theirs.png', mimeType: 'image/png',
+        extension: 'png', sizeBytes: 10, thumbSizeBytes: 7, contentHash: sha(Buffer.from('theirs')),
+      })
+      .returning();
+
+    const warnSpy = vi.spyOn(console, 'warn').mockImplementation(() => {});
+    try {
+      await finalizeMaterialization(universeId, [{
+        assetId: foreign.id,
+        hash: sha(Buffer.from('theirs')),
+        thumbSizeBytes: 999,
+        touchedThumb: true,
+        fromStaged: false,
+        preexisting: false,
+        complete: true,
+      }]);
+      expect(warnSpy.mock.calls.some((a) => String(a[0]).includes('matched zero rows'))).toBe(true);
+    } finally {
+      warnSpy.mockRestore();
+    }
+
+    const [after] = await handle.db.select().from(assets).where(eq(assets.id, foreign.id));
+    expect(after.thumbSizeBytes).toBe(7); // untouched
+  });
+
   // ── writeAssetBytes' own unwind (Plan E, E-05) ────────────────────────────
   //
   // Both CALL SITES partition orphans from repairs. This unwind is the path that
