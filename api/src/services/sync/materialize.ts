@@ -171,6 +171,25 @@ export async function writeAssetBytes(uid: string, plan: Materialization[]): Pro
           ? await storageBackend.get(syncBlobKey(uid, m.hash))
           : await storageBackend.get(m.source.assetId);
       if (!bytes) continue;
+
+      // Registered BEFORE the put, for the identical reason `touchedThumb` is
+      // set before its own put below: storage/local.ts's writeFile is not
+      // atomic, so a throw partway through THIS put can leave a truncated file
+      // on disk under `m.assetId`. If the entry only enters `written` after
+      // the put returns, that truncated survivor has no WrittenAsset for the
+      // catch block below to hand discardWrittenAssets — the one entry most in
+      // need of cleanup would be the one entry the cleanup never hears about.
+      // storageBackend.delete is idempotent on ENOENT, so registering early
+      // costs nothing when the put never got far enough to create the file.
+      const entry: WrittenAsset = {
+        assetId: m.assetId,
+        hash: m.hash,
+        thumbSizeBytes: null,
+        touchedThumb: false,
+        fromStaged: m.source.kind === 'staged',
+      };
+      written.push(entry);
+
       await storageBackend.put(m.assetId, bytes);
 
       // Thumbnails are re-derived, never transferred (C-03). SHARP_OPTS is the SAME
@@ -178,26 +197,16 @@ export async function writeAssetBytes(uid: string, plan: Materialization[]): Pro
       // than a browser upload. A blob sharp cannot read still gets its original
       // stored: the thumb endpoint 404s, which beats failing a whole sync over a
       // derived artifact.
-      let thumbSizeBytes: number | null = null;
-      let touchedThumb = false;
       try {
         const thumb = await sharp(bytes, SHARP_OPTS)
           .resize(400, 400, { fit: 'inside', withoutEnlargement: true })
           .toBuffer();
-        touchedThumb = true; // about to PUT — set before the call, not after it succeeds
+        entry.touchedThumb = true; // about to PUT — set before the call, not after it succeeds
         await storageBackend.put(`${m.assetId}_thumb`, thumb);
-        thumbSizeBytes = thumb.length;
+        entry.thumbSizeBytes = thumb.length;
       } catch {
         // leave it null; the original bytes are what matter
       }
-
-      written.push({
-        assetId: m.assetId,
-        hash: m.hash,
-        thumbSizeBytes,
-        touchedThumb,
-        fromStaged: m.source.kind === 'staged',
-      });
     }
   } catch (err) {
     // Partial writes are worse than none. planAssetMaterialization short-circuits
@@ -251,10 +260,13 @@ export async function finalizeMaterialization(uid: string, written: WrittenAsset
             `[sync-materialize] thumbSizeBytes update matched zero rows for asset ${w.assetId} (uid ${uid})`,
           );
         }
-      } catch {
+      } catch (err) {
         // As before the split: a failed size write never fails the caller. The
         // bytes and the thumbnail are both already on disk; only a display
-        // number is wrong.
+        // number is wrong. Never rethrow — but a swallowed error must still be
+        // diagnosable: this catch has silently absorbed a real, reproducible
+        // NOT NULL violation before, and that must not stay invisible.
+        console.warn(`[sync-materialize] thumbSizeBytes update failed for asset ${w.assetId} (uid ${uid}):`, err);
       }
     }
     if (w.fromStaged) consumedStaged.add(w.hash);

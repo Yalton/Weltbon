@@ -405,14 +405,25 @@ describe('sync materialization service (Plan D Task 4)', () => {
       expect(survivingThumb?.equals(sentinel)).toBe(true);
     });
 
-    it('writeAssetBytes unwinds already-written bytes when a later plan entry throws (E-05 must have something to discard)', async () => {
-      // A peer can PUT arbitrary bytes and reference an asset id that never
-      // passed upload-time UUID validation. LocalStorageBackend.exists()
-      // swallows a bad key and returns false (storage/local.ts safeJoin try/
-      // catch), so planAssetMaterialization's exists(id) check lets such a row
-      // through silently — and then storageBackend.put throws mid-plan. If the
-      // valid entries already written before that throw are lost, the caller
-      // has nothing to hand discardWrittenAssets: E-05 cannot run.
+    it('writeAssetBytes unwinds already-written bytes when a later plan entry throws — INCLUDING that failing entry\'s own truncated file (E-05 must have something to discard)', async () => {
+      // Two reachable triggers matter here, not one:
+      //
+      // 1. A peer can PUT arbitrary bytes and reference an asset id that never
+      //    passed upload-time UUID validation. LocalStorageBackend.exists()
+      //    swallows a bad key and returns false (storage/local.ts safeJoin
+      //    try/catch), so planAssetMaterialization's exists(id) check lets such
+      //    a row through silently — and storageBackend.put then throws
+      //    mid-plan. If the valid entries already written before that throw
+      //    are lost, the caller has nothing to hand discardWrittenAssets:
+      //    E-05 cannot run.
+      //
+      // 2. writeFile (storage/local.ts) is not atomic. A put that throws
+      //    PARTWAY through its own write — simulated below — leaves a
+      //    truncated file under the FAILING entry's own (perfectly valid)
+      //    asset id. Registering `written` only after a successful put means
+      //    that truncated survivor has no WrittenAsset for the catch block to
+      //    discard: the entry most in need of cleanup is the one entry the
+      //    cleanup never hears about.
       const { writeAssetBytes, syncBlobKey } = await import('../src/services/sync/materialize.js');
       const { storageBackend } = await import('../src/services/storage/local.js');
       const sharp = (await import('sharp')).default;
@@ -424,24 +435,48 @@ describe('sync materialization service (Plan D Task 4)', () => {
       const id1 = crypto.randomUUID();
       await storageBackend.put(syncBlobKey(universeId, hash1), bytes1);
 
-      const bytes2 = Buffer.from('second entry bytes, never valid to store');
+      const bytes2 = await sharp({
+        create: { width: 60, height: 45, channels: 3, background: { r: 4, g: 5, b: 6 } },
+      }).png().toBuffer();
       const hash2 = sha(bytes2);
+      const id2 = crypto.randomUUID();
       await storageBackend.put(syncBlobKey(universeId, hash2), bytes2);
 
-      await expect(
-        writeAssetBytes(universeId, [
-          { assetId: id1, hash: hash1, source: { kind: 'staged' } },
-          // safeJoin strips every non [a-zA-Z0-9_-] char; '!!!' reduces to
-          // empty and storageBackend.put throws 'Invalid storage key'.
-          { assetId: '!!!', hash: hash2, source: { kind: 'staged' } },
-        ]),
-      ).rejects.toThrow();
+      // Simulate a partial writeFile: the SECOND entry's put writes only the
+      // first 10 bytes of its data to disk, then throws — exactly what a
+      // truncated writeFile looks like from the caller's side.
+      const originalPut = storageBackend.put.bind(storageBackend);
+      const putSpy = vi.spyOn(storageBackend, 'put').mockImplementation(async (key: string, data: Buffer) => {
+        if (key === id2) {
+          await originalPut(key, data.subarray(0, 10));
+          throw new Error('simulated partial write failure on the second entry');
+        }
+        return originalPut(key, data);
+      });
 
-      // The first entry's bytes must NOT survive the throw — otherwise they
-      // sit there forever, permanently read as "already materialized" by
-      // planAssetMaterialization's exists(id) short-circuit.
-      expect(await storageBackend.exists(id1)).toBe(false);
-      expect(await storageBackend.exists(`${id1}_thumb`)).toBe(false);
+      try {
+        await expect(
+          writeAssetBytes(universeId, [
+            { assetId: id1, hash: hash1, source: { kind: 'staged' } },
+            { assetId: id2, hash: hash2, source: { kind: 'staged' } },
+          ]),
+        ).rejects.toThrow();
+
+        // The first entry's bytes must NOT survive the throw — otherwise they
+        // sit there forever, permanently read as "already materialized" by
+        // planAssetMaterialization's exists(id) short-circuit.
+        expect(await storageBackend.exists(id1)).toBe(false);
+        expect(await storageBackend.exists(`${id1}_thumb`)).toBe(false);
+
+        // The FAILING entry's own truncated file must ALSO not survive. This
+        // is strictly worse than a merely orphaned file: a 10-byte survivor at
+        // a valid UUID reads as "already materialized" forever, and a later
+        // retry commits a correct contentHash over permanently truncated bytes
+        // that content-hash merge can never detect.
+        expect(await storageBackend.exists(id2)).toBe(false);
+      } finally {
+        putSpy.mockRestore();
+      }
     });
 
     it('finalizeMaterialization warns when the thumbSizeBytes UPDATE matches zero rows', async () => {
@@ -464,9 +499,14 @@ describe('sync materialization service (Plan D Task 4)', () => {
     });
 
     it('finalizeMaterialization does not null out a row\'s thumbSizeBytes when sharp could not read the original', async () => {
-      // Pins the `if (w.thumbSizeBytes !== null)` guard: without it, finalize
-      // would issue set({ thumbSizeBytes: null }), a real divergence from the
-      // pre-split behavior of "leave thumbSizeBytes as applied."
+      // NOTE: this does NOT discriminate the `if (w.thumbSizeBytes !== null)`
+      // guard on its own. thumb_size_bytes is a NOT NULL column, so a mutant
+      // that removes the guard still issues set({ thumbSizeBytes: null }) —
+      // the DB rejects it, the catch swallows the constraint violation, and
+      // the row's value never visibly changes. This test only pins the
+      // OUTCOME an operator cares about (the seeded value survives); the two
+      // tests below are what actually prove the guard is doing its job.
+      // Kept as documentation of the intended, observable behavior.
       const { writeAssetBytes, finalizeMaterialization, syncBlobKey } =
         await import('../src/services/sync/materialize.js');
       const { storageBackend } = await import('../src/services/storage/local.js');
@@ -526,6 +566,35 @@ describe('sync materialization service (Plan D Task 4)', () => {
         expect(updateSpy).not.toHaveBeenCalled();
       } finally {
         updateSpy.mockRestore();
+      }
+    });
+
+    it('finalizeMaterialization logs nothing when thumbSizeBytes is null (no wasted, constraint-violating UPDATE attempt)', async () => {
+      // Behavioral and driver-independent, unlike the db().update spy above:
+      // now that the UPDATE's catch block warns on every failure (including
+      // the NOT NULL violation a removed guard would trigger), "no update was
+      // attempted" and "no failure was logged" become the same observable
+      // fact. A mutant that deletes the guard makes this log, because thumb_
+      // size_bytes is NOT NULL and the attempted null write is rejected by
+      // the database — discriminating the mutation without inspecting db().
+      const { finalizeMaterialization } = await import('../src/services/sync/materialize.js');
+      const warnSpy = vi.spyOn(console, 'warn').mockImplementation(() => {});
+
+      try {
+        const count = await finalizeMaterialization(universeId, [
+          {
+            assetId: crypto.randomUUID(),
+            hash: sha(Buffer.from('irrelevant — no row backs this id either')),
+            thumbSizeBytes: null,
+            touchedThumb: false,
+            fromStaged: false,
+          },
+        ]);
+
+        expect(count).toBe(1);
+        expect(warnSpy).not.toHaveBeenCalled();
+      } finally {
+        warnSpy.mockRestore();
       }
     });
   });
