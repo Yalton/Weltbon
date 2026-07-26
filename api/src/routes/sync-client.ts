@@ -171,6 +171,11 @@ const syncRunResultSchema = z.object({
    * deliver a change. Separate from blobsPushed, which cannot tell the two apart.
    */
   assetsRepairedOnPeer: z.number(),
+  /**
+   * Plan E (E-07): byte-less rows the peer healed by ITSELF during this run's
+   * apply. 0 from a peer that predates E-07 and does not report it.
+   */
+  assetsSweptOnPeer: z.number(),
   /** Plan E (E-03): rows whose bytes neither side holds — reported, not fatal. */
   assetsUnrepairable: z.number(),
   pushed: countsSchema,

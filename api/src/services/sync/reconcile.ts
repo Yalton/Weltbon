@@ -126,25 +126,33 @@ export interface ReconcileResult {
    * past tense would overclaim, because the copy happens later in
    * `writeAssetBytes`, which skips an entry whose source turns up empty and
    * unwinds the whole batch on a throw. Delta arrivals are excluded: they are
-   * ordinary transfers, not repairs. Approximate in one further edge — a hash
-   * shared by a delta row and a byte-less pre-existing row counts as delta,
-   * undercounting by one. A display counter, not an invariant; nothing branches
-   * on it.
+   * ordinary transfers, not repairs.
+   *
+   * Approximate, and by the SAME mechanism that makes the peer-side mirror
+   * unusable (see below): any repair target whose row is a delta member for an
+   * unrelated reason — most commonly a `thumbSizeBytes` the two instances have
+   * not yet agreed on — is filtered out and counted 0. It undercounts real
+   * repairs, it does not overcount. Left as is deliberately: it is a display
+   * number and nothing branches on it, and the accurate version wants the same
+   * treatment the peer counter got, which is a change of its own.
    */
   assetsRepairedLocally: number;
-  /**
-   * The peer-side mirror — how many of these pushes REPAIRED the peer rather
-   * than delivering a change — is deliberately NOT computed here, because this
-   * module cannot compute it correctly. The obvious symmetric formula
-   * (`pushedRows` whose hash is not in `deltaHashes`) is wrong, and provably so:
-   * a peer re-derives its own thumbnail on materialize, `thumbSizeBytes` is a
-   * CONTENT field for merge.ts's contentEqual, so every transferred asset row
-   * becomes a permanent delta member from its second run onward. deltaHashes
-   * then swallows the hash and the count reads 0 in exactly the scenario the
-   * number exists to measure. The caller has the right discriminator — pushed
-   * rows the merge was NOT already sending — and computes it from `pushedRows`;
-   * see run-sync.ts's re-attachment block.
-   */
+  // NB: the peer-side mirror — how many of these pushes REPAIRED the peer rather
+  // than delivering a change — is deliberately NOT a member here, because this
+  // module cannot compute it correctly. The obvious symmetric formula
+  // (`pushedRows` whose hash is not in `deltaHashes`) is wrong, and provably so:
+  // a peer re-derives its own thumbnail on materialize and `thumbSizeBytes` is a
+  // CONTENT field for merge.ts's contentEqual, so a transferred asset row becomes
+  // a delta member on the run AFTER it lands, deltaHashes swallows the hash, and
+  // the count reads 0 in exactly the scenario the number exists to measure.
+  //
+  // TRANSIENT, not permanent: re-derivation happens only inside writeAssetBytes,
+  // which only runs where exists(id) was false — permanently true once the bytes
+  // land — so each (instance, asset) pair re-derives exactly once and the two
+  // sides converge after one further round-trip. One run is still enough to break
+  // the formula, which is why the caller computes it from the right
+  // discriminator: pushed rows the merge was NOT already sending. See
+  // run-sync.ts's re-attachment block.
   /** Hashes neither side holds and that are NOT in the delta (E-03). */
   unrepairable: string[];
 }

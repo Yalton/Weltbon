@@ -64,6 +64,17 @@ export interface RemoteApplyResult {
   upserted: Record<string, number>;
   deleted: Record<string, number>;
   materializedAssets: number;
+  /**
+   * Plan E (E-07): byte-less rows the PEER healed from state it was already
+   * holding — a staged blob whose earlier apply was refused, or a C-20 sibling.
+   *
+   * OPTIONAL because apply() casts the parsed body unchecked, and a peer running
+   * a build from before E-07 simply will not send it. Declaring it required
+   * would be a lie about those peers; declaring it at all is what lets the number
+   * be consumed, since it is otherwise computed on an instance whose HTTP
+   * responses nobody reads (S-02: the sweeper is prod, which never initiates).
+   */
+  sweptAssets?: number;
 }
 
 /**
