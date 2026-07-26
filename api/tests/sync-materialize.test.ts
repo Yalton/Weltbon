@@ -650,4 +650,77 @@ describe('sync materialization service (Plan D Task 4)', () => {
       }
     });
   });
+  // ── the staged-blob sweep (Plan E, E-07) ──────────────────────────────────
+
+  describe('sweepUnmaterializedAssets (Plan E, E-07)', () => {
+    async function png(seed: number): Promise<Buffer> {
+      const sharp = (await import('sharp')).default;
+      return sharp({
+        create: { width: 120, height: 90, channels: 3, background: { r: seed, g: 1, b: 2 } },
+      })
+        .png()
+        .toBuffer();
+    }
+
+    it('heals a byte-less row from a staged blob left behind by a refused apply, and consumes it', async () => {
+      const bytes = await png(11);
+      const hash = sha(bytes);
+      const { storageBackend } = await import('../src/services/storage/local.js');
+      const { syncBlobKey, sweepUnmaterializedAssets } = await import('../src/services/sync/materialize.js');
+      const { assets } = await import('../src/db/schema.js');
+
+      // Exactly the PROBE-D state: the push landed, the apply never did.
+      const row = await seedAsset(bytes, { storeBytes: false });
+      await storageBackend.put(syncBlobKey(universeId, hash), bytes);
+
+      expect(await sweepUnmaterializedAssets(universeId)).toBe(1);
+      expect((await storageBackend.get(row.id))!.equals(bytes)).toBe(true);
+      expect(await storageBackend.exists(`${row.id}_thumb`)).toBe(true);
+      // Consumed — a surviving staged blob is what makes the breakage invisible
+      // to the peer's next `missing` probe in the first place.
+      expect(await storageBackend.exists(syncBlobKey(universeId, hash))).toBe(false);
+      // thumb_size_bytes went through finalizeMaterialization, not a second
+      // hand-rolled copy path.
+      const thumb = await storageBackend.get(`${row.id}_thumb`);
+      const [after] = await handle.db.select().from(assets).where(eq(assets.id, row.id));
+      expect(after.thumbSizeBytes).toBe(thumb!.length);
+    });
+
+    it('is IDEMPOTENT: a second sweep over healthy same-hash siblings does nothing', async () => {
+      const bytes = await png(22);
+      const { storageBackend } = await import('../src/services/storage/local.js');
+      const { sweepUnmaterializedAssets } = await import('../src/services/sync/materialize.js');
+
+      // The C-20 shape: two rows, one hash. The healthy one is the only source,
+      // so this also pins that the sweep repairs from a SIBLING with no blob
+      // staged anywhere — the variant no per-hash probe can ever see, because
+      // `missing` answers "present" for that hash via the healthy row.
+      await seedAsset(bytes);
+      const broken = await seedAsset(bytes, { storeBytes: false });
+
+      expect(await sweepUnmaterializedAssets(universeId)).toBe(1);
+      expect((await storageBackend.get(broken.id))!.equals(bytes)).toBe(true);
+
+      // The second sweep is the assertion that matters. Both rows now hold the
+      // same content under two ids, so a sweep that did not short-circuit on
+      // exists(row.id) would happily "repair" each one from the other, forever
+      // — rewriting bytes and re-deriving thumbnails on every single apply, and
+      // reporting a non-zero sweptAssets for a universe that is perfectly fine.
+      expect(await sweepUnmaterializedAssets(universeId)).toBe(0);
+    });
+
+    it('leaves a row whose bytes are nowhere alone rather than throwing', async () => {
+      const bytes = await png(33);
+      const { sweepUnmaterializedAssets } = await import('../src/services/sync/materialize.js');
+      const { storageBackend } = await import('../src/services/storage/local.js');
+
+      const orphan = await seedAsset(bytes, { storeBytes: false });
+
+      // planAssetMaterialization reports it as a missing hash; the sweep is not
+      // the place that raises for one. That is the apply pre-check's 409 for a
+      // delta member, and the initiator's `unrepairable` for anything else.
+      expect(await sweepUnmaterializedAssets(universeId)).toBe(0);
+      expect(await storageBackend.exists(orphan.id)).toBe(false);
+    });
+  });
 });

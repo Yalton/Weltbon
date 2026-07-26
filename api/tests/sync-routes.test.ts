@@ -372,6 +372,52 @@ describe('/api/sync surface (Plan C)', () => {
     expect(stored && stored.equals(BLOB)).toBe(true);
   });
 
+  // E-05, on the peer side. Bytes are written BEFORE the rows now (E-04/E-07),
+  // so a refused apply must take them back off — otherwise the apply is not the
+  // all-or-nothing operation the protocol promises, and the leftover bytes are
+  // actively harmful: planAssetMaterialization short-circuits on exists(id), so
+  // they read as "already materialized" forever, and a later change to that
+  // asset's content commits a new hash over old bytes that content-hash merge
+  // can never detect.
+  it('a refused apply takes back the bytes it wrote ahead of it, but keeps the staged blob so the retry costs no re-transfer (E-05)', async () => {
+    const assetId = '17171717-1717-4171-8171-171717171717';
+    const { storageBackend } = await import('../src/services/storage/local.js');
+
+    await app.request(`/api/sync/universes/${universeId}/assets/${BLOB_HASH}`, {
+      method: 'PUT',
+      headers: { 'Content-Type': 'application/octet-stream', ...authHeader(ownerToken) },
+      body: BLOB,
+    });
+
+    const assetUpsert = {
+      id: assetId, filename: 'x.png', mimeType: 'image/png', extension: 'png',
+      sizeBytes: BLOB.length, thumbSizeBytes: 4, altText: null, contentHash: BLOB_HASH,
+      createdAt: '2026-01-01T00:00:00.000Z', updatedAt: '2026-01-01T00:00:00.000Z',
+    };
+
+    // The asset pre-check passes (the blob is staged), so the bytes get written
+    // — and THEN the engine refuses the delta over an unrelated, id-less entry.
+    const refused = await postApply(universeId, ownerToken, applyBody({
+      assets: { upserts: [assetUpsert], deletes: [] },
+      entries: { upserts: [{ title: 'No Id', entryType: 'concept' }], deletes: [] },
+    }));
+    expect(refused.status).toBe(400);
+
+    // Nothing left under the asset id whose row never committed.
+    expect(await storageBackend.exists(assetId)).toBe(false);
+    // The staged blob is the SOURCE, not the product — it must survive, or the
+    // peer has to re-send bytes it already delivered.
+    expect(await storageBackend.exists(`sync-blob-${universeId}-${BLOB_HASH}`)).toBe(true);
+
+    // And the discard is a DEFERRAL, not a re-breakage: the retry lands.
+    const retried = await postApply(universeId, ownerToken, applyBody({
+      assets: { upserts: [assetUpsert], deletes: [] },
+    }));
+    expect(retried.status).toBe(200);
+    expect((await retried.json()).materializedAssets).toBe(1);
+    expect((await storageBackend.get(assetId))!.equals(BLOB)).toBe(true);
+  });
+
   it('maps a real engine MissingRowIdError to 400 through the catch (C-19 fallthrough)', async () => {
     // An id-less ENTRY upsert skips the asset pre-check and reaches
     // applyManifestOps, whose pre-transaction guard throws MissingRowIdError.
