@@ -415,7 +415,11 @@ describe('two-instance acceptance for the sync drive loop (Plan D Task 8)', () =
     // answer "how many broken images did we fix". Note that the row IS a delta
     // member here — B re-derived its own thumbSizeBytes on the first transfer and
     // that is a content field — which is exactly why this counter must not be
-    // computed from deltaHashes (it would read 0 here). See ReconcileResult.
+    // computed from deltaHashes (it would read 0 here). That divergence is
+    // TRANSIENT, not permanent: re-derivation only happens where exists(id) was
+    // false, so it occurs once per instance per asset and the two sides converge
+    // on the next round-trip. One run is still enough to break the formula. See
+    // ReconcileResult.
     expect(r.assetsRepairedLocally).toBe(0);
     expect(r.assetsRepairedOnPeer).toBe(1);
     expect(r.assetsUnrepairable).toBe(0);
@@ -552,6 +556,77 @@ describe('two-instance acceptance for the sync drive loop (Plan D Task 8)', () =
     const healed = await storageBackend.get(twin.id);
     expect(healed?.equals(bytes)).toBe(true);
     expect(await storageBackend.exists(`${twin.id}_thumb`)).toBe(true);
+  });
+
+  // ── Scenario 4e: a PEER cannot aim our byte write at another universe ─────
+  //
+  // The same C-09 hole as the apply route, on the initiating side, and the one
+  // review did not check. run-sync's plan ids come from the MERGED asset set,
+  // which is built from the PEER's snapshot — so a malicious or corrupt peer can
+  // name any asset id on this instance, including one in a universe it has no
+  // relationship with. The orphan/repair partition is no defence: a foreign id is
+  // not in `local.assets`, so it would be classified an ORPHAN and discarded,
+  // which is precisely the variant that destroys someone else's thumbnail.
+  it('refuses a run whose peer names an asset id from ANOTHER universe, before writing a byte', async () => {
+    const { CrossUniverseCollisionError } = await import('../src/services/sync/apply.js');
+    const { assets, universes: universesTable } = await import('../src/db/schema.js');
+
+    await use('A');
+    await runSync(linkId, ownerA.id, { fetchImpl: makeFetch() }); // bootstrap, empty
+
+    // A victim universe on A, belonging to a DIFFERENT user, holding a byte-less
+    // asset row whose thumbnail survives — the Plan D casualty as bait.
+    const victimUser = await createTestUser(A, { email: 'victim@instance.dev', password: 'password123' });
+    const [victimUniverse] = await A.db
+      .insert(universesTable)
+      .values({ userId: victimUser.id, name: 'Victim world' })
+      .returning();
+    const victimAssetId = crypto.randomUUID();
+    const bytes = await realPng(200);
+    await A.db.insert(assets).values({
+      id: victimAssetId, universeId: victimUniverse.id, filename: 'victim.png',
+      mimeType: 'image/png', extension: 'png', sizeBytes: bytes.length, thumbSizeBytes: 1,
+      contentHash: sha256(bytes),
+    });
+    const victimThumb = Buffer.from('VICTIM THUMBNAIL — PREDATES THIS RUN');
+    await storageBackend.put(`${victimAssetId}_thumb`, victimThumb);
+
+    // B, the peer, claims an asset in the SHARED universe carrying that id — and
+    // holds real bytes for it, so A pulls them and plans to write them under the
+    // victim's id.
+    await use('B');
+    await B.db.insert(assets).values({
+      id: victimAssetId, universeId, filename: 'trojan.png',
+      mimeType: 'image/png', extension: 'png', sizeBytes: bytes.length, thumbSizeBytes: 1,
+      contentHash: sha256(bytes),
+    });
+    await storageBackend.put(victimAssetId, bytes);
+
+    await use('A');
+    const putSpy = vi.spyOn(storageBackend, 'put');
+    let err: unknown;
+    let putKeys: unknown[];
+    try {
+      err = await runSync(linkId, ownerA.id, { fetchImpl: makeFetch() }).then(() => null, (e) => e);
+    } finally {
+      // BEFORE mockRestore — it resets mock.calls, and every assertion over an
+      // emptied array would pass vacuously.
+      putKeys = putSpy.mock.calls.map((c) => c[0]);
+      putSpy.mockRestore();
+    }
+
+    expect(err).toBeInstanceOf(CrossUniverseCollisionError);
+
+    await use('A');
+    // Variant A: no foreign bytes were ever written under the victim's id. The
+    // spy is provably live — the pulled blob WAS staged on A before the guard
+    // fired, so this array is non-empty for a reason unrelated to the victim.
+    expect(putKeys).not.toContain(victimAssetId);
+    expect(putKeys.length).toBeGreaterThan(0);
+    expect(await storageBackend.exists(victimAssetId)).toBe(false);
+    // Variant B: the victim's pre-existing thumbnail survived the refusal.
+    expect(putKeys).not.toContain(`${victimAssetId}_thumb`);
+    expect((await storageBackend.get(`${victimAssetId}_thumb`))!.equals(victimThumb)).toBe(true);
   });
 
   // ── Scenario 5: crash before base advance ────────────────────────────────

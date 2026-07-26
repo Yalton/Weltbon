@@ -13,7 +13,7 @@
  * told by `missing` that it has H — so the peer never PUTs the blob. Answering
  * by id here would then demand a transfer that will never come.
  */
-import { and, eq, inArray, isNotNull } from 'drizzle-orm';
+import { and, eq, inArray, isNotNull, sql } from 'drizzle-orm';
 import sharp from 'sharp';
 import { db } from '../../db/client.js';
 import { assets } from '../../db/schema.js';
@@ -22,6 +22,11 @@ import { storageBackend } from '../storage/local.js';
 // ONE definition, not three — and so this service (reusable by Plan D's
 // in-process local apply) doesn't drag in the HTTP route module.
 import { SHARP_OPTS } from '../media/sharp-opts.js';
+// The C-09 guard below reuses apply.ts's own error class rather than inventing a
+// parallel one, so both callers' existing SyncApplyError handling — and
+// mapSyncApplyError's C-21 sanitization — cover it with no new branches. apply.ts
+// does not import this module, so this direction adds no cycle.
+import { CrossUniverseCollisionError } from './apply.js';
 import type { ManifestRow } from './manifest.js';
 
 /** Staging key for a transferred blob (C-12). Hex + dashes pass storage safeJoin. */
@@ -170,6 +175,18 @@ export interface WrittenAsset {
   touchedThumb: boolean;
   /** True when the bytes came from a staged sync blob, which finalize consumes. */
   fromStaged: boolean;
+  /**
+   * True when a row for this asset id ALREADY existed in this universe at write
+   * time — i.e. this entry is a REPAIR of a committed byte-less row, not bytes
+   * for a row the caller's apply is about to create.
+   *
+   * The orphan/repair discriminator both callers need for E-05, resolved here
+   * because the C-09 guard below already has to query these ids and the answer
+   * falls out of the same rows. Deriving it per call site is how the two apply
+   * paths drift on the one question that decides whether a refused apply
+   * destroys a user's pre-existing thumbnail.
+   */
+  preexisting: boolean;
 }
 
 /**
@@ -192,6 +209,43 @@ export interface WrittenAsset {
  * content-hash merge can never detect.
  */
 export async function writeAssetBytes(uid: string, plan: Materialization[]): Promise<WrittenAsset[]> {
+  if (plan.length === 0) return [];
+
+  // ── C-09, BEFORE the first put ────────────────────────────────────────────
+  //
+  // Moving the byte copy ahead of the transaction also moved it ahead of the
+  // C-09 foreign-id pre-flight, which lives INSIDE applyManifestOps. Storage
+  // keys are bare asset ids in one flat directory and the planner only skips
+  // ids where exists(id) is already true, so a byte-less asset row belonging to
+  // ANOTHER universe — including another user's — was a valid write target.
+  // Both entry points are reachable with an attacker-chosen id: the peer apply
+  // route takes them from body.ops.assets.upserts, and the drive loop takes
+  // them from a PEER's snapshot. Two concrete harms, neither hypothetical:
+  //
+  //   - The victim's asset ends up holding foreign bytes whose hash does not
+  //     match its own contentHash. Nothing can detect that afterwards —
+  //     planAssetMaterialization short-circuits on exists(id) forever after.
+  //   - discardWrittenAssets deletes `${id}_thumb` whenever touchedThumb, so a
+  //     REFUSED apply destroys a pre-existing file belonging to someone else.
+  //     No crash required; the ordinary 409 path is enough.
+  //
+  // So the check belongs here, ahead of every write, rather than at either call
+  // site — one guard, both callers protected by construction. Because nothing
+  // has been written when it fires, there is deliberately nothing to discard.
+  const ids = [...new Set(plan.map((m) => m.assetId))];
+  const existingRows = await db()
+    .select({ id: assets.id, universeId: assets.universeId })
+    .from(assets)
+    .where(inArray(assets.id, ids));
+  const foreignIds = existingRows.filter((r) => r.universeId !== uid).map((r) => r.id);
+  if (foreignIds.length > 0) {
+    // apply.ts's own class, so mapSyncApplyError's C-21 sanitization applies
+    // unchanged: the caller gets {collection, count}, never the foreign ids.
+    throw new CrossUniverseCollisionError([{ collection: 'assets', ids: foreignIds }]);
+  }
+  // Everything left in `existingRows` belongs to `uid` — the repair set.
+  const preexistingIds = new Set(existingRows.map((r) => r.id));
+
   const written: WrittenAsset[] = [];
 
   try {
@@ -217,6 +271,7 @@ export async function writeAssetBytes(uid: string, plan: Materialization[]): Pro
         thumbSizeBytes: null,
         touchedThumb: false,
         fromStaged: m.source.kind === 'staged',
+        preexisting: preexistingIds.has(m.assetId),
       };
       written.push(entry);
 
@@ -396,19 +451,34 @@ export async function materializeAssets(uid: string, plan: Materialization[]): P
  * `missing` answer "present" for that hash forever. Hand-rolling a second
  * copy-and-thumbnail path is the duplication Plan D Task 4 existed to remove.
  *
- * Cost is ~2 storage exists() per hash-bearing asset row per apply, against a
- * local filesystem — the same order as the probe cost E-02 already accepted. The
- * per-row loop inside planAssetMaterialization is serial, so a universe with tens
- * of thousands of assets will feel it; that is the point at which this wants to be
- * a background sweeper rather than an inline tail, not before.
+ * Cost is ~2 storage exists() per swept row per apply, against a local
+ * filesystem — the same order as the probe cost E-02 already accepted — and it
+ * runs on every apply of every run, on the instance that under S-02 only ever
+ * receives. So it is BOUNDED, like every comparable path here (`missing` caps at
+ * 5000, remote-client slices at MISSING_BATCH).
+ *
+ * The sampling is random, and that is load-bearing rather than decorative. A
+ * plain `LIMIT` would NOT still heal everything: without an ORDER BY, Postgres
+ * returns rows in whatever order the scan produces, so a broken row sitting past
+ * the cutoff can be missed on every single apply, forever — which is precisely
+ * the silent-permanent-breakage this whole task exists to remove, reintroduced by
+ * the bound meant to make it affordable. Random sampling keeps the work bounded
+ * AND gives every row a per-apply chance of n/N, so any breakage is healed after
+ * a handful of applies. Sorting N rows costs far less than the N filesystem
+ * stats it replaces, and a universe under the cap is sampled in full, so this is
+ * exactly the unbounded behavior for everything but the extreme case.
  *
  * Returns how many byte-less rows it healed.
  */
+const SWEEP_BATCH = 5000;
+
 export async function sweepUnmaterializedAssets(uid: string): Promise<number> {
   const rows = await db()
     .select({ id: assets.id, contentHash: assets.contentHash })
     .from(assets)
-    .where(and(eq(assets.universeId, uid), isNotNull(assets.contentHash)));
+    .where(and(eq(assets.universeId, uid), isNotNull(assets.contentHash)))
+    .orderBy(sql`random()`)
+    .limit(SWEEP_BATCH);
   if (rows.length === 0) return 0;
 
   // `missingHashes` is deliberately ignored: a row whose bytes are nowhere is

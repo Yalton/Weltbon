@@ -40,6 +40,7 @@ import {
   finalizeMaterialization,
   discardWrittenAssets,
   sweepUnmaterializedAssets,
+  type WrittenAsset,
 } from '../services/sync/materialize.js';
 import type { AuthVariables } from '../middleware/auth.js';
 
@@ -414,10 +415,18 @@ export const syncRoutes = new OpenAPIHono<AppEnv>()
     // id whose row never committed, which is collectable and idempotent on
     // retry, rather than a committed row whose bytes are absent, which nothing
     // can see and nothing can repair.
-    const written = await writeAssetBytes(uid, plan.toMaterialize);
-
+    //
+    // INSIDE the try, because writeAssetBytes now runs its own C-09 guard (the
+    // real one lives inside applyManifestOps' transaction, which this write no
+    // longer precedes) and throws CrossUniverseCollisionError for a foreign
+    // asset id. That is a SyncApplyError and must reach the mapper below, or it
+    // becomes an unhandled 500 whose default body would echo the very foreign
+    // ids C-21 exists to withhold. It throws before writing anything, so
+    // `written` is still [] when the discard runs.
+    let written: WrittenAsset[] = [];
     let result;
     try {
+      written = await writeAssetBytes(uid, plan.toMaterialize);
       result = await applyManifestOps(
         { universe: body.universe as any, ops: body.ops as any },
         { universeId: uid, ownerId: userId },
@@ -428,19 +437,26 @@ export const syncRoutes = new OpenAPIHono<AppEnv>()
       // re-transfer. Best-effort, and deliberately BEFORE the error mapping so
       // a cleanup failure cannot change which error the caller sees.
       //
-      // ALL of `written`, with no orphan/repair partition — unlike run-sync.ts,
-      // and that is a conclusion rather than an oversight. This plan comes solely
-      // from body.ops.assets.upserts and writeAssetBytes only writes where
-      // exists(id) was false, so an entry is either a row this apply was creating
-      // (a true orphan) or a pre-existing byte-less row (a repair). run-sync must
-      // spare the repair because its refusal comes from the OTHER instance and
-      // can persist indefinitely, leaving the repair undone forever with the
-      // source sitting right there. Here the source — the staged blob, or the
-      // C-20 sibling — survives untouched on THIS instance, and the sweep at the
-      // tail of the next apply re-materializes it without needing the peer to
-      // notice anything. Discarding is therefore a deferral, not a re-breakage.
-      // If the sweep below is ever removed, this must become a partition.
-      await discardWrittenAssets(written);
+      // ORPHANS only, exactly as run-sync.ts does it — an earlier revision
+      // discarded all of `written` on the argument that the sweep below makes it
+      // a deferral rather than a re-breakage. That argument covers the original
+      // bytes and nothing else, and it was wrong twice over:
+      //
+      //   - The THUMBNAIL is not recoverable that way. A repair target can have a
+      //     surviving `_thumb` and a lost original; writeAssetBytes overwrites
+      //     the thumb, so discarding it destroys an artifact that PREDATES this
+      //     apply. The sweep only brings it back if it later re-materializes the
+      //     original, and D-06 never asked for that file to be touched at all.
+      //   - The sweep only runs on the SUCCESS path. If this instance's applies
+      //     fail persistently — a cross-universe collision, a raw FK violation
+      //     from an inconsistent peer manifest (B-10), an ownership change — the
+      //     deferral never arrives and the repair is undone on every attempt,
+      //     forever, with the source sitting right there. That the refusal is our
+      //     own engine's rather than a peer's changes nothing about the outcome.
+      //
+      // `preexisting` is resolved in writeAssetBytes against the DB at write
+      // time, so both apply paths partition on one definition (see WrittenAsset).
+      await discardWrittenAssets(written.filter((w) => !w.preexisting));
       // Every engine error derives from SyncApplyError and carries its own
       // `status` (C-19). What each error is safe to put in the BODY (C-21 —
       // CrossUniverseCollisionError's `.message` embeds another universe's row
@@ -477,6 +493,14 @@ export const syncRoutes = new OpenAPIHono<AppEnv>()
     let sweptAssets = 0;
     try {
       sweptAssets = await sweepUnmaterializedAssets(uid);
+      if (sweptAssets > 0) {
+        // The visibility half of this task, and the only one that reaches anyone
+        // on THIS instance: under S-02 the sweeping instance is prod, which
+        // initiates no runs and whose HTTP responses nobody reads. A non-zero
+        // count means assets here were silently byte-less and have just been
+        // repaired — an operator-visible fact, not a debug detail.
+        console.info(`[sync-apply] swept ${sweptAssets} unmaterialized asset(s) for universe ${uid}`);
+      }
     } catch (err) {
       console.warn(`[sync-apply] staged-blob sweep failed for universe ${uid}:`, err);
     }

@@ -540,7 +540,7 @@ describe('sync materialization service (Plan D Task 4)', () => {
         // the apply's transaction has committed the row.
         const ghostId = crypto.randomUUID();
         const count = await finalizeMaterialization(universeId, [
-          { assetId: ghostId, hash: sha(Buffer.from('ghost')), thumbSizeBytes: 42, touchedThumb: true, fromStaged: false },
+          { assetId: ghostId, hash: sha(Buffer.from('ghost')), thumbSizeBytes: 42, touchedThumb: true, fromStaged: false, preexisting: false },
         ]);
 
         expect(count).toBe(1);
@@ -611,6 +611,7 @@ describe('sync materialization service (Plan D Task 4)', () => {
             thumbSizeBytes: null,
             touchedThumb: false,
             fromStaged: false,
+            preexisting: false,
           },
         ]);
 
@@ -640,6 +641,7 @@ describe('sync materialization service (Plan D Task 4)', () => {
             thumbSizeBytes: null,
             touchedThumb: false,
             fromStaged: false,
+            preexisting: false,
           },
         ]);
 

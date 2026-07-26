@@ -137,6 +137,17 @@ export interface SyncRunResult {
    */
   assetsRepairedOnPeer: number;
   /**
+   * Plan E (E-07): byte-less rows the PEER healed by itself during this run's
+   * apply, from a staged blob left by an earlier refused apply or from a C-20
+   * sibling. Distinct from assetsRepairedOnPeer, which counts repairs THIS run
+   * caused by pushing bytes; these the peer could fix without us.
+   *
+   * 0 from a peer that predates E-07 and does not report the field. Surfaced
+   * here because the sweeping instance is, under S-02, the one nobody is
+   * watching — this is the only path by which the count reaches a user.
+   */
+  assetsSweptOnPeer: number;
+  /**
    * Plan E (E-03): asset rows whose bytes neither side holds. Outside the delta
    * this is reported rather than thrown, so the run still succeeds; the user sees
    * a broken image until the bytes turn up somewhere.
@@ -239,6 +250,7 @@ async function drive(
       // peer. (Repairs of THIS instance are still possible and still counted —
       // reconcile can source a local byte-less row from the peer.)
       assetsRepairedOnPeer: 0,
+      assetsSweptOnPeer: pushed.sweptAssets ?? 0,
       assetsUnrepairable: rec.unrepairable.length,
       pushed: { upserted: pushed.upserted, deleted: pushed.deleted },
       appliedLocally: { upserted: {}, deleted: {} },
@@ -314,22 +326,6 @@ async function drive(
   // which nothing could see and nothing could repair.
   const written = await writeAssetBytes(universeId, rec.toMaterialize);
 
-  // The ORPHAN/REPAIR discriminator for E-05 below. `local` is this run's
-  // pre-apply manifest, so these are precisely the asset rows that exist right
-  // now — and that will still exist if the applies fail, since applyManifestOps
-  // is transactional and the remote apply is refused before any local write.
-  // writeAssetBytes only ever writes under an id whose bytes were ABSENT
-  // (planAssetMaterialization short-circuits on exists(id)), so an entry for a
-  // pre-existing id is by construction a REPAIR of a committed byte-less row —
-  // the Plan D casualty — and an entry for any other id is bytes for a row this
-  // run's local apply would have created, i.e. a true orphan.
-  //
-  // NOT localOps.assets.upserts: that list also contains UPDATES to rows that
-  // already exist, and a byte-less pre-existing row the merge happens to update
-  // is still a repair. Keying on "would this row have been created" via the
-  // pre-run manifest is the exact question; the ops list only approximates it.
-  const preexistingAssetIds = new Set(((local.assets ?? []) as ManifestRow[]).map((a) => String(a.id)));
-
   let pushed;
   let appliedLocally;
   try {
@@ -358,7 +354,16 @@ async function drive(
     // whenever touchedThumb, and for a repair target the thumbnail may well have
     // outlived the original. Discarding would destroy an artifact that PREDATES
     // this run — exactly what that code's own comment says it must never do.
-    await discardWrittenAssets(written.filter((w) => !preexistingAssetIds.has(w.assetId)));
+    //
+    // The orphan/repair split is `w.preexisting`, resolved inside writeAssetBytes
+    // against the DB at write time. It used to be derived here from `local`, this
+    // run's pre-apply manifest; moving it into writeAssetBytes (which has to
+    // query these ids anyway for its C-09 guard) makes it ONE definition shared
+    // with the peer apply route, which had drifted to discarding everything. It
+    // is also the sharper question — "does a row for this id exist right now",
+    // asked at the moment of writing, rather than "did the manifest list it" from
+    // earlier in the run.
+    await discardWrittenAssets(written.filter((w) => !w.preexisting));
     throw err;
   }
 
@@ -382,6 +387,7 @@ async function drive(
     blobsPulled: rec.blobsPulled,
     assetsRepairedLocally: rec.assetsRepairedLocally,
     assetsRepairedOnPeer: remoteRepairUpserts.length,
+    assetsSweptOnPeer: pushed.sweptAssets ?? 0,
     assetsUnrepairable: rec.unrepairable.length,
     // NB: `pushed.upserted.assets` counts every asset row the PEER upserted, and
     // since the re-attachment above that INCLUDES rows added purely to carry a

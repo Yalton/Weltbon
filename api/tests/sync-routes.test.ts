@@ -1,7 +1,7 @@
 /**
  * Plan C Tasks 4-6 — the /api/sync HTTP surface.
  */
-import { describe, it, expect, beforeAll, afterAll, beforeEach } from 'vitest';
+import { describe, it, expect, beforeAll, afterAll, beforeEach, vi } from 'vitest';
 import { mkdtemp } from 'node:fs/promises';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
@@ -397,11 +397,30 @@ describe('/api/sync surface (Plan C)', () => {
 
     // The asset pre-check passes (the blob is staged), so the bytes get written
     // — and THEN the engine refuses the delta over an unrelated, id-less entry.
-    const refused = await postApply(universeId, ownerToken, applyBody({
-      assets: { upserts: [assetUpsert], deletes: [] },
-      entries: { upserts: [{ title: 'No Id', entryType: 'concept' }], deletes: [] },
-    }));
+    //
+    // The spy pins the ORDERING (E-04/E-07), which no state assertion can: if
+    // writeAssetBytes were moved back AFTER applyManifestOps, the refusal would
+    // mean the bytes were never written at all, and every assertion below about
+    // their absence would pass vacuously. `put` having been CALLED for this
+    // asset id is the only observable difference between "written then taken
+    // back" and "never written".
+    const putSpy = vi.spyOn(storageBackend, 'put');
+    let refused: Response;
+    let putKeys: unknown[];
+    try {
+      refused = await postApply(universeId, ownerToken, applyBody({
+        assets: { upserts: [assetUpsert], deletes: [] },
+        entries: { upserts: [{ title: 'No Id', entryType: 'concept' }], deletes: [] },
+      }));
+    } finally {
+      // BEFORE mockRestore — it resets the mock's state as well as restoring the
+      // original, so reading mock.calls afterwards yields [] and every
+      // assertion over it passes vacuously.
+      putKeys = putSpy.mock.calls.map((c) => c[0]);
+      putSpy.mockRestore();
+    }
     expect(refused.status).toBe(400);
+    expect(putKeys).toContain(assetId);
 
     // Nothing left under the asset id whose row never committed.
     expect(await storageBackend.exists(assetId)).toBe(false);
@@ -416,6 +435,100 @@ describe('/api/sync surface (Plan C)', () => {
     expect(retried.status).toBe(200);
     expect((await retried.json()).materializedAssets).toBe(1);
     expect((await storageBackend.get(assetId))!.equals(BLOB)).toBe(true);
+  });
+
+  // ── C-09 ahead of the byte write (Plan E security fix) ────────────────────
+  //
+  // Moving writeAssetBytes ahead of the transaction also moved it ahead of the
+  // C-09 foreign-id pre-flight, which lives INSIDE applyManifestOps. Storage
+  // keys are bare asset ids in one flat directory and the planner only skips ids
+  // whose bytes already exist, so a byte-less asset row in ANOTHER USER's
+  // universe was a valid write target. Both harms are exercised here:
+  //
+  //   A. the victim's asset ends up holding foreign bytes whose hash does not
+  //      match its own contentHash — undetectable forever after, because
+  //      planAssetMaterialization then short-circuits on exists(id);
+  //   B. discardWrittenAssets deletes `${id}_thumb` whenever touchedThumb, so
+  //      the ORDINARY 409 path destroys a pre-existing file belonging to someone
+  //      else. No crash required.
+  it('refuses an apply naming ANOTHER user\'s asset id without writing a byte or destroying their thumbnail (C-09/C-21)', async () => {
+    const { assets, universes } = await import('../src/db/schema.js');
+    const { storageBackend } = await import('../src/services/storage/local.js');
+    const sharp = (await import('sharp')).default;
+
+    // The victim: a row in another user's universe whose ORIGINAL bytes are gone
+    // (the Plan D casualty this whole plan is about) but whose thumbnail lives.
+    const victim = await createTestUser(handle, { email: 'victim@sync.dev', password: 'password123' });
+    const [victimUniverse] = await handle.db
+      .insert(universes)
+      .values({ userId: victim.id, name: 'Victim world' })
+      .returning();
+    const victimAssetId = '18181818-1818-4181-8181-181818181818';
+    await handle.db.insert(assets).values({
+      id: victimAssetId, universeId: victimUniverse.id, filename: 'victim.png',
+      mimeType: 'image/png', extension: 'png', sizeBytes: 10, thumbSizeBytes: 4,
+      contentHash: 'c'.repeat(64),
+    });
+    const victimThumb = Buffer.from('VICTIM THUMBNAIL — PREDATES THIS APPLY');
+    await storageBackend.put(`${victimAssetId}_thumb`, victimThumb);
+
+    // A REAL png, so sharp succeeds and touchedThumb would be set — that flag is
+    // what makes the discard destructive, so a decoy that sharp cannot read
+    // would let variant B pass vacuously.
+    const png = await sharp({
+      create: { width: 32, height: 32, channels: 3, background: { r: 9, g: 9, b: 9 } },
+    }).png().toBuffer();
+    const pngHash = createHash('sha256').update(png).digest('hex');
+    await app.request(`/api/sync/universes/${universeId}/assets/${pngHash}`, {
+      method: 'PUT',
+      headers: { 'Content-Type': 'application/octet-stream', ...authHeader(ownerToken) },
+      body: png,
+    });
+
+    const putSpy = vi.spyOn(storageBackend, 'put');
+    let res: Response;
+    let putKeys: unknown[];
+    try {
+      // Instrument check. The correct behaviour below is ZERO puts, so a spy
+      // that silently failed to attach would satisfy both not.toContain
+      // assertions while proving nothing. This control call is the only thing
+      // that distinguishes "nothing was written" from "nothing was watched".
+      await storageBackend.put('spy-liveness-control', Buffer.from('control'));
+      res = await postApply(universeId, ownerToken, applyBody({
+        assets: {
+          upserts: [{
+            id: victimAssetId, filename: 'stolen.png', mimeType: 'image/png', extension: 'png',
+            sizeBytes: png.length, thumbSizeBytes: 4, altText: null, contentHash: pngHash,
+            createdAt: '2026-01-01T00:00:00.000Z', updatedAt: '2026-01-01T00:00:00.000Z',
+          }],
+          deletes: [],
+        },
+      }));
+    } finally {
+      // BEFORE mockRestore, which resets mock.calls — otherwise both
+      // not.toContain assertions below would pass against an empty array and
+      // prove nothing at all.
+      putKeys = putSpy.mock.calls.map((c) => c[0]);
+      putSpy.mockRestore();
+    }
+
+    expect(res.status).toBe(409);
+    const bodyText = await res.text();
+    // C-21: the foreign id must not be echoed, in `collisions` or smuggled in `error`.
+    expect(bodyText).not.toContain(victimAssetId);
+    expect(JSON.parse(bodyText).collisions).toEqual([{ collection: 'assets', count: 1 }]);
+
+    // Variant A — asserted on the SPY, not just on the end state: a guard that
+    // wrote the bytes and then discarded them would leave identical state here,
+    // and it is the write itself that is unsafe (a crash in that window makes it
+    // permanent).
+    expect(putKeys).not.toContain(victimAssetId);
+    expect(putKeys).toContain('spy-liveness-control');
+    expect(await storageBackend.exists(victimAssetId)).toBe(false);
+
+    // Variant B — the victim's pre-existing thumbnail survived, untouched.
+    expect(putKeys).not.toContain(`${victimAssetId}_thumb`);
+    expect((await storageBackend.get(`${victimAssetId}_thumb`))!.equals(victimThumb)).toBe(true);
   });
 
   it('maps a real engine MissingRowIdError to 400 through the catch (C-19 fallthrough)', async () => {
