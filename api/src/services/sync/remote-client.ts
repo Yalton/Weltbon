@@ -41,6 +41,9 @@ export interface RemoteClientOptions {
 /** Plan C's missing-assets route caps the array at 5000 (routes/sync.ts:179). */
 const MISSING_BATCH = 5000;
 
+/** A sha256 hex digest — the only shape any hash a peer sends us may have. */
+const HASH_RE = /^[0-9a-f]{64}$/;
+
 export function syncRequestTimeoutMs(): number {
   const v = Number(process.env.SYNC_REQUEST_TIMEOUT_MS);
   return Number.isFinite(v) && v > 0 ? v : 60_000;
@@ -72,7 +75,7 @@ function sanitizeApplyDetail(body: unknown): RemoteApplyDetail {
   if (typeof body !== 'object' || body === null) return out;
   const b = body as Record<string, unknown>;
   if (Array.isArray(b.missingAssetHashes)) {
-    const hashes = b.missingAssetHashes.filter((h): h is string => typeof h === 'string' && /^[0-9a-f]{64}$/.test(h));
+    const hashes = b.missingAssetHashes.filter((h): h is string => typeof h === 'string' && HASH_RE.test(h));
     if (hashes.length > 0) out.missingAssetHashes = hashes;
   }
   if (Array.isArray(b.collisions)) {
@@ -272,8 +275,17 @@ export class SyncRemoteClient {
         body: JSON.stringify({ hashes: batch }),
       });
       if (res.status !== 200) throw new SyncUnreachableError(`assets/missing returned ${res.status}`);
-      const body = (await this.readJson(res, 'assets/missing')) as { missing?: string[] };
-      out.push(...(body.missing ?? []));
+      const body = (await this.readJson(res, 'assets/missing')) as { missing?: unknown };
+      // Validated exactly as sanitizeApplyDetail validates its own hash array
+      // (C-21): this is a peer-controlled array that flows into reconcile.ts's
+      // `unrepairable`, which Plan E's UI renders, and into storage keys via
+      // syncBlobKey. Nothing downstream re-checks the shape. A non-array body
+      // yields no hashes rather than throwing — a peer that answers the wrong
+      // shape is telling us nothing is missing as far as we can verify, and the
+      // apply's own pre-check is the backstop.
+      if (Array.isArray(body.missing)) {
+        out.push(...body.missing.filter((h): h is string => typeof h === 'string' && HASH_RE.test(h)));
+      }
     }
     return out;
   }

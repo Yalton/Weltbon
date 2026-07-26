@@ -178,6 +178,36 @@ describe('SyncRemoteClient status mapping', () => {
     expect(seen).toEqual([5000, 1]);
   });
 
+  /**
+   * The `missing` array is peer-controlled and nothing downstream re-checks it:
+   * it reaches storage keys via syncBlobKey and reconcile.ts's `unrepairable`,
+   * which the Plan E UI renders. Validated exactly as sanitizeApplyDetail
+   * validates its own hash array (C-21).
+   */
+  it('drops anything that is not a sha256 hex digest from a missing-assets reply', async () => {
+    const hash = 'a'.repeat(64);
+    const { fetchImpl } = stub(() =>
+      json({
+        missing: [
+          hash,
+          '../../../etc/passwd',
+          'A'.repeat(64), // right length, wrong case
+          'a'.repeat(63), // one short
+          42,
+          null,
+          { nested: 'object' },
+        ],
+      }),
+    );
+    const out = await client(fetchImpl).missingAssets('u-1', [hash]);
+    expect(out).toEqual([hash]);
+  });
+
+  it('treats a missing-assets reply whose `missing` is not an array as empty', async () => {
+    const { fetchImpl } = stub(() => json({ missing: 'everything' }));
+    await expect(client(fetchImpl).missingAssets('u-1', ['a'.repeat(64)])).resolves.toEqual([]);
+  });
+
   it('getBlob reports a 404 as blob-unavailable, not as an unreachable remote (E-08)', async () => {
     const { SyncRemoteClient } = await import('../src/services/sync/remote-client.js');
     const { SyncBlobUnavailableError } = await import('../src/services/sync/run-errors.js');

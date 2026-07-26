@@ -54,6 +54,13 @@ import type { ManifestRow } from './manifest.js';
  * batch on a miss. The merged set can contain a contentHash a peer wrote, so
  * filter here rather than letting one malformed row fail the probe for every
  * well-formed one.
+ *
+ * Applied to the ROWS, once, before anything else looks at them — not to the
+ * probe's hash list alone. Filtering only the probe would make a malformed hash
+ * invisible to M while still visible to L, so it would survive the
+ * `!peerMissing.has(h)` filter and be GET'd from a peer whose route 400s the
+ * request — surfacing a data problem as SyncUnreachableError, a network
+ * diagnosis for a bad row. Uniformly invisible is the only coherent treatment.
  */
 const HASH_RE = /^[0-9a-f]{64}$/;
 
@@ -63,10 +70,14 @@ export interface ReconcileResult {
   blobsPushed: number;
   blobsPulled: number;
   /**
-   * Pre-existing local rows whose absent bytes this run restored. Delta arrivals
-   * are excluded — they are ordinary transfers, not repairs. Approximate in one
-   * edge: a hash shared by a delta row and a byte-less pre-existing row counts as
-   * delta, undercounting repairs by one. It is a display counter, not an invariant.
+   * Pre-existing local rows whose absent bytes this run PLANNED to restore —
+   * past tense would overclaim, because the copy happens later in
+   * `writeAssetBytes`, which skips an entry whose source turns up empty and
+   * unwinds the whole batch on a throw. Delta arrivals are excluded: they are
+   * ordinary transfers, not repairs. Approximate in one further edge — a hash
+   * shared by a delta row and a byte-less pre-existing row counts as delta,
+   * undercounting by one. A display counter, not an invariant; nothing branches
+   * on it.
    */
   assetsRepaired: number;
   /** Hashes neither side holds and that are NOT in the delta (E-03). */
@@ -76,13 +87,12 @@ export interface ReconcileResult {
 /** The subset of SyncRemoteClient reconciliation uses — keeps the unit stub small. */
 type ReconcileClient = Pick<SyncRemoteClient, 'missingAssets' | 'putBlob' | 'getBlob'>;
 
-function hashesOf(rows: ManifestRow[]): string[] {
-  const out = new Set<string>();
-  for (const row of rows) {
+/** Rows carrying a well-formed contentHash. Everything else is out of scope here. */
+function hashBearingRows(rows: ManifestRow[]): ManifestRow[] {
+  return rows.filter((row) => {
     const hash = (row as Record<string, unknown>).contentHash;
-    if (typeof hash === 'string' && HASH_RE.test(hash)) out.add(hash);
-  }
-  return [...out];
+    return typeof hash === 'string' && HASH_RE.test(hash);
+  });
 }
 
 /**
@@ -99,7 +109,8 @@ export async function reconcileAssets(
   mergedAssets: ManifestRow[],
   deltaHashes: Set<string>,
 ): Promise<ReconcileResult> {
-  const allHashes = hashesOf(mergedAssets);
+  const rows = hashBearingRows(mergedAssets);
+  const allHashes = [...new Set(rows.map((r) => r.contentHash as string))];
   if (allHashes.length === 0) {
     return { toMaterialize: [], blobsPushed: 0, blobsPulled: 0, assetsRepaired: 0, unrepairable: [] };
   }
@@ -107,14 +118,29 @@ export async function reconcileAssets(
   // L — what we cannot source locally. An asset whose bytes already sit under its
   // own id short-circuits on the first exists() check inside the planner and
   // contributes to neither set, so running this over the whole merged set is cheap.
-  let plan = await planAssetMaterialization(uid, mergedAssets);
+  //
+  // This is the caller that made `missingHashes` mean what the set algebra needs
+  // it to mean: pre-Plan-E callers passed only delta upserts, so a byte-less row
+  // and its healthy duplicate were never planned together and the hash-ownership
+  // lookup could answer with either. findOwnedAssetsByHash now prefers the
+  // candidate whose bytes exist (C1), which is what makes L a statement about
+  // BYTES rather than about whichever row the query returned first.
+  let plan = await planAssetMaterialization(uid, rows);
 
   // M — one batched probe. E-02: no bounding. missingAssets already slices at
   // MISSING_BATCH (5000, remote-client.ts:41) to match the peer route's cap, and
   // the peer answers each batch with parallel exists() calls against a local
   // filesystem. Revisit only when a remote storage backend makes exists() a
   // network round-trip.
-  const peerMissing = new Set(await client.missingAssets(uid, allHashes));
+  //
+  // Intersected with what we ASKED. missingAssets already drops non-hex entries,
+  // but well-formedness is not relevance: a peer can still answer with a
+  // perfectly-shaped hash we never mentioned, and every such entry would flow
+  // into `unrepairable` — a peer-controlled string in a field the Plan E UI
+  // renders — and bound the push loop's work by the peer's reply rather than by
+  // our own request. The 5000 cap is on what we send, not on what comes back.
+  const asked = new Set(allHashes);
+  const peerMissing = new Set((await client.missingAssets(uid, allHashes)).filter((h) => asked.has(h)));
 
   // ── Pull: L \ M ─────────────────────────────────────────────────────────────
   let blobsPulled = 0;
@@ -126,13 +152,23 @@ export async function reconcileAssets(
   }
   if (blobsPulled > 0) {
     // Re-plan: the hashes just staged may now resolve materialization sources
-    // that were unavailable before the pull.
-    plan = await planAssetMaterialization(uid, mergedAssets);
+    // that were unavailable before the pull. Load-bearing, not an optimization —
+    // without it every pulled hash stays in `stillMissing` below, so pulling a
+    // DELTA hash (the ordinary case) throws `blob-unavailable` immediately after
+    // its bytes arrived intact.
+    plan = await planAssetMaterialization(uid, rows);
   }
 
   // ── Push: M \ L ─────────────────────────────────────────────────────────────
   // Sourced exactly as the pre-Plan-E pushBlobs did: a committed sibling first,
   // then this universe's staging key.
+  //
+  // A throw later in this loop leaves the peer holding blobs from earlier
+  // iterations. Deliberate, and not a D-06 violation: that guarantee is about
+  // this instance's own state, putBlob is idempotent, and the peer's staged
+  // blobs are inputs its apply pre-check consumes only on a run that reaches the
+  // apply — so the residue costs the peer disk until the retry uses it, never
+  // correctness. pushBlobs behaved identically.
   const stillMissing = new Set(plan.missingHashes);
   let blobsPushed = 0;
   for (const hash of peerMissing) {
