@@ -40,24 +40,54 @@ export function syncBlobKey(uid: string, hash: string): string {
  * ONE inArray query, not one per hash: callers may pass up to the route's
  * 5000-hash cap, and StorageBackend is an interface a remote backend can
  * implement — a per-hash SELECT loop would be thousands of serial round-trips.
+ *
+ * When several rows share a hash, the one whose BYTES exist wins. This used to
+ * be "first row the query happened to return", which quietly made the function
+ * under-deliver on the question its own docstring says it answers: the caller
+ * asks about the BYTES for a hash, and a byte-less duplicate is a false "no".
+ * It never surfaced because every pre-Plan-E caller passed only delta upserts,
+ * so a crash-window casualty and its healthy duplicate were never in one call.
+ * reconcile.ts passes the whole MERGED set, which is exactly what puts them
+ * together — and there the wrong pick is not a redundant push but an asset
+ * reported `unavailable on both instances` while its bytes sit on disk under
+ * the sibling row.
+ *
+ * The extra cost is one `exists()` per hash in the overwhelmingly common
+ * one-row-per-hash case — a check every caller already performed on the result.
+ * Fans out across hashes so a 5000-hash batch does not serialize, and falls
+ * back to the first row when no candidate has bytes, so callers that only want
+ * `mimeType` (the GET route's content type) see no behavior change at all.
  */
 export async function findOwnedAssetsByHash(
   uid: string,
   hashes: string[],
 ): Promise<Map<string, { id: string; mimeType: string }>> {
-  const byHash = new Map<string, { id: string; mimeType: string }>();
   const distinct = [...new Set(hashes)];
-  if (distinct.length === 0) return byHash;
+  if (distinct.length === 0) return new Map();
   const rows = await db()
     .select({ id: assets.id, mimeType: assets.mimeType, contentHash: assets.contentHash })
     .from(assets)
     .where(and(eq(assets.universeId, uid), inArray(assets.contentHash, distinct)));
+
+  const candidates = new Map<string, Array<{ id: string; mimeType: string }>>();
   for (const r of rows) {
-    if (r.contentHash && !byHash.has(r.contentHash)) {
-      byHash.set(r.contentHash, { id: r.id, mimeType: r.mimeType });
-    }
+    if (!r.contentHash) continue;
+    const list = candidates.get(r.contentHash);
+    if (list) list.push({ id: r.id, mimeType: r.mimeType });
+    else candidates.set(r.contentHash, [{ id: r.id, mimeType: r.mimeType }]);
   }
-  return byHash;
+
+  const resolved = await Promise.all(
+    [...candidates].map(async ([hash, list]) => {
+      // Serial WITHIN a hash (nearly always one candidate, and the first hit
+      // wins so the loop usually stops immediately), parallel ACROSS hashes.
+      for (const c of list) {
+        if (await storageBackend.exists(c.id)) return [hash, c] as const;
+      }
+      return [hash, list[0]] as const;
+    }),
+  );
+  return new Map(resolved);
 }
 
 /** Single-hash convenience over findOwnedAssetsByHash. */

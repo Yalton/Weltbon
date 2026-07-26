@@ -93,6 +93,58 @@ describe('sync materialization service (Plan D Task 4)', () => {
     ]);
   });
 
+  /**
+   * C1: two committed rows share a hash and only ONE has bytes. The lookup used
+   * to take whichever row the query returned first, so a byte-less duplicate
+   * could answer "this universe cannot produce these bytes" while the bytes sat
+   * on disk under its twin. Seeded byte-less-FIRST so a regression to
+   * insertion-order picking fails rather than passing by luck.
+   */
+  it('prefers the row that actually HAS the bytes when several share a hash (C1)', async () => {
+    const bytes = Buffer.from('duplicated image bytes');
+    const hash = sha(bytes);
+    const broken = await seedAsset(bytes, { storeBytes: false }); // crash-window casualty
+    const healthy = await seedAsset(bytes);                        // the user's duplicate
+    const { findOwnedAssetByHash } = await import('../src/services/sync/materialize.js');
+
+    const owned = await findOwnedAssetByHash(universeId, hash);
+    expect(owned?.id).toBe(healthy.id);
+    expect(owned?.id).not.toBe(broken.id);
+  });
+
+  it('falls back to the first row when NO candidate has bytes, so mimeType-only callers still get an answer (C1)', async () => {
+    const bytes = Buffer.from('nobody has these');
+    const a = await seedAsset(bytes, { storeBytes: false });
+    const { findOwnedAssetByHash } = await import('../src/services/sync/materialize.js');
+
+    const owned = await findOwnedAssetByHash(universeId, sha(bytes));
+    expect(owned?.id).toBe(a.id);
+    expect(owned?.mimeType).toBe('image/png');
+  });
+
+  /**
+   * The C1 payoff at the planner level: the byte-less row is REPAIRABLE from its
+   * healthy twin, so it must land in toMaterialize rather than in missingHashes.
+   * Passing both rows in one call is what reconcile.ts does and what no
+   * pre-Plan-E caller ever did.
+   */
+  it('repairs a byte-less row from its healthy duplicate instead of reporting it missing (C1)', async () => {
+    const bytes = Buffer.from('one broken one healthy');
+    const hash = sha(bytes);
+    const broken = await seedAsset(bytes, { storeBytes: false });
+    const healthy = await seedAsset(bytes);
+    const { planAssetMaterialization } = await import('../src/services/sync/materialize.js');
+
+    const plan = await planAssetMaterialization(universeId, [
+      { id: broken.id, contentHash: hash },
+      { id: healthy.id, contentHash: hash },
+    ]);
+    expect(plan.missingHashes).toEqual([]);
+    expect(plan.toMaterialize).toEqual([
+      { assetId: broken.id, hash, source: { kind: 'sibling', assetId: healthy.id } },
+    ]);
+  });
+
   it('skips a row whose bytes already sit under its own id', async () => {
     const bytes = Buffer.from('already here');
     const a = await seedAsset(bytes);
