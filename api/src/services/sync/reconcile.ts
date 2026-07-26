@@ -55,6 +55,15 @@
  * see base-has-it / local-has-it / remote-lacks-it and read that as a remote
  * delete — LWW would then delete it locally. A repair plan that can delete assets
  * is not a repair plan. So delta members still raise, exactly as before.
+ *
+ * One deliberate blind spot, recorded so it is not later rediscovered as a bug: a
+ * row whose contentHash is MALFORMED is invisible to the set algebra by design —
+ * it is filtered out of the rows before anything looks at them, so it appears in
+ * neither H, L nor M, and its hash can therefore never become `blocking`. An
+ * unsourceable malformed hash does NOT raise here; it surfaces one step later as
+ * the peer's `missingAssetHashes` 409 from its own apply pre-check. Barely
+ * reachable (contentHash is only ever sha256Hex(...) or null on any instance that
+ * wrote it itself), but a peer-authored manifest is where a bad value could enter.
  */
 import { storageBackend } from '../storage/local.js';
 import {
@@ -113,7 +122,7 @@ export interface ReconcileResult {
    */
   pushedRows: ManifestRow[];
   /**
-   * Pre-existing local rows whose absent bytes this run PLANNED to restore —
+   * Pre-existing LOCAL rows whose absent bytes this run PLANNED to restore —
    * past tense would overclaim, because the copy happens later in
    * `writeAssetBytes`, which skips an entry whose source turns up empty and
    * unwinds the whole batch on a throw. Delta arrivals are excluded: they are
@@ -122,7 +131,20 @@ export interface ReconcileResult {
    * undercounting by one. A display counter, not an invariant; nothing branches
    * on it.
    */
-  assetsRepaired: number;
+  assetsRepairedLocally: number;
+  /**
+   * The peer-side mirror — how many of these pushes REPAIRED the peer rather
+   * than delivering a change — is deliberately NOT computed here, because this
+   * module cannot compute it correctly. The obvious symmetric formula
+   * (`pushedRows` whose hash is not in `deltaHashes`) is wrong, and provably so:
+   * a peer re-derives its own thumbnail on materialize, `thumbSizeBytes` is a
+   * CONTENT field for merge.ts's contentEqual, so every transferred asset row
+   * becomes a permanent delta member from its second run onward. deltaHashes
+   * then swallows the hash and the count reads 0 in exactly the scenario the
+   * number exists to measure. The caller has the right discriminator — pushed
+   * rows the merge was NOT already sending — and computes it from `pushedRows`;
+   * see run-sync.ts's re-attachment block.
+   */
   /** Hashes neither side holds and that are NOT in the delta (E-03). */
   unrepairable: string[];
 }
@@ -152,7 +174,14 @@ export async function reconcileAssets(
   const rows = hashBearingRows(mergedAssets);
   const allHashes = [...new Set(rows.map((r) => r.contentHash as string))];
   if (allHashes.length === 0) {
-    return { toMaterialize: [], blobsPushed: 0, blobsPulled: 0, pushedRows: [], assetsRepaired: 0, unrepairable: [] };
+    return {
+      toMaterialize: [],
+      blobsPushed: 0,
+      blobsPulled: 0,
+      pushedRows: [],
+      assetsRepairedLocally: 0,
+      unrepairable: [],
+    };
   }
 
   // L — what we cannot source locally. An asset whose bytes already sit under its
@@ -243,7 +272,14 @@ export async function reconcileAssets(
   if (blocking.length > 0) throw new SyncBlobUnavailableError(blocking, 'neither');
 
   const unrepairable = unresolved.filter((h) => !deltaHashes.has(h));
-  const assetsRepaired = plan.toMaterialize.filter((m) => !deltaHashes.has(m.hash)).length;
+  const assetsRepairedLocally = plan.toMaterialize.filter((m) => !deltaHashes.has(m.hash)).length;
 
-  return { toMaterialize: plan.toMaterialize, blobsPushed, blobsPulled, pushedRows, assetsRepaired, unrepairable };
+  return {
+    toMaterialize: plan.toMaterialize,
+    blobsPushed,
+    blobsPulled,
+    pushedRows,
+    assetsRepairedLocally,
+    unrepairable,
+  };
 }

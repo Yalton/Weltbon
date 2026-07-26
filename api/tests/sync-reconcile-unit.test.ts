@@ -382,7 +382,7 @@ describe('reconcileAssets (Plan E Task 3)', () => {
       new Set([HASH_B]),
     );
 
-    expect(result.assetsRepaired).toBe(1);
+    expect(result.assetsRepairedLocally).toBe(1);
     expect(result.toMaterialize).toHaveLength(2);
   });
 });

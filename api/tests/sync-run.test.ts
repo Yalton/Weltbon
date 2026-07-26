@@ -407,8 +407,17 @@ describe('two-instance acceptance for the sync drive loop (Plan D Task 8)', () =
     const r = await runSync(linkId, ownerA.id, { fetchImpl: makeFetch() });
     expect(r.blobsPushed).toBe(1);
     expect(r.blobsPulled).toBe(0);
-    // A itself was never broken, and assetsRepaired counts LOCAL repairs only.
-    expect(r.assetsRepaired).toBe(0);
+    // A itself was never broken, and assetsRepairedLocally counts LOCAL repairs
+    // only — the repair happened on B, which is what the peer counter is for.
+    //
+    // assetsRepairedOnPeer pins the SPLIT this scenario exists to make visible:
+    // blobsPushed is 1 for an ordinary delta transfer too, so it alone cannot
+    // answer "how many broken images did we fix". Note that the row IS a delta
+    // member here — B re-derived its own thumbSizeBytes on the first transfer and
+    // that is a content field — which is exactly why this counter must not be
+    // computed from deltaHashes (it would read 0 here). See ReconcileResult.
+    expect(r.assetsRepairedLocally).toBe(0);
+    expect(r.assetsRepairedOnPeer).toBe(1);
     expect(r.assetsUnrepairable).toBe(0);
 
     await use('B');
@@ -418,6 +427,131 @@ describe('two-instance acceptance for the sync drive loop (Plan D Task 8)', () =
     expect(await storageBackend.exists(`${asset.id}_thumb`)).toBe(true);
     // And the staged blob was consumed, not left to mask the next probe.
     expect(await storageBackend.exists(syncBlobKey(universeId, sha256(bytes)))).toBe(false);
+  });
+
+  // ── Scenario 4c: the staged blob whose apply never landed (Plan E, E-07) ──
+  //
+  // PROBE-D. The push lands — B now holds a staged blob — and the apply that was
+  // supposed to consume it is refused. B is left with a staged blob AND a
+  // still-byte-less row, and that state CONCEALS ITSELF: B's `missing` route
+  // answers by byte existence and counts a staged blob as present, so on the next
+  // run the hash drops out of A's probe set. Nothing is pushed, nothing is
+  // re-attached to remoteOps, and B's apply never sees the row. Run 2 comes back
+  // clean, successful and silent, and no future run ever sees the breakage again
+  // — one transient failure, one permanently broken image.
+  //
+  // A cannot fix this: B holds the state and there is no delete-blob endpoint. So
+  // B repairs itself, in the sweep at the tail of its own apply.
+  it('a peer left holding a staged blob by a refused apply heals itself on the next apply', async () => {
+    await use('A');
+    await runSync(linkId, ownerA.id, { fetchImpl: makeFetch() }); // bootstrap, empty
+
+    const bytes = await realPng(64);
+    const hash = sha256(bytes);
+    const asset = await seedAsset('A', bytes);
+    await use('A');
+    await runSync(linkId, ownerA.id, { fetchImpl: makeFetch() }); // A -> B
+
+    // The Plan D casualty on B: the row survives, the bytes do not.
+    await use('B');
+    expect(await storageBackend.exists(asset.id)).toBe(true); // precondition
+    await storageBackend.delete(asset.id);
+    await storageBackend.delete(`${asset.id}_thumb`);
+
+    // Run 1: the PUT blob reaches the real B (only /apply is intercepted), so the
+    // bytes stage — and then the apply is refused.
+    const refuseApply = makeFetch((path) => {
+      if (path.endsWith('/apply')) {
+        return new Response(JSON.stringify({ error: 'rejected by remote' }), {
+          status: 409,
+          headers: { 'Content-Type': 'application/json' },
+        });
+      }
+      return null;
+    });
+    await use('A');
+    await expect(runSync(linkId, ownerA.id, { fetchImpl: refuseApply })).rejects.toBeInstanceOf(
+      SyncApplyRejectedError,
+    );
+
+    // Exactly the PROBE-D state: staged, but not under the asset id.
+    await use('B');
+    expect(await storageBackend.exists(syncBlobKey(universeId, hash))).toBe(true);
+    expect(await storageBackend.exists(asset.id)).toBe(false);
+
+    // Run 2, entirely clean. It pushes NOTHING — B's `missing` now counts the
+    // staged blob as present — so the repair cannot come from A. Pinning
+    // blobsPushed === 0 is what makes this test about the sweep rather than about
+    // a second push quietly redoing the work.
+    await use('A');
+    const r2 = await runSync(linkId, ownerA.id, { fetchImpl: makeFetch() });
+    expect(r2.blobsPushed).toBe(0);
+    expect(r2.assetsRepairedOnPeer).toBe(0);
+    expect(r2.assetsRepairedLocally).toBe(0);
+    expect(r2.assetsUnrepairable).toBe(0);
+
+    // The whole point: bytes under B's ASSET ID, healed by B itself.
+    await use('B');
+    const healed = await storageBackend.get(asset.id);
+    expect(healed?.equals(bytes)).toBe(true);
+    expect(await storageBackend.exists(`${asset.id}_thumb`)).toBe(true);
+    // And the staged blob is consumed, so it can no longer mask the next probe.
+    expect(await storageBackend.exists(syncBlobKey(universeId, hash))).toBe(false);
+  });
+
+  // ── Scenario 4d: the C-20 sibling variant (Plan E, E-07) ─────────────────
+  //
+  // No staged blob is ever involved here, and no probe can see this one. Two rows
+  // share a content hash on B; one keeps its bytes, the other loses them.
+  // findOwnedAssetsByHash prefers the candidate that HAS bytes, so B's `missing`
+  // answers "present" for that hash forever, A never pushes, and the byte-less
+  // sibling is invisible to every hash-keyed mechanism in the protocol. The sweep
+  // sees it because it is driven from the ROWS, and repairs it from the sibling.
+  it('heals a byte-less row whose C-20 sibling holds the bytes, with no transfer at all', async () => {
+    await use('A');
+    await runSync(linkId, ownerA.id, { fetchImpl: makeFetch() }); // bootstrap, empty
+
+    const bytes = await realPng(33);
+    const hash = sha256(bytes);
+    const assetA = await seedAsset('A', bytes);
+
+    // A SECOND row with the SAME content hash (C-20), created on A so both reach B.
+    await use('A');
+    const { assets } = await import('../src/db/schema.js');
+    const [twin] = await A.db
+      .insert(assets)
+      .values({
+        universeId,
+        filename: 'pic-copy.png',
+        mimeType: 'image/png',
+        extension: 'png',
+        sizeBytes: bytes.length,
+        thumbSizeBytes: 1,
+        contentHash: hash,
+      })
+      .returning();
+    await storageBackend.put(twin.id, bytes);
+
+    await use('A');
+    await runSync(linkId, ownerA.id, { fetchImpl: makeFetch() }); // A -> B, both rows
+
+    await use('B');
+    expect(await storageBackend.exists(twin.id)).toBe(true); // precondition
+    await storageBackend.delete(twin.id);
+    await storageBackend.delete(`${twin.id}_thumb`);
+    // B's own answer to "do you have this hash?" is still YES — via assetA's
+    // bytes. This is why no push can ever be aimed at the broken row.
+    expect(await storageBackend.exists(assetA.id)).toBe(true);
+
+    await use('A');
+    const r = await runSync(linkId, ownerA.id, { fetchImpl: makeFetch() });
+    expect(r.blobsPushed).toBe(0);
+    expect(r.blobsPulled).toBe(0);
+
+    await use('B');
+    const healed = await storageBackend.get(twin.id);
+    expect(healed?.equals(bytes)).toBe(true);
+    expect(await storageBackend.exists(`${twin.id}_thumb`)).toBe(true);
   });
 
   // ── Scenario 5: crash before base advance ────────────────────────────────

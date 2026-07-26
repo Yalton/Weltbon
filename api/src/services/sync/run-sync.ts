@@ -120,11 +120,22 @@ export interface SyncRunResult {
   blobsPushed: number;
   blobsPulled: number;
   /**
-   * Plan E: pre-existing local asset rows whose absent bytes this run planned to
+   * Plan E: pre-existing LOCAL asset rows whose absent bytes this run planned to
    * restore. Delta arrivals are excluded — those are ordinary transfers counted
    * by blobsPulled, not repairs.
    */
-  assetsRepaired: number;
+  assetsRepairedLocally: number;
+  /**
+   * Plan E: asset rows whose bytes this run pushed to repair the PEER, as opposed
+   * to pushing them as part of the delta. `blobsPushed` cannot distinguish the
+   * two, so without this "we fixed N broken images on the other instance" — the
+   * number a user actually cares about under S-02, where prod receives and never
+   * initiates — is not computable from the result.
+   *
+   * Counts ROWS, not hashes: under C-20 two of the peer's asset ids can share one
+   * pushed hash, and both of them were broken.
+   */
+  assetsRepairedOnPeer: number;
   /**
    * Plan E (E-03): asset rows whose bytes neither side holds. Outside the delta
    * this is reported rather than thrown, so the run still succeeds; the user sees
@@ -222,7 +233,12 @@ async function drive(
       conflicts: 0,
       blobsPushed: rec.blobsPushed,
       blobsPulled: rec.blobsPulled,
-      assetsRepaired: rec.assetsRepaired,
+      assetsRepairedLocally: rec.assetsRepairedLocally,
+      // Structurally zero on bootstrap: the peer has no rows at all, so the whole
+      // manifest goes over as upserts and nothing pushed can be a repair OF the
+      // peer. (Repairs of THIS instance are still possible and still counted —
+      // reconcile can source a local byte-less row from the peer.)
+      assetsRepairedOnPeer: 0,
       assetsUnrepairable: rec.unrepairable.length,
       pushed: { upserted: pushed.upserted, deleted: pushed.deleted },
       appliedLocally: { upserted: {}, deleted: {} },
@@ -277,6 +293,13 @@ async function drive(
   // keeps the timestamp it already had.
   const remoteAssetUpserts = mergeResult.remoteOps.assets?.upserts ?? [];
   const alreadyInDelta = new Set(remoteAssetUpserts.map((r) => String(r.id)));
+  //
+  // This set is also exactly `assetsRepairedOnPeer`: a row whose bytes we pushed
+  // and that the merge was NOT already sending is, by definition, bytes sent for
+  // a row the peer already agrees on — a repair, not a transfer. Computing it
+  // here rather than in reconcile.ts is deliberate; see the note on
+  // ReconcileResult for why the symmetric "hash not in deltaHashes" formula
+  // reads 0 in precisely the scenario the number exists to measure.
   const remoteRepairUpserts = rec.pushedRows.filter((r) => !alreadyInDelta.has(String(r.id)));
   if (remoteRepairUpserts.length > 0) {
     mergeResult.remoteOps.assets = {
@@ -357,8 +380,15 @@ async function drive(
     conflicts,
     blobsPushed: rec.blobsPushed,
     blobsPulled: rec.blobsPulled,
-    assetsRepaired: rec.assetsRepaired,
+    assetsRepairedLocally: rec.assetsRepairedLocally,
+    assetsRepairedOnPeer: remoteRepairUpserts.length,
     assetsUnrepairable: rec.unrepairable.length,
+    // NB: `pushed.upserted.assets` counts every asset row the PEER upserted, and
+    // since the re-attachment above that INCLUDES rows added purely to carry a
+    // repair — rows whose content did not change at all. Read as "changes sent"
+    // it overcounts. The number is deliberately left as the peer reported it (it
+    // is the peer's own count of what it wrote); only its meaning is narrower
+    // than the field name suggests. assetsRepairedOnPeer is the separable half.
     pushed: { upserted: pushed.upserted, deleted: pushed.deleted },
     appliedLocally: { upserted: appliedLocally.upserted, deleted: appliedLocally.deleted },
   };
