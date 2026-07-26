@@ -404,10 +404,31 @@ describe('two-instance acceptance for the sync drive loop (Plan D Task 8)', () =
     await storageBackend.delete(asset.id);
     await storageBackend.delete(`${asset.id}_thumb`);
 
+    // The apply body is captured off the WIRE rather than inferred from B's
+    // resulting state, because B's state no longer discriminates: E-07's sweep
+    // (added after this scenario was written) heals a byte-less row from the
+    // staged blob at the tail of B's own apply, so removing the re-attachment
+    // leaves every state assertion below still passing. The sweep is bounded and
+    // random and a pre-E-07 peer has none of it, so the re-attachment remains
+    // load-bearing — and this is the only observation that can see it.
+    let appliedAssetIds: string[] | null = null;
+    const captureApply = makeFetch((path, init) => {
+      if (path.endsWith('/apply') && typeof init?.body === 'string') {
+        const parsed = JSON.parse(init.body);
+        appliedAssetIds = ((parsed.ops?.assets?.upserts ?? []) as any[]).map((row) => String(row.id));
+      }
+      return null; // forward to the real B
+    });
+
     await use('A');
-    const r = await runSync(linkId, ownerA.id, { fetchImpl: makeFetch() });
+    const r = await runSync(linkId, ownerA.id, { fetchImpl: captureApply });
     expect(r.blobsPushed).toBe(1);
     expect(r.blobsPulled).toBe(0);
+    // The row rode along with the delta. putBlob only STAGES on B; B copies a
+    // staged blob onto an asset id only for rows in body.ops.assets.upserts, and
+    // the merge left this row out of BOTH ops lists because it is content-equal.
+    expect(appliedAssetIds).not.toBeNull();
+    expect(appliedAssetIds!).toContain(asset.id);
     // A itself was never broken, and assetsRepairedLocally counts LOCAL repairs
     // only — the repair happened on B, which is what the peer counter is for.
     //
