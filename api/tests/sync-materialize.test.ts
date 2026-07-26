@@ -241,4 +241,122 @@ describe('sync materialization service (Plan D Task 4)', () => {
     expect(await storageBackend.exists(id)).toBe(false);
     expect(await storageBackend.exists(`${id}_thumb`)).toBe(false);
   });
+
+  describe('the pre-commit / post-commit split (Plan E, E-04)', () => {
+    it('writeAssetBytes copies bytes and the thumbnail but touches neither the row nor the staged blob', async () => {
+      const { writeAssetBytes, syncBlobKey } = await import('../src/services/sync/materialize.js');
+      const { storageBackend } = await import('../src/services/storage/local.js');
+      const { assets } = await import('../src/db/schema.js');
+      const sharp = (await import('sharp')).default;
+
+      const bytes = await sharp({
+        create: { width: 120, height: 90, channels: 3, background: { r: 9, g: 9, b: 9 } },
+      }).png().toBuffer();
+      const hash = sha(bytes);
+
+      const [row] = await handle.db.insert(assets).values({
+        universeId,
+        filename: 'split.png',
+        mimeType: 'image/png',
+        extension: 'png',
+        sizeBytes: bytes.length,
+        thumbSizeBytes: 1,
+        contentHash: hash,
+      }).returning();
+
+      await storageBackend.put(syncBlobKey(universeId, hash), bytes);
+
+      const written = await writeAssetBytes(universeId, [
+        { assetId: row.id, hash, source: { kind: 'staged' } },
+      ]);
+
+      expect(written).toHaveLength(1);
+      expect(written[0].assetId).toBe(row.id);
+      expect(written[0].fromStaged).toBe(true);
+      expect(written[0].thumbSizeBytes).toBeGreaterThan(0);
+
+      // Bytes and thumbnail are on disk.
+      expect((await storageBackend.get(row.id))?.equals(bytes)).toBe(true);
+      expect(await storageBackend.exists(`${row.id}_thumb`)).toBe(true);
+
+      // The row is UNTOUCHED — thumbSizeBytes is still the seeded 1.
+      const [after] = await handle.db.select().from(assets).where(eq(assets.id, row.id));
+      expect(after.thumbSizeBytes).toBe(1);
+
+      // The staged blob SURVIVES, so a failed apply costs no re-transfer.
+      expect(await storageBackend.exists(syncBlobKey(universeId, hash))).toBe(true);
+    });
+
+    it('finalizeMaterialization writes thumbSizeBytes and consumes the staged blob', async () => {
+      const { writeAssetBytes, finalizeMaterialization, syncBlobKey } =
+        await import('../src/services/sync/materialize.js');
+      const { storageBackend } = await import('../src/services/storage/local.js');
+      const { assets } = await import('../src/db/schema.js');
+      const sharp = (await import('sharp')).default;
+
+      const bytes = await sharp({
+        create: { width: 120, height: 90, channels: 3, background: { r: 8, g: 8, b: 8 } },
+      }).png().toBuffer();
+      const hash = sha(bytes);
+
+      const [row] = await handle.db.insert(assets).values({
+        universeId,
+        filename: 'finalize.png',
+        mimeType: 'image/png',
+        extension: 'png',
+        sizeBytes: bytes.length,
+        thumbSizeBytes: 1,
+        contentHash: hash,
+      }).returning();
+
+      await storageBackend.put(syncBlobKey(universeId, hash), bytes);
+
+      const written = await writeAssetBytes(universeId, [
+        { assetId: row.id, hash, source: { kind: 'staged' } },
+      ]);
+      const count = await finalizeMaterialization(universeId, written);
+
+      expect(count).toBe(1);
+      const [after] = await handle.db.select().from(assets).where(eq(assets.id, row.id));
+      expect(after.thumbSizeBytes).toBe(written[0].thumbSizeBytes);
+      expect(after.thumbSizeBytes).not.toBe(1);
+      expect(await storageBackend.exists(syncBlobKey(universeId, hash))).toBe(false);
+    });
+
+    it('discardWrittenAssets removes both the original and the thumbnail', async () => {
+      const { writeAssetBytes, discardWrittenAssets, syncBlobKey } =
+        await import('../src/services/sync/materialize.js');
+      const { storageBackend } = await import('../src/services/storage/local.js');
+      const { assets } = await import('../src/db/schema.js');
+      const sharp = (await import('sharp')).default;
+
+      const bytes = await sharp({
+        create: { width: 120, height: 90, channels: 3, background: { r: 7, g: 7, b: 7 } },
+      }).png().toBuffer();
+      const hash = sha(bytes);
+
+      const [row] = await handle.db.insert(assets).values({
+        universeId,
+        filename: 'discard.png',
+        mimeType: 'image/png',
+        extension: 'png',
+        sizeBytes: bytes.length,
+        thumbSizeBytes: 1,
+        contentHash: hash,
+      }).returning();
+
+      await storageBackend.put(syncBlobKey(universeId, hash), bytes);
+      const written = await writeAssetBytes(universeId, [
+        { assetId: row.id, hash, source: { kind: 'staged' } },
+      ]);
+      expect(await storageBackend.exists(row.id)).toBe(true);
+
+      await discardWrittenAssets(written);
+
+      expect(await storageBackend.exists(row.id)).toBe(false);
+      expect(await storageBackend.exists(`${row.id}_thumb`)).toBe(false);
+      // The staged blob is NOT discarded — it is the source, not the product.
+      expect(await storageBackend.exists(syncBlobKey(universeId, hash))).toBe(true);
+    });
+  });
 });

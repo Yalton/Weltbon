@@ -122,17 +122,29 @@ export async function planAssetMaterialization(
 }
 
 /**
- * Copy bytes onto their asset ids and re-derive thumbnails. Returns how many
- * assets were materialized.
- *
- * Call this AFTER the rows commit (the import-json CR-02 order: storage writes
- * never happen inside a transaction). A failure here leaves an asset row whose
- * bytes are absent — exactly the state a retry of the same idempotent apply
- * repairs.
+ * What `writeAssetBytes` actually put on disk, and what `finalizeMaterialization`
+ * needs in order to complete the job once the rows exist.
  */
-export async function materializeAssets(uid: string, plan: Materialization[]): Promise<number> {
-  let materialized = 0;
-  const consumedStaged = new Set<string>();
+export interface WrittenAsset {
+  assetId: string;
+  hash: string;
+  /** Thumbnail byte length, or null when sharp could not read the original. */
+  thumbSizeBytes: number | null;
+  /** True when the bytes came from a staged sync blob, which finalize consumes. */
+  fromStaged: boolean;
+}
+
+/**
+ * Plan E (E-04), the PRE-commit half: copy bytes onto their asset ids and derive
+ * thumbnails. Safe to call BEFORE the rows exist, and deliberately non-destructive
+ * — it issues no UPDATE (which would match zero rows) and consumes no staged blob
+ * (so an apply that then fails costs no re-transfer).
+ *
+ * Everything this writes is undoable by `discardWrittenAssets`, which is what lets
+ * a refused apply stay the complete local no-op D-06 promises.
+ */
+export async function writeAssetBytes(uid: string, plan: Materialization[]): Promise<WrittenAsset[]> {
+  const written: WrittenAsset[] = [];
 
   for (const m of plan) {
     const bytes =
@@ -147,18 +159,58 @@ export async function materializeAssets(uid: string, plan: Materialization[]): P
     // than a browser upload. A blob sharp cannot read still gets its original
     // stored: the thumb endpoint 404s, which beats failing a whole sync over a
     // derived artifact.
+    let thumbSizeBytes: number | null = null;
     try {
       const thumb = await sharp(bytes, SHARP_OPTS)
         .resize(400, 400, { fit: 'inside', withoutEnlargement: true })
         .toBuffer();
       await storageBackend.put(`${m.assetId}_thumb`, thumb);
-      await db().update(assets).set({ thumbSizeBytes: thumb.length }).where(eq(assets.id, m.assetId));
+      thumbSizeBytes = thumb.length;
     } catch {
-      // leave thumbSizeBytes as applied; the original bytes are what matter
+      // leave it null; the original bytes are what matter
     }
 
-    if (m.source.kind === 'staged') consumedStaged.add(m.hash);
-    materialized += 1;
+    written.push({
+      assetId: m.assetId,
+      hash: m.hash,
+      thumbSizeBytes,
+      fromStaged: m.source.kind === 'staged',
+    });
+  }
+
+  return written;
+}
+
+/**
+ * Plan E (E-04), the POST-commit half: record the derived thumbnail size on the
+ * now-existing row, then consume the staged blobs that fed it.
+ *
+ * The window between `writeAssetBytes` and this call is the residual exposure — a
+ * crash there leaves correct, servable bytes and a stale `thumbSizeBytes`, and it
+ * is NOT self-healing: planAssetMaterialization short-circuits on exists(id), so
+ * an asset whose bytes are present never re-enters a materialization plan and its
+ * size is never recomputed. Accepted deliberately, because thumb_size_bytes feeds
+ * no quota (both quota checks sum size_bytes) — it is a wrong metadata integer on
+ * one asset, in place of a permanently byte-less asset that renders as a broken
+ * image.
+ *
+ * Returns how many assets were materialized, preserving `materializeAssets`'
+ * original return value.
+ */
+export async function finalizeMaterialization(uid: string, written: WrittenAsset[]): Promise<number> {
+  const consumedStaged = new Set<string>();
+
+  for (const w of written) {
+    if (w.thumbSizeBytes !== null) {
+      try {
+        await db().update(assets).set({ thumbSizeBytes: w.thumbSizeBytes }).where(eq(assets.id, w.assetId));
+      } catch {
+        // As before the split: a failed size write never fails the caller. The
+        // bytes and the thumbnail are both already on disk; only a display
+        // number is wrong.
+      }
+    }
+    if (w.fromStaged) consumedStaged.add(w.hash);
   }
 
   // Best-effort: a leftover staged blob costs disk, never correctness.
@@ -170,5 +222,45 @@ export async function materializeAssets(uid: string, plan: Materialization[]): P
       // ignore
     }
   }
-  return materialized;
+
+  return written.length;
+}
+
+/**
+ * Plan E (E-05): undo a `writeAssetBytes` whose apply was refused or threw.
+ *
+ * This is not disk hygiene. D-06 guarantees that a refused sync is a COMPLETE
+ * no-op on the user's own instance, and moving the byte copy ahead of the applies
+ * breaks that guarantee unless the bytes come back off. The staged blobs are
+ * deliberately left alone: they are the SOURCE, not the product, and keeping them
+ * means the retry costs no re-transfer.
+ *
+ * Best-effort by design — this runs on a failure path, and a cleanup error must
+ * never replace the real error the caller is about to see.
+ */
+export async function discardWrittenAssets(written: WrittenAsset[]): Promise<void> {
+  for (const w of written) {
+    try {
+      await storageBackend.delete(w.assetId);
+    } catch {
+      // ignore
+    }
+    try {
+      await storageBackend.delete(`${w.assetId}_thumb`);
+    } catch {
+      // ignore
+    }
+  }
+}
+
+/**
+ * The pre-split entry point, preserved verbatim in behavior for the callers that
+ * genuinely have nothing to do between the two halves. Plan E's drive loop and
+ * apply route call the halves directly so they can put an apply in between.
+ *
+ * Call this AFTER the rows commit (the import-json CR-02 order: storage writes
+ * never happen inside a transaction).
+ */
+export async function materializeAssets(uid: string, plan: Materialization[]): Promise<number> {
+  return finalizeMaterialization(uid, await writeAssetBytes(uid, plan));
 }
