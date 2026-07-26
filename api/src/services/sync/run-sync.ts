@@ -65,7 +65,7 @@ import {
   finalizeMaterialization,
   discardWrittenAssets,
 } from './materialize.js';
-import { reconcileAssets } from './reconcile.js';
+import { reconcileAssets, isWellFormedHash } from './reconcile.js';
 import { recordConflicts } from './conflicts.js';
 import { localIdentity } from './handshake.js';
 import { claimLink, releaseLink, type ReleaseOutcome } from './link-state.js';
@@ -166,12 +166,17 @@ async function drive(
     //
     // Every asset is a delta member here — the peer is getting all of them — so
     // an unsourceable hash is fatal, exactly as it was before Plan E.
+    //
+    // In practice that policy is currently unreachable: a bootstrap carrying ANY
+    // asset cannot succeed at all today, because `missing`, GET blob and PUT blob
+    // all call requireUniverse (routes/sync.ts) while only `apply` handles the
+    // C-11 create-on-bootstrap case. Blobs therefore cannot be staged before the
+    // universe exists, and assets cannot be applied before the blobs exist. This
+    // branch completes only with ZERO hashes. Pre-existing (pushBlobs called
+    // missingAssets exactly the same way) and protocol-level, so it is escalated
+    // rather than patched here; the policy below is what this code WOULD do.
     const localAssets = (local.assets ?? []) as ManifestRow[];
-    const allLocalHashes = new Set(
-      localAssets
-        .map((a) => a.contentHash)
-        .filter((h): h is string => typeof h === 'string' && h.length > 0),
-    );
+    const allLocalHashes = new Set(localAssets.map((a) => a.contentHash).filter(isWellFormedHash));
     const rec = await reconcileAssets(client, universeId, localAssets, allLocalHashes);
 
     // E-04: bytes before the apply, undone by E-05 if the apply is refused.
@@ -230,9 +235,37 @@ async function drive(
       ...(mergeResult.remoteOps.assets?.upserts ?? []),
     ]
       .map((r) => r.contentHash)
-      .filter((h): h is string => typeof h === 'string' && h.length > 0),
+      .filter(isWellFormedHash),
   );
   const rec = await reconcileAssets(client, universeId, mergedAssets, deltaHashes);
+
+  // ── Re-attach pushed rows to the remote delta ───────────────────────────────
+  //
+  // A push alone does NOT repair the peer. putBlob STAGES bytes; the peer copies a
+  // staged blob onto an asset id only inside its own apply, and only for rows in
+  // body.ops.assets.upserts. A repair target is content-equal on both sides, so
+  // merge.ts's !contentEqual gate left it out of BOTH ops lists — without this the
+  // bytes would sit staged on the peer forever while its asset id stayed empty,
+  // AND the peer's `missing` route (which counts a staged blob as present) would
+  // stop reporting the hash, turning a detectable peer-side breakage into an
+  // undetectable one.
+  //
+  // Adding rows to a delta is the OPPOSITE of the E-03 trap, which is about
+  // REMOVING them: a removed row gets recorded in the base as synced, and the next
+  // merge reads its absence on the peer as a remote delete. Adding cannot cause
+  // that. The upsert is content-identical, so it is a no-op for row content, and
+  // updateSetFor copies updatedAt straight from the manifest row (drizzle's
+  // $onUpdate only fills a column absent from the SET clause) — the peer's row
+  // keeps the timestamp it already had.
+  const remoteAssetUpserts = mergeResult.remoteOps.assets?.upserts ?? [];
+  const alreadyInDelta = new Set(remoteAssetUpserts.map((r) => String(r.id)));
+  const remoteRepairUpserts = rec.pushedRows.filter((r) => !alreadyInDelta.has(String(r.id)));
+  if (remoteRepairUpserts.length > 0) {
+    mergeResult.remoteOps.assets = {
+      upserts: [...remoteAssetUpserts, ...remoteRepairUpserts],
+      deletes: mergeResult.remoteOps.assets?.deletes ?? [],
+    };
+  }
 
   // E-04: the byte copy moves AHEAD of both applies. A crash here now leaves
   // orphan bytes under an asset id whose row never committed — collectable, and

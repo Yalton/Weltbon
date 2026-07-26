@@ -114,6 +114,68 @@ describe('reconcileAssets (Plan E Task 3)', () => {
     expect(result.unrepairable).toEqual([]);
   });
 
+  // ── pushedRows: a push is only HALF a peer repair ──────────────────────────
+  //
+  // putBlob stages; the peer copies a staged blob onto an asset id only inside
+  // its own apply, over body.ops.assets.upserts. So every pushed row has to come
+  // back to the caller for re-attachment to remoteOps, or the peer's asset id
+  // stays empty forever AND its `missing` route stops reporting the hash (a
+  // staged blob reads as present), making the breakage undetectable.
+  it('returns the pushed ROWS so the caller can re-attach them to the remote delta', async () => {
+    const { reconcileAssets } = await import('../src/services/sync/reconcile.js');
+    state.owned.push({ id: 'asset-a', mimeType: 'image/png', contentHash: HASH_A });
+    state.bytes.set('asset-a', Buffer.from('bytes-a'));
+    // A second merged row the peer already HAS — it must not appear in pushedRows.
+    state.owned.push({ id: 'asset-b', mimeType: 'image/png', contentHash: HASH_B });
+    state.bytes.set('asset-b', Buffer.from('bytes-b'));
+
+    const client = stubClient([HASH_A]); // peer lacks A only
+    const result = await reconcileAssets(
+      client as never,
+      UID,
+      [assetRow('asset-a', HASH_A), assetRow('asset-b', HASH_B)],
+      new Set<string>(),
+    );
+
+    expect(result.blobsPushed).toBe(1);
+    expect(result.pushedRows).toEqual([assetRow('asset-a', HASH_A)]);
+  });
+
+  it('returns EVERY row sharing a pushed hash, because the peer materializes per ROW (C-20)', async () => {
+    const { reconcileAssets } = await import('../src/services/sync/reconcile.js');
+    // Two distinct asset ids, one content hash, bytes committed under the first.
+    state.owned.push({ id: 'asset-a', mimeType: 'image/png', contentHash: HASH_A });
+    state.owned.push({ id: 'asset-dup', mimeType: 'image/png', contentHash: HASH_A });
+    state.bytes.set('asset-a', Buffer.from('bytes-a'));
+    state.bytes.set('asset-dup', Buffer.from('bytes-a'));
+
+    const client = stubClient([HASH_A]);
+    const result = await reconcileAssets(
+      client as never,
+      UID,
+      [assetRow('asset-a', HASH_A), assetRow('asset-dup', HASH_A)],
+      new Set<string>(),
+    );
+
+    // The blob crosses the wire once — but BOTH rows must reach remoteOps, or the
+    // second asset id is left empty on the peer with no way to notice.
+    expect(client.putBlob).toHaveBeenCalledTimes(1);
+    expect(result.blobsPushed).toBe(1);
+    expect(result.pushedRows).toEqual([assetRow('asset-a', HASH_A), assetRow('asset-dup', HASH_A)]);
+  });
+
+  it('returns no pushed rows when nothing was pushed', async () => {
+    const { reconcileAssets } = await import('../src/services/sync/reconcile.js');
+    state.owned.push({ id: 'asset-a', mimeType: 'image/png', contentHash: HASH_A });
+    state.bytes.set('asset-a', Buffer.from('bytes-a'));
+
+    const client = stubClient([]); // peer has everything
+    const result = await reconcileAssets(client as never, UID, [assetRow('asset-a', HASH_A)], new Set<string>());
+
+    expect(client.putBlob).not.toHaveBeenCalled();
+    expect(result.pushedRows).toEqual([]);
+  });
+
   it('pulls hashes we lack that the peer has (L \\ M), stages them, and RE-PLANS', async () => {
     const { reconcileAssets } = await import('../src/services/sync/reconcile.js');
 

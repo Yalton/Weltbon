@@ -375,6 +375,51 @@ describe('two-instance acceptance for the sync drive loop (Plan D Task 8)', () =
     expect(await storageBackend.exists(syncBlobKey(universeId, sha256(bytesB)))).toBe(false);
   });
 
+  // ── Scenario 4b: repairing the PEER's lost bytes (Plan E, E-06 push) ──────
+  //
+  // The Plan D casualty, on the far side: B's asset ROW survives, its bytes do
+  // not. Both manifests then report the asset identically, so merge.ts's
+  // !contentEqual gate leaves it out of BOTH ops lists — this is precisely the
+  // breakage that nothing before Plan E could see.
+  //
+  // What this pins beyond "blobsPushed went up" is the half that a push alone
+  // does NOT accomplish: putBlob only STAGES on the peer, and the peer copies a
+  // staged blob onto an asset id only inside its own apply, over
+  // body.ops.assets.upserts. So the run must re-attach the pushed row to
+  // remoteOps or B's asset id stays empty forever — and worse, B's `missing`
+  // route counts the staged blob as present, so the next run would stop
+  // reporting the hash and the broken image would become undetectable.
+  it('restores bytes under the PEER\'s asset id for a row both sides already agree on', async () => {
+    await use('A');
+    await runSync(linkId, ownerA.id, { fetchImpl: makeFetch() }); // bootstrap, empty
+
+    const bytes = await realPng(90);
+    const asset = await seedAsset('A', bytes);
+    await use('A');
+    await runSync(linkId, ownerA.id, { fetchImpl: makeFetch() }); // A -> B
+
+    await use('B');
+    expect(await storageBackend.exists(asset.id)).toBe(true); // precondition
+    await storageBackend.delete(asset.id);
+    await storageBackend.delete(`${asset.id}_thumb`);
+
+    await use('A');
+    const r = await runSync(linkId, ownerA.id, { fetchImpl: makeFetch() });
+    expect(r.blobsPushed).toBe(1);
+    expect(r.blobsPulled).toBe(0);
+    // A itself was never broken, and assetsRepaired counts LOCAL repairs only.
+    expect(r.assetsRepaired).toBe(0);
+    expect(r.assetsUnrepairable).toBe(0);
+
+    await use('B');
+    // The whole point: bytes under B's ASSET ID, not merely staged.
+    const restored = await storageBackend.get(asset.id);
+    expect(restored?.equals(bytes)).toBe(true);
+    expect(await storageBackend.exists(`${asset.id}_thumb`)).toBe(true);
+    // And the staged blob was consumed, not left to mask the next probe.
+    expect(await storageBackend.exists(syncBlobKey(universeId, sha256(bytes)))).toBe(false);
+  });
+
   // ── Scenario 5: crash before base advance ────────────────────────────────
 
   it('a crash right before the base advances leaves the base untouched but records the conflict; a retry converges with no duplicate ledger row', async () => {
