@@ -224,13 +224,15 @@ async function drive(
         ops: manifestToOps(local),
       });
     } catch (err) {
-      // Nothing to discard, and that is a conclusion rather than an oversight.
-      // Bootstrap has no LOCAL apply — only the push — so this run creates no
-      // local asset row, and every entry in `written` is therefore a repair of a
-      // row that already existed here. E-05 exists to keep a refused delta from
-      // touching local state; it must not undo a repair (see the merge path's
-      // catch for the full argument), so the restored bytes stay.
-      void written;
+      // Expected to be a no-op, and expressed as one rather than asserted in
+      // prose. Bootstrap has no LOCAL apply — only the push — so this run creates
+      // no local asset row, and every entry in `written` is a repair of a row
+      // that already existed here; E-05 must not undo a repair (see the merge
+      // path's catch for the full argument). That reasoning is true today, but it
+      // depends on where the bootstrap plan's ids come from, so run the same
+      // partition the other two call sites run: identical behavior now, and still
+      // correct if that provenance ever widens.
+      await discardWrittenAssets(written.filter((w) => !w.preexisting));
       throw err;
     }
     await finalizeMaterialization(universeId, written);

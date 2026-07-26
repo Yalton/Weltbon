@@ -540,7 +540,7 @@ describe('sync materialization service (Plan D Task 4)', () => {
         // the apply's transaction has committed the row.
         const ghostId = crypto.randomUUID();
         const count = await finalizeMaterialization(universeId, [
-          { assetId: ghostId, hash: sha(Buffer.from('ghost')), thumbSizeBytes: 42, touchedThumb: true, fromStaged: false, preexisting: false },
+          { assetId: ghostId, hash: sha(Buffer.from('ghost')), thumbSizeBytes: 42, touchedThumb: true, fromStaged: false, preexisting: false, complete: true },
         ]);
 
         expect(count).toBe(1);
@@ -612,6 +612,7 @@ describe('sync materialization service (Plan D Task 4)', () => {
             touchedThumb: false,
             fromStaged: false,
             preexisting: false,
+            complete: true,
           },
         ]);
 
@@ -642,6 +643,7 @@ describe('sync materialization service (Plan D Task 4)', () => {
             touchedThumb: false,
             fromStaged: false,
             preexisting: false,
+            complete: true,
           },
         ]);
 
@@ -652,6 +654,116 @@ describe('sync materialization service (Plan D Task 4)', () => {
       }
     });
   });
+  // ── writeAssetBytes' own unwind (Plan E, E-05) ────────────────────────────
+  //
+  // Both CALL SITES partition orphans from repairs. This unwind is the path that
+  // reaches neither of them: because writeAssetBytes throws, the caller's
+  // `written` is never assigned and stays [], so the caller's own filter runs
+  // over nothing. Discarding wholesale here therefore bypassed both fixes, and
+  // the trigger is mundane — any storage I/O failure part-way through a
+  // multi-entry plan (ENOSPC, EIO, EACCES, a filesystem quota).
+  it('a mid-plan write failure keeps a COMPLETED repair and its pre-existing thumbnail, and drops only the in-flight entry', async () => {
+    const sharp = (await import('sharp')).default;
+    const { storageBackend } = await import('../src/services/storage/local.js');
+    const { syncBlobKey, writeAssetBytes } = await import('../src/services/sync/materialize.js');
+    const { assets } = await import('../src/db/schema.js');
+
+    const repairPng = await sharp({
+      create: { width: 60, height: 60, channels: 3, background: { r: 1, g: 2, b: 3 } },
+    }).png().toBuffer();
+    const orphanPng = await sharp({
+      create: { width: 60, height: 60, channels: 3, background: { r: 4, g: 5, b: 6 } },
+    }).png().toBuffer();
+    const repairHash = sha(repairPng);
+    const orphanHash = sha(orphanPng);
+
+    // Entry 1 — a REPAIR: the row is committed here, its original bytes are gone,
+    // its thumbnail predates this call. A real PNG, so sharp succeeds and
+    // touchedThumb is set — which is what makes a wholesale discard destroy that
+    // pre-existing thumbnail rather than merely the original.
+    const repair = await seedAsset(repairPng, { storeBytes: false });
+    await storageBackend.put(`${repair.id}_thumb`, Buffer.from('THUMB PREDATING THIS CALL'));
+    await storageBackend.put(syncBlobKey(universeId, repairHash), repairPng);
+
+    // Entry 2 — an ORPHAN: no row anywhere, and its put is the one that fails.
+    const orphanId = crypto.randomUUID();
+    await storageBackend.put(syncBlobKey(universeId, orphanHash), orphanPng);
+
+    const realPut = storageBackend.put.bind(storageBackend);
+    const putSpy = vi.spyOn(storageBackend, 'put').mockImplementation(async (key: string, data: Buffer) => {
+      if (key === orphanId) throw new Error('ENOSPC: no space left on device');
+      return realPut(key, data);
+    });
+
+    try {
+      await expect(
+        writeAssetBytes(universeId, [
+          { assetId: repair.id, hash: repairHash, source: { kind: 'staged' } },
+          { assetId: orphanId, hash: orphanHash, source: { kind: 'staged' } },
+        ]),
+      ).rejects.toThrow(/ENOSPC/);
+    } finally {
+      putSpy.mockRestore();
+    }
+
+    // The COMPLETED repair survives — it is a committed row this call did not
+    // break, and undoing it re-breaks an asset whose bytes were right there.
+    expect((await storageBackend.get(repair.id))!.equals(repairPng)).toBe(true);
+    // And its thumbnail, which predates this call entirely, was not destroyed.
+    expect(await storageBackend.exists(`${repair.id}_thumb`)).toBe(true);
+
+    // The in-flight orphan is gone: no row committed for it, and a truncated
+    // original would read as "already materialized" forever.
+    expect(await storageBackend.exists(orphanId)).toBe(false);
+    expect(await storageBackend.exists(`${orphanId}_thumb`)).toBe(false);
+    // Staged blobs are the SOURCE and survive a failure, so the retry is free.
+    expect(await storageBackend.exists(syncBlobKey(universeId, repairHash))).toBe(true);
+    expect(await storageBackend.exists(syncBlobKey(universeId, orphanHash))).toBe(true);
+
+    // The repair row is still byte-bearing and untouched in the DB.
+    const [row] = await handle.db.select().from(assets).where(eq(assets.id, repair.id));
+    expect(row).toBeDefined();
+  });
+
+  it('an in-flight REPAIR is discarded too — a truncated original is worse than an absent one', async () => {
+    const sharp = (await import('sharp')).default;
+    const { storageBackend } = await import('../src/services/storage/local.js');
+    const { syncBlobKey, writeAssetBytes } = await import('../src/services/sync/materialize.js');
+
+    const png = await sharp({
+      create: { width: 60, height: 60, channels: 3, background: { r: 7, g: 8, b: 9 } },
+    }).png().toBuffer();
+    const hash = sha(png);
+
+    // The SAME repair shape as above, but now IT is the entry that fails. The
+    // `complete` half of the partition is what covers this: sparing every
+    // pre-existing entry would leave a possibly-truncated original under a
+    // committed row, which exists() reports as present forever, so the row never
+    // re-enters a plan and the sweep never looks at it again.
+    const repair = await seedAsset(png, { storeBytes: false });
+    await storageBackend.put(syncBlobKey(universeId, hash), png);
+
+    const realPut = storageBackend.put.bind(storageBackend);
+    const putSpy = vi.spyOn(storageBackend, 'put').mockImplementation(async (key: string, data: Buffer) => {
+      if (key === repair.id) {
+        // Half-written, then dead — writeFile is not atomic.
+        await realPut(key, png.subarray(0, 16));
+        throw new Error('EIO: i/o error');
+      }
+      return realPut(key, data);
+    });
+
+    try {
+      await expect(
+        writeAssetBytes(universeId, [{ assetId: repair.id, hash, source: { kind: 'staged' } }]),
+      ).rejects.toThrow(/EIO/);
+    } finally {
+      putSpy.mockRestore();
+    }
+
+    expect(await storageBackend.exists(repair.id)).toBe(false);
+  });
+
   // ── the staged-blob sweep (Plan E, E-07) ──────────────────────────────────
 
   describe('sweepUnmaterializedAssets (Plan E, E-07)', () => {
@@ -709,6 +821,23 @@ describe('sync materialization service (Plan D Task 4)', () => {
       // — rewriting bytes and re-deriving thumbnails on every single apply, and
       // reporting a non-zero sweptAssets for a universe that is perfectly fine.
       expect(await sweepUnmaterializedAssets(universeId)).toBe(0);
+    });
+
+    it('bounds itself with a RANDOMLY ordered limit, asserted on the generated SQL', async () => {
+      const { sweepCandidatesQuery, SWEEP_BATCH } = await import('../src/services/sync/materialize.js');
+
+      // Asserted at the SQL level deliberately. The property that matters —
+      // every row eventually sampled — needs SWEEP_BATCH+1 assets to observe
+      // behaviorally, which is not worth the runtime; and it is a Postgres
+      // guarantee rather than application logic. What IS application logic, and
+      // what a future edit can silently drop, is the ORDER BY. Without it a
+      // plain LIMIT returns scan-order rows, so a broken asset past the cutoff
+      // is skipped on every apply forever — the exact silent-permanent breakage
+      // this sweep exists to remove, reintroduced by its own cost bound.
+      const { sql: text, params } = sweepCandidatesQuery(universeId).toSQL();
+      expect(text.toLowerCase()).toContain('order by random()');
+      expect(params).toContain(SWEEP_BATCH);
+      expect(params).toContain(universeId);
     });
 
     it('leaves a row whose bytes are nowhere alone rather than throwing', async () => {

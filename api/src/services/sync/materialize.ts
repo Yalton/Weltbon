@@ -187,6 +187,17 @@ export interface WrittenAsset {
    * destroys a user's pre-existing thumbnail.
    */
   preexisting: boolean;
+  /**
+   * True once this entry's own writes have finished. False means the entry was
+   * IN FLIGHT when something threw, so its original may be truncated on disk
+   * (writeFile is not atomic) — and a truncated original under a pre-existing
+   * row is worse than an absent one, because `exists()` reads true forever and
+   * the row never re-enters a materialization plan.
+   *
+   * Only the unwind inside writeAssetBytes reads it: a repair is spared there
+   * only when it is BOTH pre-existing and complete.
+   */
+  complete: boolean;
 }
 
 /**
@@ -272,6 +283,7 @@ export async function writeAssetBytes(uid: string, plan: Materialization[]): Pro
         touchedThumb: false,
         fromStaged: m.source.kind === 'staged',
         preexisting: preexistingIds.has(m.assetId),
+        complete: false,
       };
       written.push(entry);
 
@@ -292,6 +304,11 @@ export async function writeAssetBytes(uid: string, plan: Materialization[]): Pro
       } catch {
         // leave it null; the original bytes are what matter
       }
+
+      // This entry's own writes are done. Everything after this point in the
+      // plan is a DIFFERENT asset, so a later throw leaves this one intact —
+      // which is what lets the unwind below spare it when it is a repair.
+      entry.complete = true;
     }
   } catch (err) {
     // Partial writes are worse than none. planAssetMaterialization short-circuits
@@ -300,7 +317,27 @@ export async function writeAssetBytes(uid: string, plan: Materialization[]): Pro
     // later changes, the row commits with one hash while the disk holds another,
     // which content-hash merge can never detect. Unwind before rethrowing so the
     // caller's E-05 path has nothing left to do.
-    await discardWrittenAssets(written);
+    //
+    // Partitioned on BOTH flags, and each half is load-bearing:
+    //
+    //   - `!preexisting` — orphans go, exactly as at both call sites. This unwind
+    //     used to discard everything, which silently bypassed both of those
+    //     partitions: because this function throws, the caller's `written` stays
+    //     [] and its own filter never runs at all. A mid-plan storage failure
+    //     (ENOSPC, EIO, EACCES, a filesystem quota — mundane, not exotic) was
+    //     therefore enough to destroy a repair target's PRE-EXISTING thumbnail,
+    //     the same D-06 violation the call sites spend paragraphs preventing,
+    //     reached through a different door.
+    //   - `!complete` — the IN-FLIGHT entry goes even when it is a repair.
+    //     writeFile is not atomic, so the entry that was mid-write can have a
+    //     truncated original under a pre-existing row, and that is strictly worse
+    //     than a byte-less one: exists() reads true forever, so the row never
+    //     re-enters a plan and the sweep never looks at it again.
+    //
+    // Positional reasoning ("the last entry is the broken one") would NOT work:
+    // the throw can come from storageBackend.get BEFORE the entry is pushed, in
+    // which case the last element is complete and must be kept.
+    await discardWrittenAssets(written.filter((w) => !w.preexisting || !w.complete));
     throw err;
   }
 
@@ -331,8 +368,14 @@ export async function finalizeMaterialization(uid: string, written: WrittenAsset
       try {
         const updated = await db()
           .update(assets)
+          // Scoped by universe as well as id. Unreachable today — writeAssetBytes'
+          // C-09 guard has already proven every id in `written` belongs to `uid`
+          // — but this function is exported and independently callable, and the
+          // guard's whole posture is "protected by construction, not by the
+          // caller being careful". It also sharpens the zero-row warning below
+          // from "no such asset" to "no such asset IN THIS UNIVERSE".
           .set({ thumbSizeBytes: w.thumbSizeBytes })
-          .where(eq(assets.id, w.assetId))
+          .where(and(eq(assets.id, w.assetId), eq(assets.universeId, uid)))
           .returning({ id: assets.id });
         // Drizzle does not throw on a zero-row UPDATE. Pre-split this was safe
         // by construction (one call site, immediately after commit). Post-split,
@@ -462,23 +505,37 @@ export async function materializeAssets(uid: string, plan: Materialization[]): P
  * returns rows in whatever order the scan produces, so a broken row sitting past
  * the cutoff can be missed on every single apply, forever — which is precisely
  * the silent-permanent-breakage this whole task exists to remove, reintroduced by
- * the bound meant to make it affordable. Random sampling keeps the work bounded
- * AND gives every row a per-apply chance of n/N, so any breakage is healed after
- * a handful of applies. Sorting N rows costs far less than the N filesystem
- * stats it replaces, and a universe under the cap is sampled in full, so this is
- * exactly the unbounded behavior for everything but the extreme case.
+ * the bound meant to make it affordable.
+ *
+ * Random sampling keeps the work bounded while preserving the property that
+ * actually matters: every row has a SWEEP_BATCH/N chance per apply, so every
+ * breakage is healed eventually, with probability 1. Not quickly — at N = 100k
+ * that is ~20 applies in expectation, and the tail is longer — but eventually and
+ * unconditionally, which is the difference between "slow" and "never". Sorting N
+ * rows costs far less than the N filesystem stats it replaces, and a universe
+ * under the cap is sampled in full, so nothing changes below the extreme case.
  *
  * Returns how many byte-less rows it healed.
  */
-const SWEEP_BATCH = 5000;
+export const SWEEP_BATCH = 5000;
 
-export async function sweepUnmaterializedAssets(uid: string): Promise<number> {
-  const rows = await db()
+/**
+ * The sweep's candidate query, factored out so its ORDER BY and LIMIT can be
+ * asserted from `.toSQL()` without seeding SWEEP_BATCH+1 assets. The statistical
+ * property cannot reasonably be tested; the SQL that produces it can, and a
+ * comment alone is how the C-20 sibling case stayed invisible for two plans.
+ */
+export function sweepCandidatesQuery(uid: string) {
+  return db()
     .select({ id: assets.id, contentHash: assets.contentHash })
     .from(assets)
     .where(and(eq(assets.universeId, uid), isNotNull(assets.contentHash)))
     .orderBy(sql`random()`)
     .limit(SWEEP_BATCH);
+}
+
+export async function sweepUnmaterializedAssets(uid: string): Promise<number> {
+  const rows = await sweepCandidatesQuery(uid);
   if (rows.length === 0) return 0;
 
   // `missingHashes` is deliberately ignored: a row whose bytes are nowhere is
