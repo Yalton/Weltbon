@@ -36,7 +36,11 @@ import {
   findOwnedAssetsByHash,
   findOwnedAssetByHash,
   planAssetMaterialization,
-  materializeAssets,
+  writeAssetBytes,
+  finalizeMaterialization,
+  discardWrittenAssets,
+  sweepUnmaterializedAssets,
+  type WrittenAsset,
 } from '../services/sync/materialize.js';
 import type { AuthVariables } from '../middleware/auth.js';
 
@@ -213,6 +217,13 @@ const applyRoute = createRoute({
             upserted: z.record(z.string(), z.number()),
             deleted: z.record(z.string(), z.number()),
             materializedAssets: z.number(),
+            // E-07: byte-less rows this apply healed from state this instance
+            // was ALREADY holding (a staged blob from a refused earlier apply, a
+            // C-20 sibling), as opposed to the ones the caller's own delta
+            // supplied. Kept separate from materializedAssets precisely so the
+            // two are separable — a non-zero sweptAssets means something was
+            // broken here and got fixed, which is a different fact.
+            sweptAssets: z.number(),
           }),
         },
       },
@@ -398,13 +409,54 @@ export const syncRoutes = new OpenAPIHono<AppEnv>()
       );
     }
 
+    // E-04/E-07: bytes BEFORE the rows. planAssetMaterialization above already
+    // proved every hash is sourceable, so this cannot fail for want of bytes —
+    // and a crash between here and the commit leaves orphan bytes under an asset
+    // id whose row never committed, which is collectable and idempotent on
+    // retry, rather than a committed row whose bytes are absent, which nothing
+    // can see and nothing can repair.
+    //
+    // INSIDE the try, because writeAssetBytes now runs its own C-09 guard (the
+    // real one lives inside applyManifestOps' transaction, which this write no
+    // longer precedes) and throws CrossUniverseCollisionError for a foreign
+    // asset id. That is a SyncApplyError and must reach the mapper below, or it
+    // becomes an unhandled 500 whose default body would echo the very foreign
+    // ids C-21 exists to withhold. It throws before writing anything, so
+    // `written` is still [] when the discard runs.
+    let written: WrittenAsset[] = [];
     let result;
     try {
+      written = await writeAssetBytes(uid, plan.toMaterialize);
       result = await applyManifestOps(
         { universe: body.universe as any, ops: body.ops as any },
         { universeId: uid, ownerId: userId },
       );
     } catch (err) {
+      // E-05: the apply did not happen, so neither did the bytes. Staged blobs
+      // are deliberately left intact — the peer's retry then costs no
+      // re-transfer. Best-effort, and deliberately BEFORE the error mapping so
+      // a cleanup failure cannot change which error the caller sees.
+      //
+      // ORPHANS only, exactly as run-sync.ts does it — an earlier revision
+      // discarded all of `written` on the argument that the sweep below makes it
+      // a deferral rather than a re-breakage. That argument covers the original
+      // bytes and nothing else, and it was wrong twice over:
+      //
+      //   - The THUMBNAIL is not recoverable that way. A repair target can have a
+      //     surviving `_thumb` and a lost original; writeAssetBytes overwrites
+      //     the thumb, so discarding it destroys an artifact that PREDATES this
+      //     apply. The sweep only brings it back if it later re-materializes the
+      //     original, and D-06 never asked for that file to be touched at all.
+      //   - The sweep only runs on the SUCCESS path. If this instance's applies
+      //     fail persistently — a cross-universe collision, a raw FK violation
+      //     from an inconsistent peer manifest (B-10), an ownership change — the
+      //     deferral never arrives and the repair is undone on every attempt,
+      //     forever, with the source sitting right there. That the refusal is our
+      //     own engine's rather than a peer's changes nothing about the outcome.
+      //
+      // `preexisting` is resolved in writeAssetBytes against the DB at write
+      // time, so both apply paths partition on one definition (see WrittenAsset).
+      await discardWrittenAssets(written.filter((w) => !w.preexisting));
       // Every engine error derives from SyncApplyError and carries its own
       // `status` (C-19). What each error is safe to put in the BODY (C-21 —
       // CrossUniverseCollisionError's `.message` embeds another universe's row
@@ -421,9 +473,37 @@ export const syncRoutes = new OpenAPIHono<AppEnv>()
       throw err;
     }
 
-    // Rows are committed; NOW materialize bytes (storage writes never happen
-    // inside the transaction). Staged blobs are consumed on the way through.
-    const materializedAssets = await materializeAssets(uid, plan.toMaterialize);
+    // Rows are committed; NOW record the derived thumbnail sizes and consume the
+    // staged blobs (storage writes never happen inside the transaction).
+    const materializedAssets = await finalizeMaterialization(uid, written);
 
-    return c.json({ ...result, materializedAssets }, 200);
+    // E-07: and then heal whatever this instance was already sitting on — a
+    // staged blob whose apply was refused or dropped, or a byte-less row whose
+    // C-20 sibling holds the bytes. Runs AFTER finalize so this apply's own work
+    // is done and its rows short-circuit on exists(id). See
+    // sweepUnmaterializedAssets for why the peer has to be the one to do this.
+    //
+    // Best-effort: the rows are committed and their bytes are on disk, so the
+    // apply has ALREADY succeeded by the time we get here. Failing it now would
+    // report a successful sync as an error and tell the initiator to retry
+    // something that does not need retrying. writeAssetBytes unwinds its own
+    // partial writes, so a throw here leaves nothing behind — but a swallowed
+    // error must still be diagnosable, which is the whole lesson of the bug this
+    // sweep exists to fix.
+    let sweptAssets = 0;
+    try {
+      sweptAssets = await sweepUnmaterializedAssets(uid);
+      if (sweptAssets > 0) {
+        // The visibility half of this task, and the only one that reaches anyone
+        // on THIS instance: under S-02 the sweeping instance is prod, which
+        // initiates no runs and whose HTTP responses nobody reads. A non-zero
+        // count means assets here were silently byte-less and have just been
+        // repaired — an operator-visible fact, not a debug detail.
+        console.info(`[sync-apply] swept ${sweptAssets} unmaterialized asset(s) for universe ${uid}`);
+      }
+    } catch (err) {
+      console.warn(`[sync-apply] staged-blob sweep failed for universe ${uid}:`, err);
+    }
+
+    return c.json({ ...result, materializedAssets, sweptAssets }, 200);
   });

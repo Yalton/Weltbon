@@ -17,6 +17,7 @@ import { maxFileBytes } from '../media/limits.js';
 import {
   SyncApplyRejectedError,
   SyncAuthError,
+  SyncBlobUnavailableError,
   SyncIncompatibleError,
   SyncPaymentError,
   SyncQuotaError,
@@ -40,6 +41,9 @@ export interface RemoteClientOptions {
 /** Plan C's missing-assets route caps the array at 5000 (routes/sync.ts:179). */
 const MISSING_BATCH = 5000;
 
+/** A sha256 hex digest — the only shape any hash a peer sends us may have. */
+const HASH_RE = /^[0-9a-f]{64}$/;
+
 export function syncRequestTimeoutMs(): number {
   const v = Number(process.env.SYNC_REQUEST_TIMEOUT_MS);
   return Number.isFinite(v) && v > 0 ? v : 60_000;
@@ -60,6 +64,17 @@ export interface RemoteApplyResult {
   upserted: Record<string, number>;
   deleted: Record<string, number>;
   materializedAssets: number;
+  /**
+   * Plan E (E-07): byte-less rows the PEER healed from state it was already
+   * holding — a staged blob whose earlier apply was refused, or a C-20 sibling.
+   *
+   * OPTIONAL because apply() casts the parsed body unchecked, and a peer running
+   * a build from before E-07 simply will not send it. Declaring it required
+   * would be a lie about those peers; declaring it at all is what lets the number
+   * be consumed, since it is otherwise computed on an instance whose HTTP
+   * responses nobody reads (S-02: the sweeper is prod, which never initiates).
+   */
+  sweptAssets?: number;
 }
 
 /**
@@ -71,7 +86,7 @@ function sanitizeApplyDetail(body: unknown): RemoteApplyDetail {
   if (typeof body !== 'object' || body === null) return out;
   const b = body as Record<string, unknown>;
   if (Array.isArray(b.missingAssetHashes)) {
-    const hashes = b.missingAssetHashes.filter((h): h is string => typeof h === 'string' && /^[0-9a-f]{64}$/.test(h));
+    const hashes = b.missingAssetHashes.filter((h): h is string => typeof h === 'string' && HASH_RE.test(h));
     if (hashes.length > 0) out.missingAssetHashes = hashes;
   }
   if (Array.isArray(b.collisions)) {
@@ -271,8 +286,17 @@ export class SyncRemoteClient {
         body: JSON.stringify({ hashes: batch }),
       });
       if (res.status !== 200) throw new SyncUnreachableError(`assets/missing returned ${res.status}`);
-      const body = (await this.readJson(res, 'assets/missing')) as { missing?: string[] };
-      out.push(...(body.missing ?? []));
+      const body = (await this.readJson(res, 'assets/missing')) as { missing?: unknown };
+      // Validated exactly as sanitizeApplyDetail validates its own hash array
+      // (C-21): this is a peer-controlled array that flows into reconcile.ts's
+      // `unrepairable`, which Plan E's UI renders, and into storage keys via
+      // syncBlobKey. Nothing downstream re-checks the shape. A non-array body
+      // yields no hashes rather than throwing — a peer that answers the wrong
+      // shape is telling us nothing is missing as far as we can verify, and the
+      // apply's own pre-check is the backstop.
+      if (Array.isArray(body.missing)) {
+        out.push(...body.missing.filter((h): h is string => typeof h === 'string' && HASH_RE.test(h)));
+      }
     }
     return out;
   }
@@ -280,6 +304,20 @@ export class SyncRemoteClient {
   /** Bounded by the SAME per-file cap the upload path uses — a peer is not privileged. */
   async getBlob(uid: string, hash: string): Promise<Buffer> {
     const res = await this.send('GET', `/universes/${uid}/assets/${hash}`);
+    // E-08: a 404 is not a transport failure. The peer answered, and its answer
+    // was "I do not have these bytes" — reporting that as remote-unreachable
+    // (502) sends an operator to debug their network over a missing file.
+    // reconcile.ts's single probe means the happy path never GETs a hash the
+    // peer has already reported missing, so reaching this branch means something
+    // changed on the peer between the probe and this call. The status alone
+    // cannot say WHAT: the handler calls requireUniverse first (routes/sync.ts),
+    // so a 404 here is either the blob being deleted or the whole universe being
+    // deleted between snapshot() and now. Either way the peer answered, and its
+    // answer was "not here" — a race, which is exactly what
+    // SyncBlobUnavailableError (409, code `blob-unavailable`) names. `remote`:
+    // whatever the cause, it is the peer that stopped being able to serve these
+    // bytes, so a retry (which re-runs the handshake and snapshot) is the remedy.
+    if (res.status === 404) throw new SyncBlobUnavailableError([hash], 'remote');
     if (res.status !== 200) throw new SyncUnreachableError(`blob GET returned ${res.status}`);
     return this.readCapped(res, maxFileBytes(), 'blob');
   }

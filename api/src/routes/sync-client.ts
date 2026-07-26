@@ -155,12 +155,29 @@ const countsSchema = z.object({
   deleted: z.record(z.string(), z.number()),
 });
 
+// Must match SyncRunResult (run-sync.ts) field for field. It did not: Plan E's
+// three asset-reconciliation counters were added to the interface and not here,
+// so the generated OpenAPI promised a shape the route no longer returned.
 const syncRunResultSchema = z.object({
   linkId: z.string().uuid(),
   bootstrapped: z.boolean(),
   conflicts: z.number(),
   blobsPushed: z.number(),
   blobsPulled: z.number(),
+  /** Plan E: byte-less LOCAL asset rows this run restored (not delta arrivals). */
+  assetsRepairedLocally: z.number(),
+  /**
+   * Plan E: asset rows whose bytes were pushed to repair the PEER rather than to
+   * deliver a change. Separate from blobsPushed, which cannot tell the two apart.
+   */
+  assetsRepairedOnPeer: z.number(),
+  /**
+   * Plan E (E-07): byte-less rows the peer healed by ITSELF during this run's
+   * apply. 0 from a peer that predates E-07 and does not report it.
+   */
+  assetsSweptOnPeer: z.number(),
+  /** Plan E (E-03): rows whose bytes neither side holds — reported, not fatal. */
+  assetsUnrepairable: z.number(),
   pushed: countsSchema,
   appliedLocally: countsSchema,
 });

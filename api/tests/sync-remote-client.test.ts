@@ -177,6 +177,70 @@ describe('SyncRemoteClient status mapping', () => {
     await client(fetchImpl).missingAssets('u-1', hashes);
     expect(seen).toEqual([5000, 1]);
   });
+
+  /**
+   * The `missing` array is peer-controlled and nothing downstream re-checks it:
+   * it reaches storage keys via syncBlobKey and reconcile.ts's `unrepairable`,
+   * which the Plan E UI renders. Validated exactly as sanitizeApplyDetail
+   * validates its own hash array (C-21).
+   */
+  it('drops anything that is not a sha256 hex digest from a missing-assets reply', async () => {
+    const hash = 'a'.repeat(64);
+    const { fetchImpl } = stub(() =>
+      json({
+        missing: [
+          hash,
+          '../../../etc/passwd',
+          'A'.repeat(64), // right length, wrong case
+          'a'.repeat(63), // one short
+          42,
+          null,
+          { nested: 'object' },
+        ],
+      }),
+    );
+    const out = await client(fetchImpl).missingAssets('u-1', [hash]);
+    expect(out).toEqual([hash]);
+  });
+
+  it('treats a missing-assets reply whose `missing` is not an array as empty', async () => {
+    const { fetchImpl } = stub(() => json({ missing: 'everything' }));
+    await expect(client(fetchImpl).missingAssets('u-1', ['a'.repeat(64)])).resolves.toEqual([]);
+  });
+
+  it('getBlob reports a 404 as blob-unavailable, not as an unreachable remote (E-08)', async () => {
+    const { SyncRemoteClient } = await import('../src/services/sync/remote-client.js');
+    const { SyncBlobUnavailableError } = await import('../src/services/sync/run-errors.js');
+
+    const hash = 'a'.repeat(64);
+    const client = new SyncRemoteClient({
+      baseUrl: 'https://peer.example',
+      pat: 'pat_test',
+      fetchImpl: async () => new Response('Blob not found', { status: 404 }),
+    });
+
+    const err = await client.getBlob('11111111-1111-1111-1111-111111111111', hash).catch((e) => e);
+    expect(err).toBeInstanceOf(SyncBlobUnavailableError);
+    expect(err.hashes).toEqual([hash]);
+    // The fixture gives the 404 a body on purpose: what lands in
+    // sync_links.last_error must be OUR string (D-09), and it must name the
+    // remote side so the operator is told to retry rather than to re-upload.
+    expect(safeErrorSummary(err)).toBe('blob-unavailable: 1 asset blob(s) the remote no longer has');
+  });
+
+  it('getBlob still reports a non-404 error status as unreachable', async () => {
+    const { SyncRemoteClient } = await import('../src/services/sync/remote-client.js');
+    const { SyncUnreachableError } = await import('../src/services/sync/run-errors.js');
+
+    const client = new SyncRemoteClient({
+      baseUrl: 'https://peer.example',
+      pat: 'pat_test',
+      fetchImpl: async () => new Response('boom', { status: 500 }),
+    });
+
+    await expect(client.getBlob('11111111-1111-1111-1111-111111111111', 'b'.repeat(64)))
+      .rejects.toBeInstanceOf(SyncUnreachableError);
+  });
 });
 
 describe('safeErrorSummary (D-09)', () => {
