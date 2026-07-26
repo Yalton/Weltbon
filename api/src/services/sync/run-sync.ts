@@ -223,10 +223,14 @@ async function drive(
     // Re-plan: the hashes just staged may now resolve materialization sources
     // that were unavailable before the pull.
     plan = await planAssetMaterialization(universeId, mergeResult.localOps.assets?.upserts ?? []);
-    // `neither`: both sources have now been exhausted for these hashes — the
-    // local plan could not resolve them and the pull above is the only remedy
-    // the remote had to offer.
-    if (plan.missingHashes.length > 0) throw new SyncBlobUnavailableError(plan.missingHashes, 'neither');
+    // `local`, not `neither`: control only reaches here if EVERY getBlob above
+    // returned bytes — a peer that lacks a hash throws `remote` from getBlob's
+    // 404 branch (E-08) and never gets this far. So the peer demonstrably had
+    // these bytes and we staged them; a hash the re-plan still reports missing
+    // is one we received and then failed to resolve locally. Reporting
+    // `neither` would tell an operator the file is gone everywhere while the
+    // remote is still serving it.
+    if (plan.missingHashes.length > 0) throw new SyncBlobUnavailableError(plan.missingHashes, 'local');
   }
 
   // D-06: remote apply first — it is the only side that can be refused.
