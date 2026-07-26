@@ -243,6 +243,24 @@ export async function writeAssetBytes(uid: string, plan: Materialization[]): Pro
   // So the check belongs here, ahead of every write, rather than at either call
   // site — one guard, both callers protected by construction. Because nothing
   // has been written when it fires, there is deliberately nothing to discard.
+  //
+  // ONE PROTECTION HERE IS INCIDENTAL, and is recorded so it is not "fixed" away.
+  // This guard checks ASSET IDS, but the code below derives a SECOND storage key
+  // from the same value: `${assetId}_thumb`. safeJoin preserves `_`, so a
+  // peer-chosen id of `<victimAssetId>_thumb` maps onto a victim's thumbnail —
+  // and because that string is not itself an asset id, the `WHERE id IN (...)`
+  // below finds no foreign row and this guard waves it through. What actually
+  // blocks it is that `assets.id` is a UUID column: the query throws `invalid
+  // input syntax for type uuid` before the first put. (Pre-Plan-E that same id
+  // reached materializeAssets and the victim's thumbnail WAS overwritten, so
+  // moving the write ahead of the transaction closed the hole in passing.)
+  //
+  // The hazard is therefore a change that looks like a cleanup: if asset ids ever
+  // become `text`, or if someone makes this query lenient by filtering to
+  // well-formed UUIDs first — the natural reaction to seeing that 500 — the hole
+  // reopens silently, with no test to catch it. The derived `_thumb` key is safe
+  // ONLY because a non-UUID id cannot survive this query. Widen the column or
+  // soften the query and this guard must start checking derived keys too.
   const ids = [...new Set(plan.map((m) => m.assetId))];
   const existingRows = await db()
     .select({ id: assets.id, universeId: assets.universeId })

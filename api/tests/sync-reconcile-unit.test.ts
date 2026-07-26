@@ -19,11 +19,21 @@
  * pinned on Postgres in sync-materialize.test.ts; what the C1 tests here pin is
  * that reconcile's policy is correct GIVEN that contract.
  */
+import { createHash } from 'node:crypto';
 import { describe, it, expect, vi, beforeEach } from 'vitest';
 
-const HASH_A = 'a'.repeat(64);
-const HASH_B = 'b'.repeat(64);
-const HASH_C = 'c'.repeat(64);
+// Real SHA-256s of real payloads, not 'a'.repeat(64). The pull direction now
+// verifies that the bytes a peer serves actually hash to the hash we asked for,
+// so a content-addressed fixture whose hashes are not the hashes of its content
+// cannot exercise it — and, worse, would have to be neutered to keep passing.
+// That mismatch is exactly the kind of thing that let the missing verification
+// sit unnoticed, so the fixture is honest about it now.
+const BYTES_A = Buffer.from('bytes-a');
+const BYTES_B = Buffer.from('bytes-b');
+const BYTES_C = Buffer.from('bytes-c');
+const HASH_A = createHash('sha256').update(BYTES_A).digest('hex');
+const HASH_B = createHash('sha256').update(BYTES_B).digest('hex');
+const HASH_C = createHash('sha256').update(BYTES_C).digest('hex');
 const UID = '11111111-1111-1111-1111-111111111111';
 
 // Hoisted mock state so the factory below can close over it.
@@ -76,6 +86,12 @@ vi.mock('../src/services/storage/local.js', () => ({
   },
 }));
 
+/**
+ * `blobs` is served by getBlob VERBATIM. reconcile verifies that what it was
+ * served hashes to what it asked for, so any entry a test actually pulls must
+ * genuinely hash to its key — the BYTES_* constants above do. Entries under a
+ * key the test asserts is never GET'd are free to hold anything.
+ */
 function stubClient(missing: string[], blobs: Map<string, Buffer> = new Map()) {
   return {
     missingAssets: vi.fn(async () => missing),
@@ -101,14 +117,14 @@ describe('reconcileAssets (Plan E Task 3)', () => {
   it('pushes hashes the peer lacks that we can source (M \\ L)', async () => {
     const { reconcileAssets } = await import('../src/services/sync/reconcile.js');
     state.owned.push({ id: 'asset-a', mimeType: 'image/png', contentHash: HASH_A });
-    state.bytes.set('asset-a', Buffer.from('bytes-a'));
+    state.bytes.set('asset-a', BYTES_A);
 
     const client = stubClient([HASH_A]);
     const result = await reconcileAssets(client as never, UID, [assetRow('asset-a', HASH_A)], new Set<string>());
 
     expect(client.putBlob).toHaveBeenCalledTimes(1);
     // WHICH bytes went out, not merely that a call happened.
-    expect(client.putBlob).toHaveBeenCalledWith(UID, HASH_A, Buffer.from('bytes-a'));
+    expect(client.putBlob).toHaveBeenCalledWith(UID, HASH_A, BYTES_A);
     expect(result.blobsPushed).toBe(1);
     expect(result.blobsPulled).toBe(0);
     expect(result.unrepairable).toEqual([]);
@@ -124,10 +140,10 @@ describe('reconcileAssets (Plan E Task 3)', () => {
   it('returns the pushed ROWS so the caller can re-attach them to the remote delta', async () => {
     const { reconcileAssets } = await import('../src/services/sync/reconcile.js');
     state.owned.push({ id: 'asset-a', mimeType: 'image/png', contentHash: HASH_A });
-    state.bytes.set('asset-a', Buffer.from('bytes-a'));
+    state.bytes.set('asset-a', BYTES_A);
     // A second merged row the peer already HAS — it must not appear in pushedRows.
     state.owned.push({ id: 'asset-b', mimeType: 'image/png', contentHash: HASH_B });
-    state.bytes.set('asset-b', Buffer.from('bytes-b'));
+    state.bytes.set('asset-b', BYTES_B);
 
     const client = stubClient([HASH_A]); // peer lacks A only
     const result = await reconcileAssets(
@@ -146,8 +162,8 @@ describe('reconcileAssets (Plan E Task 3)', () => {
     // Two distinct asset ids, one content hash, bytes committed under the first.
     state.owned.push({ id: 'asset-a', mimeType: 'image/png', contentHash: HASH_A });
     state.owned.push({ id: 'asset-dup', mimeType: 'image/png', contentHash: HASH_A });
-    state.bytes.set('asset-a', Buffer.from('bytes-a'));
-    state.bytes.set('asset-dup', Buffer.from('bytes-a'));
+    state.bytes.set('asset-a', BYTES_A);
+    state.bytes.set('asset-dup', BYTES_A);
 
     const client = stubClient([HASH_A]);
     const result = await reconcileAssets(
@@ -167,7 +183,7 @@ describe('reconcileAssets (Plan E Task 3)', () => {
   it('returns no pushed rows when nothing was pushed', async () => {
     const { reconcileAssets } = await import('../src/services/sync/reconcile.js');
     state.owned.push({ id: 'asset-a', mimeType: 'image/png', contentHash: HASH_A });
-    state.bytes.set('asset-a', Buffer.from('bytes-a'));
+    state.bytes.set('asset-a', BYTES_A);
 
     const client = stubClient([]); // peer has everything
     const result = await reconcileAssets(client as never, UID, [assetRow('asset-a', HASH_A)], new Set<string>());
@@ -179,12 +195,12 @@ describe('reconcileAssets (Plan E Task 3)', () => {
   it('pulls hashes we lack that the peer has (L \\ M), stages them, and RE-PLANS', async () => {
     const { reconcileAssets } = await import('../src/services/sync/reconcile.js');
 
-    const client = stubClient([], new Map([[HASH_B, Buffer.from('bytes-b')]]));
+    const client = stubClient([], new Map([[HASH_B, BYTES_B]]));
     const result = await reconcileAssets(client as never, UID, [assetRow('asset-b', HASH_B)], new Set<string>());
 
     expect(client.getBlob).toHaveBeenCalledTimes(1);
     expect(result.blobsPulled).toBe(1);
-    expect(state.bytes.get(`sync-blob-${UID}-${HASH_B}`)?.toString()).toBe('bytes-b');
+    expect(state.bytes.get(`sync-blob-${UID}-${HASH_B}`)?.equals(BYTES_B)).toBe(true);
 
     // The re-plan is the point of the pull: without it the freshly-staged hash
     // stays in `stillMissing` and comes back as unrepairable — or, for a delta
@@ -196,6 +212,46 @@ describe('reconcileAssets (Plan E Task 3)', () => {
     ]);
   });
 
+  /**
+   * The pull direction must verify what the peer SERVED, not merely that it
+   * answered — the mirror of the PUT route's own check (routes/sync.ts 400s
+   * bytes that do not hash to the given name).
+   *
+   * The asymmetry predates Plan E; what Plan E changed is the blast radius. The
+   * pull set used to be localOps.assets.upserts — assets the user was actively
+   * editing — and is now L \ M over the whole MERGED set, so wrong bytes land on
+   * assets nobody has touched in months. And once they are under the asset id
+   * there is no second chance: exists(id) reads true forever, the row never
+   * re-enters a materialization plan, the sweep skips it, and content-hash merge
+   * cannot see that a row's hash and its bytes disagree.
+   */
+  it('refuses bytes that do not hash to the hash it asked for, and stages nothing', async () => {
+    const { reconcileAssets } = await import('../src/services/sync/reconcile.js');
+    const { SyncBlobUnavailableError } = await import('../src/services/sync/run-errors.js');
+
+    // The peer reports nothing missing, so HASH_B is pullable — and then serves
+    // a payload that is not HASH_B's.
+    const client = stubClient([], new Map([[HASH_B, Buffer.from('these are not the bytes for HASH_B')]]));
+
+    const err = await reconcileAssets(
+      client as never,
+      UID,
+      [assetRow('asset-b', HASH_B)],
+      new Set<string>(),
+    ).then(() => null, (e: unknown) => e);
+
+    expect(client.getBlob).toHaveBeenCalledTimes(1);
+    expect(err).toBeInstanceOf(SyncBlobUnavailableError);
+    // `remote` is the actionable side: the peer failed to produce bytes it said
+    // it had, so a retry against a healthy peer is the remedy.
+    expect((err as InstanceType<typeof SyncBlobUnavailableError>).side).toBe('remote');
+    expect((err as InstanceType<typeof SyncBlobUnavailableError>).hashes).toEqual([HASH_B]);
+    // The check runs BEFORE the put. Asserting the staging key is empty is what
+    // pins that ordering — verifying after staging would leave the corrupt bytes
+    // exactly where they can never be noticed again.
+    expect(state.bytes.has(`sync-blob-${UID}-${HASH_B}`)).toBe(false);
+  });
+
   it('reports a hash neither side has as unrepairable, without attempting a GET', async () => {
     const { reconcileAssets } = await import('../src/services/sync/reconcile.js');
 
@@ -205,7 +261,7 @@ describe('reconcileAssets (Plan E Task 3)', () => {
     // stub instead of at the invariant — and it would also pass if the code grew
     // a try/catch around getBlob. Serving the bytes makes the assertion below the
     // thing that actually fires.
-    const client = stubClient([HASH_C], new Map([[HASH_C, Buffer.from('bytes-c')]]));
+    const client = stubClient([HASH_C], new Map([[HASH_C, BYTES_C]]));
     const result = await reconcileAssets(client as never, UID, [assetRow('asset-c', HASH_C)], new Set<string>());
 
     expect(client.getBlob).not.toHaveBeenCalled();
@@ -217,7 +273,7 @@ describe('reconcileAssets (Plan E Task 3)', () => {
     const { reconcileAssets } = await import('../src/services/sync/reconcile.js');
     const { SyncBlobUnavailableError } = await import('../src/services/sync/run-errors.js');
 
-    const client = stubClient([HASH_C], new Map([[HASH_C, Buffer.from('bytes-c')]]));
+    const client = stubClient([HASH_C], new Map([[HASH_C, BYTES_C]]));
 
     await expect(
       reconcileAssets(client as never, UID, [assetRow('asset-c', HASH_C)], new Set([HASH_C])),
@@ -234,7 +290,7 @@ describe('reconcileAssets (Plan E Task 3)', () => {
     const { reconcileAssets } = await import('../src/services/sync/reconcile.js');
     const { safeErrorSummary } = await import('../src/services/sync/run-errors.js');
 
-    const client = stubClient([HASH_C], new Map([[HASH_C, Buffer.from('bytes-c')]]));
+    const client = stubClient([HASH_C], new Map([[HASH_C, BYTES_C]]));
     const err = await reconcileAssets(client as never, UID, [assetRow('asset-c', HASH_C)], new Set([HASH_C])).catch(
       (e) => e,
     );
@@ -277,7 +333,7 @@ describe('reconcileAssets (Plan E Task 3)', () => {
     // A WELL-FORMED row must ride along, otherwise the empty-probe early return
     // short-circuits before the planner is ever reached and the test cannot see
     // which rows the planner was handed.
-    state.bytes.set('asset-a', Buffer.from('bytes-a'));
+    state.bytes.set('asset-a', BYTES_A);
     // The stub can serve the malformed key, so a regression fails on the
     // assertion below rather than blowing up inside the fixture.
     const client = stubClient([], new Map([['not-a-hash', Buffer.from('nope')]]));
@@ -303,7 +359,7 @@ describe('reconcileAssets (Plan E Task 3)', () => {
     const { reconcileAssets } = await import('../src/services/sync/reconcile.js');
     const UNASKED = 'd'.repeat(64);
     state.owned.push({ id: 'asset-a', mimeType: 'image/png', contentHash: HASH_A });
-    state.bytes.set('asset-a', Buffer.from('bytes-a'));
+    state.bytes.set('asset-a', BYTES_A);
 
     const client = stubClient([HASH_A, UNASKED]);
     const result = await reconcileAssets(client as never, UID, [assetRow('asset-a', HASH_A)], new Set<string>());
@@ -372,7 +428,7 @@ describe('reconcileAssets (Plan E Task 3)', () => {
     state.owned.push({ id: 'asset-a-twin', mimeType: 'image/png', contentHash: HASH_A });
     state.bytes.set('asset-a-twin', Buffer.from('twin bytes'));
     // asset-b's bytes were staged by an earlier transfer -> a delta arrival.
-    state.bytes.set(`sync-blob-${UID}-${HASH_B}`, Buffer.from('bytes-b'));
+    state.bytes.set(`sync-blob-${UID}-${HASH_B}`, BYTES_B);
 
     const client = stubClient([]);
     const result = await reconcileAssets(

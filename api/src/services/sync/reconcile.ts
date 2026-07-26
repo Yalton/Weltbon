@@ -73,6 +73,7 @@ import {
   type Materialization,
 } from './materialize.js';
 import { SyncBlobUnavailableError } from './run-errors.js';
+import { sha256Hex } from './asset-hash.js';
 import type { SyncRemoteClient } from './remote-client.js';
 import type { ManifestRow } from './manifest.js';
 
@@ -224,6 +225,26 @@ export async function reconcileAssets(
   const pullable = [...new Set(plan.missingHashes)].filter((h) => !peerMissing.has(h));
   for (const hash of pullable) {
     const bytes = await client.getBlob(uid, hash);
+    // The pull direction must verify what it was served, exactly as the PUT
+    // route already verifies what it is handed (routes/sync.ts:343 400s a
+    // mismatch). The asymmetry predates Plan E, but Plan E widened its blast
+    // radius by an order of magnitude: the pull set used to be
+    // localOps.assets.upserts — assets the user was actively changing — and it
+    // is now L \ M over the WHOLE merged set, so a peer serving wrong bytes for
+    // a hash corrupts assets the user has not touched in months.
+    //
+    // And it lands in the state every comment on this path calls unacceptable:
+    // once the bytes are under the asset id, exists(id) reads true forever, the
+    // row never re-enters a materialization plan, the sweep never looks at it,
+    // and content-hash merge cannot detect that the row's hash and its bytes
+    // disagree. There is no later chance to notice.
+    //
+    // This does not extend the trust boundary, it completes it. E-08's premise
+    // is that the peer's answer about byte EXISTENCE is authoritative; nothing
+    // in it says the bytes that follow are whatever it likes. `remote` is the
+    // right side: it is the peer that failed to produce the bytes it claimed,
+    // and a retry against a healthy peer is the remedy.
+    if (sha256Hex(bytes) !== hash) throw new SyncBlobUnavailableError([hash], 'remote');
     await storageBackend.put(syncBlobKey(uid, hash), bytes);
     blobsPulled += 1;
   }

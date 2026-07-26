@@ -23,12 +23,24 @@
  *    servable bytes with a stale thumb size. Cosmetic, and chosen deliberately
  *    over the pre-Plan-E window where the row committed and the bytes never
  *    arrived.
- *  - Orphaned staged blobs from that same crash — and PERMANENTLY orphaned, not
- *    merely deferred. finalizeMaterialization is the only consumer, and a re-run
- *    never reaches it for those assets: planAssetMaterialization short-circuits
- *    on exists(id), the now-materialized asset never re-enters a plan, and the
- *    entry never re-enters `written`. The leak accumulates across runs until the
- *    universe is deleted. Disk only, never correctness.
+ *  - Orphaned staged blobs, and PERMANENTLY orphaned rather than merely deferred.
+ *    finalizeMaterialization is the only consumer, and a re-run never reaches it
+ *    for those assets: planAssetMaterialization short-circuits on exists(id), the
+ *    now-materialized asset never re-enters a plan, and the entry never re-enters
+ *    `written`. Two routes reach this, not one:
+ *      (a) a crash in the window described above;
+ *      (b) far more reachable — a REFUSED apply over a repair target. E-05
+ *          deliberately keeps a repair's bytes (see the catch below), and the
+ *          throw skips finalizeMaterialization, so the staged blob that fed the
+ *          repair is never consumed. A peer that is persistently over quota or
+ *          read-only produces this on EVERY run.
+ *    Disk only, never correctness, and specifically not a way to conceal a future
+ *    breakage: a stale `sync-blob-<uid>-<H>` can only ever be a CORRECT source for
+ *    H (the staging key is content-addressed and the pull verifies the bytes), and
+ *    this instance detects its own byte-less rows through L — what it cannot
+ *    source locally — never through the peer's M, so a leftover staged blob cannot
+ *    make a local breakage invisible the way one on the PEER can (E-07). The leak
+ *    accumulates across runs until the universe is deleted.
  *  - Non-atomic put (pre-existing, and shared by ALL callers of storage, not
  *    just sync): a crash mid-`put` can leave a truncated file that `exists()`
  *    reports as present forever. Reconciliation trusts existence, so such a file
@@ -249,8 +261,19 @@ async function drive(
       assetsRepairedLocally: rec.assetsRepairedLocally,
       // Structurally zero on bootstrap: the peer has no rows at all, so the whole
       // manifest goes over as upserts and nothing pushed can be a repair OF the
-      // peer. (Repairs of THIS instance are still possible and still counted —
-      // reconcile can source a local byte-less row from the peer.)
+      // peer.
+      //
+      // `assetsRepairedLocally` above is structurally zero here too, and for a
+      // reason worth stating rather than leaving to look like an accident: this
+      // branch passes `allLocalHashes` as `deltaHashes`, and reconcile computes
+      // the counter as `toMaterialize` filtered by `!deltaHashes.has(...)` —
+      // every entry of which derives from `localAssets`, whose hashes are
+      // precisely `allLocalHashes`. So the filter can never keep anything. A
+      // local byte-less row CAN still be repaired on this path; the repair just
+      // is not counted, because on a bootstrap every asset is a delta member by
+      // construction. (`assetsUnrepairable` is zero on this path for the same
+      // structural reason, but there it is the intended policy — see the
+      // comment on the branch above: an unsourceable hash is FATAL here.)
       assetsRepairedOnPeer: 0,
       assetsSweptOnPeer: pushed.sweptAssets ?? 0,
       assetsUnrepairable: rec.unrepairable.length,

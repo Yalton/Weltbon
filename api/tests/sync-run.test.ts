@@ -515,6 +515,15 @@ describe('two-instance acceptance for the sync drive loop (Plan D Task 8)', () =
     expect(r2.assetsRepairedOnPeer).toBe(0);
     expect(r2.assetsRepairedLocally).toBe(0);
     expect(r2.assetsUnrepairable).toBe(0);
+    // The REPORTING half of E-07, which the disk assertions below cannot reach.
+    // They only show that B's bytes came back; they are equally happy if the
+    // count never leaves B's apply handler. Under S-02 the sweeping instance is
+    // prod — it initiates nothing and nobody reads its HTTP responses — so this
+    // counter is the ONLY path by which "assets here were silently byte-less and
+    // have just been repaired" reaches a human. It travels route response →
+    // RemoteApplyResult → SyncRunResult, and every hop of that is unobserved
+    // without this line.
+    expect(r2.assetsSweptOnPeer).toBe(1);
 
     // The whole point: bytes under B's ASSET ID, healed by B itself.
     await use('B');
@@ -573,6 +582,10 @@ describe('two-instance acceptance for the sync drive loop (Plan D Task 8)', () =
     const r = await runSync(linkId, ownerA.id, { fetchImpl: makeFetch() });
     expect(r.blobsPushed).toBe(0);
     expect(r.blobsPulled).toBe(0);
+    // Nothing crossed the wire, so the sweep is the sole healer here — which
+    // makes this the sharpest place to pin that its count actually reaches the
+    // initiator's result rather than dying in B's apply handler.
+    expect(r.assetsSweptOnPeer).toBe(1);
 
     await use('B');
     const healed = await storageBackend.get(twin.id);
@@ -1098,6 +1111,14 @@ describe('two-instance acceptance for the sync drive loop (Plan D Task 8)', () =
     expect(healed?.equals(bytes)).toBe(true);
     // And the pre-existing thumbnail was not destroyed on the way through.
     expect(await storageBackend.exists(`${asset.id}_thumb`)).toBe(true);
+    // The documented consequence of keeping the repair: the throw skipped
+    // finalizeMaterialization, so the staged blob that fed it is never consumed
+    // — and never will be, because the bytes are now under the asset id and
+    // planAssetMaterialization short-circuits on exists(id). A persistently
+    // refusing peer leaks one of these per repair per run. Disk only (see the
+    // residual list in run-sync.ts), pinned so the leak stays a known quantity
+    // rather than a rediscovery.
+    expect(await storageBackend.exists(syncBlobKey(universeId, sha256(bytes)))).toBe(true);
   });
 
   // ── Scenario 9c: E-05 on the INITIATOR, over a 413 ───────────────────────
