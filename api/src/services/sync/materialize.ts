@@ -130,6 +130,14 @@ export interface WrittenAsset {
   hash: string;
   /** Thumbnail byte length, or null when sharp could not read the original. */
   thumbSizeBytes: number | null;
+  /**
+   * True the moment a thumbnail PUT is attempted, set before the call rather
+   * than after it succeeds. `writeFile` (storage/local.ts) is not atomic, so a
+   * PUT that throws partway can leave a truncated `_thumb` with `thumbSizeBytes`
+   * still null — `discardWrittenAssets` must still remove that file, which is
+   * why it gates on this flag and not on `thumbSizeBytes !== null`.
+   */
+  touchedThumb: boolean;
   /** True when the bytes came from a staged sync blob, which finalize consumes. */
   fromStaged: boolean;
 }
@@ -142,40 +150,64 @@ export interface WrittenAsset {
  *
  * Everything this writes is undoable by `discardWrittenAssets`, which is what lets
  * a refused apply stay the complete local no-op D-06 promises.
+ *
+ * Either returns a COMPLETE `WrittenAsset[]`, or nothing was left on disk: a
+ * throw mid-plan (e.g. a peer-supplied asset id that fails storage's key
+ * validation) unwinds every entry written so far before rethrowing. Without
+ * that, a caller catching the throw has no `WrittenAsset[]` to hand to
+ * `discardWrittenAssets` — E-05 cannot run, and the orphaned bytes are worse
+ * than merely wasted disk: `planAssetMaterialization` short-circuits on
+ * `exists(id)`, so they are permanently read as "already materialized," and a
+ * later change to that asset's content commits a new hash over old bytes that
+ * content-hash merge can never detect.
  */
 export async function writeAssetBytes(uid: string, plan: Materialization[]): Promise<WrittenAsset[]> {
   const written: WrittenAsset[] = [];
 
-  for (const m of plan) {
-    const bytes =
-      m.source.kind === 'staged'
-        ? await storageBackend.get(syncBlobKey(uid, m.hash))
-        : await storageBackend.get(m.source.assetId);
-    if (!bytes) continue;
-    await storageBackend.put(m.assetId, bytes);
+  try {
+    for (const m of plan) {
+      const bytes =
+        m.source.kind === 'staged'
+          ? await storageBackend.get(syncBlobKey(uid, m.hash))
+          : await storageBackend.get(m.source.assetId);
+      if (!bytes) continue;
+      await storageBackend.put(m.assetId, bytes);
 
-    // Thumbnails are re-derived, never transferred (C-03). SHARP_OPTS is the SAME
-    // pixel-bomb guard the upload path uses — a peer's blob is no more trusted
-    // than a browser upload. A blob sharp cannot read still gets its original
-    // stored: the thumb endpoint 404s, which beats failing a whole sync over a
-    // derived artifact.
-    let thumbSizeBytes: number | null = null;
-    try {
-      const thumb = await sharp(bytes, SHARP_OPTS)
-        .resize(400, 400, { fit: 'inside', withoutEnlargement: true })
-        .toBuffer();
-      await storageBackend.put(`${m.assetId}_thumb`, thumb);
-      thumbSizeBytes = thumb.length;
-    } catch {
-      // leave it null; the original bytes are what matter
+      // Thumbnails are re-derived, never transferred (C-03). SHARP_OPTS is the SAME
+      // pixel-bomb guard the upload path uses — a peer's blob is no more trusted
+      // than a browser upload. A blob sharp cannot read still gets its original
+      // stored: the thumb endpoint 404s, which beats failing a whole sync over a
+      // derived artifact.
+      let thumbSizeBytes: number | null = null;
+      let touchedThumb = false;
+      try {
+        const thumb = await sharp(bytes, SHARP_OPTS)
+          .resize(400, 400, { fit: 'inside', withoutEnlargement: true })
+          .toBuffer();
+        touchedThumb = true; // about to PUT — set before the call, not after it succeeds
+        await storageBackend.put(`${m.assetId}_thumb`, thumb);
+        thumbSizeBytes = thumb.length;
+      } catch {
+        // leave it null; the original bytes are what matter
+      }
+
+      written.push({
+        assetId: m.assetId,
+        hash: m.hash,
+        thumbSizeBytes,
+        touchedThumb,
+        fromStaged: m.source.kind === 'staged',
+      });
     }
-
-    written.push({
-      assetId: m.assetId,
-      hash: m.hash,
-      thumbSizeBytes,
-      fromStaged: m.source.kind === 'staged',
-    });
+  } catch (err) {
+    // Partial writes are worse than none. planAssetMaterialization short-circuits
+    // on exists(id), so bytes left behind by a half-finished pass are permanently
+    // treated as "already materialized" — and if the peer's content for that asset
+    // later changes, the row commits with one hash while the disk holds another,
+    // which content-hash merge can never detect. Unwind before rethrowing so the
+    // caller's E-05 path has nothing left to do.
+    await discardWrittenAssets(written);
+    throw err;
   }
 
   return written;
@@ -203,7 +235,22 @@ export async function finalizeMaterialization(uid: string, written: WrittenAsset
   for (const w of written) {
     if (w.thumbSizeBytes !== null) {
       try {
-        await db().update(assets).set({ thumbSizeBytes: w.thumbSizeBytes }).where(eq(assets.id, w.assetId));
+        const updated = await db()
+          .update(assets)
+          .set({ thumbSizeBytes: w.thumbSizeBytes })
+          .where(eq(assets.id, w.assetId))
+          .returning({ id: assets.id });
+        // Drizzle does not throw on a zero-row UPDATE. Pre-split this was safe
+        // by construction (one call site, immediately after commit). Post-split,
+        // calling finalize before the row exists produces exactly this: no
+        // update AND the staged blob still gets consumed below, so a retry
+        // re-transfers bytes the peer already sent. Both are hazards the split
+        // exists to prevent — log so a silent zero-match doesn't stay silent.
+        if (updated.length === 0) {
+          console.warn(
+            `[sync-materialize] thumbSizeBytes update matched zero rows for asset ${w.assetId} (uid ${uid})`,
+          );
+        }
       } catch {
         // As before the split: a failed size write never fails the caller. The
         // bytes and the thumbnail are both already on disk; only a display
@@ -242,19 +289,24 @@ export async function discardWrittenAssets(written: WrittenAsset[]): Promise<voi
   for (const w of written) {
     try {
       await storageBackend.delete(w.assetId);
-    } catch {
-      // ignore
+    } catch (err) {
+      // Never rethrow — a cleanup failure must not replace the caller's real
+      // error — but a failed discard leaves bytes on disk that D-06 says must
+      // not be there, and that must be diagnosable, not silent.
+      console.warn(`[sync-materialize] failed to discard bytes for asset ${w.assetId}:`, err);
     }
-    // Only remove a thumbnail this run actually WROTE. A null thumbSizeBytes
-    // means sharp could not read the original and writeAssetBytes never wrote
-    // one — so any `_thumb` on disk predates this run, and deleting it would
-    // leave the user worse off than before a sync that is supposed to be a
-    // complete no-op (D-06, the guarantee E-05 exists to preserve).
-    if (w.thumbSizeBytes !== null) {
+    // Only remove a thumbnail this run actually ATTEMPTED to write. Gating on
+    // touchedThumb rather than thumbSizeBytes !== null matters because a PUT
+    // that throws partway (writeFile is not atomic) can leave a truncated
+    // `_thumb` with thumbSizeBytes still null — that file is still ours to
+    // clean up. A null thumbSizeBytes with touchedThumb false means sharp
+    // never got far enough to attempt a write at all, so any `_thumb` on disk
+    // predates this run and must be left alone (D-06).
+    if (w.touchedThumb) {
       try {
         await storageBackend.delete(`${w.assetId}_thumb`);
-      } catch {
-        // ignore
+      } catch (err) {
+        console.warn(`[sync-materialize] failed to discard thumbnail for asset ${w.assetId}:`, err);
       }
     }
   }

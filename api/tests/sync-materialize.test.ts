@@ -2,7 +2,7 @@
  * Plan D Task 4 — the extracted materialization service (C-12/C-20 behavior,
  * now reusable by the in-process local apply path).
  */
-import { describe, it, expect, beforeAll, afterAll, beforeEach } from 'vitest';
+import { describe, it, expect, beforeAll, afterAll, beforeEach, vi } from 'vitest';
 import { createHash } from 'node:crypto';
 import { mkdtemp } from 'node:fs/promises';
 import { tmpdir } from 'node:os';
@@ -403,6 +403,130 @@ describe('sync materialization service (Plan D Task 4)', () => {
       // never wrote it, so we must not remove it.
       const survivingThumb = await storageBackend.get(`${row.id}_thumb`);
       expect(survivingThumb?.equals(sentinel)).toBe(true);
+    });
+
+    it('writeAssetBytes unwinds already-written bytes when a later plan entry throws (E-05 must have something to discard)', async () => {
+      // A peer can PUT arbitrary bytes and reference an asset id that never
+      // passed upload-time UUID validation. LocalStorageBackend.exists()
+      // swallows a bad key and returns false (storage/local.ts safeJoin try/
+      // catch), so planAssetMaterialization's exists(id) check lets such a row
+      // through silently — and then storageBackend.put throws mid-plan. If the
+      // valid entries already written before that throw are lost, the caller
+      // has nothing to hand discardWrittenAssets: E-05 cannot run.
+      const { writeAssetBytes, syncBlobKey } = await import('../src/services/sync/materialize.js');
+      const { storageBackend } = await import('../src/services/storage/local.js');
+      const sharp = (await import('sharp')).default;
+
+      const bytes1 = await sharp({
+        create: { width: 50, height: 50, channels: 3, background: { r: 1, g: 2, b: 3 } },
+      }).png().toBuffer();
+      const hash1 = sha(bytes1);
+      const id1 = crypto.randomUUID();
+      await storageBackend.put(syncBlobKey(universeId, hash1), bytes1);
+
+      const bytes2 = Buffer.from('second entry bytes, never valid to store');
+      const hash2 = sha(bytes2);
+      await storageBackend.put(syncBlobKey(universeId, hash2), bytes2);
+
+      await expect(
+        writeAssetBytes(universeId, [
+          { assetId: id1, hash: hash1, source: { kind: 'staged' } },
+          // safeJoin strips every non [a-zA-Z0-9_-] char; '!!!' reduces to
+          // empty and storageBackend.put throws 'Invalid storage key'.
+          { assetId: '!!!', hash: hash2, source: { kind: 'staged' } },
+        ]),
+      ).rejects.toThrow();
+
+      // The first entry's bytes must NOT survive the throw — otherwise they
+      // sit there forever, permanently read as "already materialized" by
+      // planAssetMaterialization's exists(id) short-circuit.
+      expect(await storageBackend.exists(id1)).toBe(false);
+      expect(await storageBackend.exists(`${id1}_thumb`)).toBe(false);
+    });
+
+    it('finalizeMaterialization warns when the thumbSizeBytes UPDATE matches zero rows', async () => {
+      const { finalizeMaterialization } = await import('../src/services/sync/materialize.js');
+      const warnSpy = vi.spyOn(console, 'warn').mockImplementation(() => {});
+
+      try {
+        // No asset row exists with this id — simulates finalize running before
+        // the apply's transaction has committed the row.
+        const ghostId = crypto.randomUUID();
+        const count = await finalizeMaterialization(universeId, [
+          { assetId: ghostId, hash: sha(Buffer.from('ghost')), thumbSizeBytes: 42, touchedThumb: true, fromStaged: false },
+        ]);
+
+        expect(count).toBe(1);
+        expect(warnSpy.mock.calls.some((args) => String(args[0]).includes('sync-materialize'))).toBe(true);
+      } finally {
+        warnSpy.mockRestore();
+      }
+    });
+
+    it('finalizeMaterialization does not null out a row\'s thumbSizeBytes when sharp could not read the original', async () => {
+      // Pins the `if (w.thumbSizeBytes !== null)` guard: without it, finalize
+      // would issue set({ thumbSizeBytes: null }), a real divergence from the
+      // pre-split behavior of "leave thumbSizeBytes as applied."
+      const { writeAssetBytes, finalizeMaterialization, syncBlobKey } =
+        await import('../src/services/sync/materialize.js');
+      const { storageBackend } = await import('../src/services/storage/local.js');
+      const { assets } = await import('../src/db/schema.js');
+
+      const bytes = Buffer.from('still not an image, sharp cannot read this');
+      const hash = sha(bytes);
+
+      const [row] = await handle.db.insert(assets).values({
+        universeId,
+        filename: 'unreadable2.bin',
+        mimeType: 'application/octet-stream',
+        extension: 'bin',
+        sizeBytes: bytes.length,
+        thumbSizeBytes: 1,
+        contentHash: hash,
+      }).returning();
+
+      await storageBackend.put(syncBlobKey(universeId, hash), bytes);
+
+      const written = await writeAssetBytes(universeId, [
+        { assetId: row.id, hash, source: { kind: 'staged' } },
+      ]);
+      expect(written[0].thumbSizeBytes).toBeNull();
+
+      await finalizeMaterialization(universeId, written);
+
+      const [after] = await handle.db.select().from(assets).where(eq(assets.id, row.id));
+      expect(after.thumbSizeBytes).toBe(1);
+    });
+
+    it('finalizeMaterialization skips the UPDATE call entirely when thumbSizeBytes is null', async () => {
+      // thumb_size_bytes is a NOT NULL column (schema.ts), so a mutant that
+      // removes the `if (w.thumbSizeBytes !== null)` guard does not corrupt
+      // the row's stored value — the DB rejects the null write and the outer
+      // catch swallows the constraint violation, leaving the value untouched.
+      // The guard's real job is to skip the wasted UPDATE call in the first
+      // place (a query attempt this function has no business making when it
+      // never derived a size). Spying on db().update is what actually proves
+      // the guard is doing that job, independent of the DB's own safety net.
+      const { finalizeMaterialization } = await import('../src/services/sync/materialize.js');
+      const { db } = await import('../src/db/client.js');
+      const updateSpy = vi.spyOn(db(), 'update');
+
+      try {
+        const count = await finalizeMaterialization(universeId, [
+          {
+            assetId: crypto.randomUUID(),
+            hash: sha(Buffer.from('irrelevant — no row backs this id')),
+            thumbSizeBytes: null,
+            touchedThumb: false,
+            fromStaged: false,
+          },
+        ]);
+
+        expect(count).toBe(1);
+        expect(updateSpy).not.toHaveBeenCalled();
+      } finally {
+        updateSpy.mockRestore();
+      }
     });
   });
 });
