@@ -13,7 +13,7 @@
  * told by `missing` that it has H — so the peer never PUTs the blob. Answering
  * by id here would then demand a transfer that will never come.
  */
-import { and, eq, inArray } from 'drizzle-orm';
+import { and, eq, inArray, isNotNull } from 'drizzle-orm';
 import sharp from 'sharp';
 import { db } from '../../db/client.js';
 import { assets } from '../../db/schema.js';
@@ -364,4 +364,58 @@ export async function discardWrittenAssets(written: WrittenAsset[]): Promise<voi
  */
 export async function materializeAssets(uid: string, plan: Materialization[]): Promise<number> {
   return finalizeMaterialization(uid, await writeAssetBytes(uid, plan));
+}
+
+/**
+ * Plan E (E-07): the staged-blob sweep — the peer half of the self-healing story.
+ *
+ * A push lands (`PUT .../assets/{hash}` stages a blob) and the apply that was
+ * supposed to consume it never happens: refused 409/402/413, or the connection
+ * dropped. The peer is then holding a staged blob AND a still-byte-less asset row
+ * — and that state is SELF-CONCEALING, exactly like the Plan D crash window it
+ * mirrors. The `missing` route answers by BYTE existence and counts a staged blob
+ * as present, so on the very next run the hash drops out of the initiator's probe
+ * set: no push, no re-attached row, no apply that would materialize it. Run 2 is
+ * clean, successful and silent, and no future run ever sees the breakage again.
+ * One transient failure, one permanently broken image.
+ *
+ * It cannot be fixed from the initiating side — the peer holds the state, and
+ * there is no delete-blob endpoint — so the peer repairs itself, here.
+ *
+ * INVERTED so nothing has to be enumerated. The obvious shape ("sweep this
+ * universe's staged blobs onto matching byte-less rows") needs a list() over
+ * storage, and StorageBackend is deliberately put/get/delete/exists so it can be
+ * S3-backed later; inventing a list() contract for this is exactly why the GC
+ * sweeper was deferred. Driving from the DB side instead — the rows are a plain
+ * query — needs nothing new.
+ *
+ * And it deliberately goes through planAssetMaterialization rather than checking
+ * the staging key by hand, which widens it for free: the planner's source order is
+ * staged-then-SIBLING, so this also repairs the C-20 variant a per-hash probe can
+ * never see — a byte-less row whose same-hash sibling holds the bytes, which makes
+ * `missing` answer "present" for that hash forever. Hand-rolling a second
+ * copy-and-thumbnail path is the duplication Plan D Task 4 existed to remove.
+ *
+ * Cost is ~2 storage exists() per hash-bearing asset row per apply, against a
+ * local filesystem — the same order as the probe cost E-02 already accepted. The
+ * per-row loop inside planAssetMaterialization is serial, so a universe with tens
+ * of thousands of assets will feel it; that is the point at which this wants to be
+ * a background sweeper rather than an inline tail, not before.
+ *
+ * Returns how many byte-less rows it healed.
+ */
+export async function sweepUnmaterializedAssets(uid: string): Promise<number> {
+  const rows = await db()
+    .select({ id: assets.id, contentHash: assets.contentHash })
+    .from(assets)
+    .where(and(eq(assets.universeId, uid), isNotNull(assets.contentHash)));
+  if (rows.length === 0) return 0;
+
+  // `missingHashes` is deliberately ignored: a row whose bytes are nowhere is
+  // this route's 409 to raise (it already did, for the rows in the delta), and
+  // for anything OUTSIDE the delta it is the initiator's `unrepairable` to
+  // report. The sweep only ever heals what it can already reach.
+  const plan = await planAssetMaterialization(uid, rows as unknown as ManifestRow[]);
+  if (plan.toMaterialize.length === 0) return 0;
+  return materializeAssets(uid, plan.toMaterialize);
 }
