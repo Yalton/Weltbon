@@ -17,6 +17,7 @@ import { maxFileBytes } from '../media/limits.js';
 import {
   SyncApplyRejectedError,
   SyncAuthError,
+  SyncBlobUnavailableError,
   SyncIncompatibleError,
   SyncPaymentError,
   SyncQuotaError,
@@ -280,6 +281,14 @@ export class SyncRemoteClient {
   /** Bounded by the SAME per-file cap the upload path uses — a peer is not privileged. */
   async getBlob(uid: string, hash: string): Promise<Buffer> {
     const res = await this.send('GET', `/universes/${uid}/assets/${hash}`);
+    // E-08: a 404 is not a transport failure. The peer answered, and its answer
+    // was "I do not have these bytes" — reporting that as remote-unreachable
+    // (502) sends an operator to debug their network over a missing file.
+    // reconcile.ts's single probe means the happy path never GETs a hash the
+    // peer has already reported missing, so reaching this branch means the peer
+    // deleted the blob between the probe and this call: a genuine race, which is
+    // exactly what SyncBlobUnavailableError (409, code `blob-unavailable`) names.
+    if (res.status === 404) throw new SyncBlobUnavailableError([hash]);
     if (res.status !== 200) throw new SyncUnreachableError(`blob GET returned ${res.status}`);
     return this.readCapped(res, maxFileBytes(), 'blob');
   }
