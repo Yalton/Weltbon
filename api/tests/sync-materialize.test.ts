@@ -358,5 +358,51 @@ describe('sync materialization service (Plan D Task 4)', () => {
       // The staged blob is NOT discarded — it is the source, not the product.
       expect(await storageBackend.exists(syncBlobKey(universeId, hash))).toBe(true);
     });
+
+    it('discardWrittenAssets leaves a PRE-EXISTING thumbnail alone when sharp could not read the original', async () => {
+      // This is the crash state Plan E exists to repair: an asset row whose
+      // original bytes are missing but whose _thumb survived. A peer can PUT
+      // arbitrary bytes over the sync protocol (only browser uploads are
+      // magic-number restricted), so writeAssetBytes can legitimately fail to
+      // derive a thumbnail for bytes it otherwise accepts as the source.
+      const { writeAssetBytes, discardWrittenAssets, syncBlobKey } =
+        await import('../src/services/sync/materialize.js');
+      const { storageBackend } = await import('../src/services/storage/local.js');
+      const { assets } = await import('../src/db/schema.js');
+
+      const bytes = Buffer.from('this is not an image');
+      const hash = sha(bytes);
+
+      const [row] = await handle.db.insert(assets).values({
+        universeId,
+        filename: 'unreadable.bin',
+        mimeType: 'application/octet-stream',
+        extension: 'bin',
+        sizeBytes: bytes.length,
+        thumbSizeBytes: 1,
+        contentHash: hash,
+      }).returning();
+
+      await storageBackend.put(syncBlobKey(universeId, hash), bytes);
+
+      // A sentinel thumbnail that PRE-DATES this run — writeAssetBytes must
+      // never touch it, and neither must discardWrittenAssets.
+      const sentinel = Buffer.from('pre-existing thumbnail, must survive');
+      await storageBackend.put(`${row.id}_thumb`, sentinel);
+
+      const written = await writeAssetBytes(universeId, [
+        { assetId: row.id, hash, source: { kind: 'staged' } },
+      ]);
+      expect(written[0].thumbSizeBytes).toBeNull();
+
+      await discardWrittenAssets(written);
+
+      // The original bytes WE wrote are undone.
+      expect(await storageBackend.exists(row.id)).toBe(false);
+      // The pre-existing thumbnail survives, with its ORIGINAL content — we
+      // never wrote it, so we must not remove it.
+      const survivingThumb = await storageBackend.get(`${row.id}_thumb`);
+      expect(survivingThumb?.equals(sentinel)).toBe(true);
+    });
   });
 });

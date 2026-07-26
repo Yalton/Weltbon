@@ -245,10 +245,17 @@ export async function discardWrittenAssets(written: WrittenAsset[]): Promise<voi
     } catch {
       // ignore
     }
-    try {
-      await storageBackend.delete(`${w.assetId}_thumb`);
-    } catch {
-      // ignore
+    // Only remove a thumbnail this run actually WROTE. A null thumbSizeBytes
+    // means sharp could not read the original and writeAssetBytes never wrote
+    // one — so any `_thumb` on disk predates this run, and deleting it would
+    // leave the user worse off than before a sync that is supposed to be a
+    // complete no-op (D-06, the guarantee E-05 exists to preserve).
+    if (w.thumbSizeBytes !== null) {
+      try {
+        await storageBackend.delete(`${w.assetId}_thumb`);
+      } catch {
+        // ignore
+      }
     }
   }
 }
