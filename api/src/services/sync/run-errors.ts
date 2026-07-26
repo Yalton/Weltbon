@@ -145,14 +145,44 @@ export class SyncLinkSeveredError extends SyncRunError {
   }
 }
 
-/** Blob bytes could not be sourced locally or from the peer (C-12 race, D-11). */
+/** Which side of the link could not produce the bytes — see the class docstring. */
+export type BlobUnavailableSide = 'local' | 'remote' | 'neither';
+
+/**
+ * D-09: `safeDetail` is what lands in sync_links.last_error, so it must name a
+ * remedy and not just a symptom. `blob-unavailable` alone cannot: the three
+ * producers of this error mean three different things with three different fixes.
+ */
+const SIDE_DETAIL: Record<BlobUnavailableSide, string> = {
+  local: 'unavailable on this instance',
+  remote: 'the remote no longer has',
+  neither: 'unavailable on both instances',
+};
+
+/**
+ * Blob bytes could not be sourced (C-12 race, D-11 — no auto-retry).
+ *
+ * `side` says BY WHOM, because the remedies diverge and a single string for all
+ * three would tell an operator nothing actionable:
+ *   - `local`   — we cannot source bytes we are supposed to own; re-upload the
+ *                 file on this instance.
+ *   - `remote`  — the peer 404'd bytes it had just told us it had; a race, so a
+ *                 retry is the remedy.
+ *   - `neither` — no copy exists on either instance; the asset is genuinely lost
+ *                 and must be dropped or replaced.
+ * Required, not optional (the C-19 lesson): a new throw site that has not thought
+ * about which side it means must be a compile error, not a default.
+ */
 export class SyncBlobUnavailableError extends SyncRunError {
   readonly code = 'blob-unavailable';
   readonly status = 409;
   readonly safeDetail: string;
-  constructor(readonly hashes: string[]) {
+  constructor(
+    readonly hashes: string[],
+    readonly side: BlobUnavailableSide,
+  ) {
     super(`Asset bytes unavailable for ${hashes.length} content hash(es)`);
-    this.safeDetail = `${hashes.length} asset blob(s) unavailable`;
+    this.safeDetail = `${hashes.length} asset blob(s) ${SIDE_DETAIL[side]}`;
   }
 }
 

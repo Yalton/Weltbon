@@ -127,7 +127,9 @@ async function pushBlobs(client: SyncRemoteClient, uid: string, hashes: string[]
     await client.putBlob(uid, hash, bytes);
     pushed += 1;
   }
-  if (unavailable.length > 0) throw new SyncBlobUnavailableError(unavailable);
+  // `local`: the peer told us it lacks these and we could not produce them from
+  // either local source, so the missing copy is ours to restore.
+  if (unavailable.length > 0) throw new SyncBlobUnavailableError(unavailable, 'local');
   return pushed;
 }
 
@@ -221,7 +223,10 @@ async function drive(
     // Re-plan: the hashes just staged may now resolve materialization sources
     // that were unavailable before the pull.
     plan = await planAssetMaterialization(universeId, mergeResult.localOps.assets?.upserts ?? []);
-    if (plan.missingHashes.length > 0) throw new SyncBlobUnavailableError(plan.missingHashes);
+    // `neither`: both sources have now been exhausted for these hashes — the
+    // local plan could not resolve them and the pull above is the only remedy
+    // the remote had to offer.
+    if (plan.missingHashes.length > 0) throw new SyncBlobUnavailableError(plan.missingHashes, 'neither');
   }
 
   // D-06: remote apply first — it is the only side that can be refused.

@@ -285,10 +285,16 @@ export class SyncRemoteClient {
     // was "I do not have these bytes" — reporting that as remote-unreachable
     // (502) sends an operator to debug their network over a missing file.
     // reconcile.ts's single probe means the happy path never GETs a hash the
-    // peer has already reported missing, so reaching this branch means the peer
-    // deleted the blob between the probe and this call: a genuine race, which is
-    // exactly what SyncBlobUnavailableError (409, code `blob-unavailable`) names.
-    if (res.status === 404) throw new SyncBlobUnavailableError([hash]);
+    // peer has already reported missing, so reaching this branch means something
+    // changed on the peer between the probe and this call. The status alone
+    // cannot say WHAT: the handler calls requireUniverse first (routes/sync.ts),
+    // so a 404 here is either the blob being deleted or the whole universe being
+    // deleted between snapshot() and now. Either way the peer answered, and its
+    // answer was "not here" — a race, which is exactly what
+    // SyncBlobUnavailableError (409, code `blob-unavailable`) names. `remote`:
+    // whatever the cause, it is the peer that stopped being able to serve these
+    // bytes, so a retry (which re-runs the handshake and snapshot) is the remedy.
+    if (res.status === 404) throw new SyncBlobUnavailableError([hash], 'remote');
     if (res.status !== 200) throw new SyncUnreachableError(`blob GET returned ${res.status}`);
     return this.readCapped(res, maxFileBytes(), 'blob');
   }

@@ -192,6 +192,10 @@ describe('SyncRemoteClient status mapping', () => {
     const err = await client.getBlob('11111111-1111-1111-1111-111111111111', hash).catch((e) => e);
     expect(err).toBeInstanceOf(SyncBlobUnavailableError);
     expect(err.hashes).toEqual([hash]);
+    // The fixture gives the 404 a body on purpose: what lands in
+    // sync_links.last_error must be OUR string (D-09), and it must name the
+    // remote side so the operator is told to retry rather than to re-upload.
+    expect(safeErrorSummary(err)).toBe('blob-unavailable: 1 asset blob(s) the remote no longer has');
   });
 
   it('getBlob still reports a non-404 error status as unreachable', async () => {
