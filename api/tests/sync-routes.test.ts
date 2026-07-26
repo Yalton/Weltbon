@@ -437,6 +437,61 @@ describe('/api/sync surface (Plan C)', () => {
     expect((await storageBackend.get(assetId))!.equals(BLOB)).toBe(true);
   });
 
+  // The complement of the E-05 test above, and the reason that discard is
+  // partitioned rather than wholesale. A REPAIR target is a committed row the
+  // caller's delta did not break and cannot fix by retrying: undoing its
+  // restored bytes re-breaks a broken asset, and if this instance's applies keep
+  // failing (a collision, an FK violation from an inconsistent peer manifest,
+  // an ownership change) the sweep — which only runs on the success path — never
+  // arrives to put it back. The thumbnail is worse still: it can outlive its
+  // original, so discarding destroys an artifact that predates the apply
+  // entirely, which D-06 never asked for.
+  it('a refused apply keeps bytes it RESTORED to a pre-existing byte-less row, and its thumbnail (E-05 partition)', async () => {
+    const { assets } = await import('../src/db/schema.js');
+    const { storageBackend } = await import('../src/services/storage/local.js');
+    const sharp = (await import('sharp')).default;
+
+    const png = await sharp({
+      create: { width: 48, height: 48, channels: 3, background: { r: 3, g: 4, b: 5 } },
+    }).png().toBuffer();
+    const pngHash = createHash('sha256').update(png).digest('hex');
+
+    // The Plan D casualty, in THIS universe: the row is committed, the original
+    // bytes are gone, the thumbnail survives.
+    const repairId = '19191919-1919-4191-8191-191919191919';
+    await handle.db.insert(assets).values({
+      id: repairId, universeId, filename: 'broken.png', mimeType: 'image/png',
+      extension: 'png', sizeBytes: png.length, thumbSizeBytes: 4, contentHash: pngHash,
+    });
+    await storageBackend.put(`${repairId}_thumb`, Buffer.from('THUMB THAT PREDATES THIS APPLY'));
+
+    await app.request(`/api/sync/universes/${universeId}/assets/${pngHash}`, {
+      method: 'PUT',
+      headers: { 'Content-Type': 'application/octet-stream', ...authHeader(ownerToken) },
+      body: png,
+    });
+
+    // Same shape as the E-05 test: the asset pre-check passes, the bytes are
+    // restored, and the engine then refuses the delta over an unrelated row.
+    const refused = await postApply(universeId, ownerToken, applyBody({
+      assets: {
+        upserts: [{
+          id: repairId, filename: 'broken.png', mimeType: 'image/png', extension: 'png',
+          sizeBytes: png.length, thumbSizeBytes: 4, altText: null, contentHash: pngHash,
+          createdAt: '2026-01-01T00:00:00.000Z', updatedAt: '2026-01-01T00:00:00.000Z',
+        }],
+        deletes: [],
+      },
+      entries: { upserts: [{ title: 'No Id', entryType: 'concept' }], deletes: [] },
+    }));
+    expect(refused.status).toBe(400);
+
+    // The repair SURVIVES the refusal — this is the whole point.
+    expect((await storageBackend.get(repairId))!.equals(png)).toBe(true);
+    // And the thumbnail was not destroyed on the way through.
+    expect(await storageBackend.exists(`${repairId}_thumb`)).toBe(true);
+  });
+
   // ── C-09 ahead of the byte write (Plan E security fix) ────────────────────
   //
   // Moving writeAssetBytes ahead of the transaction also moved it ahead of the
