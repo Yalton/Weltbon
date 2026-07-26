@@ -662,6 +662,55 @@ describe('two-instance acceptance for the sync drive loop (Plan D Task 8)', () =
     expect(after.entries).toHaveLength(0);
   });
 
+  // ── Scenario 9b: a refused apply must not undo a REPAIR (Plan E, E-05) ────
+  //
+  // The complement of scenario 9. D-06 promises a refused sync is a complete
+  // no-op locally, and E-05 keeps that promise by discarding bytes written ahead
+  // of the applies — but only for ORPHANS. A repair target is a committed row the
+  // merge does not touch, so it is not part of the delta D-06 speaks about, and
+  // undoing its restored bytes would re-break the asset on every run for as long
+  // as the peer keeps refusing (over quota, read-only), with the bytes sitting
+  // right there in the surviving staged blob. That is the Plan D bug reintroduced
+  // on the failure path.
+  it('keeps repaired bytes when the remote refuses the apply, including a thumbnail that predates the run', async () => {
+    await use('A');
+    await runSync(linkId, ownerA.id, { fetchImpl: makeFetch() }); // bootstrap, empty
+
+    const bytes = await realPng(120);
+    const asset = await seedAsset('A', bytes);
+    await use('A');
+    await runSync(linkId, ownerA.id, { fetchImpl: makeFetch() }); // A -> B, B holds the bytes
+
+    // The Plan D casualty, locally: the row survives, the ORIGINAL bytes do not.
+    // The thumbnail deliberately survives — it predates this run, so E-05 must
+    // not remove it even though writeAssetBytes overwrites it.
+    await use('A');
+    await storageBackend.delete(asset.id);
+    expect(await storageBackend.exists(asset.id)).toBe(false);
+    await storageBackend.put(`${asset.id}_thumb`, Buffer.from('OLD-THUMB-PREDATES-THIS-RUN'));
+
+    // Now refuse the apply for an unrelated reason.
+    const fetchImpl = makeFetch((path) => {
+      if (path.endsWith('/apply')) {
+        return new Response(JSON.stringify({ error: 'over quota' }), {
+          status: 409,
+          headers: { 'Content-Type': 'application/json' },
+        });
+      }
+      return null;
+    });
+
+    await use('A');
+    await expect(runSync(linkId, ownerA.id, { fetchImpl })).rejects.toBeInstanceOf(SyncApplyRejectedError);
+
+    await use('A');
+    // The repair SURVIVES the refusal — this is the whole point.
+    const healed = await storageBackend.get(asset.id);
+    expect(healed?.equals(bytes)).toBe(true);
+    // And the pre-existing thumbnail was not destroyed on the way through.
+    expect(await storageBackend.exists(`${asset.id}_thumb`)).toBe(true);
+  });
+
   // ── Scenario 10: blob bytes absent on BOTH sides ─────────────────────────
   //
   // Plan E: the asset is a delta member (A has no row for it yet), and neither

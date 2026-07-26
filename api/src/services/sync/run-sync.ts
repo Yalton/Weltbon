@@ -13,20 +13,32 @@
  * so an interrupted run replays into the same state. BYTES are repaired by
  * reconciliation (reconcile.ts), not by mere replay: a byte-less asset row is
  * invisible to the merge (both manifests report the same contentHash), so it
- * takes the merged-set probe in reconcileAssets to see it at all. Two residuals
- * survive:
+ * takes the merged-set probe in reconcileAssets to see it at all. That repair
+ * runs in BOTH directions — we pull what only the peer has, and push what only we
+ * have, re-attaching each pushed row to remoteOps so the peer actually
+ * materializes it (see below). Three residuals survive:
  *
- *  - E-04/E-05 window: writeAssetBytes runs BEFORE both applies and
- *    finalizeMaterialization AFTER them. A crash between the applies and
- *    finalizeMaterialization leaves correct, servable bytes with a stale
- *    `thumbSizeBytes` (and staged blobs not yet consumed). Bounded and cosmetic —
- *    chosen deliberately over the pre-Plan-E window, where the row committed and
- *    the bytes never arrived.
+ *  - Stale `thumbSizeBytes`: writeAssetBytes runs BEFORE both applies and
+ *    finalizeMaterialization AFTER them, so a crash in between leaves correct,
+ *    servable bytes with a stale thumb size. Cosmetic, and chosen deliberately
+ *    over the pre-Plan-E window where the row committed and the bytes never
+ *    arrived.
+ *  - Orphaned staged blobs from that same crash — and PERMANENTLY orphaned, not
+ *    merely deferred. finalizeMaterialization is the only consumer, and a re-run
+ *    never reaches it for those assets: planAssetMaterialization short-circuits
+ *    on exists(id), the now-materialized asset never re-enters a plan, and the
+ *    entry never re-enters `written`. The leak accumulates across runs until the
+ *    universe is deleted. Disk only, never correctness.
  *  - Non-atomic put (pre-existing, and shared by ALL callers of storage, not
  *    just sync): a crash mid-`put` can leave a truncated file that `exists()`
  *    reports as present forever. Reconciliation trusts existence, so such a file
  *    is never re-fetched. Fixing it belongs in the storage backend (write-temp +
  *    rename), not here.
+ *
+ * E-05 is deliberately narrower than "undo everything writeAssetBytes did": it
+ * discards ORPHANS only. D-06 promises a refused DELTA touches nothing locally;
+ * a repair is not part of the delta, and undoing one would re-break a broken
+ * asset on every run for as long as the peer keeps refusing.
  *
  * D-06: the remote applies BEFORE the local apply. Both are idempotent and the
  * base advances last, so either order is crash-safe — but the remote apply is
@@ -190,7 +202,13 @@ async function drive(
         ops: manifestToOps(local),
       });
     } catch (err) {
-      await discardWrittenAssets(written);
+      // Nothing to discard, and that is a conclusion rather than an oversight.
+      // Bootstrap has no LOCAL apply — only the push — so this run creates no
+      // local asset row, and every entry in `written` is therefore a repair of a
+      // row that already existed here. E-05 exists to keep a refused delta from
+      // touching local state; it must not undo a repair (see the merge path's
+      // catch for the full argument), so the restored bytes stay.
+      void written;
       throw err;
     }
     await finalizeMaterialization(universeId, written);
@@ -273,6 +291,22 @@ async function drive(
   // which nothing could see and nothing could repair.
   const written = await writeAssetBytes(universeId, rec.toMaterialize);
 
+  // The ORPHAN/REPAIR discriminator for E-05 below. `local` is this run's
+  // pre-apply manifest, so these are precisely the asset rows that exist right
+  // now — and that will still exist if the applies fail, since applyManifestOps
+  // is transactional and the remote apply is refused before any local write.
+  // writeAssetBytes only ever writes under an id whose bytes were ABSENT
+  // (planAssetMaterialization short-circuits on exists(id)), so an entry for a
+  // pre-existing id is by construction a REPAIR of a committed byte-less row —
+  // the Plan D casualty — and an entry for any other id is bytes for a row this
+  // run's local apply would have created, i.e. a true orphan.
+  //
+  // NOT localOps.assets.upserts: that list also contains UPDATES to rows that
+  // already exist, and a byte-less pre-existing row the merge happens to update
+  // is still a repair. Keying on "would this row have been created" via the
+  // pre-run manifest is the exact question; the ops list only approximates it.
+  const preexistingAssetIds = new Set(((local.assets ?? []) as ManifestRow[]).map((a) => String(a.id)));
+
   let pushed;
   let appliedLocally;
   try {
@@ -288,11 +322,20 @@ async function drive(
       { universeId, ownerId },
     );
   } catch (err) {
-    // E-05. This is not disk hygiene: D-06 guarantees a refused sync is a
-    // COMPLETE no-op on the user's own instance, and writing bytes ahead of the
-    // applies breaks that guarantee unless they come back off. Staged blobs are
-    // deliberately left alone, so the retry costs no re-transfer.
-    await discardWrittenAssets(written);
+    // E-05, but ONLY over the orphans. D-06 guarantees the DELTA is a no-op on
+    // the user's own instance; it says nothing about a repair, and undoing one
+    // serves no invariant. A repair target is a row that already existed and that
+    // the merge does not touch, so discarding its restored bytes just re-breaks a
+    // broken asset — and under a persistent refusal (over quota, peer read-only)
+    // it would re-break it on every run, forever, with the bytes sitting right
+    // there in the surviving staged blob. That is the very bug Plan E exists to
+    // fix, reintroduced on the failure path.
+    //
+    // There is a sharper harm too: discardWrittenAssets removes `${id}_thumb`
+    // whenever touchedThumb, and for a repair target the thumbnail may well have
+    // outlived the original. Discarding would destroy an artifact that PREDATES
+    // this run — exactly what that code's own comment says it must never do.
+    await discardWrittenAssets(written.filter((w) => !preexistingAssetIds.has(w.assetId)));
     throw err;
   }
 
