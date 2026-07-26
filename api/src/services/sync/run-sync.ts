@@ -4,8 +4,29 @@
  * The initiating client does all the thinking: pull remote snapshot → three-way
  * merge against base → apply the merged delta locally AND push the
  * mirror-image delta to remote → advance the base only after BOTH applies
- * succeed. Everything here is idempotent and the base advances LAST, so a
- * crash anywhere is repaired by simply running again.
+ * succeed. Everything here is idempotent and the base advances LAST.
+ *
+ * What a re-run repairs, precisely — the unqualified "a crash anywhere is
+ * repaired by simply running again" this docstring used to claim was false for
+ * asset bytes, which is the hole Plan E closes. ROWS are repaired by re-running:
+ * every write is idempotent and the base only advances once both sides applied,
+ * so an interrupted run replays into the same state. BYTES are repaired by
+ * reconciliation (reconcile.ts), not by mere replay: a byte-less asset row is
+ * invisible to the merge (both manifests report the same contentHash), so it
+ * takes the merged-set probe in reconcileAssets to see it at all. Two residuals
+ * survive:
+ *
+ *  - E-04/E-05 window: writeAssetBytes runs BEFORE both applies and
+ *    finalizeMaterialization AFTER them. A crash between the applies and
+ *    finalizeMaterialization leaves correct, servable bytes with a stale
+ *    `thumbSizeBytes` (and staged blobs not yet consumed). Bounded and cosmetic —
+ *    chosen deliberately over the pre-Plan-E window, where the row committed and
+ *    the bytes never arrived.
+ *  - Non-atomic put (pre-existing, and shared by ALL callers of storage, not
+ *    just sync): a crash mid-`put` can leave a truncated file that `exists()`
+ *    reports as present forever. Reconciliation trusts existence, so such a file
+ *    is never re-fetched. Fixing it belongs in the storage backend (write-temp +
+ *    rename), not here.
  *
  * D-06: the remote applies BEFORE the local apply. Both are idempotent and the
  * base advances last, so either order is crash-safe — but the remote apply is
@@ -34,18 +55,17 @@ import { db } from '../../db/client.js';
 import { syncLinks, syncRemotes, universes } from '../../db/schema.js';
 import { env } from '../../config.js';
 import { decryptSecret } from '../crypto.js';
-import { storageBackend } from '../storage/local.js';
 import { buildSyncManifest } from './snapshot.js';
 import { mergeManifests, SyncVersionMismatchError } from './merge.js';
 import { applyManifestOps } from './apply.js';
 import { saveBaseSnapshot, loadBaseSnapshot } from './base-snapshot.js';
 import { SyncRemoteClient, type FetchLike } from './remote-client.js';
 import {
-  planAssetMaterialization,
-  materializeAssets,
-  syncBlobKey,
-  findOwnedAssetByHash,
+  writeAssetBytes,
+  finalizeMaterialization,
+  discardWrittenAssets,
 } from './materialize.js';
+import { reconcileAssets } from './reconcile.js';
 import { recordConflicts } from './conflicts.js';
 import { localIdentity } from './handshake.js';
 import { claimLink, releaseLink, type ReleaseOutcome } from './link-state.js';
@@ -56,7 +76,6 @@ import {
   SyncRemoteKeyError,
   SyncLinkSeveredError,
   SyncIncompatibleError,
-  SyncBlobUnavailableError,
   safeErrorSummary,
   type InstanceIdentityLike,
 } from './run-errors.js';
@@ -88,6 +107,18 @@ export interface SyncRunResult {
   conflicts: number; // rows INSERTED by recordConflicts, not merge.conflicts.length
   blobsPushed: number;
   blobsPulled: number;
+  /**
+   * Plan E: pre-existing local asset rows whose absent bytes this run planned to
+   * restore. Delta arrivals are excluded — those are ordinary transfers counted
+   * by blobsPulled, not repairs.
+   */
+  assetsRepaired: number;
+  /**
+   * Plan E (E-03): asset rows whose bytes neither side holds. Outside the delta
+   * this is reported rather than thrown, so the run still succeeds; the user sees
+   * a broken image until the bytes turn up somewhere.
+   */
+  assetsUnrepairable: number;
   pushed: { upserted: Record<string, number>; deleted: Record<string, number> };
   appliedLocally: { upserted: Record<string, number>; deleted: Record<string, number> };
 }
@@ -100,37 +131,6 @@ function manifestToOps(manifest: SyncManifest): Record<string, { upserts: Manife
     ops[desc.name] = { upserts: rows, deletes: [] };
   }
   return ops;
-}
-
-/**
- * Push whichever of `hashes` the peer is missing. Bytes are sourced from a
- * committed sibling asset first, falling back to this universe's staging key
- * (a blob pulled in from a DIFFERENT prior sync direction, or otherwise
- * staged). A hash resolvable from neither source fails the whole push with
- * SyncBlobUnavailableError (C-12 race, D-11 — no auto-retry).
- */
-async function pushBlobs(client: SyncRemoteClient, uid: string, hashes: string[]): Promise<number> {
-  const distinct = [...new Set(hashes)];
-  if (distinct.length === 0) return 0;
-  const missing = await client.missingAssets(uid, distinct);
-  if (missing.length === 0) return 0;
-
-  const unavailable: string[] = [];
-  let pushed = 0;
-  for (const hash of missing) {
-    const owned = await findOwnedAssetByHash(uid, hash);
-    const bytes = (owned ? await storageBackend.get(owned.id) : null) ?? (await storageBackend.get(syncBlobKey(uid, hash)));
-    if (!bytes) {
-      unavailable.push(hash);
-      continue;
-    }
-    await client.putBlob(uid, hash, bytes);
-    pushed += 1;
-  }
-  // `local`: the peer told us it lacks these and we could not produce them from
-  // either local source, so the missing copy is ours to restore.
-  if (unavailable.length > 0) throw new SyncBlobUnavailableError(unavailable, 'local');
-  return pushed;
 }
 
 async function drive(
@@ -163,16 +163,32 @@ async function drive(
     // express "no remote universe" (it unconditionally wraps [universeRow(remote)]
     // and would crash on key(undefined)), so push the whole local manifest as
     // upserts instead of merging.
-    const hashes = local.assets
-      .map((a) => a.contentHash)
-      .filter((h): h is string => typeof h === 'string' && h.length > 0);
-    const blobsPushed = await pushBlobs(client, universeId, hashes);
+    //
+    // Every asset is a delta member here — the peer is getting all of them — so
+    // an unsourceable hash is fatal, exactly as it was before Plan E.
+    const localAssets = (local.assets ?? []) as ManifestRow[];
+    const allLocalHashes = new Set(
+      localAssets
+        .map((a) => a.contentHash)
+        .filter((h): h is string => typeof h === 'string' && h.length > 0),
+    );
+    const rec = await reconcileAssets(client, universeId, localAssets, allLocalHashes);
 
-    const pushed = await client.apply(universeId, {
-      weltbonVersion: identity.weltbonVersion,
-      universe: local.universe,
-      ops: manifestToOps(local),
-    });
+    // E-04: bytes before the apply, undone by E-05 if the apply is refused.
+    const written = await writeAssetBytes(universeId, rec.toMaterialize);
+
+    let pushed;
+    try {
+      pushed = await client.apply(universeId, {
+        weltbonVersion: identity.weltbonVersion,
+        universe: local.universe,
+        ops: manifestToOps(local),
+      });
+    } catch (err) {
+      await discardWrittenAssets(written);
+      throw err;
+    }
+    await finalizeMaterialization(universeId, written);
 
     await opts.onBeforeBaseAdvance?.();
     await saveBaseSnapshot(link.id, local);
@@ -181,8 +197,10 @@ async function drive(
       linkId: link.id,
       bootstrapped: true,
       conflicts: 0,
-      blobsPushed,
-      blobsPulled: 0,
+      blobsPushed: rec.blobsPushed,
+      blobsPulled: rec.blobsPulled,
+      assetsRepaired: rec.assetsRepaired,
+      assetsUnrepairable: rec.unrepairable.length,
       pushed: { upserted: pushed.upserted, deleted: pushed.deleted },
       appliedLocally: { upserted: {}, deleted: {} },
     };
@@ -199,52 +217,56 @@ async function drive(
     throw err;
   }
 
-  // Blobs both directions, BEFORE either apply.
-  const remoteAssetHashes = (mergeResult.remoteOps.assets?.upserts ?? [])
-    .map((r) => r.contentHash)
-    .filter((h): h is string => typeof h === 'string' && h.length > 0);
-  const blobsPushed = await pushBlobs(client, universeId, remoteAssetHashes);
+  // ── Asset bytes, both directions, BEFORE either apply ───────────────────────
+  //
+  // reconcileAssets probes the MERGED asset set, so this single call covers what
+  // the pre-Plan-E code did with pushBlobs + planAssetMaterialization + a pull
+  // loop, AND repairs byte-less assets on either side that the merge cannot see
+  // because both manifests report them identical.
+  const mergedAssets = (mergeResult.merged.assets ?? []) as ManifestRow[];
+  const deltaHashes = new Set(
+    [
+      ...(mergeResult.localOps.assets?.upserts ?? []),
+      ...(mergeResult.remoteOps.assets?.upserts ?? []),
+    ]
+      .map((r) => r.contentHash)
+      .filter((h): h is string => typeof h === 'string' && h.length > 0),
+  );
+  const rec = await reconcileAssets(client, universeId, mergedAssets, deltaHashes);
 
-  let plan = await planAssetMaterialization(universeId, mergeResult.localOps.assets?.upserts ?? []);
-  let blobsPulled = 0;
-  if (plan.missingHashes.length > 0) {
-    // planAssetMaterialization's missingHashes is per-ROW by design (correct
-    // for its own purpose — materialize.ts is not touched here), so two asset
-    // rows sharing one contentHash (the exact C-20 case) appear twice. Dedupe
-    // at this point of use, mirroring pushBlobs' [...new Set(...)] on the push
-    // side — otherwise the same blob is fetched from the peer twice and
-    // blobsPulled overcounts a single pulled blob as two.
-    const distinctMissing = [...new Set(plan.missingHashes)];
-    for (const hash of distinctMissing) {
-      const bytes = await client.getBlob(universeId, hash);
-      await storageBackend.put(syncBlobKey(universeId, hash), bytes);
-      blobsPulled += 1;
-    }
-    // Re-plan: the hashes just staged may now resolve materialization sources
-    // that were unavailable before the pull.
-    plan = await planAssetMaterialization(universeId, mergeResult.localOps.assets?.upserts ?? []);
-    // `local`, not `neither`: control only reaches here if EVERY getBlob above
-    // returned bytes — a peer that lacks a hash throws `remote` from getBlob's
-    // 404 branch (E-08) and never gets this far. So the peer demonstrably had
-    // these bytes and we staged them; a hash the re-plan still reports missing
-    // is one we received and then failed to resolve locally. Reporting
-    // `neither` would tell an operator the file is gone everywhere while the
-    // remote is still serving it.
-    if (plan.missingHashes.length > 0) throw new SyncBlobUnavailableError(plan.missingHashes, 'local');
+  // E-04: the byte copy moves AHEAD of both applies. A crash here now leaves
+  // orphan bytes under an asset id whose row never committed — collectable, and
+  // idempotent on retry — instead of a committed row whose bytes are absent,
+  // which nothing could see and nothing could repair.
+  const written = await writeAssetBytes(universeId, rec.toMaterialize);
+
+  let pushed;
+  let appliedLocally;
+  try {
+    // D-06: remote apply first — it is the only side that can be refused.
+    pushed = await client.apply(universeId, {
+      weltbonVersion: identity.weltbonVersion,
+      universe: mergeResult.universeOp.remote,
+      ops: mergeResult.remoteOps,
+    });
+
+    appliedLocally = await applyManifestOps(
+      { universe: mergeResult.universeOp.local, ops: mergeResult.localOps },
+      { universeId, ownerId },
+    );
+  } catch (err) {
+    // E-05. This is not disk hygiene: D-06 guarantees a refused sync is a
+    // COMPLETE no-op on the user's own instance, and writing bytes ahead of the
+    // applies breaks that guarantee unless they come back off. Staged blobs are
+    // deliberately left alone, so the retry costs no re-transfer.
+    await discardWrittenAssets(written);
+    throw err;
   }
 
-  // D-06: remote apply first — it is the only side that can be refused.
-  const pushed = await client.apply(universeId, {
-    weltbonVersion: identity.weltbonVersion,
-    universe: mergeResult.universeOp.remote,
-    ops: mergeResult.remoteOps,
-  });
-
-  const appliedLocally = await applyManifestOps(
-    { universe: mergeResult.universeOp.local, ops: mergeResult.localOps },
-    { universeId, ownerId },
-  );
-  await materializeAssets(universeId, plan.toMaterialize);
+  // Post-commit half: record the derived thumbnail sizes and consume the staged
+  // blobs. A crash between the applies and here leaves correct, servable bytes
+  // and a stale thumbSizeBytes — the residual window, and a far better one.
+  await finalizeMaterialization(universeId, written);
 
   // D-13: record conflicts BEFORE the base advances — idempotent, so a crash
   // between the two replays harmlessly.
@@ -257,8 +279,10 @@ async function drive(
     linkId: link.id,
     bootstrapped: false,
     conflicts,
-    blobsPushed,
-    blobsPulled,
+    blobsPushed: rec.blobsPushed,
+    blobsPulled: rec.blobsPulled,
+    assetsRepaired: rec.assetsRepaired,
+    assetsUnrepairable: rec.unrepairable.length,
     pushed: { upserted: pushed.upserted, deleted: pushed.deleted },
     appliedLocally: { upserted: appliedLocally.upserted, deleted: appliedLocally.deleted },
   };

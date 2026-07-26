@@ -35,7 +35,7 @@ import {
   SyncLinkSeveredError,
   SyncIncompatibleError,
   SyncApplyRejectedError,
-  SyncUnreachableError,
+  SyncBlobUnavailableError,
 } from '../src/services/sync/run-errors.js';
 import { runSync, testRemote } from '../src/services/sync/run-sync.js';
 import { syncBlobKey } from '../src/services/sync/materialize.js';
@@ -617,23 +617,14 @@ describe('two-instance acceptance for the sync drive loop (Plan D Task 8)', () =
     expect(after.entries).toHaveLength(0);
   });
 
-  // ── Scenario 10: blob still missing after pull and re-plan ──────────────
+  // ── Scenario 10: blob bytes absent on BOTH sides ─────────────────────────
   //
-  // DEVIATION FROM THE TASK BRIEF, confirmed by running this scenario before
-  // writing the assertion: an asset row on B whose bytes are absent from B's
-  // OWN store does NOT reach run-sync.ts's `if (plan.missingHashes.length > 0)
-  // throw new SyncBlobUnavailableError(...)` re-plan branch. B's own
-  // GET /assets/{hash} 404s (routes/sync.ts's getBlobRoute: no committed
-  // sibling, no staged blob → "Blob not found"), and remote-client.ts's
-  // getBlob() throws SyncUnreachableError for ANY non-200 status BEFORE
-  // run-sync.ts ever reaches its re-plan check — that branch only guards a
-  // pull that reported success (200) yet still left the hash unresolvable,
-  // which cannot happen given a monotonically-growing local store and a pull
-  // loop that fetches every distinct hash the first plan reported missing.
-  // The substantive invariant this scenario exists to prove — a blob failure
-  // during the pull leaves the base untouched — holds regardless of which
-  // SyncRunError subclass fires, so that is what this asserts.
-  it('blob bytes absent from the remote store fail the run and the base does not advance', async () => {
+  // Plan E: the asset is a delta member (A has no row for it yet), and neither
+  // side holds its bytes, so reconcileAssets classifies it L ∩ M and raises
+  // SyncBlobUnavailableError WITHOUT attempting a GET. Before Plan E this
+  // surfaced as SyncUnreachableError, because getBlob threw on the peer's 404
+  // before run-sync reached its re-plan check — see E-03/E-08.
+  it('blob bytes absent from both stores fail the run and the base does not advance', async () => {
     await use('A');
     await runSync(linkId, ownerA.id, { fetchImpl: makeFetch() }); // bootstrap, empty
 
@@ -660,7 +651,15 @@ describe('two-instance acceptance for the sync drive loop (Plan D Task 8)', () =
     const baseBefore = linkBefore.baseSnapshotKey;
     const snapshotBefore = await storageBackend.get(baseBefore!);
 
-    await expect(runSync(linkId, ownerA.id, { fetchImpl: makeFetch() })).rejects.toBeInstanceOf(SyncUnreachableError);
+    const err = await runSync(linkId, ownerA.id, { fetchImpl: makeFetch() }).then(
+      () => null,
+      (e: unknown) => e,
+    );
+    expect(err).toBeInstanceOf(SyncBlobUnavailableError);
+    // The whole point of the discriminator: this is the scenario where a user
+    // would see 'neither' — the bytes are gone on both instances.
+    expect((err as SyncBlobUnavailableError).side).toBe('neither');
+    expect((err as SyncBlobUnavailableError).hashes).toContain(hash);
 
     const [linkAfter] = await A.db.select().from(syncLinks).where(eq(syncLinks.id, linkId));
     expect(linkAfter.status).toBe('error');
