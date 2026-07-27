@@ -365,6 +365,52 @@ describe('two-instance acceptance for the sync drive loop (Plan D Task 8)', () =
     expect(assetOnA).toBeDefined();
   });
 
+  // ── Plan F0 scenario 4: a transferred asset settles in ONE run (F0-04) ────
+  //
+  // Asserting the ABSENCE of an asset op, not merely that the run succeeded — a
+  // run that pushes a spurious delta succeeds too, so a success assertion here
+  // would be coverage that cannot fail.
+  //
+  // The divergence this builds is ONE-SIDED, which decides what can actually
+  // catch a regression: seedAsset writes thumbSizeBytes: 1 and no thumb file, so
+  // after run 1 only B's row has changed against base while A's is untouched.
+  // Only `appliedLocally` can therefore move (verified by mutation), and the
+  // remaining assertions are cheap guards rather than the binding one — see the
+  // note at that line before deleting any of them as redundant.
+  it('does not re-sync a transferred asset on the following run (F0-04)', async () => {
+    const { syncConflicts } = await import('../src/db/schema.js');
+
+    await use('A');
+    await runSync(linkId, ownerA.id, { fetchImpl: makeFetch() }); // bootstrap, empty
+
+    const bytes = await realPng(120);
+    await seedAsset('A', bytes);
+
+    await use('A');
+    const first = await runSync(linkId, ownerA.id, { fetchImpl: makeFetch() });
+    expect(first.blobsPushed).toBe(1);
+
+    // The second run must be a genuine no-op for assets. Before F0-04 the
+    // receiver's own derived thumbSizeBytes differed from the sender's, so the
+    // asset came back as a delta member here.
+    await use('A');
+    const second = await runSync(linkId, ownerA.id, { fetchImpl: makeFetch() });
+    expect(second.pushed.upserted.assets ?? 0).toBe(0);
+    // THIS is the assertion that binds. Reverting F0-04 fails here and only
+    // here ("expected 1 to be +0"): B re-derived its own thumbnail on
+    // materialize, so B's row is the changed side and the delta comes back to A.
+    expect(second.appliedLocally.upserted.assets ?? 0).toBe(0);
+    expect(second.blobsPushed).toBe(0);
+    expect(second.blobsPulled).toBe(0);
+
+    // No conflict row either. A one-sided divergence cannot reach the ledger at
+    // all — mergeCollection mints a conflict only when BOTH sides changed — so
+    // this is a guard on the shape of the scenario, not on F0-04 itself.
+    await use('A');
+    const rows = await A.db.select().from(syncConflicts).where(eq(syncConflicts.universeId, universeId));
+    expect(rows).toHaveLength(0);
+  });
+
   // ── Scenario 2: bidirectional convergence ────────────────────────────────
 
   it('converges independent creates made on both sides in one run', async () => {
