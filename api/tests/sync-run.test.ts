@@ -502,6 +502,23 @@ describe('two-instance acceptance for the sync drive loop (Plan D Task 8)', () =
       .toBuffer();
   }
 
+  /**
+   * A large enough source that the thumbnail genuinely downsizes. realPng's
+   * 200x150 is smaller than the thumb bound, and `withoutEnlargement: true`
+   * means the "thumbnail" comes back byte-identical to the original — so a
+   * repair that stat'd `${id}` instead of `${id}_thumb` would read the same
+   * number and no assertion could tell. These two tests are precisely the ones
+   * whose point is WHICH key gets stat'd.
+   */
+  async function realPngLarge(seed: number): Promise<Buffer> {
+    const sharp = (await import('sharp')).default;
+    return sharp({
+      create: { width: 900, height: 700, channels: 3, background: { r: seed, g: 10, b: 20 } },
+    })
+      .png()
+      .toBuffer();
+  }
+
   it('transfers an asset in each direction with bytes intact and a re-derived thumbnail', async () => {
     await use('A');
     await runSync(linkId, ownerA.id, { fetchImpl: makeFetch() }); // bootstrap, empty
@@ -1379,38 +1396,34 @@ describe('two-instance acceptance for the sync drive loop (Plan D Task 8)', () =
     expect(rowOnA).toBeDefined();
   });
 
-  // ── Scenario 9d: the thumb residual window, pinned as ACCEPTED ────────────
+  // ── Plan F0 scenario 3: the thumb residual is now REPAIRED ────────────────
   //
-  // writeAssetBytes runs before both applies and finalizeMaterialization after
-  // them, so anything that aborts the run in between leaves correct, servable
-  // bytes with a STALE thumbSizeBytes. And it does not self-heal:
-  // planAssetMaterialization short-circuits on exists(id), so a row whose bytes
-  // are now present never re-enters a materialization plan and its size is never
-  // recomputed.
+  // This scenario previously asserted the opposite — that a stale
+  // thumbSizeBytes survives a further run — and it was pinned that way on
+  // purpose, so that closing the gap would require a deliberate edit with a
+  // failing test attached. F0-06 closes it; this is that edit.
   //
-  // That is a deliberate trade — thumb_size_bytes feeds no quota (both checks sum
-  // size_bytes), so it is one wrong metadata integer in place of a permanently
-  // byte-less asset that renders as a broken image. It is pinned here rather than
-  // left to prose so that changing it is a DELIBERATE act with a failing test
-  // attached, not an accident. The E-05 repair path reaches the same window
-  // without a crash seam: a refused apply skips finalize while the repair's bytes
-  // survive.
-  it('leaves a repaired asset with correct bytes and a stale thumbSizeBytes that a further run does NOT fix (accepted residual)', async () => {
+  // The window is real and needs no crash: writeAssetBytes runs before both
+  // applies and finalizeMaterialization after them, so a REFUSED apply keeps
+  // the repaired bytes (correctly — that is the designed partition) and skips
+  // finalize. planAssetMaterialization then short-circuits on exists(id), so
+  // the row never re-enters a materialization plan and nothing recomputes the
+  // size. repairThumbSizes is what sees it, by comparing the row against the
+  // thumbnail actually on disk.
+  it('repairs a stale thumbSizeBytes on a later run (F0-06)', async () => {
     const { assets } = await import('../src/db/schema.js');
 
     await use('A');
     await runSync(linkId, ownerA.id, { fetchImpl: makeFetch() }); // bootstrap, empty
 
-    const bytes = await realPng(210);
+    const bytes = await realPngLarge(210);
     const asset = await seedAsset('A', bytes);
     await use('A');
     await runSync(linkId, ownerA.id, { fetchImpl: makeFetch() }); // A -> B
-    await use('A');
-    await runSync(linkId, ownerA.id, { fetchImpl: makeFetch() }); // converge thumbSizeBytes
 
-    // Same construction as 4f: both rows pinned to one deliberately-wrong size at
-    // one instant, so the row is content-equal (outside the delta) and the stale
-    // value cannot be quietly overwritten by an incoming upsert on the later run.
+    // Both rows pinned to one deliberately-wrong size at one instant, so the row
+    // is content-equal on both sides and the stale value cannot be quietly
+    // overwritten by an incoming upsert.
     const STALE = 4242;
     const pinnedAt = new Date('2026-06-01T00:00:00.000Z');
     await A.db.update(assets).set({ thumbSizeBytes: STALE, updatedAt: pinnedAt }).where(eq(assets.id, asset.id));
@@ -1436,29 +1449,56 @@ describe('two-instance acceptance for the sync drive loop (Plan D Task 8)', () =
     );
 
     await use('A');
-    // Correct, servable bytes and a real thumbnail on disk...
+    // The window: correct servable bytes, a real thumbnail, a wrong number.
     expect((await storageBackend.get(asset.id))?.equals(bytes)).toBe(true);
     const thumb = await storageBackend.get(`${asset.id}_thumb`);
     expect(thumb).not.toBeNull();
-    expect(thumb!.length).not.toBe(STALE); // the row's number is genuinely wrong
-    // ...and a thumbSizeBytes that never got written, because finalize is on the
-    // far side of the applies.
+    expect(thumb!.length).not.toBe(STALE);
     const [afterRefusal] = await A.db.select().from(assets).where(eq(assets.id, asset.id));
     expect(afterRefusal.thumbSizeBytes).toBe(STALE);
 
-    // A further, entirely healthy run does NOT repair it: the bytes are present,
-    // so the row never re-enters a materialization plan. THIS IS THE ACCEPTED
-    // RESIDUAL. If this assertion starts failing, the window was closed on
-    // purpose and this test should be updated to say so.
+    // A further healthy run REPAIRS it, against the thumbnail on disk.
     await use('A');
-    const r = await runSync(linkId, ownerA.id, { fetchImpl: makeFetch() });
-    expect(r.assetsRepairedLocally).toBe(0);
-    expect(r.assetsUnrepairable).toBe(0);
+    await runSync(linkId, ownerA.id, { fetchImpl: makeFetch() });
 
     await use('A');
     const [afterRerun] = await A.db.select().from(assets).where(eq(assets.id, asset.id));
-    expect(afterRerun.thumbSizeBytes).toBe(STALE);
+    expect(afterRerun.thumbSizeBytes).toBe(thumb!.length);
+    expect(afterRerun.thumbSizeBytes).not.toBe(STALE);
+    // The repair is metadata-only — it must not disturb the bytes.
     expect((await storageBackend.get(asset.id))?.equals(bytes)).toBe(true);
+  });
+
+  // The receiving instance drifts too, and its only self-healing before this was
+  // sweepUnmaterializedAssets. Without this test, repairThumbSizes could be
+  // wired into run-sync alone and the peer would keep a wrong number forever.
+  it('repairs a stale thumbSizeBytes on the PEER during an apply (F0-06)', async () => {
+    const { assets } = await import('../src/db/schema.js');
+
+    await use('A');
+    await runSync(linkId, ownerA.id, { fetchImpl: makeFetch() }); // bootstrap, empty
+
+    const bytes = await realPngLarge(215);
+    const asset = await seedAsset('A', bytes);
+    await use('A');
+    await runSync(linkId, ownerA.id, { fetchImpl: makeFetch() }); // A -> B
+
+    await use('B');
+    const thumbOnB = await storageBackend.get(`${asset.id}_thumb`);
+    expect(thumbOnB).not.toBeNull();
+    const STALE = 7777;
+    await B.db.update(assets).set({ thumbSizeBytes: STALE }).where(eq(assets.id, asset.id));
+
+    // Any subsequent apply against B repairs it. Give the run something to
+    // carry so an apply actually happens.
+    await seedEntry('A', 'forces an apply');
+    await use('A');
+    await runSync(linkId, ownerA.id, { fetchImpl: makeFetch() });
+
+    await use('B');
+    const [onB] = await B.db.select().from(assets).where(eq(assets.id, asset.id));
+    expect(onB.thumbSizeBytes).toBe(thumbOnB!.length);
+    expect(onB.thumbSizeBytes).not.toBe(STALE);
   });
 
   // ── Scenario 10: blob bytes absent on BOTH sides ─────────────────────────

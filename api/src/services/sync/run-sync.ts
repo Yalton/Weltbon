@@ -88,6 +88,7 @@ import {
   writeAssetBytes,
   finalizeMaterialization,
   discardWrittenAssets,
+  repairThumbSizes,
 } from './materialize.js';
 import { reconcileAssets, isWellFormedHash } from './reconcile.js';
 import { recordConflicts } from './conflicts.js';
@@ -277,6 +278,20 @@ async function drive(
     }
     await finalizeMaterialization(universeId, written);
 
+    // F0-06: bring this instance's thumbSizeBytes back in line with what is
+    // actually on disk. Sits after finalize so a size this run just wrote is
+    // already correct and costs only a stat.
+    // Best-effort, exactly like the route side: size() rethrows any
+    // non-ENOENT error, and by this point BOTH applies have committed. An
+    // unguarded throw here would report a fully successful sync as failed,
+    // skip recordConflicts, and leave the base unadvanced — a metadata
+    // repair must never do that.
+    try {
+      await repairThumbSizes(universeId);
+    } catch (err) {
+      console.warn(`[sync] thumbSizeBytes repair failed for universe ${universeId}:`, err);
+    }
+
     await opts.onBeforeBaseAdvance?.();
     await saveBaseSnapshot(link.id, local);
 
@@ -424,6 +439,20 @@ async function drive(
   // blobs. A crash between the applies and here leaves correct, servable bytes
   // and a stale thumbSizeBytes — the residual window, and a far better one.
   await finalizeMaterialization(universeId, written);
+
+  // F0-06: bring this instance's thumbSizeBytes back in line with what is
+  // actually on disk. Sits after finalize so a size this run just wrote is
+  // already correct and costs only a stat.
+  // Best-effort, exactly like the route side: size() rethrows any
+  // non-ENOENT error, and by this point BOTH applies have committed. An
+  // unguarded throw here would report a fully successful sync as failed,
+  // skip recordConflicts, and leave the base unadvanced — a metadata
+  // repair must never do that.
+  try {
+    await repairThumbSizes(universeId);
+  } catch (err) {
+    console.warn(`[sync] thumbSizeBytes repair failed for universe ${universeId}:`, err);
+  }
 
   // D-13: record conflicts BEFORE the base advances — idempotent, so a crash
   // between the two replays harmlessly.
