@@ -244,6 +244,127 @@ describe('two-instance acceptance for the sync drive loop (Plan D Task 8)', () =
     expect(link.baseSnapshotKey).not.toBeNull();
   });
 
+  // ── Plan F0 scenario 1: bootstrap a universe that ALREADY has an asset ────
+  //
+  // The suite has never been able to contain this. Every asset scenario in
+  // Plans C, D and E opens with a bootstrap of an EMPTY universe and adds
+  // assets afterwards, so the deadlock was structurally uncatchable: `missing`,
+  // GET and PUT blob all requireUniverse, while only `apply` creates the
+  // universe.
+  //
+  // Ordering is the whole point — the asset exists BEFORE the first run.
+  it('bootstraps a peer with an asset that predates the first sync (F0-01)', async () => {
+    const { assets } = await import('../src/db/schema.js');
+
+    const bytes = await realPng(70);
+    const asset = await seedAsset('A', bytes); // BEFORE any run. This is the scenario.
+
+    await use('A');
+    const r = await runSync(linkId, ownerA.id, { fetchImpl: makeFetch() });
+    expect(r.bootstrapped).toBe(true);
+    expect(r.blobsPushed).toBe(1);
+
+    // B has the universe, the row, the bytes, and its own derived thumbnail.
+    await use('B');
+    const [onB] = await B.db.select().from(assets).where(eq(assets.id, asset.id));
+    expect(onB).toBeDefined();
+    expect((await storageBackend.get(asset.id))?.equals(bytes)).toBe(true);
+    expect(await storageBackend.exists(`${asset.id}_thumb`)).toBe(true);
+
+    // thumbSizeBytes is B's OWN derived value, not the deliberately-wrong 1
+    // that seedAsset writes. Asserting against the thumbnail actually on disk
+    // rather than a fixed number keeps this independent of sharp's output.
+    const thumb = await storageBackend.get(`${asset.id}_thumb`);
+    expect(onB.thumbSizeBytes).toBe(thumb!.length);
+    expect(onB.thumbSizeBytes).not.toBe(1);
+
+    // The staged transfer blob was consumed, not leaked.
+    expect(await storageBackend.exists(syncBlobKey(universeId, sha256(bytes)))).toBe(false);
+  });
+
+  // ── Plan F0 scenario 2: the seed apply's partial-write window (F0-02) ─────
+  //
+  // If phase 1 lands and phase 2 is refused, the peer keeps an EMPTY universe
+  // row. That is accepted, and this pins WHY: the next run finds
+  // remote != null with base == null, so it takes the MERGE path, where every
+  // local row is an add and every asset is a delta member. The peer holds NO
+  // collection rows in that state, so no cross-side natural-key collision
+  // exists and deriveOps can emit no delete for either side.
+  //
+  // base == null ALONE would not be enough, and the distinction is worth
+  // keeping straight: merge.ts's natural-key dedupe drops rows from `merged`
+  // without ever consulting base, and deriveOps then emits a delete for any
+  // side key no longer in `merged`. That is a real base-less delete path
+  // (timelinePins, dictionaryWords, diagramNodes, shareTokens all carry a
+  // naturalKey). It is the peer's emptiness that makes THIS window safe.
+  // Asserting the recovery beats asserting it in prose.
+  it('recovers through the merge path when the full apply is refused after the seed apply (F0-02)', async () => {
+    const { assets, universes, syncLinks } = await import('../src/db/schema.js');
+
+    const bytes = await realPng(80);
+    const asset = await seedAsset('A', bytes);
+
+    await use('A');
+    const before = await snapshot('A');
+
+    // Refuse only the FULL apply. The seed apply carries no ops, so the body is
+    // what distinguishes them — refusing every /apply would also refuse phase 1
+    // and prove nothing about this window. The two differ structurally and
+    // exactly: the seed sends `ops: {}` literally, while the full apply always
+    // sends every collection key from manifestToOps. Discriminating on the key
+    // count is therefore exact, where "does any op carry rows" would really be
+    // testing "is this a non-empty delta".
+    const refuseFullApply = makeFetch(async (path, init) => {
+      if (!path.endsWith('/apply')) return null;
+      const body = JSON.parse(String(init?.body ?? '{}'));
+      if (Object.keys(body.ops ?? {}).length === 0) return null; // let the seed apply through
+      return new Response(JSON.stringify({ error: 'universe storage quota exceeded' }), {
+        status: 413,
+        headers: { 'Content-Type': 'application/json' },
+      });
+    });
+
+    await use('A');
+    await expect(runSync(linkId, ownerA.id, { fetchImpl: refuseFullApply })).rejects.toBeInstanceOf(
+      SyncQuotaError,
+    );
+
+    // The peer holds the universe row and nothing else.
+    await use('B');
+    const [uOnB] = await B.db.select().from(universes).where(eq(universes.id, universeId));
+    expect(uOnB).toBeDefined();
+    const rowsOnB = await B.db.select().from(assets).where(eq(assets.universeId, universeId));
+    expect(rowsOnB).toHaveLength(0);
+
+    // Local is untouched and the base never advanced — D-06 still holds.
+    await use('A');
+    const after = await snapshot('A');
+    expect(comparable(after)).toEqual(comparable(before));
+    const [linkAfter] = await A.db.select().from(syncLinks).where(eq(syncLinks.id, linkId));
+    expect(linkAfter.status).toBe('error');
+    expect(linkAfter.baseSnapshotKey).toBeNull();
+
+    // The retry is a MERGE, not a bootstrap, and it converges.
+    await use('A');
+    const retried = await runSync(linkId, ownerA.id, { fetchImpl: makeFetch() });
+    expect(retried.bootstrapped).toBe(false);
+
+    // The F0-02 claim, executed rather than asserted in prose: the merge that
+    // recovers this window produces no deletes and no conflicts.
+    expect(retried.conflicts).toBe(0);
+    expect(retried.pushed.deleted).toEqual({});
+
+    await use('B');
+    const [assetOnB] = await B.db.select().from(assets).where(eq(assets.id, asset.id));
+    expect(assetOnB).toBeDefined();
+    expect((await storageBackend.get(asset.id))?.equals(bytes)).toBe(true);
+
+    // Nothing was deleted anywhere — the trap F0-02 argues cannot fire.
+    await use('A');
+    const [assetOnA] = await A.db.select().from(assets).where(eq(assets.id, asset.id));
+    expect(assetOnA).toBeDefined();
+  });
+
   // ── Scenario 2: bidirectional convergence ────────────────────────────────
 
   it('converges independent creates made on both sides in one run', async () => {

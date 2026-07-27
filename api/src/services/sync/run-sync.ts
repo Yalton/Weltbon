@@ -212,15 +212,43 @@ async function drive(
     //
     // Every asset is a delta member here — the peer is getting all of them — so
     // an unsourceable hash is fatal, exactly as it was before Plan E.
+
+    // F0-01: create the universe on the peer BEFORE anything touches a blob
+    // route. `missing`, GET blob and PUT blob all call requireUniverse, while
+    // only `apply` handles the C-11 create-on-bootstrap case — so without this
+    // step a bootstrap carrying any asset deadlocks: blobs cannot be staged
+    // before the universe exists, and assets cannot be applied before the blobs
+    // do. It surfaced as `remote-unreachable`, because the peer's 404 becomes
+    // SyncUnreachableError, which sent the user to debug their network.
     //
-    // In practice that policy is currently unreachable: a bootstrap carrying ANY
-    // asset cannot succeed at all today, because `missing`, GET blob and PUT blob
-    // all call requireUniverse (routes/sync.ts) while only `apply` handles the
-    // C-11 create-on-bootstrap case. Blobs therefore cannot be staged before the
-    // universe exists, and assets cannot be applied before the blobs exist. This
-    // branch completes only with ZERO hashes. Pre-existing (pushBlobs called
-    // missingAssets exactly the same way) and protocol-level, so it is escalated
-    // rather than patched here; the policy below is what this code WOULD do.
+    // `ops: {}` needs no new route and no version gate: the apply schema
+    // already defaults ops to {} and applyManifestOps upserts the universe
+    // singleton on its own. That matters because prod runs an older build.
+    //
+    // Unconditional rather than gated on "does this universe have assets": the
+    // whole existing bootstrap suite then exercises this step, instead of it
+    // living on a branch only asset-bearing bootstraps reach — which is the
+    // same structural blindness that hid the bug for three plans.
+    //
+    // F0-02: if a LATER step fails, the peer keeps an empty universe row. The
+    // next run then sees remote != null with base == null and takes the MERGE
+    // path, where every local row is an add. The peer holds NO collection rows
+    // in that state, so no cross-side natural-key collision exists and
+    // deriveOps can emit no delete for either side. Note that base == null
+    // ALONE would not be enough: merge.ts's natural-key dedupe drops rows from
+    // `merged` without consulting base, and that is the one way a base-less
+    // merge can still produce a delete. It is the peer's emptiness that makes
+    // this window safe, not the absent base.
+    //
+    // The result is discarded because it is structurally empty: the peer has no
+    // rows for this universe, so there are no counters to lose — nothing to
+    // upsert or delete, and no byte-less row for the peer to sweep.
+    await client.apply(universeId, {
+      weltbonVersion: identity.weltbonVersion,
+      universe: local.universe,
+      ops: {},
+    });
+
     const localAssets = (local.assets ?? []) as ManifestRow[];
     const allLocalHashes = new Set(localAssets.map((a) => a.contentHash).filter(isWellFormedHash));
     const rec = await reconcileAssets(client, universeId, localAssets, allLocalHashes);
