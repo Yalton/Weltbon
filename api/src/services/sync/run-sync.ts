@@ -16,13 +16,15 @@
  * takes the merged-set probe in reconcileAssets to see it at all. That repair
  * runs in BOTH directions — we pull what only the peer has, and push what only we
  * have, re-attaching each pushed row to remoteOps so the peer actually
- * materializes it (see below). Three residuals survive:
+ * materializes it (see below). METADATA is repaired by repairThumbSizes
+ * (F0-06), which runs on both instances: writeAssetBytes runs BEFORE both
+ * applies and finalizeMaterialization AFTER them, so a crash — or, far more
+ * reachably, a refused apply over a repair target — leaves correct, servable
+ * bytes with a stale thumb size, and nothing in the byte paths can see it
+ * (planAssetMaterialization short-circuits on exists(id)). That is a
+ * within-run window now, not a permanent residual: a later run stats the
+ * thumbnail and writes the true size back. One residual survives:
  *
- *  - Stale `thumbSizeBytes`: writeAssetBytes runs BEFORE both applies and
- *    finalizeMaterialization AFTER them, so a crash in between leaves correct,
- *    servable bytes with a stale thumb size. Cosmetic, and chosen deliberately
- *    over the pre-Plan-E window where the row committed and the bytes never
- *    arrived.
  *  - Orphaned staged blobs, and PERMANENTLY orphaned rather than merely deferred.
  *    finalizeMaterialization is the only consumer, and a re-run never reaches it
  *    for those assets: planAssetMaterialization short-circuits on exists(id), the
@@ -41,11 +43,15 @@
  *    source locally — never through the peer's M, so a leftover staged blob cannot
  *    make a local breakage invisible the way one on the PEER can (E-07). The leak
  *    accumulates across runs until the universe is deleted.
- *  - Non-atomic put (pre-existing, and shared by ALL callers of storage, not
- *    just sync): a crash mid-`put` can leave a truncated file that `exists()`
- *    reports as present forever. Reconciliation trusts existence, so such a file
- *    is never re-fetched. Fixing it belongs in the storage backend (write-temp +
- *    rename), not here.
+ *
+ * The non-atomic `put` that used to sit here as a third residual — a crash
+ * mid-write leaving a truncated file that `exists()` reported as present
+ * forever, which reconciliation would then trust and never re-fetch — is CLOSED
+ * by F0-03. LocalStorageBackend.put now writes to a random sibling temp path and
+ * renames it into place. Two accepted residuals remain in the backend rather
+ * than here: it is not fsync-hardened against power loss, and a hard kill
+ * between the write and the rename orphans an unaddressable temp file with no
+ * sweeper. See storage/local.ts.
  *
  * E-05 is deliberately narrower than "undo everything writeAssetBytes did": it
  * discards ORPHANS only. D-06 promises a refused DELTA touches nothing locally;
@@ -61,6 +67,15 @@
  * it is the bootstrap: the peer has never seen this universe. With
  * base != null the universe was deleted wholesale on the peer — a
  * link-severing event, never a cascade delete of our copy.
+ *
+ * F0-01: the bootstrap branch opens with a seed apply — `{universe, ops: {}}` —
+ * because `missing`, blob GET and blob PUT all call requireUniverse while only
+ * `apply` handles the C-11 create-on-bootstrap case. Before it, a bootstrap
+ * carrying ANY asset deadlocked and surfaced as `remote-unreachable`; a
+ * bootstrap with assets now succeeds. F0-02: if a later step then fails, the
+ * peer keeps an empty universe row and the next run converges through the merge
+ * path — safe because the peer holds no collection rows, not because base is
+ * null (see the comment at the seed apply).
  *
  * D-09: sync_links.last_error is built ONLY from safeErrorSummary(err) — never
  * from a remote response body.
