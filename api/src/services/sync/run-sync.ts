@@ -16,13 +16,15 @@
  * takes the merged-set probe in reconcileAssets to see it at all. That repair
  * runs in BOTH directions — we pull what only the peer has, and push what only we
  * have, re-attaching each pushed row to remoteOps so the peer actually
- * materializes it (see below). Three residuals survive:
+ * materializes it (see below). METADATA is repaired by repairThumbSizes
+ * (F0-06), which runs on both instances: writeAssetBytes runs BEFORE both
+ * applies and finalizeMaterialization AFTER them, so a crash — or, far more
+ * reachably, a refused apply over a repair target — leaves correct, servable
+ * bytes with a stale thumb size, and nothing in the byte paths can see it
+ * (planAssetMaterialization short-circuits on exists(id)). That is a
+ * within-run window now, not a permanent residual: a later run stats the
+ * thumbnail and writes the true size back. One residual survives:
  *
- *  - Stale `thumbSizeBytes`: writeAssetBytes runs BEFORE both applies and
- *    finalizeMaterialization AFTER them, so a crash in between leaves correct,
- *    servable bytes with a stale thumb size. Cosmetic, and chosen deliberately
- *    over the pre-Plan-E window where the row committed and the bytes never
- *    arrived.
  *  - Orphaned staged blobs, and PERMANENTLY orphaned rather than merely deferred.
  *    finalizeMaterialization is the only consumer, and a re-run never reaches it
  *    for those assets: planAssetMaterialization short-circuits on exists(id), the
@@ -41,11 +43,15 @@
  *    source locally — never through the peer's M, so a leftover staged blob cannot
  *    make a local breakage invisible the way one on the PEER can (E-07). The leak
  *    accumulates across runs until the universe is deleted.
- *  - Non-atomic put (pre-existing, and shared by ALL callers of storage, not
- *    just sync): a crash mid-`put` can leave a truncated file that `exists()`
- *    reports as present forever. Reconciliation trusts existence, so such a file
- *    is never re-fetched. Fixing it belongs in the storage backend (write-temp +
- *    rename), not here.
+ *
+ * The non-atomic `put` that used to sit here as a third residual — a crash
+ * mid-write leaving a truncated file that `exists()` reported as present
+ * forever, which reconciliation would then trust and never re-fetch — is CLOSED
+ * by F0-03. LocalStorageBackend.put now writes to a random sibling temp path and
+ * renames it into place. Two accepted residuals remain in the backend rather
+ * than here: it is not fsync-hardened against power loss, and a hard kill
+ * between the write and the rename orphans an unaddressable temp file with no
+ * sweeper. See storage/local.ts.
  *
  * E-05 is deliberately narrower than "undo everything writeAssetBytes did": it
  * discards ORPHANS only. D-06 promises a refused DELTA touches nothing locally;
@@ -61,6 +67,15 @@
  * it is the bootstrap: the peer has never seen this universe. With
  * base != null the universe was deleted wholesale on the peer — a
  * link-severing event, never a cascade delete of our copy.
+ *
+ * F0-01: the bootstrap branch opens with a seed apply — `{universe, ops: {}}` —
+ * because `missing`, blob GET and blob PUT all call requireUniverse while only
+ * `apply` handles the C-11 create-on-bootstrap case. Before it, a bootstrap
+ * carrying ANY asset deadlocked and surfaced as `remote-unreachable`; a
+ * bootstrap with assets now succeeds. F0-02: if a later step then fails, the
+ * peer keeps an empty universe row and the next run converges through the merge
+ * path — safe because the peer holds no collection rows, not because base is
+ * null (see the comment at the seed apply).
  *
  * D-09: sync_links.last_error is built ONLY from safeErrorSummary(err) — never
  * from a remote response body.
@@ -88,6 +103,7 @@ import {
   writeAssetBytes,
   finalizeMaterialization,
   discardWrittenAssets,
+  repairThumbSizes,
 } from './materialize.js';
 import { reconcileAssets, isWellFormedHash } from './reconcile.js';
 import { recordConflicts } from './conflicts.js';
@@ -212,15 +228,43 @@ async function drive(
     //
     // Every asset is a delta member here — the peer is getting all of them — so
     // an unsourceable hash is fatal, exactly as it was before Plan E.
+
+    // F0-01: create the universe on the peer BEFORE anything touches a blob
+    // route. `missing`, GET blob and PUT blob all call requireUniverse, while
+    // only `apply` handles the C-11 create-on-bootstrap case — so without this
+    // step a bootstrap carrying any asset deadlocks: blobs cannot be staged
+    // before the universe exists, and assets cannot be applied before the blobs
+    // do. It surfaced as `remote-unreachable`, because the peer's 404 becomes
+    // SyncUnreachableError, which sent the user to debug their network.
     //
-    // In practice that policy is currently unreachable: a bootstrap carrying ANY
-    // asset cannot succeed at all today, because `missing`, GET blob and PUT blob
-    // all call requireUniverse (routes/sync.ts) while only `apply` handles the
-    // C-11 create-on-bootstrap case. Blobs therefore cannot be staged before the
-    // universe exists, and assets cannot be applied before the blobs exist. This
-    // branch completes only with ZERO hashes. Pre-existing (pushBlobs called
-    // missingAssets exactly the same way) and protocol-level, so it is escalated
-    // rather than patched here; the policy below is what this code WOULD do.
+    // `ops: {}` needs no new route and no version gate: the apply schema
+    // already defaults ops to {} and applyManifestOps upserts the universe
+    // singleton on its own. That matters because prod runs an older build.
+    //
+    // Unconditional rather than gated on "does this universe have assets": the
+    // whole existing bootstrap suite then exercises this step, instead of it
+    // living on a branch only asset-bearing bootstraps reach — which is the
+    // same structural blindness that hid the bug for three plans.
+    //
+    // F0-02: if a LATER step fails, the peer keeps an empty universe row. The
+    // next run then sees remote != null with base == null and takes the MERGE
+    // path, where every local row is an add. The peer holds NO collection rows
+    // in that state, so no cross-side natural-key collision exists and
+    // deriveOps can emit no delete for either side. Note that base == null
+    // ALONE would not be enough: merge.ts's natural-key dedupe drops rows from
+    // `merged` without consulting base, and that is the one way a base-less
+    // merge can still produce a delete. It is the peer's emptiness that makes
+    // this window safe, not the absent base.
+    //
+    // The result is discarded because it is structurally empty: the peer has no
+    // rows for this universe, so there are no counters to lose — nothing to
+    // upsert or delete, and no byte-less row for the peer to sweep.
+    await client.apply(universeId, {
+      weltbonVersion: identity.weltbonVersion,
+      universe: local.universe,
+      ops: {},
+    });
+
     const localAssets = (local.assets ?? []) as ManifestRow[];
     const allLocalHashes = new Set(localAssets.map((a) => a.contentHash).filter(isWellFormedHash));
     const rec = await reconcileAssets(client, universeId, localAssets, allLocalHashes);
@@ -248,6 +292,20 @@ async function drive(
       throw err;
     }
     await finalizeMaterialization(universeId, written);
+
+    // F0-06: bring this instance's thumbSizeBytes back in line with what is
+    // actually on disk. Sits after finalize so a size this run just wrote is
+    // already correct and costs only a stat.
+    // Best-effort, exactly like the route side: size() rethrows any
+    // non-ENOENT error, and by this point BOTH applies have committed. An
+    // unguarded throw here would report a fully successful sync as failed,
+    // skip recordConflicts, and leave the base unadvanced — a metadata
+    // repair must never do that.
+    try {
+      await repairThumbSizes(universeId);
+    } catch (err) {
+      console.warn(`[sync] thumbSizeBytes repair failed for universe ${universeId}:`, err);
+    }
 
     await opts.onBeforeBaseAdvance?.();
     await saveBaseSnapshot(link.id, local);
@@ -396,6 +454,20 @@ async function drive(
   // blobs. A crash between the applies and here leaves correct, servable bytes
   // and a stale thumbSizeBytes — the residual window, and a far better one.
   await finalizeMaterialization(universeId, written);
+
+  // F0-06: bring this instance's thumbSizeBytes back in line with what is
+  // actually on disk. Sits after finalize so a size this run just wrote is
+  // already correct and costs only a stat.
+  // Best-effort, exactly like the route side: size() rethrows any
+  // non-ENOENT error, and by this point BOTH applies have committed. An
+  // unguarded throw here would report a fully successful sync as failed,
+  // skip recordConflicts, and leave the base unadvanced — a metadata
+  // repair must never do that.
+  try {
+    await repairThumbSizes(universeId);
+  } catch (err) {
+    console.warn(`[sync] thumbSizeBytes repair failed for universe ${universeId}:`, err);
+  }
 
   // D-13: record conflicts BEFORE the base advances — idempotent, so a crash
   // between the two replays harmlessly.

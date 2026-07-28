@@ -500,10 +500,10 @@ export async function materializeAssets(uid: string, plan: Materialization[]): P
  *
  * INVERTED so nothing has to be enumerated. The obvious shape ("sweep this
  * universe's staged blobs onto matching byte-less rows") needs a list() over
- * storage, and StorageBackend is deliberately put/get/delete/exists so it can be
- * S3-backed later; inventing a list() contract for this is exactly why the GC
- * sweeper was deferred. Driving from the DB side instead — the rows are a plain
- * query — needs nothing new.
+ * storage, and StorageBackend is deliberately put/get/delete/exists/size — all
+ * single-key operations — so it can be S3-backed later; inventing a list()
+ * contract for this is exactly why the GC sweeper was deferred. Driving from the
+ * DB side instead — the rows are a plain query — needs nothing new.
  *
  * And it deliberately goes through planAssetMaterialization rather than checking
  * the staging key by hand, which widens it for free: the planner's source order is
@@ -563,4 +563,82 @@ export async function sweepUnmaterializedAssets(uid: string): Promise<number> {
   const plan = await planAssetMaterialization(uid, rows as unknown as ManifestRow[]);
   if (plan.toMaterialize.length === 0) return 0;
   return materializeAssets(uid, plan.toMaterialize);
+}
+
+/**
+ * Plan F0 (F0-06): bring each asset's recorded `thumbSizeBytes` back in line
+ * with the thumbnail actually on disk.
+ *
+ * Three routes make it drift, none of them exotic:
+ *   1. A REFUSED apply. writeAssetBytes runs before both applies and
+ *      finalizeMaterialization after them, so a refusal keeps the repaired
+ *      bytes — correctly, that is the designed partition — and skips finalize.
+ *      No crash required.
+ *   2. A crash between the applies and finalizeMaterialization.
+ *   3. A peer-side clobber. apply-tables.ts writes thumbSizeBytes on every
+ *      asset upsert, so a peer-side rename or altText edit puts the row in the
+ *      delta for an unrelated reason and ships the peer's value over ours.
+ *      F0-04 stopped the field DRIVING sync; it does not stop it crossing.
+ *
+ * In all three nothing repairs it, because planAssetMaterialization
+ * short-circuits on exists(id) — a row whose bytes are present never re-enters
+ * a materialization plan, so its size is never recomputed.
+ *
+ * Local and source-agnostic, which is why it lives here rather than in
+ * reconcile.ts: that module owns cross-instance policy, this one owns local
+ * repair.
+ *
+ * Deliberately NOT sampled, unlike sweepUnmaterializedAssets' SWEEP_BATCH: a
+ * sampled repair lets any given asset report a wrong number indefinitely, and
+ * this number is returned by the assets API and carried in the export payload.
+ * The cost is one stat per asset, cheaper than the exists() per asset that
+ * planAssetMaterialization already performs over the merged set.
+ *
+ * This is safe to run every sync ONLY because F0-04 put thumbSizeBytes in
+ * NON_CONTENT_FIELDS: the repaired row stays content-equal, so the repair never
+ * creates a delta. If that ever reverts, two instances whose libvips produce
+ * different thumbnail sizes would each repair to their own value and conflict on
+ * every run, forever.
+ *
+ * Best-effort PER ROW, and only for the UPDATE: a failed metadata write is
+ * caught and logged, so one bad row never stops the scan or fails the caller.
+ * The candidate SELECT and storageBackend.size() are NOT guarded here — size()
+ * rethrows anything that is not ENOENT — so a broken storage volume still
+ * throws OUT of this function. Every call site must therefore treat the whole
+ * call as best-effort and guard it: by the time this runs, applies have already
+ * committed, and a metadata repair must never turn a successful sync into a
+ * reported failure.
+ *
+ * Returns the number of rows repaired, for logging and tests — no SyncRunResult
+ * counter is added, so nothing in the wire contract changes.
+ */
+export async function repairThumbSizes(uid: string): Promise<number> {
+  const rows = await db()
+    .select({ id: assets.id, thumbSizeBytes: assets.thumbSizeBytes })
+    .from(assets)
+    .where(eq(assets.universeId, uid));
+
+  let repaired = 0;
+  for (const row of rows) {
+    // null means no thumbnail on disk. That is a DIFFERENT problem — an absent
+    // derivative, which the materialization path owns — and writing 0 here
+    // would fabricate a fact rather than repair one.
+    const actual = await storageBackend.size(`${row.id}_thumb`);
+    if (actual === null) continue;
+    if (row.thumbSizeBytes === actual) continue;
+
+    try {
+      await db()
+        .update(assets)
+        .set({ thumbSizeBytes: actual })
+        // Scoped by universe as well as id, matching finalizeMaterialization:
+        // this function is exported and independently callable, and the posture
+        // is "protected by construction, not by the caller being careful".
+        .where(and(eq(assets.id, row.id), eq(assets.universeId, uid)));
+      repaired++;
+    } catch (err) {
+      console.warn(`[sync-materialize] thumbSizeBytes repair failed for asset ${row.id} (uid ${uid}):`, err);
+    }
+  }
+  return repaired;
 }

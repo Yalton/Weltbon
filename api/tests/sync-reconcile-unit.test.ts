@@ -83,6 +83,9 @@ vi.mock('../src/services/storage/local.js', () => ({
     put: vi.fn(async (key: string, data: Buffer) => { state.bytes.set(key, data); }),
     delete: vi.fn(async (key: string) => { state.bytes.delete(key); }),
     exists: vi.fn(async (key: string) => state.bytes.has(key)),
+    // Nothing in this file reaches `size()` today; it is here so the mock keeps
+    // matching StorageBackend, which F0-03/F0-05 widened.
+    size: vi.fn(async (key: string) => state.bytes.get(key)?.length ?? null),
   },
 }));
 

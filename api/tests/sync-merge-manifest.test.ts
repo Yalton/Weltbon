@@ -442,3 +442,44 @@ describe('mergeManifests (Plan B, Task 5)', () => {
     expect(res.merged.exported_at).toBe(T2); // the later of the two — it's metadata, not state
   });
 });
+
+describe('contentEqual over thumbSizeBytes (Plan F0, F0-04)', () => {
+  function assetRow(over: Partial<ManifestRow> = {}): ManifestRow {
+    return {
+      id: '11111111-1111-4111-8111-111111111111',
+      filename: 'pic.png',
+      mimeType: 'image/png',
+      extension: 'png',
+      sizeBytes: 1024,
+      thumbSizeBytes: 100,
+      altText: null,
+      contentHash: 'a'.repeat(64),
+      // The sibling exclusion, carried here on purpose: a reader comparing the
+      // two cases should see both fields on the same row.
+      usedAsCoverByEntryId: null,
+      createdAt: T0,
+      updatedAt: T0,
+      ...over,
+    };
+  }
+
+  it('treats two rows differing only in thumbSizeBytes as equal', () => {
+    // Each instance derives its own thumbnail, so this field is per-instance
+    // state, not content. While it counted, every transferred asset was a delta
+    // member on the NEXT run — a spurious round-trip per asset per link and
+    // phantom conflict rows for a field no user touched.
+    expect(contentEqual(assetRow(), assetRow({ thumbSizeBytes: 987 }))).toBe(true);
+  });
+
+  it('still treats a differing contentHash as a real change', () => {
+    // Guard against over-broad exclusion: the point is to stop comparing ONE
+    // derived field, not to stop comparing assets.
+    expect(contentEqual(assetRow(), assetRow({ contentHash: 'b'.repeat(64) }))).toBe(false);
+  });
+
+  it('still treats a differing sizeBytes as a real change', () => {
+    // sizeBytes DOES feed the storage quota (both checks sum it), unlike
+    // thumbSizeBytes. It must keep participating.
+    expect(contentEqual(assetRow(), assetRow({ sizeBytes: 2048 }))).toBe(false);
+  });
+});

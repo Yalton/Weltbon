@@ -244,6 +244,177 @@ describe('two-instance acceptance for the sync drive loop (Plan D Task 8)', () =
     expect(link.baseSnapshotKey).not.toBeNull();
   });
 
+  // ── Plan F0 scenario 1: bootstrap a universe that ALREADY has an asset ────
+  //
+  // The suite has never been able to contain this. Every asset scenario in
+  // Plans C, D and E opens with a bootstrap of an EMPTY universe and adds
+  // assets afterwards, so the deadlock was structurally uncatchable: `missing`,
+  // GET and PUT blob all requireUniverse, while only `apply` creates the
+  // universe.
+  //
+  // Ordering is the whole point — the asset exists BEFORE the first run.
+  it('bootstraps a peer with an asset that predates the first sync (F0-01)', async () => {
+    const { assets } = await import('../src/db/schema.js');
+
+    const bytes = await realPng(70);
+    const asset = await seedAsset('A', bytes); // BEFORE any run. This is the scenario.
+
+    await use('A');
+    const r = await runSync(linkId, ownerA.id, { fetchImpl: makeFetch() });
+    expect(r.bootstrapped).toBe(true);
+    expect(r.blobsPushed).toBe(1);
+
+    // B has the universe, the row, the bytes, and its own derived thumbnail.
+    await use('B');
+    const [onB] = await B.db.select().from(assets).where(eq(assets.id, asset.id));
+    expect(onB).toBeDefined();
+    expect((await storageBackend.get(asset.id))?.equals(bytes)).toBe(true);
+    expect(await storageBackend.exists(`${asset.id}_thumb`)).toBe(true);
+
+    // thumbSizeBytes is B's OWN derived value, not the deliberately-wrong 1
+    // that seedAsset writes. Asserting against the thumbnail actually on disk
+    // rather than a fixed number keeps this independent of sharp's output.
+    // Post-F0-06 the value is guaranteed by finalizeMaterialization OR by
+    // repairThumbSizes (same run, same value), so this pins that B derived its
+    // own thumbnail — not which code path recorded the number. See the note at
+    // scenario 4f for the one test that still discriminates.
+    const thumb = await storageBackend.get(`${asset.id}_thumb`);
+    expect(onB.thumbSizeBytes).toBe(thumb!.length);
+    expect(onB.thumbSizeBytes).not.toBe(1);
+
+    // The staged transfer blob was consumed, not leaked.
+    expect(await storageBackend.exists(syncBlobKey(universeId, sha256(bytes)))).toBe(false);
+  });
+
+  // ── Plan F0 scenario 2: the seed apply's partial-write window (F0-02) ─────
+  //
+  // If phase 1 lands and phase 2 is refused, the peer keeps an EMPTY universe
+  // row. That is accepted, and this pins WHY: the next run finds
+  // remote != null with base == null, so it takes the MERGE path, where every
+  // local row is an add and every asset is a delta member. The peer holds NO
+  // collection rows in that state, so no cross-side natural-key collision
+  // exists and deriveOps can emit no delete for either side.
+  //
+  // base == null ALONE would not be enough, and the distinction is worth
+  // keeping straight: merge.ts's natural-key dedupe drops rows from `merged`
+  // without ever consulting base, and deriveOps then emits a delete for any
+  // side key no longer in `merged`. That is a real base-less delete path
+  // (timelinePins, dictionaryWords, diagramNodes, shareTokens all carry a
+  // naturalKey). It is the peer's emptiness that makes THIS window safe.
+  // Asserting the recovery beats asserting it in prose.
+  it('recovers through the merge path when the full apply is refused after the seed apply (F0-02)', async () => {
+    const { assets, universes, syncLinks } = await import('../src/db/schema.js');
+
+    const bytes = await realPng(80);
+    const asset = await seedAsset('A', bytes);
+
+    await use('A');
+    const before = await snapshot('A');
+
+    // Refuse only the FULL apply. The seed apply carries no ops, so the body is
+    // what distinguishes them — refusing every /apply would also refuse phase 1
+    // and prove nothing about this window. The two differ structurally and
+    // exactly: the seed sends `ops: {}` literally, while the full apply always
+    // sends every collection key from manifestToOps. Discriminating on the key
+    // count is therefore exact, where "does any op carry rows" would really be
+    // testing "is this a non-empty delta".
+    const refuseFullApply = makeFetch(async (path, init) => {
+      if (!path.endsWith('/apply')) return null;
+      const body = JSON.parse(String(init?.body ?? '{}'));
+      if (Object.keys(body.ops ?? {}).length === 0) return null; // let the seed apply through
+      return new Response(JSON.stringify({ error: 'universe storage quota exceeded' }), {
+        status: 413,
+        headers: { 'Content-Type': 'application/json' },
+      });
+    });
+
+    await use('A');
+    await expect(runSync(linkId, ownerA.id, { fetchImpl: refuseFullApply })).rejects.toBeInstanceOf(
+      SyncQuotaError,
+    );
+
+    // The peer holds the universe row and nothing else.
+    await use('B');
+    const [uOnB] = await B.db.select().from(universes).where(eq(universes.id, universeId));
+    expect(uOnB).toBeDefined();
+    const rowsOnB = await B.db.select().from(assets).where(eq(assets.universeId, universeId));
+    expect(rowsOnB).toHaveLength(0);
+
+    // Local is untouched and the base never advanced — D-06 still holds.
+    await use('A');
+    const after = await snapshot('A');
+    expect(comparable(after)).toEqual(comparable(before));
+    const [linkAfter] = await A.db.select().from(syncLinks).where(eq(syncLinks.id, linkId));
+    expect(linkAfter.status).toBe('error');
+    expect(linkAfter.baseSnapshotKey).toBeNull();
+
+    // The retry is a MERGE, not a bootstrap, and it converges.
+    await use('A');
+    const retried = await runSync(linkId, ownerA.id, { fetchImpl: makeFetch() });
+    expect(retried.bootstrapped).toBe(false);
+
+    // The F0-02 claim, executed rather than asserted in prose: the merge that
+    // recovers this window produces no deletes and no conflicts.
+    expect(retried.conflicts).toBe(0);
+    expect(retried.pushed.deleted).toEqual({});
+
+    await use('B');
+    const [assetOnB] = await B.db.select().from(assets).where(eq(assets.id, asset.id));
+    expect(assetOnB).toBeDefined();
+    expect((await storageBackend.get(asset.id))?.equals(bytes)).toBe(true);
+
+    // Nothing was deleted anywhere — the trap F0-02 argues cannot fire.
+    await use('A');
+    const [assetOnA] = await A.db.select().from(assets).where(eq(assets.id, asset.id));
+    expect(assetOnA).toBeDefined();
+  });
+
+  // ── Plan F0 scenario 4: a transferred asset settles in ONE run (F0-04) ────
+  //
+  // Asserting the ABSENCE of an asset op, not merely that the run succeeded — a
+  // run that pushes a spurious delta succeeds too, so a success assertion here
+  // would be coverage that cannot fail.
+  //
+  // The divergence this builds is ONE-SIDED, which decides what can actually
+  // catch a regression: seedAsset writes thumbSizeBytes: 1 and no thumb file, so
+  // after run 1 only B's row has changed against base while A's is untouched.
+  // Only `appliedLocally` can therefore move (verified by mutation), and the
+  // remaining assertions are cheap guards rather than the binding one — see the
+  // note at that line before deleting any of them as redundant.
+  it('does not re-sync a transferred asset on the following run (F0-04)', async () => {
+    const { syncConflicts } = await import('../src/db/schema.js');
+
+    await use('A');
+    await runSync(linkId, ownerA.id, { fetchImpl: makeFetch() }); // bootstrap, empty
+
+    const bytes = await realPng(120);
+    await seedAsset('A', bytes);
+
+    await use('A');
+    const first = await runSync(linkId, ownerA.id, { fetchImpl: makeFetch() });
+    expect(first.blobsPushed).toBe(1);
+
+    // The second run must be a genuine no-op for assets. Before F0-04 the
+    // receiver's own derived thumbSizeBytes differed from the sender's, so the
+    // asset came back as a delta member here.
+    await use('A');
+    const second = await runSync(linkId, ownerA.id, { fetchImpl: makeFetch() });
+    expect(second.pushed.upserted.assets ?? 0).toBe(0);
+    // THIS is the assertion that binds. Reverting F0-04 fails here and only
+    // here ("expected 1 to be +0"): B re-derived its own thumbnail on
+    // materialize, so B's row is the changed side and the delta comes back to A.
+    expect(second.appliedLocally.upserted.assets ?? 0).toBe(0);
+    expect(second.blobsPushed).toBe(0);
+    expect(second.blobsPulled).toBe(0);
+
+    // No conflict row either. A one-sided divergence cannot reach the ledger at
+    // all — mergeCollection mints a conflict only when BOTH sides changed — so
+    // this is a guard on the shape of the scenario, not on F0-04 itself.
+    await use('A');
+    const rows = await A.db.select().from(syncConflicts).where(eq(syncConflicts.universeId, universeId));
+    expect(rows).toHaveLength(0);
+  });
+
   // ── Scenario 2: bidirectional convergence ────────────────────────────────
 
   it('converges independent creates made on both sides in one run', async () => {
@@ -306,6 +477,12 @@ describe('two-instance acceptance for the sync drive loop (Plan D Task 8)', () =
 
   // ── Scenario 4: assets both directions ───────────────────────────────────
 
+  // NB: this deliberately writes only `<id>` and never `<id>_thumb`. That
+  // absence is load-bearing for the F0-04 no-re-sync scenario: with no thumbnail
+  // on disk `repairThumbSizes` skips the row, which is what preserves the
+  // one-sided divergence that test depends on. If this helper ever starts
+  // writing a thumbnail, both instances would repair to the same value and that
+  // test would pass even with F0-04 reverted.
   async function seedAsset(which: 'A' | 'B', bytes: Buffer) {
     await use(which);
     const handle = which === 'A' ? A : B;
@@ -330,6 +507,23 @@ describe('two-instance acceptance for the sync drive loop (Plan D Task 8)', () =
     const sharp = (await import('sharp')).default;
     return sharp({
       create: { width: 200, height: 150, channels: 3, background: { r: seed, g: 10, b: 20 } },
+    })
+      .png()
+      .toBuffer();
+  }
+
+  /**
+   * A large enough source that the thumbnail genuinely downsizes. realPng's
+   * 200x150 is smaller than the thumb bound, and `withoutEnlargement: true`
+   * means the "thumbnail" comes back byte-identical to the original — so a
+   * repair that stat'd `${id}` instead of `${id}_thumb` would read the same
+   * number and no assertion could tell. These two tests are precisely the ones
+   * whose point is WHICH key gets stat'd.
+   */
+  async function realPngLarge(seed: number): Promise<Buffer> {
+    const sharp = (await import('sharp')).default;
+    return sharp({
+      create: { width: 900, height: 700, channels: 3, background: { r: seed, g: 10, b: 20 } },
     })
       .png()
       .toBuffer();
@@ -736,8 +930,14 @@ describe('two-instance acceptance for the sync drive loop (Plan D Task 8)', () =
     const thumb = await storageBackend.get(`${asset.id}_thumb`);
     expect(thumb).not.toBeNull();
     expect(thumb!.length).toBeGreaterThan(0);
-    // finalizeMaterialization ran, so the row's size matches the file that is
-    // actually on disk rather than the stale value it carried in.
+    // The row's size matches the file that is actually on disk rather than the
+    // stale value it carried in. Post-F0-06 this assertion is satisfied by
+    // finalizeMaterialization OR by repairThumbSizes, which runs later in the
+    // same run and writes the same value — so it no longer discriminates between
+    // them. `tests/sync-materialize.test.ts` ("finalizeMaterialization writes
+    // thumbSizeBytes and consumes the staged blob") is now the only test in the
+    // repo that pins finalize's write specifically. If that one is ever weakened,
+    // this write becomes unprotected and nothing in this file will notice.
     const [rowAfter] = await A.db.select().from(assets).where(eq(assets.id, asset.id));
     expect(rowAfter.thumbSizeBytes).toBe(thumb!.length);
     expect(rowAfter.thumbSizeBytes).not.toBe(STALE);
@@ -1212,38 +1412,34 @@ describe('two-instance acceptance for the sync drive loop (Plan D Task 8)', () =
     expect(rowOnA).toBeDefined();
   });
 
-  // ── Scenario 9d: the thumb residual window, pinned as ACCEPTED ────────────
+  // ── Plan F0 scenario 3: the thumb residual is now REPAIRED ────────────────
   //
-  // writeAssetBytes runs before both applies and finalizeMaterialization after
-  // them, so anything that aborts the run in between leaves correct, servable
-  // bytes with a STALE thumbSizeBytes. And it does not self-heal:
-  // planAssetMaterialization short-circuits on exists(id), so a row whose bytes
-  // are now present never re-enters a materialization plan and its size is never
-  // recomputed.
+  // This scenario previously asserted the opposite — that a stale
+  // thumbSizeBytes survives a further run — and it was pinned that way on
+  // purpose, so that closing the gap would require a deliberate edit with a
+  // failing test attached. F0-06 closes it; this is that edit.
   //
-  // That is a deliberate trade — thumb_size_bytes feeds no quota (both checks sum
-  // size_bytes), so it is one wrong metadata integer in place of a permanently
-  // byte-less asset that renders as a broken image. It is pinned here rather than
-  // left to prose so that changing it is a DELIBERATE act with a failing test
-  // attached, not an accident. The E-05 repair path reaches the same window
-  // without a crash seam: a refused apply skips finalize while the repair's bytes
-  // survive.
-  it('leaves a repaired asset with correct bytes and a stale thumbSizeBytes that a further run does NOT fix (accepted residual)', async () => {
+  // The window is real and needs no crash: writeAssetBytes runs before both
+  // applies and finalizeMaterialization after them, so a REFUSED apply keeps
+  // the repaired bytes (correctly — that is the designed partition) and skips
+  // finalize. planAssetMaterialization then short-circuits on exists(id), so
+  // the row never re-enters a materialization plan and nothing recomputes the
+  // size. repairThumbSizes is what sees it, by comparing the row against the
+  // thumbnail actually on disk.
+  it('repairs a stale thumbSizeBytes on a later run (F0-06)', async () => {
     const { assets } = await import('../src/db/schema.js');
 
     await use('A');
     await runSync(linkId, ownerA.id, { fetchImpl: makeFetch() }); // bootstrap, empty
 
-    const bytes = await realPng(210);
+    const bytes = await realPngLarge(210);
     const asset = await seedAsset('A', bytes);
     await use('A');
     await runSync(linkId, ownerA.id, { fetchImpl: makeFetch() }); // A -> B
-    await use('A');
-    await runSync(linkId, ownerA.id, { fetchImpl: makeFetch() }); // converge thumbSizeBytes
 
-    // Same construction as 4f: both rows pinned to one deliberately-wrong size at
-    // one instant, so the row is content-equal (outside the delta) and the stale
-    // value cannot be quietly overwritten by an incoming upsert on the later run.
+    // Both rows pinned to one deliberately-wrong size at one instant, so the row
+    // is content-equal on both sides and the stale value cannot be quietly
+    // overwritten by an incoming upsert.
     const STALE = 4242;
     const pinnedAt = new Date('2026-06-01T00:00:00.000Z');
     await A.db.update(assets).set({ thumbSizeBytes: STALE, updatedAt: pinnedAt }).where(eq(assets.id, asset.id));
@@ -1269,29 +1465,56 @@ describe('two-instance acceptance for the sync drive loop (Plan D Task 8)', () =
     );
 
     await use('A');
-    // Correct, servable bytes and a real thumbnail on disk...
+    // The window: correct servable bytes, a real thumbnail, a wrong number.
     expect((await storageBackend.get(asset.id))?.equals(bytes)).toBe(true);
     const thumb = await storageBackend.get(`${asset.id}_thumb`);
     expect(thumb).not.toBeNull();
-    expect(thumb!.length).not.toBe(STALE); // the row's number is genuinely wrong
-    // ...and a thumbSizeBytes that never got written, because finalize is on the
-    // far side of the applies.
+    expect(thumb!.length).not.toBe(STALE);
     const [afterRefusal] = await A.db.select().from(assets).where(eq(assets.id, asset.id));
     expect(afterRefusal.thumbSizeBytes).toBe(STALE);
 
-    // A further, entirely healthy run does NOT repair it: the bytes are present,
-    // so the row never re-enters a materialization plan. THIS IS THE ACCEPTED
-    // RESIDUAL. If this assertion starts failing, the window was closed on
-    // purpose and this test should be updated to say so.
+    // A further healthy run REPAIRS it, against the thumbnail on disk.
     await use('A');
-    const r = await runSync(linkId, ownerA.id, { fetchImpl: makeFetch() });
-    expect(r.assetsRepairedLocally).toBe(0);
-    expect(r.assetsUnrepairable).toBe(0);
+    await runSync(linkId, ownerA.id, { fetchImpl: makeFetch() });
 
     await use('A');
     const [afterRerun] = await A.db.select().from(assets).where(eq(assets.id, asset.id));
-    expect(afterRerun.thumbSizeBytes).toBe(STALE);
+    expect(afterRerun.thumbSizeBytes).toBe(thumb!.length);
+    expect(afterRerun.thumbSizeBytes).not.toBe(STALE);
+    // The repair is metadata-only — it must not disturb the bytes.
     expect((await storageBackend.get(asset.id))?.equals(bytes)).toBe(true);
+  });
+
+  // The receiving instance drifts too, and its only self-healing before this was
+  // sweepUnmaterializedAssets. Without this test, repairThumbSizes could be
+  // wired into run-sync alone and the peer would keep a wrong number forever.
+  it('repairs a stale thumbSizeBytes on the PEER during an apply (F0-06)', async () => {
+    const { assets } = await import('../src/db/schema.js');
+
+    await use('A');
+    await runSync(linkId, ownerA.id, { fetchImpl: makeFetch() }); // bootstrap, empty
+
+    const bytes = await realPngLarge(215);
+    const asset = await seedAsset('A', bytes);
+    await use('A');
+    await runSync(linkId, ownerA.id, { fetchImpl: makeFetch() }); // A -> B
+
+    await use('B');
+    const thumbOnB = await storageBackend.get(`${asset.id}_thumb`);
+    expect(thumbOnB).not.toBeNull();
+    const STALE = 7777;
+    await B.db.update(assets).set({ thumbSizeBytes: STALE }).where(eq(assets.id, asset.id));
+
+    // Any subsequent apply against B repairs it. Give the run something to
+    // carry so an apply actually happens.
+    await seedEntry('A', 'forces an apply');
+    await use('A');
+    await runSync(linkId, ownerA.id, { fetchImpl: makeFetch() });
+
+    await use('B');
+    const [onB] = await B.db.select().from(assets).where(eq(assets.id, asset.id));
+    expect(onB.thumbSizeBytes).toBe(thumbOnB!.length);
+    expect(onB.thumbSizeBytes).not.toBe(STALE);
   });
 
   // ── Scenario 10: blob bytes absent on BOTH sides ─────────────────────────

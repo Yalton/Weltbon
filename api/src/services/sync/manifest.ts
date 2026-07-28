@@ -63,7 +63,29 @@ export const COLLECTIONS: CollectionDescriptor[] = [
  * move it: a phantom asset CONFLICT on top. The one-sided case is the common
  * one. The real state merges on the entries row.
  */
-export const NON_CONTENT_FIELDS = new Set(['updatedAt', 'createdAt', 'usedAsCoverByEntryId']);
+export const NON_CONTENT_FIELDS = new Set([
+  'updatedAt',
+  'createdAt',
+  'usedAsCoverByEntryId',
+  // F0-04: each instance re-derives its own thumbnail under its own SHARP_OPTS,
+  // so this is per-instance state rather than content — the same argument the
+  // docstring above makes for usedAsCoverByEntryId. While it counted, a
+  // transferred asset was a delta member on the run AFTER its transfer: a
+  // spurious round-trip per asset per link, and conflict-ledger rows for a field
+  // no user ever touched. It feeds no quota (both checks sum size_bytes).
+  //
+  // Note this stops the field DRIVING sync — no spurious deltas, no phantom
+  // conflicts — but it does NOT stop it crossing: apply-tables.ts still writes
+  // thumbSizeBytes on every asset upsert, so a peer-side edit to any other field
+  // (a rename, an altText change) still ships its value over, and
+  // planAssetMaterialization short-circuits on exists(id) so nothing re-derives
+  // it afterwards. F0-06 is what makes each instance repair its own value.
+  //
+  // This is also where the usedAsCoverByEntryId analogy breaks: that field is
+  // excluded from comparison AND absent from the asset toValues, so it genuinely
+  // never crosses.
+  'thumbSizeBytes',
+]);
 
 /** Array fields compared order-insensitively (B-02). */
 export const UNORDERED_ARRAY_FIELDS = new Set(['entryIds']);

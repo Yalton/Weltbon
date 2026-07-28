@@ -13,9 +13,18 @@
  *
  * Volume path: /uploads (NOT /app/assets — that path is already used for PDF font
  * files mounted at /repo/api/assets in the Dockerfile).
+ *
+ * Atomicity (F0-03): put() writes to `<key>.tmp-<16 hex>` in this same directory
+ * and renames it into place. Two consequences. Temp names are unaddressable
+ * through the API — safeJoin strips '.', so no key can resolve to one. And a
+ * hard process kill between the write and the rename orphans a temp file with
+ * nothing to reclaim it; there is no sweeper. If one is ever added, `*.tmp-`
+ * followed by 16 hex chars is the pattern, and anything older than a run is safe
+ * to remove.
  */
 
-import { mkdir, readFile, writeFile, unlink, access } from 'node:fs/promises';
+import { mkdir, readFile, writeFile, unlink, access, rename, stat } from 'node:fs/promises';
+import { randomBytes } from 'node:crypto';
 import { join } from 'node:path';
 import type { StorageBackend } from './interface.js';
 
@@ -41,7 +50,36 @@ export class LocalStorageBackend implements StorageBackend {
   async put(key: string, data: Buffer): Promise<void> {
     const fullPath = this.safeJoin(key);
     await mkdir(this.basePath, { recursive: true });
-    await writeFile(fullPath, data);
+
+    // F0-03: write to a temp path, then rename. A POSIX same-filesystem rename
+    // is atomic, so a reader sees either the whole old value or the whole new
+    // one — never the truncated file a bare writeFile leaves behind, which
+    // exists() would then report as present forever.
+    //
+    // The temp path is built from the ALREADY-JOINED path, never by passing a
+    // decorated key back through safeJoin. safeJoin strips every character
+    // outside [a-zA-Z0-9_-], so a suffix composed only of stripped characters
+    // would reduce to the real key itself — making the temp path identical to
+    // the destination and turning this write back into the truncating one it
+    // exists to replace.
+    //
+    // The random component is not decoration: two concurrent puts of one key
+    // sharing a temp path would interleave their bytes into it and then each
+    // rename the mixture into place.
+    //
+    // The temp path is a SIBLING of the destination, not a file in os.tmpdir().
+    // That is what makes the rename same-filesystem and therefore atomic —
+    // rename(2) returns EXDEV across mounts and Node does not fall back to
+    // copy. Do not relocate the temp file.
+    const tmpPath = `${fullPath}.tmp-${randomBytes(8).toString('hex')}`;
+    try {
+      await writeFile(tmpPath, data);
+      await rename(tmpPath, fullPath);
+    } catch (err) {
+      // Best-effort: never let cleanup replace the real error.
+      await unlink(tmpPath).catch(() => {});
+      throw err;
+    }
   }
 
   async get(key: string): Promise<Buffer | null> {
@@ -68,6 +106,16 @@ export class LocalStorageBackend implements StorageBackend {
       return true;
     } catch {
       return false;
+    }
+  }
+
+  async size(key: string): Promise<number | null> {
+    try {
+      const st = await stat(this.safeJoin(key));
+      return st.size;
+    } catch (err: unknown) {
+      if ((err as NodeJS.ErrnoException).code === 'ENOENT') return null;
+      throw err;
     }
   }
 

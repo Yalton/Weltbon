@@ -40,6 +40,7 @@ import {
   finalizeMaterialization,
   discardWrittenAssets,
   sweepUnmaterializedAssets,
+  repairThumbSizes,
   type WrittenAsset,
 } from '../services/sync/materialize.js';
 import type { AuthVariables } from '../middleware/auth.js';
@@ -503,6 +504,23 @@ export const syncRoutes = new OpenAPIHono<AppEnv>()
       }
     } catch (err) {
       console.warn(`[sync-apply] staged-blob sweep failed for universe ${uid}:`, err);
+    }
+
+    // F0-06: the receiving instance drifts too — a refused apply on a repair
+    // target keeps its bytes and skips finalize, no crash required — and this
+    // sweep was its only self-healing. Best-effort, exactly like the sweep:
+    // a metadata repair must never fail an apply that already committed.
+    try {
+      const repaired = await repairThumbSizes(uid);
+      if (repaired > 0) {
+        // Same visibility argument as the sweep's console.info above: under
+        // S-02 this instance is prod, which initiates no runs and whose HTTP
+        // responses nobody reads, so a log line is the only way a repair here
+        // reaches a human.
+        console.info(`[sync-apply] repaired thumbSizeBytes on ${repaired} asset(s) for universe ${uid}`);
+      }
+    } catch (err) {
+      console.warn(`[sync-apply] thumbSizeBytes repair failed for universe ${uid}:`, err);
     }
 
     return c.json({ ...result, materializedAssets, sweptAssets }, 200);

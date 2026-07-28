@@ -131,8 +131,9 @@ export interface ReconcileResult {
    *
    * Approximate, and by the SAME mechanism that makes the peer-side mirror
    * unusable (see below): any repair target whose row is a delta member for an
-   * unrelated reason — most commonly a `thumbSizeBytes` the two instances have
-   * not yet agreed on — is filtered out and counted 0. It undercounts real
+   * unrelated reason — formerly, most commonly, a `thumbSizeBytes` the two
+   * instances had not yet agreed on (F0-04 removed that one) — is filtered out
+   * and counted 0. It undercounts real
    * repairs, it does not overcount. Left as is deliberately: it is a display
    * number and nothing branches on it, and the accurate version wants the same
    * treatment the peer counter got, which is a change of its own.
@@ -142,10 +143,13 @@ export interface ReconcileResult {
   // than delivering a change — is deliberately NOT a member here, because this
   // module cannot compute it correctly. The obvious symmetric formula
   // (`pushedRows` whose hash is not in `deltaHashes`) is wrong, and provably so:
-  // a peer re-derives its own thumbnail on materialize and `thumbSizeBytes` is a
-  // CONTENT field for merge.ts's contentEqual, so a transferred asset row becomes
-  // a delta member on the run AFTER it lands, deltaHashes swallows the hash, and
-  // the count reads 0 in exactly the scenario the number exists to measure.
+  // a peer re-derives its own thumbnail on materialize and `thumbSizeBytes` WAS a
+  // CONTENT field for merge.ts's contentEqual until F0-04, so a transferred asset
+  // row became a delta member on the run AFTER it landed, deltaHashes swallowed
+  // the hash, and the count read 0 in exactly the scenario the number exists to
+  // measure. F0-04 removes that particular trigger, but the formula stays wrong in
+  // general — any unrelated delta membership reproduces it, which is why the
+  // counter lives in run-sync.ts.
   //
   // TRANSIENT, not permanent: re-derivation happens only inside writeAssetBytes,
   // which only runs where exists(id) was false — permanently true once the bytes
