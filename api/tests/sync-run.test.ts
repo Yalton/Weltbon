@@ -274,6 +274,10 @@ describe('two-instance acceptance for the sync drive loop (Plan D Task 8)', () =
     // thumbSizeBytes is B's OWN derived value, not the deliberately-wrong 1
     // that seedAsset writes. Asserting against the thumbnail actually on disk
     // rather than a fixed number keeps this independent of sharp's output.
+    // Post-F0-06 the value is guaranteed by finalizeMaterialization OR by
+    // repairThumbSizes (same run, same value), so this pins that B derived its
+    // own thumbnail — not which code path recorded the number. See the note at
+    // scenario 4f for the one test that still discriminates.
     const thumb = await storageBackend.get(`${asset.id}_thumb`);
     expect(onB.thumbSizeBytes).toBe(thumb!.length);
     expect(onB.thumbSizeBytes).not.toBe(1);
@@ -473,6 +477,12 @@ describe('two-instance acceptance for the sync drive loop (Plan D Task 8)', () =
 
   // ── Scenario 4: assets both directions ───────────────────────────────────
 
+  // NB: this deliberately writes only `<id>` and never `<id>_thumb`. That
+  // absence is load-bearing for the F0-04 no-re-sync scenario: with no thumbnail
+  // on disk `repairThumbSizes` skips the row, which is what preserves the
+  // one-sided divergence that test depends on. If this helper ever starts
+  // writing a thumbnail, both instances would repair to the same value and that
+  // test would pass even with F0-04 reverted.
   async function seedAsset(which: 'A' | 'B', bytes: Buffer) {
     await use(which);
     const handle = which === 'A' ? A : B;
@@ -920,8 +930,14 @@ describe('two-instance acceptance for the sync drive loop (Plan D Task 8)', () =
     const thumb = await storageBackend.get(`${asset.id}_thumb`);
     expect(thumb).not.toBeNull();
     expect(thumb!.length).toBeGreaterThan(0);
-    // finalizeMaterialization ran, so the row's size matches the file that is
-    // actually on disk rather than the stale value it carried in.
+    // The row's size matches the file that is actually on disk rather than the
+    // stale value it carried in. Post-F0-06 this assertion is satisfied by
+    // finalizeMaterialization OR by repairThumbSizes, which runs later in the
+    // same run and writes the same value — so it no longer discriminates between
+    // them. `tests/sync-materialize.test.ts` ("finalizeMaterialization writes
+    // thumbSizeBytes and consumes the staged blob") is now the only test in the
+    // repo that pins finalize's write specifically. If that one is ever weakened,
+    // this write becomes unprotected and nothing in this file will notice.
     const [rowAfter] = await A.db.select().from(assets).where(eq(assets.id, asset.id));
     expect(rowAfter.thumbSizeBytes).toBe(thumb!.length);
     expect(rowAfter.thumbSizeBytes).not.toBe(STALE);
