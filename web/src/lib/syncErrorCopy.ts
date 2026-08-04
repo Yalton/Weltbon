@@ -45,7 +45,12 @@ export const SYNC_ERROR_COPY: Record<string, { message: string }> = {
     message: 'A sync is already running for this link. Wait for it to finish, or force another run if you are sure the previous one is stuck.',
   },
   'remote-key-undecryptable': {
-    message: 'The saved access token for the remote connection could not be decrypted. Re-save the token on that remote connection — every link to it uses the same one — or this may be a server configuration problem, in which case setting up the link again will not help.',
+    // Two causes, distinguished by `reason` in the throw site's own message
+    // (run-errors.ts:59-61): "encryption key not configured" versus "could not
+    // decrypt stored PAT". That string reaches the UI as `raw`, so the
+    // disclosure already tells the user which one they hit — the headline can
+    // stay short and confident instead of hedging across both.
+    message: 'The saved access token for the remote connection could not be decrypted. Re-save the token on that remote connection; every link to it uses the same one.',
   },
   'remote-unreachable': {
     message: 'The remote instance could not be reached. Check that it is online and that its address is still correct, then try again.',

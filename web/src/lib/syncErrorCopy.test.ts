@@ -46,6 +46,10 @@ describe('syncErrorMessage', () => {
       const out = syncErrorMessage(err);
       expect(out.message).not.toBe(code);
       expect(out.message).toBe(SYNC_ERROR_COPY[code].message);
+      // Inside the loop, not in a single-code test: pinning `raw` for one code
+      // only leaves the other 11 free to drop it, which is the same
+      // one-code-pinned hole this loop exists to close for `message`.
+      expect(out.raw).toBe('raw');
     }
   });
 
