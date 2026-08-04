@@ -36,6 +36,19 @@ describe('syncErrorMessage', () => {
     expect(syncErrorMessage(err).message).toBe(SYNC_ERROR_COPY['busy'].message);
   });
 
+  it('routes every one of the 12 codes through syncErrorMessage to written copy, not the bare code', () => {
+    // The arming test above only inspects SYNC_ERROR_COPY directly — it never
+    // calls syncErrorMessage, so a regression that hardcodes `message: code`
+    // inside the function (rather than in the map) would pass it silently.
+    // This walks the function itself for every known code.
+    for (const code of Object.keys(SYNC_ERROR_COPY)) {
+      const err = new ApiError(409, { error: 'raw', code }, 'raw');
+      const out = syncErrorMessage(err);
+      expect(out.message).not.toBe(code);
+      expect(out.message).toBe(SYNC_ERROR_COPY[code].message);
+    }
+  });
+
   it('flags busy as retryable so the caller can offer Run anyway', () => {
     const err = new ApiError(409, { error: 'raw', code: 'busy' }, 'raw');
     expect(syncErrorMessage(err).canForce).toBe(true);
@@ -70,6 +83,14 @@ describe('syncErrorMessage', () => {
 
   it('handles a non-ApiError throw without crashing', () => {
     expect(syncErrorMessage(new Error('boom')).message.length).toBeGreaterThan(0);
+  });
+
+  it('carries the throw site\'s own message as raw on the known-code path, for disclosure', () => {
+    // e.g. remote-rejected's message embeds the remote's HTTP status
+    // (402 vs 413 vs 409); blob-unavailable's embeds the hash count. Real,
+    // code-specific information that must not be discarded by the copy map.
+    const err = new ApiError(409, { error: 'The remote rejected the apply (HTTP 402)', code: 'remote-rejected' }, 'The remote rejected the apply (HTTP 402)');
+    expect(syncErrorMessage(err).raw).toBe('The remote rejected the apply (HTTP 402)');
   });
 });
 
