@@ -6,17 +6,9 @@
 FROM node:22-bookworm-slim AS deps
 WORKDIR /repo
 RUN corepack enable && corepack prepare pnpm@9.15.0 --activate
-# `patch` is required by the root postinstall (scripts/apply-patches.sh) to
-# apply patches/*.patch over node_modules. slim base does not include it.
-RUN apt-get update && apt-get install -y --no-install-recommends patch && rm -rf /var/lib/apt/lists/*
 COPY pnpm-lock.yaml pnpm-workspace.yaml package.json ./
 COPY api/package.json api/package.json
 COPY web/package.json web/package.json
-# Phase 21 added a root postinstall (sh scripts/apply-patches.sh) for the SDK
-# patch. The script needs scripts/ and patches/ in the build context BEFORE
-# pnpm install runs the postinstall hook.
-COPY scripts ./scripts
-COPY patches ./patches
 RUN --mount=type=cache,id=pnpm,target=/pnpm/store \
     pnpm install --frozen-lockfile
 
