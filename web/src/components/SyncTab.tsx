@@ -379,7 +379,9 @@ export function SyncTab({ universeId }: { universeId: string }) {
         {formError && <SyncErrorNotice copy={formError} testId="sync-link-create-error" />}
       </div>
 
-      {/* Task 4 fills this in; the stub renders nothing today. */}
+      {/* F-03/F-04: the LWW losers this universe's runs recorded, flat and in
+          the server's order. Below the links, because it is the review surface
+          for what those runs already did. */}
       <SyncConflictList universeId={universeId} />
 
       <ConfirmDialog
