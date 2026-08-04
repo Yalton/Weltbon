@@ -318,3 +318,51 @@ describe('UniverseSettings — delete universe typed-confirmation (Phase 18-01)'
     expect(screen.queryByText(/in future phases/i)).toBeNull();
   });
 });
+
+/**
+ * Plan F (Task 3) — the Sync tab's registration in TABS.
+ *
+ * This is not a formality. `safeTab` falls back to `general` for any `?tab=`
+ * value TABS does not list, so a Sync tab that renders perfectly but is missing
+ * from that array deep-links users to General with no error anywhere. The
+ * fallback is deliberate (it refuses to gate a panel on untrusted URL state),
+ * which is exactly why the registration needs its own guard.
+ */
+describe('UniverseSettings — Sync tab (F-01)', () => {
+  beforeEach(() => {
+    vi.mocked(api).mockReset();
+  });
+
+  it('renders the Sync panel for ?tab=sync instead of falling back to General', async () => {
+    vi.mocked(api).mockImplementation(async (path: string) => {
+      if (path === '/universes/U1') return UNIVERSE as never;
+      if (path === '/sync/remotes') return [] as never;
+      if (path.startsWith('/sync/links')) return [] as never;
+      return [] as never;
+    });
+
+    renderSettings('/universes/U1/settings?tab=sync');
+
+    expect(await screen.findByRole('tab', { name: 'Sync' })).toHaveAttribute(
+      'aria-selected',
+      'true',
+    );
+    // The Sync panel's own content, and the absence of General's — the whole
+    // failure mode this guards is landing on General while the URL says sync.
+    expect(await screen.findByText(/not linked to any remote instance/i)).toBeInTheDocument();
+    expect(screen.queryByRole('button', { name: /delete universe/i })).toBeNull();
+  });
+
+  it('scopes the link query to this universe', async () => {
+    vi.mocked(api).mockImplementation(async (path: string) => {
+      if (path === '/universes/U1') return UNIVERSE as never;
+      return [] as never;
+    });
+
+    renderSettings('/universes/U1/settings?tab=sync');
+
+    await waitFor(() =>
+      expect(api).toHaveBeenCalledWith('/sync/links?universeId=U1'),
+    );
+  });
+});

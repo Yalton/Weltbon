@@ -1,0 +1,542 @@
+/**
+ * SyncTab tests — Plan F (Task 3), the universe-scoped Sync tab.
+ *
+ * Pins the three decisions this component implements:
+ *   - F-01: links live per universe (this tab), remotes per account.
+ *   - F-02: "Sync now" blocks inline; a `busy` failure offers Run anyway.
+ *   - F-06: elapsed seconds, never synthetic progress, plus a first-sync
+ *     warning for a link that has never completed a run.
+ * …and the honest-reporting rules: `assetsUnrepairable` stated plainly,
+ * `assetsRepairedLocally` never as an exact figure.
+ *
+ * Error prose is asserted against SYNC_ERROR_COPY, never retyped. A test that
+ * retyped it would pass against a component that hardcoded its own string, and
+ * would break on every deliberate copy edit.
+ *
+ * NEGATIVE ASSERTIONS USE APOSTROPHE-FREE PHRASES. This component renders
+ * typographic apostrophes (&rsquo;, U+2019), so a `queryByText(/can't/)` with a
+ * straight quote can never match and would pass no matter what the component
+ * did. Every `not.toBeInTheDocument` below matches a phrase containing no
+ * apostrophe at all.
+ */
+
+import { describe, it, expect, beforeEach, afterEach, vi } from 'vitest';
+import { render, screen, waitFor, within, act, fireEvent } from '@testing-library/react';
+import userEvent from '@testing-library/user-event';
+import { QueryClient, QueryClientProvider } from '@tanstack/react-query';
+import { MemoryRouter } from 'react-router-dom';
+
+// Keep the REAL ApiError: `syncErrorMessage` narrows with `instanceof ApiError`
+// against this same module, so a locally redeclared class would make every
+// error fall through to the generic branch and quietly defeat the tests below.
+vi.mock('../api/client', async (importOriginal) => {
+  const actual = await importOriginal<typeof import('../api/client')>();
+  return { ...actual, api: vi.fn() };
+});
+
+import { api, ApiError } from '../api/client';
+import { SYNC_ERROR_COPY } from '../lib/syncErrorCopy';
+import { SyncTab } from './SyncTab';
+
+type Handler = unknown | Error | ((path: string, init?: RequestInit) => unknown);
+
+/**
+ * Route api() calls by `"<METHOD> <path>"`, falling back to bare `<path>`.
+ * Lifted from SyncSettings.test.tsx — see its comment for why `Object.hasOwn`
+ * and why the match is resolved before the handler is inspected.
+ */
+function makeApiDispatcher(routes: Record<string, Handler>) {
+  return vi.fn((path: string, init?: RequestInit) => {
+    const method = init?.method ?? 'GET';
+    const key = `${method} ${path}`;
+    const matched = Object.hasOwn(routes, key) ? key : Object.hasOwn(routes, path) ? path : null;
+    if (matched === null) {
+      return Promise.reject(new Error(`Unhandled api() call: ${key}`));
+    }
+    const handler = routes[matched];
+    if (handler instanceof Error) return Promise.reject(handler);
+    if (typeof handler === 'function') {
+      return Promise.resolve((handler as (p: string, i?: RequestInit) => unknown)(path, init));
+    }
+    return Promise.resolve(handler);
+  });
+}
+
+function makeClient() {
+  return new QueryClient({
+    defaultOptions: { queries: { retry: false }, mutations: { retry: false } },
+  });
+}
+
+function renderTab(universeId = 'u1') {
+  // MemoryRouter because the tab deep-links to /settings/sync — the F-01 split
+  // is only usable if the account-scoped surface is one click away.
+  return render(
+    <QueryClientProvider client={makeClient()}>
+      <MemoryRouter>
+        <SyncTab universeId={universeId} />
+      </MemoryRouter>
+    </QueryClientProvider>,
+  );
+}
+
+const REMOTE = {
+  id: 'r1',
+  label: 'Laptop',
+  baseUrl: 'http://localhost:3001',
+  patSuffix: '4f2a',
+  createdAt: '2026-08-01T00:00:00.000Z',
+};
+
+const LINK = {
+  id: 'l1',
+  universeId: 'u1',
+  remoteId: 'r1',
+  remoteLabel: 'Laptop',
+  remoteBaseUrl: 'http://localhost:3001',
+  status: 'idle',
+  lastSyncedAt: '2026-08-03T00:00:00.000Z',
+  lastError: null as string | null,
+  createdAt: '2026-08-01T00:00:00.000Z',
+};
+
+const RESULT = {
+  linkId: 'l1',
+  bootstrapped: false,
+  conflicts: 0,
+  blobsPushed: 0,
+  blobsPulled: 0,
+  assetsRepairedLocally: 0,
+  assetsRepairedOnPeer: 0,
+  assetsSweptOnPeer: 0,
+  assetsUnrepairable: 0,
+  pushed: { upserted: {}, deleted: {} },
+  appliedLocally: { upserted: {}, deleted: {} },
+};
+
+const LINKS_PATH = '/sync/links?universeId=u1';
+
+/**
+ * The two GETs every render makes, plus whatever the test adds.
+ *
+ * ONE helper rather than a `routes()` object passed to a separate
+ * `makeApiDispatcher()`: the two-step form invites
+ * `makeApiDispatcher(extra, links)`, whose second argument is silently dropped,
+ * leaving every GET "unhandled" and the component rendering a load error
+ * instead of the state under test. That mistake was made here once already.
+ */
+function dispatch(extra: Record<string, Handler> = {}, links: unknown[] = [LINK]) {
+  return makeApiDispatcher({ '/sync/remotes': [REMOTE], [LINKS_PATH]: links, ...extra });
+}
+
+/** A run that never settles, so the in-flight UI stays on screen. */
+const hangingRun = () => new Promise<never>(() => {});
+
+// Braces matter — the concise form returns the mock, which vitest would then
+// run as a teardown callback and call api() with no arguments.
+beforeEach(() => {
+  vi.mocked(api).mockReset();
+});
+
+// A test that times out inside a `try` never reaches its `finally`, and a
+// leaked fake clock hangs every test after it — turning one failure into a
+// file-wide cascade that hides which test actually broke.
+afterEach(() => {
+  vi.useRealTimers();
+});
+
+describe('SyncTab — the link list', () => {
+  it('lists each linked remote by label and address', async () => {
+    vi.mocked(api).mockImplementation(dispatch());
+
+    renderTab();
+
+    expect(await screen.findByText('Laptop')).toBeInTheDocument();
+    expect(screen.getByText('http://localhost:3001')).toBeInTheDocument();
+  });
+
+  it('renders a persisted lastError through lastErrorMessage, detail and all', async () => {
+    // WHY THE DETAIL MATTERS. `blob-unavailable`'s `side` — which instance is
+    // missing the bytes — is NOT on the wire; the run route serializes only
+    // {error, code}. The server writes it into `sync_links.last_error`, so this
+    // rendered detail is the only path by which the remedy reaches the user.
+    vi.mocked(api).mockImplementation(
+      dispatch(
+        {},
+        [{ ...LINK, status: 'error', lastError: 'blob-unavailable: missing on both instances (3 files)' }],
+      ),
+    );
+
+    renderTab();
+
+    const box = await screen.findByTestId('sync-link-last-error-l1');
+    expect(box).toHaveTextContent(SYNC_ERROR_COPY['blob-unavailable'].message);
+    expect(box).toHaveTextContent(/both instances/);
+  });
+
+  it('shows an empty state when the universe has no links', async () => {
+    vi.mocked(api).mockImplementation(dispatch({}, []));
+
+    renderTab();
+
+    expect(await screen.findByText(/not linked/i)).toBeInTheDocument();
+  });
+});
+
+describe('SyncTab — F-06, a run in flight', () => {
+  it('shows elapsed time, and warns about a slow FIRST sync', async () => {
+    vi.mocked(api).mockImplementation(
+      dispatch(
+        { 'POST /sync/links/l1/run': hangingRun },
+        [{ ...LINK, lastSyncedAt: null }],
+      ),
+    );
+    const user = userEvent.setup();
+
+    renderTab();
+    await user.click(await screen.findByRole('button', { name: /sync now/i }));
+
+    // Elapsed seconds — a real measured number, not a synthetic percentage.
+    expect(await screen.findByTestId('sync-link-elapsed-l1')).toHaveTextContent(/\d+s/);
+    // Apostrophe-free phrase on purpose — see the file docstring.
+    expect(screen.getByText(/can take several minutes/i)).toBeInTheDocument();
+  });
+
+  it('does NOT warn about a first sync once the link has synced before', async () => {
+    vi.mocked(api).mockImplementation(
+      dispatch({ 'POST /sync/links/l1/run': hangingRun }),
+    );
+    const user = userEvent.setup();
+
+    renderTab();
+    await user.click(await screen.findByRole('button', { name: /sync now/i }));
+
+    // The run IS in flight — assert that first, or a component that never
+    // started would pass this test for the wrong reason.
+    expect(await screen.findByTestId('sync-link-elapsed-l1')).toBeInTheDocument();
+    expect(screen.queryByText(/can take several minutes/i)).not.toBeInTheDocument();
+  });
+});
+
+describe('SyncTab — F-02, the blocking run', () => {
+  it('reports assetsUnrepairable as a warning on an otherwise successful run', async () => {
+    vi.mocked(api).mockImplementation(
+      dispatch({ 'POST /sync/links/l1/run': { ...RESULT, assetsUnrepairable: 2 } }),
+    );
+    const user = userEvent.setup();
+
+    renderTab();
+    await user.click(await screen.findByRole('button', { name: /sync now/i }));
+
+    const summary = await screen.findByTestId('sync-link-result-l1');
+    // The NUMBER, not merely the fact — an "some files" message would hide
+    // whether one file or two hundred are unrecoverable.
+    expect(summary).toHaveTextContent(/2 asset files could not be restored/i);
+  });
+
+  it('says nothing about unrepairable assets when there are none', async () => {
+    vi.mocked(api).mockImplementation(
+      dispatch({ 'POST /sync/links/l1/run': { ...RESULT, assetsUnrepairable: 0 } }),
+    );
+    const user = userEvent.setup();
+
+    renderTab();
+    await user.click(await screen.findByRole('button', { name: /sync now/i }));
+
+    await screen.findByTestId('sync-link-result-l1');
+    // Apostrophe-free phrase — see the file docstring.
+    expect(screen.queryByText(/asset files could not be restored/i)).not.toBeInTheDocument();
+  });
+
+  it('never states an exact figure for assetsRepairedLocally', async () => {
+    // The counter counts PLANNED restores and is known to undercount, so a
+    // precise "restored 7 files" would be a number the user could disprove.
+    vi.mocked(api).mockImplementation(
+      dispatch({ 'POST /sync/links/l1/run': { ...RESULT, assetsRepairedLocally: 7 } }),
+    );
+    const user = userEvent.setup();
+
+    renderTab();
+    await user.click(await screen.findByRole('button', { name: /sync now/i }));
+
+    const summary = await screen.findByTestId('sync-link-result-l1');
+    expect(summary).toHaveTextContent(/restored/i);
+    expect(summary).not.toHaveTextContent('7');
+  });
+
+  it('offers Run anyway for a busy failure, and forces the retry', async () => {
+    const busy = new ApiError(409, { error: 'sync already running', code: 'busy' }, 'sync already running');
+    let call = 0;
+    vi.mocked(api).mockImplementation(
+      dispatch({
+        'POST /sync/links/l1/run': () => {
+          call += 1;
+          return call === 1 ? Promise.reject(busy) : RESULT;
+        },
+        'POST /sync/links/l1/run?force=true': () => {
+          call += 1;
+          return RESULT;
+        },
+      }),
+    );
+    const user = userEvent.setup();
+
+    renderTab();
+    await user.click(await screen.findByRole('button', { name: /sync now/i }));
+
+    const box = await screen.findByTestId('sync-link-run-error-l1');
+    expect(box).toHaveTextContent(SYNC_ERROR_COPY.busy.message);
+
+    // The recovery path for a claim left stuck by a closed tab: the server
+    // lease is 30 minutes, so without force the link is wedged for that long.
+    await user.click(screen.getByRole('button', { name: /run anyway/i }));
+
+    await waitFor(() =>
+      expect(api).toHaveBeenCalledWith(
+        '/sync/links/l1/run?force=true',
+        expect.objectContaining({ method: 'POST' }),
+      ),
+    );
+  });
+
+  it('does NOT offer Run anyway for a failure that forcing cannot fix', async () => {
+    const unreachable = new ApiError(
+      502,
+      { error: 'remote unreachable', code: 'remote-unreachable' },
+      'connect ECONNREFUSED',
+    );
+    vi.mocked(api).mockImplementation(
+      dispatch({ 'POST /sync/links/l1/run': unreachable }),
+    );
+    const user = userEvent.setup();
+
+    renderTab();
+    await user.click(await screen.findByRole('button', { name: /sync now/i }));
+
+    const box = await screen.findByTestId('sync-link-run-error-l1');
+    expect(box).toHaveTextContent(SYNC_ERROR_COPY['remote-unreachable'].message);
+    expect(screen.queryByRole('button', { name: /run anyway/i })).not.toBeInTheDocument();
+  });
+});
+
+describe('SyncTab — linking a remote', () => {
+  it('POSTs {universeId, remoteId} for the chosen remote', async () => {
+    vi.mocked(api).mockImplementation(
+      dispatch({ 'POST /sync/links': { ...LINK, id: 'l2' } }, []),
+    );
+    const user = userEvent.setup();
+
+    renderTab();
+
+    const select = await screen.findByLabelText(/remote to link/i);
+    await user.selectOptions(select, 'r1');
+    await user.click(screen.getByRole('button', { name: /^link universe$/i }));
+
+    await waitFor(() => {
+      const call = vi
+        .mocked(api)
+        .mock.calls.find(([p, i]) => p === '/sync/links' && (i as RequestInit | undefined)?.method === 'POST');
+      expect(call).toBeDefined();
+      expect(JSON.parse(String((call![1] as RequestInit).body))).toEqual({
+        universeId: 'u1',
+        remoteId: 'r1',
+      });
+    });
+  });
+
+  it('points at account settings when there are no remotes to link', async () => {
+    // F-01's split made visible: a remote is registered once per account, so a
+    // user with none must be sent to the OTHER surface, not offered a form.
+    vi.mocked(api).mockImplementation(dispatch({ '/sync/remotes': [] }, []));
+
+    renderTab();
+
+    expect(await screen.findByText(/no sync remotes/i)).toBeInTheDocument();
+  });
+});
+
+describe('SyncTab — the persisted lastError reaches the user after a failure', () => {
+  it('merges the refetched lastError detail into the thrown run error', async () => {
+    // THE PAYOFF OF `onSettled`, and the reason invalidating on failure is not
+    // merely tidy. `blob-unavailable`'s `side` — WHICH instance is missing the
+    // bytes — is not on the wire; the route serializes only {error, code}. The
+    // thrown copy therefore knows a COUNT ("3 content hash(es)") and no remedy.
+    // Naming the side exists only in `sync_links.last_error`, which the server
+    // writes before returning the error and which the refetch pulls in.
+    //
+    // Suppressing the persisted copy whenever a run had happened this session
+    // made the refetch invisible: it fired, the cache updated, and the user was
+    // still never told which side to fix.
+    const thrown = new ApiError(
+      409,
+      { error: 'asset bytes unavailable', code: 'blob-unavailable' },
+      'Asset bytes unavailable for 3 content hash(es)',
+    );
+    let listCall = 0;
+    vi.mocked(api).mockImplementation(
+      makeApiDispatcher({
+        '/sync/remotes': [REMOTE],
+        [LINKS_PATH]: () => {
+          listCall += 1;
+          // The row the failed run left behind, as onSettled's refetch sees it.
+          return listCall === 1
+            ? [LINK]
+            : [
+                {
+                  ...LINK,
+                  status: 'error',
+                  lastError: 'blob-unavailable: 3 asset blob(s) unavailable on this instance',
+                },
+              ];
+        },
+        'POST /sync/links/l1/run': thrown,
+      }),
+    );
+    const user = userEvent.setup();
+
+    renderTab();
+    await user.click(await screen.findByRole('button', { name: /sync now/i }));
+
+    const box = await screen.findByTestId('sync-link-run-error-l1');
+    expect(box).toHaveTextContent(SYNC_ERROR_COPY['blob-unavailable'].message);
+    // The remedy — which side to fix — arrives only via the refetched column.
+    await waitFor(() => expect(box).toHaveTextContent(/unavailable on this instance/i));
+    // …and the thrown error's own count survives the merge; the column has no
+    // count and the wire has no side, so the user needs both halves.
+    expect(box).toHaveTextContent(/3 content hash/i);
+  });
+
+  it('does not attach an older failure’s detail to a different one', async () => {
+    // The merge is gated on the two copies naming the same code. A stale
+    // `remote-unreachable` still sitting in the column must not decorate a
+    // fresh `busy`, or the UI invents a diagnosis.
+    const busy = new ApiError(409, { error: 'busy', code: 'busy' }, 'sync already running');
+    vi.mocked(api).mockImplementation(
+      makeApiDispatcher({
+        '/sync/remotes': [REMOTE],
+        [LINKS_PATH]: [
+          { ...LINK, lastError: 'remote-unreachable: connect ECONNREFUSED 10.0.0.4:3001' },
+        ],
+        'POST /sync/links/l1/run': busy,
+      }),
+    );
+    const user = userEvent.setup();
+
+    renderTab();
+    await user.click(await screen.findByRole('button', { name: /sync now/i }));
+
+    const box = await screen.findByTestId('sync-link-run-error-l1');
+    expect(box).toHaveTextContent(SYNC_ERROR_COPY.busy.message);
+    expect(box).not.toHaveTextContent(/ECONNREFUSED/);
+  });
+});
+
+describe('SyncTab — F-06, the elapsed count is real', () => {
+  it('counts upward as the run continues', async () => {
+    // A literal "0s" with no ticking satisfies a /\d+s/ assertion perfectly —
+    // and a frozen display is exactly the synthetic progress F-06 forbids,
+    // because it makes a working slow run indistinguishable from a hang.
+    // Observing the value ADVANCE is the only assertion that rules it out.
+    vi.mocked(api).mockImplementation(dispatch({ 'POST /sync/links/l1/run': hangingRun }));
+
+    renderTab();
+    // Resolve the initial load on REAL timers. RTL's async queries drive their
+    // own polling loop, and doing that under a faked clock is a deadlock hunt
+    // with nothing to do with what this test asserts.
+    const button = await screen.findByRole('button', { name: /sync now/i });
+
+    vi.useFakeTimers();
+    try {
+      // fireEvent, not userEvent: userEvent schedules timers of its own between
+      // the events it synthesises, which under a faked clock needs an advance
+      // callback wired through. A bare click is all this test needs.
+      fireEvent.click(button);
+      expect(screen.getByTestId('sync-link-elapsed-l1')).toHaveTextContent('0s');
+
+      await act(async () => {
+        await vi.advanceTimersByTimeAsync(3000);
+      });
+      expect(screen.getByTestId('sync-link-elapsed-l1')).toHaveTextContent('3s');
+
+      await act(async () => {
+        await vi.advanceTimersByTimeAsync(4000);
+      });
+      expect(screen.getByTestId('sync-link-elapsed-l1')).toHaveTextContent('7s');
+    } finally {
+      vi.useRealTimers();
+    }
+  });
+});
+
+describe('SyncTab — F-06, the first-sync warning is captured at run start', () => {
+  it('keeps the warning for the run it describes when the row refetches mid-run', async () => {
+    // WHY CAPTURED AND NOT READ LIVE. Both links share one query key, so when
+    // the second link's run settles it invalidates and refetches BOTH rows. If
+    // the server has already recorded the first link's run — this tab is still
+    // waiting on a response that is slow or lost — the refetched row says
+    // "synced", while the user is still sitting in front of a run that began
+    // with nothing synced. Reading live would yank the explanation for the wait
+    // away mid-wait, which is the confusion F-06 exists to prevent.
+    const A = { ...LINK, id: 'la', remoteId: 'ra', remoteLabel: 'Laptop', lastSyncedAt: null };
+    const B = {
+      ...LINK,
+      id: 'lb',
+      remoteId: 'rb',
+      remoteLabel: 'Desktop',
+      lastSyncedAt: '2026-08-03T00:00:00.000Z',
+    };
+    let listCall = 0;
+    vi.mocked(api).mockImplementation(
+      makeApiDispatcher({
+        '/sync/remotes': [REMOTE],
+        [LINKS_PATH]: () => {
+          listCall += 1;
+          return listCall === 1
+            ? [A, B]
+            : [{ ...A, lastSyncedAt: '2026-08-04T00:00:00.000Z' }, B];
+        },
+        'POST /sync/links/la/run': hangingRun,
+        'POST /sync/links/lb/run': { ...RESULT, linkId: 'lb' },
+      }),
+    );
+    const user = userEvent.setup();
+
+    renderTab();
+    await user.click(await screen.findByRole('button', { name: /sync now with Laptop/i }));
+    expect(screen.getByText(/can take several minutes/i)).toBeInTheDocument();
+
+    // The second link's run settles, invalidating the key both rows share.
+    await user.click(screen.getByRole('button', { name: /sync now with Desktop/i }));
+
+    const rowA = screen.getByTestId('sync-link-row-la');
+    // The refetch has LANDED — A's own meta line reads the live row, which now
+    // says it has synced. Without this the test could pass before any refetch.
+    await waitFor(() => expect(within(rowA).queryByText('Never synced')).toBeNull());
+
+    // …and the warning, captured when this run started, is still on screen.
+    expect(within(rowA).getByText(/can take several minutes/i)).toBeInTheDocument();
+  });
+});
+
+describe('SyncTab — the remote list while it is still loading', () => {
+  it('makes no claim about remotes before they arrive', async () => {
+    // `remotes` is `undefined` mid-fetch, so `remotes.length === 0` is falsy
+    // and a naive branch order shows "Every saved remote is already linked to
+    // this universe" — a complete, confident sentence about a list nobody has
+    // seen yet.
+    vi.mocked(api).mockImplementation(
+      makeApiDispatcher({
+        '/sync/remotes': () => new Promise(() => {}),
+        [LINKS_PATH]: [LINK],
+      }),
+    );
+
+    renderTab();
+
+    // The links HAVE arrived, so the page is rendered and only the remotes are
+    // outstanding — the exact window the false claim appeared in.
+    await screen.findByTestId('sync-link-row-l1');
+    expect(screen.queryByText(/already linked to this universe/i)).not.toBeInTheDocument();
+    expect(screen.getByLabelText('Loading sync remotes')).toBeInTheDocument();
+  });
+});

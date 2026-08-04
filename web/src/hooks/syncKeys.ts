@@ -29,3 +29,17 @@ export const SYNC_LINKS_QUERY_PREFIX = ['sync', 'links'] as const;
  */
 export const syncLinksKey = (universeId: string) =>
   [...SYNC_LINKS_QUERY_PREFIX, universeId] as const;
+
+/**
+ * The full key for ONE universe's sync conflicts.
+ *
+ * Deliberately NOT built on `SYNC_LINKS_QUERY_PREFIX` even though both are
+ * universe-scoped: `sync_conflicts` carries neither a `remote_id` nor a
+ * `link_id`, only `universe_id`, so nothing about it cascades from deleting a
+ * remote. Sharing the links prefix would make `useDeleteSyncRemote`'s
+ * prefix-invalidation sweep conflicts too — a refetch that can never return
+ * different rows. A run, on the other hand, changes both, and invalidates each
+ * key by name (see `useRunSyncLink`).
+ */
+export const syncConflictsKey = (universeId: string) =>
+  ['sync', 'conflicts', universeId] as const;
