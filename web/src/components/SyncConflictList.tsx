@@ -63,10 +63,17 @@ import { formatRelative } from '../utils/formatRelative';
  *     (manifest.ts), and the graph itself has no per-node URL, so the entry the
  *     position belongs to is the closest addressable thing.
  *   - `maps`, `diagrams` → their editors, keyed on the row id.
+ *   - `universe` → the universe's own settings. The singleton ignores `rowId`
+ *     entirely (it is the literal string 'universe'), addressing the universe
+ *     from the prop instead — so this entry cannot 404, and it is the case where
+ *     a link is most wanted: a name or description that lost LWW is otherwise a
+ *     raw JSON blob with nothing to hold it against.
  *
- * Everything else — `links`, `mapPins`, `timelinePins`, `dictionaryWords`,
- * `assets`, `terrainTypes`, the `universe` singleton, … — has no per-row route,
- * and gets no link rather than a guess. An unknown/new collection lands here too,
+ * Everything else — `links`, `mapPins`, `mapRegions`, `mapRoutes`, `mapLayers`,
+ * `terrainTypes`, `diagramNodes`, `timelinePins`, `dictionaryWords`, `assets`,
+ * `shareTokens` — keys on the CHILD row's own id, not on the addressable
+ * parent's, so a route built from `rowId` would genuinely 404. They get no link
+ * rather than a guess, and an unknown or newly-added collection lands here too,
  * which is the safe direction.
  */
 const ROW_LINKS: Record<string, { path: (universeId: string, rowId: string) => string; label: string }> = {
@@ -74,6 +81,7 @@ const ROW_LINKS: Record<string, { path: (universeId: string, rowId: string) => s
   graphPositions: { path: (u, r) => `/universes/${u}/entries/${r}`, label: 'Open the current entry' },
   maps: { path: (u, r) => `/universes/${u}/maps/${r}`, label: 'Open the current map' },
   diagrams: { path: (u, r) => `/universes/${u}/diagrams/${r}`, label: 'Open the current diagram' },
+  universe: { path: (u) => `/universes/${u}/settings`, label: 'Open universe settings' },
 };
 
 /**
@@ -172,7 +180,13 @@ function ConflictRow({
           collection names this file refuses to assume, and would show nothing at
           all for one it did not know. */}
       <details className="mt-2">
-        <summary className="cursor-pointer text-xs text-ink-secondary">
+        {/* aria-label because the visible text is identical on every row — this
+            was the one control left undistinguished while both buttons above
+            already name their row. */}
+        <summary
+          aria-label={`Show the version of ${what} that was set aside`}
+          className="cursor-pointer text-xs text-ink-secondary"
+        >
           Show the version that was set aside
         </summary>
         <pre
@@ -240,7 +254,18 @@ export function SyncConflictList({ universeId }: { universeId: string }) {
         <SyncErrorNotice copy={syncErrorMessage(listError)} testId="sync-conflicts-list-error" />
       )}
 
-      {!isPending && conflicts.length === 0 && (
+      {/* `!listError` IS LOAD-BEARING, not belt-and-braces. On a hard list
+          failure `data` is undefined, so `conflicts.length === 0` is true and
+          this branch would print "No sync conflicts to review" directly beneath
+          the error notice — an active claim that nothing was lost, made at the
+          exact moment the client cannot know, on the one feature whose whole
+          promise is that nothing was lost. The badge already stays silent for
+          this reason (useSyncConflicts.ts); the list must too.
+
+          It does NOT weaken the failed-refetch handling below: TanStack keeps
+          the previous rows in `data` on a failed refetch, so `conflicts.length`
+          is non-zero there and this branch never runs either way. */}
+      {!isPending && !listError && conflicts.length === 0 && (
         <p data-testid="sync-conflicts-empty" className="mt-4 text-sm text-ink-secondary">
           No sync conflicts to review in this universe.
         </p>

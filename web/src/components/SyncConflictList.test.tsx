@@ -95,6 +95,23 @@ const NEWER = {
   createdAt: '2026-08-04T12:00:00.000Z',
 };
 
+/**
+ * A row nothing can link to: `timelinePins` keys on the PIN's own id, not on
+ * the addressable entry's, so a route built from `rowId` would 404. Used only
+ * by the deep-link test, as the negative half — both NEWER and OLDER are
+ * addressable now that the `universe` singleton resolves to universe settings.
+ */
+const UNLINKABLE = {
+  id: 'c3',
+  universeId: 'u1',
+  tableName: 'timelinePins',
+  rowId: 'tp-9',
+  winner: 'remote',
+  loserPayload: { id: 'tp-9', entryId: 'e-77' },
+  resolvedAt: null as string | null,
+  createdAt: '2026-08-01T09:00:00.000Z',
+};
+
 /** Older. An entry row, so it IS deep-linkable, and it sorts first by every
  *  field a "helpful" sort might reach for. */
 const OLDER = {
@@ -169,7 +186,7 @@ describe('SyncConflictList', () => {
   });
 
   it('deep-links an addressable row, and links nothing it cannot address (F-03)', async () => {
-    vi.mocked(api).mockImplementation(dispatch({ [LIST_PATH]: [NEWER, OLDER] }));
+    vi.mocked(api).mockImplementation(dispatch({ [LIST_PATH]: [NEWER, OLDER, UNLINKABLE] }));
 
     renderList();
 
@@ -181,10 +198,21 @@ describe('SyncConflictList', () => {
       '/universes/u1/entries/e-77',
     );
 
-    // The universe singleton has no per-row page in this app; rather than
-    // fabricate one, the row simply carries no link.
+    // The universe singleton ignores `rowId` (it is the literal string
+    // 'universe') and addresses the universe from the prop, so this link cannot
+    // 404 — and it is the case where a link is most wanted, since a lost name or
+    // description is otherwise a raw blob with nothing to hold it against.
     const universeRow = screen.getByTestId('sync-conflict-row-c1');
-    expect(within(universeRow).queryByRole('link')).toBeNull();
+    expect(within(universeRow).getByRole('link')).toHaveAttribute(
+      'href',
+      '/universes/u1/settings',
+    );
+
+    // `timelinePins` keys on the pin's own id, not the entry's, so a route built
+    // from `rowId` would 404. No link beats a broken one on a surface whose
+    // point is that nothing was lost.
+    const pinRow = screen.getByTestId('sync-conflict-row-c3');
+    expect(within(pinRow).queryByRole('link')).toBeNull();
   });
 
   it('treats tableName and rowId as opaque text', async () => {
@@ -286,6 +314,25 @@ describe('SyncConflictList', () => {
     // Asserted against the copy module, never retyped: a retyped string passes
     // against a component that hardcoded its own prose.
     expect(notice).toHaveTextContent(SYNC_ERROR_COPY.forbidden.message);
+  });
+
+  it('does not claim there are no conflicts when the list failed to load', async () => {
+    // On a hard failure `data` is undefined, so a `conflicts.length === 0` gate
+    // that ignores the error renders "No sync conflicts to review" DIRECTLY
+    // BENEATH the error notice — an active claim that nothing was lost, made at
+    // the moment the client cannot know, on the feature whose whole promise is
+    // that nothing was lost. The badge already stays silent here; so must this.
+    const forbidden = new ApiError(403, { error: 'forbidden', code: 'forbidden' }, 'forbidden');
+    vi.mocked(api).mockImplementation(dispatch({ [LIST_PATH]: forbidden }));
+
+    renderList();
+
+    // Positive precondition: the failure really did render, so the absence
+    // below is not the absence of everything.
+    await screen.findByTestId('sync-conflicts-list-error');
+    expect(screen.queryByTestId('sync-conflicts-empty')).toBeNull();
+    // Apostrophe-free, so it can actually match if it is ever rendered.
+    expect(screen.queryByText(/no sync conflicts/i)).toBeNull();
   });
 
   it('renders a restore failure on the row it belongs to, through SYNC_ERROR_COPY', async () => {

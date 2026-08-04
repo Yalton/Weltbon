@@ -78,6 +78,13 @@ export function useSyncConflicts(universeId: string | undefined) {
     queryFn: () =>
       api<SyncConflict[]>(`/sync/conflicts?universeId=${encodeURIComponent(universeId!)}`),
     enabled: !!universeId,
+    // This list changes for exactly one reason: a sync ran. `useRunSyncLink`
+    // already invalidates this key on every run (settled, not just success), so
+    // the freshness that matters is event-driven and does not depend on a short
+    // staleTime. Without this, the default staleTime of 0 makes every mount and
+    // every window refocus refetch — a cost the badge now makes every universe
+    // page visit pay, for data that provably cannot have changed.
+    staleTime: 300_000,
   });
 }
 

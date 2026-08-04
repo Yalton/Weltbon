@@ -58,14 +58,27 @@ beforeEach(() => {
  * fixtures below deliberately include the `universe` singleton, whose rowId is
  * the literal string 'universe', so nothing here can quietly grow a uuid
  * assumption.
+ *
+ * THE ASSIGNMENT OF FIELDS TO ROWS IS LOAD-BEARING, for the order test below.
+ * The first version had the NEWER row as `entries`/`e-77` and the older one as
+ * `universe`/`universe` — and 'entries' < 'universe', 'e-77' < 'universe', so
+ * newest-first and BOTH of those alphabetical orders were identical. A sort by
+ * `tableName` or by `rowId` bolted into the hook changed nothing and the order
+ * test passed; only a `createdAt` sort was caught. Mutation-verified in both
+ * directions.
+ *
+ * With `universe` newest, all three plausible sorts — `tableName`, `rowId`,
+ * `createdAt` ascending — reverse the pair, and only leaving the server's order
+ * alone keeps c1 first. (The same repair, for the same reason, is in
+ * components/SyncConflictList.test.tsx.)
  */
 const CONFLICT_NEWER: SyncConflict = {
   id: 'c1',
   universeId: 'u1',
-  tableName: 'entries',
-  rowId: 'e-77',
-  winner: 'remote',
-  loserPayload: { id: 'e-77', title: 'Local title that lost' },
+  tableName: 'universe',
+  rowId: 'universe',
+  winner: 'local',
+  loserPayload: { id: 'u1', name: 'Remote name that lost' },
   resolvedAt: null,
   createdAt: '2026-08-04T12:00:00.000Z',
 };
@@ -73,10 +86,10 @@ const CONFLICT_NEWER: SyncConflict = {
 const CONFLICT_OLDER: SyncConflict = {
   id: 'c2',
   universeId: 'u1',
-  tableName: 'universe',
-  rowId: 'universe',
-  winner: 'local',
-  loserPayload: { id: 'u1', name: 'Remote name that lost' },
+  tableName: 'entries',
+  rowId: 'e-77',
+  winner: 'remote',
+  loserPayload: { id: 'e-77', title: 'Local title that lost' },
   resolvedAt: null,
   createdAt: '2026-08-02T09:00:00.000Z',
 };
@@ -178,6 +191,36 @@ describe('useSyncConflictCount', () => {
 
     // Positive precondition first: the query genuinely reached the error state.
     await waitFor(() => expect(result.current.q.isError).toBe(true));
+    expect(result.current.count).toBe(0);
+  });
+
+  it('is 0 after a FAILED REFETCH, even though the stale rows are still cached', async () => {
+    // THE test for `if (error) return 0`. Both error tests above reject on the
+    // FIRST fetch, where `data` is undefined and `data?.length ?? 0` already
+    // returns 0 on its own — so neither one ever reaches that guard, and
+    // deleting it left the whole file green. This is the case that needs it:
+    // TanStack keeps the previous rows in `data` when a REFETCH fails, so
+    // without the guard the badge keeps displaying a count whose query has just
+    // failed, and the user cannot tell it from a fresh one.
+    vi.mocked(api).mockResolvedValue([CONFLICT_NEWER, CONFLICT_OLDER]);
+    const qc = makeClient();
+
+    const { result } = renderHook(
+      () => ({ count: useSyncConflictCount('u1'), q: useSyncConflicts('u1') }),
+      { wrapper: makeWrapper(qc) },
+    );
+
+    await waitFor(() => expect(result.current.count).toBe(2));
+
+    vi.mocked(api).mockRejectedValue(new Error('boom'));
+    await act(async () => {
+      await qc.refetchQueries({ queryKey: syncConflictsKey('u1') });
+    });
+
+    await waitFor(() => expect(result.current.q.isError).toBe(true));
+    // The stale rows really ARE still cached — the precondition that makes the
+    // assertion below about the guard rather than about an empty cache.
+    expect(result.current.q.data).toHaveLength(2);
     expect(result.current.count).toBe(0);
   });
 
