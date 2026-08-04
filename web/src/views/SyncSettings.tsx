@@ -47,7 +47,7 @@ import { formatRelative } from '../utils/formatRelative';
  * authenticated page. Only http/https survive; anything the URL constructor
  * rejects returns null and the caller renders no anchor at all.
  */
-export function tokenMintUrl(raw: string): string | null {
+function tokenMintUrl(raw: string): string | null {
   const trimmed = raw.trim();
   if (!trimmed) return null;
   let parsed: URL;
@@ -352,14 +352,17 @@ export default function SyncSettings() {
         </div>
       )}
 
+      {/* A failed list is the FIRST error most users meet here — an expired
+          session and a server that is down look identical from the page, and
+          only the server's own message distinguishes them. Routing this
+          through `syncErrorMessage` (which falls through to that message when
+          the body carries no `code`) is what lets the user tell them apart;
+          a hand-written "refresh the page" would erase the difference. */}
       {!isPending && listError && (
-        <div
-          role="alert"
-          data-testid="sync-remotes-list-error"
-          className="mt-6 rounded-lg border border-rose-500/30 bg-rose-500/10 p-4 text-sm text-rose-300"
-        >
-          Could not load your sync remotes. Refresh the page to try again.
-        </div>
+        <SyncErrorNotice
+          copy={syncErrorMessage(listError)}
+          testId="sync-remotes-list-error"
+        />
       )}
 
       {!isPending && !listError && data && data.length === 0 && (

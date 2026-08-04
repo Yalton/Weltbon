@@ -4,11 +4,13 @@
  * Mirrors useCategories.test.tsx's scaffolding: the api() client is mocked at
  * the module boundary, each test builds its own QueryClient with retry off,
  * and invalidation is asserted by spying on the client rather than by
- * observing a refetch (which would depend on subscriber timing).
+ * observing a refetch (which would depend on subscriber timing). It drops that
+ * file's MutationCache.onError swallow — see the failure-path test below for
+ * why this file does not need one.
  */
 import { describe, it, expect, beforeEach, vi } from 'vitest';
 import { renderHook, act, waitFor } from '@testing-library/react';
-import { QueryClient, QueryClientProvider, MutationCache } from '@tanstack/react-query';
+import { QueryClient, QueryClientProvider } from '@tanstack/react-query';
 import type { ReactNode } from 'react';
 
 vi.mock('../api/client', () => ({
@@ -24,6 +26,7 @@ import {
   useTestSyncRemote,
   SYNC_REMOTES_QUERY_KEY,
   SYNC_LINKS_QUERY_PREFIX,
+  syncLinksKey,
   type SyncRemote,
 } from './useSyncRemotes';
 
@@ -36,11 +39,6 @@ function makeWrapper(qc: QueryClient) {
 function makeClient() {
   return new QueryClient({
     defaultOptions: { queries: { retry: false }, mutations: { retry: false } },
-    mutationCache: new MutationCache({
-      onError: () => {
-        /* intentionally empty — tests assert via mutateAsync rejection */
-      },
-    }),
   });
 }
 
@@ -59,7 +57,15 @@ function bodyOfCall(n = 0): string {
 }
 
 describe('useSyncRemotes', () => {
-  beforeEach(() => vi.mocked(api).mockReset());
+  // Braced body, not `() => vi.mocked(api).mockReset()`: the concise form
+  // RETURNS the mock, and vitest treats a function returned from beforeEach as
+  // a teardown callback — it then calls api() with no arguments after every
+  // test. Harmless while every test here uses mockResolvedValue, but it breaks
+  // loudly and confusingly the moment a test dispatches on the path argument
+  // (which is what happens in SyncSettings.test.tsx). Do not shorten these.
+  beforeEach(() => {
+    vi.mocked(api).mockReset();
+  });
 
   it('GETs /sync/remotes and returns the masked array', async () => {
     vi.mocked(api).mockResolvedValue([REMOTE]);
@@ -72,8 +78,21 @@ describe('useSyncRemotes', () => {
   });
 });
 
+describe('syncLinksKey', () => {
+  it('extends SYNC_LINKS_QUERY_PREFIX, so the delete invalidation matches it', () => {
+    // `useDeleteSyncRemote` invalidates the two-element prefix. That only
+    // reaches a universe's links if the full key starts with it — this is the
+    // seam Task 3 must not redefine, which is why the factory exists at all.
+    expect(syncLinksKey('u1').slice(0, 2)).toEqual([...SYNC_LINKS_QUERY_PREFIX]);
+    expect(syncLinksKey('u1')).toEqual(['sync', 'links', 'u1']);
+  });
+});
+
 describe('useCreateSyncRemote', () => {
-  beforeEach(() => vi.mocked(api).mockReset());
+  // Braced body — see the note on the first beforeEach in this file.
+  beforeEach(() => {
+    vi.mocked(api).mockReset();
+  });
 
   it('POSTs {label, baseUrl, pat} to /sync/remotes', async () => {
     vi.mocked(api).mockResolvedValue(REMOTE);
@@ -115,7 +134,10 @@ describe('useCreateSyncRemote', () => {
 });
 
 describe('useUpdateSyncRemote', () => {
-  beforeEach(() => vi.mocked(api).mockReset());
+  // Braced body — see the note on the first beforeEach in this file.
+  beforeEach(() => {
+    vi.mocked(api).mockReset();
+  });
 
   it('PATCHes /sync/remotes/:id with only the fields supplied', async () => {
     vi.mocked(api).mockResolvedValue({ ...REMOTE, label: 'Desktop' });
@@ -181,7 +203,10 @@ describe('useUpdateSyncRemote', () => {
 });
 
 describe('useDeleteSyncRemote', () => {
-  beforeEach(() => vi.mocked(api).mockReset());
+  // Braced body — see the note on the first beforeEach in this file.
+  beforeEach(() => {
+    vi.mocked(api).mockReset();
+  });
 
   it('DELETEs /sync/remotes/:id', async () => {
     vi.mocked(api).mockResolvedValue(undefined);
@@ -219,8 +244,44 @@ describe('useDeleteSyncRemote', () => {
   });
 });
 
+describe('useDeleteSyncRemote — failure path', () => {
+  // Braced body — see the note on the first beforeEach in this file.
+  beforeEach(() => {
+    vi.mocked(api).mockReset();
+  });
+
+  it('invalidates NOTHING when the DELETE fails', async () => {
+    // Deliberately unlike `useRevokeLlmKey`, which also invalidates onError to
+    // clear a row lost to a 404 race. Here a failed delete means the remote —
+    // and every link that cascades from it — is still there, so dropping the
+    // caches would replace a correct list with a refetch that returns the same
+    // rows, and briefly imply to the user that something changed.
+    //
+    // No MutationCache.onError swallow is needed for this (useCategories.test
+    // carries one for its own rejection tests): on vitest 3.2.4 + TanStack v5
+    // the rejection is delivered to the awaited `mutateAsync` and consumed by
+    // the assertion below, so nothing reaches the unhandled-rejection handler.
+    // Verified by removing the swallow: still 13 passed, exit 0, no Errors.
+    const failure = new Error('boom');
+    vi.mocked(api).mockRejectedValue(failure);
+    const qc = makeClient();
+    const spy = vi.spyOn(qc, 'invalidateQueries');
+
+    const { result } = renderHook(() => useDeleteSyncRemote(), { wrapper: makeWrapper(qc) });
+
+    await act(async () => {
+      await expect(result.current.mutateAsync({ id: 'r1' })).rejects.toThrow('boom');
+    });
+
+    expect(spy).not.toHaveBeenCalled();
+  });
+});
+
 describe('useTestSyncRemote', () => {
-  beforeEach(() => vi.mocked(api).mockReset());
+  // Braced body — see the note on the first beforeEach in this file.
+  beforeEach(() => {
+    vi.mocked(api).mockReset();
+  });
 
   it("POSTs /sync/remotes/:id/test and returns the peer's identity", async () => {
     const identity = {

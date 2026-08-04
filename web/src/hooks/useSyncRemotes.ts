@@ -57,6 +57,20 @@ export const SYNC_REMOTES_QUERY_KEY = ['sync', 'remotes'] as const;
  */
 export const SYNC_LINKS_QUERY_PREFIX = ['sync', 'links'] as const;
 
+/**
+ * The full key for ONE universe's sync links — the other half of the contract
+ * `SYNC_LINKS_QUERY_PREFIX` only half-states.
+ *
+ * Task 3's link hooks must build their query key with this factory rather than
+ * writing an array literal. Nothing about a prefix constant stops a consumer
+ * from keying links as, say, `['sync-links', universeId]`, at which point the
+ * invalidation in `useDeleteSyncRemote` below silently stops matching and the
+ * only symptom is a Sync tab listing links the server already cascaded away.
+ * A shared factory makes that drift a compile error instead of a ghost.
+ */
+export const syncLinksKey = (universeId: string) =>
+  [...SYNC_LINKS_QUERY_PREFIX, universeId] as const;
+
 /** List the caller's registered remotes (masked). */
 export function useSyncRemotes() {
   return useQuery({

@@ -116,6 +116,48 @@ describe('SyncSettings — the remote list', () => {
     expect(container.textContent).not.toContain('super-secret-token-value');
   });
 
+  it('reports WHICH failure a list load hit, via syncErrorMessage', async () => {
+    // The realistic failure for this route: the session expired. The body
+    // carries no `code`, so syncErrorMessage falls through to the server's own
+    // message. That fallthrough is the whole point — "expired session" and
+    // "server is down" are indistinguishable from the page unless the server's
+    // message survives, and a hand-written "refresh the page" would erase it.
+    vi.mocked(api).mockImplementation(
+      makeApiDispatcher({
+        '/sync/remotes': new ApiError(401, { error: 'Unauthorized' }, 'Session expired'),
+      }),
+    );
+
+    renderView();
+
+    const notice = await screen.findByTestId('sync-remotes-list-error');
+    expect(notice.textContent).toContain('Session expired');
+  });
+
+  it('renders SYNC_ERROR_COPY when a list failure DOES carry a code', async () => {
+    // `remote-key-undecryptable` is not a code GET /sync/remotes emits today
+    // (the masked list reads only a stored suffix). What this pins is the
+    // delegation: the branch cannot produce this sentence except by going
+    // through syncErrorCopy, so it dies the moment the view goes back to
+    // writing its own prose — which is exactly the regression that shipped
+    // unnoticed the first time.
+    vi.mocked(api).mockImplementation(
+      makeApiDispatcher({
+        '/sync/remotes': new ApiError(
+          503,
+          { code: 'remote-key-undecryptable' },
+          'encryption key not configured',
+        ),
+      }),
+    );
+
+    renderView();
+
+    expect(
+      await screen.findByText(SYNC_ERROR_COPY['remote-key-undecryptable'].message),
+    ).toBeInTheDocument();
+  });
+
   it('shows an empty state when the account has no remotes', async () => {
     vi.mocked(api).mockImplementation(makeApiDispatcher({ '/sync/remotes': [] }));
 
