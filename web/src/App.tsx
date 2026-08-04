@@ -29,6 +29,7 @@ import Invites from './views/Invites';
 import LlmKeys from './views/LlmKeys';
 import Templates from './views/Templates';
 import Shares from './views/Shares';
+import SyncSettings from './views/SyncSettings';
 import { ShareLayout } from './components/ShareLayout';
 import { ErrorBoundary } from './components/ErrorBoundary';
 import { ShareFallback } from './views/ShareFallback';
@@ -53,6 +54,9 @@ export default function App() {
             {/* Phase 29 — global owner audit view for all share links. */}
             <Route path="shares" element={<Shares />} />
             <Route path="llm" element={<LlmKeys />} />
+            {/* Plan F — sync remotes are account-scoped (sync_remotes has no
+                universe column), so they live here, not in universe settings. */}
+            <Route path="sync" element={<SyncSettings />} />
           </Route>
         </Route>
         {/* Sidebar shell for everything scoped inside a single universe. */}
