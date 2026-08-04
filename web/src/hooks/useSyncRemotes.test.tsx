@@ -24,11 +24,9 @@ import {
   useUpdateSyncRemote,
   useDeleteSyncRemote,
   useTestSyncRemote,
-  SYNC_REMOTES_QUERY_KEY,
-  SYNC_LINKS_QUERY_PREFIX,
-  syncLinksKey,
   type SyncRemote,
 } from './useSyncRemotes';
+import { SYNC_REMOTES_QUERY_KEY, SYNC_LINKS_QUERY_PREFIX } from './syncKeys';
 
 function makeWrapper(qc: QueryClient) {
   return function Wrapper({ children }: { children: ReactNode }) {
@@ -41,6 +39,20 @@ function makeClient() {
     defaultOptions: { queries: { retry: false }, mutations: { retry: false } },
   });
 }
+
+/**
+ * One top-level reset for every describe below.
+ *
+ * Braced body, NOT `beforeEach(() => vi.mocked(api).mockReset())`: the concise
+ * form returns the mock, and vitest treats a function returned from beforeEach
+ * as a teardown callback — it would then call api() with no arguments after
+ * every test. Harmless while each test here uses mockResolvedValue, but it
+ * breaks loudly and confusingly the moment a test dispatches on the path
+ * argument (as SyncSettings.test.tsx does). Do not shorten it.
+ */
+beforeEach(() => {
+  vi.mocked(api).mockReset();
+});
 
 const REMOTE: SyncRemote = {
   id: 'r1',
@@ -57,16 +69,6 @@ function bodyOfCall(n = 0): string {
 }
 
 describe('useSyncRemotes', () => {
-  // Braced body, not `() => vi.mocked(api).mockReset()`: the concise form
-  // RETURNS the mock, and vitest treats a function returned from beforeEach as
-  // a teardown callback — it then calls api() with no arguments after every
-  // test. Harmless while every test here uses mockResolvedValue, but it breaks
-  // loudly and confusingly the moment a test dispatches on the path argument
-  // (which is what happens in SyncSettings.test.tsx). Do not shorten these.
-  beforeEach(() => {
-    vi.mocked(api).mockReset();
-  });
-
   it('GETs /sync/remotes and returns the masked array', async () => {
     vi.mocked(api).mockResolvedValue([REMOTE]);
     const qc = makeClient();
@@ -78,22 +80,7 @@ describe('useSyncRemotes', () => {
   });
 });
 
-describe('syncLinksKey', () => {
-  it('extends SYNC_LINKS_QUERY_PREFIX, so the delete invalidation matches it', () => {
-    // `useDeleteSyncRemote` invalidates the two-element prefix. That only
-    // reaches a universe's links if the full key starts with it — this is the
-    // seam Task 3 must not redefine, which is why the factory exists at all.
-    expect(syncLinksKey('u1').slice(0, 2)).toEqual([...SYNC_LINKS_QUERY_PREFIX]);
-    expect(syncLinksKey('u1')).toEqual(['sync', 'links', 'u1']);
-  });
-});
-
 describe('useCreateSyncRemote', () => {
-  // Braced body — see the note on the first beforeEach in this file.
-  beforeEach(() => {
-    vi.mocked(api).mockReset();
-  });
-
   it('POSTs {label, baseUrl, pat} to /sync/remotes', async () => {
     vi.mocked(api).mockResolvedValue(REMOTE);
     const qc = makeClient();
@@ -108,14 +95,14 @@ describe('useCreateSyncRemote', () => {
       });
     });
 
-    expect(api).toHaveBeenCalledWith('/sync/remotes', expect.objectContaining({
-      method: 'POST',
-      body: JSON.stringify({
-        label: 'Laptop',
-        baseUrl: 'http://localhost:3001',
-        pat: 'wb_pat_secret',
-      }),
-    }));
+    expect(api).toHaveBeenCalledWith('/sync/remotes', expect.objectContaining({ method: 'POST' }));
+    // Parsed, not string-compared: JSON.stringify pins key ORDER, so
+    // reordering the hook's object literal — a no-op — would fail this.
+    expect(JSON.parse(bodyOfCall())).toEqual({
+      label: 'Laptop',
+      baseUrl: 'http://localhost:3001',
+      pat: 'wb_pat_secret',
+    });
   });
 
   it("invalidates ['sync','remotes'] on success", async () => {
@@ -134,11 +121,6 @@ describe('useCreateSyncRemote', () => {
 });
 
 describe('useUpdateSyncRemote', () => {
-  // Braced body — see the note on the first beforeEach in this file.
-  beforeEach(() => {
-    vi.mocked(api).mockReset();
-  });
-
   it('PATCHes /sync/remotes/:id with only the fields supplied', async () => {
     vi.mocked(api).mockResolvedValue({ ...REMOTE, label: 'Desktop' });
     const qc = makeClient();
@@ -149,10 +131,8 @@ describe('useUpdateSyncRemote', () => {
       await result.current.mutateAsync({ id: 'r1', label: 'Desktop' });
     });
 
-    expect(api).toHaveBeenCalledWith('/sync/remotes/r1', expect.objectContaining({
-      method: 'PATCH',
-      body: JSON.stringify({ label: 'Desktop' }),
-    }));
+    expect(api).toHaveBeenCalledWith('/sync/remotes/r1', expect.objectContaining({ method: 'PATCH' }));
+    expect(JSON.parse(bodyOfCall())).toEqual({ label: 'Desktop' });
   });
 
   it('omits `pat` from the body entirely when no new token is supplied', async () => {
@@ -203,11 +183,6 @@ describe('useUpdateSyncRemote', () => {
 });
 
 describe('useDeleteSyncRemote', () => {
-  // Braced body — see the note on the first beforeEach in this file.
-  beforeEach(() => {
-    vi.mocked(api).mockReset();
-  });
-
   it('DELETEs /sync/remotes/:id', async () => {
     vi.mocked(api).mockResolvedValue(undefined);
     const qc = makeClient();
@@ -245,11 +220,6 @@ describe('useDeleteSyncRemote', () => {
 });
 
 describe('useDeleteSyncRemote — failure path', () => {
-  // Braced body — see the note on the first beforeEach in this file.
-  beforeEach(() => {
-    vi.mocked(api).mockReset();
-  });
-
   it('invalidates NOTHING when the DELETE fails', async () => {
     // Deliberately unlike `useRevokeLlmKey`, which also invalidates onError to
     // clear a row lost to a 404 race. Here a failed delete means the remote —
@@ -278,11 +248,6 @@ describe('useDeleteSyncRemote — failure path', () => {
 });
 
 describe('useTestSyncRemote', () => {
-  // Braced body — see the note on the first beforeEach in this file.
-  beforeEach(() => {
-    vi.mocked(api).mockReset();
-  });
-
   it("POSTs /sync/remotes/:id/test and returns the peer's identity", async () => {
     const identity = {
       ok: true as const,

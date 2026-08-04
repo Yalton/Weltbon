@@ -35,15 +35,25 @@ import SyncSettings from './SyncSettings';
 
 type Handler = unknown | Error | ((path: string, init?: RequestInit) => unknown);
 
-/** Route api() calls by `"<METHOD> <path>"`, falling back to bare `<path>`. */
+/**
+ * Route api() calls by `"<METHOD> <path>"`, falling back to bare `<path>`.
+ *
+ * Which key matched is resolved BEFORE the handler is inspected. The obvious
+ * `if (handler === undefined) reject` cannot tell "no route registered" from
+ * "a registered route that resolves to undefined", so it rejects every
+ * void-returning call — a test that models one gets a failed mutation and a
+ * rendered error while appearing to model success. `Object.hasOwn` also beats
+ * `in`, which would match inherited Object.prototype members.
+ */
 function makeApiDispatcher(routes: Record<string, Handler>) {
   return vi.fn((path: string, init?: RequestInit) => {
     const method = init?.method ?? 'GET';
     const key = `${method} ${path}`;
-    const handler = key in routes ? routes[key] : routes[path];
-    if (handler === undefined) {
+    const matched = Object.hasOwn(routes, key) ? key : Object.hasOwn(routes, path) ? path : null;
+    if (matched === null) {
       return Promise.reject(new Error(`Unhandled api() call: ${key}`));
     }
+    const handler = routes[matched];
     if (handler instanceof Error) return Promise.reject(handler);
     if (typeof handler === 'function') {
       return Promise.resolve((handler as (p: string, i?: RequestInit) => unknown)(path, init));
@@ -117,21 +127,24 @@ describe('SyncSettings — the remote list', () => {
   });
 
   it('reports WHICH failure a list load hit, via syncErrorMessage', async () => {
-    // The realistic failure for this route: the session expired. The body
-    // carries no `code`, so syncErrorMessage falls through to the server's own
-    // message. That fallthrough is the whole point — "expired session" and
-    // "server is down" are indistinguishable from the page unless the server's
-    // message survives, and a hand-written "refresh the page" would erase it.
+    // A server-side failure with no `code` on the body — the shape most
+    // non-sync errors on this route take. syncErrorMessage falls through to
+    // the server's own message, which is the whole point: without it the user
+    // cannot tell a misconfigured server from a transient outage.
+    //
+    // (Not an expired session: that throws `UnauthenticatedError`, not
+    // `ApiError`, so it takes syncErrorMessage's non-ApiError branch and gets
+    // the generic message. Different path, same delegation.)
     vi.mocked(api).mockImplementation(
       makeApiDispatcher({
-        '/sync/remotes': new ApiError(401, { error: 'Unauthorized' }, 'Session expired'),
+        '/sync/remotes': new ApiError(503, { error: 'Service unavailable' }, 'Database is unavailable'),
       }),
     );
 
     renderView();
 
     const notice = await screen.findByTestId('sync-remotes-list-error');
-    expect(notice.textContent).toContain('Session expired');
+    expect(notice.textContent).toContain('Database is unavailable');
   });
 
   it('renders SYNC_ERROR_COPY when a list failure DOES carry a code', async () => {
@@ -290,7 +303,7 @@ describe('SyncSettings — test connection', () => {
     renderView();
     await screen.findByText('Laptop');
 
-    await userEvent.click(screen.getByRole('button', { name: /Test connection/i }));
+    await userEvent.click(screen.getByRole('button', { name: /^Test connection to Laptop$/i }));
 
     const status = await screen.findByTestId('remote-test-status-r1');
     expect(status.textContent).toContain('3.2.0');
@@ -312,7 +325,7 @@ describe('SyncSettings — test connection', () => {
     renderView();
     await screen.findByText('Laptop');
 
-    await userEvent.click(screen.getByRole('button', { name: /Test connection/i }));
+    await userEvent.click(screen.getByRole('button', { name: /^Test connection to Laptop$/i }));
 
     const status = await screen.findByTestId('remote-test-status-r1');
     expect(status.textContent).toContain(SYNC_ERROR_COPY['remote-unreachable'].message);
@@ -334,7 +347,7 @@ describe('SyncSettings — edit', () => {
     renderView();
     await screen.findByText('Laptop');
 
-    await userEvent.click(screen.getByRole('button', { name: /^Edit$/i }));
+    await userEvent.click(screen.getByRole('button', { name: /^Edit Laptop$/i }));
     const form = await screen.findByTestId('edit-remote-form-r1');
 
     const labelInput = within(form).getByLabelText(/Label/i);
@@ -362,7 +375,7 @@ describe('SyncSettings — edit', () => {
     renderView();
     await screen.findByText('Laptop');
 
-    await userEvent.click(screen.getByRole('button', { name: /^Edit$/i }));
+    await userEvent.click(screen.getByRole('button', { name: /^Edit Laptop$/i }));
     const form = await screen.findByTestId('edit-remote-form-r1');
 
     await userEvent.type(within(form).getByLabelText(/Access token/i), 'wb_pat_new');
@@ -392,7 +405,7 @@ describe('SyncSettings — edit', () => {
     renderView();
     await screen.findByText('Laptop');
 
-    await userEvent.click(screen.getByRole('button', { name: /^Edit$/i }));
+    await userEvent.click(screen.getByRole('button', { name: /^Edit Laptop$/i }));
     const form = await screen.findByTestId('edit-remote-form-r1');
     await userEvent.click(within(form).getByRole('button', { name: /Save/i }));
 
@@ -402,19 +415,154 @@ describe('SyncSettings — edit', () => {
   });
 });
 
-describe('SyncSettings — delete', () => {
-  it('confirms, DELETEs, and warns that links in every universe go with it', async () => {
+describe('SyncSettings — a handshake result is about an ADDRESS, not just a row', () => {
+  it('drops the Connected line when the row is edited to a different host', async () => {
+    // Proved bug: testState keyed by id alone survives a change of base URL,
+    // so a green "Connected — …" line goes on asserting a successful handshake
+    // against an address that was never contacted. Keying the result to the
+    // baseUrl it was produced against also covers a refetch that brings a new
+    // URL, which no edit-side callback would.
+    let listed = [REMOTE];
     vi.mocked(api).mockImplementation(
       makeApiDispatcher({
-        '/sync/remotes': [REMOTE],
-        'DELETE /sync/remotes/r1': undefined,
+        '/sync/remotes': () => listed,
+        'POST /sync/remotes/r1/test': {
+          ok: true,
+          remote: { weltbonVersion: '1.0', appVersion: '3.2.0', migrationHead: '0027' },
+        },
+        'PATCH /sync/remotes/r1': () => {
+          listed = [{ ...REMOTE, baseUrl: 'http://other-host:9999' }];
+          return listed[0];
+        },
       }),
     );
 
     renderView();
     await screen.findByText('Laptop');
 
-    await userEvent.click(screen.getByRole('button', { name: /^Delete$/i }));
+    await userEvent.click(screen.getByRole('button', { name: /^Test connection to Laptop$/i }));
+    expect((await screen.findByTestId('remote-test-status-r1')).textContent).toContain('0027');
+
+    await userEvent.click(screen.getByRole('button', { name: /^Edit Laptop$/i }));
+    const form = await screen.findByTestId('edit-remote-form-r1');
+    const urlInput = within(form).getByLabelText(/Base URL/i);
+    await userEvent.clear(urlInput);
+    await userEvent.type(urlInput, 'http://other-host:9999');
+    await userEvent.click(within(form).getByRole('button', { name: /Save/i }));
+
+    // The row now shows a host that was never handshaken.
+    await screen.findByText('http://other-host:9999');
+    await waitFor(() => {
+      expect(screen.queryByTestId('remote-test-status-r1')).toBeNull();
+    });
+  });
+});
+
+describe('SyncSettings — test connection is a network wait, so it must look like one', () => {
+  it('shows a pending state and disables that row while the handshake is in flight', async () => {
+    // `remote-unreachable` IS the timeout path, so the slow case is ordinary.
+    // Without feedback a user facing a dead peer queues handshakes blind.
+    vi.mocked(api).mockImplementation(
+      makeApiDispatcher({
+        '/sync/remotes': [REMOTE],
+        'POST /sync/remotes/r1/test': () => new Promise(() => {}), // never settles
+      }),
+    );
+
+    renderView();
+    await screen.findByText('Laptop');
+
+    const button = screen.getByRole('button', { name: /^Test connection to Laptop$/i });
+    await userEvent.click(button);
+
+    const status = await screen.findByTestId('remote-test-status-r1');
+    expect(status.textContent).toMatch(/Testing/i);
+    expect(button).toBeDisabled();
+  });
+});
+
+describe('SyncSettings — more than one remote', () => {
+  const SECOND = {
+    id: 'r2',
+    label: 'Desktop',
+    baseUrl: 'http://desktop.local',
+    patSuffix: 'bb91',
+    createdAt: '2026-08-03T00:00:00.000Z',
+  };
+
+  it('gives every row action a name that identifies its row', async () => {
+    // With two remotes there are two of each action. Undistinguished labels
+    // are ambiguous to a screen reader and make getByRole throw — which is
+    // also why every other test in this file was silently limited to N=1.
+    vi.mocked(api).mockImplementation(
+      makeApiDispatcher({ '/sync/remotes': [REMOTE, SECOND] }),
+    );
+
+    renderView();
+    await screen.findByText('Laptop');
+    await screen.findByText('Desktop');
+
+    expect(screen.getByRole('button', { name: 'Edit Laptop' })).toBeInTheDocument();
+    expect(screen.getByRole('button', { name: 'Edit Desktop' })).toBeInTheDocument();
+    expect(screen.getByRole('button', { name: 'Delete Laptop' })).toBeInTheDocument();
+    expect(screen.getByRole('button', { name: 'Delete Desktop' })).toBeInTheDocument();
+    expect(screen.getByRole('button', { name: 'Test connection to Laptop' })).toBeInTheDocument();
+    expect(screen.getByRole('button', { name: 'Test connection to Desktop' })).toBeInTheDocument();
+  });
+
+  it('opens the editor for the row that was clicked', async () => {
+    vi.mocked(api).mockImplementation(
+      makeApiDispatcher({ '/sync/remotes': [REMOTE, SECOND] }),
+    );
+
+    renderView();
+    await screen.findByText('Desktop');
+
+    await userEvent.click(screen.getByRole('button', { name: 'Edit Desktop' }));
+
+    const form = await screen.findByTestId('edit-remote-form-r2');
+    expect(within(form).getByLabelText(/Label/i)).toHaveValue('Desktop');
+    expect(screen.queryByTestId('edit-remote-form-r1')).toBeNull();
+  });
+
+  it('keeps one row\'s handshake result out of the other row', async () => {
+    vi.mocked(api).mockImplementation(
+      makeApiDispatcher({
+        '/sync/remotes': [REMOTE, SECOND],
+        'POST /sync/remotes/r2/test': {
+          ok: true,
+          remote: { weltbonVersion: '1.0', appVersion: '3.2.0', migrationHead: '0027' },
+        },
+      }),
+    );
+
+    renderView();
+    await screen.findByText('Desktop');
+
+    await userEvent.click(screen.getByRole('button', { name: 'Test connection to Desktop' }));
+
+    await screen.findByTestId('remote-test-status-r2');
+    expect(screen.queryByTestId('remote-test-status-r1')).toBeNull();
+  });
+});
+
+describe('SyncSettings — delete', () => {
+  it('confirms, DELETEs, and warns that links in every universe go with it', async () => {
+    vi.mocked(api).mockImplementation(
+      makeApiDispatcher({
+        '/sync/remotes': [REMOTE],
+        // The route's real 200 body (api/src/routes/sync-client.ts:337). The
+        // previous `undefined` fixture made the dispatcher reject, so the
+        // mutation actually FAILED and the view rendered its delete error —
+        // invisible to a test that only asserted on api() mock calls.
+        'DELETE /sync/remotes/r1': { deleted: true },
+      }),
+    );
+
+    renderView();
+    await screen.findByText('Laptop');
+
+    await userEvent.click(screen.getByRole('button', { name: /^Delete Laptop$/i }));
 
     const dialog = await screen.findByRole('dialog');
     // `sync_links.remote_id` cascades (api/src/db/schema.ts:775) — the
@@ -429,5 +577,32 @@ describe('SyncSettings — delete', () => {
         method: 'DELETE',
       }));
     });
+    // Assert on what the USER sees, not just on the call: a delete that failed
+    // would leave this notice on screen.
+    expect(screen.queryByTestId('sync-remotes-delete-error')).toBeNull();
+  });
+
+  it('surfaces syncErrorMessage copy when the DELETE fails', async () => {
+    vi.mocked(api).mockImplementation(
+      makeApiDispatcher({
+        '/sync/remotes': [REMOTE],
+        'DELETE /sync/remotes/r1': new ApiError(
+          404,
+          { code: 'link-not-found' },
+          'Remote not found',
+        ),
+      }),
+    );
+
+    renderView();
+    await screen.findByText('Laptop');
+
+    await userEvent.click(screen.getByRole('button', { name: /^Delete Laptop$/i }));
+    const dialog = await screen.findByRole('dialog');
+    await userEvent.click(within(dialog).getByRole('button', { name: /Delete remote/i }));
+
+    expect(
+      await screen.findByText(SYNC_ERROR_COPY['link-not-found'].message),
+    ).toBeInTheDocument();
   });
 });

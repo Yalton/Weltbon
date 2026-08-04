@@ -6,7 +6,7 @@
  *   GET    /api/sync/remotes            → SyncRemote[]  (masked)
  *   POST   /api/sync/remotes            → SyncRemote    (201)
  *   PATCH  /api/sync/remotes/:id        → SyncRemote
- *   DELETE /api/sync/remotes/:id        → 204 (void)
+ *   DELETE /api/sync/remotes/:id        → 200 { deleted: true }
  *   POST   /api/sync/remotes/:id/test   → TestRemoteResult
  *
  * SCOPE. `sync_remotes` is ACCOUNT-scoped (no universe column), which is why
@@ -23,6 +23,9 @@
 
 import { useMutation, useQuery, useQueryClient } from '@tanstack/react-query';
 import { api } from '../api/client';
+// Keys live in their own module so Task 3's universe-scoped link hooks import
+// the SAME definitions this module invalidates — see syncKeys.ts.
+import { SYNC_REMOTES_QUERY_KEY, SYNC_LINKS_QUERY_PREFIX } from './syncKeys';
 
 /** A saved remote connection, as the server masks it. Never carries the PAT. */
 export interface SyncRemote {
@@ -47,35 +50,17 @@ export interface TestRemoteResult {
   remote: RemoteIdentity;
 }
 
-export const SYNC_REMOTES_QUERY_KEY = ['sync', 'remotes'] as const;
-
-/**
- * PREFIX, not a full key: universe-scoped link queries key on
- * `['sync', 'links', universeId]`. Invalidating the two-element prefix matches
- * every universe's links at once — see `useDeleteSyncRemote` for why that
- * breadth is required rather than merely convenient.
- */
-export const SYNC_LINKS_QUERY_PREFIX = ['sync', 'links'] as const;
-
-/**
- * The full key for ONE universe's sync links — the other half of the contract
- * `SYNC_LINKS_QUERY_PREFIX` only half-states.
- *
- * Task 3's link hooks must build their query key with this factory rather than
- * writing an array literal. Nothing about a prefix constant stops a consumer
- * from keying links as, say, `['sync-links', universeId]`, at which point the
- * invalidation in `useDeleteSyncRemote` below silently stops matching and the
- * only symptom is a Sync tab listing links the server already cascaded away.
- * A shared factory makes that drift a compile error instead of a ghost.
- */
-export const syncLinksKey = (universeId: string) =>
-  [...SYNC_LINKS_QUERY_PREFIX, universeId] as const;
-
 /** List the caller's registered remotes (masked). */
 export function useSyncRemotes() {
   return useQuery({
     queryKey: SYNC_REMOTES_QUERY_KEY,
     queryFn: () => api<SyncRemote[]>('/sync/remotes'),
+    // Matches useLlmKeys. Task 3's Sync tab lists remotes too (to pick one
+    // when creating a link), so without this both subscribers refetch on every
+    // mount and navigating between the two surfaces re-hits the network for a
+    // list that changes only when the user changes it. Every mutation below
+    // invalidates, so user-initiated changes still appear immediately.
+    staleTime: 60_000,
   });
 }
 
@@ -141,6 +126,11 @@ export function useDeleteSyncRemote() {
       // the only way to stop a Sync tab from rendering links the server has
       // already deleted.
       qc.invalidateQueries({ queryKey: SYNC_LINKS_QUERY_PREFIX });
+      // Conflicts are deliberately NOT invalidated, though it looks like an
+      // omission next to the two above: `sync_conflicts` carries neither a
+      // remote_id nor a link_id, only `universe_id` (api/src/db/schema.ts), so
+      // nothing about it cascades from deleting a remote. Invalidating it
+      // would be a refetch that can never return different rows.
     },
   });
 }
