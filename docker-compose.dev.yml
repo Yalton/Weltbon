@@ -1,0 +1,81 @@
+# Two-instance rig for developing and manually verifying sync (Plan F, F-09).
+#
+# Instance A runs on the HOST (vite 5173 + tsx watch API on 3000) against db-a,
+# so the UI under development has HMR. Instance B is fully containerized on
+# 3001. A reaches B at http://localhost:3001 — the A API is a host process, so
+# no Docker networking is involved.
+#
+# Nothing here touches docker-compose.yml, which stays the production stack.
+name: weltbon-syncdev
+
+services:
+  # Postgres for instance A, published to the host so the host-run API can see it.
+  db-a:
+    image: postgres:16-alpine
+    restart: unless-stopped
+    environment:
+      POSTGRES_DB: weltbon
+      POSTGRES_USER: weltbon
+      POSTGRES_PASSWORD: ${POSTGRES_PASSWORD:-devpassword}
+    ports:
+      - "5441:5432"
+    volumes:
+      - pgdata-a:/var/lib/postgresql/data
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U weltbon -d weltbon"]
+      interval: 10s
+      timeout: 5s
+      retries: 5
+      start_period: 10s
+
+  # Postgres for instance B. Internal only — nothing on the host talks to it.
+  db-b:
+    image: postgres:16-alpine
+    restart: unless-stopped
+    environment:
+      POSTGRES_DB: weltbon
+      POSTGRES_USER: weltbon
+      POSTGRES_PASSWORD: ${POSTGRES_PASSWORD:-devpassword}
+    volumes:
+      - pgdata-b:/var/lib/postgresql/data
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U weltbon -d weltbon"]
+      interval: 10s
+      timeout: 5s
+      retries: 5
+      start_period: 10s
+
+  # Instance B: the peer. A baked production build — a UI change needs
+  # `up -d --build`, not a restart.
+  #
+  # JWT_SECRET/INVITE_CODE deliberately read *_B-suffixed variables, not the
+  # plain JWT_SECRET/INVITE_CODE names A's own .env.dev-a also defines. When
+  # .env.dev-a is passed to compose via --env-file, ALL of its variables are
+  # available for interpolation here, so an unsuffixed name would silently
+  # shadow this service's own fallback with A's value instead of falling
+  # back — which is exactly what happened before this was split (B ended up
+  # seeded with A's invite code). The two JWT secrets must also actually
+  # differ, not just be named differently: a shared secret would let a JWT
+  # minted by A validate on B, which could mask a real cross-instance auth
+  # bug during the manual verification this rig exists for.
+  app-b:
+    build: .
+    restart: unless-stopped
+    environment:
+      DATABASE_URL: postgresql://weltbon:${POSTGRES_PASSWORD:-devpassword}@db-b:5432/weltbon
+      JWT_SECRET: ${JWT_SECRET_B:-peer-jwtsecret-peer-jwtsecret-32ch}
+      INVITE_CODE: ${INVITE_CODE_B:-peer-invite-code}
+      UPLOADS_DIR: /uploads
+      PORT: 3000
+    ports:
+      - "3001:3000"
+    volumes:
+      - uploads-b:/uploads
+    depends_on:
+      db-b:
+        condition: service_healthy
+
+volumes:
+  pgdata-a:
+  pgdata-b:
+  uploads-b:

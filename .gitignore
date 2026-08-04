@@ -1,5 +1,6 @@
 .env
 .env.local
+.env.dev-a
 node_modules/
 api/node_modules
 web/node_modules
