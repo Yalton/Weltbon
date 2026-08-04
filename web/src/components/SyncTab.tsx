@@ -50,7 +50,12 @@ import {
   type SyncRunResult,
 } from '../hooks/useSyncLinks';
 import { useSyncRemotes } from '../hooks/useSyncRemotes';
-import { syncErrorMessage, lastErrorMessage, type SyncCopy } from '../lib/syncErrorCopy';
+import {
+  syncErrorMessage,
+  lastErrorMessage,
+  combineRunError,
+  type SyncCopy,
+} from '../lib/syncErrorCopy';
 import { SyncErrorNotice } from './SyncErrorNotice';
 import { SyncRunSummary } from './SyncRunSummary';
 import { SyncConflictList } from './SyncConflictList';
@@ -60,17 +65,22 @@ import { formatRelative } from '../utils/formatRelative';
 /**
  * One link's in-flight / just-finished run, as this session saw it.
  *
+ * A discriminated union rather than a bag of optionals, so the impossible
+ * states cannot be written. `{pending: true}` without `startedAt` used to
+ * typecheck, and the `startedAt ?? Date.now()` fallback it forced would have
+ * handed `ElapsedTime` a FRESH value on every render — resetting the clock
+ * each tick, so the counter could never leave `0s`. Making `startedAt`
+ * mandatory on the running variant removes both the bug and the fallback.
+ *
  * `neverSynced` is captured when the run STARTS rather than read from the live
- * row: the row is refetched the moment the run settles, so reading it live
- * would flip the first-sync warning off mid-run on the very run it describes.
+ * row: links share one query key, so another link's run settling refetches this
+ * row mid-run, and a server that has already recorded this run would flip the
+ * first-sync warning off underneath the user still waiting for it.
  */
-type RunState = {
-  pending?: true;
-  startedAt?: number;
-  neverSynced?: boolean;
-  result?: SyncRunResult;
-  error?: SyncCopy;
-};
+type RunState =
+  | { phase: 'running'; startedAt: number; neverSynced: boolean }
+  | { phase: 'done'; result: SyncRunResult }
+  | { phase: 'failed'; error: SyncCopy };
 
 /** Seconds since `since`, ticking. The only progress signal a run actually has. */
 function ElapsedTime({ since, testId }: { since: number; testId: string }) {
@@ -80,33 +90,17 @@ function ElapsedTime({ since, testId }: { since: number; testId: string }) {
     const timer = setInterval(() => setNow(Date.now()), 1000);
     return () => clearInterval(timer);
   }, [since]);
-  return <span data-testid={testId}>{Math.max(0, Math.floor((now - since) / 1000))}s</span>;
-}
-
-/**
- * Attach the persisted `last_error`'s detail to a just-thrown run error.
- *
- * THIS IS WHY THE RUN MUTATION USES `onSettled`. `blob-unavailable`'s `side` —
- * WHICH instance is missing the bytes — is not on the wire; the route
- * serializes only {error, code}. So the thrown copy carries the generic
- * headline plus `raw: "Asset bytes unavailable for 3 content hash(es)"`, a
- * count and not a remedy. The naming of the side exists ONLY in
- * `sync_links.last_error`, which the server writes before the route returns and
- * which `onSettled`'s refetch pulls in. Merging that detail into the thrown
- * copy is what turns the refetch into something the user can actually see;
- * without it the invalidation is real but its payoff is discarded.
- *
- * The merge is gated on the two copies describing the SAME failure.
- * `lastErrorMessage`'s message IS the `SYNC_ERROR_COPY` entry for the code
- * stored in the column, so equal messages mean equal codes — an older, unrelated
- * error still sitting in the column cannot smuggle its detail onto this one.
- * The thrown copy is kept as the base so its `raw` (the count) and its
- * `canForce` survive; `lastErrorMessage` sets neither.
- */
-function withPersistedDetail(copy: SyncCopy, lastError: string | null): SyncCopy {
-  const persisted = lastErrorMessage(lastError);
-  if (!persisted?.detail || persisted.message !== copy.message) return copy;
-  return { ...copy, detail: persisted.detail };
+  // aria-hidden: this span lives inside a role="status" region, which implies
+  // aria-live="polite" AND aria-atomic="true". Mutating text inside it once a
+  // second makes a screen reader re-announce the WHOLE block — "Syncing, 1s
+  // elapsed, keep this tab open…", plus the first-sync paragraph — every second,
+  // for a run this component's own copy says may take minutes. Hidden here, the
+  // region announces one stable sentence and the visual display is untouched.
+  return (
+    <span data-testid={testId} aria-hidden="true">
+      {Math.max(0, Math.floor((now - since) / 1000))}s
+    </span>
+  );
 }
 
 /** One linked remote: its state, its run controls, and this run's outcome. */
@@ -121,12 +115,21 @@ function SyncLinkRow({
   onRun: (link: SyncLink, force?: boolean) => void;
   onRemove: (link: SyncLink) => void;
 }) {
-  // A run this session produced supersedes the column — but only after taking
-  // the column's detail with it (see `withPersistedDetail`). The standalone
-  // persisted notice is for the untouched case: a link whose last failure
-  // happened before this page was opened.
-  const runError = state?.error ? withPersistedDetail(state.error, link.lastError) : null;
-  const persisted = state ? null : lastErrorMessage(link.lastError);
+  // A run this session FAILED gets `combineRunError`, which either folds the
+  // refetched column into the thrown copy (same code) or hands it back to be
+  // shown alongside (different code, or no code — the generic "Failed to fetch"
+  // case, which is the likeliest failure of a multi-minute request and the one
+  // where the column holds the only real diagnosis).
+  //
+  // Suppressing the column outright whenever ANY run state existed was the
+  // original bug here: the `onSettled` refetch fired, the cache updated, and
+  // the user was shown "Something went wrong while talking to the server" while
+  // the answer sat unread one field away.
+  const combined = state?.phase === 'failed' ? combineRunError(state.error, link.lastError) : null;
+  const runError = combined?.copy ?? null;
+  // On a run that has not failed (in flight, or succeeded) the column describes
+  // something already superseded, so it stays hidden.
+  const persisted = state ? (combined?.unmergedPersisted ?? null) : lastErrorMessage(link.lastError);
 
   return (
     <li
@@ -156,7 +159,7 @@ function SyncLinkRow({
           <button
             type="button"
             onClick={() => onRun(link)}
-            disabled={!!state?.pending}
+            disabled={state?.phase === 'running'}
             aria-label={`Sync now with ${link.remoteLabel || link.remoteBaseUrl}`}
             className="text-sm text-ink-secondary hover:text-[color:var(--color-accent)] disabled:opacity-50"
           >
@@ -165,7 +168,7 @@ function SyncLinkRow({
           <button
             type="button"
             onClick={() => onRemove(link)}
-            disabled={!!state?.pending}
+            disabled={state?.phase === 'running'}
             aria-label={`Remove link to ${link.remoteLabel || link.remoteBaseUrl}`}
             className="text-sm text-ink-secondary hover:text-rose-400 disabled:opacity-50"
           >
@@ -175,11 +178,11 @@ function SyncLinkRow({
       </div>
 
       {/* F-06: elapsed seconds and nothing that resembles a progress bar. */}
-      {state?.pending && (
+      {state?.phase === 'running' && (
         <div role="status" className="mt-3 rounded-lg border border-glass-border bg-white/5 p-3 text-sm text-ink-secondary">
           <p>
             Syncing…{' '}
-            <ElapsedTime since={state.startedAt ?? Date.now()} testId={`sync-link-elapsed-${link.id}`} />{' '}
+            <ElapsedTime since={state.startedAt} testId={`sync-link-elapsed-${link.id}`} />{' '}
             elapsed. Keep this tab open until it finishes.
           </p>
           {state.neverSynced && (
@@ -191,7 +194,7 @@ function SyncLinkRow({
         </div>
       )}
 
-      {state?.result && (
+      {state?.phase === 'done' && (
         <SyncRunSummary result={state.result} testId={`sync-link-result-${link.id}`} />
       )}
 
@@ -205,6 +208,7 @@ function SyncLinkRow({
             <button
               type="button"
               onClick={() => onRun(link, true)}
+              aria-label={`Run anyway with ${link.remoteLabel || link.remoteBaseUrl}`}
               className="mt-2 rounded-md border border-glass-border px-3 py-1.5 text-sm text-ink-secondary hover:text-[color:var(--color-accent)]"
             >
               Run anyway
@@ -230,7 +234,13 @@ export function SyncTab({ universeId }: { universeId: string }) {
   const [runs, setRuns] = useState<Record<string, RunState>>({});
   const [chosenRemote, setChosenRemote] = useState('');
   const [removeTarget, setRemoveTarget] = useState<SyncLink | null>(null);
+  // `formError` belongs to the ADD form and is rendered beneath it. A failed
+  // removal used to borrow it, so the dialog closed (reading as success) and
+  // the explanation appeared under "Remote to link", labelled as a create
+  // error and possibly below the fold. An error has to appear where the action
+  // was taken.
   const [formError, setFormError] = useState<SyncCopy | null>(null);
+  const [removeError, setRemoveError] = useState<SyncCopy | null>(null);
 
   const linked = links ?? [];
   const available = (remotes ?? []).filter((r) => !linked.some((l) => l.remoteId === r.id));
@@ -238,15 +248,15 @@ export function SyncTab({ universeId }: { universeId: string }) {
   const handleRun = async (link: SyncLink, force = false) => {
     setRuns((prev) => ({
       ...prev,
-      [link.id]: { pending: true, startedAt: Date.now(), neverSynced: link.lastSyncedAt === null },
+      [link.id]: { phase: 'running', startedAt: Date.now(), neverSynced: link.lastSyncedAt === null },
     }));
     try {
       // F-02: awaited, not fired and forgotten. The user stays on this row and
       // is shown what actually happened.
       const result = await runLink.mutateAsync({ id: link.id, force });
-      setRuns((prev) => ({ ...prev, [link.id]: { result } }));
+      setRuns((prev) => ({ ...prev, [link.id]: { phase: 'done', result } }));
     } catch (err) {
-      setRuns((prev) => ({ ...prev, [link.id]: { error: syncErrorMessage(err) } }));
+      setRuns((prev) => ({ ...prev, [link.id]: { phase: 'failed', error: syncErrorMessage(err) } }));
     }
   };
 
@@ -280,6 +290,10 @@ export function SyncTab({ universeId }: { universeId: string }) {
         <p className="mt-4 text-sm text-ink-secondary">
           This universe is not linked to any remote instance yet.
         </p>
+      )}
+
+      {removeError && (
+        <SyncErrorNotice copy={removeError} testId="sync-link-remove-error" />
       )}
 
       {/* Gated on the data rather than on `!listError` (same reasoning as
@@ -348,6 +362,7 @@ export function SyncTab({ universeId }: { universeId: string }) {
               disabled={!chosenRemote || createLink.isPending}
               onClick={async () => {
                 setFormError(null);
+                setRemoveError(null);
                 try {
                   await createLink.mutateAsync({ remoteId: chosenRemote });
                   setChosenRemote('');
@@ -384,9 +399,13 @@ export function SyncTab({ universeId }: { universeId: string }) {
         cancelLabel="Cancel"
         destructive
         onConfirm={async () => {
-          if (!removeTarget) return;
+          // `isPending` guards a double confirm: ConfirmDialog only closes
+          // AFTER onConfirm resolves, so its button stays live for the whole
+          // request and a second click would fire a second DELETE — whose 404
+          // would then report a failure for a removal that worked.
+          if (!removeTarget || deleteLink.isPending) return;
           const id = removeTarget.id;
-          setFormError(null);
+          setRemoveError(null);
           try {
             await deleteLink.mutateAsync({ id });
             // Drop the row's local run state with the row itself.
@@ -397,7 +416,7 @@ export function SyncTab({ universeId }: { universeId: string }) {
               return next;
             });
           } catch (err) {
-            setFormError(syncErrorMessage(err));
+            setRemoveError(syncErrorMessage(err));
           }
           setRemoveTarget(null);
         }}

@@ -37,30 +37,7 @@ vi.mock('../api/client', async (importOriginal) => {
 import { api, ApiError } from '../api/client';
 import { SYNC_ERROR_COPY } from '../lib/syncErrorCopy';
 import { SyncTab } from './SyncTab';
-
-type Handler = unknown | Error | ((path: string, init?: RequestInit) => unknown);
-
-/**
- * Route api() calls by `"<METHOD> <path>"`, falling back to bare `<path>`.
- * Lifted from SyncSettings.test.tsx — see its comment for why `Object.hasOwn`
- * and why the match is resolved before the handler is inspected.
- */
-function makeApiDispatcher(routes: Record<string, Handler>) {
-  return vi.fn((path: string, init?: RequestInit) => {
-    const method = init?.method ?? 'GET';
-    const key = `${method} ${path}`;
-    const matched = Object.hasOwn(routes, key) ? key : Object.hasOwn(routes, path) ? path : null;
-    if (matched === null) {
-      return Promise.reject(new Error(`Unhandled api() call: ${key}`));
-    }
-    const handler = routes[matched];
-    if (handler instanceof Error) return Promise.reject(handler);
-    if (typeof handler === 'function') {
-      return Promise.resolve((handler as (p: string, i?: RequestInit) => unknown)(path, init));
-    }
-    return Promise.resolve(handler);
-  });
-}
+import { makeApiDispatcher, type ApiHandler } from '../test/apiDispatcher';
 
 function makeClient() {
   return new QueryClient({
@@ -125,7 +102,7 @@ const LINKS_PATH = '/sync/links?universeId=u1';
  * leaving every GET "unhandled" and the component rendering a load error
  * instead of the state under test. That mistake was made here once already.
  */
-function dispatch(extra: Record<string, Handler> = {}, links: unknown[] = [LINK]) {
+function dispatch(extra: Record<string, ApiHandler> = {}, links: unknown[] = [LINK]) {
   return makeApiDispatcher({ '/sync/remotes': [REMOTE], [LINKS_PATH]: links, ...extra });
 }
 
@@ -445,23 +422,27 @@ describe('SyncTab — F-06, the elapsed count is real', () => {
     // with nothing to do with what this test asserts.
     const button = await screen.findByRole('button', { name: /sync now/i });
 
-    vi.useFakeTimers();
+    // `toFake` explicitly: this test needs a faked `Date` as much as a faked
+    // `setInterval`, because the counter is `Date.now() - startedAt`. Vitest
+    // fakes Date by default, but if that default is ever narrowed in config the
+    // display sticks at 0s and the failure gives no hint why.
+    vi.useFakeTimers({ toFake: ['setInterval', 'clearInterval', 'Date'] });
     try {
       // fireEvent, not userEvent: userEvent schedules timers of its own between
       // the events it synthesises, which under a faked clock needs an advance
       // callback wired through. A bare click is all this test needs.
       fireEvent.click(button);
-      expect(screen.getByTestId('sync-link-elapsed-l1')).toHaveTextContent('0s');
+      expect(screen.getByTestId('sync-link-elapsed-l1')).toHaveTextContent(/^0s$/);
 
       await act(async () => {
         await vi.advanceTimersByTimeAsync(3000);
       });
-      expect(screen.getByTestId('sync-link-elapsed-l1')).toHaveTextContent('3s');
+      expect(screen.getByTestId('sync-link-elapsed-l1')).toHaveTextContent(/^3s$/);
 
       await act(async () => {
         await vi.advanceTimersByTimeAsync(4000);
       });
-      expect(screen.getByTestId('sync-link-elapsed-l1')).toHaveTextContent('7s');
+      expect(screen.getByTestId('sync-link-elapsed-l1')).toHaveTextContent(/^7s$/);
     } finally {
       vi.useRealTimers();
     }
@@ -538,5 +519,172 @@ describe('SyncTab — the remote list while it is still loading', () => {
     await screen.findByTestId('sync-link-row-l1');
     expect(screen.queryByText(/already linked to this universe/i)).not.toBeInTheDocument();
     expect(screen.getByLabelText('Loading sync remotes')).toBeInTheDocument();
+  });
+});
+
+describe('SyncTab — a failure the run response cannot explain', () => {
+  it('still shows the column diagnosis when the thrown error carries no code', async () => {
+    // THE COMMONEST SHAPE OF THIS FAILURE, and the one the first fix missed.
+    // A multi-minute blocking request most often dies in transit — proxy
+    // timeout, dropped connection — which is not an ApiError at all, so
+    // `syncErrorMessage` returns the generic sentence with no code. The server
+    // still recorded what went wrong, `onSettled` still refetches it, and
+    // suppressing the column because "a run happened this session" threw that
+    // away: the user saw "Something went wrong while talking to the server"
+    // while `remote-quota-exceeded` sat unread one field over.
+    let listCall = 0;
+    vi.mocked(api).mockImplementation(
+      makeApiDispatcher({
+        '/sync/remotes': [REMOTE],
+        [LINKS_PATH]: () => {
+          listCall += 1;
+          return listCall === 1
+            ? [LINK]
+            : [
+                {
+                  ...LINK,
+                  status: 'error',
+                  lastError: 'remote-quota-exceeded: remote reported 0 bytes free',
+                },
+              ];
+        },
+        'POST /sync/links/l1/run': new TypeError('Failed to fetch'),
+      }),
+    );
+    const user = userEvent.setup();
+
+    renderTab();
+    await user.click(await screen.findByRole('button', { name: /sync now/i }));
+
+    // The generic sentence is shown — it is all the thrown value supports…
+    await screen.findByTestId('sync-link-run-error-l1');
+    // …and the refetched column's real diagnosis is shown too, separately,
+    // because no code was established on the thrown side to merge it onto.
+    const box = await screen.findByTestId('sync-link-last-error-l1');
+    expect(box).toHaveTextContent(SYNC_ERROR_COPY['remote-quota-exceeded'].message);
+    expect(box).toHaveTextContent(/0 bytes free/);
+  });
+
+  it('does not repeat the column when it WAS merged into the run error', async () => {
+    // The other half of the rule: a same-code column is folded in, so showing
+    // it again as its own notice would print the same sentence twice.
+    const thrown = new ApiError(
+      409,
+      { error: 'asset bytes unavailable', code: 'blob-unavailable' },
+      'Asset bytes unavailable for 3 content hash(es)',
+    );
+    vi.mocked(api).mockImplementation(
+      makeApiDispatcher({
+        '/sync/remotes': [REMOTE],
+        [LINKS_PATH]: [
+          { ...LINK, lastError: 'blob-unavailable: 3 asset blob(s) unavailable on this instance' },
+        ],
+        'POST /sync/links/l1/run': thrown,
+      }),
+    );
+    const user = userEvent.setup();
+
+    renderTab();
+    await user.click(await screen.findByRole('button', { name: /sync now/i }));
+
+    const box = await screen.findByTestId('sync-link-run-error-l1');
+    await waitFor(() => expect(box).toHaveTextContent(/unavailable on this instance/i));
+    expect(screen.queryByTestId('sync-link-last-error-l1')).not.toBeInTheDocument();
+  });
+});
+
+describe('SyncTab — removing a link', () => {
+  /** Open the confirm dialog for a row and press its destructive button. */
+  async function confirmRemoval(user: ReturnType<typeof userEvent.setup>, name: RegExp) {
+    await user.click(await screen.findByRole('button', { name }));
+    await user.click(await screen.findByRole('button', { name: /^remove link$/i }));
+  }
+
+  it('DELETEs the link the dialog named', async () => {
+    let listCall = 0;
+    vi.mocked(api).mockImplementation(
+      makeApiDispatcher({
+        '/sync/remotes': [REMOTE],
+        [LINKS_PATH]: () => {
+          listCall += 1;
+          return listCall === 1 ? [LINK] : [];
+        },
+        'DELETE /sync/links/l1': { deleted: true },
+      }),
+    );
+    const user = userEvent.setup();
+
+    renderTab();
+    await confirmRemoval(user, /remove link to Laptop/i);
+
+    await waitFor(() =>
+      expect(api).toHaveBeenCalledWith(
+        '/sync/links/l1',
+        expect.objectContaining({ method: 'DELETE' }),
+      ),
+    );
+    // The row is gone once the invalidated list comes back empty.
+    await waitFor(() => expect(screen.queryByTestId('sync-link-row-l1')).not.toBeInTheDocument());
+  });
+
+  it('reports a failed removal beside the list, not as a create error', async () => {
+    // A failed removal used to write to the ADD form's error slot: the dialog
+    // closed (reading as success) and the explanation appeared under "Remote to
+    // link", labelled a create error, possibly below the fold.
+    const denied = new ApiError(
+      403,
+      { error: 'not your universe', code: 'forbidden' },
+      'not your universe',
+    );
+    vi.mocked(api).mockImplementation(
+      makeApiDispatcher({
+        '/sync/remotes': [REMOTE],
+        [LINKS_PATH]: [LINK],
+        'DELETE /sync/links/l1': denied,
+      }),
+    );
+    const user = userEvent.setup();
+
+    renderTab();
+    await confirmRemoval(user, /remove link to Laptop/i);
+
+    const box = await screen.findByTestId('sync-link-remove-error');
+    expect(box).toHaveTextContent(SYNC_ERROR_COPY.forbidden.message);
+    expect(screen.queryByTestId('sync-link-create-error')).not.toBeInTheDocument();
+    // …and the link is still there, because the server kept it.
+    expect(screen.getByTestId('sync-link-row-l1')).toBeInTheDocument();
+  });
+
+  it('drops only the removed link’s run state, leaving other rows alone', async () => {
+    // The cleanup at the end of onConfirm must not be a `setRuns({})`: another
+    // link can be mid-run at that moment, and clearing the whole map would
+    // erase its in-flight display — the elapsed counter and the first-sync
+    // warning — while its request is still outstanding.
+    const A = { ...LINK, id: 'la', remoteId: 'ra', remoteLabel: 'Laptop', lastSyncedAt: null };
+    const B = { ...LINK, id: 'lb', remoteId: 'rb', remoteLabel: 'Desktop' };
+    let listCall = 0;
+    vi.mocked(api).mockImplementation(
+      makeApiDispatcher({
+        '/sync/remotes': [REMOTE],
+        [LINKS_PATH]: () => {
+          listCall += 1;
+          return listCall === 1 ? [A, B] : [A];
+        },
+        'POST /sync/links/la/run': hangingRun,
+        'DELETE /sync/links/lb': { deleted: true },
+      }),
+    );
+    const user = userEvent.setup();
+
+    renderTab();
+    await user.click(await screen.findByRole('button', { name: /sync now with Laptop/i }));
+    expect(await screen.findByTestId('sync-link-elapsed-la')).toBeInTheDocument();
+
+    await confirmRemoval(user, /remove link to Desktop/i);
+
+    await waitFor(() => expect(screen.queryByTestId('sync-link-row-lb')).not.toBeInTheDocument());
+    // A's run is still in flight and still says so.
+    expect(screen.getByTestId('sync-link-elapsed-la')).toBeInTheDocument();
+    expect(screen.getByText(/can take several minutes/i)).toBeInTheDocument();
   });
 });

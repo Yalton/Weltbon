@@ -50,10 +50,27 @@ export interface SyncCopy {
   raw?: string;
   /** True only for `busy` — the caller may offer "Run anyway" (`?force=true`, F-02). */
   canForce?: boolean;
+  /**
+   * The machine code both producers recognised, when either did.
+   *
+   * Carried so consumers can ask "do these two copies describe the SAME
+   * failure?" DIRECTLY. `combineRunError` below needs exactly that question
+   * answered, and its first implementation asked it by comparing `message`
+   * strings — sound only while all 12 messages stay distinct, which nothing
+   * enforced. Two entries given the same prose would have made a stale error of
+   * code A silently decorate a fresh failure of code B with A's cause.
+   *
+   * Absent on both fallback paths: `syncErrorMessage`'s unknown/absent-code
+   * branch (including every `SyncApplyError`, which carries no code at all) and
+   * `lastErrorMessage`'s `apply-error` and unexpected-error branches. Absent
+   * means "no code was established", never "codes differ" — so a comparison
+   * must require it to be present on BOTH sides before trusting equality.
+   */
+  code?: SyncErrorCode;
 }
 
 /** The 12 codes `run-errors.ts`'s `SyncRunError` subclasses declare. */
-type SyncErrorCode =
+export type SyncErrorCode =
   | 'link-not-found'
   | 'forbidden'
   | 'busy'
@@ -130,6 +147,8 @@ export const SYNC_ERROR_COPY: Record<SyncErrorCode, { message: string }> = {
 };
 
 /**
+ * Narrow an arbitrary string to a code this map actually knows.
+ *
  * `Object.hasOwn` rather than `in`: `in` also matches inherited
  * `Object.prototype` members ('constructor', 'toString', 'hasOwnProperty',
  * …), so `'constructor' in SYNC_ERROR_COPY` is true and
@@ -139,8 +158,10 @@ export const SYNC_ERROR_COPY: Record<SyncErrorCode, { message: string }> = {
  * advertises `(err: unknown)` and future callers (Tasks 2-4) will feed it
  * arbitrary caught values.
  */
-function copyFor(code: string): { message: string } | undefined {
-  return Object.hasOwn(SYNC_ERROR_COPY, code) ? SYNC_ERROR_COPY[code as SyncErrorCode] : undefined;
+function knownCode(code: string | undefined): SyncErrorCode | undefined {
+  return code !== undefined && Object.hasOwn(SYNC_ERROR_COPY, code)
+    ? (code as SyncErrorCode)
+    : undefined;
 }
 
 /**
@@ -168,14 +189,14 @@ export function syncErrorMessage(err: unknown): SyncCopy {
   const body = err.body;
   const code =
     body && typeof body === 'object' && 'code' in body ? String(body.code) : undefined;
-  const copy = code ? copyFor(code) : undefined;
+  const known = knownCode(code);
 
-  if (copy) {
+  if (known) {
     // err.message is the throw site's own text (e.g. `remote-rejected`:
     // "The remote rejected the apply (HTTP 402)"; `blob-unavailable`: "Asset
     // bytes unavailable for 3 content hash(es)") — real, code-specific
     // information a disclosure can show, so it must not be discarded.
-    return { ...copy, raw: err.message, canForce: code === 'busy' };
+    return { ...SYNC_ERROR_COPY[known], code: known, raw: err.message, canForce: known === 'busy' };
   }
 
   // Unknown/absent code: either a 13th code this map has not caught up to
@@ -206,9 +227,9 @@ export function lastErrorMessage(raw: string | null | undefined): SyncCopy | nul
     };
   }
 
-  const copy = copyFor(head);
-  if (copy) {
-    return { ...copy, detail: rest || undefined, raw };
+  const known = knownCode(head);
+  if (known) {
+    return { ...SYNC_ERROR_COPY[known], code: known, detail: rest || undefined, raw };
   }
 
   // Also covers the bare `unexpected-error` constant: it contains no `:`, so
@@ -218,5 +239,68 @@ export function lastErrorMessage(raw: string | null | undefined): SyncCopy | nul
   return {
     message: 'The sync failed unexpectedly. Try running it again; if it keeps happening, check the server logs.',
     raw,
+  };
+}
+
+/**
+ * Combine a just-thrown run error with the `sync_links.last_error` column the
+ * same failure left behind.
+ *
+ * WHY THIS EXISTS AT ALL — it is the entire payoff of the run mutation
+ * invalidating `onSettled` rather than `onSuccess`. `blob-unavailable`'s `side`
+ * (WHICH instance is missing the bytes) is not on the wire: the route
+ * serializes only `{error, code}`. So the thrown copy knows a COUNT
+ * ("3 content hash(es)", in `raw`) and no remedy, while the column — written by
+ * the server before the route returned — knows the remedy and no count. The
+ * user needs both halves, so a refetch that is never rendered is a refetch
+ * whose point was discarded.
+ *
+ * TWO OUTCOMES, because the two copies may or may not be about the same event:
+ *
+ *   - Same code → merge. The thrown copy stays the base so its `raw` and its
+ *     `canForce` survive (`lastErrorMessage` sets neither), gaining the
+ *     column's `detail`. `unmergedPersisted` is null: showing the column
+ *     separately would repeat what the merged copy already says.
+ *   - Different code, or no code on either side → NO merge, and the column is
+ *     returned separately for the caller to render alongside. This is the
+ *     commoner case and the one worth caring about: the likeliest failure of a
+ *     multi-minute blocking request is the fetch itself dying (proxy timeout,
+ *     dropped connection), which produces the generic non-`ApiError` sentence
+ *     with no code — while the column holds the real diagnosis the server
+ *     recorded. Suppressing it there would show the user "Something went wrong
+ *     while talking to the server" and bin `remote-quota-exceeded`.
+ *
+ * The trade-off in returning an unmerged column: it may be an OLDER, unrelated
+ * failure rather than this one's. That is the same staleness the caller already
+ * accepts when it renders the column on a link nobody has run this session, so
+ * it adds no risk that was not already taken — and an unrelated real diagnosis
+ * beats a generic one and nothing.
+ *
+ * The gate is code equality, NOT message equality. Message equality is sound
+ * only while all 12 entries stay textually distinct, which nothing enforces; a
+ * copy edit that gave two entries the same prose would silently let a stale
+ * error of code A decorate a fresh failure of code B with A's cause. Requiring
+ * a code on BOTH sides also keeps `undefined === undefined` from reading as a
+ * match between two copies that merely both failed to establish one.
+ *
+ * NOTE ON `apply-error`: a column written by the LOCAL apply hierarchy can
+ * never merge, because `SyncApplyError` carries no code on the wire and so the
+ * thrown copy never has one to match. Such a column reaches the user through
+ * `unmergedPersisted` instead — which is precisely why that half exists.
+ */
+export function combineRunError(
+  thrown: SyncCopy,
+  lastError: string | null | undefined,
+): { copy: SyncCopy; unmergedPersisted: SyncCopy | null } {
+  const persisted = lastErrorMessage(lastError);
+  if (!persisted) return { copy: thrown, unmergedPersisted: null };
+
+  const sameFailure = !!thrown.code && persisted.code === thrown.code;
+  if (!sameFailure) return { copy: thrown, unmergedPersisted: persisted };
+
+  // Same failure: fold the column's detail in, and do not show it twice.
+  return {
+    copy: persisted.detail ? { ...thrown, detail: persisted.detail } : thrown,
+    unmergedPersisted: null,
   };
 }

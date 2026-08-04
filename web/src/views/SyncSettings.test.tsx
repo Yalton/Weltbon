@@ -32,35 +32,7 @@ vi.mock('../api/client', async (importOriginal) => {
 import { api, ApiError } from '../api/client';
 import { SYNC_ERROR_COPY } from '../lib/syncErrorCopy';
 import SyncSettings from './SyncSettings';
-
-type Handler = unknown | Error | ((path: string, init?: RequestInit) => unknown);
-
-/**
- * Route api() calls by `"<METHOD> <path>"`, falling back to bare `<path>`.
- *
- * Which key matched is resolved BEFORE the handler is inspected. The obvious
- * `if (handler === undefined) reject` cannot tell "no route registered" from
- * "a registered route that resolves to undefined", so it rejects every
- * void-returning call — a test that models one gets a failed mutation and a
- * rendered error while appearing to model success. `Object.hasOwn` also beats
- * `in`, which would match inherited Object.prototype members.
- */
-function makeApiDispatcher(routes: Record<string, Handler>) {
-  return vi.fn((path: string, init?: RequestInit) => {
-    const method = init?.method ?? 'GET';
-    const key = `${method} ${path}`;
-    const matched = Object.hasOwn(routes, key) ? key : Object.hasOwn(routes, path) ? path : null;
-    if (matched === null) {
-      return Promise.reject(new Error(`Unhandled api() call: ${key}`));
-    }
-    const handler = routes[matched];
-    if (handler instanceof Error) return Promise.reject(handler);
-    if (typeof handler === 'function') {
-      return Promise.resolve((handler as (p: string, i?: RequestInit) => unknown)(path, init));
-    }
-    return Promise.resolve(handler);
-  });
-}
+import { makeApiDispatcher } from '../test/apiDispatcher';
 
 function makeClient() {
   return new QueryClient({

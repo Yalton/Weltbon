@@ -1,5 +1,11 @@
 import { describe, it, expect } from 'vitest';
-import { syncErrorMessage, lastErrorMessage, SYNC_ERROR_COPY } from './syncErrorCopy';
+import {
+  syncErrorMessage,
+  lastErrorMessage,
+  combineRunError,
+  SYNC_ERROR_COPY,
+  type SyncCopy,
+} from './syncErrorCopy';
 import { ApiError } from '../api/client';
 
 describe('SYNC_ERROR_COPY', () => {
@@ -184,5 +190,169 @@ describe('lastErrorMessage', () => {
 
   it('returns null for no error', () => {
     expect(lastErrorMessage(null)).toBeNull();
+  });
+});
+
+describe('SYNC_ERROR_COPY — message distinctness', () => {
+  it('gives all 12 codes textually distinct prose', () => {
+    // Not cosmetic. `combineRunError` originally decided "same failure?" by
+    // comparing `message` strings, which is correct only while this holds.
+    // Two entries edited to share prose would have let a stale error of one
+    // code silently decorate a fresh failure of the other with the wrong
+    // cause — and every existing test would have stayed green.
+    //
+    // The gate now compares codes, so this no longer guards correctness. It
+    // guards the USER: two failures with different remedies must not read
+    // identically on screen.
+    const messages = Object.values(SYNC_ERROR_COPY).map((c) => c.message);
+    expect(new Set(messages).size).toBe(12);
+  });
+});
+
+describe('SyncCopy.code', () => {
+  it('is set by syncErrorMessage for every known code', () => {
+    for (const code of Object.keys(SYNC_ERROR_COPY)) {
+      const out = syncErrorMessage(new ApiError(409, { error: 'x', code }, 'x'));
+      expect(out.code).toBe(code);
+    }
+  });
+
+  it('is set by lastErrorMessage for every known code', () => {
+    for (const code of Object.keys(SYNC_ERROR_COPY)) {
+      expect(lastErrorMessage(`${code}: some detail`)?.code).toBe(code);
+    }
+  });
+
+  it('is absent wherever no code was established', () => {
+    // Absent must mean "unknown", never "matches another absent" — the whole
+    // reason `combineRunError` requires a code on both sides.
+    expect(syncErrorMessage(new Error('network down')).code).toBeUndefined();
+    expect(syncErrorMessage(new ApiError(400, { error: 'no code here' }, 'no code here')).code)
+      .toBeUndefined();
+    expect(lastErrorMessage('apply-error: CrossUniverseCollisionError')?.code).toBeUndefined();
+    expect(lastErrorMessage('unexpected-error')?.code).toBeUndefined();
+  });
+});
+
+describe('combineRunError', () => {
+  const thrownBlob = () =>
+    syncErrorMessage(
+      new ApiError(
+        409,
+        { error: 'asset bytes unavailable', code: 'blob-unavailable' },
+        'Asset bytes unavailable for 3 content hash(es)',
+      ),
+    );
+
+  it('folds the column detail into a thrown error with the SAME code', () => {
+    const { copy, unmergedPersisted } = combineRunError(
+      thrownBlob(),
+      'blob-unavailable: 3 asset blob(s) unavailable on this instance',
+    );
+
+    expect(copy.detail).toBe('3 asset blob(s) unavailable on this instance');
+    // The thrown copy stays the base: `lastErrorMessage` sets neither of these,
+    // and the count in `raw` is information the column does not carry.
+    expect(copy.raw).toBe('Asset bytes unavailable for 3 content hash(es)');
+    expect(copy.message).toBe(SYNC_ERROR_COPY['blob-unavailable'].message);
+    // Already folded in — showing it again would repeat the same sentence.
+    expect(unmergedPersisted).toBeNull();
+  });
+
+  it('keeps canForce when merging a busy failure', () => {
+    const thrown = syncErrorMessage(new ApiError(409, { error: 'busy', code: 'busy' }, 'busy'));
+    const { copy } = combineRunError(thrown, 'busy: claimed 4 minutes ago');
+
+    // `lastErrorMessage` never sets canForce, so a merge that took the column
+    // as its base would silently remove the "Run anyway" recovery path.
+    expect(copy.canForce).toBe(true);
+    expect(copy.detail).toBe('claimed 4 minutes ago');
+  });
+
+  it('returns the column SEPARATELY when the thrown error has no code', () => {
+    // The likeliest failure of a multi-minute blocking request: the fetch dies
+    // (proxy timeout, dropped connection). The thrown copy is the generic
+    // sentence; the column holds the real diagnosis the server recorded, and
+    // discarding it would leave the user with "something went wrong".
+    const thrown = syncErrorMessage(new Error('Failed to fetch'));
+    const { copy, unmergedPersisted } = combineRunError(
+      thrown,
+      'remote-quota-exceeded: remote reported 0 bytes free',
+    );
+
+    expect(copy).toEqual(thrown);
+    expect(unmergedPersisted?.message).toBe(SYNC_ERROR_COPY['remote-quota-exceeded'].message);
+    expect(unmergedPersisted?.detail).toBe('remote reported 0 bytes free');
+  });
+
+  it('returns the column separately when the two codes DIFFER', () => {
+    const thrown = syncErrorMessage(new ApiError(409, { error: 'busy', code: 'busy' }, 'busy'));
+    const { copy, unmergedPersisted } = combineRunError(
+      thrown,
+      'remote-unreachable: connect ECONNREFUSED 10.0.0.4:3001',
+    );
+
+    // No invented diagnosis: the fresh failure keeps its own copy…
+    expect(copy.detail).toBeUndefined();
+    expect(copy.message).toBe(SYNC_ERROR_COPY.busy.message);
+    // …and the older one is handed back to be shown as its own separate thing.
+    expect(unmergedPersisted?.message).toBe(SYNC_ERROR_COPY['remote-unreachable'].message);
+  });
+
+  it('hands back an apply-error column rather than dropping it', () => {
+    // `SyncApplyError` carries no code on the wire, so an apply-error column
+    // can never merge. This half of the return is how it still reaches a user.
+    const thrown = syncErrorMessage(new Error('Failed to fetch'));
+    const { unmergedPersisted } = combineRunError(
+      thrown,
+      'apply-error: CrossUniverseCollisionError',
+    );
+
+    expect(unmergedPersisted?.detail).toBe('CrossUniverseCollisionError');
+  });
+
+  it('does nothing when the column is empty', () => {
+    const thrown = thrownBlob();
+    expect(combineRunError(thrown, null)).toEqual({ copy: thrown, unmergedPersisted: null });
+    expect(combineRunError(thrown, '')).toEqual({ copy: thrown, unmergedPersisted: null });
+  });
+
+  it('compares CODES, not prose', () => {
+    // The gate has to survive two entries being given the same wording. Today
+    // none share any (the distinctness test above enforces that), so a
+    // message-equality gate is behaviourally identical and no test built from
+    // the real producers can tell the two apart. Hand-building the thrown copy
+    // is the only way to state which rule is actually intended.
+    const thrown: SyncCopy = {
+      message: SYNC_ERROR_COPY['remote-unreachable'].message,
+      code: 'busy',
+    };
+
+    const { copy, unmergedPersisted } = combineRunError(
+      thrown,
+      'remote-unreachable: connect ECONNREFUSED 10.0.0.4:3001',
+    );
+
+    // Same prose, different failure: no merge, and the older one is handed back.
+    expect(copy.detail).toBeUndefined();
+    expect(unmergedPersisted?.detail).toBe('connect ECONNREFUSED 10.0.0.4:3001');
+  });
+
+  it('merges on a matching code even when the prose has diverged', () => {
+    // The mirror image: a copy edit to SYNC_ERROR_COPY must not stop a column
+    // merging with the failure it actually describes.
+    const thrown: SyncCopy = { message: 'Some older wording for busy.', code: 'busy' };
+
+    const { copy, unmergedPersisted } = combineRunError(thrown, 'busy: claimed 4 minutes ago');
+
+    expect(copy.detail).toBe('claimed 4 minutes ago');
+    expect(unmergedPersisted).toBeNull();
+  });
+
+  it('does not invent a detail when the column carries only a code', () => {
+    const { copy, unmergedPersisted } = combineRunError(thrownBlob(), 'blob-unavailable');
+
+    expect(copy.detail).toBeUndefined();
+    expect(unmergedPersisted).toBeNull();
   });
 });
