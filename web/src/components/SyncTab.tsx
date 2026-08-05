@@ -226,7 +226,7 @@ function SyncLinkRow({
 
 export function SyncTab({ universeId }: { universeId: string }) {
   const { data: links, isPending, error: listError } = useSyncLinks(universeId);
-  const { data: remotes, isPending: remotesPending } = useSyncRemotes();
+  const { data: remotes, isPending: remotesPending, error: remotesError } = useSyncRemotes();
   const createLink = useCreateSyncLink(universeId);
   const deleteLink = useDeleteSyncLink(universeId);
   const runLink = useRunSyncLink(universeId);
@@ -286,7 +286,19 @@ export function SyncTab({ universeId }: { universeId: string }) {
         <SyncErrorNotice copy={syncErrorMessage(listError)} testId="sync-links-list-error" />
       )}
 
-      {!isPending && linked.length === 0 && (
+      {/* THE GATE, GENERALLY (also SyncSettings.tsx:120, SyncConflictList.tsx:268).
+          TanStack sets `isPending: false` with `data` left `undefined` on a
+          FAILED FIRST FETCH — there is no list yet, only an error. A branch that
+          infers "empty" from the absence of data, without excluding that state,
+          cannot tell "the server said there are none" from "the server never
+          answered", and prints the former — a confident, false sentence — with
+          no error in sight. Every EMPTY/POSITIVE-STATE branch on this feature
+          must therefore check `!listError` before treating a missing list as a
+          known-empty one. (The positive list render below is gated differently,
+          on the data itself, so a stale-but-real list survives a failed
+          REFETCH instead of vanishing — see the comment there.) Any list added
+          to this surface later needs the same `!listError` check here. */}
+      {!isPending && !listError && linked.length === 0 && (
         <p className="mt-4 text-sm text-ink-secondary">
           This universe is not linked to any remote instance yet.
         </p>
@@ -318,13 +330,21 @@ export function SyncTab({ universeId }: { universeId: string }) {
             positive claims about a list that has not arrived. `remotes` is
             `undefined` mid-fetch, so `remotes.length === 0` is falsy and the
             "already linked" branch would win — telling the user, in a complete
-            sentence, something not yet known to be true. */}
+            sentence, something not yet known to be true.
+
+            THE ERROR BRANCH COMES NEXT, for the same reason: on a failed fetch
+            `remotes` is ALSO `undefined` (see the gate comment above the links
+            list), and without this check "already linked" would win here too —
+            flatly untrue, with the real error never shown and no way to link
+            anything. */}
         {remotesPending ? (
           <div
             className="h-9 animate-pulse rounded-lg bg-white/5"
             aria-busy="true"
             aria-label="Loading sync remotes"
           />
+        ) : remotesError ? (
+          <SyncErrorNotice copy={syncErrorMessage(remotesError)} testId="sync-remotes-list-error" />
         ) : remotes && remotes.length === 0 ? (
           <p className="text-sm text-ink-secondary">
             No sync remotes are saved on this account yet. Add the other instance in{' '}

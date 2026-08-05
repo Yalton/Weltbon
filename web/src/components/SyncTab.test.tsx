@@ -92,18 +92,31 @@ const RESULT = {
 };
 
 const LINKS_PATH = '/sync/links?universeId=u1';
+const CONFLICTS_PATH = '/sync/conflicts?universeId=u1';
 
 /**
- * The two GETs every render makes, plus whatever the test adds.
+ * The three GETs every render makes, plus whatever the test adds.
  *
  * ONE helper rather than a `routes()` object passed to a separate
  * `makeApiDispatcher()`: the two-step form invites
  * `makeApiDispatcher(extra, links)`, whose second argument is silently dropped,
  * leaving every GET "unhandled" and the component rendering a load error
  * instead of the state under test. That mistake was made here once already.
+ *
+ * CONFLICTS_PATH DEFAULTS TO EMPTY, NOT OMITTED. `SyncTab` embeds
+ * `SyncConflictList`, which makes its own GET; leaving it unrouted made
+ * `makeApiDispatcher` reject that call in all 22 tests here, so the embedded
+ * component was exercised only in its error state and never its healthy one.
+ * `extra` can still override this per test to reach the error or loading path
+ * on purpose.
  */
 function dispatch(extra: Record<string, ApiHandler> = {}, links: unknown[] = [LINK]) {
-  return makeApiDispatcher({ '/sync/remotes': [REMOTE], [LINKS_PATH]: links, ...extra });
+  return makeApiDispatcher({
+    '/sync/remotes': [REMOTE],
+    [LINKS_PATH]: links,
+    [CONFLICTS_PATH]: [],
+    ...extra,
+  });
 }
 
 /** A run that never settles, so the in-flight UI stays on screen. */
@@ -157,6 +170,31 @@ describe('SyncTab — the link list', () => {
     renderTab();
 
     expect(await screen.findByText(/not linked/i)).toBeInTheDocument();
+  });
+
+  it('does not claim the universe has no links when the list failed to load', async () => {
+    // On a hard failure `data` is `undefined`, so a `linked.length === 0` gate
+    // that ignores `listError` renders "This universe is not linked to any
+    // remote instance yet" DIRECTLY BENEATH the error notice — an active claim
+    // about a list the client never actually saw. `SyncConflictList` already
+    // stays silent for this exact reason (its own list-error test); this list
+    // must too.
+    const forbidden = new ApiError(403, { error: 'forbidden', code: 'forbidden' }, 'forbidden');
+    vi.mocked(api).mockImplementation(
+      makeApiDispatcher({
+        '/sync/remotes': [REMOTE],
+        [LINKS_PATH]: forbidden,
+        [CONFLICTS_PATH]: [],
+      }),
+    );
+
+    renderTab();
+
+    // Positive precondition: the failure really did render, so the absence
+    // below is not the absence of everything.
+    await screen.findByTestId('sync-links-list-error');
+    // Apostrophe-free, so it can actually match if it is ever rendered.
+    expect(screen.queryByText(/not linked to any remote instance/i)).not.toBeInTheDocument();
   });
 });
 
@@ -330,6 +368,28 @@ describe('SyncTab — linking a remote', () => {
 
     expect(await screen.findByText(/no sync remotes/i)).toBeInTheDocument();
   });
+
+  it('does not claim every remote is linked when the remotes list failed to load', async () => {
+    // On a hard failure `remotes` is `undefined`, so `available.length === 0`
+    // is (vacuously) true and a gate that ignores the error renders "Every
+    // saved remote is already linked to this universe" — a confident, false
+    // sentence, with the real error not shown and no way to link anything.
+    const forbidden = new ApiError(403, { error: 'forbidden', code: 'forbidden' }, 'forbidden');
+    vi.mocked(api).mockImplementation(
+      makeApiDispatcher({
+        '/sync/remotes': forbidden,
+        [LINKS_PATH]: [LINK],
+        [CONFLICTS_PATH]: [],
+      }),
+    );
+
+    renderTab();
+
+    // Positive precondition: the failure really did render.
+    await screen.findByTestId('sync-remotes-list-error');
+    // Apostrophe-free, so it can actually match if it is ever rendered.
+    expect(screen.queryByText(/already linked to this universe/i)).not.toBeInTheDocument();
+  });
 });
 
 describe('SyncTab — the persisted lastError reaches the user after a failure', () => {
@@ -366,6 +426,7 @@ describe('SyncTab — the persisted lastError reaches the user after a failure',
                 },
               ];
         },
+        [CONFLICTS_PATH]: [],
         'POST /sync/links/l1/run': thrown,
       }),
     );
@@ -394,6 +455,7 @@ describe('SyncTab — the persisted lastError reaches the user after a failure',
         [LINKS_PATH]: [
           { ...LINK, lastError: 'remote-unreachable: connect ECONNREFUSED 10.0.0.4:3001' },
         ],
+        [CONFLICTS_PATH]: [],
         'POST /sync/links/l1/run': busy,
       }),
     );
@@ -476,6 +538,7 @@ describe('SyncTab — F-06, the first-sync warning is captured at run start', ()
             ? [A, B]
             : [{ ...A, lastSyncedAt: '2026-08-04T00:00:00.000Z' }, B];
         },
+        [CONFLICTS_PATH]: [],
         'POST /sync/links/la/run': hangingRun,
         'POST /sync/links/lb/run': { ...RESULT, linkId: 'lb' },
       }),
@@ -509,6 +572,7 @@ describe('SyncTab — the remote list while it is still loading', () => {
       makeApiDispatcher({
         '/sync/remotes': () => new Promise(() => {}),
         [LINKS_PATH]: [LINK],
+        [CONFLICTS_PATH]: [],
       }),
     );
 
@@ -548,6 +612,7 @@ describe('SyncTab — a failure the run response cannot explain', () => {
                 },
               ];
         },
+        [CONFLICTS_PATH]: [],
         'POST /sync/links/l1/run': new TypeError('Failed to fetch'),
       }),
     );
@@ -579,6 +644,7 @@ describe('SyncTab — a failure the run response cannot explain', () => {
         [LINKS_PATH]: [
           { ...LINK, lastError: 'blob-unavailable: 3 asset blob(s) unavailable on this instance' },
         ],
+        [CONFLICTS_PATH]: [],
         'POST /sync/links/l1/run': thrown,
       }),
     );
@@ -609,6 +675,7 @@ describe('SyncTab — removing a link', () => {
           listCall += 1;
           return listCall === 1 ? [LINK] : [];
         },
+        [CONFLICTS_PATH]: [],
         'DELETE /sync/links/l1': { deleted: true },
       }),
     );
@@ -640,6 +707,7 @@ describe('SyncTab — removing a link', () => {
       makeApiDispatcher({
         '/sync/remotes': [REMOTE],
         [LINKS_PATH]: [LINK],
+        [CONFLICTS_PATH]: [],
         'DELETE /sync/links/l1': denied,
       }),
     );
@@ -670,6 +738,7 @@ describe('SyncTab — removing a link', () => {
           listCall += 1;
           return listCall === 1 ? [A, B] : [A];
         },
+        [CONFLICTS_PATH]: [],
         'POST /sync/links/la/run': hangingRun,
         'DELETE /sync/links/lb': { deleted: true },
       }),
@@ -686,5 +755,38 @@ describe('SyncTab — removing a link', () => {
     // A's run is still in flight and still says so.
     expect(screen.getByTestId('sync-link-elapsed-la')).toBeInTheDocument();
     expect(screen.getByText(/can take several minutes/i)).toBeInTheDocument();
+  });
+});
+
+describe('SyncTab — the embedded conflict list', () => {
+  it('routes /sync/conflicts so the embedded list renders healthy, not its error state', async () => {
+    // Before CONFLICTS_PATH existed, every dispatcher call in this file left
+    // `/sync/conflicts` unrouted, which `makeApiDispatcher` rejects — so the
+    // embedded `SyncConflictList` was in its error state in all 22 tests here,
+    // and the composition was never exercised in its ordinary, healthy state.
+    vi.mocked(api).mockImplementation(dispatch());
+
+    renderTab();
+
+    expect(await screen.findByTestId('sync-conflicts-empty')).toBeInTheDocument();
+    expect(screen.queryByTestId('sync-conflicts-list-error')).not.toBeInTheDocument();
+  });
+
+  it('renders a real conflict row when the route returns one', async () => {
+    const conflict = {
+      id: 'c1',
+      universeId: 'u1',
+      tableName: 'entries',
+      rowId: 'e1',
+      winner: 'local',
+      loserPayload: { name: 'Replaced name' },
+      resolvedAt: null as string | null,
+      createdAt: '2026-08-01T00:00:00.000Z',
+    };
+    vi.mocked(api).mockImplementation(dispatch({ [CONFLICTS_PATH]: [conflict] }));
+
+    renderTab();
+
+    expect(await screen.findByTestId('sync-conflict-row-c1')).toBeInTheDocument();
   });
 });

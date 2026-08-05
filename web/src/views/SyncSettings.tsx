@@ -278,7 +278,16 @@ export default function SyncSettings() {
         cancelLabel="Cancel"
         destructive
         onConfirm={async () => {
-          if (!deleteTarget) return;
+          // `isPending` guards a double confirm: ConfirmDialog only closes
+          // AFTER onConfirm resolves, so its button stays live for the whole
+          // request, and a second click would fire a second DELETE. This
+          // delete cascades to every link that used this remote, across every
+          // universe on the account (schema.ts:775, `onDelete: 'cascade'`) —
+          // the most destructive action this surface offers — so the request
+          // it could double-fire is a 404 reporting failure for a removal
+          // that already succeeded on data whose blast radius is already
+          // large. Mirrors SyncTab.tsx's remove-link guard.
+          if (!deleteTarget || deleteRemote.isPending) return;
           const id = deleteTarget.id;
           setDeleteError(null);
           try {

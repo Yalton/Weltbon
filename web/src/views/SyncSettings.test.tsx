@@ -554,6 +554,41 @@ describe('SyncSettings — delete', () => {
     expect(screen.queryByTestId('sync-remotes-delete-error')).toBeNull();
   });
 
+  it('does not fire a second DELETE if Delete remote is clicked again before the first resolves', async () => {
+    // ConfirmDialog only closes AFTER onConfirm resolves (ConfirmDialog.tsx:
+    // 45-48), so with no guard its button stays live for the whole request and
+    // a second click fires a second DELETE — whose 404 would report a failure
+    // for a deletion that already succeeded. This is the MORE destructive of
+    // the two delete actions in this feature (it cascades to every universe's
+    // links, not just one), and was the one shipped without the guard its
+    // sibling in SyncTab.tsx already had.
+    let deleteCalls = 0;
+    vi.mocked(api).mockImplementation(
+      makeApiDispatcher({
+        '/sync/remotes': [REMOTE],
+        // Hangs deliberately: `deleteRemote.isPending` must still read `true`
+        // for the second click, which requires the mutation to still be in
+        // flight rather than settled by then.
+        'DELETE /sync/remotes/r1': () => {
+          deleteCalls += 1;
+          return new Promise(() => {});
+        },
+      }),
+    );
+
+    renderView();
+    await screen.findByText('Laptop');
+
+    await userEvent.click(screen.getByRole('button', { name: /^Delete Laptop$/i }));
+    const dialog = await screen.findByRole('dialog');
+    const confirmButton = within(dialog).getByRole('button', { name: /Delete remote/i });
+
+    await userEvent.click(confirmButton);
+    await userEvent.click(confirmButton);
+
+    expect(deleteCalls).toBe(1);
+  });
+
   it('surfaces syncErrorMessage copy when the DELETE fails', async () => {
     vi.mocked(api).mockImplementation(
       makeApiDispatcher({
