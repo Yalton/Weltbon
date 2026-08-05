@@ -16,7 +16,13 @@ TestUniverse/
 
 # Playwright E2E
 web/e2e/seed.json
+# Plan F Task 5 — the two-instance sync suite's own seed, and the screenshots it
+# takes at each step (a few MB per run, regenerated on every run).
+web/e2e/sync-seed.json
+web/e2e/screenshots/
 web/test-results/
 web/playwright-report/
 web/playwright/.cache/
 
+# Instance A of the sync dev rig stores uploaded assets here (UPLOADS_DIR).
+.uploads-dev-*
