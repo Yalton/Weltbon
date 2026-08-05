@@ -2,8 +2,8 @@
  * SettingsLayout tests — Plan 09-03 must_haves truth #4.
  *
  * Asserts UI-SPEC §4.3 + §4.5 contract:
- * - <nav aria-label="Settings sections"> with six NavLinks ("Visual",
- *   "API tokens", "Invite codes", "Templates", "Shares", "LLM keys")
+ * - <nav aria-label="Settings sections"> with seven NavLinks ("Visual",
+ *   "API tokens", "Invite codes", "Templates", "Shares", "LLM keys", "Sync")
  * - Active state classes on the link matching the current route
  * - Container uses flex-col md:flex-row (mobile stacks above content; md: row)
  * - <Outlet /> renders nested route children
@@ -28,6 +28,7 @@ function renderAt(path: string) {
           <Route path="templates" element={<div data-testid="templates-child">TEMPLATES_CHILD</div>} />
           <Route path="shares" element={<div data-testid="shares-child">SHARES_CHILD</div>} />
           <Route path="llm" element={<div data-testid="llm-child">LLM_CHILD</div>} />
+          <Route path="sync" element={<div data-testid="sync-child">SYNC_CHILD</div>} />
         </Route>
       </Routes>
     </MemoryRouter>,
@@ -42,7 +43,7 @@ describe('SettingsLayout', () => {
     expect(nav.tagName).toBe('NAV');
   });
 
-  it('renders six NavLinks: "Visual", "API tokens", "Invite codes", "Templates", "Shares", "LLM keys"', () => {
+  it('renders seven NavLinks: "Visual", "API tokens", "Invite codes", "Templates", "Shares", "LLM keys", "Sync"', () => {
     renderAt('/settings');
     const visual = screen.getByRole('link', { name: 'Visual' });
     const apiTokens = screen.getByRole('link', { name: 'API tokens' });
@@ -50,6 +51,8 @@ describe('SettingsLayout', () => {
     const templates = screen.getByRole('link', { name: 'Templates' });
     const shares = screen.getByRole('link', { name: 'Shares' });
     const llmKeys = screen.getByRole('link', { name: 'LLM keys' });
+    // Plan F Task 2 — account-scoped sync remotes.
+    const sync = screen.getByRole('link', { name: 'Sync' });
 
     expect(visual.getAttribute('href')).toBe('/settings');
     expect(apiTokens.getAttribute('href')).toBe('/settings/tokens');
@@ -57,9 +60,10 @@ describe('SettingsLayout', () => {
     expect(templates.getAttribute('href')).toBe('/settings/templates');
     expect(shares.getAttribute('href')).toBe('/settings/shares');
     expect(llmKeys.getAttribute('href')).toBe('/settings/llm');
+    expect(sync.getAttribute('href')).toBe('/settings/sync');
 
     const nav = screen.getByRole('navigation', { name: 'Settings sections' });
-    expect(nav.querySelectorAll('a').length).toBe(6);
+    expect(nav.querySelectorAll('a').length).toBe(7);
   });
 
   it('applies active classes to the "Visual" link when route is /settings', () => {
@@ -184,6 +188,27 @@ describe('SettingsLayout', () => {
     expect(inviteCodes.getAttribute('class') ?? '').not.toContain('bg-[color:var(--color-accent)]/10');
     const shares = screen.getByRole('link', { name: 'Shares' });
     expect(shares.getAttribute('class') ?? '').not.toContain('bg-[color:var(--color-accent)]/10');
+  });
+
+  it('applies active classes to "Sync" link when route is /settings/sync', () => {
+    renderAt('/settings/sync');
+    const sync = screen.getByRole('link', { name: 'Sync' });
+    const cls = sync.getAttribute('class') ?? '';
+    expect(cls).toContain('bg-[color:var(--color-accent)]/10');
+    expect(cls).toContain('text-[color:var(--color-accent)]');
+    expect(cls).toContain('font-medium');
+    // The other links must NOT carry the active classes.
+    const visual = screen.getByRole('link', { name: 'Visual' });
+    expect(visual.getAttribute('class') ?? '').not.toContain('bg-[color:var(--color-accent)]/10');
+    const llmKeys = screen.getByRole('link', { name: 'LLM keys' });
+    expect(llmKeys.getAttribute('class') ?? '').not.toContain('bg-[color:var(--color-accent)]/10');
+  });
+
+  it('renders Outlet with the nested /sync route child', () => {
+    renderAt('/settings/sync');
+    expect(screen.getByTestId('sync-child')).toBeInTheDocument();
+    expect(screen.queryByTestId('index-child')).not.toBeInTheDocument();
+    expect(screen.queryByTestId('llm-child')).not.toBeInTheDocument();
   });
 
   it('renders Outlet with the nested /llm route child', () => {

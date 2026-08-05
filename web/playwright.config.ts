@@ -29,6 +29,11 @@ const CHROMIUM = process.env.PLAYWRIGHT_CHROMIUM_PATH || '/usr/bin/chromium';
 
 export default defineConfig({
   testDir: './e2e',
+  // The Plan F sync suite lives in the same directory but targets a completely
+  // different topology (the two-instance dev rig: Vite on :5173 + a peer on
+  // :3001) and has its own global setup. It runs from playwright.sync.config.ts;
+  // without this it would be swept up here and run against the wrong stack.
+  testIgnore: 'sync.spec.ts',
   globalSetup: './e2e/global-setup.ts',
   globalTeardown: './e2e/global-teardown.ts',
   // Seeding + the single shared universe mean tests must not race each other.

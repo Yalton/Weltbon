@@ -7,6 +7,7 @@ import { ThemeSection } from '../components/ThemeSection';
 import { FieldRegistrySection } from '../components/FieldRegistrySection';
 import { ShareLinksSection } from '../components/ShareLinksSection';
 import { SettingsTabBar } from '../components/SettingsTabBar';
+import { SyncTab } from '../components/SyncTab';
 import { Toggle } from '../components/Toggle';
 import { AuditHistoryTable } from '../components/AuditHistoryTable';
 import { useLlmKeys } from '../hooks/useLlmKeys';
@@ -50,6 +51,14 @@ const TABS = [
   { id: 'share-links', label: 'Share Links' },
   { id: 'ai-auditor', label: 'AI Gap Auditor' },
   { id: 'audit-history', label: 'Audit history' },
+  // Plan F F-01 — Sync tab: this universe's links to remote instances, plus
+  // its conflicts. Both tables are universe-scoped; the account-scoped remotes
+  // they point at are managed at /settings/sync instead.
+  //
+  // Registering the id here is load-bearing, not cosmetic: `safeTab` below
+  // falls back to `general` for any value TABS does not know, so a deep link to
+  // `?tab=sync` would silently land on General.
+  { id: 'sync', label: 'Sync' },
 ];
 
 export function UniverseSettings() {
@@ -382,6 +391,12 @@ export function UniverseSettings() {
             <AuditHistoryTable universeId={id!} />
           </div>
         )}
+
+        {/* ─── Sync tab ────────────────────────────────────────────── */}
+        {/* Plan F Task 3 — links, runs and (Task 4) conflicts for THIS
+            universe. Gated on `id` like the Share Links tab: the hooks inside
+            key their queries and their invalidations by universe id. */}
+        {safeTab === 'sync' && id && <SyncTab universeId={id} />}
       </div>
 
       <ConfirmDialog

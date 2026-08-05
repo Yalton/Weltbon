@@ -20,6 +20,7 @@ import {
   useReorderCategories,
   type Category,
 } from '../hooks/useCategories';
+import { useSyncConflictCount } from '../hooks/useSyncConflicts';
 import { CategorySidebarItem } from './CategorySidebarItem';
 import { CategoryManageDialog } from './CategoryManageDialog';
 import { ConfirmDialog } from './ConfirmDialog';
@@ -54,9 +55,23 @@ const NAV_ICONS: Record<string, React.ReactNode> = {
   Media: <NavIcon d="M2 3h12v10H2zM2 10l3.5-3 4 4M10 8.5L14 5.5M6 6a1 1 0 1 0 0-2 1 1 0 0 0 0 2z" />,
   Dictionary: <NavIcon d="M4 2h8a1 1 0 0 1 1 1v10a1 1 0 0 1-1 1H4a1 1 0 0 1-1-1V3a1 1 0 0 1 1-1zM3 11h10M6 5h4" />,
   Issues: <NavIcon d="M4 2v12M4 3h8l-1.5 2.5L12 8H4" />,
+  Sync: <NavIcon d="M13 7a5 5 0 0 0-9-2.5M3 9a5 5 0 0 0 9 2.5M3 2v3h3M13 14v-3h-3" />,
 };
 
-function SidebarNavLink({ to, children }: { to: string; children: React.ReactNode }) {
+function SidebarNavLink({
+  to,
+  children,
+  badge,
+}: {
+  to: string;
+  children: React.ReactNode;
+  /**
+   * Rendered ONLY above zero. See `Sidebar`'s F-07 comment: a badge is read as
+   * authoritative, so "no badge" has to mean "nothing to say", never "nothing
+   * is known yet".
+   */
+  badge?: number;
+}) {
   return (
     <NavLink
       to={to}
@@ -72,12 +87,37 @@ function SidebarNavLink({ to, children }: { to: string; children: React.ReactNod
     >
       {NAV_ICONS[typeof children === 'string' ? children : ''] ?? null}
       {children}
+      {badge !== undefined && badge > 0 && (
+        <span
+          data-testid="sidebar-sync-badge"
+          className="ml-auto min-w-5 rounded-full bg-rose-500/20 px-1.5 py-0.5 text-center text-[10px] font-medium tabular-nums text-rose-300"
+        >
+          {badge}
+          <span className="sr-only"> unresolved sync conflicts</span>
+        </span>
+      )}
     </NavLink>
   );
 }
 
+/**
+ * F-07 — the sync-conflict badge is CURRENT-UNIVERSE ONLY.
+ *
+ * `useSyncConflictCount` reads the same query key as the Sync tab's list, for
+ * the universe already on screen, so the two can never disagree. It returns 0
+ * while loading and 0 on error, and the badge renders only above zero — a badge
+ * is read as authoritative, so a wrong number is worse than no number, and
+ * silence is the right failure mode rather than a confident "no conflicts".
+ *
+ * THE LIMIT, STATED PLAINLY: this cannot surface conflicts in a universe the
+ * user has not opened. Fixing that would need an account-wide count endpoint,
+ * which does not exist and which Plan F does not add (Plan F changes nothing
+ * under api/). No copy anywhere implies otherwise — the Sync tab's own list
+ * says "this universe only" for the same reason.
+ */
 export function Sidebar({ universeId }: { universeId: string }) {
   const { data, isLoading, error } = useCategories(universeId);
+  const conflictCount = useSyncConflictCount(universeId);
   const [collapsed, setCollapsed] = useState<Record<string, boolean>>({});
 
   const [dialogOpen, setDialogOpen] = useState(false);
@@ -137,6 +177,9 @@ export function Sidebar({ universeId }: { universeId: string }) {
         <SidebarNavLink to={`/universes/${universeId}/assets`}>Media</SidebarNavLink>
         <SidebarNavLink to={`/universes/${universeId}/dictionary`}>Dictionary</SidebarNavLink>
         <SidebarNavLink to={`/universes/${universeId}/issues`}>Issues</SidebarNavLink>
+        <SidebarNavLink to={`/universes/${universeId}/settings?tab=sync`} badge={conflictCount}>
+          Sync
+        </SidebarNavLink>
       </div>
 
       <div className="mt-4 px-3">

@@ -9,6 +9,7 @@
     "preview": "vite preview",
     "test": "vitest",
     "test:e2e": "playwright test",
+    "test:e2e:sync": "playwright test -c playwright.sync.config.ts",
     "test:e2e:ui": "playwright test --ui"
   },
   "dependencies": {

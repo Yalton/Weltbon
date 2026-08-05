@@ -11,6 +11,7 @@ vi.mock('../api/client', () => ({
 }));
 import { api } from '../api/client';
 import { Sidebar } from './Sidebar';
+import { makeApiDispatcher, type ApiHandler } from '../test/apiDispatcher';
 
 function renderSidebar(universeId = 'U1') {
   const qc = new QueryClient({
@@ -173,6 +174,106 @@ describe('Sidebar', () => {
     // Menu items from Radix DropdownMenu render as menuitems
     expect(await screen.findByRole('menuitem', { name: /rename/i })).toBeInTheDocument();
     expect(screen.getByRole('menuitem', { name: /delete/i })).toBeInTheDocument();
+  });
+});
+
+/**
+ * Plan F (F-07) — the current-universe sync-conflict badge.
+ *
+ * SCOPE, STATED HONESTLY. This badge counts conflicts in the universe already
+ * on screen and nothing else. It cannot surface conflicts in a universe the
+ * user has not opened; that is a known, accepted limit of putting the count
+ * here, and the copy must not imply otherwise.
+ *
+ * A BADGE IS READ AS AUTHORITATIVE, so a wrong number is worse than no number.
+ * It renders only above zero, and the count is 0 while loading and 0 on error —
+ * silence, never a confident "no conflicts".
+ */
+describe('Sidebar sync conflict badge (F-07)', () => {
+  const CATEGORIES = { categories: [], uncategorizedCount: 0 };
+
+  function conflict(id: string, createdAt: string) {
+    return {
+      id,
+      universeId: 'UA',
+      tableName: 'entries',
+      rowId: `e-${id}`,
+      winner: 'remote',
+      loserPayload: { id: `e-${id}` },
+      resolvedAt: null,
+      createdAt,
+    };
+  }
+
+  function routes(conflicts: ApiHandler) {
+    return makeApiDispatcher({
+      '/universes/UA/categories': CATEGORIES,
+      '/sync/conflicts?universeId=UA': conflicts,
+    });
+  }
+
+  beforeEach(() => {
+    vi.mocked(api).mockReset();
+  });
+
+  it('links to the universe’s Sync tab', async () => {
+    vi.mocked(api).mockImplementation(routes([]));
+
+    renderSidebar('UA');
+
+    const link = await screen.findByRole('link', { name: /sync/i });
+    expect(link).toHaveAttribute('href', '/universes/UA/settings?tab=sync');
+  });
+
+  it('renders no badge when there are no unresolved conflicts', async () => {
+    vi.mocked(api).mockImplementation(routes([]));
+
+    renderSidebar('UA');
+
+    // Positive precondition: the Sync item itself IS on screen, so the missing
+    // badge below is a real absence rather than an unrendered component.
+    await screen.findByRole('link', { name: /sync/i });
+    expect(screen.queryByTestId('sidebar-sync-badge')).toBeNull();
+  });
+
+  it('renders the count when there are unresolved conflicts', async () => {
+    // TWO rows, deliberately: a one-row fixture passes identically against a
+    // badge that renders the constant 1.
+    vi.mocked(api).mockImplementation(
+      routes([conflict('c1', '2026-08-04T12:00:00.000Z'), conflict('c2', '2026-08-02T09:00:00.000Z')]),
+    );
+
+    renderSidebar('UA');
+
+    const badge = await screen.findByTestId('sidebar-sync-badge');
+    expect(badge).toHaveTextContent('2');
+  });
+
+  it('renders no badge while the conflicts query is loading', async () => {
+    let resolveFn: (value: unknown) => void = () => {};
+    vi.mocked(api).mockImplementation(
+      routes(() => new Promise((res) => { resolveFn = res; })),
+    );
+
+    renderSidebar('UA');
+
+    await screen.findByRole('link', { name: /sync/i });
+    expect(screen.queryByTestId('sidebar-sync-badge')).toBeNull();
+
+    // Do not leak the pending promise between tests.
+    resolveFn([]);
+  });
+
+  it('renders no badge when the conflicts query errors', async () => {
+    vi.mocked(api).mockImplementation(routes(new Error('boom')));
+
+    renderSidebar('UA');
+
+    // The categories half rendered, so the sidebar is genuinely on screen and
+    // the absence below is not the absence of everything.
+    await screen.findByRole('link', { name: /sync/i });
+    await waitFor(() => expect(api).toHaveBeenCalledWith('/sync/conflicts?universeId=UA'));
+    expect(screen.queryByTestId('sidebar-sync-badge')).toBeNull();
   });
 });
 
