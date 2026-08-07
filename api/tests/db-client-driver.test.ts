@@ -2,6 +2,8 @@ import { describe, it, expect, afterEach, beforeEach, vi } from 'vitest';
 import { mkdtemp, rm, readdir } from 'node:fs/promises';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
+import { eq } from 'drizzle-orm';
+import { users } from '../src/db/schema.js';
 
 /**
  * The seam itself (DV-04/DV-05/DV-08). These tests exercise the REAL pglite
@@ -136,11 +138,31 @@ describe('db/client driver seam', () => {
 
     vi.resetModules();
     // @ts-expect-error - see the seam-1 note above.
+    const { runMigrations } = await import('../src/db/migrate.js?seam-6');
+    // @ts-expect-error - see the seam-1 note above.
     const { initDb, closeDb } = await import('../src/db/client.js?seam-6');
     const first = await initDb();
+    await runMigrations(first);
+
+    // Persistence-through-the-seam as a real regression test, not just a
+    // manual boot procedure (Task 4): write a row through the FIRST handle,
+    // close, reopen over the same dir, and read it back through the SECOND
+    // handle.
+    const email = 'seam-persist@example.com';
+    await first.insert(users).values({
+      email,
+      passwordHash: 'x'.repeat(60),
+      displayName: 'Seam Persist',
+    });
+
     await closeDb();
     const second = await initDb();
     expect(second).not.toBe(first);
+
+    const found = await second.query.users.findFirst({ where: eq(users.email, email) });
+    expect(found).toBeDefined();
+    expect(found?.displayName).toBe('Seam Persist');
+
     await closeDb();
   });
 

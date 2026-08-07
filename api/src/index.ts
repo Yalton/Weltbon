@@ -263,8 +263,13 @@ if (import.meta.url === `file://${process.argv[1]}`) {
     );
   }
   // DV-04: PGlite is constructed asynchronously, so the handle must exist
-  // before ANY db() call below. On the postgres driver this is a no-op beyond
-  // building the pool eagerly instead of on first use.
+  // before ANY db() call below. On the postgres driver this is a no-op that
+  // moves pool construction LATER, not earlier: on master, client.ts built
+  // the pool at module load time (`const defaultPool = new pg.Pool(...)`);
+  // this branch moves construction into this boot block instead, so on
+  // Postgres `initDb()` makes it happen here rather than at import time.
+  // Still harmless either way — constructing a pg.Pool does no I/O, and this
+  // call is before serve() regardless.
   await initDb();
   await seedInviteCode(db());
   await assertLlmKeyEncryptionKey({ db: db(), cfg });

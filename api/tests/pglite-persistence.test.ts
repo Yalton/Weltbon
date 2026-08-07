@@ -17,6 +17,16 @@ import { users } from '../src/db/schema.js';
  * that reuses one handle — or that points the second handle at a fresh temp dir —
  * passes with persistence completely broken. Both mutations are exercised
  * explicitly in the plan's verification steps.
+ *
+ * Both of those mutations die at the SCHEMA layer (`relation "users" does not
+ * exist`), before the row assertions below ever run — which on its own leaves
+ * it unclear whether `expect(found).toBeDefined()` is load-bearing or just
+ * decorative on top of the migration check. A third mutation, verified during
+ * review, isolates it: delete the inserted row (`DELETE FROM users WHERE
+ * email = ...`) before `c1.close()`. The schema still persists (migrations
+ * did run, tables still exist), but the row does not — the test fails at
+ * `expect(found).toBeDefined()` with "expected undefined to be defined".
+ * That is the row assertion catching a failure the schema check cannot.
  */
 describe('PGlite persistence across close and reopen', () => {
   let dir: string;

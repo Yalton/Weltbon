@@ -1,3 +1,4 @@
+import { pathToFileURL } from 'node:url';
 import { env } from '../config.js';
 import { initDb, closeDb, type AppDatabase } from './client.js';
 
@@ -28,8 +29,13 @@ async function main() {
 }
 
 // Only run when executed directly, so importing this module in a test does not
-// migrate and exit the process.
-if (import.meta.url === `file://${process.argv[1]}`) {
+// migrate and exit the process. Uses pathToFileURL rather than a bare
+// `file://${...}` template — the naive string comparison mismatches on paths
+// with spaces, non-ASCII characters, or `%`, which would silently skip
+// main() and exit 0. That looks like success to `set -e` in
+// docker-entrypoint.sh, starting the API against an unmigrated database with
+// a green healthcheck.
+if (import.meta.url === pathToFileURL(process.argv[1]).href) {
   main().catch((err) => {
     console.error('Migration failed:', err);
     process.exit(1);
