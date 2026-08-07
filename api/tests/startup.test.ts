@@ -155,4 +155,59 @@ describe('startup config guard (OPS-04 / AUTH-05a / AUTH-05b)', () => {
     expect(result.auditMaxTokensTotal).toBe(200_000);
     expect(result.auditShutdownGraceMs).toBe(15_000);
   });
+
+  // ── DV-03: driver selection ────────────────────────────────────────────────
+
+  it('defaults to the postgres driver when WELTBON_DB_DRIVER is unset', () => {
+    const env = loadEnv({
+      JWT_SECRET: 'a'.repeat(32),
+      DATABASE_URL: 'postgresql://localhost/x',
+    } as NodeJS.ProcessEnv);
+    expect(env.dbDriver).toBe('postgres');
+    expect(env.dataDir).toBeUndefined();
+  });
+
+  it('rejects an unknown WELTBON_DB_DRIVER', () => {
+    expect(() =>
+      loadEnv({
+        JWT_SECRET: 'a'.repeat(32),
+        DATABASE_URL: 'postgresql://localhost/x',
+        WELTBON_DB_DRIVER: 'sqlite',
+      } as NodeJS.ProcessEnv)
+    ).toThrow(/WELTBON_DB_DRIVER must be "postgres" or "pglite"/);
+  });
+
+  it('requires WELTBON_DATA_DIR when the driver is pglite', () => {
+    expect(() =>
+      loadEnv({
+        JWT_SECRET: 'a'.repeat(32),
+        WELTBON_DB_DRIVER: 'pglite',
+      } as NodeJS.ProcessEnv)
+    ).toThrow(/WELTBON_DATA_DIR must be set/);
+  });
+
+  it('does NOT require DATABASE_URL when the driver is pglite', () => {
+    const env = loadEnv({
+      JWT_SECRET: 'a'.repeat(32),
+      WELTBON_DB_DRIVER: 'pglite',
+      WELTBON_DATA_DIR: '/tmp/weltbon-data',
+    } as NodeJS.ProcessEnv);
+    expect(env.dbDriver).toBe('pglite');
+    expect(env.dataDir).toBe('/tmp/weltbon-data');
+    expect(env.databaseUrl).toBeUndefined();
+  });
+
+  it('still rejects a malformed DATABASE_URL under the pglite driver when one IS given', () => {
+    // The scheme check must not become dead code just because the driver
+    // changed: a stray DATABASE_URL should still be caught, not silently
+    // ignored, or a mis-set var goes unnoticed on a desktop install.
+    expect(() =>
+      loadEnv({
+        JWT_SECRET: 'a'.repeat(32),
+        WELTBON_DB_DRIVER: 'pglite',
+        WELTBON_DATA_DIR: '/tmp/weltbon-data',
+        DATABASE_URL: 'mysql://localhost/x',
+      } as NodeJS.ProcessEnv)
+    ).toThrow(/postgresql:\/\/ or postgres:\/\//);
+  });
 });

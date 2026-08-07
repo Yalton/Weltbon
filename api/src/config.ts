@@ -1,7 +1,13 @@
 // api/src/config.ts
+export type DbDriver = 'postgres' | 'pglite';
+
 export interface Env {
   jwtSecret: Uint8Array;
-  databaseUrl: string;
+  dbDriver: DbDriver;
+  /** Undefined when dbDriver === 'pglite'. */
+  databaseUrl: string | undefined;
+  /** The PGlite data directory. Required when dbDriver === 'pglite', else undefined. */
+  dataDir: string | undefined;
   chromiumPath: string | undefined;
   publicOrigin: string | undefined;
   port: number;
@@ -16,7 +22,6 @@ export interface Env {
 
 export function loadEnv(source: NodeJS.ProcessEnv = process.env): Env {
   const jwt = source.JWT_SECRET;
-  const db = source.DATABASE_URL;
 
   if (!jwt) {
     throw new Error(
@@ -28,14 +33,39 @@ export function loadEnv(source: NodeJS.ProcessEnv = process.env): Env {
       `JWT_SECRET must be at least 32 characters (got ${jwt.length}). Generate one with: openssl rand -hex 32`
     );
   }
-  if (!db) {
+
+  // ── DV-03: which database engine backs this process ────────────────────────
+  // Default 'postgres' is load-bearing: the Docker stack, CI, the sync rig and
+  // the temp prod all omit this variable and must keep the pre-DV-03 behaviour.
+  const rawDriver = source.WELTBON_DB_DRIVER ?? 'postgres';
+  if (rawDriver !== 'postgres' && rawDriver !== 'pglite') {
+    throw new Error(
+      `WELTBON_DB_DRIVER must be "postgres" or "pglite" (got "${rawDriver}").`
+    );
+  }
+  const dbDriver: DbDriver = rawDriver;
+
+  const db = source.DATABASE_URL;
+  const dataDir = source.WELTBON_DATA_DIR;
+
+  if (dbDriver === 'postgres' && !db) {
     throw new Error('DATABASE_URL must be set (expected postgresql:// URL).');
   }
-  if (!db.startsWith('postgresql://') && !db.startsWith('postgres://')) {
+  if (dbDriver === 'pglite' && !dataDir) {
+    throw new Error(
+      'WELTBON_DATA_DIR must be set when WELTBON_DB_DRIVER=pglite ' +
+      '(the directory PGlite stores its data in).'
+    );
+  }
+  // Validate the URL's shape whenever one is present, regardless of driver. A
+  // stray or mistyped DATABASE_URL on a pglite install should be reported, not
+  // silently ignored.
+  if (db && !db.startsWith('postgresql://') && !db.startsWith('postgres://')) {
     throw new Error(
       `DATABASE_URL must start with postgresql:// or postgres:// (got: ${db.slice(0, 20)}...)`
     );
   }
+
   const publicOrigin = source.WELTBON_PUBLIC_ORIGIN;
   if (publicOrigin !== undefined && !publicOrigin.startsWith('http://') && !publicOrigin.startsWith('https://')) {
     throw new Error(
@@ -88,7 +118,9 @@ export function loadEnv(source: NodeJS.ProcessEnv = process.env): Env {
 
   return {
     jwtSecret: new TextEncoder().encode(jwt),
+    dbDriver,
     databaseUrl: db,
+    dataDir,
     chromiumPath: source.CHROMIUM_PATH,
     publicOrigin,
     port: Number(source.PORT ?? 3000),
