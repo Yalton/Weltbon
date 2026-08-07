@@ -1,5 +1,5 @@
 import { describe, it, expect, afterEach, beforeEach, vi } from 'vitest';
-import { mkdtemp, rm } from 'node:fs/promises';
+import { mkdtemp, rm, readdir } from 'node:fs/promises';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 
@@ -52,6 +52,10 @@ describe('db/client driver seam', () => {
     expect(handle).toBeDefined();
     // Same instance is handed back by db() — no second engine.
     expect(db()).toBe(handle);
+    // "backed by the data dir" made literal: PGlite must have actually
+    // written into cfg.dataDir, not e.g. silently fallen back to in-memory.
+    const entries = await readdir(dir);
+    expect(entries.length).toBeGreaterThan(0);
     await closeDb();
   });
 
@@ -99,6 +103,74 @@ describe('db/client driver seam', () => {
     vi.resetModules();
     // @ts-expect-error - see the seam-1 note above.
     const { db } = await import('../src/db/client.js?seam-4');
-    expect(() => db()).not.toThrow();
+    const handle = db();
+    expect(() => handle).not.toThrow();
+    // not.toThrow() alone survives a mutant that passes a wrong or undefined
+    // connectionString to `new pg.Pool` — assert the resolved value directly,
+    // closing the postgres half of the silent-wrong-database class. $client
+    // is drizzle-orm/node-postgres's documented escape hatch to the pg.Pool.
+    const client = (handle as unknown as { $client: { options: { connectionString?: string } } }).$client;
+    expect(client.options.connectionString).toBe('postgresql://localhost/x');
+  });
+
+  it('initDb() is idempotent — sequential calls return the exact same instance', async () => {
+    process.env.WELTBON_DB_DRIVER = 'pglite';
+    process.env.WELTBON_DATA_DIR = dir;
+    process.env.JWT_SECRET = 'a'.repeat(32);
+    delete process.env.DATABASE_URL;
+
+    vi.resetModules();
+    // @ts-expect-error - see the seam-1 note above.
+    const { initDb, closeDb } = await import('../src/db/client.js?seam-5');
+    const first = await initDb();
+    const second = await initDb();
+    expect(second).toBe(first);
+    await closeDb();
+  });
+
+  it('closeDb() then initDb() builds a genuinely fresh, different instance', async () => {
+    process.env.WELTBON_DB_DRIVER = 'pglite';
+    process.env.WELTBON_DATA_DIR = dir;
+    process.env.JWT_SECRET = 'a'.repeat(32);
+    delete process.env.DATABASE_URL;
+
+    vi.resetModules();
+    // @ts-expect-error - see the seam-1 note above.
+    const { initDb, closeDb } = await import('../src/db/client.js?seam-6');
+    const first = await initDb();
+    await closeDb();
+    const second = await initDb();
+    expect(second).not.toBe(first);
+    await closeDb();
+  });
+
+  it('closeDb() on a never-initialized module is a safe no-op', async () => {
+    process.env.WELTBON_DB_DRIVER = 'pglite';
+    process.env.WELTBON_DATA_DIR = dir;
+    process.env.JWT_SECRET = 'a'.repeat(32);
+    delete process.env.DATABASE_URL;
+
+    vi.resetModules();
+    // @ts-expect-error - see the seam-1 note above.
+    const { closeDb } = await import('../src/db/client.js?seam-7');
+    await expect(closeDb()).resolves.toBeUndefined();
+  });
+
+  it('concurrent initDb() calls share ONE construction, not two engines over one directory', async () => {
+    // Pins the check-then-act race fix: without the in-flight-promise memo,
+    // both calls would observe `_db === null` (construction is async) and
+    // each build its own PGlite instance over the same directory — the exact
+    // corruption case the docstring on initDb() promises to prevent.
+    process.env.WELTBON_DB_DRIVER = 'pglite';
+    process.env.WELTBON_DATA_DIR = dir;
+    process.env.JWT_SECRET = 'a'.repeat(32);
+    delete process.env.DATABASE_URL;
+
+    vi.resetModules();
+    // @ts-expect-error - see the seam-1 note above.
+    const { initDb, closeDb } = await import('../src/db/client.js?seam-8');
+    const [a, b] = await Promise.all([initDb(), initDb()]);
+    expect(b).toBe(a);
+    await closeDb();
   });
 });
