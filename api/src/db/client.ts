@@ -1,28 +1,114 @@
-import { drizzle, type NodePgDatabase } from 'drizzle-orm/node-postgres';
+import { drizzle as drizzleNodePg, type NodePgDatabase } from 'drizzle-orm/node-postgres';
 import pg from 'pg';
 import { env } from '../config.js';
 import * as schema from './schema.js';
 
 type Schema = typeof schema;
 
-const defaultPool = new pg.Pool({ connectionString: env().databaseUrl });
-const defaultDb = drizzle(defaultPool, { schema });
+/**
+ * The single declared database handle type (DV-05).
+ *
+ * PGlite's drizzle handle is `PgliteDatabase<Schema>`, a DIFFERENT type from
+ * `NodePgDatabase<Schema>`. They share the `PgDatabase` query API that all 39
+ * calling files use, but TypeScript does not consider them assignable. A union
+ * type here would push a discriminated type into every one of those call sites'
+ * query typing for no runtime benefit, so the cast happens exactly ONCE — at the
+ * construction site below — and is documented rather than left implicit.
+ *
+ * If a future driver diverges in a way the query API actually notices, this is
+ * the line to revisit; the cast is the seam's single point of dishonesty and it
+ * is deliberately not spread around.
+ */
+export type AppDatabase = NodePgDatabase<Schema>;
 
-// Mutable refs so tests can redirect to an isolated test schema.
-let _db: NodePgDatabase<Schema> & { $client: pg.Pool } = defaultDb;
-let _pool: pg.Pool = defaultPool;
+let _db: AppDatabase | null = null;
+let _pool: pg.Pool | null = null;
+let _close: (() => Promise<void>) | null = null;
 
-/** Current DB instance. Tests override via `setTestDb()`. */
-export function db() { return _db; }
+/** Build the Postgres handle. Constructing a pg.Pool does not connect eagerly. */
+function initPostgres(connectionString: string): AppDatabase {
+  const pool = new pg.Pool({ connectionString });
+  _pool = pool;
+  _close = () => pool.end();
+  _db = drizzleNodePg(pool, { schema });
+  return _db;
+}
 
-/** Current pool. Tests override via `setTestDb()`. */
-export function pool() { return _pool; }
+/**
+ * Initialize the database handle. MUST be awaited during boot when the driver
+ * is `pglite`, because PGlite construction is async and `db()` is not.
+ *
+ * Idempotent: a second call returns the existing handle without building a
+ * second engine. Two PGlite instances over one directory is the corruption
+ * case, so this is a safety property, not just an optimization.
+ */
+export async function initDb(): Promise<AppDatabase> {
+  if (_db !== null) return _db;
+  const cfg = env();
+
+  if (cfg.dbDriver === 'pglite') {
+    const { PGlite } = await import('@electric-sql/pglite');
+    const { drizzle: drizzlePglite } = await import('drizzle-orm/pglite');
+
+    // cfg.dataDir is guaranteed present for this driver by config.ts (DV-03).
+    const client = new PGlite(cfg.dataDir!);
+    await client.waitReady;
+
+    // DV-08 — pin the session to UTC. Real Postgres deployments run a UTC
+    // session; PGlite defaults to the HOST zone, which skews the app's
+    // `AT TIME ZONE 'UTC'` round-trips. The sync protocol compares timestamptz
+    // across instances, so a skewed session is a correctness bug in the paid
+    // feature, not a cosmetic one.
+    await client.exec(`SET TIME ZONE 'UTC'`);
+
+    _db = drizzlePglite(client, { schema }) as unknown as AppDatabase;
+    _close = () => client.close();
+    return _db;
+  }
+
+  return initPostgres(cfg.databaseUrl!);
+}
+
+/**
+ * The current handle. Synchronous by contract — 39 files call this, and making
+ * it async would be a repo-wide rewrite unrelated to the desktop app.
+ *
+ * On the postgres driver this lazily constructs on first use, preserving the
+ * pre-DV-04 behaviour where importing this module was enough. On pglite it
+ * cannot: construction is async, so boot must call `await initDb()` first.
+ */
+export function db(): AppDatabase {
+  if (_db === null) {
+    const cfg = env();
+    if (cfg.dbDriver === 'pglite') {
+      throw new Error(
+        'PGlite is initialized asynchronously — call `await initDb()` during boot ' +
+        'before the first db() call.'
+      );
+    }
+    return initPostgres(cfg.databaseUrl!);
+  }
+  return _db;
+}
+
+/**
+ * Close the database and reset the module state. Replaces the four
+ * `pool().end()` calls, which had no meaning for a driver that has no pool.
+ */
+export async function closeDb(): Promise<void> {
+  const close = _close;
+  _db = null;
+  _pool = null;
+  _close = null;
+  if (close) await close();
+}
 
 /**
  * Replace db + pool for testing against an isolated schema.
  * Call in beforeAll; routes that call `db()` will resolve to the test handle.
  */
-export function setTestDb(newDb: typeof _db, newPool: pg.Pool) {
+export function setTestDb(newDb: AppDatabase, newPool: pg.Pool) {
   _db = newDb;
   _pool = newPool;
+  _close = () => newPool.end();
 }
