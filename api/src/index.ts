@@ -38,7 +38,7 @@ import { recoverOrphanAuditRuns } from './services/audit-recovery.js';
 import { wireSigtermDrain } from './services/audit-shutdown.js';
 import { requireAuth } from './middleware/auth.js';
 import { forwarded } from './middleware/forwarded.js';
-import { db } from './db/client.js';
+import { db, initDb } from './db/client.js';
 import { llmApiKeys, syncRemotes } from './db/schema.js';
 import { seedInviteCode } from './db/seedInviteCode.js';
 import { createApiRouter } from './openapi/app.js';
@@ -262,6 +262,10 @@ if (import.meta.url === `file://${process.argv[1]}`) {
       'to restrict CORS to your operator-controlled origin.'
     );
   }
+  // DV-04: PGlite is constructed asynchronously, so the handle must exist
+  // before ANY db() call below. On the postgres driver this is a no-op beyond
+  // building the pool eagerly instead of on first use.
+  await initDb();
   await seedInviteCode(db());
   await assertLlmKeyEncryptionKey({ db: db(), cfg });
   // AUDIT-12: force-fail any pending|running orphan runs from a previous process.
