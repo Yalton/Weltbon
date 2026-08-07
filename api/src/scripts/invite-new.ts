@@ -1,4 +1,4 @@
-import { db, pool } from '../db/client.js';
+import { db, closeDb } from '../db/client.js';
 import { inviteCodes } from '../db/schema.js';
 import { generateInviteToken } from '../services/invite.js';
 
@@ -9,7 +9,7 @@ async function main() {
     .values({ ownerId: null, label: 'cli-mint', hash, bodySuffix });
   console.log(`Invite code: ${plaintext}`);
   console.log(`Share this once. Consumed on first use.`);
-  await pool().end();
+  await closeDb();
 }
 
 main().catch((err) => {

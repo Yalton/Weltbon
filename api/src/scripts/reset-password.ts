@@ -1,6 +1,6 @@
 import { parseArgs } from 'node:util';
 import { eq } from 'drizzle-orm';
-import { db, pool } from '../db/client.js';
+import { db, closeDb } from '../db/client.js';
 import { users } from '../db/schema.js';
 import { hashPassword, revokeAllForUser } from '../services/auth.js';
 
@@ -28,7 +28,7 @@ async function main() {
   await db().update(users).set({ passwordHash }).where(eq(users.id, user.id));
   const revoked = await revokeAllForUser(user.id);
   console.log(`Password updated for ${email}. Revoked ${revoked} refresh token(s).`);
-  await pool().end();
+  await closeDb();
 }
 
 main().catch((err) => {
