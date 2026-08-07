@@ -21,7 +21,7 @@
 import Anthropic from '@anthropic-ai/sdk';
 import OpenAI from 'openai';
 import { eq } from 'drizzle-orm';
-import { db, pool } from '../db/client.js';
+import { db, closeDb } from '../db/client.js';
 import { users } from '../db/schema.js';
 import { getDecryptedKey } from '../services/llm-key.js';
 import { PRICING } from '../providers/llm/pricing.js';
@@ -112,7 +112,7 @@ async function main() {
     console.log('');
   }
 
-  await pool().end();
+  await closeDb();
 }
 
 main().catch((err) => {

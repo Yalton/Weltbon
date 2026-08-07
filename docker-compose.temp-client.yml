@@ -1,0 +1,41 @@
+# Temp-client override — turns the sync rig's `app-b` into a local web instance
+# that syncs TO the temp prod, standing in for the desktop app until it exists.
+#
+# Usage (always pass BOTH files, in this order). Naming `app-b` explicitly keeps
+# `db-a` down; it exists only for the rig's host-run instance A, which is not
+# used here (and whose API would collide with the temp prod on port 3000):
+#   docker compose -f docker-compose.dev.yml -f docker-compose.temp-client.yml up -d app-b
+#   docker compose -f docker-compose.dev.yml -f docker-compose.temp-client.yml down -v
+#
+# The rig was designed with the CLIENT on the host (instance A) and the peer in a
+# container (`app-b`). Here that is inverted — the containerized instance is the
+# client and the temp prod is the peer — which needs two things `app-b` was never
+# given, because in the rig's own topology it is only ever the peer:
+services:
+  app-b:
+    environment:
+      # 1. Registering a sync remote encrypts the peer's PAT at rest, and the
+      #    route 503s without this key (api/src/routes/sync-client.ts). `app-b`
+      #    has no reason to set it as a peer, so the rig never did.
+      #    Deliberately an obvious non-key: config.ts only checks /^[0-9a-f]{64}$/,
+      #    so this passes validation while being impossible to mistake for a real
+      #    key. Same value as .env.dev-a.example, for the same reason.
+      LLM_KEY_ENCRYPTION_KEY: deadbeefdeadbeefdeadbeefdeadbeefdeadbeefdeadbeefdeadbeefdeadbeef
+    # 2. Reachability. The remote base URL is fetched by the CLIENT'S API — a
+    #    process inside this container — so it must resolve here, not in the
+    #    browser. `http://localhost:3000` would resolve to this container itself.
+    #    Joining the temp prod's network makes the prod service reachable by its
+    #    compose service name, so the remote URL is `http://app:3000`.
+    #    `default` must be listed too: naming any network replaces the implicit
+    #    default, and dropping it would cut app-b off from its own db-b.
+    networks:
+      - default
+      - temp-prod
+
+networks:
+  temp-prod:
+    external: true
+    # Created by the temp prod stack. If `docker network ls` disagrees, the prod
+    # project name differs (it is derived from the repo directory name) and this
+    # must match it, or `up` fails with a missing-network error.
+    name: weltbon_default

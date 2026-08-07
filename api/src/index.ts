@@ -38,7 +38,7 @@ import { recoverOrphanAuditRuns } from './services/audit-recovery.js';
 import { wireSigtermDrain } from './services/audit-shutdown.js';
 import { requireAuth } from './middleware/auth.js';
 import { forwarded } from './middleware/forwarded.js';
-import { db } from './db/client.js';
+import { db, initDb } from './db/client.js';
 import { llmApiKeys, syncRemotes } from './db/schema.js';
 import { seedInviteCode } from './db/seedInviteCode.js';
 import { createApiRouter } from './openapi/app.js';
@@ -262,6 +262,15 @@ if (import.meta.url === `file://${process.argv[1]}`) {
       'to restrict CORS to your operator-controlled origin.'
     );
   }
+  // DV-04: PGlite is constructed asynchronously, so the handle must exist
+  // before ANY db() call below. On the postgres driver this is a no-op that
+  // moves pool construction LATER, not earlier: on master, client.ts built
+  // the pool at module load time (`const defaultPool = new pg.Pool(...)`);
+  // this branch moves construction into this boot block instead, so on
+  // Postgres `initDb()` makes it happen here rather than at import time.
+  // Still harmless either way — constructing a pg.Pool does no I/O, and this
+  // call is before serve() regardless.
+  await initDb();
   await seedInviteCode(db());
   await assertLlmKeyEncryptionKey({ db: db(), cfg });
   // AUDIT-12: force-fail any pending|running orphan runs from a previous process.
