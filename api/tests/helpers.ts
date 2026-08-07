@@ -1,5 +1,6 @@
 import { drizzle } from 'drizzle-orm/node-postgres';
 import pg from 'pg';
+import { join } from 'node:path';
 import { sql } from 'drizzle-orm';
 import { migrate } from 'drizzle-orm/node-postgres/migrator';
 import * as schema from '../src/db/schema.js';
@@ -26,7 +27,18 @@ export async function createTestDb(): Promise<TestDbHandle> {
     const { drizzle: drizzlePglite } = await import('drizzle-orm/pglite');
     const { migrate: migratePglite } = await import('drizzle-orm/pglite/migrator');
 
-    const client = new PGlite();
+    // A persistent directory when WELTBON_TEST_PGLITE_DIR is set, else the
+    // in-memory instance the D-07 spike used. Persistent mode is what the
+    // desktop app actually ships, so the suite must be runnable against it —
+    // in-memory alone cannot catch a durability regression.
+    //
+    // One subdirectory per createTestDb() call (i.e. per test file) preserves
+    // the isolation the in-memory instance gave for free.
+    const persistRoot = process.env.WELTBON_TEST_PGLITE_DIR;
+    const client = persistRoot
+      ? new PGlite(join(persistRoot, `f_${Date.now()}_${Math.floor(Math.random() * 1e6)}`))
+      : new PGlite();
+    await client.waitReady;
     // Real Postgres deployments (docker containers, CI) run with a UTC session
     // TimeZone; PGlite defaults to the HOST zone, which skews the app's
     // naive-timestamp AT TIME ZONE 'UTC' round-trips (proven by issues-dismiss
