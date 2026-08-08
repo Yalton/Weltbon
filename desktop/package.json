@@ -9,12 +9,21 @@
     "start": "electron .",
     "rebuild": "electron-rebuild -f -w bcrypt,sharp -m ../api",
     "test": "tsc && node --test dist/*.test.js",
-    "build:app": "cd ../web && ./node_modules/.bin/vite build && cd ../api && ./node_modules/.bin/tsc -p tsconfig.build.json; cd .. && rm -rf api/web-dist && cp -r web/dist api/web-dist && cd desktop && ./node_modules/.bin/tsc"
+    "build:app": "cd ../web && ./node_modules/.bin/vite build && cd ../api && ./node_modules/.bin/tsc -p tsconfig.build.json; cd .. && rm -rf api/web-dist && cp -r web/dist api/web-dist && cd desktop && ./node_modules/.bin/tsc",
+    "stage": "bash scripts/stage-api.sh",
+    "dist": "pnpm run build && pnpm run stage && electron-builder --linux --config electron-builder.yml"
   },
   "devDependencies": {
-    "electron": "^43.1.1",
     "@electron/rebuild": "^3.6.0",
-    "typescript": "5.7.3",
-    "@types/node": "22.10.5"
+    "@types/node": "22.10.5",
+    "electron": "^43.1.1",
+    "electron-builder": "^25",
+    "typescript": "5.7.3"
+  },
+  "description": "Weltbon desktop \u2014 self-hostable worldbuilding, offline-first",
+  "homepage": "https://github.com/Citreum-LLC/Weltbon",
+  "author": {
+    "name": "DaltonBailey",
+    "email": "73573710+Yalton@users.noreply.github.com"
   }
 }

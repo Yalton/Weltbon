@@ -331,6 +331,12 @@ export async function startServer(): Promise<{ server: ReturnType<typeof serve>;
   return { server, port };
 }
 
-if (import.meta.url === pathToFileURL(process.argv[1]).href) {
+// See the identical guard in db/migrate.ts for why the `!== undefined` check
+// is load-bearing: a packaged Electron app imports this module with no script
+// argument, so `process.argv[1]` is undefined and pathToFileURL(undefined)
+// throws. Electron calls startServer() itself, so this branch must simply not
+// fire there — quietly, not by crashing.
+const entryArg = process.argv[1];
+if (entryArg !== undefined && import.meta.url === pathToFileURL(entryArg).href) {
   await startServer();
 }

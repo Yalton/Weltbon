@@ -1,0 +1,57 @@
+# Packaging config for the Weltbon desktop app (issue #6, #7).
+#
+# LAYOUT — the whole point of this file:
+#   <resources>/app.asar        desktop's own main process only
+#   <resources>/api/            the staged API tree (dist, node_modules,
+#                               drizzle, web-dist), on the REAL filesystem
+#
+# main.ts derives `join(app.getAppPath(), '..', 'api', 'dist', 'index.js')`,
+# and packaged `getAppPath()` is `<resources>/app.asar` — so that resolves to
+# `<resources>/api/dist/index.js`. The derivation is unchanged from the dev
+# layout; only where the files sit changes.
+#
+# Everything under <resources>/api needs a real path rather than Electron's
+# asar-transparent fs shim: native .node files (dlopen cannot read an archive),
+# PGlite's WASM payload, and drizzle's migrations directory. Keeping the tree
+# unpacked avoids app.asar.unpacked path rewriting in the component holding the
+# user's only copy of their data.
+appId: com.citreum.weltbon
+productName: Weltbon
+copyright: Citreum LLC
+
+directories:
+  output: release
+  buildResources: build
+
+# Only the Electron main process goes in the archive. `pnpm deploy` has already
+# put the API's production dependencies in the staged tree, so desktop's own
+# node_modules (electron, electron-builder, typescript) must NOT be packed.
+files:
+  - dist/**/*
+  - package.json
+  - "!node_modules/**/*"
+
+extraResources:
+  - from: .stage/api
+    to: api
+
+# Unsigned for now — signing and notarization are tracked separately (issue #11).
+linux:
+  target:
+    - AppImage
+    - deb
+  category: Office
+  synopsis: Self-hostable worldbuilding, offline-first
+  desktop:
+    entry:
+      Name: Weltbon
+      Comment: Self-hostable worldbuilding, offline-first
+
+win:
+  target:
+    - nsis
+
+mac:
+  target:
+    - dmg
+  category: public.app-category.productivity
