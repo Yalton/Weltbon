@@ -2,6 +2,7 @@ import { describe, it, expect, afterEach, beforeEach, vi } from 'vitest';
 import { mkdtemp, rm } from 'node:fs/promises';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
+import { sql } from 'drizzle-orm';
 
 // Same singleton-bleed problem documented in tests/db-client-lifecycle.test.ts
 // and tests/db-client-driver.test.ts: config.ts's `_env` and db/client.ts's
@@ -66,21 +67,62 @@ describe('startServer()', () => {
 
   it('runs migrations as part of boot, so a fresh data dir is usable immediately', async () => {
     vi.resetModules();
+
+    // assertLlmKeyEncryptionKey is ALSO part of startServer()'s boot sequence
+    // (it runs unconditionally, right after seedInviteCode) and queries
+    // llm_api_keys/sync_remotes whenever this env var is unset. On an
+    // unmigrated database that query itself throws "relation llm_api_keys
+    // does not exist" and startServer() REJECTS before returning — so the
+    // migration assertion below would never run; the test would fail one
+    // step earlier, for a reason unrelated to what it's meant to prove
+    // (exactly the trap the old /api/auth/refresh assertion fell into, one
+    // level up). Setting a valid key here makes that check a no-op (it
+    // returns before touching the DB), so startServer() can only fail — or
+    // succeed — for reasons this test actually exercises. The other
+    // remaining DB-touching boot step, recoverOrphanAuditRuns, is already
+    // wrapped in try/catch inside startServer() and cannot reject it either.
+    process.env.LLM_KEY_ENCRYPTION_KEY = 'a'.repeat(64);
+
     // @ts-expect-error query-suffix import is unresolvable to tsc but fine at runtime
     const mod = await import('../src/index.js?start-2');
     const { startServer } = mod;
-    // @ts-expect-error same
-    const dbMod = await import('../src/db/client.js?start-2');
+    // The db handle startServer() actually used is reached through index.ts's
+    // OWN internal `import './db/client.js'` — an UNQUERIED specifier. After
+    // vi.resetModules() plus the fresh `?start-2` top-level import above,
+    // that unqueried specifier is ALSO a fresh cache slot, and importing it
+    // here (unqueried, matching) resolves to the exact same live module
+    // instance index.ts already populated — confirmed by probing `.db()`
+    // directly: a `?start-2`-QUERIED import of client.js throws "PGlite is
+    // initialized asynchronously" here, because it lands in a DIFFERENT
+    // cache slot that startServer() never touched. Unqueried, this path is
+    // tsc-resolvable — no @ts-expect-error needed here, unlike the two
+    // query-suffixed imports above/below.
+    const dbMod = await import('../src/db/client.js');
 
-    const { server, port } = await startServer();
+    const { server } = await startServer();
     stop = async () => {
       await new Promise<void>((r) => server.close(() => r()));
       await dbMod.closeDb();
     };
 
-    // Hitting a real table proves the schema exists. Without migrations in the
-    // boot path this 500s with "relation does not exist".
-    const res = await fetch(`http://127.0.0.1:${port}/api/auth/refresh`, { method: 'POST' });
-    expect(res.status).toBe(401);
+    // The real assertion: the applied-migration count must match the
+    // journal's entry count — read from drizzle/meta/_journal.json rather
+    // than hard-coded, so adding a migration later doesn't break this test.
+    // Same shape as tests/pglite-migrate.test.ts.
+    //
+    // A plain 401 from POST /api/auth/refresh does NOT prove migrations ran:
+    // api/src/routes/auth.ts returns 401 before any DB query when no cookie
+    // is sent, so that assertion passed even with `runMigrations` deleted
+    // from startServer() — it was failing (when it failed at all) for the
+    // unrelated reason above, never by actually observing migrated schema.
+    const handle = dbMod.db();
+    const res = await handle.execute(
+      sql`SELECT count(*)::int AS n FROM drizzle.__drizzle_migrations`
+    );
+    const rows = (res as unknown as { rows?: Array<Record<string, unknown>> }).rows
+      ?? (res as unknown as Array<Record<string, unknown>>);
+    const journal = await import('../drizzle/meta/_journal.json', { with: { type: 'json' } });
+    const expected = (journal.default as { entries: unknown[] }).entries.length;
+    expect(Number(rows[0].n)).toBe(expected);
   }, 30_000);
 });
