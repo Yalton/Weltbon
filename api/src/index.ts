@@ -6,7 +6,7 @@ import { cors } from 'hono/cors';
 import { logger } from 'hono/logger';
 import { HTTPException } from 'hono/http-exception';
 import { env, type Env } from './config.js';
-import { authRoutes } from './routes/auth.js';
+import { buildAuthRoutes } from './routes/auth.js';
 import { tokenRoutes } from './routes/tokens.js';
 import { templates } from './routes/templates.js';
 import { inviteRoutes } from './routes/invites.js';
@@ -103,7 +103,10 @@ export function createApp() {
   // middleware — no apiR.use() needed (mirrors llmKeyRoutes' per-route gate).
   apiR.route('/', llmModelsRoutes);
   apiR.route('/auth/invites', inviteRoutes);
-  apiR.route('/auth', authRoutes);
+  // DV-11: built fresh on every createApp() call so the local-session route's
+  // conditional registration (Finding 2 review fix) sees a live env().localMode
+  // read, not whatever it was the first time this module was ever imported.
+  apiR.route('/auth', buildAuthRoutes());
   // Phase 29 D-02 / D-13 — owner-facing share CRUD (POST mint, GET list, PATCH rename,
   // DELETE revoke). Mounted BEFORE the `requireAuth` gate below because each route in
   // shareCrudRoutes carries its own `requireJwtAuth` per-route middleware (D-13: PAT

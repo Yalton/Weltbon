@@ -147,5 +147,9 @@ export function env(): Env {
   return _env;
 }
 
-/** Tests only: drop the cached Env so a changed process.env is re-read. */
-export function resetEnvForTests(): void { _env = null; }
+/**
+ * Tests only: drop the cached Env so a changed process.env is re-read.
+ * Leading underscore is this repo's convention for a test-only export — see
+ * `_resetModelCacheForTests` in `providers/llm/model-catalog.ts`.
+ */
+export function _resetEnvForTests(): void { _env = null; }
