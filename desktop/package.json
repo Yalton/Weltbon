@@ -7,7 +7,8 @@
   "scripts": {
     "build": "tsc",
     "start": "electron .",
-    "rebuild": "electron-rebuild -f -w bcrypt,sharp -m ../api"
+    "rebuild": "electron-rebuild -f -w bcrypt,sharp -m ../api",
+    "test": "tsc && node --test dist/*.test.js"
   },
   "devDependencies": {
     "electron": "^43.1.1",

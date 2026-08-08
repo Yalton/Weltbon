@@ -1,5 +1,5 @@
 import { randomBytes } from 'node:crypto';
-import { mkdir, readFile, writeFile } from 'node:fs/promises';
+import { mkdir, readFile, rename, writeFile } from 'node:fs/promises';
 import { dirname, join } from 'node:path';
 
 export interface Secrets {
@@ -19,16 +19,34 @@ export interface Secrets {
  *   the containerized sync client while standing up the temp prod.)
  *
  * The third, the local user's password, lives in the database and is never read.
+ *
+ * Review round 1, Finding 2: only a MISSING file (ENOENT) is grounds to mint
+ * fresh secrets. A file that exists but can't be read (EACCES, EIO, EMFILE,
+ * ...) or is malformed (a half-written file from a prior crash) is NOT the
+ * same thing — silently regenerating over it destroys llmKeyEncryptionKey
+ * irrecoverably: every stored LLM key and every sync remote's encrypted_pat
+ * becomes undecryptable, and the app still boots (the key is *set*, just
+ * wrong), so this surfaces later as scattered decrypt errors instead of a
+ * clean, loud refusal here where it's still fixable. Everything other than
+ * ENOENT rethrows, and main()'s dialog reports it.
  */
 export async function loadOrCreateSecrets(path: string): Promise<Secrets> {
+  let raw: string | undefined;
   try {
-    const raw = await readFile(path, 'utf8');
+    raw = await readFile(path, 'utf8');
+  } catch (err) {
+    if ((err as NodeJS.ErrnoException).code !== 'ENOENT') throw err;
+    // ENOENT only: nothing existing to protect — fall through and mint fresh.
+  }
+
+  if (raw !== undefined) {
+    // Malformed JSON (e.g. a half-written file from a crash mid-write) is
+    // deliberately NOT caught here either, for the same reason as above —
+    // see the file-level comment.
     const parsed = JSON.parse(raw) as Partial<Secrets>;
     if (parsed.jwtSecret && parsed.llmKeyEncryptionKey) {
       return { jwtSecret: parsed.jwtSecret, llmKeyEncryptionKey: parsed.llmKeyEncryptionKey };
     }
-  } catch {
-    // Missing or unreadable — fall through and mint a fresh set.
   }
 
   const secrets: Secrets = {
@@ -38,7 +56,16 @@ export async function loadOrCreateSecrets(path: string): Promise<Secrets> {
     llmKeyEncryptionKey: randomBytes(32).toString('hex'),
   };
   await mkdir(dirname(path), { recursive: true });
-  await writeFile(path, JSON.stringify(secrets, null, 2), { mode: 0o600 });
+  // Write to a temp file then rename, so a crash mid-write can never leave a
+  // half-written secrets.json for a future launch to trip over (see above).
+  // rename() also reapplies mode 0600 to the final path even when path
+  // already existed — writeFile's `mode` option only takes effect when the
+  // destination is newly CREATED, not when overwriting an existing file, so
+  // the old direct-write path silently left a pre-existing file's
+  // permissions untouched.
+  const tmpPath = `${path}.tmp-${randomBytes(4).toString('hex')}`;
+  await writeFile(tmpPath, JSON.stringify(secrets, null, 2), { mode: 0o600 });
+  await rename(tmpPath, path);
   return secrets;
 }
 

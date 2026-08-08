@@ -146,7 +146,12 @@ export function loadEnv(source: NodeJS.ProcessEnv = process.env): Env {
     auditMaxTokensTotal,
     auditShutdownGraceMs,
     localMode: source.WELTBON_LOCAL_MODE === '1' || source.WELTBON_LOCAL_MODE === 'true',
-    bindHost: source.WELTBON_BIND_HOST,
+    // `|| undefined` (not `??`): an explicitly-set-but-empty WELTBON_BIND_HOST=
+    // must fall back to the all-interfaces default too, not pass '' through to
+    // net.Server#listen (Node's http server treats '' as 0.0.0.0 in practice,
+    // but the intent here is "undefined means unset", not "empty string is a
+    // valid hostname").
+    bindHost: source.WELTBON_BIND_HOST || undefined,
   };
 }
 

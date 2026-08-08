@@ -8,17 +8,26 @@ import { initDb, closeDb, type AppDatabase } from './client.js';
  *
  * The two migrators are imported dynamically so that a pglite-only deployment
  * never loads the node-postgres one and vice versa.
+ *
+ * migrationsFolder defaults to './drizzle', resolved by drizzle-orm against
+ * process.cwd() — matches the DRIZZLE_DIR fallback in
+ * services/sync/handshake.ts's migrationHead(), the repo's existing
+ * mechanism for redirecting this lookup. Docker's WORKDIR /app happens to
+ * equal the api root, so the default resolves there without needing the
+ * override; desktop/src/main.ts sets DRIZZLE_DIR to an absolute path
+ * because Electron has no such cwd guarantee.
  */
 export async function runMigrations(database: AppDatabase): Promise<void> {
+  const migrationsFolder = process.env.DRIZZLE_DIR ?? './drizzle';
   if (env().dbDriver === 'pglite') {
     const { migrate } = await import('drizzle-orm/pglite/migrator');
     // Same cast rationale as AppDatabase in client.ts: the runtime handle IS a
     // PgliteDatabase, only the declared type is unified.
-    await migrate(database as never, { migrationsFolder: './drizzle' });
+    await migrate(database as never, { migrationsFolder });
     return;
   }
   const { migrate } = await import('drizzle-orm/node-postgres/migrator');
-  await migrate(database, { migrationsFolder: './drizzle' });
+  await migrate(database, { migrationsFolder });
 }
 
 async function main() {

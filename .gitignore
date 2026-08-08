@@ -8,6 +8,9 @@ web/node_modules
 dist/
 build/
 coverage/
+# Task 6: local desktop-launch verification builds api/web-dist as a copy of
+# web/dist (Docker builds it the same way, but inside the image, not the repo).
+api/web-dist/
 *.log
 .DS_Store
 .vscode/
