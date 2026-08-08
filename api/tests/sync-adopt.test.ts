@@ -234,13 +234,23 @@ describe('universe adoption', () => {
         id: universeId, userId: ownerA.id, name: 'my local name', description: 'mine',
       });
 
-      await expect(
-        adoptUniverse({ remoteId, universeId, ownerId: ownerA.id, fetchImpl: makeFetch() }),
-      ).rejects.toBeInstanceOf(SyncUniverseAlreadyLocalError);
+      // The row check runs FIRST and unconditionally (not inside `.rejects`),
+      // so it executes whether or not the throw happens. `await expect(...).
+      // rejects` aborts the test body on the first failed assertion — if the
+      // no-clobber check were written only AFTER that line, a guard that
+      // failed to throw would hide the clobber it let through: the test would
+      // fail on "did not reject" without ever proving whether the row was
+      // touched. This ordering is what makes the mutation test (removing the
+      // guard) fail on `local.name` — 'my local name' having become 'Aethel'
+      // — rather than merely on "no error was thrown".
+      const promise = adoptUniverse({ remoteId, universeId, ownerId: ownerA.id, fetchImpl: makeFetch() });
+      await promise.catch(() => {});
 
       const [local] = await A.db.select().from(universes).where(eq(universes.id, universeId));
       expect(local.name).toBe('my local name');
       expect(local.description).toBe('mine');
+
+      await expect(promise).rejects.toBeInstanceOf(SyncUniverseAlreadyLocalError);
     });
 
     it('refuses an id another local user owns, with the engine\'s own 403 (A-07)', async () => {
@@ -298,6 +308,54 @@ describe('universe adoption', () => {
         body: JSON.stringify({ universeId, remoteId }),
       });
       expect(res.status).toBe(201);
+    });
+
+    it('is reachable over the JWT route in the link wire shape, and refuses a PAT (D-10)', async () => {
+      // Nothing in this file's other tests issues an HTTP request to
+      // POST /adopt — every other adoptUniverse test calls the service
+      // directly. This is the one that exercises adoptBodySchema, the actual
+      // route handler (and its two error-hierarchy mapping, C-19/C-21), and
+      // toLinkWire's 201 shape, which is what Task 8's hook consumes.
+      const { issueAccessToken } = await import('../src/services/auth.js');
+      const jwt = await issueAccessToken(ownerA.id);
+
+      // The route builds its own client with the real global fetch, so point
+      // the stored baseUrl at the in-process peer by intercepting fetch itself
+      // — same technique as the D-10 test above.
+      const peer = makeFetch();
+      const original = globalThis.fetch;
+      globalThis.fetch = peer as unknown as typeof globalThis.fetch;
+      try {
+        await use('A');
+        const res = await app.request('/api/sync/adopt', {
+          method: 'POST',
+          headers: { 'Content-Type': 'application/json', Authorization: `Bearer ${jwt}` },
+          body: JSON.stringify({ remoteId, universeId }),
+        });
+        expect(res.status).toBe(201);
+        const body = await res.json();
+        expect(body.universeId).toBe(universeId);
+        expect(body.remoteId).toBe(remoteId);
+        expect(body.remoteLabel).toBe('prod');
+        expect(body.remoteBaseUrl).toBe('https://peer.example');
+        expect(body.status).toBe('idle');
+        expect(body.id).toBeDefined();
+
+        const { universes } = await import('../src/db/schema.js');
+        const [local] = await A.db.select().from(universes).where(eq(universes.id, universeId));
+        expect(local.name).toBe('Aethel');
+      } finally {
+        globalThis.fetch = original;
+      }
+
+      const patPlaintext = await mintPat(A, ownerA.id);
+      await use('A');
+      const patRes = await app.request('/api/sync/adopt', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json', Authorization: `Bearer ${patPlaintext}` },
+        body: JSON.stringify({ remoteId, universeId }),
+      });
+      expect(patRes.status).toBe(401);
     });
   });
 });

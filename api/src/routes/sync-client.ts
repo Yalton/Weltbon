@@ -429,6 +429,12 @@ const adoptRoute = createRoute({
   },
   responses: {
     201: { content: { 'application/json': { schema: linkSchema } }, description: 'Universe adopted; link created.' },
+    // Reachable: UNIVERSE_APPLY.toValues (apply-tables.ts) calls ts() on the
+    // peer row's createdAt/updatedAt, which throws InvalidSyncTimestampError
+    // (a SyncApplyError, status 400) for a malformed or absent timestamp — and
+    // SyncRemoteClient.listUniverses only validates id and name, so a peer
+    // answering with a row that has no updatedAt reaches this branch.
+    400: syncRunErrorResponses[400],
     401: syncRunErrorResponses[401],
     402: syncRunErrorResponses[402],
     403: { content: { 'application/json': { schema: syncErrorSchema } }, description: 'Another user on this instance owns that universe id.' },
@@ -852,15 +858,13 @@ export const syncClientRoutes = new OpenAPIHono<AppEnv>()
       return c.json(toLinkWire(link, remote), 201);
     } catch (err) {
       // TWO hierarchies, checked in this order — the same C-19/C-21 shape
-      // runLinkRoute uses. The LOCAL seed apply throws SyncApplyError
-      // (UniverseOwnershipError → 403), which does not extend SyncRunError.
+      // runLinkRoute uses. The LOCAL seed apply throws SyncApplyError —
+      // UniverseOwnershipError (403), or InvalidSyncTimestampError (400) if the
+      // peer's universe row has a malformed/missing timestamp (see the 400
+      // response declared above) — neither of which extends SyncRunError.
       if (err instanceof SyncApplyError) {
         const mapped = mapSyncApplyError(err, 'sync-client/adopt');
-        // Narrower than runLinkRoute's cast (no 400): adoptUniverse always
-        // calls applyManifestOps with `ops: {}`, so UnknownCollectionError /
-        // MissingRowIdError — the only 400 sources — can never fire here, and
-        // adoptRoute's declared responses (see above) do not promise a 400.
-        return c.json(mapped.body, mapped.status as 403 | 409);
+        return c.json(mapped.body, mapped.status as 400 | 403 | 409);
       }
       if (err instanceof SyncRunError) {
         return c.json({ error: err.message, code: err.code }, err.status as 401 | 402 | 404 | 409 | 413 | 500 | 502);

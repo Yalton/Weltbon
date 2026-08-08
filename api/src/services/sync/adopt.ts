@@ -162,11 +162,17 @@ export async function adoptUniverse(opts: {
   // would both misdescribe the remedy (linking it is not possible either) and
   // disclose that the id is taken.
   //
-  // This pre-check races the apply in principle. The residual is bounded and
-  // benign: the only writer that could win is a concurrent create of a universe
-  // whose id equals a randomly-minted UUID the caller already holds on the
-  // remote, and the worst outcome is the same refusal arriving from the apply
-  // instead of from here.
+  // This pre-check races the apply — NOT benignly. If the caller's OWN row for
+  // this id is created between this SELECT and the apply below (a concurrent
+  // peer push, or a second concurrent adopt racing this one), the ownership
+  // check inside applyManifestOps sees a row owned by ctx.ownerId and PASSES —
+  // it does not re-run this 409 check — so the universe upsert clobbers
+  // whatever that concurrent writer just created. This is exactly what the A-07
+  // mutation test demonstrates when the check is removed entirely; the window
+  // here is the same defect narrowed to a race instead of guaranteed. It is
+  // low-probability (requires the SAME uuid to be created independently in that
+  // window) but not safe to assume away — do not widen it further believing the
+  // apply's own check covers it, because it only covers a DIFFERENT owner.
   const [existing] = await db()
     .select({ userId: universes.userId })
     .from(universes)
@@ -182,8 +188,16 @@ export async function adoptUniverse(opts: {
   try {
     const [link] = await db().insert(syncLinks).values({ universeId, remoteId }).returning();
     return { link, remote };
-  } catch (err: any) {
-    if (err?.code === '23505') {
+  } catch (e: unknown) {
+    // Drizzle wraps the PG error: the '23505' code may be on the top-level
+    // error (e.code) or on the cause (e.cause.code) depending on the Drizzle
+    // version. Check both to be safe — same idiom as templates.ts, llm-keys.ts,
+    // dictionary.ts and audits.ts. A bare `err?.code` (what this used to read)
+    // never matches: Drizzle 0.45 rethrows driver errors as DrizzleQueryError,
+    // which carries no `.code` of its own.
+    const err = e as { code?: string; cause?: { code?: string } } | null;
+    const code = err?.code ?? err?.cause?.code;
+    if (code === '23505') {
       const [link] = await db()
         .select()
         .from(syncLinks)
@@ -191,6 +205,6 @@ export async function adoptUniverse(opts: {
         .limit(1);
       if (link) return { link, remote };
     }
-    throw err;
+    throw e;
   }
 }
