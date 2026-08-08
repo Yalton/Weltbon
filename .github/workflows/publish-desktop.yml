@@ -1,0 +1,161 @@
+# Build the Weltbon desktop app and attach the artifacts to a GitHub Release.
+#
+# Trigger: any pushed git tag matching `v*` — the same trigger as
+# publish-ghcr.yml, so one tag ships both the container image and the desktop
+# build. The two workflows are deliberately INDEPENDENT: a desktop failure must
+# not stop the server image from shipping, and vice versa.
+#
+# One-time repo setup (same as publish-ghcr.yml):
+#   Settings -> Actions -> General -> Workflow permissions -> "Read and write"
+#
+# WHY TWO JOBS RATHER THAN ONE MATRIX. This repo is private, so runner minutes
+# are billed at 1x for Linux, 2x for Windows and 10x for macOS. Linux is the
+# only platform that has been built AND run (issue #7); Windows (#8) and macOS
+# (#9) have never been built here at all. Putting all three on the tag trigger
+# would spend roughly 240 extra billed minutes per release producing artifacts
+# nobody has verified. So:
+#
+#   release       — Linux only, on a v* tag. Cheap, and it is what ships.
+#   experimental  — Windows + macOS, MANUAL ONLY (workflow_dispatch). Run it
+#                   while working #8/#9 to get real build logs, without making
+#                   every release pay for them.
+#
+# Promote a platform into `release` only once someone has installed and run the
+# artifact on that OS. A green build proves an artifact was produced, not that
+# it works — the whole point of #7 was discovering a crash that only appeared
+# when the packaged app was actually launched.
+name: publish-desktop
+
+on:
+  push:
+    tags:
+      - 'v*'
+  workflow_dispatch:
+    inputs:
+      experimental:
+        description: 'Also build the unverified Windows/macOS targets (billed at 2x/10x)'
+        type: boolean
+        default: false
+
+permissions:
+  contents: write   # required to upload assets onto the Release
+
+jobs:
+  release:
+    name: linux
+    runs-on: ubuntu-latest
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Set up pnpm
+        uses: pnpm/action-setup@v4
+
+      - name: Set up Node
+        uses: actions/setup-node@v4
+        with:
+          node-version: 22
+          cache: pnpm
+
+      - name: Install dependencies
+        run: pnpm install --frozen-lockfile
+
+      # Builds web + api, runs `pnpm deploy --prod` into desktop/.stage/api, copies
+      # the migrations and the built SPA, and rebuilds bcrypt/sharp for Electron's
+      # ABI in that staged tree. electron-builder ships it as extraResources.
+      - name: Stage the API for packaging
+        run: cd desktop && pnpm run build && pnpm run stage
+
+      - name: Build the desktop package
+        run: cd desktop && ./node_modules/.bin/electron-builder --linux --config electron-builder.yml
+
+      # Uploaded whether or not this is a tag: on a manual run it is the only
+      # output, and it is what makes a build debuggable without cutting a release.
+      - name: Upload build artifacts
+        uses: actions/upload-artifact@v4
+        with:
+          name: weltbon-desktop-linux
+          path: |
+            desktop/release/*.AppImage
+            desktop/release/*.deb
+          if-no-files-found: error
+          retention-days: 14
+
+      # Uses the preinstalled `gh` rather than a third-party release action: this
+      # needs `contents: write`, and every other workflow here sticks to
+      # first-party actions. Not worth granting write to another supply-chain
+      # dependency for an upload. `--clobber` makes a re-run of the same tag
+      # idempotent instead of failing on an asset that already exists.
+      - name: Attach to the GitHub Release
+        if: startsWith(github.ref, 'refs/tags/v')
+        env:
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+          TAG: ${{ github.ref_name }}
+        run: |
+          set -euo pipefail
+          gh release view "$TAG" >/dev/null 2>&1 || gh release create "$TAG" --generate-notes
+          shopt -s nullglob
+          files=(desktop/release/*.AppImage desktop/release/*.deb)
+          if [ ${#files[@]} -eq 0 ]; then
+            echo "No artifacts found — the build step should have failed before here." >&2
+            exit 1
+          fi
+          printf 'uploading: %s\n' "${files[@]}"
+          gh release upload "$TAG" "${files[@]}" --clobber
+
+  experimental:
+    name: ${{ matrix.name }} (unverified)
+    # Manual only, and opt-in even then. Never runs on a tag.
+    if: github.event_name == 'workflow_dispatch' && inputs.experimental
+    runs-on: ${{ matrix.os }}
+    continue-on-error: true
+    strategy:
+      # One platform failing must not cancel the other — the point is logs.
+      fail-fast: false
+      matrix:
+        include:
+          - name: windows
+            os: windows-latest
+            builder_flag: --win
+            glob: desktop/release/*.exe
+          - name: macos
+            os: macos-latest
+            builder_flag: --mac
+            glob: desktop/release/*.dmg
+
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Set up pnpm
+        uses: pnpm/action-setup@v4
+
+      - name: Set up Node
+        uses: actions/setup-node@v4
+        with:
+          node-version: 22
+          cache: pnpm
+
+      - name: Install dependencies
+        run: pnpm install --frozen-lockfile
+
+      # `shell: bash` matters on the Windows runner — stage-api.sh is a bash
+      # script, and the default shell there is PowerShell. Note the staging
+      # script's `pnpm deploy` produces symlinks into a bundled .pnpm/ rather
+      # than a flat tree; that survived packaging on Linux but is exactly the
+      # kind of thing to check in these logs for #8.
+      - name: Stage the API for packaging
+        shell: bash
+        run: cd desktop && pnpm run build && pnpm run stage
+
+      - name: Build the desktop package
+        shell: bash
+        run: cd desktop && ./node_modules/.bin/electron-builder ${{ matrix.builder_flag }} --config electron-builder.yml
+
+      - name: Upload build artifacts
+        uses: actions/upload-artifact@v4
+        with:
+          name: weltbon-desktop-${{ matrix.name }}
+          path: ${{ matrix.glob }}
+          if-no-files-found: error
+          retention-days: 14
