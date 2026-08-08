@@ -45,6 +45,9 @@ const MISSING_BATCH = 5000;
 /** A sha256 hex digest — the only shape any hash a peer sends us may have. */
 const HASH_RE = /^[0-9a-f]{64}$/;
 
+/** The only shape an id we are going to use as a universe id may have. */
+const UUID_RE = /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i;
+
 export function syncRequestTimeoutMs(): number {
   const v = Number(process.env.SYNC_REQUEST_TIMEOUT_MS);
   return Number.isFinite(v) && v > 0 ? v : 60_000;
@@ -276,6 +279,29 @@ export class SyncRemoteClient {
     if (res.status === 404) return null;
     if (res.status !== 200) throw new SyncUnreachableError(`snapshot returned ${res.status}`);
     return (await this.readJson(res, 'snapshot')) as SyncManifest;
+  }
+
+  /**
+   * A-04: the universes the PAT's owner holds on the peer.
+   *
+   * Sanitized on the same principle as missingAssets' hash array (C-21), and
+   * for a sharper reason: adoptUniverse feeds the CHOSEN row straight into
+   * applyManifestOps, so this array reaches a write. An element without a
+   * well-formed uuid `id` or a string `name` is dropped rather than repaired —
+   * a universe we cannot key or name is one we cannot offer to adopt. A body
+   * that is not an array yields an empty list rather than a throw, exactly as
+   * missingAssets treats a malformed reply as "nothing to report".
+   */
+  async listUniverses(): Promise<ManifestRow[]> {
+    const res = await this.send('GET', '/universes');
+    if (res.status !== 200) throw new SyncUnreachableError(`universes returned ${res.status}`);
+    const body = (await this.readJson(res, 'universes')) as { universes?: unknown };
+    if (!Array.isArray(body.universes)) return [];
+    return body.universes.filter((u): u is ManifestRow => {
+      if (typeof u !== 'object' || u === null) return false;
+      const row = u as Record<string, unknown>;
+      return typeof row.id === 'string' && UUID_RE.test(row.id) && typeof row.name === 'string';
+    });
   }
 
   async missingAssets(uid: string, hashes: string[]): Promise<string[]> {

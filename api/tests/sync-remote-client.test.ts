@@ -249,3 +249,57 @@ describe('safeErrorSummary (D-09)', () => {
     expect(safeErrorSummary(new Error('raw remote text with <secrets>'))).toBe('unexpected-error');
   });
 });
+
+describe('listUniverses (A-04)', () => {
+  const U = (over: Record<string, unknown> = {}) => ({
+    id: '11111111-1111-4111-8111-111111111111',
+    name: 'Aethel',
+    updatedAt: '2026-01-01T00:00:00.000Z',
+    ...over,
+  });
+
+  it('returns the peer\'s rows and sends the PAT as a bearer header', async () => {
+    const { calls, fetchImpl } = stub(() => json({ universes: [U()] }));
+    const rows = await client(fetchImpl).listUniverses();
+
+    expect(calls[0].url).toBe('https://peer.example/api/sync/universes');
+    expect((calls[0].init.headers as Record<string, string>).Authorization).toBe('Bearer wbn_pat_secret');
+    expect(rows).toHaveLength(1);
+    expect(rows[0].name).toBe('Aethel');
+  });
+
+  it('drops elements that are not a usable universe row (C-21)', async () => {
+    // The chosen row is fed straight into applyManifestOps, so a row we cannot
+    // key or name is one we must never offer to adopt.
+    const { fetchImpl } = stub(() =>
+      json({
+        universes: [
+          U(),
+          U({ id: 'not-a-uuid' }),
+          U({ name: 42 }),
+          null,
+          'nope',
+          { name: 'no id' },
+        ],
+      }),
+    );
+    const rows = await client(fetchImpl).listUniverses();
+    expect(rows).toHaveLength(1);
+    expect(rows[0].id).toBe('11111111-1111-4111-8111-111111111111');
+  });
+
+  it('treats a non-array body as an empty list rather than throwing', async () => {
+    const { fetchImpl } = stub(() => json({ universes: 'everything' }));
+    await expect(client(fetchImpl).listUniverses()).resolves.toEqual([]);
+  });
+
+  it('turns a non-200 into the typed transport error, never a raw status', async () => {
+    const { fetchImpl } = stub(() => json({ error: 'nope' }, 500));
+    await expect(client(fetchImpl).listUniverses()).rejects.toBeInstanceOf(SyncUnreachableError);
+  });
+
+  it('maps 401 to the auth error like every other method', async () => {
+    const { fetchImpl } = stub(() => json({ error: 'nope' }, 401));
+    await expect(client(fetchImpl).listUniverses()).rejects.toBeInstanceOf(SyncAuthError);
+  });
+});
