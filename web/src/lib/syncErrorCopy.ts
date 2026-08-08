@@ -87,7 +87,7 @@ export type SyncErrorCode =
   | 'universe-already-local';
 
 /** One entry per `SyncErrorCode` above — 14, no more, no fewer (enforced by the type). */
-export const SYNC_ERROR_COPY: Record<SyncErrorCode, { message: string; detail?: string }> = {
+export const SYNC_ERROR_COPY: Record<SyncErrorCode, { message: string }> = {
   'link-not-found': {
     // Two distinct throw sites share this code: the sync link itself may be
     // gone (run-errors.ts), OR `testRemote` throws the identical class when
@@ -147,12 +147,10 @@ export const SYNC_ERROR_COPY: Record<SyncErrorCode, { message: string; detail?: 
     message: 'The remote instance rejected this sync.',
   },
   'universe-not-on-remote': {
-    message: 'That universe is no longer on the remote instance.',
-    detail: 'It may have been deleted there, or it may belong to a different account on that instance. Refresh the list to see what the remote holds now.',
+    message: 'That universe is no longer on the remote instance. It may have been deleted there, or it may belong to a different account on that instance — refresh the list to see what is available there now.',
   },
   'universe-already-local': {
-    message: 'You already have that universe on this instance.',
-    detail: 'Adopting would replace its name and settings with the remote\'s copy. Link it to the remote instead — linking merges the two.',
+    message: 'You already have that universe on this instance. Adopting would replace its name and settings with the remote instance\'s copy — link it to the remote instead, which merges the two rather than overwriting yours.',
   },
 };
 
