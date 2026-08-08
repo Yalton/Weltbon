@@ -43,7 +43,19 @@ echo "[stage] 1/5 building the web bundle"
 # `build:docker` script. It does NOT hide a real regression: the baseline is
 # asserted separately in CI and in the definition of done.
 echo "[stage] 2/5 building the api (63-error baseline is expected)"
-(cd "$REPO/api" && ./node_modules/.bin/tsc -p tsconfig.build.json) || true
+# --max-old-space-size is not optional on a clean CI runner. Node's default
+# old-space cap is around 2GB, and this build reproducibly dies at ~2030MB with
+# "Ineffective mark-compacts near heap limit" — api/src/db/schema.ts has the
+# circular-inference types behind several of the baseline errors, and drizzle's
+# generics are expensive to check. It fits on a developer machine and does not
+# fit on a GitHub runner, which is why this only showed up in CI.
+echo "[stage]     (raising the heap: this build OOMs at Node's ~2GB default)"
+(cd "$REPO/api" && NODE_OPTIONS="--max-old-space-size=4096" ./node_modules/.bin/tsc -p tsconfig.build.json) || true
+# This assertion is load-bearing, not belt-and-braces. The `|| true` above is
+# there for the documented 63-error baseline, and it would just as happily
+# swallow an OOM, a missing binary, or a syntax error — leaving the staging to
+# continue with no dist/ and fail somewhere much less obvious. It is what turned
+# the CI OOM into a legible failure instead of a confusing one downstream.
 test -f "$REPO/api/dist/index.js" || { echo "[stage] FATAL: api/dist/index.js missing after build"; exit 1; }
 
 echo "[stage] 3/5 pnpm deploy → hoisted prod-only api tree"
