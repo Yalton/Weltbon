@@ -20,9 +20,15 @@ import { db } from '../../db/client.js';
 import { syncLinks, syncRemotes, universes } from '../../db/schema.js';
 import { env } from '../../config.js';
 import { decryptSecret } from '../crypto.js';
+import { applyManifestOps } from './apply.js';
 import { SyncRemoteClient, type FetchLike } from './remote-client.js';
 import { localIdentity } from './handshake.js';
-import { SyncLinkNotFoundError, SyncRemoteKeyError } from './run-errors.js';
+import {
+  SyncLinkNotFoundError,
+  SyncRemoteKeyError,
+  SyncUniverseAlreadyLocalError,
+  SyncUniverseNotOnRemoteError,
+} from './run-errors.js';
 import type { ManifestRow } from './manifest.js';
 
 /**
@@ -107,4 +113,84 @@ export async function listRemoteUniverses(
         : 'absent';
     return { ...row, localState };
   });
+}
+
+/**
+ * Adopt `universeId` from `remoteId`: create the local universe from the
+ * remote's own row, then an ordinary link.
+ *
+ * A-02: the universe is created by `applyManifestOps({universe, ops: {}})` —
+ * the engine's own C-11 create path, the exact call run-sync.ts:262 makes in
+ * the OPPOSITE direction to seed a universe onto a peer (F0-01). Reusing it
+ * rather than hand-writing an INSERT is what makes the adopted row identical to
+ * the remote's: UNIVERSE_APPLY.toValues copies every field and both timestamps
+ * verbatim and takes userId from ctx.ownerId (C-08). Because updatedAt matches,
+ * the first merge sees no universe difference and records no phantom conflict.
+ * A hand-written insert would stamp `now()` and immediately push a
+ * content-identical row back over the remote with a newer timestamp.
+ *
+ * A-09: the seed and the link insert are deliberately NOT one transaction —
+ * applyManifestOps owns its own (it takes the C-16 advisory lock inside), and
+ * nesting would mean threading a tx through the engine's public entry point.
+ * If the insert fails after the seed, the caller holds an empty universe they
+ * own and no link. That is recoverable, not corrupt: re-running adopt takes the
+ * A-07 409 path, and the remedy it names — the ordinary link route — now
+ * succeeds, because the universe exists.
+ *
+ * The row is read from the peer on THIS call, never taken from the caller:
+ * it feeds a write.
+ */
+export async function adoptUniverse(opts: {
+  remoteId: string;
+  universeId: string;
+  ownerId: string;
+  fetchImpl?: FetchLike;
+}): Promise<{ link: typeof syncLinks.$inferSelect; remote: typeof syncRemotes.$inferSelect }> {
+  const { remoteId, universeId, ownerId } = opts;
+
+  const remote = await ownedRemote(remoteId, ownerId);
+  const client = clientFor(remote, opts.fetchImpl);
+  await client.handshake(await localIdentity());
+
+  const rows = await client.listUniverses();
+  const row = rows.find((u) => String(u.id) === universeId);
+  if (!row) throw new SyncUniverseNotOnRemoteError();
+
+  // A-07. Only the CALLER's own row short-circuits here: a universe owned by
+  // another local user falls through to applyManifestOps, whose ownership check
+  // raises UniverseOwnershipError → 403. Answering 409 for a stranger's row
+  // would both misdescribe the remedy (linking it is not possible either) and
+  // disclose that the id is taken.
+  //
+  // This pre-check races the apply in principle. The residual is bounded and
+  // benign: the only writer that could win is a concurrent create of a universe
+  // whose id equals a randomly-minted UUID the caller already holds on the
+  // remote, and the worst outcome is the same refusal arriving from the apply
+  // instead of from here.
+  const [existing] = await db()
+    .select({ userId: universes.userId })
+    .from(universes)
+    .where(eq(universes.id, universeId))
+    .limit(1);
+  if (existing && existing.userId === ownerId) throw new SyncUniverseAlreadyLocalError();
+
+  await applyManifestOps({ universe: row, ops: {} }, { universeId, ownerId });
+
+  // The pre-check above means no link can exist yet (the FK makes a link
+  // without its universe unrepresentable), so this guard covers only two
+  // concurrent adopts — the same 23505 shape postLinkRoute already uses.
+  try {
+    const [link] = await db().insert(syncLinks).values({ universeId, remoteId }).returning();
+    return { link, remote };
+  } catch (err: any) {
+    if (err?.code === '23505') {
+      const [link] = await db()
+        .select()
+        .from(syncLinks)
+        .where(and(eq(syncLinks.universeId, universeId), eq(syncLinks.remoteId, remoteId)))
+        .limit(1);
+      if (link) return { link, remote };
+    }
+    throw err;
+  }
 }

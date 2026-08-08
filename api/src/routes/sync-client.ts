@@ -15,6 +15,7 @@
  *   PATCH  /remotes/{id}           update label / baseUrl / replace PAT
  *   DELETE /remotes/{id}           delete + drop each link's base snapshot
  *   GET    /remotes/{id}/universes what that remote holds, + local state (A-04)
+ *   POST   /adopt                  create a universe from a remote, then link it (A-02)
  *   POST   /links                  create {universeId, remoteId}
  *   GET    /links?universeId=      list
  *   DELETE /links/{id}             delete + drop the base snapshot
@@ -43,7 +44,7 @@ import {
 import { SyncApplyError } from '../services/sync/errors.js';
 import { mapSyncApplyError } from '../services/sync/apply-error-response.js';
 import { runSync, testRemote } from '../services/sync/run-sync.js';
-import { listRemoteUniverses } from '../services/sync/adopt.js';
+import { adoptUniverse, listRemoteUniverses } from '../services/sync/adopt.js';
 import { SyncRunError } from '../services/sync/run-errors.js';
 import { env } from '../config.js';
 
@@ -90,6 +91,11 @@ const maskedRemoteSchema = z.object({
 const createLinkBodySchema = z.object({
   universeId: z.string().uuid(),
   remoteId: z.string().uuid(),
+});
+
+const adoptBodySchema = z.object({
+  remoteId: z.string().uuid(),
+  universeId: z.string().uuid(),
 });
 
 const linkListQuerySchema = z.object({
@@ -398,6 +404,34 @@ const remoteUniversesRoute = createRoute({
     // 400) and folds "not owned" into SyncLinkNotFoundError → 404 (never 403).
     401: syncRunErrorResponses[401],
     402: syncRunErrorResponses[402],
+    404: syncRunErrorResponses[404],
+    409: syncRunErrorResponses[409],
+    413: syncRunErrorResponses[413],
+    500: syncRunErrorResponses[500],
+    502: syncRunErrorResponses[502],
+  },
+});
+
+const adoptRoute = createRoute({
+  method: 'post',
+  path: '/adopt',
+  tags: ['Sync Links'],
+  summary: 'Adopt a universe the remote holds and this instance does not (A-02)',
+  description:
+    'Creates the local universe from the remote\'s own universe row, preserving ' +
+    'its id (S-05), then creates an ordinary link. Does NOT run the first sync ' +
+    '(A-06) — call POST /links/{id}/run next. 409 if this account already holds ' +
+    'the universe (link it instead); 403 if another user on this instance does.',
+  security: [{ bearerJwtAuth: [] }],
+  middleware: [requireJwtAuth] as const,
+  request: {
+    body: { content: { 'application/json': { schema: adoptBodySchema } }, required: true },
+  },
+  responses: {
+    201: { content: { 'application/json': { schema: linkSchema } }, description: 'Universe adopted; link created.' },
+    401: syncRunErrorResponses[401],
+    402: syncRunErrorResponses[402],
+    403: { content: { 'application/json': { schema: syncErrorSchema } }, description: 'Another user on this instance owns that universe id.' },
     404: syncRunErrorResponses[404],
     409: syncRunErrorResponses[409],
     413: syncRunErrorResponses[413],
@@ -804,6 +838,32 @@ export const syncClientRoutes = new OpenAPIHono<AppEnv>()
     } catch (err: any) {
       if (err?.code === '23505') {
         return c.json({ error: 'This universe is already linked to this remote' }, 409);
+      }
+      throw err;
+    }
+  })
+
+  .openapi(adoptRoute, async (c) => {
+    const userId = c.var.userId;
+    const { remoteId, universeId } = c.req.valid('json');
+
+    try {
+      const { link, remote } = await adoptUniverse({ remoteId, universeId, ownerId: userId });
+      return c.json(toLinkWire(link, remote), 201);
+    } catch (err) {
+      // TWO hierarchies, checked in this order — the same C-19/C-21 shape
+      // runLinkRoute uses. The LOCAL seed apply throws SyncApplyError
+      // (UniverseOwnershipError → 403), which does not extend SyncRunError.
+      if (err instanceof SyncApplyError) {
+        const mapped = mapSyncApplyError(err, 'sync-client/adopt');
+        // Narrower than runLinkRoute's cast (no 400): adoptUniverse always
+        // calls applyManifestOps with `ops: {}`, so UnknownCollectionError /
+        // MissingRowIdError — the only 400 sources — can never fire here, and
+        // adoptRoute's declared responses (see above) do not promise a 400.
+        return c.json(mapped.body, mapped.status as 403 | 409);
+      }
+      if (err instanceof SyncRunError) {
+        return c.json({ error: err.message, code: err.code }, err.status as 401 | 402 | 404 | 409 | 413 | 500 | 502);
       }
       throw err;
     }

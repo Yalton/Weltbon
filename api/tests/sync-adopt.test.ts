@@ -23,8 +23,12 @@ import { join } from 'node:path';
 import { createHash } from 'node:crypto';
 import { eq } from 'drizzle-orm';
 import { createTestDb, cleanDb, createTestUser, type TestDbHandle } from './helpers.js';
-import { listRemoteUniverses } from '../src/services/sync/adopt.js';
-import { SyncLinkNotFoundError } from '../src/services/sync/run-errors.js';
+import { adoptUniverse, listRemoteUniverses } from '../src/services/sync/adopt.js';
+import {
+  SyncLinkNotFoundError,
+  SyncUniverseAlreadyLocalError,
+  SyncUniverseNotOnRemoteError,
+} from '../src/services/sync/run-errors.js';
 
 // Used by Task 7's acceptance test. If the typecheck flags it as unused while
 // only Tasks 5-6 exist, add it in Task 7 instead of deleting the import above.
@@ -190,6 +194,110 @@ describe('universe adoption', () => {
         headers: { Authorization: `Bearer ${patPlaintext}` },
       });
       expect(patRes.status).toBe(401);
+    });
+  });
+
+  describe('adoptUniverse (A-02, A-07, A-09)', () => {
+    it('creates the local universe with the SAME id, owned by the adopter (S-05)', async () => {
+      const { link } = await adoptUniverse({
+        remoteId, universeId, ownerId: ownerA.id, fetchImpl: makeFetch(),
+      });
+
+      const { universes } = await import('../src/db/schema.js');
+      const [local] = await A.db.select().from(universes).where(eq(universes.id, universeId));
+      expect(local).toBeDefined();
+      // The id is the whole point: sync matches rows by shared UUID, which is
+      // exactly why import (which remaps ids, S-05) can never substitute.
+      expect(local.id).toBe(universeId);
+      // C-08: the manifest's user id is never trusted; ownership is the adopter's.
+      expect(local.userId).toBe(ownerA.id);
+      expect(local.name).toBe('Aethel');
+      expect(local.description).toBe('from the remote');
+      expect(link.universeId).toBe(universeId);
+      expect(link.remoteId).toBe(remoteId);
+    });
+
+    it('copies the remote\'s timestamps verbatim, so the first merge sees no universe difference', async () => {
+      const { universes } = await import('../src/db/schema.js');
+      const [onB] = await B.db.select().from(universes).where(eq(universes.id, universeId));
+
+      await adoptUniverse({ remoteId, universeId, ownerId: ownerA.id, fetchImpl: makeFetch() });
+
+      const [onA] = await A.db.select().from(universes).where(eq(universes.id, universeId));
+      expect(onA.updatedAt.toISOString()).toBe(onB.updatedAt.toISOString());
+      expect(onA.createdAt.toISOString()).toBe(onB.createdAt.toISOString());
+    });
+
+    it('refuses a universe this user already holds, and does NOT clobber it (A-07)', async () => {
+      const { universes } = await import('../src/db/schema.js');
+      await A.db.insert(universes).values({
+        id: universeId, userId: ownerA.id, name: 'my local name', description: 'mine',
+      });
+
+      await expect(
+        adoptUniverse({ remoteId, universeId, ownerId: ownerA.id, fetchImpl: makeFetch() }),
+      ).rejects.toBeInstanceOf(SyncUniverseAlreadyLocalError);
+
+      const [local] = await A.db.select().from(universes).where(eq(universes.id, universeId));
+      expect(local.name).toBe('my local name');
+      expect(local.description).toBe('mine');
+    });
+
+    it('refuses an id another local user owns, with the engine\'s own 403 (A-07)', async () => {
+      const { universes } = await import('../src/db/schema.js');
+      const stranger = await createTestUser(A, { email: 'other@test.dev', password: 'password123' });
+      await A.db.insert(universes).values({ id: universeId, userId: stranger.id, name: 'theirs' });
+
+      await expect(
+        adoptUniverse({ remoteId, universeId, ownerId: ownerA.id, fetchImpl: makeFetch() }),
+      ).rejects.toMatchObject({ status: 403 });
+
+      const [local] = await A.db.select().from(universes).where(eq(universes.id, universeId));
+      expect(local.userId).toBe(stranger.id);
+      expect(local.name).toBe('theirs');
+    });
+
+    it('404s when the remote does not hold that universe', async () => {
+      await expect(
+        adoptUniverse({
+          remoteId,
+          universeId: '99999999-9999-4999-8999-999999999999',
+          ownerId: ownerA.id,
+          fetchImpl: makeFetch(),
+        }),
+      ).rejects.toBeInstanceOf(SyncUniverseNotOnRemoteError);
+    });
+
+    it('refuses another user\'s remote as not-found', async () => {
+      const stranger = await createTestUser(A, { email: 'nope@test.dev', password: 'password123' });
+      await expect(
+        adoptUniverse({ remoteId, universeId, ownerId: stranger.id, fetchImpl: makeFetch() }),
+      ).rejects.toBeInstanceOf(SyncLinkNotFoundError);
+    });
+
+    it('is recoverable when the link insert fails after the seed (A-09)', async () => {
+      // Simulate the crash window: seed the universe, then adopt. The universe
+      // now exists and is owned by the caller, so adoption takes the A-07 409
+      // path and the remedy is the ordinary link route — which now works,
+      // because the FK is satisfiable.
+      await adoptUniverse({ remoteId, universeId, ownerId: ownerA.id, fetchImpl: makeFetch() });
+      const { syncLinks } = await import('../src/db/schema.js');
+      await A.db.delete(syncLinks).where(eq(syncLinks.universeId, universeId));
+
+      await expect(
+        adoptUniverse({ remoteId, universeId, ownerId: ownerA.id, fetchImpl: makeFetch() }),
+      ).rejects.toBeInstanceOf(SyncUniverseAlreadyLocalError);
+
+      // ...and the ordinary link route succeeds where it 404'd before adoption.
+      const { issueAccessToken } = await import('../src/services/auth.js');
+      const jwt = await issueAccessToken(ownerA.id);
+      await use('A');
+      const res = await app.request('/api/sync/links', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json', Authorization: `Bearer ${jwt}` },
+        body: JSON.stringify({ universeId, remoteId }),
+      });
+      expect(res.status).toBe(201);
     });
   });
 });
