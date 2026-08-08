@@ -1,7 +1,7 @@
 import bcrypt from 'bcrypt';
 import { SignJWT, jwtVerify } from 'jose';
 import { randomBytes, randomUUID } from 'node:crypto';
-import { and, eq, gt, isNull } from 'drizzle-orm';
+import { and, eq, gt, isNotNull, isNull } from 'drizzle-orm';
 import { db as getDb } from '../db/client.js';
 import { refreshTokens } from '../db/schema.js';
 import { env } from '../config.js';
@@ -148,7 +148,38 @@ export async function rotateRefreshToken(
 }
 
 /**
- * Revokes a specific refresh token (logout current session only).
+ * Take every one of this user's already-rotated tokens out of the grace window.
+ *
+ * `replacedById` is the grace-eligibility flag: `rotateRefreshToken` honours a
+ * replay only when the row has one AND was revoked within REFRESH_GRACE_MS.
+ * Clearing it is therefore how an explicit revocation reaches rows that are
+ * ALREADY revoked — which `revokedAt`-based updates cannot do, because they all
+ * filter `isNull(revokedAt)` and a rotated row has it set.
+ *
+ * Without this, logging out revoked the current token but left its PREDECESSOR
+ * grace-eligible, so replaying the token the current one was rotated from still
+ * yielded a full-length access token after logout (#14).
+ *
+ * Not time-bounded on purpose: rows revoked longer ago than the grace window are
+ * already ineligible, so clearing them changes nothing and the query stays
+ * simple. It is scoped to one user, so it cannot affect anyone else's sessions.
+ * It does end the grace window for this user's OTHER devices — a concurrent
+ * refresh elsewhere within the same 10 seconds gets a 401 instead of a grace
+ * pass. That is the correct trade: an explicit logout should win over a race.
+ *
+ * `replacedById` has no other reader, so clearing it costs no behaviour
+ * elsewhere — only the successor breadcrumb, which nothing consumes.
+ */
+async function endGraceWindowForUser(tx: DrizzleDb, userId: string): Promise<void> {
+  await tx
+    .update(refreshTokens)
+    .set({ replacedById: null })
+    .where(and(eq(refreshTokens.userId, userId), isNotNull(refreshTokens.replacedById)));
+}
+
+/**
+ * Revokes a specific refresh token (logout current session only), and ends the
+ * grace window for that user's rotated predecessors so the logout is absolute.
  */
 export async function revokeRefreshToken(
   composite: string,
@@ -156,10 +187,23 @@ export async function revokeRefreshToken(
 ): Promise<void> {
   const [id] = composite.split('.');
   if (!id) return;
-  await dbHandle
-    .update(refreshTokens)
-    .set({ revokedAt: new Date() })
-    .where(and(eq(refreshTokens.id, id), isNull(refreshTokens.revokedAt)));
+  await dbHandle.transaction(async (tx) => {
+    // Read the owner first: the revoking UPDATE below cannot report it when the
+    // row is already revoked, and the grace teardown still has to run in that
+    // case — logging out twice must not leave predecessors eligible.
+    const row = await tx.query.refreshTokens.findFirst({
+      where: eq(refreshTokens.id, id),
+      columns: { userId: true },
+    });
+    if (!row) return;
+
+    await tx
+      .update(refreshTokens)
+      .set({ revokedAt: new Date() })
+      .where(and(eq(refreshTokens.id, id), isNull(refreshTokens.revokedAt)));
+
+    await endGraceWindowForUser(tx as DrizzleDb, row.userId);
+  });
 }
 
 /**
@@ -169,12 +213,23 @@ export async function revokeAllForUser(
   userId: string,
   dbHandle: DrizzleDb = getDb()
 ): Promise<number> {
-  const result = await dbHandle
-    .update(refreshTokens)
-    .set({ revokedAt: new Date() })
-    .where(and(eq(refreshTokens.userId, userId), isNull(refreshTokens.revokedAt)))
-    .returning({ id: refreshTokens.id });
-  return result.length;
+  return await dbHandle.transaction(async (tx) => {
+    const result = await tx
+      .update(refreshTokens)
+      .set({ revokedAt: new Date() })
+      .where(and(eq(refreshTokens.userId, userId), isNull(refreshTokens.revokedAt)))
+      .returning({ id: refreshTokens.id });
+
+    // A password change must not leave a rotated predecessor grace-eligible.
+    // The UPDATE above cannot reach those rows — they already have revokedAt
+    // set, so `isNull(revokedAt)` excludes them (#14).
+    await endGraceWindowForUser(tx as DrizzleDb, userId);
+
+    // Deliberately still the count of tokens this call actually REVOKED, not
+    // rows touched: callers report it as "revoked N session(s)", and rows whose
+    // grace was merely ended were already revoked.
+    return result.length;
+  });
 }
 
 /**

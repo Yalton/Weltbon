@@ -179,6 +179,57 @@ describe('concurrent refresh-token rotation', () => {
     expect(liveAfter).toBe(liveBefore);
   });
 
+  it('logout disqualifies the PREDECESSOR of the token being revoked (#14)', async () => {
+    // The grace window keeps a concurrent tab from being signed out, but it must
+    // not outlive an explicit logout. Before the fix, the check only looked at
+    // the row logout itself revoked — so replaying the token that row was
+    // ROTATED FROM still yielded a 1-hour access token after the user logged
+    // out, and revokeAllForUser could not reach it either (it filters
+    // isNull(revokedAt), so it never touches an already-rotated row).
+    const a = await registerAndGetCookie();
+
+    // Rotate A -> B. A is now revoked with replacedById set: grace-eligible.
+    const rotate = await appRequest('POST', '/api/auth/refresh', {
+      headers: { Cookie: `refresh=${a}` },
+    });
+    expect(rotate.status).toBe(200);
+    const b = extractRefreshCookie(rotate.setCookieHeader);
+    expect(b).toBeTruthy();
+
+    // Sanity: A is inside its grace window right now, so without the logout
+    // below it WOULD be honoured. This is what makes the assertion meaningful
+    // rather than passing because the window had simply expired.
+    const beforeLogout = await appRequest('POST', '/api/auth/refresh', {
+      headers: { Cookie: `refresh=${a}` },
+    });
+    expect(beforeLogout.status).toBe(200);
+
+    await appRequest('POST', '/api/auth/logout', { headers: { Cookie: `refresh=${b}` } });
+
+    // The predecessor must now be refused, still well inside the 10s window.
+    const replay = await appRequest('POST', '/api/auth/refresh', {
+      headers: { Cookie: `refresh=${a}` },
+    });
+    expect(replay.status).toBe(401);
+  });
+
+  it('a password change (revokeAllForUser) also disqualifies rotated predecessors (#14)', async () => {
+    const a = await registerAndGetCookie();
+    const rotate = await appRequest('POST', '/api/auth/refresh', {
+      headers: { Cookie: `refresh=${a}` },
+    });
+    expect(rotate.status).toBe(200);
+
+    const [row] = await handle.db.select().from(refreshTokens).limit(1);
+    const { revokeAllForUser } = await import('../src/services/auth.js');
+    await revokeAllForUser(row.userId, handle.db as never);
+
+    const replay = await appRequest('POST', '/api/auth/refresh', {
+      headers: { Cookie: `refresh=${a}` },
+    });
+    expect(replay.status).toBe(401);
+  });
+
   it('an unknown token is still refused', async () => {
     // A well-formed but unknown id. NOT a malformed one: a non-UUID id reaches
     // a uuid column and the route currently 500s instead of 401ing. That is a
