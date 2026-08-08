@@ -11,6 +11,8 @@ export interface Env {
   chromiumPath: string | undefined;
   publicOrigin: string | undefined;
   port: number;
+  /** Directory holding the built SPA. Relative paths resolve against process.cwd(). */
+  webDist: string;
   llmKeyEncryptionKey: string | undefined;
   // Phase 24 AUDIT hard caps (T-24-01-03: validated at boot, defaults applied when unset).
   auditMaxToolCalls: number;     // AUDIT_MAX_TOOL_CALLS, default 20
@@ -124,6 +126,7 @@ export function loadEnv(source: NodeJS.ProcessEnv = process.env): Env {
     chromiumPath: source.CHROMIUM_PATH,
     publicOrigin,
     port: Number(source.PORT ?? 3000),
+    webDist: source.WELTBON_WEB_DIST ?? './web-dist',
     llmKeyEncryptionKey,
     auditMaxToolCalls,
     auditMaxWallClockMs,

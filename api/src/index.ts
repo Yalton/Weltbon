@@ -1,3 +1,4 @@
+import { pathToFileURL } from 'node:url';
 import { serve } from '@hono/node-server';
 import { serveStatic } from '@hono/node-server/serve-static';
 import { Hono } from 'hono';
@@ -39,6 +40,7 @@ import { wireSigtermDrain } from './services/audit-shutdown.js';
 import { requireAuth } from './middleware/auth.js';
 import { forwarded } from './middleware/forwarded.js';
 import { db, initDb } from './db/client.js';
+import { runMigrations } from './db/migrate.js';
 import { llmApiKeys, syncRemotes } from './db/schema.js';
 import { seedInviteCode } from './db/seedInviteCode.js';
 import { createApiRouter } from './openapi/app.js';
@@ -193,9 +195,14 @@ export function createApp() {
   );
   app.get('/health', (c) => c.json({ ok: true }));
 
-  app.use('*', serveStatic({ root: './web-dist' }));
-  app.get('/', serveStatic({ path: './web-dist/index.html' }));
-  app.get('*', serveStatic({ path: './web-dist/index.html' }));
+  // Resolved from config so a second caller (the Electron main process, which
+  // runs with a completely different cwd) can point at its packaged copy.
+  // Relative values still resolve against process.cwd(), preserving the exact
+  // previous behaviour for every existing deployment.
+  const webDist = cfg.webDist;
+  app.use('*', serveStatic({ root: webDist }));
+  app.get('/', serveStatic({ path: `${webDist}/index.html` }));
+  app.get('*', serveStatic({ path: `${webDist}/index.html` }));
 
   app.onError((err, c) => {
     if (err instanceof HTTPException) {
@@ -251,10 +258,25 @@ export async function assertLlmKeyEncryptionKey(deps: {
   }
 }
 
-if (import.meta.url === `file://${process.argv[1]}`) {
-  // PROXY-01 operator warning: when WELTBON_PUBLIC_ORIGIN is unset the CORS
-  // middleware reflects any Origin back with credentials: true — fine for
-  // local dev, an XS-attack surface in production. Surface it loudly at boot.
+/**
+ * The full boot sequence, callable. Extracted so the Electron main process
+ * (Stage 2) can start the same server the CLI entrypoint does, instead of
+ * duplicating this ordering and letting the two copies drift.
+ *
+ * Resolves only once the socket is listening, and reports the port that was
+ * ACTUALLY bound — with PORT=0 the kernel picks it, and the caller needs the
+ * real number to build the URL it loads.
+ *
+ * DV-04: PGlite is constructed asynchronously, so the handle must exist
+ * before ANY db() call below. On the postgres driver this is a no-op that
+ * moves pool construction LATER, not earlier: on master, client.ts built
+ * the pool at module load time (`const defaultPool = new pg.Pool(...)`);
+ * this branch moves construction into this boot block instead, so on
+ * Postgres `initDb()` makes it happen here rather than at import time.
+ * Still harmless either way — constructing a pg.Pool does no I/O, and this
+ * call is before serve() regardless.
+ */
+export async function startServer(): Promise<{ server: ReturnType<typeof serve>; port: number }> {
   if (!cfg.publicOrigin) {
     console.warn(
       '[weltbon] WELTBON_PUBLIC_ORIGIN is not set — CORS will reflect any Origin with credentials. ' +
@@ -262,15 +284,8 @@ if (import.meta.url === `file://${process.argv[1]}`) {
       'to restrict CORS to your operator-controlled origin.'
     );
   }
-  // DV-04: PGlite is constructed asynchronously, so the handle must exist
-  // before ANY db() call below. On the postgres driver this is a no-op that
-  // moves pool construction LATER, not earlier: on master, client.ts built
-  // the pool at module load time (`const defaultPool = new pg.Pool(...)`);
-  // this branch moves construction into this boot block instead, so on
-  // Postgres `initDb()` makes it happen here rather than at import time.
-  // Still harmless either way — constructing a pg.Pool does no I/O, and this
-  // call is before serve() regardless.
   await initDb();
+  await runMigrations(db());
   await seedInviteCode(db());
   await assertLlmKeyEncryptionKey({ db: db(), cfg });
   // AUDIT-12: force-fail any pending|running orphan runs from a previous process.
@@ -281,8 +296,25 @@ if (import.meta.url === `file://${process.argv[1]}`) {
   } catch (err) {
     console.warn('[audit-recovery] failed at boot; orphan rows may persist:', err);
   }
+
   const server = serve({ fetch: app.fetch, port: cfg.port });
+  const port = await new Promise<number>((resolve, reject) => {
+    const read = () => {
+      const addr = server.address();
+      if (addr && typeof addr === 'object') resolve(addr.port);
+      else reject(new Error('server bound to a non-TCP address'));
+    };
+    const addr = server.address();
+    if (addr) read();
+    else server.once('listening', read);
+  });
+
   // D-04: register SIGTERM handler after serve() so the handler has the server reference.
   wireSigtermDrain(server, cfg.auditShutdownGraceMs);
-  console.log(`Weltbon API listening on :${cfg.port}`);
+  console.log(`Weltbon API listening on :${port}`);
+  return { server, port };
+}
+
+if (import.meta.url === pathToFileURL(process.argv[1]).href) {
+  await startServer();
 }
