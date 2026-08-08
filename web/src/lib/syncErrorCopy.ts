@@ -7,7 +7,7 @@
  * module only ever renders values the API has already scrubbed:
  *
  * 1. A run failure's `code` (api/src/services/sync/run-errors.ts) — one of
- *    12 `SyncRunError` subclasses, mirrored below as `SyncErrorCode`. A
+ *    14 `SyncRunError` subclasses, mirrored below as `SyncErrorCode`. A
  *    sibling hierarchy, `SyncApplyError` (the LOCAL apply's own errors),
  *    carries no `code` at all, and may instead carry
  *    `collisions: [{collection, count}]` — counts only, never the colliding
@@ -56,7 +56,7 @@ export interface SyncCopy {
    * Carried so consumers can ask "do these two copies describe the SAME
    * failure?" DIRECTLY. `combineRunError` below needs exactly that question
    * answered, and its first implementation asked it by comparing `message`
-   * strings — sound only while all 12 messages stay distinct, which nothing
+   * strings — sound only while all 14 messages stay distinct, which nothing
    * enforced. Two entries given the same prose would have made a stale error of
    * code A silently decorate a fresh failure of code B with A's cause.
    *
@@ -69,7 +69,7 @@ export interface SyncCopy {
   code?: SyncErrorCode;
 }
 
-/** The 12 codes `run-errors.ts`'s `SyncRunError` subclasses declare. */
+/** The 14 codes `run-errors.ts`'s `SyncRunError` subclasses declare. */
 export type SyncErrorCode =
   | 'link-not-found'
   | 'forbidden'
@@ -82,10 +82,12 @@ export type SyncErrorCode =
   | 'remote-incompatible'
   | 'remote-universe-missing'
   | 'blob-unavailable'
-  | 'remote-rejected';
+  | 'remote-rejected'
+  | 'universe-not-on-remote'
+  | 'universe-already-local';
 
-/** One entry per `SyncErrorCode` above — 12, no more, no fewer (enforced by the type). */
-export const SYNC_ERROR_COPY: Record<SyncErrorCode, { message: string }> = {
+/** One entry per `SyncErrorCode` above — 14, no more, no fewer (enforced by the type). */
+export const SYNC_ERROR_COPY: Record<SyncErrorCode, { message: string; detail?: string }> = {
   'link-not-found': {
     // Two distinct throw sites share this code: the sync link itself may be
     // gone (run-errors.ts), OR `testRemote` throws the identical class when
@@ -143,6 +145,14 @@ export const SYNC_ERROR_COPY: Record<SyncErrorCode, { message: string }> = {
     // reason: what the remote objected to is `last_error`-only detail, not
     // part of this headline.
     message: 'The remote instance rejected this sync.',
+  },
+  'universe-not-on-remote': {
+    message: 'That universe is no longer on the remote instance.',
+    detail: 'It may have been deleted there, or it may belong to a different account on that instance. Refresh the list to see what the remote holds now.',
+  },
+  'universe-already-local': {
+    message: 'You already have that universe on this instance.',
+    detail: 'Adopting would replace its name and settings with the remote\'s copy. Link it to the remote instead — linking merges the two.',
   },
 };
 
@@ -277,7 +287,7 @@ export function lastErrorMessage(raw: string | null | undefined): SyncCopy | nul
  * beats a generic one and nothing.
  *
  * The gate is code equality, NOT message equality. Message equality is sound
- * only while all 12 entries stay textually distinct, which nothing enforces; a
+ * only while all 14 entries stay textually distinct, which nothing enforces; a
  * copy edit that gave two entries the same prose would silently let a stale
  * error of code A decorate a fresh failure of code B with A's cause. Requiring
  * a code on BOTH sides also keeps `undefined === undefined` from reading as a
