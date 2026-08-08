@@ -159,11 +159,20 @@ describe('auth routes (AUTH-01..06)', () => {
     expect(refresh.body.accessToken).toBeTypeOf('string');
     expect(refresh.setCookieHeader).toMatch(/^refresh=/);
 
-    // Old refresh cookie value should no longer work (rotation)
+    // The old cookie value can no longer ROTATE. It is not a flat 401 any more:
+    // within REFRESH_GRACE_MS a replay still yields an access token, so that two
+    // tabs cold-loading at the same instant do not sign each other out. What it
+    // must never do is mint a second refresh token — that is the single-use
+    // guarantee, and it is asserted by the absence of a Set-Cookie here.
+    //
+    // Changed deliberately (2026-08-07) alongside the concurrent-rotation fix;
+    // the full contract, including the 401 once the window has passed, lives in
+    // tests/auth-refresh-concurrency.test.ts.
     const reuse = await appRequest('POST', '/api/auth/refresh', {
       headers: { Cookie: `refresh=${refreshValue}` },
     });
-    expect(reuse.status).toBe(401);
+    expect(reuse.status).toBe(200);
+    expect(extractRefreshCookie(reuse.setCookieHeader)).toBeNull();
   });
 
   it('refresh without cookie returns 401', async () => {

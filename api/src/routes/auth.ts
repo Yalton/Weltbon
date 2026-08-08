@@ -355,7 +355,13 @@ export const authRoutes = new OpenAPIHono<AppEnv>()
       return c.json({ error: 'Invalid refresh token' }, 401);
     }
     const accessToken = await issueAccessToken(rotated.userId);
-    setRefreshCookie(c, rotated.newToken);
+    // newToken === null is the benign-replay path (a concurrent tab already
+    // rotated this cookie moments ago). Issue the access token, but set NO
+    // cookie: the browser already holds the winner's value, and minting a
+    // second refresh token here is exactly the bug the claim guard closes.
+    if (rotated.newToken !== null) {
+      setRefreshCookie(c, rotated.newToken);
+    }
     return c.json({ accessToken }, 200);
   })
 

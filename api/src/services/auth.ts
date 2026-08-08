@@ -49,35 +49,101 @@ export async function issueRefreshToken(
 }
 
 /**
+ * How long after a token is rotated a replay of it still yields an ACCESS token.
+ *
+ * Exists for the benign concurrent case — two browser tabs, or a StrictMode
+ * double-invoke, cold-loading at the same moment and both presenting the same
+ * cookie. Without it the loser gets a 401 and the user is signed out of a
+ * session with perfectly valid credentials.
+ *
+ * A replay inside the window grants NO refresh token (see below), so it buys an
+ * attacker one access token's worth of time and no persistence at all.
+ */
+export const REFRESH_GRACE_MS = 10_000;
+
+/**
  * Rotates a refresh token atomically: verifies the composite, revokes the old row,
  * and issues a new token in the same transaction.
- * Returns null if the composite is invalid / revoked / expired / wrong secret.
+ *
+ * Returns null if the composite is invalid / expired / wrong secret, or if it was
+ * revoked longer ago than REFRESH_GRACE_MS. `newToken === null` means "grant an
+ * access token but do NOT rotate" — the benign-replay path; the caller must not
+ * set a refresh cookie in that case.
+ *
+ * CONCURRENCY, learned the hard way. Filtering `isNull(revokedAt)` in the read
+ * alone does NOT make rotation single-use: under READ COMMITTED two transactions
+ * both pass the read before either commits, and the ~250ms `bcrypt.compare`
+ * below makes that window very wide. Reproduced before this guard existed — two
+ * concurrent refreshes of ONE cookie both returned 200 and left TWO live tokens,
+ * silently defeating the reuse-detection that single-use rotation exists to
+ * provide. The claiming UPDATE's `isNull(revokedAt)` predicate is what actually
+ * serialises it: the loser's UPDATE blocks on the winner's row lock, re-evaluates
+ * against the committed row, matches nothing, and returns zero rows.
  */
 export async function rotateRefreshToken(
   composite: string,
   dbHandle: DrizzleDb = getDb()
-): Promise<{ userId: string; newToken: string } | null> {
+): Promise<{ userId: string; newToken: string | null } | null> {
   const [id, secret] = composite.split('.');
   if (!id || !secret) return null;
 
   return await dbHandle.transaction(async (tx) => {
+    // Deliberately NOT filtered on isNull(revokedAt): a revoked row must stay
+    // readable so a benign concurrent replay can be told apart from a genuine
+    // stolen-token reuse. Expiry is still enforced here.
     const row = await tx.query.refreshTokens.findFirst({
       where: and(
         eq(refreshTokens.id, id),
-        isNull(refreshTokens.revokedAt),
         gt(refreshTokens.expiresAt, new Date())
       ),
     });
     if (!row) return null;
     if (!(await bcrypt.compare(secret, row.tokenHash))) return null;
 
-    await tx
+    // Claim the row. Exactly one concurrent caller can win this.
+    const claimed = await tx
       .update(refreshTokens)
       .set({ revokedAt: new Date() })
-      .where(eq(refreshTokens.id, id));
+      .where(and(eq(refreshTokens.id, id), isNull(refreshTokens.revokedAt)))
+      .returning({ id: refreshTokens.id });
 
-    const newToken = await issueRefreshToken(row.userId, tx as DrizzleDb);
-    return { userId: row.userId, newToken };
+    if (claimed.length === 1) {
+      const newToken = await issueRefreshToken(row.userId, tx as DrizzleDb);
+      // Mark WHY this row was retired. Only rotation sets this; logout and
+      // revokeAllForUser leave it null, which is what makes the grace window
+      // below inapplicable to an explicit logout.
+      const newId = newToken.split('.')[0];
+      await tx
+        .update(refreshTokens)
+        .set({ replacedById: newId })
+        .where(eq(refreshTokens.id, id));
+      return { userId: row.userId, newToken };
+    }
+
+    // Lost the claim, or it was already revoked when we read it. Re-read for the
+    // authoritative values: under READ COMMITTED this statement sees the winner's
+    // committed row, which the snapshot above may predate.
+    const current = await tx.query.refreshTokens.findFirst({
+      where: eq(refreshTokens.id, id),
+      columns: { revokedAt: true, replacedById: true },
+    });
+    const revokedAt = current?.revokedAt;
+
+    // The grace window applies ONLY to a token retired by ROTATION. A token
+    // revoked by logout (or by revokeAllForUser on a password change) has a null
+    // replacedById and is refused immediately — logout must be absolute, and an
+    // earlier version of this code that omitted the check kept a logged-out
+    // session alive for the whole window.
+    if (
+      current?.replacedById != null &&
+      revokedAt &&
+      Date.now() - revokedAt.getTime() <= REFRESH_GRACE_MS
+    ) {
+      // Benign replay: an access token, and deliberately no new refresh token.
+      // Granting one here would reopen the two-live-tokens hole this guard closes.
+      return { userId: row.userId, newToken: null };
+    }
+    return null;
   });
 }
 

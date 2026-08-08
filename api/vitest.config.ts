@@ -30,6 +30,8 @@ const DB_GATED_TESTS = [
   'tests/audits-history.test.ts',
   'tests/audits-in-flight.test.ts',
   'tests/auth.test.ts',
+  // Concurrent refresh-token rotation — the single-use guarantee under load.
+  'tests/auth-refresh-concurrency.test.ts',
   'tests/categories.test.ts',
   'tests/entries.test.ts',
   'tests/entry-search.test.ts',

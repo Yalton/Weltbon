@@ -253,6 +253,13 @@
       "when": 1784940346573,
       "tag": "0035_sync_conflict_row_id_text",
       "breakpoints": true
+    },
+    {
+      "idx": 36,
+      "version": "7",
+      "when": 1786148846944,
+      "tag": "0036_refresh_token_replaced_by",
+      "breakpoints": true
     }
   ]
 }

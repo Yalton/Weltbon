@@ -1,7 +1,7 @@
 import { useEffect, useState } from 'react';
 import { Navigate, Outlet } from 'react-router-dom';
 import { useAuthStore } from '../store/auth';
-import { api, setAccessToken } from '../api/client';
+import { api, setAccessToken, attemptRefresh } from '../api/client';
 
 /**
  * If we have a session in memory, render children.
@@ -25,19 +25,23 @@ export function ProtectedRoute() {
     let cancelled = false;
     (async () => {
       try {
-        // Step 1 -- attempt silent refresh. Call /auth/refresh directly
-        // (the api() client's 401-retry branch is guarded away from /auth/*
-        // paths, so we POST directly and inspect the response).
-        const refreshRes = await fetch('/api/auth/refresh', {
-          method: 'POST',
-          credentials: 'include',
-        });
+        // Step 1 -- attempt silent refresh through the SHARED deduped helper.
+        //
+        // This used to be a raw fetch('/api/auth/refresh'). The comment then
+        // explained that api()'s 401-retry branch is guarded away from /auth/*
+        // paths — true, but it justified bypassing client.ts entirely, which also
+        // skipped `refreshInflight`, the in-flight dedupe that exists precisely to
+        // make concurrent refreshes safe. React.StrictMode double-invokes this
+        // effect in development and the `cancelled` flag below guards only the
+        // state writes, not the request, so both refreshes went out against a
+        // single-use rotating token. attemptRefresh() collapses them into one
+        // call; it is not the retry branch, so the /auth/* guard is unaffected.
+        const accessToken = await attemptRefresh();
         if (cancelled) return;
-        if (!refreshRes.ok) {
+        if (!accessToken) {
           setState('anonymous');
           return;
         }
-        const { accessToken } = (await refreshRes.json()) as { accessToken: string };
         setAccessToken(accessToken);
 
         // Step 2 -- rehydrate user identity via /auth/me so the user menu
