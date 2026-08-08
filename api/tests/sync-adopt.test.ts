@@ -29,6 +29,8 @@ import {
   SyncUniverseAlreadyLocalError,
   SyncUniverseNotOnRemoteError,
 } from '../src/services/sync/run-errors.js';
+import { runSync } from '../src/services/sync/run-sync.js';
+import { storageBackend } from '../src/services/storage/local.js';
 
 // Used by Task 7's acceptance test. If the typecheck flags it as unused while
 // only Tasks 5-6 exist, add it in Task 7 instead of deleting the import above.
@@ -356,6 +358,136 @@ describe('universe adoption', () => {
         body: JSON.stringify({ remoteId, universeId }),
       });
       expect(patRes.status).toBe(401);
+    });
+  });
+
+  describe('acceptance: web → desktop, end to end (#24)', () => {
+    /**
+     * At least 900x700. A smaller source produces a thumbnail byte-identical to
+     * the original (`withoutEnlargement: true`), so an assertion about the
+     * thumbnail would pass without the resize path ever running — the F0-06
+     * fixture lesson.
+     */
+    async function realPngLarge(seed: number): Promise<Buffer> {
+      const sharp = (await import('sharp')).default;
+      return sharp({
+        create: { width: 900, height: 700, channels: 3, background: { r: seed, g: 10, b: 20 } },
+      })
+        .png()
+        .toBuffer();
+    }
+
+    it('adopts a universe with an entry and an image, then converges both ways', async () => {
+      const { universes, entries, assets, syncConflicts } = await import('../src/db/schema.js');
+
+      // ── 1. Content on B (think: created in the web app) ──────────────────
+      const bytes = await realPngLarge(60);
+      await use('B');
+      const [entryOnB] = await B.db
+        .insert(entries)
+        .values({ universeId, title: 'Elandra', entryType: 'character', body: 'a knight' })
+        .returning();
+      const [assetOnB] = await B.db
+        .insert(assets)
+        .values({
+          universeId,
+          filename: 'banner.png',
+          mimeType: 'image/png',
+          extension: 'png',
+          sizeBytes: bytes.length,
+          thumbSizeBytes: 1,
+          contentHash: sha256(bytes),
+        })
+        .returning();
+      await storageBackend.put(assetOnB.id, bytes);
+
+      // ── 2. Adopt on A (think: the desktop app) ───────────────────────────
+      await use('A');
+      const { link } = await adoptUniverse({
+        remoteId, universeId, ownerId: ownerA.id, fetchImpl: makeFetch(),
+      });
+
+      // A-06: adoption does not sync. The universe is here; its contents are not.
+      const [seeded] = await A.db.select().from(universes).where(eq(universes.id, universeId));
+      expect(seeded.id).toBe(universeId);
+      const beforeRun = await A.db.select().from(entries).where(eq(entries.universeId, universeId));
+      expect(beforeRun).toHaveLength(0);
+
+      // ── 3. First sync pulls everything ───────────────────────────────────
+      await use('A');
+      const run = await runSync(link.id, ownerA.id, { fetchImpl: makeFetch() });
+      expect(run.appliedLocally.upserted.entries).toBe(1);
+
+      await use('A');
+      const [entryOnA] = await A.db.select().from(entries).where(eq(entries.id, entryOnB.id));
+      expect(entryOnA.title).toBe('Elandra');
+
+      const [assetOnA] = await A.db.select().from(assets).where(eq(assets.id, assetOnB.id));
+      expect(assetOnA).toBeDefined();
+
+      // The BYTES, not just the row — and a real PNG of the right size.
+      const bytesOnA = await storageBackend.get(assetOnB.id);
+      expect(bytesOnA?.equals(bytes)).toBe(true);
+      const sharp = (await import('sharp')).default;
+      const meta = await sharp(bytesOnA!).metadata();
+      expect(meta.format).toBe('png');
+      expect(meta.width).toBe(900);
+      expect(meta.height).toBe(700);
+      // The thumbnail was derived locally, and derived SMALLER than the source.
+      expect(await storageBackend.exists(`${assetOnB.id}_thumb`)).toBe(true);
+      const thumb = await storageBackend.get(`${assetOnB.id}_thumb`);
+      expect(thumb!.length).toBeLessThan(bytes.length);
+
+      // ── 4. Edit on both sides; converge; the loser is preserved ──────────
+      await use('A');
+      await A.db.update(entries).set({ body: 'edited on the desktop', updatedAt: new Date() })
+        .where(eq(entries.id, entryOnB.id));
+      await use('B');
+      await B.db.update(entries).set({ body: 'edited on the web', updatedAt: new Date(Date.now() + 1000) })
+        .where(eq(entries.id, entryOnB.id));
+
+      await use('A');
+      const run2 = await runSync(link.id, ownerA.id, { fetchImpl: makeFetch() });
+      expect(run2.conflicts).toBe(1);
+
+      await use('A');
+      const [convergedA] = await A.db.select().from(entries).where(eq(entries.id, entryOnB.id));
+      await use('B');
+      const [convergedB] = await B.db.select().from(entries).where(eq(entries.id, entryOnB.id));
+      expect(convergedA.body).toBe(convergedB.body);
+      expect(convergedA.body).toBe('edited on the web'); // later timestamp wins (LWW)
+
+      await use('A');
+      const losers = await A.db.select().from(syncConflicts).where(eq(syncConflicts.universeId, universeId));
+      expect(losers).toHaveLength(1);
+      expect(losers[0].resolvedAt).toBeNull();
+      // The loser really is the overwritten text, not an empty placeholder.
+      expect((losers[0].loserPayload as any).body).toBe('edited on the desktop');
+    });
+
+    it('a failed first sync leaves a state the next run converges (A-10)', async () => {
+      const { entries } = await import('../src/db/schema.js');
+      await use('B');
+      await B.db.insert(entries).values({
+        universeId, title: 'Solo', entryType: 'character', body: 'x',
+      });
+
+      await use('A');
+      const { link } = await adoptUniverse({
+        remoteId, universeId, ownerId: ownerA.id, fetchImpl: makeFetch(),
+      });
+
+      // Never ran a sync: base is null and the local side holds no collection
+      // rows. deriveOps' deletes are `side.keys() \ merged` and merged is the
+      // union, so neither side can derive a delete from this state.
+      await use('A');
+      const run = await runSync(link.id, ownerA.id, { fetchImpl: makeFetch() });
+      expect(run.appliedLocally.upserted.entries).toBe(1);
+      expect(run.pushed.deleted.entries ?? 0).toBe(0);
+
+      await use('B');
+      const stillOnB = await B.db.select().from(entries).where(eq(entries.universeId, universeId));
+      expect(stillOnB).toHaveLength(1);
     });
   });
 });
