@@ -14,6 +14,7 @@
  *   GET    /remotes                list, masked
  *   PATCH  /remotes/{id}           update label / baseUrl / replace PAT
  *   DELETE /remotes/{id}           delete + drop each link's base snapshot
+ *   GET    /remotes/{id}/universes what that remote holds, + local state (A-04)
  *   POST   /links                  create {universeId, remoteId}
  *   GET    /links?universeId=      list
  *   DELETE /links/{id}             delete + drop the base snapshot
@@ -42,6 +43,7 @@ import {
 import { SyncApplyError } from '../services/sync/errors.js';
 import { mapSyncApplyError } from '../services/sync/apply-error-response.js';
 import { runSync, testRemote } from '../services/sync/run-sync.js';
+import { listRemoteUniverses } from '../services/sync/adopt.js';
 import { SyncRunError } from '../services/sync/run-errors.js';
 import { env } from '../config.js';
 
@@ -358,6 +360,42 @@ const testRemoteRoute = createRoute({
     // engine (no 400 source) and folds "not owned" into SyncLinkNotFoundError
     // → 404, never a bare 403 (see testRemote's own docstring). Declaring an
     // unreachable status is worse than a terse contract.
+    401: syncRunErrorResponses[401],
+    402: syncRunErrorResponses[402],
+    404: syncRunErrorResponses[404],
+    409: syncRunErrorResponses[409],
+    413: syncRunErrorResponses[413],
+    500: syncRunErrorResponses[500],
+    502: syncRunErrorResponses[502],
+  },
+});
+
+const remoteUniversesRoute = createRoute({
+  method: 'get',
+  path: '/remotes/{id}/universes',
+  tags: ['Sync Remotes'],
+  summary: 'List the universes a registered remote holds (A-04)',
+  description:
+    'Handshakes, asks the remote instance what the stored PAT\'s owner holds, ' +
+    'and annotates each row with `localState` — absent | present | linked (A-07). ' +
+    'Creates nothing. JWT auth required: the browser holds no PAT and cannot ' +
+    'call a peer itself.',
+  security: [{ bearerJwtAuth: [] }],
+  middleware: [requireJwtAuth] as const,
+  request: { params: idParams },
+  responses: {
+    200: {
+      content: {
+        'application/json': {
+          schema: z.object({
+            universes: z.array(z.object({ localState: z.enum(['absent', 'present', 'linked']) }).passthrough()),
+          }),
+        },
+      },
+      description: 'What the remote instance holds, with this instance\'s state for each.',
+    },
+    // Same set as testRemoteRoute: this path cannot reach the apply engine (no
+    // 400) and folds "not owned" into SyncLinkNotFoundError → 404 (never 403).
     401: syncRunErrorResponses[401],
     402: syncRunErrorResponses[402],
     404: syncRunErrorResponses[404],
@@ -705,6 +743,24 @@ export const syncClientRoutes = new OpenAPIHono<AppEnv>()
       // SyncRunError subclass is added. Narrower than runLinkRoute's cast:
       // testRemote() cannot raise 400 or 403 (see the route's declared
       // responses above), so those are deliberately excluded here too.
+      if (err instanceof SyncRunError) {
+        return c.json({ error: err.message, code: err.code }, err.status as 401 | 402 | 404 | 409 | 413 | 500 | 502);
+      }
+      throw err;
+    }
+  })
+
+  .openapi(remoteUniversesRoute, async (c) => {
+    const userId = c.var.userId;
+    const { id } = c.req.valid('param');
+
+    try {
+      const rows = await listRemoteUniverses(id, userId);
+      return c.json({ universes: rows as any[] }, 200);
+    } catch (err) {
+      // ONE branch reading the error's own status/code (C-19 lesson): a
+      // per-class instanceof chain silently returns 500 the day a new
+      // SyncRunError subclass is added.
       if (err instanceof SyncRunError) {
         return c.json({ error: err.message, code: err.code }, err.status as 401 | 402 | 404 | 409 | 413 | 500 | 502);
       }
