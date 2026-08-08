@@ -52,7 +52,21 @@ async function main() {
 // main() and exit 0. That looks like success to `set -e` in
 // docker-entrypoint.sh, starting the API against an unmigrated database with
 // a green healthcheck.
-if (import.meta.url === pathToFileURL(process.argv[1]).href) {
+// `process.argv[1]` is undefined when this module is IMPORTED by a host that
+// was not launched with a script path — most importantly a packaged Electron
+// app, where argv[0] is the binary and there is no script argument. Calling
+// pathToFileURL(undefined) throws ERR_INVALID_ARG_TYPE, which crashed the
+// packaged desktop app at startup before the window ever appeared.
+//
+// Note the direction of that regression: the ORIGINAL string comparison
+// (`import.meta.url === `file://${process.argv[1]}``) never threw — it
+// evaluated to `file://undefined` and was correctly false. pathToFileURL was
+// adopted to close a silent-mismatch class (spaces, non-ASCII, %), and in
+// doing so converted a benign false into a crash in a context nothing tested.
+// Keep both properties: exact URL comparison AND no throw when there is no
+// script argument at all.
+const entryArg = process.argv[1];
+if (entryArg !== undefined && import.meta.url === pathToFileURL(entryArg).href) {
   main().catch((err) => {
     console.error('Migration failed:', err);
     process.exit(1);
