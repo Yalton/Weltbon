@@ -31,7 +31,23 @@ describe('db/client lifecycle under concurrent close', () => {
 
   afterEach(async () => {
     process.env = { ...OLD_ENV };
-    await rm(dir, { recursive: true, force: true });
+    // PGlite can still be flushing into `dir` when this runs, and under
+    // full-lane CPU contention the removal loses the race with ENOTEMPTY —
+    // `force: true` suppresses ENOENT, not ENOTEMPTY, so the flag does not
+    // cover it (#17). A false red here is especially costly: this file's own
+    // subject is PGlite lifecycle correctness, so the natural first reading is
+    // "the lifecycle fix regressed".
+    //
+    // Retry briefly, then give up silently. This is /tmp scratch — leaking a
+    // directory is harmless, and failing the test over it asserts nothing.
+    for (let attempt = 0; attempt < 5; attempt += 1) {
+      try {
+        await rm(dir, { recursive: true, force: true });
+        return;
+      } catch {
+        await new Promise((r) => setTimeout(r, 50 * (attempt + 1)));
+      }
+    }
   });
 
   it('closeDb() during an in-flight initDb() closes that engine instead of orphaning it', async () => {

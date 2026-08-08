@@ -62,6 +62,15 @@ export async function issueRefreshToken(
 export const REFRESH_GRACE_MS = 10_000;
 
 /**
+ * Refresh-token ids are `uuid` columns, and a non-UUID value reaching the query
+ * raises a Postgres 22P02 that surfaces as a 500 rather than a 401 (#16).
+ * Deliberately permissive about version/variant nibbles: the goal is "can this
+ * be compared against a uuid column", not "is this a canonical v4".
+ */
+const UUID_RE = /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i;
+
+
+/**
  * Rotates a refresh token atomically: verifies the composite, revokes the old row,
  * and issues a new token in the same transaction.
  *
@@ -86,6 +95,16 @@ export async function rotateRefreshToken(
 ): Promise<{ userId: string; newToken: string | null } | null> {
   const [id, secret] = composite.split('.');
   if (!id || !secret) return null;
+  // The id half goes straight into a query against a `uuid` column, so a
+  // malformed cookie (`refresh=not-a-real.token`) made Postgres raise
+  // `invalid input syntax for type uuid` — surfacing to the user as a 500
+  // "Internal error" rather than the 401 that every other bad-token path
+  // returns (#16). Shape-check first so a garbage cookie is simply refused.
+  //
+  // Note this must NOT reject well-formed-but-unknown ids: those still have to
+  // reach the lookup and come back 401, which is what makes an unknown token
+  // indistinguishable from a malformed one to a caller.
+  if (!UUID_RE.test(id)) return null;
 
   return await dbHandle.transaction(async (tx) => {
     // Deliberately NOT filtered on isNull(revokedAt): a revoked row must stay
