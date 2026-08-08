@@ -59,7 +59,7 @@ export async function initDb(): Promise<AppDatabase> {
 
   const cfg = env();
 
-  _initPromise = (async () => {
+  const mine = (async () => {
     if (cfg.dbDriver === 'pglite') {
       const { PGlite } = await import('@electric-sql/pglite');
       const { drizzle: drizzlePglite } = await import('drizzle-orm/pglite');
@@ -82,14 +82,16 @@ export async function initDb(): Promise<AppDatabase> {
 
     return initPostgres(cfg.databaseUrl!);
   })();
+  _initPromise = mine;
 
   try {
-    return await _initPromise;
+    return await mine;
   } finally {
-    // Clear regardless of outcome: a successful build makes `_db !== null`
-    // the fast path from here on, and a failed build must let the next
-    // caller retry construction rather than replaying a rejected promise.
-    _initPromise = null;
+    // Clear ONLY if this call still owns the slot. Without the identity check a
+    // slow first construction could null a NEWER caller's promise on its way
+    // out, and a third caller would then see both `_db` and `_initPromise` null
+    // and start yet another engine over the same directory.
+    if (_initPromise === mine) _initPromise = null;
   }
 }
 
@@ -125,6 +127,18 @@ export function db(): AppDatabase {
  * connection tied to the engine this call just closed.
  */
 export async function closeDb(): Promise<void> {
+  // Wait for any in-flight construction FIRST. Tearing down while a build is
+  // running orphans the engine it produces: `_close` is still null at that
+  // moment, so nothing can ever close it, and on pglite it keeps holding the
+  // data directory — which is the two-engines-over-one-directory corruption
+  // case wearing a different hat. A build that REJECTS produced nothing to
+  // close, so its failure is swallowed here rather than masking the caller's
+  // intent to shut down.
+  const pending = _initPromise;
+  if (pending) {
+    try { await pending; } catch { /* nothing was built */ }
+  }
+
   const close = _close;
   _db = null;
   _pool = null;
