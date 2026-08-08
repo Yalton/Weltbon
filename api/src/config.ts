@@ -22,6 +22,16 @@ export interface Env {
   auditShutdownGraceMs: number;  // AUDIT_SHUTDOWN_GRACE_MS, default 15_000
   /** DV-11: local desktop mode. Enables the credential-free local session route. */
   localMode: boolean;
+  /**
+   * Host/interface `serve()` binds to. Leaving this undefined preserves the
+   * pre-existing all-interfaces default (`@hono/node-server` passes it
+   * straight through to `net.Server#listen`, and `hostname: undefined`
+   * behaves exactly like omitting the option) — the Docker container needs
+   * that so its published port is reachable from the host. The desktop app
+   * sets this to '127.0.0.1': it mints credential-free local sessions and
+   * must never be reachable from the LAN.
+   */
+  bindHost: string | undefined;
 }
 
 export function loadEnv(source: NodeJS.ProcessEnv = process.env): Env {
@@ -136,6 +146,7 @@ export function loadEnv(source: NodeJS.ProcessEnv = process.env): Env {
     auditMaxTokensTotal,
     auditShutdownGraceMs,
     localMode: source.WELTBON_LOCAL_MODE === '1' || source.WELTBON_LOCAL_MODE === 'true',
+    bindHost: source.WELTBON_BIND_HOST,
   };
 }
 

@@ -1,6 +1,6 @@
 import { describe, it, expect, afterEach, beforeEach, vi } from 'vitest';
 import { mkdtemp, rm } from 'node:fs/promises';
-import { tmpdir } from 'node:os';
+import { tmpdir, networkInterfaces } from 'node:os';
 import { join } from 'node:path';
 import { sql } from 'drizzle-orm';
 
@@ -124,5 +124,56 @@ describe('startServer()', () => {
     const journal = await import('../drizzle/meta/_journal.json', { with: { type: 'json' } });
     const expected = (journal.default as { entries: unknown[] }).entries.length;
     expect(Number(rows[0].n)).toBe(expected);
+  }, 30_000);
+
+  // Task 6 addendum (Task 3 security review): api/src/index.ts's startServer()
+  // now passes cfg.bindHost through to serve() as `hostname`. Left unset it's
+  // the pre-existing all-interfaces default the Docker container needs — see
+  // the OTHER two tests in this file, neither of which sets WELTBON_BIND_HOST
+  // and both of which still work. This test proves the desktop app's opt-in
+  // (WELTBON_BIND_HOST=127.0.0.1, set by desktop/src/main.ts before the API
+  // module is imported — same ordering constraint as every other env var
+  // above) actually restricts the bind to loopback rather than being a
+  // config field nothing reads.
+  it('binds only loopback when WELTBON_BIND_HOST=127.0.0.1 (desktop mode)', async () => {
+    vi.resetModules();
+    process.env.WELTBON_BIND_HOST = '127.0.0.1';
+
+    // @ts-expect-error query-suffix import is unresolvable to tsc but fine at runtime
+    const mod = await import('../src/index.js?start-bindhost');
+    const { startServer } = mod;
+    // @ts-expect-error same
+    const dbMod = await import('../src/db/client.js?start-bindhost');
+
+    const { server, port } = await startServer();
+    stop = async () => {
+      await new Promise<void>((r) => server.close(() => r()));
+      await dbMod.closeDb();
+    };
+
+    const addr = server.address();
+    expect(addr && typeof addr === 'object' ? addr.address : null).toBe('127.0.0.1');
+
+    // Sanity: loopback itself is still reachable.
+    const res = await fetch(`http://127.0.0.1:${port}/health`);
+    expect(res.status).toBe(200);
+
+    // Find a non-loopback address this HOST actually owns (a LAN IP, a
+    // docker0 bridge IP, whatever exists) — connecting to it on the same
+    // port must be refused. That's the real assertion: proof the server is
+    // NOT listening on all interfaces, not merely that 127.0.0.1 works (a
+    // hostname: undefined server bound to 0.0.0.0 would ALSO pass on
+    // 127.0.0.1, so that alone doesn't distinguish the two).
+    const external = Object.values(networkInterfaces())
+      .flat()
+      .find((i): i is NonNullable<typeof i> => !!i && i.family === 'IPv4' && !i.internal);
+
+    if (!external) {
+      // No non-loopback interface on this host to test refusal against.
+      return;
+    }
+    await expect(
+      fetch(`http://${external.address}:${port}/health`, { signal: AbortSignal.timeout(2000) })
+    ).rejects.toThrow();
   }, 30_000);
 });

@@ -300,7 +300,7 @@ export async function startServer(): Promise<{ server: ReturnType<typeof serve>;
     console.warn('[audit-recovery] failed at boot; orphan rows may persist:', err);
   }
 
-  const server = serve({ fetch: app.fetch, port: cfg.port });
+  const server = serve({ fetch: app.fetch, port: cfg.port, hostname: cfg.bindHost });
   const port = await new Promise<number>((resolve, reject) => {
     const read = () => {
       const addr = server.address();
