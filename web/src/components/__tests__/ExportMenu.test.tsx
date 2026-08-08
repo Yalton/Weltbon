@@ -182,6 +182,45 @@ describe('ExportMenu', () => {
     errSpy.mockRestore();
   });
 
+  it('surfaces the server\'s named reason on a JSON error body (DV-14: PDF export 501 in local mode)', async () => {
+    const fetchMock = vi.fn().mockResolvedValue(
+      new Response(
+        JSON.stringify({
+          error: 'PDF export is not available in the desktop app. Use ZIP or Markdown export instead.',
+        }),
+        { status: 501, headers: { 'content-type': 'application/json' } },
+      ),
+    );
+    vi.stubGlobal('fetch', fetchMock);
+    const onToast = vi.fn();
+    const errSpy = vi.spyOn(console, 'error').mockImplementation(() => {});
+
+    render(<ExportMenu universeId="u1" fallbackFilename="t" onToast={onToast} />);
+    await userEvent.click(screen.getByRole('button', { name: /^Export/ }));
+    await userEvent.click(await screen.findByText('PDF'));
+
+    await waitFor(() => expect(onToast).toHaveBeenCalled());
+    expect(onToast).toHaveBeenCalledWith(
+      'PDF export is not available in the desktop app. Use ZIP or Markdown export instead.',
+    );
+    errSpy.mockRestore();
+  });
+
+  it('falls back to the generic message when the error body is absent or unusable', async () => {
+    const fetchMock = vi.fn().mockResolvedValue(new Response(null, { status: 500 }));
+    vi.stubGlobal('fetch', fetchMock);
+    const onToast = vi.fn();
+    const errSpy = vi.spyOn(console, 'error').mockImplementation(() => {});
+
+    render(<ExportMenu universeId="u1" fallbackFilename="t" onToast={onToast} />);
+    await userEvent.click(screen.getByRole('button', { name: /^Export/ }));
+    await userEvent.click(await screen.findByText('PDF'));
+
+    await waitFor(() => expect(onToast).toHaveBeenCalled());
+    expect(onToast).toHaveBeenCalledWith('Export failed. Try again.');
+    errSpy.mockRestore();
+  });
+
   it('uses Content-Disposition filename when present', async () => {
     const fetchMock = vi.fn().mockResolvedValue(
       makeBlobResponse('{}', {

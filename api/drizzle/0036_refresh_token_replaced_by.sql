@@ -1,0 +1,12 @@
+-- Records WHY a refresh token row was retired, so a benign concurrent replay can
+-- be told apart from an explicit logout.
+--
+-- rotateRefreshToken sets replaced_by_id to the row it rotated into. logout and
+-- revokeAllForUser deliberately leave it NULL. The grace window that keeps a
+-- second browser tab from being signed out mid-cold-load applies ONLY to rows
+-- with a non-null replaced_by_id — without this column the grace window also
+-- kept a logged-out token working for its duration, which a test caught.
+--
+-- Additive and nullable: no default, no backfill, no table rewrite, so this
+-- takes no ACCESS EXCLUSIVE window worth scheduling (unlike 0033).
+ALTER TABLE "refresh_tokens" ADD COLUMN "replaced_by_id" uuid;

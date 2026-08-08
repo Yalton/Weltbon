@@ -42,7 +42,17 @@ export class ApiError extends Error {
   }
 }
 
-async function attemptRefresh(): Promise<string | null> {
+/**
+ * Exchange the refresh cookie for a new access token, DEDUPED.
+ *
+ * Exported because `ProtectedRoute` needs exactly this and previously hand-rolled
+ * its own `fetch('/api/auth/refresh')` — which bypassed `refreshInflight` and, under
+ * React.StrictMode's double-invoked effect, fired two concurrent refreshes of one
+ * single-use token. Any caller that needs a silent refresh must come through here
+ * rather than fetching the endpoint directly; that is the entire point of the
+ * in-flight promise below.
+ */
+export async function attemptRefresh(): Promise<string | null> {
   refreshInflight ??= (async () => {
     const res = await fetch('/api/auth/refresh', {
       method: 'POST',

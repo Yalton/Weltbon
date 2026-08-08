@@ -36,7 +36,7 @@ export function ExportMenu({ universeId, fallbackFilename, onToast }: Props) {
         credentials: 'include',
         headers: token ? { Authorization: `Bearer ${token}` } : {},
       });
-      if (!res.ok) throw new Error(`HTTP ${res.status}`);
+      if (!res.ok) throw res;
       const blob = await res.blob();
       const item = FORMAT_ITEMS.find((i) => i.format === format)!;
       const filename =
@@ -53,7 +53,20 @@ export function ExportMenu({ universeId, fallbackFilename, onToast }: Props) {
     } catch (err) {
       // eslint-disable-next-line no-console
       console.error('[ExportMenu] export failed:', err);
-      onToast('Export failed. Try again.');
+      // DV-14: prefer the server's named reason (e.g. the local-mode PDF 501)
+      // over the generic message — but the body may be absent, empty, or
+      // non-JSON (a plain-text error page), so parse it defensively and never
+      // let a parse failure replace one confusing failure with another.
+      let message = 'Export failed. Try again.';
+      if (err instanceof Response) {
+        try {
+          const body = (await err.json()) as { error?: unknown };
+          if (typeof body.error === 'string' && body.error.trim()) message = body.error;
+        } catch {
+          // no body, empty body, or non-JSON — keep the generic message
+        }
+      }
+      onToast(message);
     } finally {
       setLoading((prev) => ({ ...prev, [format]: false }));
     }

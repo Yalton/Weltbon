@@ -138,6 +138,13 @@ export const refreshTokens = pgTable('refresh_tokens', {
   tokenHash:  text('token_hash').notNull(),
   expiresAt:  timestamp('expires_at').notNull(),
   revokedAt:  timestamp('revoked_at'),
+  // Set ONLY when this row was retired by a rotation, naming the row it was
+  // rotated into. Deliberately not set by logout or revokeAllForUser, which is
+  // the whole point: it is what lets rotateRefreshToken tell a benign concurrent
+  // replay (grace window applies) from a token revoked by an explicit logout
+  // (must be refused immediately). No FK — it is a provenance marker, and a
+  // self-reference would complicate the cascade on user delete.
+  replacedById: uuid('replaced_by_id'),
   createdAt:  timestamp('created_at').defaultNow().notNull(),
 });
 

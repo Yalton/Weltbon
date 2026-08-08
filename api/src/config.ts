@@ -11,6 +11,8 @@ export interface Env {
   chromiumPath: string | undefined;
   publicOrigin: string | undefined;
   port: number;
+  /** Directory holding the built SPA. Relative paths resolve against process.cwd(). */
+  webDist: string;
   llmKeyEncryptionKey: string | undefined;
   // Phase 24 AUDIT hard caps (T-24-01-03: validated at boot, defaults applied when unset).
   auditMaxToolCalls: number;     // AUDIT_MAX_TOOL_CALLS, default 20
@@ -18,6 +20,18 @@ export interface Env {
   auditMaxCostUsd: number;       // AUDIT_MAX_COST_USD, default 1.00
   auditMaxTokensTotal: number;   // AUDIT_MAX_TOKENS_TOTAL, default 200_000
   auditShutdownGraceMs: number;  // AUDIT_SHUTDOWN_GRACE_MS, default 15_000
+  /** DV-11: local desktop mode. Enables the credential-free local session route. */
+  localMode: boolean;
+  /**
+   * Host/interface `serve()` binds to. Leaving this undefined preserves the
+   * pre-existing all-interfaces default (`@hono/node-server` passes it
+   * straight through to `net.Server#listen`, and `hostname: undefined`
+   * behaves exactly like omitting the option) — the Docker container needs
+   * that so its published port is reachable from the host. The desktop app
+   * sets this to '127.0.0.1': it mints credential-free local sessions and
+   * must never be reachable from the LAN.
+   */
+  bindHost: string | undefined;
 }
 
 export function loadEnv(source: NodeJS.ProcessEnv = process.env): Env {
@@ -124,12 +138,20 @@ export function loadEnv(source: NodeJS.ProcessEnv = process.env): Env {
     chromiumPath: source.CHROMIUM_PATH,
     publicOrigin,
     port: Number(source.PORT ?? 3000),
+    webDist: source.WELTBON_WEB_DIST ?? './web-dist',
     llmKeyEncryptionKey,
     auditMaxToolCalls,
     auditMaxWallClockMs,
     auditMaxCostUsd,
     auditMaxTokensTotal,
     auditShutdownGraceMs,
+    localMode: source.WELTBON_LOCAL_MODE === '1' || source.WELTBON_LOCAL_MODE === 'true',
+    // `|| undefined` (not `??`): an explicitly-set-but-empty WELTBON_BIND_HOST=
+    // must fall back to the all-interfaces default too, not pass '' through to
+    // net.Server#listen (Node's http server treats '' as 0.0.0.0 in practice,
+    // but the intent here is "undefined means unset", not "empty string is a
+    // valid hostname").
+    bindHost: source.WELTBON_BIND_HOST || undefined,
   };
 }
 
@@ -140,3 +162,10 @@ export function env(): Env {
   if (_env === null) _env = loadEnv();
   return _env;
 }
+
+/**
+ * Tests only: drop the cached Env so a changed process.env is re-read.
+ * Leading underscore is this repo's convention for a test-only export — see
+ * `_resetModelCacheForTests` in `providers/llm/model-catalog.ts`.
+ */
+export function _resetEnvForTests(): void { _env = null; }

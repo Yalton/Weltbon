@@ -1,6 +1,7 @@
 import { describe, it, expect, beforeAll, afterAll } from 'vitest';
-import { mkdirSync, writeFileSync, rmSync, existsSync } from 'node:fs';
-import { resolve } from 'node:path';
+import { mkdirSync, mkdtempSync, writeFileSync, rmSync } from 'node:fs';
+import { tmpdir } from 'node:os';
+import { resolve, join } from 'node:path';
 import { createTestDb, type TestDbHandle } from './helpers.js';
 
 describe('createApp() route mounts (CONT-01 /api prefix + SPA fallback)', () => {
@@ -9,13 +10,18 @@ describe('createApp() route mounts (CONT-01 /api prefix + SPA fallback)', () => 
   let app: any;
 
   const originalNodeEnv = process.env.NODE_ENV;
-  // index.ts serves the SPA from a hard-coded `./web-dist` (relative to cwd) —
-  // there is no WEB_DIST_DIR override in the product, so the static/SPA tests
-  // must stub the real path. We only create + remove it when it is absent
-  // (the case in CI and local source checkouts, where web-dist is a Docker-only
-  // build artifact) so we never clobber a real build a developer may have.
-  const distDir = resolve(process.cwd(), 'web-dist');
-  let createdDist = false;
+  const originalWebDist = process.env.WELTBON_WEB_DIST;
+  // FIX 3 (final whole-branch review): this used to stub api/web-dist itself
+  // (skipping the stub whenever a real build was already there) — which meant
+  // `desktop`'s own `build:app` (it populates api/web-dist as a real build
+  // step) put this file on a collision course with whatever WAS actually
+  // built there, and made this integration lane red on any checkout that had
+  // run a desktop build. WELTBON_WEB_DIST (added by Task 2 of this branch;
+  // read by config.ts as `cfg.webDist`, defaulting to './web-dist' only when
+  // unset) lets this test point the server at a throwaway temp directory
+  // instead, so it can no longer collide with a real build under
+  // api/web-dist regardless of what is or is not sitting there.
+  const distDir = mkdtempSync(join(tmpdir(), 'weltbon-web-dist-test-'));
 
   beforeAll(async () => {
     handle = await createTestDb();
@@ -23,21 +29,26 @@ describe('createApp() route mounts (CONT-01 /api prefix + SPA fallback)', () => 
     // eslint-disable-next-line @typescript-eslint/no-explicit-any
     setTestDb(handle.db as any, handle.pool);
 
-    // Stub web-dist for the SPA-fallback + static-serve tests BEFORE createApp().
-    if (!existsSync(distDir)) {
-      mkdirSync(resolve(distDir, 'assets'), { recursive: true });
-      writeFileSync(
-        resolve(distDir, 'index.html'),
-        '<!doctype html><html><body>Stub SPA</body></html>'
-      );
-      writeFileSync(
-        resolve(distDir, 'assets', 'app.abc123.js'),
-        'console.log("hashed bundle stub");'
-      );
-      createdDist = true;
-    }
+    // Stub the SPA build in the temp dir BEFORE createApp() reads cfg.webDist.
+    mkdirSync(resolve(distDir, 'assets'), { recursive: true });
+    writeFileSync(
+      resolve(distDir, 'index.html'),
+      '<!doctype html><html><body>Stub SPA</body></html>'
+    );
+    writeFileSync(
+      resolve(distDir, 'assets', 'app.abc123.js'),
+      'console.log("hashed bundle stub");'
+    );
 
     process.env.NODE_ENV = 'production';
+    process.env.WELTBON_WEB_DIST = distDir;
+
+    // config.ts caches Env in a module singleton (`_env`) — see
+    // local-session.test.ts's buildApp() for the same pattern — so it must be
+    // dropped here too, or a WELTBON_WEB_DIST set above would not be seen by
+    // the env() call index.ts's module-scope `const cfg = env()` makes.
+    const { _resetEnvForTests } = await import('../src/config.js');
+    _resetEnvForTests();
 
     const indexModule = await import('../src/index.js');
     app = indexModule.createApp();
@@ -46,7 +57,9 @@ describe('createApp() route mounts (CONT-01 /api prefix + SPA fallback)', () => 
   afterAll(async () => {
     if (originalNodeEnv === undefined) delete process.env.NODE_ENV;
     else process.env.NODE_ENV = originalNodeEnv;
-    if (createdDist) rmSync(distDir, { recursive: true, force: true });
+    if (originalWebDist === undefined) delete process.env.WELTBON_WEB_DIST;
+    else process.env.WELTBON_WEB_DIST = originalWebDist;
+    rmSync(distDir, { recursive: true, force: true });
     await handle.cleanup();
   });
 

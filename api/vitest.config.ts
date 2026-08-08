@@ -30,6 +30,8 @@ const DB_GATED_TESTS = [
   'tests/audits-history.test.ts',
   'tests/audits-in-flight.test.ts',
   'tests/auth.test.ts',
+  // Concurrent refresh-token rotation — the single-use guarantee under load.
+  'tests/auth-refresh-concurrency.test.ts',
   'tests/categories.test.ts',
   'tests/entries.test.ts',
   'tests/entry-search.test.ts',
@@ -39,6 +41,8 @@ const DB_GATED_TESTS = [
   'tests/export-import.test.ts',
   'tests/export-markdown.test.ts',
   'tests/export-pdf.test.ts',
+  // Stage 2 Task 5 (DV-14) — PDF export refuses by name in local mode.
+  'tests/export-pdf-local-mode.test.ts',
   'tests/export-streaming.test.ts',
   'tests/graph-positions.test.ts',
   'tests/graph.test.ts',
@@ -112,6 +116,8 @@ const DB_GATED_TESTS = [
   'tests/sync-client-crud.test.ts',
   // Plan D Task 8 — two-instance acceptance for the sync drive loop.
   'tests/sync-run.test.ts',
+  // Stage 2 Task 3 (DV-11) — credential-free local session route.
+  'tests/local-session.test.ts',
 ];
 
 export default defineConfig({

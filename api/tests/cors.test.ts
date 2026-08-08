@@ -79,6 +79,65 @@ describe('CORS conditional-strict origin (PROXY-01)', () => {
     });
   });
 
+  describe('WELTBON_PUBLIC_ORIGIN=http://weltbon.invalid (desktop mode) — no real browser Origin ever matches', () => {
+    // Review round 1, Finding 1 (SECURITY): desktop/src/main.ts sets this to
+    // block the cross-origin token-theft path — a page at evil.example
+    // fetching POST /api/auth/local-session and reading the bearer token out
+    // of the response body.
+    //
+    // Review round 2, Finding 1: round 1 used 'http://127.0.0.1' (no port),
+    // reasoning that a real browser Origin always carries the port — true
+    // for THIS app's own window, but NOT universally: it is exactly the
+    // Origin a page served from loopback port 80 sends (browsers omit the
+    // default port), so another locally-hosted app on port 80 with an XSS
+    // could still steal the token. '.invalid' is reserved by RFC 2606 and
+    // guaranteed to never resolve, so no page can ever be served from it —
+    // no real Origin header, with or without a port, can equal this string.
+    let app: any;
+    const originalPublicOrigin = process.env.WELTBON_PUBLIC_ORIGIN;
+
+    beforeAll(async () => {
+      process.env.WELTBON_PUBLIC_ORIGIN = 'http://weltbon.invalid';
+      vi.resetModules();
+      const indexModule = await import('../src/index.js');
+      app = indexModule.createApp();
+    });
+
+    afterAll(() => {
+      if (originalPublicOrigin === undefined) delete process.env.WELTBON_PUBLIC_ORIGIN;
+      else process.env.WELTBON_PUBLIC_ORIGIN = originalPublicOrigin;
+    });
+
+    it('a same-host Origin WITH a port (what every real browser sends for this app) gets no Access-Control-Allow-Origin', async () => {
+      const res = await preflight(app, 'http://127.0.0.1:54321');
+      const allowOrigin = res.headers.get('access-control-allow-origin');
+      expect(allowOrigin).toBeNull();
+      expect(allowOrigin).not.toBe('*');
+    });
+
+    // Pins the round-2 regression: 'http://127.0.0.1' with NO port is exactly
+    // what a page served from loopback port 80 (a different local app
+    // entirely) sends as its Origin — the round-1 sentinel would have
+    // reflected this. It must not.
+    it('Origin: http://127.0.0.1 (no port — what a page on loopback port 80 sends) gets no Access-Control-Allow-Origin', async () => {
+      const res = await preflight(app, 'http://127.0.0.1');
+      const allowOrigin = res.headers.get('access-control-allow-origin');
+      expect(allowOrigin).toBeNull();
+      expect(allowOrigin).not.toBe('*');
+    });
+
+    it('a different host entirely (the evil.example attack) also gets no Access-Control-Allow-Origin', async () => {
+      const res = await preflight(app, 'https://evil.example.com');
+      expect(res.headers.get('access-control-allow-origin')).toBeNull();
+    });
+
+    it('same-origin requests are unaffected — GET /health still works with no Origin header at all', async () => {
+      const res = await app.fetch(new Request('http://localhost/health'));
+      expect(res.status).toBe(200);
+      expect(await res.json()).toEqual({ ok: true });
+    });
+  });
+
   describe('Non-CORS routes still function', () => {
     let app: any;
 

@@ -2,6 +2,7 @@ import { OpenAPIHono, createRoute, z } from '@hono/zod-openapi';
 import { createMiddleware } from 'hono/factory';
 import { setCookie, getCookie, deleteCookie } from 'hono/cookie';
 import { HTTPException } from 'hono/http-exception';
+import { getConnInfo } from '@hono/node-server/conninfo';
 import { and, eq, isNull } from 'drizzle-orm';
 import { db as getDb } from '../db/client.js';
 import { users, inviteCodes } from '../db/schema.js';
@@ -17,6 +18,8 @@ import {
   REFRESH_TTL_MS,
 } from '../services/auth.js';
 import { hashInviteToken } from '../services/invite.js';
+import { ensureLocalUser } from '../services/local-mode.js';
+import { env } from '../config.js';
 
 type AppEnv = { Variables: AuthVariables };
 
@@ -257,9 +260,46 @@ const meRoute = createRoute({
   },
 });
 
-// ─── Router ──────────────────────────────────────────────────────────────────
+const localSessionRoute = createRoute({
+  method: 'post',
+  path: '/local-session',
+  tags: ['Auth'],
+  summary: 'Mint a session for the sole local user (desktop app only)',
+  description:
+    'DV-11. This route is only REGISTERED at all when WELTBON_LOCAL_MODE is set — a server ' +
+    'deployment never mounts it, so its own OpenAPI document and /api/docs never mention it. ' +
+    'When mounted, the handler additionally requires the real TCP peer (read from the Node ' +
+    'socket, not a client-supplied header) to be loopback, refuses outright if the request ' +
+    'carries an X-Forwarded-For header at all, and refuses unless the Host header names a ' +
+    'loopback hostname (the DNS-rebinding defence: a page on an attacker-controlled domain ' +
+    'rebound to 127.0.0.1 is same-origin to the browser and passes every other check here). ' +
+    'Every refusal path THIS route itself decides on returns the exact same 404 shape as an ' +
+    'unmounted route — but a request carrying a share-token header without an Authorization ' +
+    'bearer is rejected 401 by the router-wide rejectShareToken middleware before this ' +
+    'handler ever runs, so that one path is not 404. Mints a session with no credential ' +
+    'presented — its safety is the env flag, conditional route registration, and the ' +
+    'socket/Host loopback checks, together.',
+  security: [],
+  middleware: [rejectShareToken] as const,
+  responses: {
+    200: { content: { 'application/json': { schema: refreshResponseSchema } }, description: 'Local session issued' },
+    404: { description: 'Refused (non-loopback peer, or a forwarded request) — identical in shape to a route that does not exist' },
+  },
+});
 
-export const authRoutes = new OpenAPIHono<AppEnv>()
+// ─── Router ──────────────────────────────────────────────────────────────────
+//
+// DV-11 / Finding 2: authRoutes is built by a FUNCTION, not a module-level
+// const, so that the local-session route's registration can depend on
+// env().localMode evaluated fresh at call time (index.ts's createApp() calls
+// this on every invocation). A module-level const would freeze the decision
+// at whatever env().localMode happened to be the first time this module was
+// ever imported in the process — wrong for tests that flip the flag between
+// createApp() calls, and conceptually wrong for the security property this
+// route depends on: a server deployment must have NO local-session handler
+// in its route table, not merely a handler that always says no.
+export function buildAuthRoutes(): OpenAPIHono<AppEnv> {
+  const router = new OpenAPIHono<AppEnv>()
 
   .openapi(registerRoute, async (c) => {
     const { email, password, displayName, inviteCode } = c.req.valid('json');
@@ -355,7 +395,13 @@ export const authRoutes = new OpenAPIHono<AppEnv>()
       return c.json({ error: 'Invalid refresh token' }, 401);
     }
     const accessToken = await issueAccessToken(rotated.userId);
-    setRefreshCookie(c, rotated.newToken);
+    // newToken === null is the benign-replay path (a concurrent tab already
+    // rotated this cookie moments ago). Issue the access token, but set NO
+    // cookie: the browser already holds the winner's value, and minting a
+    // second refresh token here is exactly the bug the claim guard closes.
+    if (rotated.newToken !== null) {
+      setRefreshCookie(c, rotated.newToken);
+    }
     return c.json({ accessToken }, 200);
   })
 
@@ -389,3 +435,64 @@ export const authRoutes = new OpenAPIHono<AppEnv>()
       200,
     );
   });
+
+  // DV-11 / Finding 2: only register the local-session route when local mode
+  // is actually on. `env().localMode` is re-checked HERE, live, each time
+  // buildAuthRoutes() runs — see the docblock above the function. When this
+  // branch does not run, the router simply has no handler and no OpenAPI
+  // path for /local-session: GET /api/openapi.json and /api/docs never
+  // mention it (Finding 2), and a probing POST 404s through Hono's ordinary
+  // no-route-matched path — byte-identical to any other unmounted path
+  // (Finding 3) — rather than through a JSON handler that confirms the route
+  // exists and is merely refusing.
+  if (env().localMode) {
+    router.openapi(localSessionRoute, async (c) => {
+      // Defence in depth (Finding 2's own instruction): re-check localMode
+      // even though this handler exists at all only because it was true at
+      // router-construction time above.
+      if (!env().localMode) return c.notFound();
+
+      // Finding 1: the presence of X-Forwarded-For AT ALL is itself evidence
+      // this is not the desktop app's topology — nothing should ever be
+      // proxying a request to this route. Refuse outright rather than parse
+      // or trust client-supplied header content, which any caller who can
+      // reach this port can omit, forge, or list-prefix at will.
+      if (c.req.header('x-forwarded-for') !== undefined) return c.notFound();
+
+      // DNS-rebinding defence. A page at evil.example rebound to 127.0.0.1 makes
+      // requests the browser treats as SAME-ORIGIN, so CORS is never consulted and
+      // the socket peer really is loopback — every other control here passes. The
+      // Host header is the one thing the attacker cannot forge, because the browser
+      // sets it from the URL it was given.
+      const hostHeader = c.req.header('host') ?? '';
+      const hostname = hostHeader.replace(/:\d+$/, '').toLowerCase();
+      const hostIsLoopback =
+        hostname === '127.0.0.1' || hostname === 'localhost' || hostname === '[::1]' || hostname === '::1';
+      if (!hostIsLoopback) return c.notFound();
+
+      // The real TCP peer, read off the Node socket via @hono/node-server —
+      // unlike a header, the client cannot set this. Fail CLOSED: an address
+      // this check does not recognise is refused, never allowed, because on
+      // a route that mints a session with no credential, "we could not tell"
+      // must never mean "allow".
+      const remote = getConnInfo(c).remote.address;
+      const isLoopback =
+        remote === '127.0.0.1' || remote === '::1' || remote === '::ffff:127.0.0.1';
+      if (!isLoopback) return c.notFound();
+
+      // c.notFound() on every refusal path above (never c.json 404): a
+      // caller who reaches this handler but fails a check must see the exact
+      // same response shape as a request to a route that was never mounted
+      // (Finding 3) — status, body, and content-type all byte-identical to
+      // Hono's default "no route matched" response, since nothing here
+      // overrides the app's notFoundHandler.
+      const user = await ensureLocalUser(getDb());
+      const accessToken = await issueAccessToken(user.id);
+      const refreshToken = await issueRefreshToken(user.id);
+      setRefreshCookie(c, refreshToken);
+      return c.json({ accessToken }, 200);
+    });
+  }
+
+  return router;
+}

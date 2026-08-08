@@ -25,6 +25,7 @@ let _db: AppDatabase | null = null;
 let _pool: pg.Pool | null = null;
 let _close: (() => Promise<void>) | null = null;
 let _initPromise: Promise<AppDatabase> | null = null;
+let _closing: Promise<void> | null = null;
 
 /** Build the Postgres handle. Constructing a pg.Pool does not connect eagerly. */
 function initPostgres(connectionString: string): AppDatabase {
@@ -52,28 +53,50 @@ function initPostgres(connectionString: string): AppDatabase {
  * returns that same promise instead of re-entering construction. This covers
  * the postgres branch too, since `initPostgres()` is only ever reached from
  * inside this one memoized promise.
+ *
+ * Close note: if a `closeDb()` is in flight when this is called, the current
+ * `_db`/`_initPromise` (if any) are about to be — or already are — torn down,
+ * so returning either here would hand the caller a dead connection. Wait for
+ * the close to finish and re-enter fresh instead of racing it.
  */
 export async function initDb(): Promise<AppDatabase> {
+  if (_closing) {
+    await _closing;
+    return initDb();
+  }
   if (_db !== null) return _db;
   if (_initPromise !== null) return _initPromise;
 
   const cfg = env();
 
-  _initPromise = (async () => {
+  const mine = (async () => {
     if (cfg.dbDriver === 'pglite') {
       const { PGlite } = await import('@electric-sql/pglite');
       const { drizzle: drizzlePglite } = await import('drizzle-orm/pglite');
 
       // cfg.dataDir is guaranteed present for this driver by config.ts (DV-03).
       const client = new PGlite(cfg.dataDir!);
-      await client.waitReady;
+      try {
+        await client.waitReady;
 
-      // DV-08 — pin the session to UTC. Real Postgres deployments run a UTC
-      // session; PGlite defaults to the HOST zone, which skews the app's
-      // `AT TIME ZONE 'UTC'` round-trips. The sync protocol compares timestamptz
-      // across instances, so a skewed session is a correctness bug in the paid
-      // feature, not a cosmetic one.
-      await client.exec(`SET TIME ZONE 'UTC'`);
+        // DV-08 — pin the session to UTC. Real Postgres deployments run a UTC
+        // session; PGlite defaults to the HOST zone, which skews the app's
+        // `AT TIME ZONE 'UTC'` round-trips. The sync protocol compares timestamptz
+        // across instances, so a skewed session is a correctness bug in the paid
+        // feature, not a cosmetic one.
+        await client.exec(`SET TIME ZONE 'UTC'`);
+      } catch (err) {
+        // `client` exists and holds the data directory from construction
+        // onward, regardless of whether `waitReady` or `exec` is what fails.
+        // Leaving it open here orphans it — unreachable (nothing kept a
+        // reference) and unclosable — and the NEXT initDb() call opens a
+        // SECOND engine over the same directory: the corruption case this
+        // module exists to prevent, just reached via a failed build instead
+        // of a racing close. A locked or corrupt data directory on first run
+        // is exactly when this triggers on desktop.
+        await client.close().catch(() => undefined);
+        throw err;
+      }
 
       _db = drizzlePglite(client, { schema }) as unknown as AppDatabase;
       _close = () => client.close();
@@ -82,14 +105,16 @@ export async function initDb(): Promise<AppDatabase> {
 
     return initPostgres(cfg.databaseUrl!);
   })();
+  _initPromise = mine;
 
   try {
-    return await _initPromise;
+    return await mine;
   } finally {
-    // Clear regardless of outcome: a successful build makes `_db !== null`
-    // the fast path from here on, and a failed build must let the next
-    // caller retry construction rather than replaying a rejected promise.
-    _initPromise = null;
+    // Clear ONLY if this call still owns the slot. Without the identity check a
+    // slow first construction could null a NEWER caller's promise on its way
+    // out, and a third caller would then see both `_db` and `_initPromise` null
+    // and start yet another engine over the same directory.
+    if (_initPromise === mine) _initPromise = null;
   }
 }
 
@@ -123,14 +148,80 @@ export function db(): AppDatabase {
  * `initDb()` could leave a stale promise behind that a later `initDb()` call
  * would return instead of building a fresh handle — handing back a dead
  * connection tied to the engine this call just closed.
+ *
+ * Publishes `_closing` for the duration of the teardown so a concurrent
+ * `initDb()` can see a close is in progress and wait it out instead of
+ * handing back the engine this call is about to close (see `initDb()`'s
+ * `_closing` check).
  */
 export async function closeDb(): Promise<void> {
-  const close = _close;
-  _db = null;
-  _pool = null;
-  _close = null;
-  _initPromise = null;
-  if (close) await close();
+  if (_closing) {
+    await _closing;
+    return;
+  }
+
+  const job = (async () => {
+    // Wait for any in-flight construction FIRST. Tearing down while a build is
+    // running orphans the engine it produces: `_close` is still null at that
+    // moment, so nothing can ever close it, and on pglite it keeps holding the
+    // data directory — which is the two-engines-over-one-directory corruption
+    // case wearing a different hat. A build that rejects has already closed
+    // whatever it constructed (see `initDb()`'s own catch), so there is
+    // nothing left here for this call to close — the rejection is swallowed
+    // rather than masking the caller's intent to shut down.
+    const pending = _initPromise;
+    if (pending) {
+      try { await pending; } catch { /* the failed build already closed itself */ }
+    }
+
+    const close = _close;
+    _db = null;
+    _pool = null;
+    _close = null;
+    _initPromise = null;
+    if (close) await close();
+  })();
+  _closing = job;
+
+  try {
+    await job;
+  } finally {
+    _closing = null;
+  }
+}
+
+/**
+ * Test-only seam onto the module's `_initPromise` slot. `initDb()`'s and
+ * `closeDb()`'s public API always serializes through one another (see the
+ * `_closing` flag above), which makes it impossible for a test to observe a
+ * NEWER promise having landed in the slot while an OLDER call's own
+ * construction is still settling — exactly the interleaving the ownership
+ * guard in `initDb()`'s `finally` exists to survive. These let a test swap
+ * the slot directly, standing in for that newer caller, without spinning up
+ * a second real PGlite engine over the same directory to do it (which is
+ * itself the corruption case this module exists to prevent). Not for
+ * production use.
+ */
+export function __getInitPromiseForTest(): Promise<AppDatabase> | null {
+  return _initPromise;
+}
+export function __setInitPromiseForTest(p: Promise<AppDatabase> | null): void {
+  _initPromise = p;
+}
+
+/**
+ * Test-only seam onto `_closing`. Lets a test simulate "a close is in
+ * progress" with a manually-controlled gate instead of racing real PGlite
+ * I/O through the public closeDb()/initDb() API — driving that race
+ * end-to-end was tried first and, under a test runner's async scheduling, it
+ * occasionally let an arriving `initDb()` call land in the window where a
+ * SECOND real engine gets built over the still-live first one before the
+ * first is closed: the exact two-engines-one-directory corruption this
+ * module exists to prevent, which crashes the process with a V8 heap OOM
+ * rather than failing an assertion. Not for production use.
+ */
+export function __setClosingForTest(p: Promise<void> | null): void {
+  _closing = p;
 }
 
 /**

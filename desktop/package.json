@@ -1,0 +1,20 @@
+{
+  "name": "weltbon-desktop",
+  "version": "0.1.0",
+  "private": true,
+  "type": "module",
+  "main": "dist/main.js",
+  "scripts": {
+    "build": "tsc",
+    "start": "electron .",
+    "rebuild": "electron-rebuild -f -w bcrypt,sharp -m ../api",
+    "test": "tsc && node --test dist/*.test.js",
+    "build:app": "cd ../web && ./node_modules/.bin/vite build && cd ../api && ./node_modules/.bin/tsc -p tsconfig.build.json; cd .. && rm -rf api/web-dist && cp -r web/dist api/web-dist && cd desktop && ./node_modules/.bin/tsc"
+  },
+  "devDependencies": {
+    "electron": "^43.1.1",
+    "@electron/rebuild": "^3.6.0",
+    "typescript": "5.7.3",
+    "@types/node": "22.10.5"
+  }
+}
