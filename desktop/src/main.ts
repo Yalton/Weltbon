@@ -1,6 +1,7 @@
 import { app, BrowserWindow, dialog } from 'electron';
 import { dirname, join } from 'node:path';
 import { pathToFileURL } from 'node:url';
+import { writeFile } from 'node:fs/promises';
 import { loadOrCreateSecrets, secretsPath } from './secrets.js';
 
 // DV-15: two processes over one PGlite directory is the corruption case.
@@ -126,6 +127,56 @@ if (!app.requestSingleInstanceLock()) {
       );
     });
     await mainWindow.loadURL(`http://127.0.0.1:${port}`);
+
+    // Task 7 — close the visual-evidence gap left by Task 6. That task could
+    // only infer "the UI rendered" from the API's own request log: this
+    // sandboxed Wayland session has no working OS-level screenshot path (X11
+    // `import` fails; the GNOME D-Bus screenshot portal returns
+    // AccessDenied). webContents.capturePage()/executeJavaScript() run
+    // entirely IN-PROCESS over Electron's own compositor and CDP — no
+    // portal, no external compositor call — so they work unconditionally
+    // here. Opt-in only, via env vars an ordinary user never sets, so none
+    // of this runs (or costs anything) for a real launch.
+    if (process.env.WELTBON_DESKTOP_CAPTURE || process.env.WELTBON_DESKTOP_CAPTURE_TEXT) {
+      // capturePage() and executeJavaScript() would both happily fire the
+      // instant loadURL() resolves — which is 'did-finish-load', i.e. the
+      // document is parsed, not that React has mounted, authenticated, and
+      // painted anything. Poll for a steady, logged-in state (no login form
+      // present, some real body text) instead of guessing a fixed delay.
+      const steadyDeadline = Date.now() + 15_000;
+      let steadyState: { hasLoginForm: boolean; text: string } | null = null;
+      for (;;) {
+        const state: { hasLoginForm: boolean; text: string } = await mainWindow.webContents.executeJavaScript(
+          `({ hasLoginForm: !!document.querySelector('#email'), text: document.body.innerText.slice(0, 300) })`
+        );
+        // "Loading..." is real non-empty body text too (the isLoading branch
+        // in e.g. UniverseList.tsx renders nothing else), so it satisfies a
+        // bare non-empty check while telling us nothing about whether the
+        // app actually finished authenticating and rendering its real UI.
+        const trimmed = state.text.trim();
+        if (!state.hasLoginForm && trimmed.length > 0 && !/^Loading/i.test(trimmed)) {
+          steadyState = state;
+          break;
+        }
+        if (Date.now() >= steadyDeadline) break;
+        await new Promise((resolve) => setTimeout(resolve, 300));
+      }
+      if (!steadyState) {
+        console.error('[weltbon] capture: UI never reached a steady, logged-in state within 15s');
+      } else if (process.env.WELTBON_DESKTOP_CAPTURE_TEXT) {
+        console.log('[weltbon] capture text:', JSON.stringify(steadyState.text));
+        console.log('[weltbon] capture hasLoginForm:', steadyState.hasLoginForm);
+      }
+      if (process.env.WELTBON_DESKTOP_CAPTURE) {
+        const image = await mainWindow.webContents.capturePage();
+        const size = image.getSize();
+        const png = image.toPNG();
+        await writeFile(process.env.WELTBON_DESKTOP_CAPTURE, png);
+        console.log(
+          `[weltbon] capture: wrote ${process.env.WELTBON_DESKTOP_CAPTURE} (${size.width}x${size.height}, ${png.length} bytes)`
+        );
+      }
+    }
   }
 
   main().catch((err) => {
