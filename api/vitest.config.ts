@@ -41,6 +41,8 @@ const DB_GATED_TESTS = [
   'tests/export-import.test.ts',
   'tests/export-markdown.test.ts',
   'tests/export-pdf.test.ts',
+  // Stage 2 Task 5 (DV-14) — PDF export refuses by name in local mode.
+  'tests/export-pdf-local-mode.test.ts',
   'tests/export-streaming.test.ts',
   'tests/graph-positions.test.ts',
   'tests/graph.test.ts',

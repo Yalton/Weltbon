@@ -6,6 +6,7 @@ import { renderUniversePdf } from '../services/export/pdf/render.js';
 import { renderUniverseDocx } from '../services/export/docx/render.js';
 import { loadUniverseExportPayload } from '../services/export/payload.js';
 import { exportFilename } from '../services/export/slug.js';
+import { env } from '../config.js';
 import type { AuthVariables } from '../middleware/auth.js';
 
 type AppEnv = { Variables: AuthVariables };
@@ -86,6 +87,10 @@ const exportRoute = createRoute({
       content: { 'application/json': { schema: errorSchema } },
       description: 'Internal error',
     },
+    501: {
+      content: { 'application/json': { schema: errorSchema } },
+      description: 'PDF export unavailable in this build (DV-14)',
+    },
   },
 });
 
@@ -118,6 +123,16 @@ export const exportRoutes = new OpenAPIHono<AppEnv>().openapi(exportRoute, async
     return c.body(buildMarkdownZip(payload));
   }
   if (format === 'pdf') {
+    // DV-14: the PDF renderer drives a SYSTEM Chromium via puppeteer-core, which
+    // a desktop install has no reason to have — and Electron's bundled Chromium
+    // cannot be driven by puppeteer in the normal way. Refuse by name rather than
+    // 500ing on a missing binary. ZIP/JSON export is unaffected.
+    if (env().localMode) {
+      return c.json(
+        { error: 'PDF export is not available in the desktop app. Use ZIP or Markdown export instead.' },
+        501
+      );
+    }
     const payload = await loadUniverseExportPayload(uid);
     c.header('Content-Type', 'application/pdf');
     c.header(
