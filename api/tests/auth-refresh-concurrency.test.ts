@@ -230,6 +230,25 @@ describe('concurrent refresh-token rotation', () => {
     expect(replay.status).toBe(401);
   });
 
+  it('a MALFORMED cookie is refused with 401, not a 500 (#16)', async () => {
+    // The id half goes straight into a query against a `uuid` column, so a
+    // non-UUID raised Postgres 22P02 and surfaced as {"error":"Internal error"}
+    // with a 500 — telling a caller that a garbage cookie is a server fault,
+    // and distinguishable from every other bad-token path.
+    for (const bad of [
+      'not-a-real.token',
+      'refresh.token',
+      '../../etc/passwd.x',
+      '00000000-0000-4000-8000-00000000000.short',
+      "'; DROP TABLE refresh_tokens; --.x",
+    ]) {
+      const res = await appRequest('POST', '/api/auth/refresh', {
+        headers: { Cookie: `refresh=${bad}` },
+      });
+      expect(res.status, `malformed cookie ${JSON.stringify(bad)} should 401`).toBe(401);
+    }
+  });
+
   it('an unknown token is still refused', async () => {
     // A well-formed but unknown id. NOT a malformed one: a non-UUID id reaches
     // a uuid column and the route currently 500s instead of 401ing. That is a

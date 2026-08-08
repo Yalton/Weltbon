@@ -10,6 +10,12 @@ if (!app.requestSingleInstanceLock()) {
   app.quit();
 } else {
   let mainWindow: BrowserWindow | null = null;
+  // How long a quit waits for the database to close before giving up (#15).
+  // Long enough for a normal PGlite flush, short enough that a user is never
+  // left staring at no window while the process is still alive.
+  const SHUTDOWN_TIMEOUT_MS = 5_000;
+
+
 
   app.on('second-instance', () => {
     if (mainWindow) {
@@ -116,13 +122,44 @@ if (!app.requestSingleInstanceLock()) {
       if (closing) return; // already closing (or closed) — do not double-close
       event.preventDefault();
       closing = (async () => {
+        let timer: ReturnType<typeof setTimeout> | undefined;
         try {
-          await closeDb();
+          // Bounded, not just try/caught. A REJECTION was already handled; a
+          // HANG was not — and closeDb() first awaits any in-flight initDb()
+          // and then PGlite's own close(), either of which could fail to
+          // settle. Because this handler calls preventDefault(), an unsettled
+          // close leaves the quit permanently blocked: the window is gone and
+          // the process is still alive with no UI, which a user cannot recover
+          // from except by killing it (#15).
+          //
+          // A clean close is preferable — it lets PGlite flush rather than
+          // recover from its WAL on the next boot — but a stuck process is
+          // worse than an unclean one, so the timeout wins.
+          await Promise.race([
+            closeDb(),
+            new Promise<void>((resolve) => {
+              timer = setTimeout(() => {
+                console.error(
+                  `[weltbon] closeDb() did not settle within ${SHUTDOWN_TIMEOUT_MS}ms — quitting anyway. ` +
+                  'PGlite will recover from its WAL on the next launch.'
+                );
+                resolve();
+              }, SHUTDOWN_TIMEOUT_MS);
+              // Do not let the timer itself hold the process open.
+              timer.unref?.();
+            }),
+          ]);
         } catch (err) {
           // A failure to close must never hang the app open — log and let
           // the quit proceed regardless.
           console.error('[weltbon] closeDb() failed during shutdown:', err);
         } finally {
+          // Cancel the deadline whichever way the race went. Without this, a
+          // SUCCESSFUL close still leaves the timer armed and it later logs
+          // "did not settle" — a false alarm about the shutdown that just
+          // worked, which is exactly the kind of misleading log that costs
+          // someone an afternoon.
+          if (timer) clearTimeout(timer);
           app.quit();
         }
       })();
