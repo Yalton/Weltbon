@@ -119,7 +119,8 @@ export function createApp() {
   apiR.use('/sync/*', requireAuth);
   apiR.route('/sync', syncRoutes);
   // Plan D: the owner-facing half at the SAME prefix, from its own file so the
-  // peer surface above stays exactly Plan C's six routes. Each route here adds
+  // peer surface above stays seven routes (Plan C's six plus A-04's discovery
+  // route). Each route here adds
   // requireJwtAuth on top of the /sync/* requireAuth gate (D-10).
   apiR.route('/sync', syncClientRoutes);
   apiR.use('/universes/*', requireAuth);

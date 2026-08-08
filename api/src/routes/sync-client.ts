@@ -1,9 +1,10 @@
 /**
  * Plan D — the OWNER-facing half of /api/sync (D-04, D-10).
  *
- * Mounted at the SAME /api/sync prefix as routes/sync.ts (Plan C's six
- * PAT-or-JWT peer routes), but from this separate file so the peer surface
- * stays exactly those six routes. Every route here is JWT-only
+ * Mounted at the SAME /api/sync prefix as routes/sync.ts (seven routes: Plan
+ * C's six PAT-or-JWT peer routes plus A-04's discovery route), but from this
+ * separate file so the peer surface stays exactly those seven routes. Every
+ * route here is JWT-only
  * (`middleware: [requireJwtAuth] as const`), mirroring the D-13 rule already
  * applied in routes/llm-keys.ts and routes/tokens.ts: a stolen PAT must not be
  * able to enumerate a user's remotes, mint links, or (once Task 7 lands) aim

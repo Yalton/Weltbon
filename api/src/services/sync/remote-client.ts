@@ -2,8 +2,9 @@
  * Plan D: the outbound half of the sync protocol — the ONLY place in the API
  * that calls fetch.
  *
- * Every method targets one of Plan C's six routes and converts what the peer
- * says into a typed SyncRunError, so no caller ever branches on a status code.
+ * Every method targets one of the peer surface's seven routes (Plan C's six
+ * plus A-04's discovery route) and converts what the peer says into a typed
+ * SyncRunError, so no caller ever branches on a status code.
  *
  * D-05: `fetchImpl` is injectable, and that is load-bearing rather than a
  * convenience. In the two-instance integration test the peer is a Hono app
