@@ -39,7 +39,7 @@ import { recoverOrphanAuditRuns } from './services/audit-recovery.js';
 import { wireSigtermDrain } from './services/audit-shutdown.js';
 import { requireAuth } from './middleware/auth.js';
 import { forwarded } from './middleware/forwarded.js';
-import { db, initDb } from './db/client.js';
+import { db, initDb, closeDb } from './db/client.js';
 import { runMigrations } from './db/migrate.js';
 import { llmApiKeys, syncRemotes } from './db/schema.js';
 import { seedInviteCode } from './db/seedInviteCode.js';
@@ -260,6 +260,19 @@ export async function assertLlmKeyEncryptionKey(deps: {
     );
   }
 }
+
+// Re-exported so the Electron main process (Stage 2) can close the SAME
+// PGlite handle this module's own boot sequence opened. main.ts already
+// dynamically imports this compiled file by URL to get `startServer` — it
+// must pull `closeDb` off that SAME import result rather than separately
+// re-deriving a path to db/client.js and importing that. WELTBON_API_ENTRY
+// lets an operator point apiEntry somewhere other than the conventional
+// <apiRoot>/dist/index.js (see the DRIZZLE_DIR comment in main.ts), so a
+// second, independently-constructed path to db/client.js is not guaranteed
+// to resolve to the identical file this module actually imported — and if it
+// doesn't, Node's module cache treats it as a distinct, never-initialized
+// module instance whose closeDb() would be a silent no-op.
+export { closeDb };
 
 /**
  * The full boot sequence, callable. Extracted so the Electron main process

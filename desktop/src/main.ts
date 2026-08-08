@@ -96,8 +96,37 @@ if (!app.requestSingleInstanceLock()) {
     process.env.DRIZZLE_DIR = join(apiRoot, 'drizzle');
     delete process.env.DATABASE_URL;          // must never reach a real Postgres
 
-    const { startServer } = await import(pathToFileURL(apiEntry).href);
+    const { startServer, closeDb } = await import(pathToFileURL(apiEntry).href);
     const { port } = await startServer();
+
+    // FIX 2 (final whole-branch review): without this, every quit is a crash
+    // from PGlite's point of view — Electron does not SIGTERM itself on quit,
+    // so `wireSigtermDrain` (api/src/services/audit-shutdown.ts) never fires,
+    // and nothing else in this process ever called closeDb() either. That is
+    // exactly the failure class Stage 2's initDb()/closeDb() lifecycle
+    // hardening (Task 1) exists to rule out — this handler is what actually
+    // wires it into a real desktop quit.
+    //
+    // `closeDb` is destructured off THIS SAME dynamic import (see index.ts's
+    // `export { closeDb }` for why a second, independent import would not
+    // do), so it closes the module-scope PGlite handle this process's own
+    // startServer() actually opened.
+    let closing: Promise<void> | null = null;
+    app.on('before-quit', (event) => {
+      if (closing) return; // already closing (or closed) — do not double-close
+      event.preventDefault();
+      closing = (async () => {
+        try {
+          await closeDb();
+        } catch (err) {
+          // A failure to close must never hang the app open — log and let
+          // the quit proceed regardless.
+          console.error('[weltbon] closeDb() failed during shutdown:', err);
+        } finally {
+          app.quit();
+        }
+      })();
+    });
 
     mainWindow = new BrowserWindow({
       width: 1280,

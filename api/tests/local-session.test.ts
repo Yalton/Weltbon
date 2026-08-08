@@ -61,7 +61,15 @@ describe('POST /api/auth/local-session (DV-11)', () => {
   }
 
   function req(path: string, headers: Record<string, string> = {}) {
-    return new Request(`http://127.0.0.1${path}`, { method: 'POST', headers });
+    // A synthetic Request built via `new Request(url)` does NOT populate a
+    // Host header the way a real browser/socket request would (verified: the
+    // Fetch API leaves `headers` empty unless the caller sets it), so every
+    // caller here defaults to a loopback Host unless it explicitly overrides
+    // it — which is exactly what the DNS-rebinding tests below do.
+    return new Request(`http://127.0.0.1${path}`, {
+      method: 'POST',
+      headers: { Host: '127.0.0.1', ...headers },
+    });
   }
 
   it('is not registered at all when local mode is OFF — 404 is byte-identical to an absent route', async () => {
@@ -149,5 +157,35 @@ describe('POST /api/auth/local-session (DV-11)', () => {
       'X-Forwarded-For': '127.0.0.1',
     }));
     expect(res.status).toBe(404);
+  });
+
+  describe('DNS-rebinding defence (Host header)', () => {
+    // A page at evil.example, rebound via DNS to 127.0.0.1, makes requests the
+    // BROWSER treats as same-origin: CORS's weltbon.invalid sentinel is never
+    // consulted (no cross-origin request is being made from the browser's
+    // point of view), sameSite: 'Strict' doesn't help (still "same site" by
+    // the browser's reckoning), and the real TCP peer genuinely IS loopback,
+    // so the getConnInfo check above passes too. The one thing the attacker
+    // cannot forge is the Host header, because the browser sets it from the
+    // URL the page itself was loaded from — evil.example:<port>, not
+    // 127.0.0.1:<port>.
+    it('refuses a request whose Host header names an attacker-controlled domain, even though the peer is loopback', async () => {
+      app = await buildApp(true);
+      const res = await app.fetch(req('/api/auth/local-session', { Host: 'evil.example:1234' }));
+      expect(res.status).toBe(404);
+      expect(await res.text()).toBe('404 Not Found');
+    });
+
+    it('accepts Host: 127.0.0.1 with a port', async () => {
+      app = await buildApp(true);
+      const res = await app.fetch(req('/api/auth/local-session', { Host: '127.0.0.1:5391' }));
+      expect(res.status).toBe(200);
+    });
+
+    it('accepts Host: localhost with a port', async () => {
+      app = await buildApp(true);
+      const res = await app.fetch(req('/api/auth/local-session', { Host: 'localhost:5391' }));
+      expect(res.status).toBe(200);
+    });
   });
 });

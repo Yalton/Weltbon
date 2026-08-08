@@ -269,10 +269,16 @@ const localSessionRoute = createRoute({
     'DV-11. This route is only REGISTERED at all when WELTBON_LOCAL_MODE is set — a server ' +
     'deployment never mounts it, so its own OpenAPI document and /api/docs never mention it. ' +
     'When mounted, the handler additionally requires the real TCP peer (read from the Node ' +
-    'socket, not a client-supplied header) to be loopback, and refuses outright if the request ' +
-    'carries an X-Forwarded-For header at all. Every refusal path returns the exact same 404 ' +
-    'shape as an unmounted route. Mints a session with no credential presented — its safety is ' +
-    'the env flag, conditional route registration, and the socket-level loopback check, together.',
+    'socket, not a client-supplied header) to be loopback, refuses outright if the request ' +
+    'carries an X-Forwarded-For header at all, and refuses unless the Host header names a ' +
+    'loopback hostname (the DNS-rebinding defence: a page on an attacker-controlled domain ' +
+    'rebound to 127.0.0.1 is same-origin to the browser and passes every other check here). ' +
+    'Every refusal path THIS route itself decides on returns the exact same 404 shape as an ' +
+    'unmounted route — but a request carrying a share-token header without an Authorization ' +
+    'bearer is rejected 401 by the router-wide rejectShareToken middleware before this ' +
+    'handler ever runs, so that one path is not 404. Mints a session with no credential ' +
+    'presented — its safety is the env flag, conditional route registration, and the ' +
+    'socket/Host loopback checks, together.',
   security: [],
   middleware: [rejectShareToken] as const,
   responses: {
@@ -452,6 +458,17 @@ export function buildAuthRoutes(): OpenAPIHono<AppEnv> {
       // or trust client-supplied header content, which any caller who can
       // reach this port can omit, forge, or list-prefix at will.
       if (c.req.header('x-forwarded-for') !== undefined) return c.notFound();
+
+      // DNS-rebinding defence. A page at evil.example rebound to 127.0.0.1 makes
+      // requests the browser treats as SAME-ORIGIN, so CORS is never consulted and
+      // the socket peer really is loopback — every other control here passes. The
+      // Host header is the one thing the attacker cannot forge, because the browser
+      // sets it from the URL it was given.
+      const hostHeader = c.req.header('host') ?? '';
+      const hostname = hostHeader.replace(/:\d+$/, '').toLowerCase();
+      const hostIsLoopback =
+        hostname === '127.0.0.1' || hostname === 'localhost' || hostname === '[::1]' || hostname === '::1';
+      if (!hostIsLoopback) return c.notFound();
 
       // The real TCP peer, read off the Node socket via @hono/node-server —
       // unlike a header, the client cannot set this. Fail CLOSED: an address
