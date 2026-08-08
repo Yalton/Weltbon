@@ -4,12 +4,12 @@
 // Build first (`tsc`), then: node --test dist/*.test.js
 import { test, describe, before, after } from 'node:test';
 import assert from 'node:assert/strict';
-import { chmod, mkdir, mkdtemp, readFile, rm, stat, writeFile } from 'node:fs/promises';
+import { chmod, mkdir, mkdtemp, readdir, readFile, rm, stat, writeFile } from 'node:fs/promises';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import { loadOrCreateSecrets, secretsPath } from './secrets.js';
 
-describe('loadOrCreateSecrets (DV-10 / review round 1 Finding 2)', () => {
+describe('loadOrCreateSecrets (DV-10 / review rounds 1-2)', () => {
   let dir: string;
 
   before(async () => {
@@ -23,7 +23,7 @@ describe('loadOrCreateSecrets (DV-10 / review round 1 Finding 2)', () => {
     await rm(dir, { recursive: true, force: true });
   });
 
-  test('missing file (ENOENT) mints fresh secrets, written mode 0600', async () => {
+  test('missing file (ENOENT) mints fresh secrets, written mode 0600, no leftover .tmp-* file', async () => {
     const p = join(dir, 'fresh', 'secrets.json');
     const secrets = await loadOrCreateSecrets(p);
     assert.equal(secrets.jwtSecret.length, 64);
@@ -33,6 +33,10 @@ describe('loadOrCreateSecrets (DV-10 / review round 1 Finding 2)', () => {
 
     const st = await stat(p);
     assert.equal(st.mode & 0o777, 0o600);
+
+    // The atomic-write temp file must not survive a successful write.
+    const entries = await readdir(join(dir, 'fresh'));
+    assert.deepEqual(entries, ['secrets.json']);
   });
 
   test('existing valid file is reused unchanged, not regenerated', async () => {
@@ -85,6 +89,27 @@ describe('loadOrCreateSecrets (DV-10 / review round 1 Finding 2)', () => {
     // Untouched — still the same truncated bytes, not clobbered with fresh secrets.
     const raw = await readFile(p, 'utf8');
     assert.equal(raw, '{"jwtSecret": "abc');
+  });
+
+  // Review round 2, Finding 4: valid JSON that parses fine but is missing a
+  // key (hand-edited, or written by some other schema) is the same clobber
+  // class as the unreadable/malformed cases above, even though it can't
+  // arise from a crash mid-write the way a truncated file can.
+  test('valid JSON missing a key rethrows (naming the file) rather than silently regenerating', async () => {
+    const p = join(dir, 'missing-key', 'secrets.json');
+    await mkdir(join(dir, 'missing-key'), { recursive: true });
+    const partial = { jwtSecret: 'a'.repeat(64) }; // llmKeyEncryptionKey absent
+    await writeFile(p, JSON.stringify(partial), { mode: 0o600 });
+
+    await assert.rejects(() => loadOrCreateSecrets(p), (err: Error) => {
+      assert.match(err.message, /llmKeyEncryptionKey/);
+      assert.ok(err.message.includes(p), 'error message should name the file path');
+      return true;
+    });
+
+    // Untouched — still exactly the partial object, not clobbered with fresh secrets.
+    const raw = JSON.parse(await readFile(p, 'utf8'));
+    assert.deepEqual(raw, partial);
   });
 });
 

@@ -18,6 +18,14 @@ import { initDb, closeDb, type AppDatabase } from './client.js';
  * because Electron has no such cwd guarantee.
  */
 export async function runMigrations(database: AppDatabase): Promise<void> {
+  // WARNING: DRIZZLE_DIR is a process-global env var, and the integration
+  // test lane runs DB-gated files with pool:'forks' + singleFork:true — one
+  // process, many files in sequence. Today only tests/sync-handshake.test.ts
+  // sets DRIZZLE_DIR, it's in the unit lane (no DB), and it always restores
+  // the original value in afterEach, so nothing currently leaks across
+  // files. A future DB-gated test that sets DRIZZLE_DIR without restoring it
+  // would silently redirect every sibling test's runMigrations() call in
+  // the same fork afterward.
   const migrationsFolder = process.env.DRIZZLE_DIR ?? './drizzle';
   if (env().dbDriver === 'pglite') {
     const { migrate } = await import('drizzle-orm/pglite/migrator');

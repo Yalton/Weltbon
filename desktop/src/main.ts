@@ -26,16 +26,19 @@ if (!app.requestSingleInstanceLock()) {
   // directories up.
   const apiRoot = dirname(dirname(apiEntry));
 
-  // Failures after main() resolves (a window navigation error, a renderer
-  // crash) would otherwise leave a blank, unexplained window — the exact
-  // failure mode this file's main().catch() dialog already exists to avoid
-  // for startup failures. Cover the post-startup cases too.
+  // Review round 2, Finding 3: this handler is PROCESS-WIDE, so once
+  // startServer() has imported the API module in-process, it also catches
+  // rejections from the API's own background work (audit runs, sync jobs) —
+  // not just this file's own post-startup failures. A synchronous dialog
+  // here would block the main process on an API-internal promise rejection
+  // that the API's own error handling may already be managing, and would
+  // suppress Node's default crash-on-unhandled-rejection behavior for that
+  // code without actually fixing anything. Log only; do not dialog, do not
+  // quit — a background rejection here is not evidence the app is unusable,
+  // unlike a startup failure or a renderer crash (both handled below with
+  // an actual dialog, because those genuinely do mean the window is dead).
   process.on('unhandledRejection', (err) => {
     console.error('[weltbon] unhandled rejection:', err);
-    dialog.showErrorBox(
-      'Weltbon encountered an unexpected error',
-      err instanceof Error ? (err.stack ?? err.message) : String(err)
-    );
   });
 
   async function main(): Promise<void> {
@@ -65,13 +68,20 @@ if (!app.requestSingleInstanceLock()) {
     // user's OWN browser, which is already loopback. A page at evil.example
     // can POST /api/auth/local-session, read the token cross-origin out of
     // the response body (it is not cookie-only), and use it as a bearer
-    // token against every route. 'http://127.0.0.1' (no port) is a value a
-    // real browser Origin header can NEVER equal — Origin always carries the
-    // port — so cors() never reflects any actual Origin, blocking cross-
-    // origin reads while leaving the same-origin SPA's own fetches
-    // untouched (the Same-Origin Policy does not gate same-origin requests
-    // on CORS response headers at all).
-    process.env.WELTBON_PUBLIC_ORIGIN = 'http://127.0.0.1';
+    // token against every route.
+    //
+    // Review round 2, Finding 1: the round-1 fix used 'http://127.0.0.1' (no
+    // port) as the sentinel, reasoning that a real browser Origin always
+    // carries the port. True for THIS app's own window — but not universally:
+    // it is EXACTLY the Origin a page served from loopback port 80 sends
+    // (browsers omit the default port), so any other locally-hosted app on
+    // port 80 with an XSS could still get the token. Use an origin no page
+    // can EVER be served from instead: '.invalid' is reserved by RFC 2606
+    // and guaranteed to never resolve, so no origin header a real browser
+    // sends can ever equal this string, port included or not. Do not
+    // "simplify" this back to a loopback address — that is the bug this
+    // comment exists to prevent someone from reintroducing.
+    process.env.WELTBON_PUBLIC_ORIGIN = 'http://weltbon.invalid';
     // Review round 1, Finding 3: api/src/db/migrate.ts's migrationsFolder
     // and services/sync/handshake.ts's migrationHead() both resolve
     // './drizzle' against process.cwd() by default — fine in Docker, where
@@ -93,7 +103,15 @@ if (!app.requestSingleInstanceLock()) {
       height: 800,
       webPreferences: { nodeIntegration: false, contextIsolation: true },
     });
-    mainWindow.webContents.on('did-fail-load', (_event, errorCode, errorDescription, validatedURL) => {
+    mainWindow.webContents.on('did-fail-load', (_event, errorCode, errorDescription, validatedURL, isMainFrame) => {
+      // Review round 2, Finding 2: unfiltered, this fired a blocking native
+      // modal on ordinary events — any subframe load failure (isMainFrame
+      // false; iframes, trackers blocked, whatever) and every ERR_ABORTED
+      // (-3), which Chromium fires routinely for a navigation superseded by
+      // another before it finished (exactly what a fast SPA redirect looks
+      // like). Only a MAIN FRAME failure that is not a mere abort means the
+      // window is actually stuck with nothing loaded.
+      if (!isMainFrame || errorCode === -3) return;
       console.error('[weltbon] did-fail-load:', errorCode, errorDescription, validatedURL);
       dialog.showErrorBox(
         'Weltbon failed to load',

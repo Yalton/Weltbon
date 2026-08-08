@@ -1,5 +1,5 @@
 import { randomBytes } from 'node:crypto';
-import { mkdir, readFile, rename, writeFile } from 'node:fs/promises';
+import { mkdir, readFile, rename, unlink, writeFile } from 'node:fs/promises';
 import { dirname, join } from 'node:path';
 
 export interface Secrets {
@@ -29,6 +29,13 @@ export interface Secrets {
  * wrong), so this surfaces later as scattered decrypt errors instead of a
  * clean, loud refusal here where it's still fixable. Everything other than
  * ENOENT rethrows, and main()'s dialog reports it.
+ *
+ * Review round 2, Finding 4: the same reasoning applies to a file that reads
+ * and parses fine but is missing one or both keys — a hand-edited file, or
+ * one written by a future/older schema. That is a NARROWER case than the
+ * round-1 fix (JSON.parse itself already rejects a truncated write, so this
+ * specific shape can't come from a crash mid-write), but it is still the
+ * same clobber class, so it rethrows too rather than silently minting over it.
  */
 export async function loadOrCreateSecrets(path: string): Promise<Secrets> {
   let raw: string | undefined;
@@ -47,6 +54,13 @@ export async function loadOrCreateSecrets(path: string): Promise<Secrets> {
     if (parsed.jwtSecret && parsed.llmKeyEncryptionKey) {
       return { jwtSecret: parsed.jwtSecret, llmKeyEncryptionKey: parsed.llmKeyEncryptionKey };
     }
+    throw new Error(
+      `${path} exists and is valid JSON but is missing jwtSecret and/or ` +
+      `llmKeyEncryptionKey — refusing to overwrite it with freshly-minted ` +
+      `secrets, which would make any existing encrypted LLM keys / sync ` +
+      `remote credentials permanently undecryptable. Fix or remove this ` +
+      `file manually if it is not needed.`
+    );
   }
 
   const secrets: Secrets = {
@@ -65,7 +79,16 @@ export async function loadOrCreateSecrets(path: string): Promise<Secrets> {
   // permissions untouched.
   const tmpPath = `${path}.tmp-${randomBytes(4).toString('hex')}`;
   await writeFile(tmpPath, JSON.stringify(secrets, null, 2), { mode: 0o600 });
-  await rename(tmpPath, path);
+  try {
+    await rename(tmpPath, path);
+  } catch (err) {
+    // Don't leave a stray .tmp-* file behind for a future launch to trip
+    // over or an operator to be confused by. Best-effort: if the unlink
+    // itself fails, the original rename error is still the one that
+    // matters and must not be swallowed by it.
+    await unlink(tmpPath).catch(() => {});
+    throw err;
+  }
   return secrets;
 }
 
