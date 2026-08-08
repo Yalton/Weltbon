@@ -20,6 +20,8 @@ export interface Env {
   auditMaxCostUsd: number;       // AUDIT_MAX_COST_USD, default 1.00
   auditMaxTokensTotal: number;   // AUDIT_MAX_TOKENS_TOTAL, default 200_000
   auditShutdownGraceMs: number;  // AUDIT_SHUTDOWN_GRACE_MS, default 15_000
+  /** DV-11: local desktop mode. Enables the credential-free local session route. */
+  localMode: boolean;
 }
 
 export function loadEnv(source: NodeJS.ProcessEnv = process.env): Env {
@@ -133,6 +135,7 @@ export function loadEnv(source: NodeJS.ProcessEnv = process.env): Env {
     auditMaxCostUsd,
     auditMaxTokensTotal,
     auditShutdownGraceMs,
+    localMode: source.WELTBON_LOCAL_MODE === '1' || source.WELTBON_LOCAL_MODE === 'true',
   };
 }
 
@@ -143,3 +146,6 @@ export function env(): Env {
   if (_env === null) _env = loadEnv();
   return _env;
 }
+
+/** Tests only: drop the cached Env so a changed process.env is re-read. */
+export function resetEnvForTests(): void { _env = null; }

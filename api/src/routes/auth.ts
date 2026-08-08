@@ -17,6 +17,8 @@ import {
   REFRESH_TTL_MS,
 } from '../services/auth.js';
 import { hashInviteToken } from '../services/invite.js';
+import { ensureLocalUser } from '../services/local-mode.js';
+import { env } from '../config.js';
 
 type AppEnv = { Variables: AuthVariables };
 
@@ -257,6 +259,23 @@ const meRoute = createRoute({
   },
 });
 
+const localSessionRoute = createRoute({
+  method: 'post',
+  path: '/local-session',
+  tags: ['Auth'],
+  summary: 'Mint a session for the sole local user (desktop app only)',
+  description:
+    'DV-11. Only mounted behaviourally when WELTBON_LOCAL_MODE is set AND the caller is loopback; ' +
+    'returns 404 otherwise so a server deployment does not advertise it. Mints a session with no ' +
+    'credential presented — its safety is the env flag plus the loopback check on a localhost-only port.',
+  security: [],
+  middleware: [rejectShareToken] as const,
+  responses: {
+    200: { content: { 'application/json': { schema: refreshResponseSchema } }, description: 'Local session issued' },
+    404: { content: { 'application/json': { schema: errorSchema } }, description: 'Not in local mode, or non-loopback caller' },
+  },
+});
+
 // ─── Router ──────────────────────────────────────────────────────────────────
 
 export const authRoutes = new OpenAPIHono<AppEnv>()
@@ -394,4 +413,23 @@ export const authRoutes = new OpenAPIHono<AppEnv>()
       },
       200,
     );
+  })
+
+  .openapi(localSessionRoute, async (c) => {
+    const cfg = env();
+    // Both conditions, and a 404 for either: an attacker probing a server
+    // deployment must not be able to tell the difference between "this build
+    // has no such route" and "this route refused me".
+    const peer = c.req.header('x-forwarded-for') ?? '';
+    const isLoopback =
+      peer === '' || peer.startsWith('127.') || peer === '::1' || peer === '::ffff:127.0.0.1';
+    if (!cfg.localMode || !isLoopback) {
+      return c.json({ error: 'Not found' }, 404);
+    }
+
+    const user = await ensureLocalUser(getDb());
+    const accessToken = await issueAccessToken(user.id);
+    const refreshToken = await issueRefreshToken(user.id);
+    setRefreshCookie(c, refreshToken);
+    return c.json({ accessToken }, 200);
   });

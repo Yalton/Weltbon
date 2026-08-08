@@ -114,6 +114,8 @@ const DB_GATED_TESTS = [
   'tests/sync-client-crud.test.ts',
   // Plan D Task 8 — two-instance acceptance for the sync drive loop.
   'tests/sync-run.test.ts',
+  // Stage 2 Task 3 (DV-11) — credential-free local session route.
+  'tests/local-session.test.ts',
 ];
 
 export default defineConfig({
