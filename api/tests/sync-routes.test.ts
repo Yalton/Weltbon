@@ -675,5 +675,15 @@ describe('/api/sync surface (Plan C)', () => {
       const body = await res.json();
       expect(JSON.stringify(body)).not.toContain(ownerId);
     });
+
+    // A-11: this route has no uid to check, so c.var.userId — set by the
+    // requireAuth gate in index.ts, a DIFFERENT file — is its entire boundary.
+    // Every other peer route also has requireUniverse as a second in-file
+    // check; this one does not, so losing the gate would return every
+    // universe on the instance to an anonymous caller.
+    it('rejects an unauthenticated request', async () => {
+      const res = await app.request('/api/sync/universes');
+      expect(res.status).toBe(401);
+    });
   });
 });
