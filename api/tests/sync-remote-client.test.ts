@@ -1,7 +1,7 @@
 /**
  * Plan D Task 3 — the outbound sync client. Pure: no DB; fetch is injected (D-05).
  */
-import { describe, it, expect } from 'vitest';
+import { describe, it, expect, vi } from 'vitest';
 import { SyncRemoteClient } from '../src/services/sync/remote-client.js';
 import {
   SyncApplyRejectedError,
@@ -301,5 +301,38 @@ describe('listUniverses (A-04)', () => {
   it('maps 401 to the auth error like every other method', async () => {
     const { fetchImpl } = stub(() => json({ error: 'nope' }, 401));
     await expect(client(fetchImpl).listUniverses()).rejects.toBeInstanceOf(SyncAuthError);
+  });
+
+  it('caps the returned rows at 1000 and warns once, rather than letting the peer size our query', async () => {
+    const rows = Array.from({ length: 1200 }, (_, i) =>
+      U({ id: `11111111-1111-4111-8111-${String(i).padStart(12, '0')}`, name: `Universe ${i}` }),
+    );
+    const { fetchImpl } = stub(() => json({ universes: rows }));
+    const warnSpy = vi.spyOn(console, 'warn').mockImplementation(() => {});
+    try {
+      const result = await client(fetchImpl).listUniverses();
+      expect(result).toHaveLength(1000);
+      expect(result[0].id).toBe(rows[0].id);
+      expect(warnSpy).toHaveBeenCalledTimes(1);
+      expect(warnSpy.mock.calls[0][0]).toContain('1200');
+      expect(warnSpy.mock.calls[0][0]).toContain('1000');
+    } finally {
+      warnSpy.mockRestore();
+    }
+  });
+
+  it('leaves an under-cap response unaffected and does not warn', async () => {
+    const rows = Array.from({ length: 3 }, (_, i) =>
+      U({ id: `11111111-1111-4111-8111-${String(i).padStart(12, '0')}`, name: `Universe ${i}` }),
+    );
+    const { fetchImpl } = stub(() => json({ universes: rows }));
+    const warnSpy = vi.spyOn(console, 'warn').mockImplementation(() => {});
+    try {
+      const result = await client(fetchImpl).listUniverses();
+      expect(result).toHaveLength(3);
+      expect(warnSpy).not.toHaveBeenCalled();
+    } finally {
+      warnSpy.mockRestore();
+    }
   });
 });

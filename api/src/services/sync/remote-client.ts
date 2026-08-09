@@ -42,6 +42,17 @@ export interface RemoteClientOptions {
 /** Plan C's missing-assets route caps the array at 5000 (routes/sync.ts:179). */
 const MISSING_BATCH = 5000;
 
+/**
+ * Cap on the rows listUniverses() returns. maxJsonBytes only bounds the
+ * response's BYTES (64 MB default) — a peer could still fit 100k+ minimal
+ * rows under that ceiling, and listRemoteUniverses (adopt.ts) builds two
+ * inArray() predicates directly from these ids, one bind parameter per id.
+ * Postgres's own limit is 65535 bind parameters per query; well past that the
+ * owner-facing browse route would 500 instead of degrading. 1000 is far above
+ * any real user's universe count and far below that ceiling.
+ */
+const MAX_UNIVERSES = 1000;
+
 /** A sha256 hex digest — the only shape any hash a peer sends us may have. */
 const HASH_RE = /^[0-9a-f]{64}$/;
 
@@ -297,11 +308,20 @@ export class SyncRemoteClient {
     if (res.status !== 200) throw new SyncUnreachableError(`universes returned ${res.status}`);
     const body = (await this.readJson(res, 'universes')) as { universes?: unknown };
     if (!Array.isArray(body.universes)) return [];
-    return body.universes.filter((u): u is ManifestRow => {
+    const rows = body.universes.filter((u): u is ManifestRow => {
       if (typeof u !== 'object' || u === null) return false;
       const row = u as Record<string, unknown>;
       return typeof row.id === 'string' && UUID_RE.test(row.id) && typeof row.name === 'string';
     });
+    // The peer, not us, otherwise picks the size of listRemoteUniverses' two
+    // inArray() queries (MAX_UNIVERSES doc above). Never truncate silently —
+    // an operator staring at a mysteriously incomplete adopt list needs this
+    // in the logs, same as run-sync.ts's thumbSizeBytes repair warning.
+    if (rows.length > MAX_UNIVERSES) {
+      console.warn(`[sync] listUniverses: peer returned ${rows.length} universes, capping at ${MAX_UNIVERSES}`);
+      return rows.slice(0, MAX_UNIVERSES);
+    }
+    return rows;
   }
 
   async missingAssets(uid: string, hashes: string[]): Promise<string[]> {
