@@ -378,7 +378,7 @@ describe('universe adoption', () => {
     }
 
     it('adopts a universe with an entry and an image, then converges both ways', async () => {
-      const { universes, entries, assets, syncConflicts } = await import('../src/db/schema.js');
+      const { entries, assets, syncConflicts } = await import('../src/db/schema.js');
 
       // ── 1. Content on B (think: created in the web app) ──────────────────
       const bytes = await realPngLarge(60);
@@ -408,8 +408,8 @@ describe('universe adoption', () => {
       });
 
       // A-06: adoption does not sync. The universe is here; its contents are not.
-      const [seeded] = await A.db.select().from(universes).where(eq(universes.id, universeId));
-      expect(seeded.id).toBe(universeId);
+      // (`seeded.id === universeId` would be tautological — the query filtered
+      // on exactly that id — so the real assertion is just `beforeRun`, below.)
       const beforeRun = await A.db.select().from(entries).where(eq(entries.universeId, universeId));
       expect(beforeRun).toHaveLength(0);
 
@@ -425,9 +425,13 @@ describe('universe adoption', () => {
       const [assetOnA] = await A.db.select().from(assets).where(eq(assets.id, assetOnB.id));
       expect(assetOnA).toBeDefined();
 
-      // The BYTES, not just the row — and a real PNG of the right size.
+      // The BYTES, not just the row.
       const bytesOnA = await storageBackend.get(assetOnB.id);
       expect(bytesOnA?.equals(bytes)).toBe(true);
+      // format/width/height below follow BY CONSTRUCTION once byte-equality
+      // holds (bytes is a known-real 900x700 PNG from realPngLarge) — kept only
+      // as a human-readable demonstration that the roundtripped bytes really do
+      // decode as a real PNG, not as independent coverage (review round 1, minor 2).
       const sharp = (await import('sharp')).default;
       const meta = await sharp(bytesOnA!).metadata();
       expect(meta.format).toBe('png');
@@ -437,13 +441,25 @@ describe('universe adoption', () => {
       expect(await storageBackend.exists(`${assetOnB.id}_thumb`)).toBe(true);
       const thumb = await storageBackend.get(`${assetOnB.id}_thumb`);
       expect(thumb!.length).toBeLessThan(bytes.length);
+      // B deliberately lied about thumbSizeBytes (seeded as 1); A's row must
+      // carry the CORRECTED size from repairThumbSizes (F0-06), not the lie —
+      // otherwise this repair could silently no-op and still ship green.
+      expect(assetOnA.thumbSizeBytes).toBe(thumb!.length);
 
       // ── 4. Edit on both sides; converge; the loser is preserved ──────────
+      // pickWinner (merge.ts) breaks TIES toward remote (B-03) — so giving B
+      // the later timestamp would make "remote wins" indistinguishable from
+      // "the tie-break fired", and since remote already wins the tie, deriveOps
+      // would emit no upsert toward B at all: convergedB.body would just be B's
+      // own prior write, true by construction, proving nothing about the push.
+      // Giving A (local) the later timestamp instead makes the expected winner
+      // ('edited on the desktop') reachable ONLY if that value genuinely pushes
+      // through to B — a real round trip, not the tie-break default.
       await use('A');
-      await A.db.update(entries).set({ body: 'edited on the desktop', updatedAt: new Date() })
+      await A.db.update(entries).set({ body: 'edited on the desktop', updatedAt: new Date(Date.now() + 1000) })
         .where(eq(entries.id, entryOnB.id));
       await use('B');
-      await B.db.update(entries).set({ body: 'edited on the web', updatedAt: new Date(Date.now() + 1000) })
+      await B.db.update(entries).set({ body: 'edited on the web', updatedAt: new Date() })
         .where(eq(entries.id, entryOnB.id));
 
       await use('A');
@@ -455,18 +471,19 @@ describe('universe adoption', () => {
       await use('B');
       const [convergedB] = await B.db.select().from(entries).where(eq(entries.id, entryOnB.id));
       expect(convergedA.body).toBe(convergedB.body);
-      expect(convergedA.body).toBe('edited on the web'); // later timestamp wins (LWW)
+      expect(convergedA.body).toBe('edited on the desktop'); // later timestamp (local/A) wins (LWW)
 
       await use('A');
       const losers = await A.db.select().from(syncConflicts).where(eq(syncConflicts.universeId, universeId));
       expect(losers).toHaveLength(1);
-      expect(losers[0].resolvedAt).toBeNull();
+      // resolvedAt-is-null is a freshly-recorded-conflict tautology, not
+      // exercised coverage — omitted deliberately (review round 1, minor 2).
       // The loser really is the overwritten text, not an empty placeholder.
-      expect((losers[0].loserPayload as any).body).toBe('edited on the desktop');
+      expect((losers[0].loserPayload as any).body).toBe('edited on the web');
     });
 
     it('a failed first sync leaves a state the next run converges (A-10)', async () => {
-      const { entries } = await import('../src/db/schema.js');
+      const { entries, syncLinks } = await import('../src/db/schema.js');
       await use('B');
       await B.db.insert(entries).values({
         universeId, title: 'Solo', entryType: 'character', body: 'x',
@@ -477,17 +494,49 @@ describe('universe adoption', () => {
         remoteId, universeId, ownerId: ownerA.id, fetchImpl: makeFetch(),
       });
 
-      // Never ran a sync: base is null and the local side holds no collection
-      // rows. deriveOps' deletes are `side.keys() \ merged` and merged is the
-      // union, so neither side can derive a delete from this state.
+      // Crash the FIRST sync right before its base advances. By that point
+      // (run-sync.ts) the local apply and the push have ALREADY committed —
+      // only saveBaseSnapshot is skipped — so the crash leaves rows applied
+      // but the base still null, exactly the precedent at
+      // tests/sync-run.test.ts:1049.
+      const boom = new Error('simulated crash');
+      await use('A');
+      await expect(
+        runSync(link.id, ownerA.id, {
+          fetchImpl: makeFetch(),
+          onBeforeBaseAdvance: () => { throw boom; },
+        }),
+      ).rejects.toBe(boom);
+
+      await use('A');
+      const [linkAfterCrash] = await A.db.select().from(syncLinks).where(eq(syncLinks.id, link.id));
+      expect(linkAfterCrash.status).toBe('error');
+      expect(linkAfterCrash.baseSnapshotKey).toBeNull(); // base did NOT advance
+
+      // The local apply already committed despite the crash — B's row is here.
+      const onAAfterCrash = await A.db.select().from(entries).where(eq(entries.universeId, universeId));
+      expect(onAAfterCrash).toHaveLength(1);
+
+      // Retry. Base is STILL null (the crash never saved one), so this run
+      // repeats the exact same base==null merge as the crashed attempt, not a
+      // base-having one. deriveOps' deletes are `side.keys() \ merged` and
+      // merged is the union, so neither side can derive a delete from this
+      // state — on the first attempt OR the retry.
       await use('A');
       const run = await runSync(link.id, ownerA.id, { fetchImpl: makeFetch() });
-      expect(run.appliedLocally.upserted.entries).toBe(1);
       expect(run.pushed.deleted.entries ?? 0).toBe(0);
+      expect(run.appliedLocally.deleted.entries ?? 0).toBe(0);
+
+      const [linkAfterRetry] = await A.db.select().from(syncLinks).where(eq(syncLinks.id, link.id));
+      expect(linkAfterRetry.status).toBe('idle');
+      expect(linkAfterRetry.baseSnapshotKey).not.toBeNull(); // now it advances
 
       await use('B');
       const stillOnB = await B.db.select().from(entries).where(eq(entries.universeId, universeId));
       expect(stillOnB).toHaveLength(1);
+      await use('A');
+      const stillOnA = await A.db.select().from(entries).where(eq(entries.universeId, universeId));
+      expect(stillOnA).toHaveLength(1);
     });
   });
 });
