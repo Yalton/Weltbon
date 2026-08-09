@@ -15,6 +15,7 @@ api/web-dist/
 .DS_Store
 .vscode/
 .idea/
+.worktrees/
 TestUniverse/
 
 # Playwright E2E
