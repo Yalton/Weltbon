@@ -842,7 +842,12 @@ export const syncClientRoutes = new OpenAPIHono<AppEnv>()
         .returning();
       return c.json(toLinkWire(row, remote), 201);
     } catch (err: any) {
-      if (err?.code === '23505') {
+      // Drizzle wraps the PG error: the '23505' code may be on the top-level
+      // error (err.code) or on the cause (err.cause.code) depending on the
+      // Drizzle version. Check both — same idiom as adopt.ts, templates.ts,
+      // llm-keys.ts, dictionary.ts and audits.ts.
+      const code = err?.code ?? err?.cause?.code;
+      if (code === '23505') {
         return c.json({ error: 'This universe is already linked to this remote' }, 409);
       }
       throw err;
