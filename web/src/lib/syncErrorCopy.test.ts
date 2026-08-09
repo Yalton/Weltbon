@@ -18,10 +18,10 @@ describe('SYNC_ERROR_COPY', () => {
     }
   });
 
-  it('pins this map to exactly 12 keys, so adding/removing one HERE forces a copy decision', () => {
+  it('pins this map to exactly 14 keys, so adding/removing one HERE forces a copy decision', () => {
     // This reads SYNC_ERROR_COPY only, never run-errors.ts — there is no
     // shared package and no web→api import, so nothing in `web` can fail
-    // when a code is added server-side. A 13th server code does NOT fail
+    // when a code is added server-side. A 15th server code does NOT fail
     // this test; it silently degrades to syncErrorMessage's fallback branch,
     // by design (see that function's comment).
     expect(Object.keys(SYNC_ERROR_COPY).sort()).toEqual([
@@ -37,12 +37,14 @@ describe('SYNC_ERROR_COPY', () => {
       'remote-unauthorized',
       'remote-universe-missing',
       'remote-unreachable',
+      'universe-already-local',
+      'universe-not-on-remote',
     ]);
   });
 });
 
 describe('syncErrorMessage', () => {
-  it('routes every one of the 12 codes through syncErrorMessage to written copy, not the bare code', () => {
+  it('routes every one of the 14 codes through syncErrorMessage to written copy, not the bare code', () => {
     // The SYNC_ERROR_COPY tests above only inspect the map directly — they
     // never call syncErrorMessage, so a regression that hardcodes
     // `message: code` inside the function (rather than in the map) would
@@ -194,7 +196,7 @@ describe('lastErrorMessage', () => {
 });
 
 describe('SYNC_ERROR_COPY — message distinctness', () => {
-  it('gives all 12 codes textually distinct prose', () => {
+  it('gives all 14 codes textually distinct prose', () => {
     // Not cosmetic. `combineRunError` originally decided "same failure?" by
     // comparing `message` strings, which is correct only while this holds.
     // Two entries edited to share prose would have let a stale error of one
@@ -205,7 +207,7 @@ describe('SYNC_ERROR_COPY — message distinctness', () => {
     // guards the USER: two failures with different remedies must not read
     // identically on screen.
     const messages = Object.values(SYNC_ERROR_COPY).map((c) => c.message);
-    expect(new Set(messages).size).toBe(12);
+    expect(new Set(messages).size).toBe(14);
   });
 });
 

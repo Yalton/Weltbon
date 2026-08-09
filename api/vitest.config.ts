@@ -118,6 +118,8 @@ const DB_GATED_TESTS = [
   'tests/sync-run.test.ts',
   // Stage 2 Task 3 (DV-11) — credential-free local session route.
   'tests/local-session.test.ts',
+  // Universe adoption (spec 2026-08-08) — two-instance adopt + acceptance.
+  'tests/sync-adopt.test.ts',
 ];
 
 export default defineConfig({

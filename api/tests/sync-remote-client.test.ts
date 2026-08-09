@@ -1,7 +1,7 @@
 /**
  * Plan D Task 3 — the outbound sync client. Pure: no DB; fetch is injected (D-05).
  */
-import { describe, it, expect } from 'vitest';
+import { describe, it, expect, vi } from 'vitest';
 import { SyncRemoteClient } from '../src/services/sync/remote-client.js';
 import {
   SyncApplyRejectedError,
@@ -247,5 +247,92 @@ describe('safeErrorSummary (D-09)', () => {
   it('summarizes by code, never by remote body text', () => {
     expect(safeErrorSummary(new SyncAuthError())).toContain('remote-unauthorized');
     expect(safeErrorSummary(new Error('raw remote text with <secrets>'))).toBe('unexpected-error');
+  });
+});
+
+describe('listUniverses (A-04)', () => {
+  const U = (over: Record<string, unknown> = {}) => ({
+    id: '11111111-1111-4111-8111-111111111111',
+    name: 'Aethel',
+    updatedAt: '2026-01-01T00:00:00.000Z',
+    ...over,
+  });
+
+  it('returns the peer\'s rows and sends the PAT as a bearer header', async () => {
+    const { calls, fetchImpl } = stub(() => json({ universes: [U()] }));
+    const rows = await client(fetchImpl).listUniverses();
+
+    expect(calls[0].url).toBe('https://peer.example/api/sync/universes');
+    expect((calls[0].init.headers as Record<string, string>).Authorization).toBe('Bearer wbn_pat_secret');
+    expect(rows).toHaveLength(1);
+    expect(rows[0].name).toBe('Aethel');
+  });
+
+  it('drops elements that are not a usable universe row (C-21)', async () => {
+    // The chosen row is fed straight into applyManifestOps, so a row we cannot
+    // key or name is one we must never offer to adopt.
+    const { fetchImpl } = stub(() =>
+      json({
+        universes: [
+          U(),
+          U({ id: 'not-a-uuid' }),
+          U({ name: 42 }),
+          null,
+          'nope',
+          { name: 'no id' },
+        ],
+      }),
+    );
+    const rows = await client(fetchImpl).listUniverses();
+    expect(rows).toHaveLength(1);
+    expect(rows[0].id).toBe('11111111-1111-4111-8111-111111111111');
+  });
+
+  it('treats a non-array body as an empty list rather than throwing', async () => {
+    const { fetchImpl } = stub(() => json({ universes: 'everything' }));
+    await expect(client(fetchImpl).listUniverses()).resolves.toEqual([]);
+  });
+
+  it('turns a non-200 into the typed transport error, never a raw status', async () => {
+    const { fetchImpl } = stub(() => json({ error: 'nope' }, 500));
+    await expect(client(fetchImpl).listUniverses()).rejects.toBeInstanceOf(SyncUnreachableError);
+  });
+
+  it('maps 401 to the auth error like every other method', async () => {
+    const { fetchImpl } = stub(() => json({ error: 'nope' }, 401));
+    await expect(client(fetchImpl).listUniverses()).rejects.toBeInstanceOf(SyncAuthError);
+  });
+
+  it('caps the returned rows at 1000 and warns once, rather than letting the peer size our query', async () => {
+    const rows = Array.from({ length: 1200 }, (_, i) =>
+      U({ id: `11111111-1111-4111-8111-${String(i).padStart(12, '0')}`, name: `Universe ${i}` }),
+    );
+    const { fetchImpl } = stub(() => json({ universes: rows }));
+    const warnSpy = vi.spyOn(console, 'warn').mockImplementation(() => {});
+    try {
+      const result = await client(fetchImpl).listUniverses();
+      expect(result).toHaveLength(1000);
+      expect(result[0].id).toBe(rows[0].id);
+      expect(warnSpy).toHaveBeenCalledTimes(1);
+      expect(warnSpy.mock.calls[0][0]).toContain('1200');
+      expect(warnSpy.mock.calls[0][0]).toContain('1000');
+    } finally {
+      warnSpy.mockRestore();
+    }
+  });
+
+  it('leaves an under-cap response unaffected and does not warn', async () => {
+    const rows = Array.from({ length: 3 }, (_, i) =>
+      U({ id: `11111111-1111-4111-8111-${String(i).padStart(12, '0')}`, name: `Universe ${i}` }),
+    );
+    const { fetchImpl } = stub(() => json({ universes: rows }));
+    const warnSpy = vi.spyOn(console, 'warn').mockImplementation(() => {});
+    try {
+      const result = await client(fetchImpl).listUniverses();
+      expect(result).toHaveLength(3);
+      expect(warnSpy).not.toHaveBeenCalled();
+    } finally {
+      warnSpy.mockRestore();
+    }
   });
 });

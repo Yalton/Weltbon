@@ -304,6 +304,26 @@ describe('SyncSettings — test connection', () => {
   });
 });
 
+describe('SyncSettings — browsing a remote\'s universes (A-12)', () => {
+  it('reveals the remote\'s universes on demand and hides them again', async () => {
+    vi.mocked(api).mockImplementation(
+      makeApiDispatcher({
+        '/sync/remotes': [REMOTE],
+        '/sync/remotes/r1/universes': { universes: [] },
+      }),
+    );
+
+    renderView();
+    await screen.findByText('Laptop');
+
+    await userEvent.click(screen.getByRole('button', { name: /browse universes on/i }));
+    expect(screen.queryByLabelText(/loading universes/i)).toBeNull();
+    expect(screen.getByRole('button', { name: /hide universes/i })).toBeInTheDocument();
+    await userEvent.click(screen.getByRole('button', { name: /hide universes/i }));
+    expect(screen.getByRole('button', { name: /browse universes on/i })).toBeInTheDocument();
+  });
+});
+
 describe('SyncSettings — edit', () => {
   it('PATCHes the label without sending a pat when the token field is left blank', async () => {
     // This affordance is the remedy `remote-unauthorized` and

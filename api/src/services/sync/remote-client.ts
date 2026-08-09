@@ -2,8 +2,9 @@
  * Plan D: the outbound half of the sync protocol — the ONLY place in the API
  * that calls fetch.
  *
- * Every method targets one of Plan C's six routes and converts what the peer
- * says into a typed SyncRunError, so no caller ever branches on a status code.
+ * Every method targets one of the peer surface's seven routes (Plan C's six
+ * plus A-04's discovery route) and converts what the peer says into a typed
+ * SyncRunError, so no caller ever branches on a status code.
  *
  * D-05: `fetchImpl` is injectable, and that is load-bearing rather than a
  * convenience. In the two-instance integration test the peer is a Hono app
@@ -41,8 +42,22 @@ export interface RemoteClientOptions {
 /** Plan C's missing-assets route caps the array at 5000 (routes/sync.ts:179). */
 const MISSING_BATCH = 5000;
 
+/**
+ * Cap on the rows listUniverses() returns. maxJsonBytes only bounds the
+ * response's BYTES (64 MB default) — a peer could still fit 100k+ minimal
+ * rows under that ceiling, and listRemoteUniverses (adopt.ts) builds two
+ * inArray() predicates directly from these ids, one bind parameter per id.
+ * Postgres's own limit is 65535 bind parameters per query; well past that the
+ * owner-facing browse route would 500 instead of degrading. 1000 is far above
+ * any real user's universe count and far below that ceiling.
+ */
+const MAX_UNIVERSES = 1000;
+
 /** A sha256 hex digest — the only shape any hash a peer sends us may have. */
 const HASH_RE = /^[0-9a-f]{64}$/;
+
+/** The only shape an id we are going to use as a universe id may have. */
+const UUID_RE = /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i;
 
 export function syncRequestTimeoutMs(): number {
   const v = Number(process.env.SYNC_REQUEST_TIMEOUT_MS);
@@ -275,6 +290,38 @@ export class SyncRemoteClient {
     if (res.status === 404) return null;
     if (res.status !== 200) throw new SyncUnreachableError(`snapshot returned ${res.status}`);
     return (await this.readJson(res, 'snapshot')) as SyncManifest;
+  }
+
+  /**
+   * A-04: the universes the PAT's owner holds on the peer.
+   *
+   * Sanitized on the same principle as missingAssets' hash array (C-21), and
+   * for a sharper reason: adoptUniverse feeds the CHOSEN row straight into
+   * applyManifestOps, so this array reaches a write. An element without a
+   * well-formed uuid `id` or a string `name` is dropped rather than repaired —
+   * a universe we cannot key or name is one we cannot offer to adopt. A body
+   * that is not an array yields an empty list rather than a throw, exactly as
+   * missingAssets treats a malformed reply as "nothing to report".
+   */
+  async listUniverses(): Promise<ManifestRow[]> {
+    const res = await this.send('GET', '/universes');
+    if (res.status !== 200) throw new SyncUnreachableError(`universes returned ${res.status}`);
+    const body = (await this.readJson(res, 'universes')) as { universes?: unknown };
+    if (!Array.isArray(body.universes)) return [];
+    const rows = body.universes.filter((u): u is ManifestRow => {
+      if (typeof u !== 'object' || u === null) return false;
+      const row = u as Record<string, unknown>;
+      return typeof row.id === 'string' && UUID_RE.test(row.id) && typeof row.name === 'string';
+    });
+    // The peer, not us, otherwise picks the size of listRemoteUniverses' two
+    // inArray() queries (MAX_UNIVERSES doc above). Never truncate silently —
+    // an operator staring at a mysteriously incomplete adopt list needs this
+    // in the logs, same as run-sync.ts's thumbSizeBytes repair warning.
+    if (rows.length > MAX_UNIVERSES) {
+      console.warn(`[sync] listUniverses: peer returned ${rows.length} universes, capping at ${MAX_UNIVERSES}`);
+      return rows.slice(0, MAX_UNIVERSES);
+    }
+    return rows;
   }
 
   async missingAssets(uid: string, hashes: string[]): Promise<string[]> {

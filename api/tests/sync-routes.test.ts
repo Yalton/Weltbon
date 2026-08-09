@@ -634,4 +634,56 @@ describe('/api/sync surface (Plan C)', () => {
     expect(JSON.stringify(body)).not.toContain(foreignId);
     expect(body.collisions).toEqual([{ collection: 'entries', count: 1 }]);
   });
+
+  // ── universe discovery (A-04) ──────────────────────────────────────────────
+
+  describe('GET /api/sync/universes (A-04, A-11)', () => {
+    it('lists ONLY the universes the presented credential owns', async () => {
+      const { universes } = await import('../src/db/schema.js');
+      const stranger = await createTestUser(handle, {
+        email: 'stranger@test.dev',
+        password: 'password123',
+      });
+      await handle.db.insert(universes).values({ userId: stranger.id, name: 'Not Yours' });
+
+      const res = await app.request('/api/sync/universes', { headers: authHeader(ownerToken) });
+      expect(res.status).toBe(200);
+      const body = await res.json();
+      const names = body.universes.map((u: any) => u.name);
+      expect(names).not.toContain('Not Yours');
+      expect(body.universes.every((u: any) => u.id !== undefined)).toBe(true);
+    });
+
+    it('returns the full manifest universe row, not a name-and-id stub', async () => {
+      const { universes } = await import('../src/db/schema.js');
+      const { eq } = await import('drizzle-orm');
+      await handle.db
+        .update(universes)
+        .set({ theme: { accent: '#123456' } as any, description: 'described' })
+        .where(eq(universes.id, universeId));
+
+      const res = await app.request('/api/sync/universes', { headers: authHeader(ownerToken) });
+      const body = await res.json();
+      const mine = body.universes.find((u: any) => u.id === universeId);
+      expect(mine.theme).toEqual({ accent: '#123456' });
+      expect(mine.description).toBe('described');
+      expect(typeof mine.updatedAt).toBe('string');
+    });
+
+    it('never exposes the owner user id', async () => {
+      const res = await app.request('/api/sync/universes', { headers: authHeader(ownerToken) });
+      const body = await res.json();
+      expect(JSON.stringify(body)).not.toContain(ownerId);
+    });
+
+    // A-11: this route has no uid to check, so c.var.userId — set by the
+    // requireAuth gate in index.ts, a DIFFERENT file — is its entire boundary.
+    // Every other peer route also has requireUniverse as a second in-file
+    // check; this one does not, so losing the gate would return every
+    // universe on the instance to an anonymous caller.
+    it('rejects an unauthenticated request', async () => {
+      const res = await app.request('/api/sync/universes');
+      expect(res.status).toBe(401);
+    });
+  });
 });

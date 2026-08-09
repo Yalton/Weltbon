@@ -1,9 +1,10 @@
 /**
  * Plan D — the OWNER-facing half of /api/sync (D-04, D-10).
  *
- * Mounted at the SAME /api/sync prefix as routes/sync.ts (Plan C's six
- * PAT-or-JWT peer routes), but from this separate file so the peer surface
- * stays exactly those six routes. Every route here is JWT-only
+ * Mounted at the SAME /api/sync prefix as routes/sync.ts (seven routes: Plan
+ * C's six PAT-or-JWT peer routes plus A-04's discovery route), but from this
+ * separate file so the peer surface stays exactly those seven routes. Every
+ * route here is JWT-only
  * (`middleware: [requireJwtAuth] as const`), mirroring the D-13 rule already
  * applied in routes/llm-keys.ts and routes/tokens.ts: a stolen PAT must not be
  * able to enumerate a user's remotes, mint links, or (once Task 7 lands) aim
@@ -13,6 +14,8 @@
  *   GET    /remotes                list, masked
  *   PATCH  /remotes/{id}           update label / baseUrl / replace PAT
  *   DELETE /remotes/{id}           delete + drop each link's base snapshot
+ *   GET    /remotes/{id}/universes what that remote holds, + local state (A-04)
+ *   POST   /adopt                  create a universe from a remote, then link it (A-02)
  *   POST   /links                  create {universeId, remoteId}
  *   GET    /links?universeId=      list
  *   DELETE /links/{id}             delete + drop the base snapshot
@@ -41,6 +44,7 @@ import {
 import { SyncApplyError } from '../services/sync/errors.js';
 import { mapSyncApplyError } from '../services/sync/apply-error-response.js';
 import { runSync, testRemote } from '../services/sync/run-sync.js';
+import { adoptUniverse, listRemoteUniverses } from '../services/sync/adopt.js';
 import { SyncRunError } from '../services/sync/run-errors.js';
 import { env } from '../config.js';
 
@@ -87,6 +91,11 @@ const maskedRemoteSchema = z.object({
 const createLinkBodySchema = z.object({
   universeId: z.string().uuid(),
   remoteId: z.string().uuid(),
+});
+
+const adoptBodySchema = z.object({
+  remoteId: z.string().uuid(),
+  universeId: z.string().uuid(),
 });
 
 const linkListQuerySchema = z.object({
@@ -359,6 +368,76 @@ const testRemoteRoute = createRoute({
     // unreachable status is worse than a terse contract.
     401: syncRunErrorResponses[401],
     402: syncRunErrorResponses[402],
+    404: syncRunErrorResponses[404],
+    409: syncRunErrorResponses[409],
+    413: syncRunErrorResponses[413],
+    500: syncRunErrorResponses[500],
+    502: syncRunErrorResponses[502],
+  },
+});
+
+const remoteUniversesRoute = createRoute({
+  method: 'get',
+  path: '/remotes/{id}/universes',
+  tags: ['Sync Remotes'],
+  summary: 'List the universes a registered remote holds (A-04)',
+  description:
+    'Handshakes, asks the remote instance what the stored PAT\'s owner holds, ' +
+    'and annotates each row with `localState` — absent | present | linked (A-07). ' +
+    'Creates nothing. JWT auth required: the browser holds no PAT and cannot ' +
+    'call a peer itself.',
+  security: [{ bearerJwtAuth: [] }],
+  middleware: [requireJwtAuth] as const,
+  request: { params: idParams },
+  responses: {
+    200: {
+      content: {
+        'application/json': {
+          schema: z.object({
+            universes: z.array(z.object({ localState: z.enum(['absent', 'present', 'linked']) }).passthrough()),
+          }),
+        },
+      },
+      description: 'What the remote instance holds, with this instance\'s state for each.',
+    },
+    // Same set as testRemoteRoute: this path cannot reach the apply engine (no
+    // 400) and folds "not owned" into SyncLinkNotFoundError → 404 (never 403).
+    401: syncRunErrorResponses[401],
+    402: syncRunErrorResponses[402],
+    404: syncRunErrorResponses[404],
+    409: syncRunErrorResponses[409],
+    413: syncRunErrorResponses[413],
+    500: syncRunErrorResponses[500],
+    502: syncRunErrorResponses[502],
+  },
+});
+
+const adoptRoute = createRoute({
+  method: 'post',
+  path: '/adopt',
+  tags: ['Sync Links'],
+  summary: 'Adopt a universe the remote holds and this instance does not (A-02)',
+  description:
+    'Creates the local universe from the remote\'s own universe row, preserving ' +
+    'its id (S-05), then creates an ordinary link. Does NOT run the first sync ' +
+    '(A-06) — call POST /links/{id}/run next. 409 if this account already holds ' +
+    'the universe (link it instead); 403 if another user on this instance does.',
+  security: [{ bearerJwtAuth: [] }],
+  middleware: [requireJwtAuth] as const,
+  request: {
+    body: { content: { 'application/json': { schema: adoptBodySchema } }, required: true },
+  },
+  responses: {
+    201: { content: { 'application/json': { schema: linkSchema } }, description: 'Universe adopted; link created.' },
+    // Reachable: UNIVERSE_APPLY.toValues (apply-tables.ts) calls ts() on the
+    // peer row's createdAt/updatedAt, which throws InvalidSyncTimestampError
+    // (a SyncApplyError, status 400) for a malformed or absent timestamp — and
+    // SyncRemoteClient.listUniverses only validates id and name, so a peer
+    // answering with a row that has no updatedAt reaches this branch.
+    400: syncRunErrorResponses[400],
+    401: syncRunErrorResponses[401],
+    402: syncRunErrorResponses[402],
+    403: { content: { 'application/json': { schema: syncErrorSchema } }, description: 'Another user on this instance owns that universe id.' },
     404: syncRunErrorResponses[404],
     409: syncRunErrorResponses[409],
     413: syncRunErrorResponses[413],
@@ -711,6 +790,24 @@ export const syncClientRoutes = new OpenAPIHono<AppEnv>()
     }
   })
 
+  .openapi(remoteUniversesRoute, async (c) => {
+    const userId = c.var.userId;
+    const { id } = c.req.valid('param');
+
+    try {
+      const rows = await listRemoteUniverses(id, userId);
+      return c.json({ universes: rows as any[] }, 200);
+    } catch (err) {
+      // ONE branch reading the error's own status/code (C-19 lesson): a
+      // per-class instanceof chain silently returns 500 the day a new
+      // SyncRunError subclass is added.
+      if (err instanceof SyncRunError) {
+        return c.json({ error: err.message, code: err.code }, err.status as 401 | 402 | 404 | 409 | 413 | 500 | 502);
+      }
+      throw err;
+    }
+  })
+
   .openapi(postLinkRoute, async (c) => {
     const userId = c.var.userId;
     const { universeId, remoteId } = c.req.valid('json');
@@ -745,8 +842,37 @@ export const syncClientRoutes = new OpenAPIHono<AppEnv>()
         .returning();
       return c.json(toLinkWire(row, remote), 201);
     } catch (err: any) {
-      if (err?.code === '23505') {
+      // Drizzle wraps the PG error: the '23505' code may be on the top-level
+      // error (err.code) or on the cause (err.cause.code) depending on the
+      // Drizzle version. Check both — same idiom as adopt.ts, templates.ts,
+      // llm-keys.ts, dictionary.ts and audits.ts.
+      const code = err?.code ?? err?.cause?.code;
+      if (code === '23505') {
         return c.json({ error: 'This universe is already linked to this remote' }, 409);
+      }
+      throw err;
+    }
+  })
+
+  .openapi(adoptRoute, async (c) => {
+    const userId = c.var.userId;
+    const { remoteId, universeId } = c.req.valid('json');
+
+    try {
+      const { link, remote } = await adoptUniverse({ remoteId, universeId, ownerId: userId });
+      return c.json(toLinkWire(link, remote), 201);
+    } catch (err) {
+      // TWO hierarchies, checked in this order — the same C-19/C-21 shape
+      // runLinkRoute uses. The LOCAL seed apply throws SyncApplyError —
+      // UniverseOwnershipError (403), or InvalidSyncTimestampError (400) if the
+      // peer's universe row has a malformed/missing timestamp (see the 400
+      // response declared above) — neither of which extends SyncRunError.
+      if (err instanceof SyncApplyError) {
+        const mapped = mapSyncApplyError(err, 'sync-client/adopt');
+        return c.json(mapped.body, mapped.status as 400 | 403 | 409);
+      }
+      if (err instanceof SyncRunError) {
+        return c.json({ error: err.message, code: err.code }, err.status as 401 | 402 | 404 | 409 | 413 | 500 | 502);
       }
       throw err;
     }

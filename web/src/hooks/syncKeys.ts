@@ -43,3 +43,13 @@ export const syncLinksKey = (universeId: string) =>
  */
 export const syncConflictsKey = (universeId: string) =>
   ['sync', 'conflicts', universeId] as const;
+
+/**
+ * The full key for ONE remote's universe listing (A-04).
+ *
+ * Remote-scoped, like SYNC_REMOTES_QUERY_KEY, but deliberately NOT built on it:
+ * this list is a live call to the peer, while the remotes list is local rows.
+ * Sharing the prefix would make every remote CRUD mutation re-dial every peer.
+ */
+export const remoteUniversesKey = (remoteId: string) =>
+  ['sync', 'remote-universes', remoteId] as const;

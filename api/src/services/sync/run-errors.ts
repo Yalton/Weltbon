@@ -145,6 +145,38 @@ export class SyncLinkSeveredError extends SyncRunError {
   }
 }
 
+/**
+ * A-04: the peer does not hold the universe the caller asked to adopt.
+ *
+ * Distinct from SyncLinkSeveredError, which means an ESTABLISHED link's
+ * universe vanished from the peer. This one means it was never there for this
+ * credential — deleted, or owned by a different account on that instance.
+ */
+export class SyncUniverseNotOnRemoteError extends SyncRunError {
+  readonly code = 'universe-not-on-remote';
+  readonly status = 404;
+  readonly safeDetail = 'the remote instance does not hold that universe';
+  constructor() {
+    super('That universe is not on the remote instance');
+  }
+}
+
+/**
+ * A-07: adoption refuses a universe this instance already holds for this user.
+ *
+ * Adoption seeds the local universe from the REMOTE's row, so proceeding would
+ * overwrite the local name, theme and settings with the peer's. The remedy is
+ * the ordinary link route, which pairs two existing universes and merges them.
+ */
+export class SyncUniverseAlreadyLocalError extends SyncRunError {
+  readonly code = 'universe-already-local';
+  readonly status = 409;
+  readonly safeDetail = 'this instance already holds that universe';
+  constructor() {
+    super('This instance already has that universe — link it instead of adopting it');
+  }
+}
+
 /** Which side of the link could not produce the bytes — see the class docstring. */
 export type BlobUnavailableSide = 'local' | 'remote' | 'neither';
 

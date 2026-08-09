@@ -1,7 +1,39 @@
 import archiver from 'archiver';
 import { Readable } from 'node:stream';
-import { loadUniverseExportPayload, type ExportPayload } from './payload.js';
+import { loadUniverseExportPayload, type ExportPayload, type ExportPayloadUniverse } from './payload.js';
 import { storageBackend } from '../storage/local.js';
+
+/**
+ * The universe singleton as the manifest expresses it (B-06).
+ *
+ * A-05: exported because the sync discovery route must produce exactly this
+ * shape for a universe WITHOUT loading its export payload (which would read
+ * every entry just to list a name), and because adoption feeds the result
+ * straight into applyManifestOps. Two copies of this field list would mean an
+ * adopted universe silently missing whichever field the second copy forgot.
+ *
+ * Import ignores `id` — a fresh universe id is always minted on import; sync
+ * (not import) is what preserves ids (S-05).
+ */
+export function buildUniverseManifestRow(u: ExportPayloadUniverse) {
+  return {
+    id: u.id,
+    name: u.name,
+    description: u.description,
+    entryTypes: u.entryTypes,
+    timelineWindow: u.timelineWindow,
+    linkTypes: u.linkTypes,
+    // Plan A2 (A2-06): previously-dropped universe-level product state.
+    calendar: u.calendar,
+    theme: u.theme,
+    fieldRegistry: u.fieldRegistry,
+    auditEnabled: u.auditEnabled,
+    auditProvider: u.auditProvider,
+    auditModel: u.auditModel,
+    createdAt: u.createdAt.toISOString(),
+    updatedAt: u.updatedAt.toISOString(),
+  };
+}
 
 /**
  * Plan B: manifest construction, decoupled from ZIP writing so the sync engine
@@ -12,26 +44,7 @@ export function buildManifest(payload: ExportPayload) {
   return {
     weltbon_version: '2.2.0' as const,
     exported_at: new Date().toISOString(),
-    universe: {
-      // Plan B (Task 1): universe singleton identity/timestamps for the merge engine
-      // (B-06). Import ignores `id` — a fresh universe id is always minted on import;
-      // sync (not import) is what preserves ids (S-05).
-      id: payload.universe.id,
-      name: payload.universe.name,
-      description: payload.universe.description,
-      entryTypes: payload.universe.entryTypes,
-      timelineWindow: payload.universe.timelineWindow,
-      linkTypes: payload.universe.linkTypes,
-      // Plan A2 (A2-06): previously-dropped universe-level product state.
-      calendar: payload.universe.calendar,
-      theme: payload.universe.theme,
-      fieldRegistry: payload.universe.fieldRegistry,
-      auditEnabled: payload.universe.auditEnabled,
-      auditProvider: payload.universe.auditProvider,
-      auditModel: payload.universe.auditModel,
-      createdAt: payload.universe.createdAt.toISOString(),
-      updatedAt: payload.universe.updatedAt.toISOString(),
-    },
+    universe: buildUniverseManifestRow(payload.universe),
     categories: payload.categories.map((c) => ({
       id: c.id,
       label: c.label,

@@ -7,6 +7,7 @@
  *   GET  /api/sync/universes/:uid/assets/:hash        blob bytes
  *   PUT  /api/sync/universes/:uid/assets/:hash        stage a blob
  *   POST /api/sync/universes/:uid/apply               transactional delta apply
+ *   GET  /api/sync/universes                          universes this owner holds (A-04)
  *
  * Every route is PAT-or-JWT authenticated by the apiR.use('/sync/*') gate in
  * index.ts. Universe scoping is per-handler via requireUniverse, EXCEPT apply,
@@ -20,6 +21,7 @@ import type { MiddlewareHandler } from 'hono';
 import { db } from '../db/client.js';
 import { assets, universes } from '../db/schema.js';
 import { requireUniverse } from '../utils/ownership.js';
+import { buildUniverseManifestRow } from '../services/export/json.js';
 import { storageBackend } from '../services/storage/local.js';
 // Shared with routes/assets.ts and services/sync/remote-client.ts so both size
 // limits are one definition, not two — and this route module no longer needs
@@ -111,6 +113,26 @@ const snapshotRoute = createRoute({
     401: err401,
     403: err403,
     404: err404,
+  },
+});
+
+// ── universe discovery (A-04) ───────────────────────────────────────────────
+
+const listUniversesRoute = createRoute({
+  method: 'get',
+  path: '/universes',
+  tags: ['Sync'],
+  summary: 'Universes the presented credential\'s owner holds (A-04)',
+  description:
+    'Owner-scoped listing used by an adopting client to choose a universe ' +
+    'without typing a UUID. Returns manifest universe rows (A-05).',
+  security: [{ bearerAuth: [] }],
+  responses: {
+    200: {
+      content: { 'application/json': { schema: z.any() } },
+      description: 'Manifest universe rows owned by the credential\'s user.',
+    },
+    401: err401,
   },
 });
 
@@ -292,6 +314,23 @@ export const syncRoutes = new OpenAPIHono<AppEnv>()
     // caching layer in front of /snapshot must account for that.
     const manifest = await buildSyncManifest(uid);
     return c.json(manifest as any, 200);
+  })
+
+  .openapi(listUniversesRoute, async (c) => {
+    // A-11: the WHERE clause is the security boundary here. Every other peer
+    // route scopes by calling requireUniverse on a uid from the path; this one
+    // has no uid, so the owner filter IS the check. Do not relax it to "all
+    // universes, the client filters" — a PAT would then enumerate every
+    // universe on a multi-tenant instance.
+    const rows = await db()
+      .select()
+      .from(universes)
+      .where(eq(universes.userId, c.var.userId))
+      .orderBy(universes.name);
+    // buildUniverseManifestRow, not a bespoke projection: `userId` is not a
+    // manifest field, so it cannot leak, and the row is exactly what
+    // adoptUniverse will feed to applyManifestOps.
+    return c.json({ universes: rows.map(buildUniverseManifestRow) } as any, 200);
   })
 
   .openapi(missingAssetsRoute, async (c) => {
