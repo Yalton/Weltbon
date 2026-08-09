@@ -34,6 +34,7 @@ import { EmptyState } from '../components/EmptyState';
 import { ConfirmDialog } from '../components/ConfirmDialog';
 import { SyncErrorNotice } from '../components/SyncErrorNotice';
 import { AddSyncRemoteForm, EditSyncRemoteForm } from '../components/SyncRemoteForm';
+import { RemoteUniverseList } from '../components/RemoteUniverseList';
 import { formatRelative } from '../utils/formatRelative';
 
 /**
@@ -65,6 +66,7 @@ export default function SyncSettings() {
   const deleteRemote = useDeleteSyncRemote();
 
   const [editingId, setEditingId] = useState<string | null>(null);
+  const [browsingId, setBrowsingId] = useState<string | null>(null);
   const [deleteTarget, setDeleteTarget] = useState<SyncRemote | null>(null);
   const [deleteError, setDeleteError] = useState<SyncCopy | null>(null);
   const [testState, setTestState] = useState<Record<string, TestState>>({});
@@ -98,7 +100,8 @@ export default function SyncSettings() {
         A remote is another Weltbon instance this account can sync with. Remotes
         are saved once per account and reused by every universe you link to that
         instance; you choose which universes actually sync in each universe&rsquo;s
-        own Sync tab.
+        own Sync tab, or adopt one this instance does not have yet from the
+        list below.
       </p>
 
       {isPending && (
@@ -193,6 +196,18 @@ export default function SyncSettings() {
                         </button>
                         <button
                           type="button"
+                          onClick={() => setBrowsingId((cur) => (cur === remote.id ? null : remote.id))}
+                          aria-label={
+                            browsingId === remote.id
+                              ? `Hide universes on ${name}`
+                              : `Browse universes on ${name}`
+                          }
+                          className="text-sm text-ink-secondary hover:text-[color:var(--color-accent)]"
+                        >
+                          {browsingId === remote.id ? 'Hide universes' : 'Browse universes'}
+                        </button>
+                        <button
+                          type="button"
                           onClick={() => setEditingId((cur) => (cur === remote.id ? null : remote.id))}
                           aria-label={`Edit ${name}`}
                           className="text-sm text-ink-secondary hover:text-[color:var(--color-accent)]"
@@ -240,6 +255,13 @@ export default function SyncSettings() {
                             )}
                           </p>
                         )}
+                      </td>
+                    </tr>
+                  ) : null,
+                  browsingId === remote.id ? (
+                    <tr key={`${remote.id}-universes`}>
+                      <td colSpan={5} className="pb-4">
+                        <RemoteUniverseList remote={remote} />
                       </td>
                     </tr>
                   ) : null,
@@ -296,6 +318,7 @@ export default function SyncSettings() {
             // stale handshake result or open editor outlives the remote it
             // described.
             if (editingId === id) setEditingId(null);
+            if (browsingId === id) setBrowsingId(null);
             setTestState((prev) => {
               if (!(id in prev)) return prev;
               const next = { ...prev };
