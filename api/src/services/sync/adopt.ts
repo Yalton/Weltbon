@@ -163,16 +163,23 @@ export async function adoptUniverse(opts: {
   // disclose that the id is taken.
   //
   // This pre-check races the apply — NOT benignly. If the caller's OWN row for
-  // this id is created between this SELECT and the apply below (a concurrent
-  // peer push, or a second concurrent adopt racing this one), the ownership
+  // this id is created between this SELECT and the apply below, the ownership
   // check inside applyManifestOps sees a row owned by ctx.ownerId and PASSES —
   // it does not re-run this 409 check — so the universe upsert clobbers
   // whatever that concurrent writer just created. This is exactly what the A-07
   // mutation test demonstrates when the check is removed entirely; the window
-  // here is the same defect narrowed to a race instead of guaranteed. It is
-  // low-probability (requires the SAME uuid to be created independently in that
-  // window) but not safe to assume away — do not widen it further believing the
-  // apply's own check covers it, because it only covers a DIFFERENT owner.
+  // here is the same defect narrowed to a race instead of guaranteed.
+  //
+  // Two ways into that window, not one. The rare one needs the SAME uuid
+  // created independently by a concurrent peer push. The one that does NOT
+  // need any coincidence: two concurrent adopts of the SAME universe id from
+  // two different remotes — prod plus a second device, the feature's own
+  // motivating setup. Both see `absent` here, both apply, and the second
+  // clobbers the first's universe row with a possibly older name/theme/
+  // calendar. It self-heals on the next LWW sync and touches only
+  // universe-level settings, so this is left as-is — but it is not safe to
+  // assume away, and do not widen it further believing the apply's own check
+  // covers it, because that check only covers a DIFFERENT owner.
   const [existing] = await db()
     .select({ userId: universes.userId })
     .from(universes)
