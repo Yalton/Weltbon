@@ -26,6 +26,7 @@ import { createTestDb, cleanDb, createTestUser, type TestDbHandle } from './help
 import { adoptUniverse, listRemoteUniverses } from '../src/services/sync/adopt.js';
 import {
   SyncLinkNotFoundError,
+  SyncSelfRemoteError,
   SyncUniverseAlreadyLocalError,
   SyncUniverseNotOnRemoteError,
 } from '../src/services/sync/run-errors.js';
@@ -200,6 +201,44 @@ describe('universe adoption', () => {
   });
 
   describe('adoptUniverse (A-02, A-07, A-09)', () => {
+    it('refuses self-adoption before creating a universe or link', async () => {
+      // Mutation caught: removing the centralized equality guard would let
+      // adoption proceed to universe discovery against this same database.
+      await use('A');
+      const pat = await mintPat(A, ownerA.id);
+      const { encryptSecret } = await import('../src/services/crypto.js');
+      const { syncLinks, syncRemotes, universes } = await import('../src/db/schema.js');
+      const [selfRemote] = await A.db.insert(syncRemotes).values({
+        userId: ownerA.id,
+        label: 'self',
+        baseUrl: 'https://self.example',
+        encryptedPat: encryptSecret(pat, '0'.repeat(64)),
+      }).returning();
+      const beforeUniverses = await A.db.select().from(universes);
+      const beforeLinks = await A.db.select().from(syncLinks);
+      let listCalls = 0;
+      let applyCalls = 0;
+      const selfFetch = async (url: string, init?: RequestInit): Promise<Response> => {
+        const path = new URL(url).pathname;
+        if (path.endsWith('/universes')) listCalls += 1;
+        if (path.endsWith('/apply')) applyCalls += 1;
+        return app.request(path, init);
+      };
+
+      await expect(adoptUniverse({
+        remoteId: selfRemote.id,
+        universeId,
+        ownerId: ownerA.id,
+        fetchImpl: selfFetch,
+      })).rejects.toBeInstanceOf(SyncSelfRemoteError);
+
+      expect(listCalls).toBe(0);
+      expect(applyCalls).toBe(0);
+      expect(await A.db.select().from(universes)).toEqual(beforeUniverses);
+      expect(await A.db.select().from(syncLinks)).toEqual(beforeLinks);
+      expect(await A.db.select().from(syncRemotes).where(eq(syncRemotes.id, selfRemote.id))).toHaveLength(1);
+    });
+
     it('creates the local universe with the SAME id, owned by the adopter (S-05)', async () => {
       const { link } = await adoptUniverse({
         remoteId, universeId, ownerId: ownerA.id, fetchImpl: makeFetch(),
@@ -304,12 +343,18 @@ describe('universe adoption', () => {
       const { issueAccessToken } = await import('../src/services/auth.js');
       const jwt = await issueAccessToken(ownerA.id);
       await use('A');
-      const res = await app.request('/api/sync/links', {
-        method: 'POST',
-        headers: { 'Content-Type': 'application/json', Authorization: `Bearer ${jwt}` },
-        body: JSON.stringify({ universeId, remoteId }),
-      });
-      expect(res.status).toBe(201);
+      const original = globalThis.fetch;
+      globalThis.fetch = makeFetch() as unknown as typeof globalThis.fetch;
+      try {
+        const res = await app.request('/api/sync/links', {
+          method: 'POST',
+          headers: { 'Content-Type': 'application/json', Authorization: `Bearer ${jwt}` },
+          body: JSON.stringify({ universeId, remoteId }),
+        });
+        expect(res.status).toBe(201);
+      } finally {
+        globalThis.fetch = original;
+      }
     });
 
     it('is reachable over the JWT route in the link wire shape, and refuses a PAT (D-10)', async () => {

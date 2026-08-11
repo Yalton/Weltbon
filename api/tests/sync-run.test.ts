@@ -37,6 +37,7 @@ import {
   SyncApplyRejectedError,
   SyncBlobUnavailableError,
   SyncQuotaError,
+  SyncSelfRemoteError,
 } from '../src/services/sync/run-errors.js';
 import { runSync, testRemote } from '../src/services/sync/run-sync.js';
 import { syncBlobKey } from '../src/services/sync/materialize.js';
@@ -1186,6 +1187,59 @@ describe('two-instance acceptance for the sync drive loop (Plan D Task 8)', () =
 
   // ── Scenario 8: handshake mismatch — no body leak ────────────────────────
 
+  it('an existing self-link stops at handshake and preserves all sync data', async () => {
+    // Mutation caught: moving self detection after snapshot/apply would
+    // increment these route counters and risk changing the seeded state.
+    await use('A');
+    const patPlaintext = await mintPat(A, ownerA.id);
+    const { encryptSecret } = await import('../src/services/crypto.js');
+    const { entries, syncConflicts, syncLinks, syncRemotes } = await import('../src/db/schema.js');
+    await A.db.update(syncRemotes)
+      .set({ encryptedPat: encryptSecret(patPlaintext, '0'.repeat(64)) })
+      .where(eq(syncRemotes.id, remoteId));
+
+    const entry = await seedEntry('A', 'Must remain unchanged');
+    await use('A');
+    await A.db.insert(syncConflicts).values({
+      universeId,
+      tableName: 'entries',
+      rowId: entry.id,
+      winner: 'local',
+      loserPayload: { title: 'preserved loser' },
+    });
+    const { saveBaseSnapshot, loadBaseSnapshot } = await import('../src/services/sync/base-snapshot.js');
+    const baseBefore = { weltbon_version: '2.2.0', marker: 'preserve-me' } as any;
+    await saveBaseSnapshot(linkId, baseBefore);
+
+    const [entryBefore] = await A.db.select().from(entries).where(eq(entries.id, entry.id));
+    const conflictsBefore = await A.db.select().from(syncConflicts).where(eq(syncConflicts.universeId, universeId));
+    let snapshotCalls = 0;
+    let applyCalls = 0;
+    const selfFetch = async (url: string, init?: RequestInit): Promise<Response> => {
+      const path = new URL(url).pathname;
+      if (path.endsWith('/snapshot')) snapshotCalls += 1;
+      if (path.endsWith('/apply')) applyCalls += 1;
+      return app.request(path, init);
+    };
+
+    const err = await runSync(linkId, ownerA.id, { fetchImpl: selfFetch }).then(
+      () => null,
+      (cause: unknown) => cause,
+    );
+    expect(err).toBeInstanceOf(SyncSelfRemoteError);
+    expect(snapshotCalls).toBe(0);
+    expect(applyCalls).toBe(0);
+
+    const [entryAfter] = await A.db.select().from(entries).where(eq(entries.id, entry.id));
+    const conflictsAfter = await A.db.select().from(syncConflicts).where(eq(syncConflicts.universeId, universeId));
+    expect(entryAfter).toEqual(entryBefore);
+    expect(conflictsAfter).toEqual(conflictsBefore);
+    expect(await loadBaseSnapshot(linkId)).toEqual(baseBefore);
+    const [linkAfter] = await A.db.select().from(syncLinks).where(eq(syncLinks.id, linkId));
+    expect(linkAfter.status).toBe('error');
+    expect(linkAfter.lastError).toBe('SELF_REMOTE: the configured remote is this Weltbon instance');
+  });
+
   it('a 409 handshake never leaks the remote body into last_error', async () => {
     const LEAK_BODY = 'LEAK_MARKER_do_not_persist_9f3a';
     // A SECOND, stronger marker embedded in a field that DOES flow into
@@ -1200,8 +1254,18 @@ describe('two-instance acceptance for the sync drive loop (Plan D Task 8)', () =
         return new Response(
           JSON.stringify({
             error: LEAK_BODY,
-            local: { weltbonVersion: '9.9.9', appVersion: 'x', migrationHead: 'y' },
-            remote: { weltbonVersion: LEAK_FIELD, appVersion: '1.0.0', migrationHead: 'deadbeef' },
+            local: {
+              instanceId: '11111111-1111-4111-8111-111111111111',
+              weltbonVersion: '9.9.9',
+              appVersion: 'x',
+              migrationHead: 'y',
+            },
+            remote: {
+              instanceId: '22222222-2222-4222-8222-222222222222',
+              weltbonVersion: LEAK_FIELD,
+              appVersion: '1.0.0',
+              migrationHead: 'deadbeef',
+            },
           }),
           { status: 409, headers: { 'Content-Type': 'application/json' } },
         );

@@ -7,7 +7,7 @@
  * module only ever renders values the API has already scrubbed:
  *
  * 1. A run failure's `code` (api/src/services/sync/run-errors.ts) — one of
- *    14 `SyncRunError` subclasses, mirrored below as `SyncErrorCode`. A
+ *    15 `SyncRunError` subclasses, mirrored below as `SyncErrorCode`. A
  *    sibling hierarchy, `SyncApplyError` (the LOCAL apply's own errors),
  *    carries no `code` at all, and may instead carry
  *    `collisions: [{collection, count}]` — counts only, never the colliding
@@ -56,7 +56,7 @@ export interface SyncCopy {
    * Carried so consumers can ask "do these two copies describe the SAME
    * failure?" DIRECTLY. `combineRunError` below needs exactly that question
    * answered, and its first implementation asked it by comparing `message`
-   * strings — sound only while all 14 messages stay distinct, which nothing
+ * strings — sound only while all 15 messages stay distinct, which nothing
    * enforced. Two entries given the same prose would have made a stale error of
    * code A silently decorate a fresh failure of code B with A's cause.
    *
@@ -69,8 +69,9 @@ export interface SyncCopy {
   code?: SyncErrorCode;
 }
 
-/** The 14 codes `run-errors.ts`'s `SyncRunError` subclasses declare. */
+/** The 15 codes `run-errors.ts`'s `SyncRunError` subclasses declare. */
 export type SyncErrorCode =
+  | 'SELF_REMOTE'
   | 'link-not-found'
   | 'forbidden'
   | 'busy'
@@ -86,8 +87,11 @@ export type SyncErrorCode =
   | 'universe-not-on-remote'
   | 'universe-already-local';
 
-/** One entry per `SyncErrorCode` above — 14, no more, no fewer (enforced by the type). */
+/** One entry per `SyncErrorCode` above — 15, no more, no fewer (enforced by the type). */
 export const SYNC_ERROR_COPY: Record<SyncErrorCode, { message: string }> = {
+  SELF_REMOTE: {
+    message: 'This remote resolves to this Weltbon instance, so it cannot be linked or synced. Use the address and access token for a different instance, or remove the mistaken remote or link.',
+  },
   'link-not-found': {
     // Two distinct throw sites share this code: the sync link itself may be
     // gone (run-errors.ts), OR `testRemote` throws the identical class when

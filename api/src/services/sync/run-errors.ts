@@ -105,9 +105,19 @@ export class SyncQuotaError extends SyncRunError {
 }
 
 export interface InstanceIdentityLike {
+  instanceId: string;
   weltbonVersion: string;
   appVersion: string;
   migrationHead: string;
+}
+
+export class SyncSelfRemoteError extends SyncRunError {
+  readonly code = 'SELF_REMOTE';
+  readonly status = 409;
+  readonly safeDetail = 'the configured remote is this Weltbon instance';
+  constructor() {
+    super('This remote resolves to this Weltbon instance and cannot be linked or synced');
+  }
 }
 
 export class SyncIncompatibleError extends SyncRunError {

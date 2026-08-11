@@ -101,7 +101,12 @@ describe('run-sync unit-lane coverage (Plan D Task 8, scenarios 15/16)', () => {
   beforeEach(() => {
     vi.clearAllMocks();
     (db as unknown as Mock).mockReturnValue(
-      makeFakeDb([{ link: fakeLink, remote: fakeRemote, universeOwnerId: OWNER_ID }]),
+      makeFakeDb([{
+        instanceId: '11111111-1111-4111-8111-111111111111',
+        link: fakeLink,
+        remote: fakeRemote,
+        universeOwnerId: OWNER_ID,
+      }]),
     );
     (env as unknown as Mock).mockReturnValue({ llmKeyEncryptionKey: '0'.repeat(64) });
     (decryptSecret as unknown as Mock).mockReturnValue('wbn_pat_fake');
@@ -109,6 +114,7 @@ describe('run-sync unit-lane coverage (Plan D Task 8, scenarios 15/16)', () => {
     (loadBaseSnapshot as unknown as Mock).mockResolvedValue(null);
     (saveBaseSnapshot as unknown as Mock).mockResolvedValue(undefined);
     remoteClientMocks.handshake.mockResolvedValue({
+      instanceId: '22222222-2222-4222-8222-222222222222',
       weltbonVersion: '2.2.0',
       appVersion: '1.0.0',
       migrationHead: 'deadbeef',

@@ -148,6 +148,7 @@ const syncErrorSchema = z.object({
 });
 
 const identitySchema = z.object({
+  instanceId: z.string().uuid(),
   weltbonVersion: z.string(),
   appVersion: z.string(),
   migrationHead: z.string(),
@@ -466,13 +467,17 @@ const postLinkRoute = createRoute({
   },
   responses: {
     201: { content: { 'application/json': { schema: linkSchema } }, description: 'Link created.' },
-    401: err401,
-    403: err403,
+    401: syncRunErrorResponses[401],
+    402: syncRunErrorResponses[402],
+    403: syncRunErrorResponses[403],
     // Specific rather than the shared err404: this route's 404 covers TWO
     // different not-found causes (universe or remote), distinct from every
     // other route's single-cause 404 wording.
-    404: { content: { 'application/json': { schema: errorSchema } }, description: 'Universe or remote not found / not owned.' },
-    409: { content: { 'application/json': { schema: errorSchema } }, description: 'This universe is already linked to this remote.' },
+    404: syncRunErrorResponses[404],
+    409: syncRunErrorResponses[409],
+    413: syncRunErrorResponses[413],
+    500: syncRunErrorResponses[500],
+    502: syncRunErrorResponses[502],
   },
 });
 
@@ -820,22 +825,23 @@ export const syncClientRoutes = new OpenAPIHono<AppEnv>()
       return c.json({ error: 'Remote not found' }, 404);
     }
 
-    // Pre-check the unique (universeId, remoteId) pair rather than surfacing a
-    // raw 23505 — a duplicate link is a caller-fault 409, not a 500.
-    const existingLink = await getDb()
-      .select({ id: syncLinks.id })
-      .from(syncLinks)
-      .where(and(eq(syncLinks.universeId, universeId), eq(syncLinks.remoteId, remoteId)))
-      .limit(1);
-    if (existingLink.length > 0) {
-      return c.json({ error: 'This universe is already linked to this remote' }, 409);
-    }
-
-    // The pre-check above is the common path (better message, no wasted INSERT
-    // attempt), but two concurrent requests can both pass it — the catch below
-    // is the race guard, same shape as llm-keys.ts / tokens.ts / audits.ts /
-    // templates.ts / shares.ts / dictionary.ts / invites.ts / auth.ts.
     try {
+      // Link creation is the one write path that did not already handshake.
+      // Refuse self, incompatible, unauthorized, or unreachable peers before
+      // duplicate checking or insertion changes any link state.
+      await testRemote(remoteId, userId);
+
+      // Pre-check the unique (universeId, remoteId) pair rather than surfacing
+      // a raw 23505 — a duplicate link is a caller-fault 409, not a 500.
+      const existingLink = await getDb()
+        .select({ id: syncLinks.id })
+        .from(syncLinks)
+        .where(and(eq(syncLinks.universeId, universeId), eq(syncLinks.remoteId, remoteId)))
+        .limit(1);
+      if (existingLink.length > 0) {
+        return c.json({ error: 'This universe is already linked to this remote' }, 409);
+      }
+
       const [row] = await getDb()
         .insert(syncLinks)
         .values({ universeId, remoteId })
@@ -849,6 +855,12 @@ export const syncClientRoutes = new OpenAPIHono<AppEnv>()
       const code = err?.code ?? err?.cause?.code;
       if (code === '23505') {
         return c.json({ error: 'This universe is already linked to this remote' }, 409);
+      }
+      if (err instanceof SyncRunError) {
+        return c.json(
+          { error: err.message, code: err.code },
+          err.status as 401 | 402 | 404 | 409 | 413 | 500 | 502,
+        );
       }
       throw err;
     }

@@ -9,11 +9,21 @@ import {
   SyncIncompatibleError,
   SyncPaymentError,
   SyncQuotaError,
+  SyncSelfRemoteError,
   SyncUnreachableError,
   safeErrorSummary,
 } from '../src/services/sync/run-errors.js';
 
-const IDENTITY = { weltbonVersion: '2.2.0', appVersion: '0.1.0', migrationHead: '0035_x' };
+const IDENTITY = {
+  instanceId: '11111111-1111-4111-8111-111111111111',
+  weltbonVersion: '2.2.0',
+  appVersion: '0.1.0',
+  migrationHead: '0035_x',
+};
+const REMOTE_IDENTITY = {
+  ...IDENTITY,
+  instanceId: '22222222-2222-4222-8222-222222222222',
+};
 
 /** Records every call and replies with whatever the scenario queued. */
 function stub(reply: (url: string, init: RequestInit) => Response | Promise<Response>) {
@@ -34,7 +44,7 @@ const json = (body: unknown, status = 200) =>
 
 describe('SyncRemoteClient transport invariants', () => {
   it('sends the PAT as a bearer header and nowhere else', async () => {
-    const { calls, fetchImpl } = stub(() => json({ ok: true, remote: IDENTITY }));
+    const { calls, fetchImpl } = stub(() => json({ ok: true, remote: REMOTE_IDENTITY }));
     await client(fetchImpl).handshake(IDENTITY);
 
     const { url, init } = calls[0];
@@ -45,7 +55,7 @@ describe('SyncRemoteClient transport invariants', () => {
   });
 
   it('never follows redirects — a redirect is how an allowed host pivots to a blocked one', async () => {
-    const { calls, fetchImpl } = stub(() => json({ ok: true, remote: IDENTITY }));
+    const { calls, fetchImpl } = stub(() => json({ ok: true, remote: REMOTE_IDENTITY }));
     await client(fetchImpl).handshake(IDENTITY);
     expect(calls[0].init.redirect).toBe('manual');
   });
@@ -56,7 +66,7 @@ describe('SyncRemoteClient transport invariants', () => {
   });
 
   it('attaches an abort signal', async () => {
-    const { calls, fetchImpl } = stub(() => json({ ok: true, remote: IDENTITY }));
+    const { calls, fetchImpl } = stub(() => json({ ok: true, remote: REMOTE_IDENTITY }));
     await client(fetchImpl).handshake(IDENTITY);
     expect(calls[0].init.signal).toBeInstanceOf(AbortSignal);
   });
@@ -89,6 +99,45 @@ describe('SyncRemoteClient transport invariants', () => {
 });
 
 describe('SyncRemoteClient status mapping', () => {
+  it('sends instanceId in the handshake request', async () => {
+    // Mutation caught: omitting instanceId prevents the peer from identifying
+    // this caller even though the compatibility tuple still matches.
+    const { calls, fetchImpl } = stub(() => json({ ok: true, remote: REMOTE_IDENTITY }));
+    await client(fetchImpl).handshake(IDENTITY);
+    expect(JSON.parse(String(calls[0].init.body))).toEqual({
+      instanceId: IDENTITY.instanceId,
+      weltbonVersion: IDENTITY.weltbonVersion,
+      migrationHead: IDENTITY.migrationHead,
+    });
+  });
+
+  it('rejects the same persisted instance before returning a usable peer', async () => {
+    // Mutation caught: disabling the UUID equality branch would return self as
+    // an ordinary compatible peer and allow later sync work to proceed.
+    const { fetchImpl } = stub(() => json({ ok: true, remote: IDENTITY }));
+    const err = await client(fetchImpl).handshake(IDENTITY).catch((e) => e);
+    expect(err).toBeInstanceOf(SyncSelfRemoteError);
+    expect(err.code).toBe('SELF_REMOTE');
+    expect(err.status).toBe(409);
+  });
+
+  it('accepts an otherwise identical peer with a different instanceId', async () => {
+    const { fetchImpl } = stub(() => json({ ok: true, remote: REMOTE_IDENTITY }));
+    await expect(client(fetchImpl).handshake(IDENTITY)).resolves.toEqual(REMOTE_IDENTITY);
+  });
+
+  it.each([
+    ['missing', undefined],
+    ['non-string', 42],
+    ['non-UUID', 'not-an-instance-id'],
+  ])('rejects a successful handshake with a %s instanceId', async (_case, instanceId) => {
+    // Mutation caught: repairing or ignoring malformed peer identity would
+    // make self detection optional at the trust boundary.
+    const remote = { ...REMOTE_IDENTITY, instanceId };
+    const { fetchImpl } = stub(() => json({ ok: true, remote }));
+    await expect(client(fetchImpl).handshake(IDENTITY)).rejects.toBeInstanceOf(SyncUnreachableError);
+  });
+
   it.each([
     [401, SyncAuthError],
     [403, SyncAuthError],

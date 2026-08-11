@@ -120,6 +120,8 @@ const DB_GATED_TESTS = [
   'tests/local-session.test.ts',
   // Universe adoption (spec 2026-08-08) — two-instance adopt + acceptance.
   'tests/sync-adopt.test.ts',
+  // Issue #25 — persisted database-owned identity on both database drivers.
+  'tests/sync-instance-identity.test.ts',
 ];
 
 export default defineConfig({

@@ -60,12 +60,30 @@ describe('/api/sync surface (Plan C)', () => {
     const res = await app.request('/api/sync/handshake', {
       method: 'POST',
       headers: { 'Content-Type': 'application/json', ...authHeader(ownerToken) },
-      body: JSON.stringify({ weltbonVersion: local.weltbonVersion, migrationHead: local.migrationHead }),
+      body: JSON.stringify({
+        instanceId: local.instanceId,
+        weltbonVersion: local.weltbonVersion,
+        migrationHead: local.migrationHead,
+      }),
     });
     expect(res.status).toBe(200);
     const body = await res.json();
     expect(body.ok).toBe(true);
     expect(body.remote.weltbonVersion).toBe('2.2.0');
+    expect(body.remote.instanceId).toBe(local.instanceId);
+  });
+
+  it('handshake rejects a request missing its required instanceId', async () => {
+    // Mutation caught: making instanceId optional would let older or malformed
+    // callers bypass the persisted-identity contract.
+    const { localIdentity } = await import('../src/services/sync/handshake.js');
+    const local = await localIdentity();
+    const res = await app.request('/api/sync/handshake', {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json', ...authHeader(ownerToken) },
+      body: JSON.stringify({ weltbonVersion: local.weltbonVersion, migrationHead: local.migrationHead }),
+    });
+    expect(res.status).toBe(400);
   });
 
   it('handshake refuses a manifest-version mismatch with 409 (S-08)', async () => {
@@ -74,7 +92,7 @@ describe('/api/sync surface (Plan C)', () => {
     const res = await app.request('/api/sync/handshake', {
       method: 'POST',
       headers: { 'Content-Type': 'application/json', ...authHeader(ownerToken) },
-      body: JSON.stringify({ weltbonVersion: '2.1.0', migrationHead: local.migrationHead }),
+      body: JSON.stringify({ instanceId: local.instanceId, weltbonVersion: '2.1.0', migrationHead: local.migrationHead }),
     });
     expect(res.status).toBe(409);
     expect((await res.json()).error).toMatch(/not compatible/i);
@@ -86,7 +104,7 @@ describe('/api/sync surface (Plan C)', () => {
     const res = await app.request('/api/sync/handshake', {
       method: 'POST',
       headers: { 'Content-Type': 'application/json', ...authHeader(ownerToken) },
-      body: JSON.stringify({ weltbonVersion: local.weltbonVersion, migrationHead: '0001_ancient' }),
+      body: JSON.stringify({ instanceId: local.instanceId, weltbonVersion: local.weltbonVersion, migrationHead: '0001_ancient' }),
     });
     expect(res.status).toBe(409);
   });
@@ -95,7 +113,7 @@ describe('/api/sync surface (Plan C)', () => {
     const res = await app.request('/api/sync/handshake', {
       method: 'POST',
       headers: { 'Content-Type': 'application/json' },
-      body: JSON.stringify({ weltbonVersion: '2.2.0', migrationHead: 'x' }),
+      body: JSON.stringify({ instanceId: '11111111-1111-4111-8111-111111111111', weltbonVersion: '2.2.0', migrationHead: 'x' }),
     });
     expect(res.status).toBe(401);
   });

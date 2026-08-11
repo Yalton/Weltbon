@@ -71,7 +71,11 @@ describe('sync handshake — migration head unavailable (C-14)', () => {
     const res = await syncRoutes.request('/handshake', {
       method: 'POST',
       headers: { 'Content-Type': 'application/json' },
-      body: JSON.stringify({ weltbonVersion: '2.2.0', migrationHead: 'anything' }),
+      body: JSON.stringify({
+        instanceId: '11111111-1111-4111-8111-111111111111',
+        weltbonVersion: '2.2.0',
+        migrationHead: 'anything',
+      }),
     });
     expect(res.status).toBe(503);
     const body = (await res.json()) as { error: string };

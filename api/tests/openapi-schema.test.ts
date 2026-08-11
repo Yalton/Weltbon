@@ -20,6 +20,22 @@ import { describe, it, expect } from 'vitest';
 import { app } from '../src/index.js';
 
 describe('OpenAPI schema and Scalar docs (Phase 10 — DB-independent)', () => {
+  it('declares instanceId as required on the registered-remote test response', async () => {
+    // Mutation caught: leaving the owner-facing identity schema on the old
+    // three-field contract makes generated clients discard the self-identity
+    // field even though testRemote() returns it at runtime.
+    const res = await app.fetch(new Request('http://localhost/api/openapi.json'));
+    expect(res.status).toBe(200);
+    const doc = await res.json() as any;
+    const schema = doc.paths['/sync/remotes/{id}/test']?.post?.responses?.['200']
+      ?.content?.['application/json']?.schema;
+    expect(schema?.properties?.remote?.properties?.instanceId).toMatchObject({
+      type: 'string',
+      format: 'uuid',
+    });
+    expect(schema?.properties?.remote?.required).toContain('instanceId');
+  });
+
   // ──────────────────────────────────────────────────────────────────────────
   // Gap 1: GET /api/openapi.json — valid OpenAPI 3.x doc with both security
   //         schemes and paths from all 11 routers.
