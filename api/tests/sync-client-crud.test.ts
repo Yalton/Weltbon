@@ -1,7 +1,7 @@
 /**
  * Plan D Task 5 — sync_remotes / sync_links CRUD (D-04, D-10).
  */
-import { describe, it, expect, beforeAll, afterAll, beforeEach, vi } from 'vitest';
+import { describe, it, expect, beforeAll, afterAll, beforeEach, afterEach, vi } from 'vitest';
 
 // CRITICAL — must be set BEFORE the *first* env() call in the process. config.ts
 // caches `_env` on first call, and api/src/db/client.ts calls env() at module
@@ -32,6 +32,7 @@ import { eq } from 'drizzle-orm';
 import { createTestDb, cleanDb, createTestUser, authHeader, type TestDbHandle } from './helpers.js';
 
 describe('sync client CRUD (Plan D)', () => {
+  const hostFetch = globalThis.fetch;
   let handle: TestDbHandle;
   // eslint-disable-next-line @typescript-eslint/no-explicit-any
   let app: any;
@@ -63,6 +64,26 @@ describe('sync client CRUD (Plan D)', () => {
     const { universes } = await import('../src/db/schema.js');
     const [u] = await handle.db.insert(universes).values({ userId, name: 'CRUD U' }).returning();
     universeId = u.id;
+
+    // Ordinary CRUD link tests use a compatible, distinct peer at the network
+    // boundary. The self-link test below temporarily replaces this with the
+    // real in-process app so it exercises the complete authenticated route.
+    globalThis.fetch = async (_url, init) => {
+      const local = JSON.parse(String(init?.body));
+      return new Response(JSON.stringify({
+        ok: true,
+        remote: {
+          instanceId: '22222222-2222-4222-8222-222222222222',
+          weltbonVersion: local.weltbonVersion,
+          appVersion: '0.1.0',
+          migrationHead: local.migrationHead,
+        },
+      }), { status: 200, headers: { 'Content-Type': 'application/json' } });
+    };
+  });
+
+  afterEach(() => {
+    globalThis.fetch = hostFetch;
   });
 
   const post = (path: string, body: unknown, hdrs: Record<string, string> = authHeader(token)) =>
@@ -223,6 +244,40 @@ describe('sync client CRUD (Plan D)', () => {
     expect(list[0].remoteLabel).toBe('Home server');
     expect(list[0].status).toBe('idle');
     expect(list[0].lastSyncedAt).toBeNull();
+  });
+
+  it('refuses a self-pointing remote before inserting a link', async () => {
+    // Mutation caught: removing the pre-insert handshake would return 201 and
+    // persist the otherwise valid self-link.
+    const { generatePatToken } = await import('../src/services/pat.js');
+    const { personalAccessTokens, syncLinks, syncRemotes, universes } = await import('../src/db/schema.js');
+    const pat = generatePatToken();
+    await handle.db.insert(personalAccessTokens).values({
+      userId,
+      hash: pat.hash,
+      bodySuffix: pat.bodySuffix,
+      label: 'self-route',
+    });
+    const { body: remote } = await createRemote({
+      baseUrl: 'https://self.example',
+      pat: pat.plaintext,
+    });
+
+    const originalFetch = globalThis.fetch;
+    globalThis.fetch = async (url, init) => {
+      const parsed = new URL(String(url));
+      return app.request(parsed.pathname + parsed.search, init);
+    };
+    try {
+      const res = await post('/api/sync/links', { universeId, remoteId: remote.id });
+      expect(res.status).toBe(409);
+      expect(await res.json()).toMatchObject({ code: 'SELF_REMOTE' });
+      expect(await handle.db.select().from(syncLinks)).toHaveLength(0);
+      expect(await handle.db.select().from(universes).where(eq(universes.id, universeId))).toHaveLength(1);
+      expect(await handle.db.select().from(syncRemotes).where(eq(syncRemotes.id, remote.id))).toHaveLength(1);
+    } finally {
+      globalThis.fetch = originalFetch;
+    }
   });
 
   it('deleting a link removes its base snapshot from storage', async () => {
