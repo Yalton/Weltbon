@@ -1,4 +1,4 @@
-import { pgTable, uuid, text, timestamp, jsonb, boolean, integer, doublePrecision, primaryKey, unique, numeric, uniqueIndex, index } from 'drizzle-orm/pg-core';
+import { pgTable, uuid, text, timestamp, jsonb, boolean, integer, doublePrecision, primaryKey, unique, numeric, uniqueIndex, index, check } from 'drizzle-orm/pg-core';
 import { relations, sql } from 'drizzle-orm';
 import type { EncryptedSecret } from '../services/crypto.js';
 
@@ -89,6 +89,14 @@ export type UniverseTheme = {
   displayFont?: 'spectral' | 'cormorant' | 'cinzel' | 'crimson';
   backdropAssetId?: string; // asset in THIS universe; unset = starfield
 };
+
+/** Stable database-owned identity used to prevent syncing an instance to itself. */
+export const instanceIdentity = pgTable('instance_identity', {
+  singleton: boolean('singleton').primaryKey().default(true),
+  instanceId: uuid('instance_id').notNull().defaultRandom().unique(),
+}, (t) => ({
+  singletonOnly: check('instance_identity_singleton_true', sql`${t.singleton} = true`),
+}));
 
 export const users = pgTable('users', {
   id:               uuid('id').primaryKey().defaultRandom(),

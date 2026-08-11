@@ -16,8 +16,12 @@
  */
 import { readFile } from 'node:fs/promises';
 import { join } from 'node:path';
+import { eq } from 'drizzle-orm';
+import { db } from '../../db/client.js';
+import { instanceIdentity } from '../../db/schema.js';
 
 export interface InstanceIdentity {
+  instanceId: string;
   weltbonVersion: string;
   appVersion: string;
   migrationHead: string;
@@ -27,6 +31,13 @@ export class MigrationHeadUnavailableError extends Error {
   constructor(cause: string) {
     super(`Cannot determine migration head: ${cause}`);
     this.name = 'MigrationHeadUnavailableError';
+  }
+}
+
+export class InstanceIdentityUnavailableError extends Error {
+  constructor(cause: string) {
+    super(`Cannot determine instance identity: ${cause}`);
+    this.name = 'InstanceIdentityUnavailableError';
   }
 }
 
@@ -62,11 +73,30 @@ export function resetMigrationHeadCache(): void {
 /** The manifest version this build emits — kept in lockstep with json.ts. */
 export const WELTBON_MANIFEST_VERSION = '2.2.0';
 
+const UUID_RE = /^[0-9a-f]{8}-[0-9a-f]{4}-[1-5][0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$/i;
+
 export async function localIdentity(): Promise<InstanceIdentity> {
+  const head = await migrationHead();
+  let rows: Array<{ instanceId: string }>;
+  try {
+    rows = await db()
+      .select({ instanceId: instanceIdentity.instanceId })
+      .from(instanceIdentity)
+      .where(eq(instanceIdentity.singleton, true));
+  } catch (err) {
+    throw new InstanceIdentityUnavailableError((err as Error).message);
+  }
+  if (rows.length !== 1) {
+    throw new InstanceIdentityUnavailableError(`expected one singleton row, found ${rows.length}`);
+  }
+  if (!UUID_RE.test(rows[0].instanceId)) {
+    throw new InstanceIdentityUnavailableError('singleton row contains a malformed UUID');
+  }
   return {
+    instanceId: rows[0].instanceId,
     weltbonVersion: WELTBON_MANIFEST_VERSION,
     // Read lazily so a bundler/packager change cannot break module load.
     appVersion: process.env.npm_package_version ?? '0.1.0',
-    migrationHead: await migrationHead(),
+    migrationHead: head,
   };
 }
