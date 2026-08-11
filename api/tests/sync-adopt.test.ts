@@ -343,12 +343,18 @@ describe('universe adoption', () => {
       const { issueAccessToken } = await import('../src/services/auth.js');
       const jwt = await issueAccessToken(ownerA.id);
       await use('A');
-      const res = await app.request('/api/sync/links', {
-        method: 'POST',
-        headers: { 'Content-Type': 'application/json', Authorization: `Bearer ${jwt}` },
-        body: JSON.stringify({ universeId, remoteId }),
-      });
-      expect(res.status).toBe(201);
+      const original = globalThis.fetch;
+      globalThis.fetch = makeFetch() as unknown as typeof globalThis.fetch;
+      try {
+        const res = await app.request('/api/sync/links', {
+          method: 'POST',
+          headers: { 'Content-Type': 'application/json', Authorization: `Bearer ${jwt}` },
+          body: JSON.stringify({ universeId, remoteId }),
+        });
+        expect(res.status).toBe(201);
+      } finally {
+        globalThis.fetch = original;
+      }
     });
 
     it('is reachable over the JWT route in the link wire shape, and refuses a PAT (D-10)', async () => {
