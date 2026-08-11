@@ -148,6 +148,7 @@ const syncErrorSchema = z.object({
 });
 
 const identitySchema = z.object({
+  instanceId: z.string().uuid(),
   weltbonVersion: z.string(),
   appVersion: z.string(),
   migrationHead: z.string(),
