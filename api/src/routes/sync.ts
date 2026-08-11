@@ -60,6 +60,7 @@ const err404 = { content: { 'application/json': { schema: errorSchema } }, descr
 // ── handshake ────────────────────────────────────────────────────────────────
 
 const identitySchema = z.object({
+  instanceId: z.string().uuid(),
   weltbonVersion: z.string(),
   appVersion: z.string(),
   migrationHead: z.string(),
@@ -75,7 +76,11 @@ const handshakeRoute = createRoute({
     body: {
       content: {
         'application/json': {
-          schema: z.object({ weltbonVersion: z.string(), migrationHead: z.string() }),
+          schema: z.object({
+            instanceId: z.string().uuid(),
+            weltbonVersion: z.string(),
+            migrationHead: z.string(),
+          }),
         },
       },
       required: true,
@@ -296,7 +301,12 @@ export const syncRoutes = new OpenAPIHono<AppEnv>()
             'Instances are not compatible — update the older instance before syncing. ' +
             `This instance is at manifest ${local.weltbonVersion} / migration ${local.migrationHead}; ` +
             `the caller reported ${body.weltbonVersion} / ${body.migrationHead}.`,
-          local: { weltbonVersion: body.weltbonVersion, appVersion: 'unknown', migrationHead: body.migrationHead },
+          local: {
+            instanceId: body.instanceId,
+            weltbonVersion: body.weltbonVersion,
+            appVersion: 'unknown',
+            migrationHead: body.migrationHead,
+          },
           remote: local,
         },
         409,

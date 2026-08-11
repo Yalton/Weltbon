@@ -288,7 +288,11 @@ describe('sync client CRUD (Plan D)', () => {
 
   it('does not disturb Plan C peer routes at the same prefix', async () => {
     // Both routers mount at /api/sync; the peer surface must still answer.
-    const res = await post('/api/sync/handshake', { weltbonVersion: 'nope', migrationHead: 'nope' });
+    const res = await post('/api/sync/handshake', {
+      instanceId: '11111111-1111-4111-8111-111111111111',
+      weltbonVersion: 'nope',
+      migrationHead: 'nope',
+    });
     expect([409, 503]).toContain(res.status);
   });
 });

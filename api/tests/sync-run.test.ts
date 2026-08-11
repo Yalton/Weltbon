@@ -1200,8 +1200,18 @@ describe('two-instance acceptance for the sync drive loop (Plan D Task 8)', () =
         return new Response(
           JSON.stringify({
             error: LEAK_BODY,
-            local: { weltbonVersion: '9.9.9', appVersion: 'x', migrationHead: 'y' },
-            remote: { weltbonVersion: LEAK_FIELD, appVersion: '1.0.0', migrationHead: 'deadbeef' },
+            local: {
+              instanceId: '11111111-1111-4111-8111-111111111111',
+              weltbonVersion: '9.9.9',
+              appVersion: 'x',
+              migrationHead: 'y',
+            },
+            remote: {
+              instanceId: '22222222-2222-4222-8222-222222222222',
+              weltbonVersion: LEAK_FIELD,
+              appVersion: '1.0.0',
+              migrationHead: 'deadbeef',
+            },
           }),
           { status: 409, headers: { 'Content-Type': 'application/json' } },
         );

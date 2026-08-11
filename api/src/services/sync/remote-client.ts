@@ -23,6 +23,7 @@ import {
   SyncPaymentError,
   SyncQuotaError,
   SyncRunError,
+  SyncSelfRemoteError,
   SyncUnreachableError,
   type InstanceIdentityLike,
   type RemoteApplyDetail,
@@ -134,18 +135,20 @@ function sanitizeIdentity(body: unknown): InstanceIdentityLike | null {
   if (typeof body !== 'object' || body === null) return null;
   const b = body as Record<string, unknown>;
   const pattern = /^[A-Za-z0-9._-]{1,64}$/;
-  const { weltbonVersion, appVersion, migrationHead } = b;
+  const { instanceId, weltbonVersion, appVersion, migrationHead } = b;
   if (
+    typeof instanceId !== 'string' ||
     typeof weltbonVersion !== 'string' ||
     typeof appVersion !== 'string' ||
     typeof migrationHead !== 'string' ||
+    !UUID_RE.test(instanceId) ||
     !pattern.test(weltbonVersion) ||
     !pattern.test(appVersion) ||
     !pattern.test(migrationHead)
   ) {
     return null;
   }
-  return { weltbonVersion, appVersion, migrationHead };
+  return { instanceId, weltbonVersion, appVersion, migrationHead };
 }
 
 export class SyncRemoteClient {
@@ -272,7 +275,11 @@ export class SyncRemoteClient {
   async handshake(local: InstanceIdentityLike): Promise<InstanceIdentityLike> {
     const res = await this.send('POST', '/handshake', {
       headers: { 'Content-Type': 'application/json' },
-      body: JSON.stringify({ weltbonVersion: local.weltbonVersion, migrationHead: local.migrationHead }),
+      body: JSON.stringify({
+        instanceId: local.instanceId,
+        weltbonVersion: local.weltbonVersion,
+        migrationHead: local.migrationHead,
+      }),
     });
     const body = (await this.readJson(res, 'handshake')) as Record<string, unknown>;
     if (res.status === 409) {
@@ -281,6 +288,7 @@ export class SyncRemoteClient {
     if (res.status !== 200) throw new SyncUnreachableError(`handshake returned ${res.status}`);
     const remote = sanitizeIdentity(body.remote);
     if (!remote) throw new SyncUnreachableError('handshake returned a malformed identity');
+    if (remote.instanceId === local.instanceId) throw new SyncSelfRemoteError();
     return remote;
   }
 
