@@ -36,22 +36,9 @@ export function ProtectedRoute() {
         // state writes, not the request, so both refreshes went out against a
         // single-use rotating token. attemptRefresh() collapses them into one
         // call; it is not the retry branch, so the /auth/* guard is unaffected.
-        let token = await attemptRefresh();
+        const token = await attemptRefresh();
         if (cancelled) return;
-        if (!token) {
-          // DV-12: the desktop app has no login screen. On a server deployment
-          // this route 404s and we fall through to /login exactly as before --
-          // one extra request on a path that was already about to show a login
-          // form, which is why this needs no build-time flag and the web bundle
-          // stays shared with the server (D-03).
-          const localRes = await fetch('/api/auth/local-session', {
-            method: 'POST',
-            credentials: 'include',
-          });
-          if (cancelled) return;
-          if (!localRes.ok) { setState('anonymous'); return; }
-          token = ((await localRes.json()) as { accessToken: string }).accessToken;
-        }
+        if (!token) { setState('anonymous'); return; }
         setAccessToken(token);
 
         // Step 2 -- rehydrate user identity via /auth/me so the user menu

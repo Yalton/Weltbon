@@ -4,7 +4,7 @@ import { MemoryRouter, Route, Routes } from 'react-router-dom';
 import { ProtectedRoute } from '../ProtectedRoute';
 import { useAuthStore } from '../../store/auth';
 
-describe('ProtectedRoute local-mode fallback (DV-12)', () => {
+describe('ProtectedRoute in server mode', () => {
   beforeEach(() => {
     useAuthStore.setState({ user: null });
     vi.restoreAllMocks();
@@ -24,38 +24,19 @@ describe('ProtectedRoute local-mode fallback (DV-12)', () => {
     );
   }
 
-  it('falls back to local-session when refresh fails, and renders the app', async () => {
+  it('redirects to login after failed refresh without requesting a local session', async () => {
     const fetchMock = vi.spyOn(globalThis, 'fetch').mockImplementation(async (input) => {
       const url = String(input);
       if (url.includes('/auth/refresh')) return new Response(null, { status: 401 });
-      if (url.includes('/auth/local-session')) {
-        return new Response(JSON.stringify({ accessToken: 'local-token' }), {
-          status: 200, headers: { 'Content-Type': 'application/json' },
-        });
-      }
-      if (url.includes('/auth/me')) {
-        return new Response(
-          JSON.stringify({ id: 'u1', email: 'local@weltbon.app', displayName: 'Local' }),
-          { status: 200, headers: { 'Content-Type': 'application/json' } }
-        );
-      }
-      return new Response(null, { status: 404 });
-    });
-
-    renderRoute();
-    await waitFor(() => expect(screen.getByText('PRIVATE')).toBeInTheDocument());
-    expect(fetchMock.mock.calls.some(([u]) => String(u).includes('/auth/local-session'))).toBe(true);
-  });
-
-  it('still redirects to /login when BOTH refresh and local-session fail', async () => {
-    vi.spyOn(globalThis, 'fetch').mockImplementation(async (input) => {
-      const url = String(input);
-      if (url.includes('/auth/refresh')) return new Response(null, { status: 401 });
-      if (url.includes('/auth/local-session')) return new Response(null, { status: 404 });
       return new Response(null, { status: 404 });
     });
 
     renderRoute();
     await waitFor(() => expect(screen.getByText('LOGIN')).toBeInTheDocument());
+    expect(fetchMock).toHaveBeenCalledTimes(1);
+    expect(fetchMock).toHaveBeenCalledWith('/api/auth/refresh', {
+      method: 'POST',
+      credentials: 'include',
+    });
   });
 });
