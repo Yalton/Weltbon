@@ -115,7 +115,9 @@ jobs:
       matrix:
         include:
           - name: windows
-            os: windows-latest
+            # Pin VS 2022: Electron's bundled node-gyp does not yet recognize
+            # the Visual Studio 2026 image currently behind windows-latest.
+            os: windows-2022
             builder_flag: --win
             glob: desktop/release/*.exe
           - name: macos
