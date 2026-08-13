@@ -35,6 +35,7 @@ import { assetsRouter } from './routes/assets.js';
 import { dictionaryRoutes } from './routes/dictionary.js';
 import { syncRoutes } from './routes/sync.js';
 import { syncClientRoutes } from './routes/sync-client.js';
+import { buildRuntimeRoutes } from './routes/runtime.js';
 import { recoverOrphanAuditRuns } from './services/audit-recovery.js';
 import { wireSigtermDrain } from './services/audit-shutdown.js';
 import { requireAuth } from './middleware/auth.js';
@@ -175,6 +176,7 @@ export function createApp() {
   // the JWT/PAT bearer domain (T-29-04 elevation-of-privilege mitigation). The
   // singular `/api/share` (read) vs plural `/api/shares` (CRUD) namespace split is
   // the URL contract per D-02.
+  app.route('/api/runtime', buildRuntimeRoutes());
   app.route('/api/share', shareRoutes);
   app.route('/api', apiR);
   // D-08: OpenAPI schema at /api/openapi.json
