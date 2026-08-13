@@ -117,6 +117,10 @@ describe('RuntimeProvider', () => {
     render(<RuntimeProvider><RuntimeChild /></RuntimeProvider>);
 
     expect(await screen.findByRole('heading', { name: 'Weltbon could not open' })).toBeInTheDocument();
+    // The mode is still unknown here, so this surface is equally reachable by a
+    // hosted user hitting a transient 5xx. It must not reassure them about a
+    // local application data folder they do not have.
+    expect(screen.queryByText(/application data folder/i)).not.toBeInTheDocument();
     expect(screen.queryByText(/^application \(/)).not.toBeInTheDocument();
     expect(screen.queryByText(/log in/i)).not.toBeInTheDocument();
     await userEvent.click(screen.getByRole('button', { name: 'Retry' }));

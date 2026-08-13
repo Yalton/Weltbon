@@ -201,7 +201,7 @@ const syncRunErrorResponses = {
   400: { content: { 'application/json': { schema: syncErrorSchema } }, description: 'Malformed request the apply engine rejected.' },
   401: { content: { 'application/json': { schema: syncErrorSchema } }, description: 'Missing or invalid JWT bearer.' },
   402: { content: { 'application/json': { schema: syncErrorSchema } }, description: 'The remote requires an active subscription (S-09).' },
-  403: { content: { 'application/json': { schema: syncErrorSchema } }, description: 'Caller does not own this universe.' },
+  403: { content: { 'application/json': { schema: syncErrorSchema } }, description: 'Ownership refusal: either the caller does not own this universe here, or the remote refused a universe-scoped call (`remote-universe-forbidden`).' },
   404: { content: { 'application/json': { schema: syncErrorSchema } }, description: 'Sync link or remote not found / not owned.' },
   409: { content: { 'application/json': { schema: syncErrorSchema } }, description: 'Busy, incompatible, severed link, blob unavailable, or remote-rejected apply.' },
   413: { content: { 'application/json': { schema: syncErrorSchema } }, description: 'The remote is out of storage quota (S-09).' },
@@ -363,12 +363,12 @@ const testRemoteRoute = createRoute({
   request: { params: idParams },
   responses: {
     200: { content: { 'application/json': { schema: testRemoteResponseSchema } }, description: 'Handshake succeeded; the peer\'s identity.' },
-    // testRemote() never touches the apply engine, so it has no 400 source.
-    // A peer handshake can still return 403, which SyncRemoteClient maps to
-    // SyncRemoteOwnershipError; document the status the route actually sends.
+    // testRemote() never touches the apply engine, so it has no 400 source, and
+    // it only handshakes: `/handshake` is not universe-scoped, so SyncRemoteClient
+    // maps a 403 there to SyncAuthError (401) rather than an ownership collision.
+    // This route therefore has no 403 source either.
     401: syncRunErrorResponses[401],
     402: syncRunErrorResponses[402],
-    403: syncRunErrorResponses[403],
     404: syncRunErrorResponses[404],
     409: syncRunErrorResponses[409],
     413: syncRunErrorResponses[413],

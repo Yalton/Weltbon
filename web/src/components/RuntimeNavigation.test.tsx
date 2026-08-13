@@ -114,9 +114,12 @@ describe('runtime-aware navigation', () => {
   it('shows a neutral settings-only local user menu', async () => {
     renderUserMenu('local');
 
-    await userEvent.click(await screen.findByRole('button', { name: 'Application menu' }));
-    expect(screen.getByRole('menuitem', { name: 'Settings' })).toBeInTheDocument();
+    // Local mode exposes Settings as a direct link, not a one-item menu: the
+    // accessible name is the visible label, so voice control can reach it.
+    const settings = await screen.findByRole('link', { name: 'Settings' });
+    expect(settings).toHaveAttribute('href', '/settings');
     expect(screen.queryByText('Local')).not.toBeInTheDocument();
+    expect(screen.queryByRole('button', { name: /menu/i })).not.toBeInTheDocument();
     expect(screen.queryByRole('menuitem', { name: 'Log out' })).not.toBeInTheDocument();
   });
 

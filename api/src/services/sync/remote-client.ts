@@ -203,7 +203,18 @@ export class SyncRemoteClient {
       throw new SyncUnreachableError(`${method} ${path} responded with a redirect (${res.status})`);
     }
     if (res.status === 401) throw new SyncAuthError();
-    if (res.status === 403) throw new SyncRemoteOwnershipError();
+    // Only a universe-scoped path can carry an ownership collision: on a Weltbon
+    // peer the 403 originates in the `requireUniverse` guard, and `/handshake`
+    // and `/universes` (discovery) declare no 403 at all. A 403 on those is an
+    // intermediary — Cloudflare Access, an nginx `deny`, a gateway answering a
+    // dead credential with 403 rather than 401 — and reporting it as an
+    // ownership collision would tell the user their token is valid and ask them
+    // to delete remote data, both wrong. Those keep the pre-existing SyncAuthError.
+    if (res.status === 403) {
+      throw /^\/universes\/[^/]+\//.test(path)
+        ? new SyncRemoteOwnershipError()
+        : new SyncAuthError();
+    }
     if (res.status === 402) throw new SyncPaymentError();
     if (res.status === 413) throw new SyncQuotaError();
     return res;

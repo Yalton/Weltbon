@@ -15,25 +15,18 @@ export function UserMenu() {
   const logout = useLogout();
   const navigate = useNavigate();
 
+  // Local mode has no account lifecycle, so the menu held exactly one item that
+  // repeated its own trigger. A direct link is the same destination in one click,
+  // and it drops an accessible name ("Application menu") that did not contain the
+  // visible label, which no voice-control user could have spoken (WCAG 2.5.3).
   if (authMode === 'local') {
     return (
-      <DropdownMenu.Root>
-        <DropdownMenu.Trigger
-          aria-label="Application menu"
-          className="rounded-lg px-2 py-1.5 text-sm text-ink-secondary hover:bg-white/5 hover:text-ink"
-        >
-          Settings
-        </DropdownMenu.Trigger>
-        <DropdownMenu.Portal>
-          <DropdownMenu.Content className={menuContentClasses} sideOffset={6}>
-            <DropdownMenu.Item asChild>
-              <Link to="/settings" className={`block ${menuItemClasses}`}>
-                Settings
-              </Link>
-            </DropdownMenu.Item>
-          </DropdownMenu.Content>
-        </DropdownMenu.Portal>
-      </DropdownMenu.Root>
+      <Link
+        to="/settings"
+        className="rounded-lg px-2 py-1.5 text-sm text-ink-secondary hover:bg-white/5 hover:text-ink"
+      >
+        Settings
+      </Link>
     );
   }
 

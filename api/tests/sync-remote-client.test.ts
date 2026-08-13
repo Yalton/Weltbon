@@ -149,6 +149,19 @@ describe('SyncRemoteClient status mapping', () => {
     await expect(client(fetchImpl).snapshot('u-1')).rejects.toBeInstanceOf(ctor as any);
   });
 
+  it.each([
+    ['handshake', (c: ReturnType<typeof client>) => c.handshake(IDENTITY)],
+    ['universe discovery', (c: ReturnType<typeof client>) => c.listUniverses()],
+  ])('maps a 403 on %s to SyncAuthError, not an ownership collision', async (_case, call) => {
+    // Neither path is universe-scoped, so a Weltbon peer never answers 403 there
+    // (its own routes declare none). A 403 is an intermediary — a WAF, an access
+    // proxy, a gateway refusing a dead credential with 403 instead of 401. Typing
+    // it as an ownership collision would tell the user their token is valid and
+    // ask them to delete remote data, both false and both actively misleading.
+    const { fetchImpl } = stub(() => json({ error: 'nope' }, 403));
+    await expect(call(client(fetchImpl))).rejects.toBeInstanceOf(SyncAuthError);
+  });
+
   it('persists ownership refusal without blaming the PAT or naming another user', () => {
     const summary = safeErrorSummary(new SyncRemoteOwnershipError());
     expect(summary).toBe(

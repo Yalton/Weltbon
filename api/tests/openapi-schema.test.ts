@@ -20,18 +20,23 @@ import { describe, it, expect } from 'vitest';
 import { app } from '../src/index.js';
 
 describe('OpenAPI schema and Scalar docs (Phase 10 — DB-independent)', () => {
-  it('declares the peer ownership refusal that a remote handshake can return', async () => {
-    // Mutation caught: a peer 403 is mapped to SyncRemoteOwnershipError at
-    // runtime, but omitting 403 here makes generated clients treat that real
-    // response as undocumented/unreachable.
+  it('does not declare an ownership refusal the handshake-only test route cannot send', async () => {
+    // Mutation caught: an earlier revision mapped EVERY peer 403 to
+    // SyncRemoteOwnershipError and documented 403 here to match. But this route
+    // only handshakes, and `/handshake` is not universe-scoped — SyncRemoteClient
+    // now types a 403 there as SyncAuthError (401), because on a Weltbon peer only
+    // the `requireUniverse` guard emits 403. Re-declaring 403 would promise
+    // generated clients an ownership collision this route can never produce.
     const res = await app.fetch(new Request('http://localhost/api/openapi.json'));
     expect(res.status).toBe(200);
     const doc = await res.json() as any;
-    const response = doc.paths['/sync/remotes/{id}/test']?.post?.responses?.['403'];
+    const testRoute = doc.paths['/sync/remotes/{id}/test']?.post;
 
-    expect(response?.content?.['application/json']?.schema?.properties?.code).toMatchObject({
-      type: 'string',
-    });
+    expect(testRoute).toBeDefined();
+    expect(testRoute.responses['403']).toBeUndefined();
+    // The universe-scoped run route still carries it — the type was not deleted,
+    // only kept to the paths that can actually originate it.
+    expect(doc.paths['/sync/links/{id}/run']?.post?.responses?.['403']).toBeDefined();
   });
 
   it('declares instanceId as required on the registered-remote test response', async () => {

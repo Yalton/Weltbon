@@ -99,12 +99,20 @@ export function RuntimeProvider({ children }: PropsWithChildren) {
   if (state.status === 'error') {
     return (
       <main className="mx-auto flex min-h-screen max-w-lg flex-col justify-center px-6 py-12">
-        <h1 className="text-2xl font-semibold text-neutral-900">Weltbon could not open</h1>
-        <p className="mt-3 text-sm text-neutral-600">
-          Your data remains in Weltbon&apos;s application data folder.
+        <h1 className="text-2xl font-semibold text-ink">Weltbon could not open</h1>
+        <p className="mt-3 text-sm text-ink-secondary">
+          {/*
+            This surface is also reachable before the mode is known — a failed
+            `/api/runtime` leaves `authMode` null in server deployments too, so
+            the local "application data folder" reassurance must not be the
+            fallback copy.
+          */}
+          {state.authMode === 'local'
+            ? 'Your data remains in Weltbon’s application data folder.'
+            : 'Weltbon could not reach its server. Your data is unaffected.'}
         </p>
         <button
-          className="mt-6 w-fit rounded bg-neutral-900 px-4 py-2 text-sm font-medium text-white"
+          className="mt-6 w-fit rounded bg-[color:var(--color-accent)] px-4 py-2 text-sm font-medium text-white"
           type="button"
           onClick={() => { void initialize(state.authMode); }}
         >
