@@ -363,12 +363,12 @@ const testRemoteRoute = createRoute({
   request: { params: idParams },
   responses: {
     200: { content: { 'application/json': { schema: testRemoteResponseSchema } }, description: 'Handshake succeeded; the peer\'s identity.' },
-    // 400 and 403 deliberately absent: testRemote() never touches the apply
-    // engine (no 400 source) and folds "not owned" into SyncLinkNotFoundError
-    // → 404, never a bare 403 (see testRemote's own docstring). Declaring an
-    // unreachable status is worse than a terse contract.
+    // testRemote() never touches the apply engine, so it has no 400 source.
+    // A peer handshake can still return 403, which SyncRemoteClient maps to
+    // SyncRemoteOwnershipError; document the status the route actually sends.
     401: syncRunErrorResponses[401],
     402: syncRunErrorResponses[402],
+    403: syncRunErrorResponses[403],
     404: syncRunErrorResponses[404],
     409: syncRunErrorResponses[409],
     413: syncRunErrorResponses[413],
@@ -786,10 +786,10 @@ export const syncClientRoutes = new OpenAPIHono<AppEnv>()
       // ONE branch reading the error's own status/code (C-19 lesson): a
       // per-class instanceof chain silently returns 500 the day a new
       // SyncRunError subclass is added. Narrower than runLinkRoute's cast:
-      // testRemote() cannot raise 400 or 403 (see the route's declared
-      // responses above), so those are deliberately excluded here too.
+      // testRemote() cannot raise 400, but peer ownership refusals map to 403
+      // (see the route's declared responses above).
       if (err instanceof SyncRunError) {
-        return c.json({ error: err.message, code: err.code }, err.status as 401 | 402 | 404 | 409 | 413 | 500 | 502);
+        return c.json({ error: err.message, code: err.code }, err.status as 401 | 402 | 403 | 404 | 409 | 413 | 500 | 502);
       }
       throw err;
     }

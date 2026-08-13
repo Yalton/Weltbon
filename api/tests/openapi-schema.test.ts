@@ -20,6 +20,20 @@ import { describe, it, expect } from 'vitest';
 import { app } from '../src/index.js';
 
 describe('OpenAPI schema and Scalar docs (Phase 10 — DB-independent)', () => {
+  it('declares the peer ownership refusal that a remote handshake can return', async () => {
+    // Mutation caught: a peer 403 is mapped to SyncRemoteOwnershipError at
+    // runtime, but omitting 403 here makes generated clients treat that real
+    // response as undocumented/unreachable.
+    const res = await app.fetch(new Request('http://localhost/api/openapi.json'));
+    expect(res.status).toBe(200);
+    const doc = await res.json() as any;
+    const response = doc.paths['/sync/remotes/{id}/test']?.post?.responses?.['403'];
+
+    expect(response?.content?.['application/json']?.schema?.properties?.code).toMatchObject({
+      type: 'string',
+    });
+  });
+
   it('declares instanceId as required on the registered-remote test response', async () => {
     // Mutation caught: leaving the owner-facing identity schema on the old
     // three-field contract makes generated clients discard the self-identity
