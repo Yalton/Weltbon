@@ -86,6 +86,16 @@ export class SyncAuthError extends SyncRunError {
   }
 }
 
+export class SyncRemoteOwnershipError extends SyncRunError {
+  readonly code = 'remote-universe-forbidden';
+  readonly status = 403;
+  readonly safeDetail = 'the universe identity is owned by another account on the remote';
+
+  constructor() {
+    super('The remote refused access to this universe identity');
+  }
+}
+
 export class SyncPaymentError extends SyncRunError {
   readonly code = 'remote-payment-required';
   readonly status = 402;

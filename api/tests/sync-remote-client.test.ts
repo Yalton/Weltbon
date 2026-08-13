@@ -9,6 +9,7 @@ import {
   SyncIncompatibleError,
   SyncPaymentError,
   SyncQuotaError,
+  SyncRemoteOwnershipError,
   SyncSelfRemoteError,
   SyncUnreachableError,
   safeErrorSummary,
@@ -140,12 +141,20 @@ describe('SyncRemoteClient status mapping', () => {
 
   it.each([
     [401, SyncAuthError],
-    [403, SyncAuthError],
+    [403, SyncRemoteOwnershipError],
     [402, SyncPaymentError],
     [413, SyncQuotaError],
   ])('maps %i to a typed error', async (status, ctor) => {
     const { fetchImpl } = stub(() => json({ error: 'nope' }, status));
     await expect(client(fetchImpl).snapshot('u-1')).rejects.toBeInstanceOf(ctor as any);
+  });
+
+  it('persists ownership refusal without blaming the PAT or naming another user', () => {
+    const summary = safeErrorSummary(new SyncRemoteOwnershipError());
+    expect(summary).toBe(
+      'remote-universe-forbidden: the universe identity is owned by another account on the remote',
+    );
+    expect(summary).not.toMatch(/PAT|email|userId/i);
   });
 
   it('maps a handshake 409 to SyncIncompatibleError carrying both identities', async () => {

@@ -22,6 +22,7 @@ import {
   SyncIncompatibleError,
   SyncPaymentError,
   SyncQuotaError,
+  SyncRemoteOwnershipError,
   SyncRunError,
   SyncSelfRemoteError,
   SyncUnreachableError,
@@ -201,7 +202,8 @@ export class SyncRemoteClient {
     if (res.status >= 300 && res.status < 400) {
       throw new SyncUnreachableError(`${method} ${path} responded with a redirect (${res.status})`);
     }
-    if (res.status === 401 || res.status === 403) throw new SyncAuthError();
+    if (res.status === 401) throw new SyncAuthError();
+    if (res.status === 403) throw new SyncRemoteOwnershipError();
     if (res.status === 402) throw new SyncPaymentError();
     if (res.status === 413) throw new SyncQuotaError();
     return res;
