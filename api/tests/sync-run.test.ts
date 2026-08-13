@@ -38,6 +38,7 @@ import {
   SyncBlobUnavailableError,
   SyncQuotaError,
   SyncSelfRemoteError,
+  SyncRemoteOwnershipError,
 } from '../src/services/sync/run-errors.js';
 import { runSync, testRemote } from '../src/services/sync/run-sync.js';
 import { syncBlobKey } from '../src/services/sync/materialize.js';
@@ -205,10 +206,10 @@ describe('two-instance acceptance for the sync drive loop (Plan D Task 8)', () =
     return await res.json();
   }
 
-  async function snapshot(which: 'A' | 'B'): Promise<any | null> {
+  async function snapshot(which: 'A' | 'B', bearer = token(which)): Promise<any | null> {
     await use(which);
     const res = await app.request(`/api/sync/universes/${universeId}/snapshot`, {
-      headers: authHeader(token(which)),
+      headers: authHeader(bearer),
     });
     if (res.status === 404) return null;
     expect(res.status).toBe(200);
@@ -226,23 +227,86 @@ describe('two-instance acceptance for the sync drive loop (Plan D Task 8)', () =
   it('bootstraps a never-synced peer', async () => {
     await seedEntry('A', 'Seeded on A');
 
+    // The peer genuinely has no row for this UUID before first publish. This
+    // is the C-11 create-on-bootstrap path, not a merge into a pre-seeded row.
+    expect(await snapshot('B')).toBeNull();
+
     await use('A');
     const result = await runSync(linkId, ownerA.id, { fetchImpl: makeFetch() });
 
     expect(result.bootstrapped).toBe(true);
     expect(result.linkId).toBe(linkId);
 
+    // C-11 must assign the newly-created row to the authenticated PAT owner on
+    // B while preserving the universe data published by A.
+    const { universes: universesTable, syncLinks } = await import('../src/db/schema.js');
+    const [remoteUniverse] = await B.db
+      .select()
+      .from(universesTable)
+      .where(eq(universesTable.id, universeId));
+    expect(remoteUniverse.userId).toBe(ownerB.id);
+    expect(remoteUniverse.name).toBe('Shared World');
+
     const { a, b } = await bothSnapshots();
     expect(b.universe.id).toBe(universeId);
     expect(b.entries.map((e: any) => e.title)).toEqual(['Seeded on A']);
     expect(comparable(a)).toEqual(comparable(b));
 
-    const { syncLinks } = await import('../src/db/schema.js');
     const [link] = await A.db.select().from(syncLinks).where(eq(syncLinks.id, linkId));
     expect(link.status).toBe('idle');
     expect(link.lastSyncedAt).not.toBeNull();
     expect(link.lastError).toBeNull();
     expect(link.baseSnapshotKey).not.toBeNull();
+  });
+
+  it('does not overwrite a colliding remote universe owned by another account', async () => {
+    await use('B');
+    const collisionOwner = await createTestUser(B, {
+      email: 'collision-owner@instance.dev',
+      password: 'password123',
+    });
+    const collisionToken = await login('collision-owner@instance.dev');
+    const { syncLinks, universes: universesTable } = await import('../src/db/schema.js');
+    await B.db.insert(universesTable).values({
+      id: universeId,
+      userId: collisionOwner.id,
+      name: 'Collision owner world',
+    });
+
+    // Give the colliding universe real collection state so the before/after
+    // manifest assertion protects more than the singleton row.
+    const entryRes = await app.request(`/api/universes/${universeId}/entries`, {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json', ...authHeader(collisionToken) },
+      body: JSON.stringify({
+        title: 'Must survive refused first publish',
+        entryType: 'concept',
+        summary: 'Owned by the collision account',
+      }),
+    });
+    expect(entryRes.status).toBe(201);
+    const beforeCollision = await snapshot('B', collisionToken);
+
+    await use('A');
+    const rejectedRun = runSync(linkId, ownerA.id, { fetchImpl: makeFetch() });
+    await expect(rejectedRun).rejects.toBeInstanceOf(SyncRemoteOwnershipError);
+    await expect(rejectedRun).rejects.toMatchObject({
+      code: 'remote-universe-forbidden',
+      status: 403,
+    });
+
+    const [savedLink] = await A.db.select().from(syncLinks).where(eq(syncLinks.id, linkId));
+    expect(savedLink.status).toBe('error');
+    expect(savedLink.lastError).toContain('remote-universe-forbidden');
+    expect(savedLink.lastError).not.toContain('remote-unauthorized');
+
+    const afterCollision = await snapshot('B', collisionToken);
+    expect(comparable(afterCollision)).toEqual(comparable(beforeCollision));
+    const [remoteUniverse] = await B.db
+      .select()
+      .from(universesTable)
+      .where(eq(universesTable.id, universeId));
+    expect(remoteUniverse.userId).toBe(collisionOwner.id);
   });
 
   // ── Plan F0 scenario 1: bootstrap a universe that ALREADY has an asset ────
