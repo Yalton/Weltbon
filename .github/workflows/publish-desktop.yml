@@ -36,6 +36,18 @@ on:
         description: 'Also build the unverified Windows/macOS targets (billed at 2x/10x)'
         type: boolean
         default: false
+      # Windows is billed at 2x and macOS at 10x, so "I need a Windows build"
+      # should not have to buy a macOS one. The old boolean could only run the
+      # pair. `both` is the default so an existing dispatch that just ticks
+      # `experimental` behaves exactly as it did before.
+      experimental_targets:
+        description: 'Which experimental targets to build (only applies when experimental is checked)'
+        type: choice
+        default: both
+        options:
+          - both
+          - windows
+          - macos
 
 permissions:
   contents: write   # required to upload assets onto the Release
@@ -112,18 +124,15 @@ jobs:
     strategy:
       # One platform failing must not cancel the other — the point is logs.
       fail-fast: false
+      # `include` has to be a literal or a fromJSON() of one — there is no way to
+      # drop a matrix entry from an input, and a step-level `if` would not help
+      # because the runner is already billed by the time a step is evaluated.
+      # Hence the inlined JSON. Windows pins VS 2022: Electron's bundled node-gyp
+      # does not yet recognize the Visual Studio 2026 image behind windows-latest.
+      # The `|| 'both'` fallback keeps this valid if the job is ever reached from
+      # a trigger that defines no inputs.
       matrix:
-        include:
-          - name: windows
-            # Pin VS 2022: Electron's bundled node-gyp does not yet recognize
-            # the Visual Studio 2026 image currently behind windows-latest.
-            os: windows-2022
-            builder_flag: --win
-            glob: desktop/release/*.exe
-          - name: macos
-            os: macos-latest
-            builder_flag: --mac
-            glob: desktop/release/*.dmg
+        include: ${{ fromJSON((inputs.experimental_targets || 'both') == 'windows' && '[{"name":"windows","os":"windows-2022","builder_flag":"--win","glob":"desktop/release/*.exe"}]' || (inputs.experimental_targets || 'both') == 'macos' && '[{"name":"macos","os":"macos-latest","builder_flag":"--mac","glob":"desktop/release/*.dmg"}]' || '[{"name":"windows","os":"windows-2022","builder_flag":"--win","glob":"desktop/release/*.exe"},{"name":"macos","os":"macos-latest","builder_flag":"--mac","glob":"desktop/release/*.dmg"}]') }}
 
     steps:
       - name: Checkout
