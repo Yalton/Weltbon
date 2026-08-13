@@ -33,6 +33,7 @@ export function useRuntime(): RuntimeValue {
 }
 
 export function RuntimeProvider({ children }: PropsWithChildren) {
+  const user = useAuthStore((state) => state.user);
   const [state, setState] = useState<RuntimeState>({
     authMode: null,
     status: 'loading',
@@ -88,6 +89,12 @@ export function RuntimeProvider({ children }: PropsWithChildren) {
     void initialize(null);
     return () => { attemptRef.current += 1; };
   }, [initialize]);
+
+  useEffect(() => {
+    if (state.authMode === 'local' && state.status === 'ready' && !user) {
+      void initialize('local');
+    }
+  }, [initialize, state.authMode, state.status, user]);
 
   if (state.status === 'error') {
     return (

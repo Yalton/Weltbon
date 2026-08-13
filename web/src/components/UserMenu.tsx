@@ -7,11 +7,35 @@ import {
   menuItemClasses,
   menuSeparatorClasses,
 } from './ui/overlay';
+import { useRuntime } from '../runtime/RuntimeProvider';
 
 export function UserMenu() {
+  const { authMode } = useRuntime();
   const user = useAuthStore((s) => s.user);
   const logout = useLogout();
   const navigate = useNavigate();
+
+  if (authMode === 'local') {
+    return (
+      <DropdownMenu.Root>
+        <DropdownMenu.Trigger
+          aria-label="Application menu"
+          className="rounded-lg px-2 py-1.5 text-sm text-ink-secondary hover:bg-white/5 hover:text-ink"
+        >
+          Settings
+        </DropdownMenu.Trigger>
+        <DropdownMenu.Portal>
+          <DropdownMenu.Content className={menuContentClasses} sideOffset={6}>
+            <DropdownMenu.Item asChild>
+              <Link to="/settings" className={`block ${menuItemClasses}`}>
+                Settings
+              </Link>
+            </DropdownMenu.Item>
+          </DropdownMenu.Content>
+        </DropdownMenu.Portal>
+      </DropdownMenu.Root>
+    );
+  }
 
   if (!user) return null;
 

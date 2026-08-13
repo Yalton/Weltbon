@@ -33,13 +33,16 @@ import SyncSettings from './views/SyncSettings';
 import { ShareLayout } from './components/ShareLayout';
 import { ErrorBoundary } from './components/ErrorBoundary';
 import { ShareFallback } from './views/ShareFallback';
+import { useRuntime } from './runtime/RuntimeProvider';
 
 export default function App() {
+  const { authMode } = useRuntime();
+
   return (
     <Routes>
       <Route path="/" element={<Navigate to="/universes" replace />} />
-      <Route path="/login" element={<Login />} />
-      <Route path="/register" element={<Register />} />
+      <Route path="/login" element={authMode === 'local' ? <Navigate to="/universes" replace /> : <Login />} />
+      <Route path="/register" element={authMode === 'local' ? <Navigate to="/universes" replace /> : <Register />} />
       <Route element={<ProtectedRoute />}>
         {/* Header-only shell for the universe picker, per-universe settings, and app settings. */}
         <Route element={<Layout />}>
@@ -48,8 +51,8 @@ export default function App() {
           {/* /settings placed after /universes/:id/settings so the more-specific route still matches first */}
           <Route path="/settings" element={<SettingsLayout />}>
             <Route index element={<Settings />} />
-            <Route path="tokens" element={<Tokens />} />
-            <Route path="invites" element={<Invites />} />
+            <Route path="tokens" element={authMode === 'local' ? <Navigate to="/settings" replace /> : <Tokens />} />
+            <Route path="invites" element={authMode === 'local' ? <Navigate to="/settings" replace /> : <Invites />} />
             <Route path="templates" element={<Templates />} />
             {/* Phase 29 — global owner audit view for all share links. */}
             <Route path="shares" element={<Shares />} />

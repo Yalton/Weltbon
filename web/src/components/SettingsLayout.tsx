@@ -9,8 +9,11 @@
  */
 
 import { NavLink, Outlet } from 'react-router-dom';
+import { useRuntime } from '../runtime/RuntimeProvider';
 
 export function SettingsLayout() {
+  const { authMode } = useRuntime();
+
   return (
     <div className="max-w-5xl mx-auto p-6 flex flex-col md:flex-row gap-4 md:gap-8">
       <nav aria-label="Settings sections" className="md:w-48 md:shrink-0">
@@ -31,38 +34,42 @@ export function SettingsLayout() {
               Visual
             </NavLink>
           </li>
-          <li>
-            <NavLink
-              to="/settings/tokens"
-              end
-              className={({ isActive }) =>
-                [
-                  'block rounded px-2 py-1.5 text-sm',
-                  isActive
-                    ? 'bg-[color:var(--color-accent)]/10 text-[color:var(--color-accent)] font-medium'
-                    : 'text-neutral-700 dark:text-neutral-200 hover:bg-neutral-100 dark:hover:bg-neutral-900',
-                ].join(' ')
-              }
-            >
-              API tokens
-            </NavLink>
-          </li>
-          <li>
-            <NavLink
-              to="/settings/invites"
-              end
-              className={({ isActive }) =>
-                [
-                  'block rounded px-2 py-1.5 text-sm',
-                  isActive
-                    ? 'bg-[color:var(--color-accent)]/10 text-[color:var(--color-accent)] font-medium'
-                    : 'text-neutral-700 dark:text-neutral-200 hover:bg-neutral-100 dark:hover:bg-neutral-900',
-                ].join(' ')
-              }
-            >
-              Invite codes
-            </NavLink>
-          </li>
+          {authMode === 'server' && (
+            <>
+              <li>
+                <NavLink
+                  to="/settings/tokens"
+                  end
+                  className={({ isActive }) =>
+                    [
+                      'block rounded px-2 py-1.5 text-sm',
+                      isActive
+                        ? 'bg-[color:var(--color-accent)]/10 text-[color:var(--color-accent)] font-medium'
+                        : 'text-neutral-700 dark:text-neutral-200 hover:bg-neutral-100 dark:hover:bg-neutral-900',
+                    ].join(' ')
+                  }
+                >
+                  API tokens
+                </NavLink>
+              </li>
+              <li>
+                <NavLink
+                  to="/settings/invites"
+                  end
+                  className={({ isActive }) =>
+                    [
+                      'block rounded px-2 py-1.5 text-sm',
+                      isActive
+                        ? 'bg-[color:var(--color-accent)]/10 text-[color:var(--color-accent)] font-medium'
+                        : 'text-neutral-700 dark:text-neutral-200 hover:bg-neutral-100 dark:hover:bg-neutral-900',
+                    ].join(' ')
+                  }
+                >
+                  Invite codes
+                </NavLink>
+              </li>
+            </>
+          )}
           <li>
             <NavLink
               to="/settings/templates"

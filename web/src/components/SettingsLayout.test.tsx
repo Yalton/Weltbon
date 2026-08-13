@@ -12,10 +12,14 @@
  * No QueryClient needed: SettingsLayout has no queries.
  */
 
-import { describe, it, expect } from 'vitest';
+import { describe, it, expect, vi } from 'vitest';
 import { render, screen } from '@testing-library/react';
 import { MemoryRouter, Routes, Route } from 'react-router-dom';
 import { SettingsLayout } from './SettingsLayout';
+
+vi.mock('../runtime/RuntimeProvider', () => ({
+  useRuntime: () => ({ authMode: 'server' }),
+}));
 
 function renderAt(path: string) {
   return render(
