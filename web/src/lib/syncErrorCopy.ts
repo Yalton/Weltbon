@@ -7,7 +7,7 @@
  * module only ever renders values the API has already scrubbed:
  *
  * 1. A run failure's `code` (api/src/services/sync/run-errors.ts) — one of
- *    15 `SyncRunError` subclasses, mirrored below as `SyncErrorCode`. A
+ *    16 `SyncRunError` subclasses, mirrored below as `SyncErrorCode`. A
  *    sibling hierarchy, `SyncApplyError` (the LOCAL apply's own errors),
  *    carries no `code` at all, and may instead carry
  *    `collisions: [{collection, count}]` — counts only, never the colliding
@@ -56,7 +56,7 @@ export interface SyncCopy {
    * Carried so consumers can ask "do these two copies describe the SAME
    * failure?" DIRECTLY. `combineRunError` below needs exactly that question
    * answered, and its first implementation asked it by comparing `message`
- * strings — sound only while all 15 messages stay distinct, which nothing
+   * strings — sound only while all 16 messages stay distinct, which nothing
    * enforced. Two entries given the same prose would have made a stale error of
    * code A silently decorate a fresh failure of code B with A's cause.
    *
@@ -69,7 +69,7 @@ export interface SyncCopy {
   code?: SyncErrorCode;
 }
 
-/** The 15 codes `run-errors.ts`'s `SyncRunError` subclasses declare. */
+/** The 16 codes `run-errors.ts`'s `SyncRunError` subclasses declare. */
 export type SyncErrorCode =
   | 'SELF_REMOTE'
   | 'link-not-found'
@@ -78,6 +78,7 @@ export type SyncErrorCode =
   | 'remote-key-undecryptable'
   | 'remote-unreachable'
   | 'remote-unauthorized'
+  | 'remote-universe-forbidden'
   | 'remote-payment-required'
   | 'remote-quota-exceeded'
   | 'remote-incompatible'
@@ -87,7 +88,7 @@ export type SyncErrorCode =
   | 'universe-not-on-remote'
   | 'universe-already-local';
 
-/** One entry per `SyncErrorCode` above — 15, no more, no fewer (enforced by the type). */
+/** One entry per `SyncErrorCode` above — 16, no more, no fewer (enforced by the type). */
 export const SYNC_ERROR_COPY: Record<SyncErrorCode, { message: string }> = {
   SELF_REMOTE: {
     message: 'This remote resolves to this Weltbon instance, so it cannot be linked or synced. Use the address and access token for a different instance, or remove the mistaken remote or link.',
@@ -120,6 +121,9 @@ export const SYNC_ERROR_COPY: Record<SyncErrorCode, { message: string }> = {
   },
   'remote-unauthorized': {
     message: 'The remote instance rejected the saved access token. Mint a new one there and save it on the remote — every sync link to it will pick it up.',
+  },
+  'remote-universe-forbidden': {
+    message: 'Universe identity conflict. Your access token is valid, but this universe identity already belongs to another account on the remote. Keep this token and sync a different universe, or remove the conflicting test data from the remote.',
   },
   'remote-payment-required': {
     message: 'The remote instance needs an active subscription before it will accept a sync. Resolve billing there, then try again.',
@@ -211,7 +215,7 @@ export function syncErrorMessage(err: unknown): SyncCopy {
     return { ...SYNC_ERROR_COPY[known], code: known, raw: err.message, canForce: known === 'busy' };
   }
 
-  // Unknown/absent code: either a 13th code this map has not caught up to
+  // Unknown/absent code: either a future code this map has not caught up to
   // (a code added in run-errors.ts alone does NOT fail any test here — there
   // is no shared package and no web→api import — so it silently degrades to
   // this branch by design), or the LOCAL apply hierarchy (SyncApplyError),

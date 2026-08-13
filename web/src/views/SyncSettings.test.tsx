@@ -302,6 +302,31 @@ describe('SyncSettings — test connection', () => {
     const status = await screen.findByTestId('remote-test-status-r1');
     expect(status.textContent).toContain(SYNC_ERROR_COPY['remote-unreachable'].message);
   });
+
+  it('shows ownership-collision guidance without a replacement-token recommendation', async () => {
+    // Mutation caught: routing the collision through remote-unauthorized
+    // falsely tells the user that their valid PAT needs replacement.
+    vi.mocked(api).mockImplementation(
+      makeApiDispatcher({
+        '/sync/remotes': [REMOTE],
+        'POST /sync/remotes/r1/test': new ApiError(
+          403,
+          { code: 'remote-universe-forbidden' },
+          'the universe identity is owned by another account on the remote',
+        ),
+      }),
+    );
+
+    renderView();
+    await screen.findByText('Laptop');
+
+    await userEvent.click(screen.getByRole('button', { name: /^Test connection to Laptop$/i }));
+
+    const status = await screen.findByTestId('remote-test-status-r1');
+    expect(status.textContent).toMatch(/Universe identity conflict/i);
+    expect(status.textContent).toMatch(/Keep this token/i);
+    expect(status.textContent).not.toMatch(/Mint a new one|save it on the remote/i);
+  });
 });
 
 describe('SyncSettings — browsing a remote\'s universes (A-12)', () => {

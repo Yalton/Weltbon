@@ -18,10 +18,10 @@ describe('SYNC_ERROR_COPY', () => {
     }
   });
 
-  it('pins this map to exactly 15 keys, so adding/removing one HERE forces a copy decision', () => {
+  it('pins this map to exactly 16 keys, so adding/removing one HERE forces a copy decision', () => {
     // This reads SYNC_ERROR_COPY only, never run-errors.ts — there is no
     // shared package and no web→api import, so nothing in `web` can fail
-    // when a code is added server-side. A 15th server code does NOT fail
+    // when a code is added server-side. A future server code does NOT fail
     // this test; it silently degrades to syncErrorMessage's fallback branch,
     // by design (see that function's comment).
     expect(Object.keys(SYNC_ERROR_COPY).sort()).toEqual([
@@ -36,6 +36,7 @@ describe('SYNC_ERROR_COPY', () => {
       'remote-quota-exceeded',
       'remote-rejected',
       'remote-unauthorized',
+      'remote-universe-forbidden',
       'remote-universe-missing',
       'remote-unreachable',
       'universe-already-local',
@@ -45,7 +46,7 @@ describe('SYNC_ERROR_COPY', () => {
 });
 
 describe('syncErrorMessage', () => {
-  it('routes every one of the 15 codes through syncErrorMessage to written copy, not the bare code', () => {
+  it('routes every one of the 16 codes through syncErrorMessage to written copy, not the bare code', () => {
     // The SYNC_ERROR_COPY tests above only inspect the map directly — they
     // never call syncErrorMessage, so a regression that hardcodes
     // `message: code` inside the function (rather than in the map) would
@@ -85,7 +86,7 @@ describe('syncErrorMessage', () => {
   });
 
   it('falls back to the server message for an unknown code', () => {
-    // This is what a future 13th code hits.
+    // This is what a future code hits.
     const err = new ApiError(409, { error: 'something new', code: 'not-a-real-code' }, 'something new');
     expect(syncErrorMessage(err).message).toBe('something new');
   });
@@ -157,6 +158,19 @@ describe('syncErrorMessage', () => {
 });
 
 describe('lastErrorMessage', () => {
+  it('explains a remote universe ownership collision without rejecting the PAT', () => {
+    // Mutation caught: treating an ownership refusal like remote-unauthorized
+    // sends the user to replace a valid credential instead of changing the
+    // universe selection or removing test data.
+    const out = lastErrorMessage(
+      'remote-universe-forbidden: the universe identity is owned by another account on the remote',
+    );
+    expect(out?.message).toEqual(SYNC_ERROR_COPY['remote-universe-forbidden'].message);
+    expect(out?.message).toMatch(/different universe, or remove the conflicting test data/i);
+    expect(out?.message).toMatch(/Keep this token/i);
+    expect(out?.message).not.toMatch(/Mint a new one|save it on the remote/i);
+  });
+
   it('maps the `code: detail` shape to copy plus the detail', () => {
     const out = lastErrorMessage('remote-unauthorized: the stored PAT was rejected by the remote');
     expect(out!.message).toBe(SYNC_ERROR_COPY['remote-unauthorized'].message);
@@ -208,7 +222,7 @@ describe('lastErrorMessage', () => {
 });
 
 describe('SYNC_ERROR_COPY — message distinctness', () => {
-  it('gives all 15 codes textually distinct prose', () => {
+  it('gives all 16 codes textually distinct prose', () => {
     // Not cosmetic. `combineRunError` originally decided "same failure?" by
     // comparing `message` strings, which is correct only while this holds.
     // Two entries edited to share prose would have let a stale error of one
@@ -219,7 +233,7 @@ describe('SYNC_ERROR_COPY — message distinctness', () => {
     // guards the USER: two failures with different remedies must not read
     // identically on screen.
     const messages = Object.values(SYNC_ERROR_COPY).map((c) => c.message);
-    expect(new Set(messages).size).toBe(15);
+    expect(new Set(messages).size).toBe(16);
   });
 });
 
