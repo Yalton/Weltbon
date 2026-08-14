@@ -1,4 +1,7 @@
 import { describe, it, expect } from 'vitest';
+import { mkdtemp, writeFile, rm } from 'node:fs/promises';
+import { tmpdir } from 'node:os';
+import { join } from 'node:path';
 import { buildFontFaceBlock } from '../src/services/export/pdf/fonts.js';
 import {
   renderUniverseHtml,
@@ -160,6 +163,28 @@ describe('Plan 04-03 Task 1: pdf/fonts.ts', () => {
     // when fonts ARE present it should at least mention font-face; when absent the empty string is fine.
     if (block.length > 0) {
       expect(block).toMatch(/@font-face/);
+    }
+  });
+
+  // Bundling the API collapses every module to one file, so a font directory
+  // derived from `import.meta.url` with a fixed `../../../../` walk lands
+  // somewhere else entirely. DRIZZLE_DIR already solved this exact problem for
+  // migrations; WELTBON_FONT_DIR is the same escape hatch for fonts.
+  it('honours WELTBON_FONT_DIR, read at call time', async () => {
+    const dir = await mkdtemp(join(tmpdir(), 'weltbon-fonts-'));
+    // A real woff2 is unnecessary — buildFontFaceBlock only stats and reads.
+    await writeFile(join(dir, 'Inter-Regular.woff2'), Buffer.from('not-a-real-font'));
+
+    const previous = process.env.WELTBON_FONT_DIR;
+    process.env.WELTBON_FONT_DIR = dir;
+    try {
+      const block = await buildFontFaceBlock();
+      expect(block).toMatch(/@font-face/);
+      expect(block).toContain("font-family: 'Inter'");
+    } finally {
+      if (previous === undefined) delete process.env.WELTBON_FONT_DIR;
+      else process.env.WELTBON_FONT_DIR = previous;
+      await rm(dir, { recursive: true, force: true });
     }
   });
 });

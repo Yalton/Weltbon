@@ -39,14 +39,32 @@ import { fileURLToPath } from 'node:url';
  * these from rsms.me/inter and fonts.google.com/noto.
  */
 
-// Resolve api/assets/fonts/ relative to this file (works from src/ in dev
-// and dist/ in production). Both layouts have the same depth from the
-// project's `api/` root, so the relative ../../../../ walk lands on
-// api/assets/fonts in either case.
-const FONT_DIR = path.resolve(
-  path.dirname(fileURLToPath(import.meta.url)),
-  '../../../../assets/fonts',
-);
+/**
+ * Where the bundled woff2 files live.
+ *
+ * The default resolves `api/assets/fonts/` relative to this module, which works
+ * from `src/` in dev and `dist/` in production because both sit at the same
+ * depth below `api/`. That assumption breaks the moment the API is bundled: a
+ * bundle collapses every module into one file at a different depth, and the
+ * fixed `../../../../` walk then lands outside the packaged tree entirely.
+ *
+ * WELTBON_FONT_DIR is the escape hatch, exactly as DRIZZLE_DIR is for
+ * migrations (`db/migrate.ts`) — the desktop app sets an absolute path because
+ * Electron offers no useful cwd or module-layout guarantee.
+ *
+ * Read at CALL time rather than module load, matching DRIZZLE_DIR's idiom, so a
+ * test or a late-configuring deployment is honoured. The same process-global
+ * caveat applies: a test that sets it without restoring would redirect every
+ * later call in the same worker.
+ */
+function fontDir(): string {
+  const override = process.env.WELTBON_FONT_DIR;
+  if (override) return override;
+  return path.resolve(
+    path.dirname(fileURLToPath(import.meta.url)),
+    '../../../../assets/fonts',
+  );
+}
 
 interface FontSpec {
   family: string;
@@ -77,8 +95,12 @@ const FONT_SPECS: FontSpec[] = [
 export async function buildFontFaceBlock(): Promise<string> {
   const decls: string[] = [];
 
+  // Resolved once per call, not per spec: one env read, and every font in a
+  // single block comes from the same directory.
+  const dir = fontDir();
+
   for (const spec of FONT_SPECS) {
-    const fullPath = path.join(FONT_DIR, spec.file);
+    const fullPath = path.join(dir, spec.file);
     try {
       const stat = await fs.stat(fullPath);
       if (!stat.isFile()) continue;

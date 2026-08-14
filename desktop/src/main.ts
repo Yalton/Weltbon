@@ -100,6 +100,14 @@ if (!app.requestSingleInstanceLock()) {
     // tracked apiEntry's directory even when WELTBON_API_ENTRY points
     // somewhere not shaped <root>/dist/index.js).
     process.env.DRIZZLE_DIR = join(apiRoot, 'drizzle');
+    // Same class of problem, same remedy (#8). pdf/fonts.ts derives its font
+    // directory by walking a fixed `../../../../` from `import.meta.url`, which
+    // relies on src/ and dist/ sitting at equal depth below api/. Bundling the
+    // API collapses that depth, so the walk lands outside the packaged tree.
+    // Unlike DRIZZLE_DIR this one fails late — the path is only touched during a
+    // PDF export — which is precisely why it is set here rather than discovered
+    // by a user whose export silently lost its fonts.
+    process.env.WELTBON_FONT_DIR = join(apiRoot, 'assets', 'fonts');
     delete process.env.DATABASE_URL;          // must never reach a real Postgres
 
     const { startServer, closeDb } = await import(pathToFileURL(apiEntry).href);
