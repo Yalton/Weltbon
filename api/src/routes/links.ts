@@ -18,7 +18,13 @@ const uidAndIdParams = z.object({ uid: z.string().uuid(), id: z.string().uuid() 
 const createLinkSchema = z.object({
   sourceEntryId: z.string().uuid(),
   targetEntryId: z.string().uuid(),
-  label: z.string().max(100).optional(),
+  // `.nullable()` is load-bearing, not tidiness (#28). The display label is
+  // optional in the UI, and both callers send an explicit `null` when it is
+  // left blank rather than omitting the key — so `.optional()` alone rejected
+  // the ordinary case and made link creation impossible from every surface.
+  // Matches `linkType` below and `label` in patchLinkSchema; this field was the
+  // only one in the file missing it.
+  label: z.string().max(100).nullable().optional(),
   linkType: z.string().max(100).nullable().optional(),
   direction: z.enum(['directed', 'undirected']).optional().default('directed'),
 });

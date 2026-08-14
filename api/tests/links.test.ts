@@ -107,6 +107,36 @@ describe('link routes (LINK-01..06)', () => {
     expect(link.label).toBeNull();
   });
 
+  // #28 regression. The test above omits `label` entirely, which `.optional()`
+  // accepts — so it passed while every real link creation failed. Both web
+  // callers send an explicit `null` for the empty optional display label
+  // (LinkEditor.tsx and CreateLinkPopover.tsx both use `label.trim() || null`),
+  // and `.optional()` without `.nullable()` rejects null. That 400 is what made
+  // link creation impossible from both the entry page and the graph.
+  it('POST /universes/:uid/links accepts an explicit null label and linkType', async () => {
+    const { hdrs } = await userWithToken('b-null@test.com');
+    const universe = await createUniverse(hdrs);
+    const entryA = await createEntry(universe.id, hdrs, { title: 'Entry A' });
+    const entryB = await createEntry(universe.id, hdrs, { title: 'Entry B' });
+
+    const res = await req('POST', `/api/universes/${universe.id}/links`, {
+      headers: hdrs,
+      body: {
+        sourceEntryId: entryA.id,
+        targetEntryId: entryB.id,
+        label: null,
+        linkType: null,
+        direction: 'directed',
+      },
+    });
+
+    expect(res.status).toBe(201);
+    const link = await json(res);
+    expect(link.label).toBeNull();
+    expect(link.linkType).toBeNull();
+    expect(link.direction).toBe('directed');
+  });
+
   // direction validation: rejects invalid direction enum value
   it('POST /universes/:uid/links with invalid direction returns 400', async () => {
     const { hdrs } = await userWithToken('b2@test.com');

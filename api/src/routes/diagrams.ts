@@ -18,7 +18,7 @@
  */
 
 import { OpenAPIHono, createRoute, z } from '@hono/zod-openapi';
-import { and, eq } from 'drizzle-orm';
+import { and, eq, isNull } from 'drizzle-orm';
 import { HTTPException } from 'hono/http-exception';
 import { db } from '../db/client.js';
 import { diagrams, diagramNodes, links, entries } from '../db/schema.js';
@@ -74,7 +74,12 @@ const nodeSchema = z.object({
 const createEdgeSchema = z.object({
   sourceEntryId: z.string().uuid(),
   targetEntryId: z.string().uuid(),
-  label: z.string().max(100),
+  // An edge label is optional in the editor — DrawEdgePopover's submit is gated
+  // on `pending` alone, not on a non-empty label — and DiagramEditor posts an
+  // explicit `null` for the empty case. A bare required string rejected that,
+  // so an unlabeled edge could never be drawn. Same defect as #28 on
+  // createLinkSchema.label; `edgeSchema` below already returns it nullable.
+  label: z.string().max(100).nullable().optional(),
   lineStyle: z.enum(LINE_STYLES).optional().default('solid'),
   color: z.string().max(50).optional(),
   // Phase 35 REL-01: DIAGRAM-02 keeps `bidirectional` on the diagram-edge API
@@ -493,6 +498,12 @@ export const diagramsRouter = new OpenAPIHono<AppEnv>()
       return c.json({ error: 'Source or target entry not found in this universe' }, 400);
     }
 
+    // Normalize once: the schema accepts an omitted label and an explicit null
+    // (the editor sends null for an unlabeled edge), and the column is nullable.
+    // Collapsing both to null here keeps the lookup and the insert below reading
+    // one value instead of each re-deriving it.
+    const edgeLabel = data.label ?? null;
+
     // Upsert: if a link with this (universeId, sourceEntryId, targetEntryId, label) already
     // exists, update its diagramId/lineStyle/color rather than creating a duplicate.
     // This reconciles the links_unique_idx and prevents a 500 on duplicate (T-31-02).
@@ -507,7 +518,10 @@ export const diagramsRouter = new OpenAPIHono<AppEnv>()
           eq(links.universeId, uid),
           eq(links.sourceEntryId, data.sourceEntryId),
           eq(links.targetEntryId, data.targetEntryId),
-          eq(links.label, data.label),
+          // An absent label is NULL in this column, and SQL `= NULL` is never
+          // true — so matching it needs IS NULL, or the dedupe above silently
+          // never finds an existing unlabeled edge and inserts a duplicate.
+          edgeLabel === null ? isNull(links.label) : eq(links.label, edgeLabel),
         )
       );
 
@@ -536,7 +550,7 @@ export const diagramsRouter = new OpenAPIHono<AppEnv>()
           universeId: uid,
           sourceEntryId: data.sourceEntryId,
           targetEntryId: data.targetEntryId,
-          label: data.label,
+          label: edgeLabel,
           linkType: null,
           direction: data.bidirectional ? 'undirected' : 'directed',
           diagramId: did,

@@ -21,6 +21,7 @@ export function LinkEditor({ universeId, entryId, onLinkCreated, children }: Pro
   const [linkType, setLinkType] = useState('');
   const [direction, setDirection] = useState<'directed' | 'undirected'>('directed');
   const [showDropdown, setShowDropdown] = useState(false);
+  const [error, setError] = useState<unknown>(null);
   const inputRef = useRef<HTMLInputElement>(null);
 
   const { data: entries } = useEntries(universeId);
@@ -42,17 +43,32 @@ export function LinkEditor({ universeId, entryId, onLinkCreated, children }: Pro
     setLinkType('');
     setDirection('directed');
     setShowDropdown(false);
+    // Cleared here too, so reopening the popover after a failure does not
+    // greet the user with a stale error about a create they have moved on from.
+    setError(null);
   };
 
   const handleSubmit = async () => {
     if (!canSubmit) return;
-    await createLink.mutateAsync({
-      sourceEntryId: entryId,
-      targetEntryId: selectedEntry.id,
-      label: label.trim() || null,
-      linkType: linkType || null,
-      direction,
-    });
+    // #29: mutateAsync rejects on any failure, and without this catch the throw
+    // aborted before reset/setOpen/onLinkCreated — leaving the popover exactly
+    // as it was with nothing rendered, which reads as a dead button. Keep the
+    // popover open and the user's selection intact so retry is one click, and
+    // mirror CreateLinkPopover's inline-error treatment rather than inventing a
+    // second convention for the same failure.
+    try {
+      setError(null);
+      await createLink.mutateAsync({
+        sourceEntryId: entryId,
+        targetEntryId: selectedEntry.id,
+        label: label.trim() || null,
+        linkType: linkType || null,
+        direction,
+      });
+    } catch (err) {
+      setError(err);
+      return;
+    }
     reset();
     setOpen(false);
     onLinkCreated();
@@ -169,6 +185,12 @@ export function LinkEditor({ universeId, entryId, onLinkCreated, children }: Pro
                 placeholder="e.g. sworn shield since the Sundering"
               />
             </div>
+
+            {error != null && (
+              <p className="text-xs text-red-500">
+                Couldn&apos;t create link. Try again.
+              </p>
+            )}
 
             {/* Actions */}
             <div className="flex justify-end gap-2 pt-1">

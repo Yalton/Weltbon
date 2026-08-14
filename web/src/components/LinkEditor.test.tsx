@@ -38,8 +38,11 @@ const RELATIONS = [
   { label: 'allies of', count: 9 },
 ];
 
-function setupApiMock(opts: { onCreate?: (body: unknown) => void } = {}) {
+function setupApiMock(opts: { onCreate?: (body: unknown) => void; failCreate?: boolean } = {}) {
   vi.mocked(api).mockImplementation(async (path: string, init?: RequestInit) => {
+    if (opts.failCreate && path.includes('/links') && init?.method === 'POST') {
+      throw new Error('Bad Request');
+    }
     if (path.includes('/entries') && (!init || (init.method ?? 'GET') === 'GET')) {
       return ENTRIES as unknown as never;
     }
@@ -128,6 +131,28 @@ describe('LinkEditor', () => {
       expect(createdBody).not.toBeNull();
     });
     expect(createdBody!.label).toBe('created by');
+  });
+
+  // #29 regression. Every test above asserts a SUCCESSFUL create, so a rejected
+  // mutation was never exercised — and handleSubmit had no try/catch, so the
+  // throw aborted before setOpen(false) and the popover simply sat there. That
+  // is why the #28 400 presented to users as a dead button rather than an error.
+  it('surfaces an error and keeps the popover open when the create fails', async () => {
+    setupApiMock({ failCreate: true });
+    const user = userEvent.setup();
+    const { onLinkCreated } = renderEditor();
+
+    await user.click(screen.getByRole('button', { name: /open link editor/i }));
+    const search = await screen.findByPlaceholderText(/search entries/i);
+    await user.type(search, 'Aragorn');
+    await user.click(await screen.findByText('Aragorn'));
+    await user.click(screen.getByRole('button', { name: /^add link$/i }));
+
+    // The user must be told the create failed.
+    expect(await screen.findByText(/couldn't create link/i)).toBeInTheDocument();
+    // And must not lose the target they already picked, so retry is one click.
+    expect(screen.getByRole('button', { name: /^add link$/i })).toBeInTheDocument();
+    expect(onLinkCreated).not.toHaveBeenCalled();
   });
 
   it('free-entry: typing a novel label + Add link still submits the typed string', async () => {

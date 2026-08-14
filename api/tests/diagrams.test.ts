@@ -264,6 +264,35 @@ describe('diagram routes (DIAGRAM-01 + DIAGRAM-02)', () => {
 
   // ─── DIAGRAM-02: edge write-through ───────────────────────────────────────
 
+  // Same defect family as #28, found while fixing it. DrawEdgePopover gates its
+  // submit on `pending` alone, not on a non-empty label, and DiagramEditor sends
+  // `opts.label || null` — so drawing an unlabeled edge posts an explicit null
+  // into a schema that required a string. Every existing edge test passes a
+  // label, which is why this was never caught.
+  it('POST edge accepts an explicit null label (unlabeled edge)', async () => {
+    const { hdrs } = await userWithToken('i-null@test.com');
+    const universe = await createUniverse(hdrs);
+    const entryA = await createEntry(universe.id, hdrs, { title: 'Father' });
+    const entryB = await createEntry(universe.id, hdrs, { title: 'Son' });
+    const diagram = await createDiagram(universe.id, hdrs);
+
+    const res = await req('POST', `/api/universes/${universe.id}/diagrams/${diagram.id}/edges`, {
+      headers: hdrs,
+      body: {
+        sourceEntryId: entryA.id,
+        targetEntryId: entryB.id,
+        label: null,
+        lineStyle: 'solid',
+        color: '#6366f1',
+      },
+    });
+
+    expect(res.status).toBe(201);
+    const edge = await json(res);
+    expect(edge.label).toBeNull();
+    expect(edge.diagramId).toBe(diagram.id);
+  });
+
   it('POST edge creates a links row with diagramId, lineStyle, and color', async () => {
     const { hdrs } = await userWithToken('i@test.com');
     const universe = await createUniverse(hdrs);
