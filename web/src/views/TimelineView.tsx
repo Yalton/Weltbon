@@ -27,6 +27,7 @@ import {
   useShareCalendar,
   useShareTimelineWindow,
 } from '../contexts/ShareModeContext';
+import { Loading } from '../components/ui/Loading';
 
 type ToastState = { message: string; variant: 'success' | 'error' } | null;
 
@@ -269,7 +270,7 @@ export function TimelineView() {
   useEffect(() => removeDragKeydown, [removeDragKeydown]);
 
   if (windowLoading || pinsLoading) {
-    return <p className="p-6 text-sm text-neutral-500">Loading…</p>;
+    return <Loading />;
   }
 
   // First-visit gate (D-02): no window persisted → mount the configure-range

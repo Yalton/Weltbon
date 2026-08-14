@@ -6,6 +6,7 @@ import {
 import { PinEditor } from './PinEditor';
 import { ConfirmDialog } from './ConfirmDialog';
 import { PrecisionBadge, precisionDotClass } from './PrecisionBadge';
+import { Loading } from './ui/Loading';
 
 // Re-export for any downstream consumer that still imports these from
 // TimelinePinSection (no in-tree consumers today, but keeping the public
@@ -48,7 +49,7 @@ export function TimelinePinSection({ universeId, entryId }: Props) {
       </div>
 
       {isLoading ? (
-        <p className="mt-3 text-sm text-neutral-500">Loading…</p>
+        <Loading />
       ) : currentPin ? (
         <div className="mt-3 flex items-center justify-between rounded-md border border-neutral-200 dark:border-neutral-800 px-3 py-2">
           <span className="flex items-center gap-3">

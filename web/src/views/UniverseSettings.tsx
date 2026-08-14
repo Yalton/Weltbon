@@ -14,6 +14,7 @@ import { useLlmKeys } from '../hooks/useLlmKeys';
 import { useListModels } from '../hooks/useAudits';
 import { RECOMMENDED_CHEAP_MODEL } from '../data/pricing';
 import type { ModelListingWithCoverage } from '../types/audit';
+import { Loading } from '../components/ui/Loading';
 
 /**
  * Phase 26 — UniverseSettings tabbed layout (D-09).
@@ -120,7 +121,7 @@ export function UniverseSettings() {
     }
   }, [auditProvider, auditModel, modelOptions]);
 
-  if (isLoading || !data) return <p className="text-sm text-neutral-500">Loading...</p>;
+  if (isLoading || !data) return <Loading />;
 
   const activeTab = searchParams.get('tab') ?? 'general';
   const safeTab = TABS.some((t) => t.id === activeTab) ? activeTab : 'general';

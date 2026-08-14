@@ -25,6 +25,7 @@ import { CategorySidebarItem } from './CategorySidebarItem';
 import { CategoryManageDialog } from './CategoryManageDialog';
 import { ConfirmDialog } from './ConfirmDialog';
 import { computeNewCategoryOrder } from './categoryReorder';
+import { Loading } from './ui/Loading';
 
 function NavIcon({ d, circle }: { d?: string; circle?: boolean }) {
   return (
@@ -196,7 +197,7 @@ export function Sidebar({ universeId }: { universeId: string }) {
         </div>
 
         {isLoading && (
-          <p className="text-sm mt-2 text-ink-muted">Loading…</p>
+          <Loading />
         )}
         {error && (
           <p className="text-sm mt-2 text-rose-400">Failed to load</p>

@@ -2,6 +2,7 @@ import { useEffect, useState } from 'react';
 import { Navigate, Outlet } from 'react-router-dom';
 import { useAuthStore } from '../store/auth';
 import { api, setAccessToken, attemptRefresh } from '../api/client';
+import { Loading } from './ui/Loading';
 
 /**
  * If we have a session in memory, render children.
@@ -59,7 +60,7 @@ export function ProtectedRoute() {
   }, [user, setSession]);
 
   if (state === 'checking') {
-    return <div className="px-6 py-8 text-sm text-neutral-500">Loading...</div>;
+    return <Loading fullPage />;
   }
   if (state === 'anonymous') {
     return <Navigate to="/login" replace />;

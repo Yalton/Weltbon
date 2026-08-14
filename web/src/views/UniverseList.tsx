@@ -23,6 +23,7 @@ import {
   menuItemClasses,
   menuItemDangerClasses,
 } from '../components/ui/overlay';
+import { Loading } from '../components/ui/Loading';
 
 const schema = z.object({ name: z.string().min(1).max(80) });
 type FormValues = z.infer<typeof schema>;
@@ -59,7 +60,7 @@ export function UniverseList() {
     }
   };
 
-  if (isLoading) return <p className="text-sm text-ink-muted">Loading...</p>;
+  if (isLoading) return <Loading />;
 
   const isEmpty = !universes || universes.length === 0;
 

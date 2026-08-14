@@ -13,6 +13,7 @@ import { TemplatePicker } from '../components/TemplatePicker';
 import { Toast } from '../components/Toast';
 import { AuditCostDialog } from '../components/AuditCostDialog';
 import { useShareMode } from '../contexts/ShareModeContext';
+import { Loading } from '../components/ui/Loading';
 
 type ToastState = { message: string; variant: 'success' | 'error' } | null;
 
@@ -128,7 +129,7 @@ export function EntryList() {
       </div>
 
       {isLoading ? (
-        <p className="text-sm text-neutral-500">Loading...</p>
+        <Loading />
       ) : isEmpty && hasActiveFilters ? (
         <EmptyState
           title="Nothing matches these filters"

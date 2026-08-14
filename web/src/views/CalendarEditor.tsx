@@ -6,6 +6,7 @@ import type { Calendar } from '../lib/calendarFormat';
 import { parsePosition } from '../lib/parsePosition';
 import { EmptyState } from '../components/EmptyState';
 import { ConfirmDialog } from '../components/ConfirmDialog';
+import { Loading } from '../components/ui/Loading';
 
 // ─── LOCKED copy strings (all literals asserted by tests) ──────────────────
 const COPY = {
@@ -338,7 +339,7 @@ export function CalendarEditor() {
         : '';
 
   if (isLoading) {
-    return <p className="text-sm text-neutral-500">Loading...</p>;
+    return <Loading />;
   }
 
   // ── Empty state (no calendar, not editing) ──────────────────────────────

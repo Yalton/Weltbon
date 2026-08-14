@@ -23,6 +23,7 @@ import { ConfirmDialog } from '../components/ConfirmDialog';
 import { EmptyState } from '../components/EmptyState';
 import { Toast } from '../components/Toast';
 import { AuditCompletionBanner } from '../components/AuditCompletionBanner';
+import { Loading } from '../components/ui/Loading';
 
 /**
  * UUID v4-shape regex (Phase 26 D-10). Belt-and-suspenders alongside the
@@ -309,7 +310,7 @@ export function IssuesView() {
       {/* List */}
       <div className="mt-6">
         {isLoading ? (
-          <p className="text-sm text-neutral-500">Loading…</p>
+          <Loading />
         ) : !displayedIssues || displayedIssues.length === 0 ? (
           safeAuditRunId ? (
             // Phase 26 D-10: zero-rows-when-filtered branch with Clear filter CTA.

@@ -73,6 +73,11 @@
   --animate-dialog-out:  dialog-out var(--motion-dialog-exit-duration) var(--motion-ease-in)  both;
   --animate-popover-in:  popover-in  var(--motion-popover-duration) var(--motion-ease-out) both;
   --animate-popover-out: popover-out var(--motion-popover-duration) var(--motion-ease-in)  both;
+  /* Loading indicator (#32). Linear, not eased: a spinner that accelerates and
+     decelerates every cycle reads as stuttering. The reduced-motion block below
+     parks it after one iteration, which is why the ring is drawn as a complete
+     circle with a single accent quadrant — stopped, it still looks deliberate. */
+  --animate-spinner: spinner 0.8s linear infinite;
 }
 
 @variant dark (&:where(.dark, .dark *));
@@ -177,6 +182,8 @@ body {
   from { opacity: 1; transform: translateY(0); }
   to   { opacity: 0; transform: translateY(calc(-1 * var(--motion-translate-popover))); }
 }
+
+@keyframes spinner { to { transform: rotate(360deg); } }
 
 @media (prefers-reduced-motion: reduce) {
   *, *::before, *::after {

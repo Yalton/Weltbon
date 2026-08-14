@@ -9,6 +9,7 @@ import { FilterChip } from '../components/FilterChip';
 import { AddEventDialog } from '../components/AddEventDialog';
 import { useShareMode } from '../contexts/ShareModeContext';
 import { parsePosition } from '../lib/parsePosition';
+import { Loading } from '../components/ui/Loading';
 
 // Raw position formatter matching TimelineCanvas (CALENDAR-03 fallback).
 const POSITION_FORMAT = new Intl.NumberFormat('en-US', { maximumFractionDigits: 2 });
@@ -206,7 +207,7 @@ export function EventsView() {
 
       {/* Content */}
       {isLoading ? (
-        <p className="text-sm text-neutral-500">Loading...</p>
+        <Loading />
       ) : isEmpty && hasActiveFilters ? (
         <EmptyState
           title="No events match"

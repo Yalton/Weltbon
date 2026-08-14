@@ -5,6 +5,7 @@ import type { Entry } from '../hooks/useEntries';
 import type { TimelinePin } from '../hooks/useTimelinePins';
 import { EntryIdentity } from './EntryIdentity';
 import { TypeBadge } from './TypeBadge';
+import { Loading } from './ui/Loading';
 
 /**
  * TimelineEntryPanel — the right-hand list of every universe entry in the
@@ -145,7 +146,7 @@ export function TimelineEntryPanel({ universeId, pins }: TimelineEntryPanelProps
       />
 
       {isLoading ? (
-        <p className="text-sm text-neutral-500">Loading…</p>
+        <Loading />
       ) : list.length === 0 ? (
         filtersActive ? (
           <div className="py-6 text-center">

@@ -18,6 +18,7 @@ import { useShareMode, useShareCalendar } from '../contexts/ShareModeContext';
 import { resolveMedallion } from '../lib/medallion';
 import { EntryHero } from '../components/EntryHero';
 import { Panel } from '../components/ui/Panel';
+import { Loading } from '../components/ui/Loading';
 
 export function EntryDetail() {
   // Phase 29 — share-mode awareness. In share mode the route is
@@ -143,7 +144,7 @@ export function EntryDetail() {
     return map;
   }, [linkedLanguageEntryId, langScopedWords, universeWords]);
 
-  if (isLoading || !entry) return <p className="text-sm text-neutral-500">Loading...</p>;
+  if (isLoading || !entry) return <Loading />;
 
   // Resolve the pin for THIS entry (may be undefined if not pinned).
   const entryPin = pins?.find((p) => p.entryId === entryId);

@@ -21,6 +21,7 @@ import { resolveMedallion } from '../lib/medallion';
 import { EntryHero } from '../components/EntryHero';
 import type { Entry } from '../hooks/useEntries';
 import type { EntryTemplate } from '../lib/entryTemplates';
+import { Loading } from '../components/ui/Loading';
 
 const entryFormSchema = z.object({
   title: z.string().min(1, 'Title is required').max(200),
@@ -181,7 +182,7 @@ export function EntryEditor() {
   }, [isEditMode, existingEntry, reset, location.state, universe?.entryTypes]);
 
   if (isEditMode && entryLoading) {
-    return <p className="text-sm text-neutral-500">Loading...</p>;
+    return <Loading />;
   }
 
   // Phase 48 XREF-05 (D-10) — commit the pending payload after confirm.

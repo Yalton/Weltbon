@@ -1,5 +1,6 @@
 import { NavLink } from 'react-router-dom';
 import { useCategories } from '../hooks/useCategories';
+import { Loading } from './ui/Loading';
 
 /**
  * Read-only share-mode sidebar mirroring `Sidebar.tsx` structure without any
@@ -93,7 +94,7 @@ export function ShareSidebar({ token }: { token: string }) {
         <h3 className="text-xs uppercase tracking-wide text-neutral-500">Categories</h3>
 
         {isLoading && (
-          <p className="text-sm mt-2 text-neutral-500">Loading…</p>
+          <Loading />
         )}
         {error && (
           <p className="text-sm mt-2 text-red-500">Failed to load</p>
