@@ -112,6 +112,11 @@ export function TimelineView() {
   const [toast, setToast] = useState<ToastState>(null);
   const [popoverState, setPopoverState] = useState<PopoverState>(null);
   const [rangeDialogOpen, setRangeDialogOpen] = useState(false);
+  // Separate from rangeDialogOpen (which the toolbar button drives and which
+  // therefore starts closed): the first visit opens this one automatically to
+  // guide the user into configuring a range. It is real state rather than a
+  // hardcoded `open` so the dialog can actually be dismissed — see #30.
+  const [firstVisitDialogOpen, setFirstVisitDialogOpen] = useState(true);
   const [isDndDragActive, setIsDndDragActive] = useState(false);
 
   const containerRef = useRef<HTMLDivElement>(null);
@@ -286,13 +291,29 @@ export function TimelineView() {
         </div>
       );
     }
+    // The empty state renders unconditionally, sitting behind the dialog's
+    // overlay while it is open. That way dismissing reveals somewhere usable
+    // instead of a blank screen, and the canvas stays gated until a range
+    // exists — which was the point of the gate, without trapping anyone in it.
     return (
       <div ref={containerRef} className="flex h-full flex-col">
+        <div className="max-w-3xl mx-auto p-6">
+          <h1 className="text-2xl font-semibold tracking-tight">Timeline</h1>
+          <p className="mt-4 text-sm text-neutral-600 dark:text-neutral-400">
+            This universe doesn&rsquo;t have a timeline range yet. Set a start and
+            end position to start placing events on it.
+          </p>
+          <button
+            type="button"
+            onClick={() => setFirstVisitDialogOpen(true)}
+            className="mt-4 rounded-md bg-[color:var(--color-accent)] text-white text-sm px-3 py-1.5"
+          >
+            Configure timeline
+          </button>
+        </div>
         <TimelineRangeDialog
-          open
-          onOpenChange={() => {
-            /* first-visit gate: stay open until a window is saved */
-          }}
+          open={firstVisitDialogOpen}
+          onOpenChange={setFirstVisitDialogOpen}
           universeId={universeId}
         />
       </div>

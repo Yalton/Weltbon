@@ -11,7 +11,16 @@ interface Props {
 
 type FieldError = 'start' | 'end' | 'order' | 'save' | null;
 
-const INVALID_NUMBER_COPY = 'Enter a valid number (e.g. 4.35e17 or -10000).';
+/**
+ * Opening range when a universe has none (#31). Deliberately unremarkable: a
+ * 1000-unit span reads as a plausible era in most settings, and both values are
+ * editable before saving. Not derived from data because there is none to derive
+ * from at this point — entries have no date field and the timeline has no pins.
+ */
+const DEFAULT_START = 0;
+const DEFAULT_END = 1000;
+
+const INVALID_NUMBER_COPY = 'Enter a valid number (e.g. -10000 or 4.35e17).';
 const ORDER_COPY = 'Start must be less than end.';
 const SAVE_FAILED_COPY = "Couldn't save range. Try again.";
 
@@ -23,11 +32,13 @@ const SAVE_FAILED_COPY = "Couldn't save range. Try again.";
  * closes via `onOpenChange(false)`. On parse / order / mutation failure,
  * shows inline error per UI-SPEC §Copywriting.
  *
- * Copy strings are locked verbatim from UI-SPEC §Copywriting:
+ * Copy strings below came from UI-SPEC §Copywriting, which lived in the retired
+ * project notes tree and no longer exists in the repo — so "locked" now means
+ * "asserted by the tests beside this file", not "governed by a document".
  *   - Title: "Configure timeline range"
- *   - Body:  "Set the start and end positions for this universe's timeline.
- *            You can use scientific notation (e.g. 4.35e17) or plain numbers
- *            (e.g. -10000)."
+ *   - Body:  leads with plain numbers and offers scientific notation as an
+ *            accepted format. It previously led with `4.35e17`, which read as a
+ *            recommended end year rather than a notation example (#31).
  *   - Primary CTA: "Save range"
  *   - Cancel:      "Keep current range"
  *   - Errors: see constants above.
@@ -47,8 +58,12 @@ export function TimelineRangeDialog({ open, onOpenChange, universeId }: Props) {
   // Reset form state on (re)open from the latest persisted window.
   useEffect(() => {
     if (open) {
-      setStartInput(persistedWindow ? String(persistedWindow.start) : '');
-      setEndInput(persistedWindow ? String(persistedWindow.end) : '');
+      // Prefilled rather than blank on a first visit (#31). There is nothing to
+      // derive a range from — entries carry no date and no pins exist yet — so a
+      // generic span the user can accept or edit beats an empty field behind a
+      // placeholder that reads as a recommendation.
+      setStartInput(persistedWindow ? String(persistedWindow.start) : String(DEFAULT_START));
+      setEndInput(persistedWindow ? String(persistedWindow.end) : String(DEFAULT_END));
       setErrorField(null);
       setErrorCopy(null);
     }
@@ -99,9 +114,9 @@ export function TimelineRangeDialog({ open, onOpenChange, universeId }: Props) {
             Configure timeline range
           </Dialog.Title>
           <Dialog.Description className="mt-2 text-sm text-neutral-600 dark:text-neutral-400">
-            Set the start and end positions for this universe&rsquo;s timeline. You
-            can use scientific notation (e.g. 4.35e17) or plain numbers (e.g.
-            -10000).
+            Set the start and end positions for this universe&rsquo;s timeline.
+            Plain numbers work (e.g. -10000), and scientific notation is accepted
+            for very large values (e.g. 4.35e17).
           </Dialog.Description>
 
           <form onSubmit={onSubmit} className="mt-4 space-y-3">
@@ -139,7 +154,7 @@ export function TimelineRangeDialog({ open, onOpenChange, universeId }: Props) {
                 type="text"
                 value={endInput}
                 onChange={(e) => setEndInput(e.target.value)}
-                placeholder="e.g. 4.35e17"
+                placeholder="e.g. 3000"
                 className="w-full rounded-md border border-neutral-300 dark:border-neutral-700 bg-transparent px-3 py-2 text-sm font-mono focus:outline-none focus:ring-2 focus:ring-[color:var(--color-accent)]"
               />
               {liveEnd.ok && endInput.trim() !== '' && (

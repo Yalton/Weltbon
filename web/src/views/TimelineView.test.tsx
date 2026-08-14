@@ -99,8 +99,18 @@ vi.mock('../components/TimelineEntryPanel', () => ({
 }));
 
 vi.mock('../components/TimelineRangeDialog', () => ({
-  TimelineRangeDialog: (props: { open: boolean }) =>
-    props.open ? <div data-testid="range-dialog-stub">Configure timeline range</div> : null,
+  // The stub exposes onOpenChange so a test can dismiss the dialog the way
+  // Escape, an outside click, and "Keep current range" all do — Radix routes
+  // every one of them through this single callback.
+  TimelineRangeDialog: (props: { open: boolean; onOpenChange: (o: boolean) => void }) =>
+    props.open ? (
+      <div data-testid="range-dialog-stub">
+        Configure timeline range
+        <button type="button" onClick={() => props.onOpenChange(false)}>
+          Keep current range
+        </button>
+      </div>
+    ) : null,
 }));
 
 vi.mock('../components/PinPopover', () => ({
@@ -147,6 +157,35 @@ describe('TimelineView orchestrator', () => {
     expect(screen.getByTestId('range-dialog-stub')).toBeInTheDocument();
     expect(screen.queryByTestId('timeline-canvas-stub')).not.toBeInTheDocument();
     expect(screen.queryByTestId('timeline-entry-panel-stub')).not.toBeInTheDocument();
+  });
+
+  // #30: the first-visit gate passed a no-op onOpenChange, and because Radix
+  // routes Escape, outside-click, and Dialog.Close through that one callback,
+  // all three were dead at once — the user could not leave the modal without
+  // configuring a range.
+  it('first visit: dismissing the range dialog leaves an escapable empty state', async () => {
+    windowState.window = null;
+    const user = userEvent.setup();
+    renderAt();
+
+    expect(screen.getByTestId('range-dialog-stub')).toBeInTheDocument();
+    await user.click(screen.getByRole('button', { name: /keep current range/i }));
+
+    expect(screen.queryByTestId('range-dialog-stub')).not.toBeInTheDocument();
+    // Dismissing must land somewhere usable, not a blank screen.
+    expect(
+      screen.getByRole('button', { name: /configure timeline/i }),
+    ).toBeInTheDocument();
+  });
+
+  it('first visit: the empty state can reopen the dialog', async () => {
+    windowState.window = null;
+    const user = userEvent.setup();
+    renderAt();
+
+    await user.click(screen.getByRole('button', { name: /keep current range/i }));
+    await user.click(screen.getByRole('button', { name: /configure timeline/i }));
+    expect(screen.getByTestId('range-dialog-stub')).toBeInTheDocument();
   });
 
   it('when window is set → canvas + entry panel are rendered, range dialog is not (initially)', () => {
