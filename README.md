@@ -20,6 +20,7 @@ Weltbon's API, web client, sync contracts, and downloadable desktop app form the
 - [Running Tests](#running-tests)
 - [Contributing](CONTRIBUTING.md)
 - [Security Reports](SECURITY.md)
+- [Release Testing Matrix](docs/release-testing-matrix-v1.md)
 - [License](#license)
 
 ## Tech Stack
