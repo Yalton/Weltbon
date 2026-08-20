@@ -8,7 +8,12 @@ import {
 import { drag } from 'd3-drag';
 import { select } from 'd3-selection';
 import { zoom, zoomIdentity, type ZoomBehavior } from 'd3-zoom';
-import { posToX, xToPos, clampedPosToX } from '../lib/timelineMath';
+import {
+  clampXToCanvas,
+  posToX,
+  xToPos,
+  clampedPosToX,
+} from '../lib/timelineMath';
 import { inferEraSpans, type EraSpan } from '../lib/groupByEra';
 import type { TimelinePin } from '../hooks/useTimelinePins';
 import { formatCalendar, type Calendar } from '../lib/calendarFormat';
@@ -321,7 +326,8 @@ export function TimelineCanvas({
         // transform; re-read it rather than re-deriving it here.
         const el = select(this);
         const cy = /translate\(\s*[-\d.]+\s*,\s*([-\d.]+)/.exec(el.attr('transform') ?? '')?.[1];
-        el.attr('transform', `translate(${evt.x}, ${cy ?? 0})`);
+        const clampedX = clampXToCanvas(evt.x, width);
+        el.attr('transform', `translate(${clampedX}, ${cy ?? 0})`);
       })
       .on('end', (evt, d) => {
         if (cancelledRef.current) {

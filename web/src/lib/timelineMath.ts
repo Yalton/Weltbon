@@ -26,17 +26,29 @@ export const posToX = (
 ): number => ((pos - windowStart) / (windowEnd - windowStart)) * canvasWidth;
 
 /**
+ * Clamp an x-coordinate to the usable horizontal extent of the canvas.
+ * Drag events can continue reporting pointer coordinates after the pointer
+ * leaves the SVG; persisting those raw values is what allowed pins to become
+ * unreachable outside the configured timeline window (#46).
+ */
+export const clampXToCanvas = (x: number, canvasWidth: number): number =>
+  Math.min(canvasWidth, Math.max(0, x));
+
+/**
  * Exact inverse of `posToX` for `x in [0, canvasWidth]`: map a canvas
- * x-coordinate back to a `position` value. Used by drag-end handlers to
- * translate cursor x into the abstract numeric position the user is
- * dropping a pin at.
+ * x-coordinate back to a `position` value. Out-of-canvas x values clamp to
+ * the configured start/end so every drag caller gets the same safe boundary
+ * behavior, including coordinates inverted through a zoom transform.
  */
 export const xToPos = (
   x: number,
   windowStart: number,
   windowEnd: number,
   canvasWidth: number,
-): number => (x / canvasWidth) * (windowEnd - windowStart) + windowStart;
+): number =>
+  (clampXToCanvas(x, canvasWidth) / canvasWidth) *
+    (windowEnd - windowStart) +
+  windowStart;
 
 /**
  * Same mapping as `posToX`, but clamps out-of-window positions to the

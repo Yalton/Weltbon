@@ -47,6 +47,19 @@ describe('xToPos', () => {
     expect(xToPos(400, 0, 100, 800)).toBeCloseTo(50, 6);
   });
 
+  it('clamps x left of the canvas to the window start', () => {
+    expect(xToPos(-250, 0, 100, 800)).toBe(0);
+  });
+
+  it('clamps x right of the canvas to the window end', () => {
+    expect(xToPos(1200, 0, 100, 800)).toBe(100);
+  });
+
+  it('clamps against a timeline window with negative positions', () => {
+    expect(xToPos(-1, -10000, 26000, 800)).toBe(-10000);
+    expect(xToPos(801, -10000, 26000, 800)).toBe(26000);
+  });
+
   it('is the exact inverse of posToX (round-trip) — basic window', () => {
     const start = 0;
     const end = 100;
