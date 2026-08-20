@@ -5,9 +5,12 @@ import { BATCH_LIMIT_FILES, BATCH_LIMIT_MB } from '../../lib/ingestLimits';
  * Drop-zone widget for the Phase 12 import flow.
  *
  * Two responsibilities:
- *   1. Render a click-to-browse / drag-and-drop target with the locked color
- *      states from UI-SPEC §3.5 / §6.4.
- *   2. Feature-detect `webkitdirectory` and apply it via DOM ref API (NOT
+ *   1. Render a drag-and-drop target plus explicit Markdown-file, folder, and
+ *      ZIP pickers. Keeping these as separate inputs is important: applying
+ *      `webkitdirectory` to the ordinary file picker makes supported browsers
+ *      refuse standalone files.
+ *   2. Feature-detect `webkitdirectory` and apply it to the folder input via
+ *      DOM ref API (NOT
  *      a JSX prop) per UI-SPEC §13.7. React 18+ warns on unknown DOM
  *      properties; webkitdirectory is non-standard, so setting it after
  *      mount via ref.setAttribute() bypasses React's prop reconciliation
@@ -30,12 +33,14 @@ interface ImportDropZoneProps {
 }
 
 export function ImportDropZone({ onSelect, disabled }: ImportDropZoneProps) {
-  const inputRef = useRef<HTMLInputElement | null>(null);
+  const markdownInputRef = useRef<HTMLInputElement | null>(null);
+  const folderInputRef = useRef<HTMLInputElement | null>(null);
+  const zipInputRef = useRef<HTMLInputElement | null>(null);
   const [dragActive, setDragActive] = useState(false);
   const [folderSupported, setFolderSupported] = useState(false);
 
   useEffect(() => {
-    const input = inputRef.current;
+    const input = folderInputRef.current;
     if (!input) return;
     // Feature-detect: webkitdirectory presence on the prototype chain.
     // Chromium-based browsers (Chrome, Edge, Brave) AND Safari 14.4+ expose
@@ -53,11 +58,6 @@ export function ImportDropZone({ onSelect, disabled }: ImportDropZoneProps) {
     setFolderSupported(supported);
   }, []);
 
-  const handleClick = () => {
-    if (disabled) return;
-    inputRef.current?.click();
-  };
-
   const handleChange = (e: React.ChangeEvent<HTMLInputElement>) => {
     const fileList = e.target.files;
     if (!fileList || fileList.length === 0) return;
@@ -65,7 +65,7 @@ export function ImportDropZone({ onSelect, disabled }: ImportDropZoneProps) {
     // Reset the input so picking the same folder twice in a row still
     // triggers onChange. Without this, change does not fire on identical
     // re-selection (e.g., to retry after an error).
-    if (inputRef.current) inputRef.current.value = '';
+    e.currentTarget.value = '';
   };
 
   const handleDragOver = (e: React.DragEvent<HTMLButtonElement>) => {
@@ -88,12 +88,14 @@ export function ImportDropZone({ onSelect, disabled }: ImportDropZoneProps) {
     <>
       <button
         type="button"
-        onClick={handleClick}
+        onClick={() => {
+          if (!disabled) markdownInputRef.current?.click();
+        }}
         onDragOver={handleDragOver}
         onDragLeave={handleDragLeave}
         onDrop={handleDrop}
         disabled={disabled}
-        aria-label="Drop a folder of Markdown files or a ZIP, or click to browse"
+        aria-label="Drop Markdown files or a ZIP, or choose Markdown files"
         aria-describedby="import-dropzone-helper"
         className={[
           'w-full mt-6 border-2 border-dashed rounded-md p-8 text-center transition-colors cursor-pointer disabled:cursor-not-allowed',
@@ -103,7 +105,7 @@ export function ImportDropZone({ onSelect, disabled }: ImportDropZoneProps) {
         ].join(' ')}
       >
         <p className="text-sm">
-          Drop a folder of .md files or a .zip here, or click to browse.
+          Drop .md files, a folder, or a .zip here.
         </p>
         <p
           id="import-dropzone-helper"
@@ -112,6 +114,32 @@ export function ImportDropZone({ onSelect, disabled }: ImportDropZoneProps) {
           Up to {BATCH_LIMIT_FILES} files · {BATCH_LIMIT_MB} MB compressed.
         </p>
       </button>
+      <div className="mt-3 flex flex-wrap gap-2">
+        <button
+          type="button"
+          onClick={() => markdownInputRef.current?.click()}
+          disabled={disabled}
+          className="px-3 py-1.5 text-sm rounded-md border border-neutral-300 dark:border-neutral-700 disabled:opacity-50"
+        >
+          Choose Markdown files
+        </button>
+        <button
+          type="button"
+          onClick={() => folderInputRef.current?.click()}
+          disabled={disabled || !folderSupported}
+          className="px-3 py-1.5 text-sm rounded-md border border-neutral-300 dark:border-neutral-700 disabled:opacity-50"
+        >
+          Choose folder
+        </button>
+        <button
+          type="button"
+          onClick={() => zipInputRef.current?.click()}
+          disabled={disabled}
+          className="px-3 py-1.5 text-sm rounded-md border border-neutral-300 dark:border-neutral-700 disabled:opacity-50"
+        >
+          Choose ZIP
+        </button>
+      </div>
       {!folderSupported && (
         <p className="mt-2 text-xs text-amber-600 dark:text-amber-400 leading-[1.4]">
           Folder upload works in Chrome, Edge, and Safari 14.4+. In other
@@ -119,10 +147,28 @@ export function ImportDropZone({ onSelect, disabled }: ImportDropZoneProps) {
         </p>
       )}
       <input
-        ref={inputRef}
+        ref={markdownInputRef}
         type="file"
-        accept=".zip,.md,text/markdown"
+        accept=".md,.markdown,text/markdown"
         multiple
+        aria-label="Choose Markdown files"
+        onChange={handleChange}
+        className="hidden"
+      />
+      <input
+        ref={folderInputRef}
+        type="file"
+        accept=".md,.markdown,text/markdown"
+        multiple
+        aria-label="Choose folder"
+        onChange={handleChange}
+        className="hidden"
+      />
+      <input
+        ref={zipInputRef}
+        type="file"
+        accept=".zip,application/zip"
+        aria-label="Choose ZIP"
         onChange={handleChange}
         className="hidden"
       />

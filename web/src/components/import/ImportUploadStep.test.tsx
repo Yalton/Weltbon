@@ -70,11 +70,16 @@ function renderStep(
  * fireEvent.change after defining `files` because userEvent.upload() does
  * not preserve the synthetic webkitRelativePath that we set on the File.
  */
-function selectFiles(container: HTMLElement, files: File[]) {
+function selectFiles(
+  container: HTMLElement,
+  files: File[],
+  picker: 'Choose Markdown files' | 'Choose folder' | 'Choose ZIP' =
+    'Choose Markdown files',
+) {
   const input = container.querySelector(
-    'input[type="file"]',
+    `input[type="file"][aria-label="${picker}"]`,
   ) as HTMLInputElement | null;
-  if (!input) throw new Error('hidden file input not found');
+  if (!input) throw new Error(`${picker} input not found`);
   Object.defineProperty(input, 'files', { value: files, configurable: true });
   fireEvent.change(input);
 }
@@ -115,7 +120,7 @@ describe('ImportUploadStep — idle render and interactive flows', () => {
     ).toBeInTheDocument();
     expect(
       screen.getByText(
-        /upload a folder of markdown files or a zip\. we'll parse each file/i,
+        /upload one or more markdown files, a folder, or a zip\. we'll parse each file/i,
       ),
     ).toBeInTheDocument();
   });
@@ -124,6 +129,35 @@ describe('ImportUploadStep — idle render and interactive flows', () => {
     renderStep();
     const upload = screen.getByRole('button', { name: /upload/i });
     expect(upload).toBeDisabled();
+  });
+
+  it('offers separate Markdown file, folder, and ZIP selectors', () => {
+    renderStep();
+
+    expect(
+      screen.getByRole('button', { name: 'Choose Markdown files' }),
+    ).toBeInTheDocument();
+    expect(
+      screen.getByRole('button', { name: 'Choose folder' }),
+    ).toBeInTheDocument();
+    expect(
+      screen.getByRole('button', { name: 'Choose ZIP' }),
+    ).toBeInTheDocument();
+  });
+
+  it('keeps directory selection off the standalone Markdown file input', () => {
+    Object.defineProperty(HTMLInputElement.prototype, 'webkitdirectory', {
+      configurable: true,
+      writable: true,
+      value: false,
+    });
+    renderStep();
+
+    const markdownInput = screen.getByLabelText('Choose Markdown files');
+    const folderInput = screen.getByLabelText('Choose folder');
+    expect(markdownInput).not.toHaveAttribute('webkitdirectory');
+    expect(markdownInput).toHaveAttribute('multiple');
+    expect(folderInput).toHaveAttribute('webkitdirectory');
   });
 
   it('shows the amber fallback notice when webkitdirectory unsupported (jsdom default)', () => {
@@ -160,7 +194,9 @@ describe('ImportUploadStep — idle render and interactive flows', () => {
     ]);
     expect(
       screen.getByRole('alert'),
-    ).toHaveTextContent(/Only \.md files \(in a folder\) or a \.zip are accepted\./i);
+    ).toHaveTextContent(
+      /Only \.md or \.markdown files, folders of Markdown files, or a \.zip are accepted\./i,
+    );
     expect(api).not.toHaveBeenCalled();
   });
 
@@ -194,7 +230,7 @@ describe('ImportUploadStep — idle render and interactive flows', () => {
     const { container, onParsed } = renderStep();
 
     const zip = makeZipFile('vault.zip', 256);
-    selectFiles(container, [zip]);
+    selectFiles(container, [zip], 'Choose ZIP');
     const upload = screen.getByRole('button', { name: /upload/i });
     await userEvent.click(upload);
 
@@ -220,7 +256,7 @@ describe('ImportUploadStep — idle render and interactive flows', () => {
     const f1 = makeMdFile('a.md', 50, 'MyVault/notes/a.md');
     const f2 = makeMdFile('b.md', 50, 'MyVault/notes/b.md');
     const f3 = makeMdFile('c.md', 50, 'MyVault/c.md');
-    selectFiles(container, [f1, f2, f3]);
+    selectFiles(container, [f1, f2, f3], 'Choose folder');
     const upload = screen.getByRole('button', { name: /upload/i });
     await userEvent.click(upload);
 
@@ -245,7 +281,7 @@ describe('ImportUploadStep — idle render and interactive flows', () => {
     vi.mocked(api).mockRejectedValueOnce(new TypeError('Failed to fetch'));
     const { container } = renderStep();
 
-    selectFiles(container, [makeZipFile('vault.zip', 256)]);
+    selectFiles(container, [makeZipFile('vault.zip', 256)], 'Choose ZIP');
     const upload = screen.getByRole('button', { name: /upload/i });
     await userEvent.click(upload);
 
@@ -270,7 +306,7 @@ describe('ImportUploadStep — idle render and interactive flows', () => {
     );
     const { container } = renderStep();
 
-    selectFiles(container, [makeZipFile('vault.zip', 256)]);
+    selectFiles(container, [makeZipFile('vault.zip', 256)], 'Choose ZIP');
     await userEvent.click(screen.getByRole('button', { name: /upload/i }));
 
     await waitFor(() => {
@@ -301,7 +337,7 @@ describe('ImportUploadStep — idle render and interactive flows', () => {
     const onParsed = vi.fn();
     const { container } = renderStep({ onParsed });
 
-    selectFiles(container, [makeZipFile('vault.zip', 256)]);
+    selectFiles(container, [makeZipFile('vault.zip', 256)], 'Choose ZIP');
     await userEvent.click(screen.getByRole('button', { name: /upload/i }));
 
     await waitFor(() => {

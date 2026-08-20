@@ -50,7 +50,7 @@ type UploadState =
     };
 
 const COPY_INVALID_FILE_TYPE =
-  'Only .md files (in a folder) or a .zip are accepted.';
+  'Only .md or .markdown files, folders of Markdown files, or a .zip are accepted.';
 
 function isMarkdown(name: string): boolean {
   const n = name.toLowerCase();
@@ -255,8 +255,8 @@ export function ImportUploadStep({
     <div className="max-w-2xl mx-auto py-12">
       <h1 className="text-2xl font-semibold tracking-tight">Import notes</h1>
       <p className="mt-2 text-sm text-neutral-600 dark:text-neutral-400 leading-[1.5]">
-        Upload a folder of Markdown files or a ZIP. We&apos;ll parse each file
-        and let you review before anything saves.
+        Upload one or more Markdown files, a folder, or a ZIP. We&apos;ll parse
+        each file and let you review before anything saves.
       </p>
 
       {state.step === 'error' && (
