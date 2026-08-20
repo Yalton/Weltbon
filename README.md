@@ -4,6 +4,8 @@ A self-hostable worldbuilding web app: create entries, link them with named rela
 
 **Status:** v1 ready. All 65 v1 requirements implemented across 5 phases. Self-host friendly.
 
+Weltbon's API, web client, sync contracts, and downloadable desktop app form the open-source core. Hosted-production infrastructure and hosted-only operations live behind a one-way private overlay; the public core never depends on them. See [ADR 0001](docs/adr/0001-open-core-and-hosted-boundary.md) and the [open-source migration runbook](docs/open-source-migration.md).
+
 ## Contents
 
 - [Quickstart (Development)](#quickstart-development)
@@ -16,6 +18,9 @@ A self-hostable worldbuilding web app: create entries, link them with named rela
 - [Architecture at a Glance](#architecture-at-a-glance)
 - [Security Posture](#security-posture)
 - [Running Tests](#running-tests)
+- [Contributing](CONTRIBUTING.md)
+- [Security Reports](SECURITY.md)
+- [License](#license)
 
 ## Tech Stack
 
@@ -493,4 +498,4 @@ This is the manual smoke test for OPS-04: the application must refuse to start w
 
 ## License
 
-(To be chosen by the project owner. No license is declared in v1.)
+Weltbon's public core is licensed under the [Mozilla Public License 2.0](LICENSE). Contributions are accepted under the same license with Developer Certificate of Origin sign-off; see [CONTRIBUTING.md](CONTRIBUTING.md).

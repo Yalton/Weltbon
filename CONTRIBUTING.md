@@ -1,5 +1,37 @@
 # Contributing to Weltbon
 
+Weltbon's public core is licensed under the Mozilla Public License 2.0. By contributing, you agree that your contribution is licensed under the same terms and certify it under the [Developer Certificate of Origin 1.1](https://developercertificate.org/).
+
+Add a sign-off to every commit:
+
+```bash
+git commit --signoff
+```
+
+The sign-off records `Signed-off-by: Name <email>` and certifies that you have the right to submit the work. It is not a copyright assignment.
+
+## Public/private boundary
+
+Changes to the web app, API, desktop app, database schema and migrations, sync protocol, import/export formats, and general self-hosting behavior belong in this repository. Do not submit production credentials, customer data, private infrastructure, billing configuration, monitoring destinations, or incident evidence.
+
+Public packages must install, build, and test without private repositories or secrets. New extension points must use documented configuration or versioned interfaces; public code may not import the private hosted-production overlay. See [ADR 0001](docs/adr/0001-open-core-and-hosted-boundary.md).
+
+## Before opening a pull request
+
+Install with the locked dependency graph and run the checks affected by your change:
+
+```bash
+pnpm install --frozen-lockfile
+pnpm --filter api test
+pnpm --filter web exec vitest run
+pnpm --filter web build
+pnpm --filter weltbon-desktop test
+```
+
+API integration tests additionally require PostgreSQL; follow the root README. Keep migrations and public protocol/schema changes backward-compatible or document the required version break and migration.
+
+Security reports do not belong in a pull request or public issue. Follow [SECURITY.md](SECURITY.md).
+
 ## Adding new authenticated API routes
 
 Any new authenticated route MUST mount via the `requireAuth` middleware (`api/src/middleware/auth.ts`).
