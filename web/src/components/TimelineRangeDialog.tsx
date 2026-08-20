@@ -110,6 +110,14 @@ export function TimelineRangeDialog({ open, onOpenChange, universeId }: Props) {
       <Dialog.Portal>
         <Dialog.Overlay className="fixed inset-0 bg-black/50 z-40 data-[state=open]:animate-overlay-in data-[state=closed]:animate-overlay-out" />
         <Dialog.Content className="fixed left-1/2 top-1/2 -translate-x-1/2 -translate-y-1/2 w-full max-w-md bg-white dark:bg-neutral-900 border border-neutral-200 dark:border-neutral-800 rounded-md p-6 shadow-lg z-50 data-[state=open]:animate-dialog-in data-[state=closed]:animate-dialog-out focus:outline-none">
+          <Dialog.Close
+            type="button"
+            aria-label="Close timeline settings"
+            title="Close without saving"
+            className="absolute right-3 top-3 inline-flex h-8 w-8 items-center justify-center rounded-md text-xl leading-none text-neutral-600 hover:bg-neutral-100 hover:text-neutral-950 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-[color:var(--color-accent)] dark:text-neutral-300 dark:hover:bg-neutral-800 dark:hover:text-white"
+          >
+            <span aria-hidden="true">×</span>
+          </Dialog.Close>
           <Dialog.Title className="text-lg font-semibold">
             Configure timeline range
           </Dialog.Title>

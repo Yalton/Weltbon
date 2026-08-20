@@ -42,6 +42,37 @@ describe('TimelineRangeDialog', () => {
     expect(screen.getByText('Configure timeline range')).toBeInTheDocument();
   });
 
+  it('renders a conventional close control that dismisses without saving', async () => {
+    const onOpenChange = vi.fn();
+    const user = userEvent.setup();
+    renderDialog({ onOpenChange });
+
+    await user.clear(screen.getByLabelText(/start position/i));
+    await user.type(screen.getByLabelText(/start position/i), '42');
+    const close = screen.getByRole('button', {
+      name: 'Close timeline settings',
+    });
+    expect(close).toHaveTextContent('×');
+    expect(close).toHaveAttribute('title', 'Close without saving');
+    await user.click(close);
+
+    expect(onOpenChange).toHaveBeenCalledWith(false);
+    expect(setWindow).not.toHaveBeenCalled();
+  });
+
+  it('Escape dismisses without saving', async () => {
+    const onOpenChange = vi.fn();
+    const user = userEvent.setup();
+    renderDialog({ onOpenChange });
+
+    await user.clear(screen.getByLabelText(/end position/i));
+    await user.type(screen.getByLabelText(/end position/i), '2000');
+    await user.keyboard('{Escape}');
+
+    expect(onOpenChange).toHaveBeenCalledWith(false);
+    expect(setWindow).not.toHaveBeenCalled();
+  });
+
   // #31: the fields used to open blank behind a `4.35e17` placeholder, which
   // read as a recommended end year rather than a notation example. With no
   // persisted window there is nothing to derive a range from — entries carry no
