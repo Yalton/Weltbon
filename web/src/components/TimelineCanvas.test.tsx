@@ -1,5 +1,5 @@
 import { afterEach, describe, it, expect, vi } from 'vitest';
-import { render } from '@testing-library/react';
+import { fireEvent, render, waitFor } from '@testing-library/react';
 import { select } from 'd3-selection';
 import { TimelineCanvas, type TimelineCanvasProps } from './TimelineCanvas';
 import type { TimelinePin } from '../hooks/useTimelinePins';
@@ -83,15 +83,16 @@ describe('TimelineCanvas', () => {
     expect(svg?.getAttribute('aria-label')).toBe('Timeline canvas');
   });
 
-  it('renders both era-layer and pin-layer <g> children in document order', () => {
+  it('renders era, axis, and pin layers in document order', () => {
     const { container } = render(
       <TimelineCanvas {...DEFAULT_PROPS} pins={[]} />,
     );
     const svg = container.querySelector('[data-testid="timeline-canvas"]') as SVGSVGElement;
     const groups = Array.from(svg.querySelectorAll(':scope > g'));
-    // era-layer FIRST (behind), pin-layer SECOND (in front).
+    // Era shading stays behind the fixed axis; pins remain the foreground.
     expect(groups[0]?.getAttribute('class')).toMatch(/era-layer/);
-    expect(groups[1]?.getAttribute('class')).toMatch(/pin-layer/);
+    expect(groups[1]?.getAttribute('class')).toMatch(/axis-layer/);
+    expect(groups[2]?.getAttribute('class')).toMatch(/pin-layer/);
     expect(container.querySelector('[data-testid="era-layer"]')).toBeTruthy();
     expect(container.querySelector('[data-testid="pin-layer"]')).toBeTruthy();
   });
@@ -205,6 +206,141 @@ describe('TimelineCanvas', () => {
     );
     const baseline = container.querySelector('[data-testid="pin-layer"] [data-testid="baseline"]');
     expect(baseline).toBeTruthy();
+  });
+
+  it('renders a labeled timeline axis and visible-range readout', () => {
+    const { container } = render(
+      <TimelineCanvas {...DEFAULT_PROPS} pins={[]} />,
+    );
+
+    const axis = container.querySelector('[data-testid="timeline-axis"]');
+    expect(axis).toBeTruthy();
+    expect(axis?.querySelectorAll('[data-axis-tick]').length).toBeGreaterThan(1);
+    expect(
+      container.querySelector('[data-testid="timeline-visible-range"]')
+        ?.textContent,
+    ).toMatch(/0.*1,000/);
+  });
+
+  it('uses readable round-number ticks instead of arbitrary subdivisions', () => {
+    const { container } = renderCanvas({
+      pins: [],
+      window: { start: 3, end: 987 },
+      width: 800,
+    });
+
+    const values = Array.from(
+      container.querySelectorAll('[data-axis-tick]'),
+      (element) => Number(element.getAttribute('data-axis-tick')),
+    );
+    expect(values).toEqual([200, 400, 600, 800]);
+  });
+
+  it('uses compact labels for very large numeric ranges', () => {
+    const { container } = renderCanvas({
+      pins: [],
+      window: { start: 0, end: 1_000_000_000_000 },
+      width: 400,
+    });
+
+    const labels = Array.from(
+      container.querySelectorAll('[data-axis-tick] text'),
+      (element) => element.textContent,
+    );
+    expect(labels).toContain('500B');
+  });
+
+  it('reduces tick density on narrow canvases and keeps edge labels visible', () => {
+    const narrow = renderCanvas({ pins: [], width: 240 });
+    const narrowTicks = narrow.container.querySelectorAll('[data-axis-tick]');
+    expect(narrowTicks.length).toBeLessThanOrEqual(3);
+    expect(narrowTicks[0]?.querySelector('text')?.getAttribute('text-anchor')).toBe(
+      'start',
+    );
+    expect(
+      narrowTicks[narrowTicks.length - 1]
+        ?.querySelector('text')
+        ?.getAttribute('text-anchor'),
+    ).toBe('end');
+
+    const wide = renderCanvas({ pins: [], width: 1000 });
+    expect(wide.container.querySelectorAll('[data-axis-tick]').length).toBeGreaterThan(
+      narrowTicks.length,
+    );
+  });
+
+  it('formats negative timeline positions consistently', () => {
+    const { container } = renderCanvas({
+      pins: [],
+      window: { start: -1000, end: 1000 },
+    });
+
+    expect(
+      Array.from(
+        container.querySelectorAll('[data-axis-tick] text'),
+        (element) => element.textContent,
+      ),
+    ).toContain('-1,000');
+    expect(
+      container.querySelector('[data-testid="timeline-visible-range"]')
+        ?.textContent,
+    ).toMatch(/-1,000.*1,000/);
+  });
+
+  it('formats axis ticks and the visible range with a custom calendar', () => {
+    const calendar = {
+      eras: [{ name: 'First Age', abbr: 'FA', startPosition: 0 }],
+      months: [{ name: 'Frostmoon', lengthDays: 100 }],
+      weekdays: [],
+      moons: [],
+      beforeEraAbbr: 'BE',
+    };
+    const { container } = renderCanvas({
+      pins: [],
+      window: { start: 0, end: 400 },
+      width: 400,
+      calendar,
+    });
+
+    expect(container.querySelector('[data-axis-tick] text')?.textContent).toMatch(
+      /Frostmoon.*FA/,
+    );
+    expect(
+      container.querySelector('[data-testid="timeline-visible-range"]')
+        ?.textContent,
+    ).toMatch(/Frostmoon.*FA/);
+  });
+
+  it('updates axis labels and the visible range after zooming', async () => {
+    const { container } = renderCanvas({ pins: [] });
+    const svg = container.querySelector(
+      '[data-testid="timeline-canvas"]',
+    ) as SVGSVGElement;
+    // jsdom does not implement SVGAnimatedLength, which d3-zoom reads when
+    // calculating its default interaction extent.
+    Object.defineProperty(svg, 'width', {
+      configurable: true,
+      value: { baseVal: { value: 800 } },
+    });
+    Object.defineProperty(svg, 'height', {
+      configurable: true,
+      value: { baseVal: { value: 400 } },
+    });
+    const range = container.querySelector(
+      '[data-testid="timeline-visible-range"]',
+    );
+    expect(range?.textContent).toMatch(/0.*1,000/);
+
+    fireEvent.wheel(svg, {
+      clientX: 400,
+      clientY: 200,
+      deltaY: -500,
+      bubbles: true,
+    });
+
+    await waitFor(() => {
+      expect(range?.textContent).not.toMatch(/0.*1,000/);
+    });
   });
 
   describe('Content-Forward Views §6 — pin medallions', () => {

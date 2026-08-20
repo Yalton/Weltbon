@@ -45,6 +45,43 @@ const HOVER_RADIUS = 14;
 const PROXIMITY_THRESHOLD = 110;
 
 const POSITION_FORMAT = new Intl.NumberFormat('en-US', { maximumFractionDigits: 2 });
+const COMPACT_POSITION_FORMAT = new Intl.NumberFormat('en-US', {
+  notation: 'compact',
+  maximumFractionDigits: 2,
+});
+
+function formatAxisPosition(position: number, calendar: Calendar | null): string {
+  const calendarDate = formatCalendar(position, calendar);
+  if (calendarDate) return calendarDate.compact;
+  return Math.abs(position) >= 1_000_000
+    ? COMPACT_POSITION_FORMAT.format(position)
+    : POSITION_FORMAT.format(position);
+}
+
+function niceAxisStep(span: number, targetTickCount: number): number {
+  const rough = Math.abs(span) / Math.max(1, targetTickCount);
+  if (!Number.isFinite(rough) || rough === 0) return 1;
+  const power = 10 ** Math.floor(Math.log10(rough));
+  const fraction = rough / power;
+  const niceFraction = fraction <= 1 ? 1 : fraction <= 2 ? 2 : fraction <= 5 ? 5 : 10;
+  return niceFraction * power;
+}
+
+function axisValues(start: number, end: number, width: number): number[] {
+  const step = niceAxisStep(end - start, Math.max(2, Math.floor(width / 140)));
+  const first = Math.ceil(start / step) * step;
+  const values: number[] = [];
+  for (let value = first; value <= end && values.length < 100; value += step) {
+    values.push(Number(value.toPrecision(12)));
+  }
+  return values;
+}
+
+function axisTextAnchor(x: number, width: number): 'start' | 'middle' | 'end' {
+  if (x < 48) return 'start';
+  if (x > width - 48) return 'end';
+  return 'middle';
+}
 
 export interface TimelineCanvasProps {
   universeId: string;
@@ -189,6 +226,15 @@ export function TimelineCanvas({
   // assert structure synchronously on first paint (jsdom needs this — d3
   // imperative writes happen in a useEffect that's a tick behind render).
   const baselineY = height / 2;
+  const initialAxisTicks = useMemo(() => {
+    return axisValues(timelineWindow.start, timelineWindow.end, width).map((value) => {
+      return {
+        value,
+        x: posToX(value, timelineWindow.start, timelineWindow.end, width),
+        label: formatAxisPosition(value, calendar),
+      };
+    });
+  }, [calendar, timelineWindow.end, timelineWindow.start, width]);
 
   // Stack index per position: pins.length=N at the same position become
   // 0..N-1 stack indices, rendered upward from the baseline.
@@ -252,6 +298,7 @@ export function TimelineCanvas({
     if (!svgRef.current) return;
     const svg = select(svgRef.current);
     const eraLayer = svg.select<SVGGElement>('g.era-layer');
+    const axisLayer = svg.select<SVGGElement>('g.axis-layer');
     const pinLayer = svg.select<SVGGElement>('g.pin-layer');
     // Content-Forward Views §6: the pins are medallion <g> groups now, not bare <circle>s.
     // This selection feeds the d3-DRAG behavior only — the click-to-open path stays React
@@ -263,6 +310,60 @@ export function TimelineCanvas({
     const prefersReducedMotion =
       typeof globalThis.matchMedia === 'function' &&
       globalThis.matchMedia('(prefers-reduced-motion: reduce)').matches;
+
+    const updateAxis = (transform: { x: number; k: number }) => {
+      const configuredSpan = timelineWindow.end - timelineWindow.start;
+      const positionAtCanvasX = (canvasX: number) =>
+        timelineWindow.start + (canvasX / width) * configuredSpan;
+      const visibleStart = positionAtCanvasX(-transform.x / transform.k);
+      const visibleEnd = positionAtCanvasX(
+        (width - transform.x) / transform.k,
+      );
+      const ticks = axisValues(visibleStart, visibleEnd, width).map((value) => ({
+        value,
+        x:
+          transform.x +
+          transform.k *
+            posToX(value, timelineWindow.start, timelineWindow.end, width),
+      }));
+
+      const tickGroups = axisLayer
+        .selectAll<SVGGElement, (typeof ticks)[number]>('g[data-axis-tick]')
+        .data(ticks)
+        .join((enter) => {
+          const group = enter.append('g');
+          group
+            .append('line')
+            .attr('stroke', 'currentColor')
+            .attr('class', 'text-neutral-400 dark:text-neutral-500');
+          group
+            .append('text')
+            .attr('font-size', 10)
+            .attr('fill', 'currentColor')
+            .attr('class', 'text-neutral-600 dark:text-neutral-300');
+          return group;
+        })
+        .attr('data-axis-tick', (datum) => String(datum.value));
+
+      tickGroups
+        .select('line')
+        .attr('x1', (datum) => datum.x)
+        .attr('x2', (datum) => datum.x)
+        .attr('y1', baselineY - 5)
+        .attr('y2', baselineY + 5);
+      tickGroups
+        .select('text')
+        .attr('x', (datum) => datum.x)
+        .attr('y', baselineY + 19)
+        .attr('text-anchor', (datum) => axisTextAnchor(datum.x, width))
+        .text((datum) => formatAxisPosition(datum.value, calendar));
+
+      axisLayer
+        .select<SVGTextElement>('[data-testid="timeline-visible-range"]')
+        .text(
+          `${formatAxisPosition(visibleStart, calendar)} – ${formatAxisPosition(visibleEnd, calendar)}`,
+        );
+    };
 
     // ---------- d3-zoom ----------
     const zoomBehavior: ZoomBehavior<SVGSVGElement, unknown> = zoom<SVGSVGElement, unknown>()
@@ -287,6 +388,7 @@ export function TimelineCanvas({
           ? t.toString()
           : `translate(${t.x * PARALLAX_RATIO}, 0) scale(${t.k})`;
         eraLayer.attr('transform', eraTransform);
+        updateAxis(t);
         // Surface the live transform to the orchestrator (Plan 06) for
         // inverse-coord math on @dnd-kit drop events. Imperative-only —
         // parent writes to a ref, never setState per tick.
@@ -295,6 +397,7 @@ export function TimelineCanvas({
       });
     zoomBehaviorRef.current = zoomBehavior;
     svg.call(zoomBehavior);
+    updateAxis(transformRef.current);
 
     // ---------- d3-drag on pin circles ----------
     let activeKeydownHandler: ((e: KeyboardEvent) => void) | null = null;
@@ -383,7 +486,7 @@ export function TimelineCanvas({
       zoomBehaviorRef.current = null;
     };
     // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [pins, timelineWindow.start, timelineWindow.end, width, height]);
+  }, [pins, timelineWindow.start, timelineWindow.end, width, height, calendar]);
 
   const onPointerMove = (e: ReactPointerEvent<SVGSVGElement>) => {
     if (!svgRef.current) return;
@@ -452,6 +555,43 @@ export function TimelineCanvas({
             </text>
           </g>
         ))}
+      </g>
+      <g className="axis-layer" data-testid="timeline-axis">
+        {initialAxisTicks.map((tick) => (
+          <g key={tick.value} data-axis-tick={String(tick.value)}>
+            <line
+              x1={tick.x}
+              x2={tick.x}
+              y1={baselineY - 5}
+              y2={baselineY + 5}
+              stroke="currentColor"
+              className="text-neutral-400 dark:text-neutral-500"
+            />
+            <text
+              x={tick.x}
+              y={baselineY + 19}
+              textAnchor={axisTextAnchor(tick.x, width)}
+              fontSize={10}
+              fill="currentColor"
+              className="text-neutral-600 dark:text-neutral-300"
+            >
+              {tick.label}
+            </text>
+          </g>
+        ))}
+        <text
+          data-testid="timeline-visible-range"
+          x={width - 8}
+          y={16}
+          textAnchor="end"
+          fontSize={11}
+          fontWeight={600}
+          fill="currentColor"
+          className="text-neutral-600 dark:text-neutral-300"
+        >
+          {formatAxisPosition(timelineWindow.start, calendar)} –{' '}
+          {formatAxisPosition(timelineWindow.end, calendar)}
+        </text>
       </g>
       <g className="pin-layer" data-testid="pin-layer">
         <g className="baseline" data-testid="baseline">
