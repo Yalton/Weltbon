@@ -7,7 +7,7 @@
  * module only ever renders values the API has already scrubbed:
  *
  * 1. A run failure's `code` (api/src/services/sync/run-errors.ts) — one of
- *    16 `SyncRunError` subclasses, mirrored below as `SyncErrorCode`. A
+ *    17 `SyncRunError` subclasses, mirrored below as `SyncErrorCode`. A
  *    sibling hierarchy, `SyncApplyError` (the LOCAL apply's own errors),
  *    carries no `code` at all, and may instead carry
  *    `collisions: [{collection, count}]` — counts only, never the colliding
@@ -56,7 +56,7 @@ export interface SyncCopy {
    * Carried so consumers can ask "do these two copies describe the SAME
    * failure?" DIRECTLY. `combineRunError` below needs exactly that question
    * answered, and its first implementation asked it by comparing `message`
-   * strings — sound only while all 16 messages stay distinct, which nothing
+   * strings — sound only while all 17 messages stay distinct, which nothing
    * enforced. Two entries given the same prose would have made a stale error of
    * code A silently decorate a fresh failure of code B with A's cause.
    *
@@ -69,10 +69,11 @@ export interface SyncCopy {
   code?: SyncErrorCode;
 }
 
-/** The 16 codes `run-errors.ts`'s `SyncRunError` subclasses declare. */
+/** The 17 codes `run-errors.ts`'s `SyncRunError` subclasses declare. */
 export type SyncErrorCode =
   | 'SELF_REMOTE'
   | 'link-not-found'
+  | 'local-materialization-incomplete'
   | 'forbidden'
   | 'busy'
   | 'remote-key-undecryptable'
@@ -88,7 +89,7 @@ export type SyncErrorCode =
   | 'universe-not-on-remote'
   | 'universe-already-local';
 
-/** One entry per `SyncErrorCode` above — 16, no more, no fewer (enforced by the type). */
+/** One entry per `SyncErrorCode` above — 17, no more, no fewer (enforced by the type). */
 export const SYNC_ERROR_COPY: Record<SyncErrorCode, { message: string }> = {
   SELF_REMOTE: {
     message: 'This remote resolves to this Weltbon instance, so it cannot be linked or synced. Use the address and access token for a different instance, or remove the mistaken remote or link.',
@@ -101,6 +102,9 @@ export const SYNC_ERROR_COPY: Record<SyncErrorCode, { message: string }> = {
     // where no sync link is involved at all. The copy must not assert which
     // one, or it lies on one of the two surfaces.
     message: 'The sync link or the remote it points to could not be found. It may have been deleted — refresh the list and set it up again if you still need it.',
+  },
+  'local-materialization-incomplete': {
+    message: 'This instance did not finish applying every record from the sync, so the run was not recorded as complete. Retry the sync; if it happens again, report the failure before making more changes.',
   },
   forbidden: {
     message: 'You do not have access to this universe, so this sync link cannot run. Check which account you are signed in as.',

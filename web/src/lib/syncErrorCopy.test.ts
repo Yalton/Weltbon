@@ -18,7 +18,7 @@ describe('SYNC_ERROR_COPY', () => {
     }
   });
 
-  it('pins this map to exactly 16 keys, so adding/removing one HERE forces a copy decision', () => {
+  it('pins this map to exactly 17 keys, so adding/removing one HERE forces a copy decision', () => {
     // This reads SYNC_ERROR_COPY only, never run-errors.ts — there is no
     // shared package and no web→api import, so nothing in `web` can fail
     // when a code is added server-side. A future server code does NOT fail
@@ -30,6 +30,7 @@ describe('SYNC_ERROR_COPY', () => {
       'busy',
       'forbidden',
       'link-not-found',
+      'local-materialization-incomplete',
       'remote-incompatible',
       'remote-key-undecryptable',
       'remote-payment-required',
@@ -46,7 +47,7 @@ describe('SYNC_ERROR_COPY', () => {
 });
 
 describe('syncErrorMessage', () => {
-  it('routes every one of the 16 codes through syncErrorMessage to written copy, not the bare code', () => {
+  it('routes every one of the 17 codes through syncErrorMessage to written copy, not the bare code', () => {
     // The SYNC_ERROR_COPY tests above only inspect the map directly — they
     // never call syncErrorMessage, so a regression that hardcodes
     // `message: code` inside the function (rather than in the map) would
@@ -83,6 +84,19 @@ describe('syncErrorMessage', () => {
     expect(out.message).toMatch(/this Weltbon instance/i);
     expect(out.message).toMatch(/different instance|remove/i);
     expect(out.canForce).toBe(false);
+  });
+
+  it('explains that an incomplete local materialization was not recorded as success', () => {
+    const out = syncErrorMessage(
+      new ApiError(
+        500,
+        { error: 'incomplete', code: 'local-materialization-incomplete' },
+        'incomplete',
+      ),
+    );
+    expect(out.message).toMatch(/did not finish applying/i);
+    expect(out.message).toMatch(/not recorded as complete/i);
+    expect(out.message).toMatch(/retry/i);
   });
 
   it('falls back to the server message for an unknown code', () => {
@@ -222,7 +236,7 @@ describe('lastErrorMessage', () => {
 });
 
 describe('SYNC_ERROR_COPY — message distinctness', () => {
-  it('gives all 16 codes textually distinct prose', () => {
+  it('gives all 17 codes textually distinct prose', () => {
     // Not cosmetic. `combineRunError` originally decided "same failure?" by
     // comparing `message` strings, which is correct only while this holds.
     // Two entries edited to share prose would have let a stale error of one
@@ -233,7 +247,7 @@ describe('SYNC_ERROR_COPY — message distinctness', () => {
     // guards the USER: two failures with different remedies must not read
     // identically on screen.
     const messages = Object.values(SYNC_ERROR_COPY).map((c) => c.message);
-    expect(new Set(messages).size).toBe(16);
+    expect(new Set(messages).size).toBe(17);
   });
 });
 

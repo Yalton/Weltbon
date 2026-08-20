@@ -116,6 +116,7 @@ import {
   SyncRemoteKeyError,
   SyncLinkSeveredError,
   SyncIncompatibleError,
+  SyncLocalMaterializationError,
   safeErrorSummary,
   type InstanceIdentityLike,
 } from './run-errors.js';
@@ -183,6 +184,25 @@ export interface SyncRunResult {
   assetsUnrepairable: number;
   pushed: { upserted: Record<string, number>; deleted: Record<string, number> };
   appliedLocally: { upserted: Record<string, number>; deleted: Record<string, number> };
+}
+
+function assertExpectedLocalUpserts(
+  ops: Record<string, { upserts: ManifestRow[]; deletes: string[] }>,
+  universeOp: ManifestRow | null,
+  applied: { upserted: Record<string, number> },
+): void {
+  const expectedUniverse = universeOp === null ? 0 : 1;
+  const appliedUniverse = applied.upserted.universe ?? 0;
+  if (appliedUniverse !== expectedUniverse) {
+    throw new SyncLocalMaterializationError('universe', expectedUniverse, appliedUniverse);
+  }
+  for (const { name } of COLLECTIONS) {
+    const expected = ops[name]?.upserts.length ?? 0;
+    const actual = applied.upserted[name] ?? 0;
+    if (actual !== expected) {
+      throw new SyncLocalMaterializationError(name, expected, actual);
+    }
+  }
 }
 
 /** Every collection as {upserts: manifest[name] ?? [], deletes: []} — the bootstrap push. */
@@ -422,6 +442,11 @@ async function drive(
     appliedLocally = await applyManifestOps(
       { universe: mergeResult.universeOp.local, ops: mergeResult.localOps },
       { universeId, ownerId },
+    );
+    assertExpectedLocalUpserts(
+      mergeResult.localOps,
+      mergeResult.universeOp.local,
+      appliedLocally,
     );
   } catch (err) {
     // E-05, but ONLY over the orphans. D-06 guarantees the DELTA is a no-op on

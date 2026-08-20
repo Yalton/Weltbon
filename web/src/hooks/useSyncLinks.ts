@@ -155,9 +155,11 @@ export function useRunSyncLink(universeId: string) {
     onSettled: () => {
       qc.invalidateQueries({ queryKey: syncLinksKey(universeId) });
       qc.invalidateQueries({ queryKey: syncConflictsKey(universeId) });
-      // Never SYNC_REMOTES_QUERY_KEY: a run cannot change an account-scoped
-      // remote row, and invalidating it would refetch a masked list that only
-      // changes when the user edits it.
+      // A run can apply any of the synced collections, and those content
+      // queries have no shared universe-scoped key prefix. It may also commit
+      // the local apply before a later step fails. Sweep on both outcomes so
+      // the UI never keeps showing the pre-sync empty/stale universe.
+      qc.invalidateQueries();
     },
   });
 }

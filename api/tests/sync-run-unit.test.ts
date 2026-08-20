@@ -30,6 +30,18 @@ vi.mock('../src/services/sync/link-state.js', () => ({
   claimLink: vi.fn(),
   releaseLink: vi.fn(),
 }));
+vi.mock('../src/services/sync/apply.js', () => ({ applyManifestOps: vi.fn() }));
+vi.mock('../src/services/sync/reconcile.js', () => ({
+  isWellFormedHash: vi.fn(() => false),
+  reconcileAssets: vi.fn(),
+}));
+vi.mock('../src/services/sync/materialize.js', () => ({
+  writeAssetBytes: vi.fn(),
+  finalizeMaterialization: vi.fn(),
+  discardWrittenAssets: vi.fn(),
+  repairThumbSizes: vi.fn(),
+}));
+vi.mock('../src/services/sync/conflicts.js', () => ({ recordConflicts: vi.fn() }));
 
 const remoteClientMocks = {
   handshake: vi.fn(),
@@ -46,6 +58,14 @@ import { decryptSecret } from '../src/services/crypto.js';
 import { buildSyncManifest } from '../src/services/sync/snapshot.js';
 import { saveBaseSnapshot, loadBaseSnapshot } from '../src/services/sync/base-snapshot.js';
 import { claimLink, releaseLink } from '../src/services/sync/link-state.js';
+import { applyManifestOps } from '../src/services/sync/apply.js';
+import { reconcileAssets } from '../src/services/sync/reconcile.js';
+import {
+  writeAssetBytes,
+  finalizeMaterialization,
+  repairThumbSizes,
+} from '../src/services/sync/materialize.js';
+import { recordConflicts } from '../src/services/sync/conflicts.js';
 import { runSync } from '../src/services/sync/run-sync.js';
 import { SyncIncompatibleError } from '../src/services/sync/run-errors.js';
 import { COLLECTIONS } from '../src/services/sync/manifest.js';
@@ -113,6 +133,19 @@ describe('run-sync unit-lane coverage (Plan D Task 8, scenarios 15/16)', () => {
     (claimLink as unknown as Mock).mockResolvedValue(undefined);
     (loadBaseSnapshot as unknown as Mock).mockResolvedValue(null);
     (saveBaseSnapshot as unknown as Mock).mockResolvedValue(undefined);
+    (applyManifestOps as unknown as Mock).mockResolvedValue({ upserted: {}, deleted: {} });
+    (reconcileAssets as unknown as Mock).mockResolvedValue({
+      blobsPushed: 0,
+      blobsPulled: 0,
+      assetsRepairedLocally: 0,
+      pushedRows: [],
+      toMaterialize: [],
+      unrepairable: [],
+    });
+    (writeAssetBytes as unknown as Mock).mockResolvedValue([]);
+    (finalizeMaterialization as unknown as Mock).mockResolvedValue(undefined);
+    (repairThumbSizes as unknown as Mock).mockResolvedValue(undefined);
+    (recordConflicts as unknown as Mock).mockResolvedValue(0);
     remoteClientMocks.handshake.mockResolvedValue({
       instanceId: '22222222-2222-4222-8222-222222222222',
       weltbonVersion: '2.2.0',
@@ -180,6 +213,36 @@ describe('run-sync unit-lane coverage (Plan D Task 8, scenarios 15/16)', () => {
     // The failure path release ran with status 'error', and the base never advanced.
     expect(releaseLink).toHaveBeenCalledTimes(1);
     expect((releaseLink as unknown as Mock).mock.calls[0][1]).toMatchObject({ status: 'error' });
+    expect(saveBaseSnapshot).not.toHaveBeenCalled();
+  });
+
+  it('does not report success when the local apply reports fewer rows than the merge required', async () => {
+    const local = emptyManifest('2.2.0');
+    const remote = emptyManifest('2.2.0');
+    (remote.entries as Record<string, unknown>[]).push({
+      id: 'entry-1',
+      universeId: UNIVERSE_ID,
+      title: 'Expected remote entry',
+      entryType: 'entity',
+      body: '',
+      summary: '',
+      tags: [],
+      meta: {},
+      createdAt: '2026-08-20T00:00:00.000Z',
+      updatedAt: '2026-08-20T00:00:00.000Z',
+    });
+    (buildSyncManifest as unknown as Mock).mockResolvedValue(local);
+    remoteClientMocks.snapshot.mockResolvedValue(remote);
+    remoteClientMocks.apply.mockResolvedValue({ upserted: {}, deleted: {}, sweptAssets: 0 });
+    // The merge requires one local entry upsert, but a broken apply reports
+    // that it wrote nothing. This is the false-success boundary from #43.
+    (applyManifestOps as unknown as Mock).mockResolvedValue({ upserted: {}, deleted: {} });
+    (releaseLink as unknown as Mock).mockResolvedValue(undefined);
+
+    await expect(runSync(LINK_ID, OWNER_ID, {})).rejects.toMatchObject({
+      code: 'local-materialization-incomplete',
+      status: 500,
+    });
     expect(saveBaseSnapshot).not.toHaveBeenCalled();
   });
 });

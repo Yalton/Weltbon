@@ -241,7 +241,7 @@ describe('useRunSyncLink', () => {
     expect(returned?.conflicts).toBe(3);
   });
 
-  it('invalidates links AND conflicts for this universe, never remotes', async () => {
+  it('invalidates every content cache after success because a run can change any synced collection', async () => {
     vi.mocked(api).mockResolvedValue(RESULT);
     const qc = makeClient();
     const spy = vi.spyOn(qc, 'invalidateQueries');
@@ -254,8 +254,9 @@ describe('useRunSyncLink', () => {
 
     expect(spy).toHaveBeenCalledWith({ queryKey: syncLinksKey('u1') });
     expect(spy).toHaveBeenCalledWith({ queryKey: syncConflictsKey('u1') });
-    // A run cannot change an account-scoped remote row.
-    expect(spy).not.toHaveBeenCalledWith({ queryKey: SYNC_REMOTES_QUERY_KEY });
+    // No arguments = every query. Sync can change roughly 17 collections,
+    // whose cache keys do not share a safe universe-scoped prefix.
+    expect(spy).toHaveBeenCalledWith();
   });
 
   it('invalidates links on FAILURE too — the remedy only arrives via lastError', async () => {
@@ -281,5 +282,8 @@ describe('useRunSyncLink', () => {
 
     expect(spy).toHaveBeenCalledWith({ queryKey: syncLinksKey('u1') });
     expect(spy).toHaveBeenCalledWith({ queryKey: syncConflictsKey('u1') });
+    // A failed run may have committed the local apply before a later step
+    // failed, so stale content is unsafe on this path too.
+    expect(spy).toHaveBeenCalledWith();
   });
 });

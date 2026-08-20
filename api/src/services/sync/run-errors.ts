@@ -151,6 +151,20 @@ export class SyncIncompatibleError extends SyncRunError {
 }
 
 /**
+ * The apply engine returned fewer local upserts than the merge required.
+ * Treat this as a failed run and leave the base unadvanced: reporting success
+ * would strand the missing records behind a snapshot that says they synced.
+ */
+export class SyncLocalMaterializationError extends SyncRunError {
+  readonly code = 'local-materialization-incomplete';
+  readonly status = 500;
+  readonly safeDetail = 'the local instance did not materialize every expected record';
+  constructor(readonly collection: string, readonly expected: number, readonly applied: number) {
+    super(`Local sync apply incomplete for ${collection}: expected ${expected}, applied ${applied}`);
+  }
+}
+
+/**
  * D-07: the remote returned 404 for a universe we have a BASE for, meaning it
  * was deleted wholesale there. The spec makes this a link-severing event, never
  * a cascade delete of our copy — merging against an "empty" remote would read as
