@@ -1,0 +1,243 @@
+/**
+ * OB-02 (#42). The one-button connect flow's UI, driving `useConnectToWeltbon`.
+ *
+ * Three panes, chosen by the hook's `step`/`failedStep` — not by a locally
+ * tracked "which screen am I on" flag, because the hook is already the source
+ * of truth for where the flow is:
+ *
+ *   - credentials  <- step === 'idle', OR failedStep === 'authenticating'.
+ *     A rejected sign-in is the one failure that belongs back on the form —
+ *     everything the user typed was wrong at the source, so re-typing it is
+ *     the only useful next step. The form stays mounted alongside the error
+ *     so "Try again" (retry(), reusing the credentials already sent) and
+ *     "Connect" (start(), sending edited ones) are both on offer.
+ *   - picker       <- step === 'choosing'.
+ *   - progress     <- everything else, INCLUDING every other failure. A
+ *     failure at 'adopting' or 'syncing' must not bounce the user back to
+ *     the credential form — their universe may already be adopted, and
+ *     asking them to sign in again would be the exact bad recovery path
+ *     this feature exists to remove (see useConnectToWeltbon.ts's docstring).
+ *
+ * PASSWORD LIFETIME. Held in local `useState` only, cleared the instant
+ * `start` resolves — same rule as the PAT in SyncRemoteForm.tsx:12, applied
+ * to a password instead of a token. `start()` never rejects (the hook
+ * catches internally and reports failure via state), so an unconditional
+ * clear after the `await` is correct for both outcomes.
+ *
+ * COPY. No visible string here may contain "remote", "link", "token", or
+ * "PAT" — the user is connecting to Weltbon, not registering a remote.
+ */
+import { useEffect, useId, useState } from 'react';
+import { useConnectToWeltbon, type ConnectStep } from '../hooks/useConnectToWeltbon';
+import { Input } from './ui/Input';
+import { Button } from './ui/Button';
+import { Loading } from './ui/Loading';
+import { formatRelative } from '../utils/formatRelative';
+
+const STEP_LABEL: Record<ConnectStep, string> = {
+  authenticating: 'Signing you in…',
+  discovering: 'Looking for your universes…',
+  choosing: 'Choose a universe',
+  adopting: 'Setting up your universe…',
+  syncing: 'Bringing in your content…',
+  done: 'All set',
+};
+
+export function ConnectToWeltbon(props: { onDone(universeId: string): void; onCancel(): void }) {
+  const { onDone, onCancel } = props;
+  const state = useConnectToWeltbon();
+  const { step, failedStep, error, universes, universeId, start, chooseUniverse, retry } = state;
+
+  useEffect(() => {
+    if (step === 'done' && universeId) onDone(universeId);
+  }, [step, universeId, onDone]);
+
+  const showCredentials = step === 'idle' || failedStep === 'authenticating';
+  const showPicker = !showCredentials && step === 'choosing';
+
+  return (
+    <div className="space-y-4">
+      {showCredentials && (
+        <CredentialsPane
+          start={start}
+          retry={retry}
+          onCancel={onCancel}
+          error={failedStep === 'authenticating' ? error : null}
+        />
+      )}
+      {showPicker && <PickerPane universes={universes} chooseUniverse={chooseUniverse} onCancel={onCancel} />}
+      {!showCredentials && !showPicker && (
+        <ProgressPane step={step as ConnectStep} failedStep={failedStep} error={error} retry={retry} />
+      )}
+    </div>
+  );
+}
+
+function CredentialsPane({
+  start,
+  retry,
+  onCancel,
+  error,
+}: {
+  start: (args: { baseUrl: string; email: string; password: string }) => Promise<void>;
+  retry?: () => Promise<void>;
+  onCancel: () => void;
+  error: { message: string; code?: string } | null;
+}) {
+  const ids = { baseUrl: useId(), email: useId(), password: useId() };
+  const [baseUrl, setBaseUrl] = useState('');
+  const [email, setEmail] = useState('');
+  const [password, setPassword] = useState('');
+  const [submitting, setSubmitting] = useState(false);
+
+  const submit = async (e: React.FormEvent) => {
+    e.preventDefault();
+    setSubmitting(true);
+    try {
+      await start({ baseUrl: baseUrl.trim(), email: email.trim(), password });
+    } finally {
+      // Cleared as soon as start() resolves, win or lose — its lifetime ends
+      // here, the same rule SyncRemoteForm.tsx:12 states for a PAT.
+      setPassword('');
+      setSubmitting(false);
+    }
+  };
+
+  return (
+    <form onSubmit={submit} className="space-y-4">
+      <p className="text-sm text-ink-secondary">
+        Enter your Weltbon address and sign in to bring your universe onto this app.
+      </p>
+
+      <div>
+        <label htmlFor={ids.baseUrl} className="block text-sm text-ink-secondary">
+          Address
+        </label>
+        <Input
+          id={ids.baseUrl}
+          type="text"
+          inputMode="url"
+          required
+          value={baseUrl}
+          onChange={(e) => setBaseUrl(e.target.value)}
+          placeholder="https://weltbon.example.com"
+          className="mt-1"
+        />
+      </div>
+
+      <div>
+        <label htmlFor={ids.email} className="block text-sm text-ink-secondary">
+          Email
+        </label>
+        <Input
+          id={ids.email}
+          type="email"
+          autoComplete="username"
+          required
+          value={email}
+          onChange={(e) => setEmail(e.target.value)}
+          className="mt-1"
+        />
+      </div>
+
+      <div>
+        <label htmlFor={ids.password} className="block text-sm text-ink-secondary">
+          Password
+        </label>
+        <Input
+          id={ids.password}
+          type="password"
+          autoComplete="current-password"
+          required
+          value={password}
+          onChange={(e) => setPassword(e.target.value)}
+          className="mt-1"
+        />
+      </div>
+
+      {error && (
+        <div role="alert" className="rounded-lg border border-rose-500/30 bg-rose-500/10 p-3 text-sm text-rose-300">
+          <p>{error.message}</p>
+          {retry && (
+            <Button type="button" variant="ghost" className="mt-2" onClick={() => retry()}>
+              Try again
+            </Button>
+          )}
+        </div>
+      )}
+
+      <div className="flex gap-2">
+        <Button type="submit" disabled={submitting}>
+          {submitting ? 'Connecting…' : 'Connect'}
+        </Button>
+        <Button type="button" variant="ghost" onClick={onCancel}>
+          Cancel
+        </Button>
+      </div>
+    </form>
+  );
+}
+
+function PickerPane({
+  universes,
+  chooseUniverse,
+  onCancel,
+}: {
+  universes: Array<{ id: string; name: string; description?: string; updatedAt?: string }>;
+  chooseUniverse: (universeId: string) => Promise<void>;
+  onCancel: () => void;
+}) {
+  return (
+    <div className="space-y-3">
+      <p className="text-sm text-ink-secondary">Choose the universe to bring onto this app.</p>
+      <ul className="space-y-1">
+        {universes.map((u) => (
+          <li key={u.id}>
+            <button
+              type="button"
+              onClick={() => chooseUniverse(u.id)}
+              className="flex w-full flex-col items-start gap-0.5 rounded-lg border border-glass-border bg-white/5 px-3 py-2 text-left text-sm text-ink hover:bg-white/10"
+            >
+              <span>{u.name}</span>
+              {u.updatedAt && (
+                <span className="text-xs text-ink-muted">
+                  updated {formatRelative(u.updatedAt)}
+                </span>
+              )}
+            </button>
+          </li>
+        ))}
+      </ul>
+      <Button type="button" variant="ghost" onClick={onCancel}>
+        Cancel
+      </Button>
+    </div>
+  );
+}
+
+function ProgressPane({
+  step,
+  failedStep,
+  error,
+  retry,
+}: {
+  step: ConnectStep;
+  failedStep: ConnectStep | null;
+  error: { message: string; code?: string } | null;
+  retry?: () => Promise<void>;
+}) {
+  if (failedStep) {
+    return (
+      <div role="alert" className="rounded-lg border border-rose-500/30 bg-rose-500/10 p-3 text-sm text-rose-300">
+        <p>{error?.message}</p>
+        {retry && (
+          <Button type="button" variant="ghost" className="mt-2" onClick={() => retry()}>
+            Try again
+          </Button>
+        )}
+      </div>
+    );
+  }
+
+  return <Loading label={STEP_LABEL[step] ?? 'Working…'} />;
+}
