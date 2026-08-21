@@ -46,6 +46,7 @@ import { mapSyncApplyError } from '../services/sync/apply-error-response.js';
 import { runSync, testRemote } from '../services/sync/run-sync.js';
 import { adoptUniverse, listRemoteUniverses } from '../services/sync/adopt.js';
 import { SyncRunError } from '../services/sync/run-errors.js';
+import { mintPatFromCredentials, PeerAuthError } from '../services/sync/peer-auth.js';
 import { env } from '../config.js';
 
 type AppEnv = { Variables: AuthVariables };
@@ -68,11 +69,31 @@ const err403 = { content: { 'application/json': { schema: errorSchema } }, descr
 const err404 = { content: { 'application/json': { schema: errorSchema } }, description: 'Remote not found / not owned.' };
 const err503 = { content: { 'application/json': { schema: errorSchema } }, description: 'Server not configured for encryption.' };
 
-const createRemoteBodySchema = z.object({
-  label: z.string().trim().default(''),
-  baseUrl: z.string(),
-  pat: z.string().min(1),
-});
+/**
+ * OB-02. Two credential shapes, exactly one per request.
+ *
+ * A refine rather than a discriminated union: the discriminant would have to
+ * be a field the client sends purely to describe its own body, which is a
+ * worse contract than inferring it from what is present. Both-present is
+ * rejected rather than silently preferring one, so a client bug surfaces as a
+ * 400 instead of a token being ignored.
+ */
+const createRemoteBodySchema = z
+  .object({
+    label: z.string().trim().default(''),
+    baseUrl: z.string(),
+    pat: z.string().min(1).optional(),
+    email: z.string().min(1).optional(),
+    password: z.string().min(1).optional(),
+  })
+  .refine(
+    (b) => (b.pat === undefined) !== (b.email === undefined && b.password === undefined),
+    { message: 'provide either pat, or email and password — not both' },
+  )
+  .refine(
+    (b) => b.pat !== undefined || (b.email !== undefined && b.password !== undefined),
+    { message: 'email and password must be supplied together' },
+  );
 
 const updateRemoteBodySchema = z.object({
   label: z.string().trim().optional(),
@@ -288,8 +309,10 @@ const postRemoteRoute = createRoute({
     200: { content: { 'application/json': { schema: maskedRemoteSchema } }, description: 'Remote already registered for this base URL; the stored token was replaced. Response is masked.' },
     400: err400,
     // Specific rather than the shared err401: this is the one route whose 401
-    // wording calls out the D-10 PAT rule by name.
-    401: { content: { 'application/json': { schema: errorSchema } }, description: 'Missing or invalid JWT bearer (or PAT — D-10).' },
+    // wording calls out the D-10 PAT rule by name. Also covers OB-02's peer
+    // credential rejection (PeerAuthError, code 'peer_credentials_rejected').
+    401: { content: { 'application/json': { schema: errorSchema } }, description: 'Missing or invalid JWT bearer (or PAT — D-10), or the peer instance rejected the given email/password.' },
+    502: { content: { 'application/json': { schema: errorSchema } }, description: 'The peer instance was unreachable, or did not answer as a Weltbon instance.' },
     503: err503,
   },
 });
@@ -676,7 +699,7 @@ export const syncClientRoutes = new OpenAPIHono<AppEnv>()
     }
 
     const userId = c.var.userId;
-    const { label, baseUrl, pat } = c.req.valid('json');
+    const { label, baseUrl, pat: suppliedPat, email, password } = c.req.valid('json');
 
     let normalizedUrl: string;
     try {
@@ -686,6 +709,30 @@ export const syncClientRoutes = new OpenAPIHono<AppEnv>()
         return c.json({ error: err.message }, 400);
       }
       throw err;
+    }
+
+    // OB-02. A label is optional now, because asking a first-time user to
+    // invent one is friction with no payoff. The host is a better default
+    // than anything they would type.
+    const effectiveLabel = label !== '' ? label : new URL(normalizedUrl).host;
+
+    let pat: string;
+    if (suppliedPat !== undefined) {
+      pat = suppliedPat;
+    } else {
+      try {
+        pat = await mintPatFromCredentials({
+          baseUrl: normalizedUrl,
+          email: email as string,
+          password: password as string,
+          label: `Weltbon Desktop (${effectiveLabel})`,
+        });
+      } catch (err) {
+        if (err instanceof PeerAuthError) {
+          return c.json({ error: err.message, code: err.code }, err.status);
+        }
+        throw err;
+      }
     }
 
     // OB-03. A user pressing Connect twice, or retrying a flow that failed
@@ -719,7 +766,7 @@ export const syncClientRoutes = new OpenAPIHono<AppEnv>()
 
     const [row] = await getDb()
       .insert(syncRemotes)
-      .values({ userId, label, baseUrl: normalizedUrl, encryptedPat: enc })
+      .values({ userId, label: effectiveLabel, baseUrl: normalizedUrl, encryptedPat: enc })
       .returning();
     return c.json(toMaskedRemote(row), 201);
   })
