@@ -26,6 +26,19 @@
  *
  * COPY. No visible string here may contain "remote", "link", "token", or
  * "PAT" — the user is connecting to Weltbon, not registering a remote.
+ *
+ * PICKER + `localState: 'present'` (fix round 1). Adopting a universe the
+ * server reports as already `'present'` on this instance is a dead end: the
+ * server's 409 (`SyncUniverseAlreadyLocalError`) covers both `'present'` and
+ * `'linked'`, but the hook's recovery only works for `'linked'` (it finds an
+ * existing sync link to resume through) — for `'present'` there is by
+ * definition no link yet, the lookup fails, and the original error rethrows
+ * every time, including on retry(). There is no code path here that can ever
+ * succeed for that entry, so it is disabled rather than offered: bringing a
+ * universe you already have a local copy of under sync is a deliberate,
+ * advanced action that belongs at Settings → Sync (OB-05), not a silent trap
+ * in the one-button flow. `'absent'` (the normal case) and `'linked'` (whose
+ * recovery demonstrably resumes a sync) stay enabled.
  */
 import { useEffect, useId, useState } from 'react';
 import { useConnectToWeltbon, type ConnectStep } from '../hooks/useConnectToWeltbon';
@@ -67,7 +80,13 @@ export function ConnectToWeltbon(props: { onDone(universeId: string): void; onCa
       )}
       {showPicker && <PickerPane universes={universes} chooseUniverse={chooseUniverse} onCancel={onCancel} />}
       {!showCredentials && !showPicker && (
-        <ProgressPane step={step as ConnectStep} failedStep={failedStep} error={error} retry={retry} />
+        <ProgressPane
+          step={step as ConnectStep}
+          failedStep={failedStep}
+          error={error}
+          retry={retry}
+          onCancel={onCancel}
+        />
       )}
     </div>
   );
@@ -178,12 +197,20 @@ function CredentialsPane({
   );
 }
 
+interface PickerUniverse {
+  id: string;
+  name: string;
+  description?: string;
+  updatedAt?: string;
+  localState?: 'absent' | 'present' | 'linked';
+}
+
 function PickerPane({
   universes,
   chooseUniverse,
   onCancel,
 }: {
-  universes: Array<{ id: string; name: string; description?: string; updatedAt?: string }>;
+  universes: PickerUniverse[];
   chooseUniverse: (universeId: string) => Promise<void>;
   onCancel: () => void;
 }) {
@@ -191,22 +218,32 @@ function PickerPane({
     <div className="space-y-3">
       <p className="text-sm text-ink-secondary">Choose the universe to bring onto this app.</p>
       <ul className="space-y-1">
-        {universes.map((u) => (
-          <li key={u.id}>
-            <button
-              type="button"
-              onClick={() => chooseUniverse(u.id)}
-              className="flex w-full flex-col items-start gap-0.5 rounded-lg border border-glass-border bg-white/5 px-3 py-2 text-left text-sm text-ink hover:bg-white/10"
-            >
-              <span>{u.name}</span>
-              {u.updatedAt && (
-                <span className="text-xs text-ink-muted">
-                  updated {formatRelative(u.updatedAt)}
-                </span>
+        {universes.map((u) => {
+          const alreadyHere = u.localState === 'present';
+          return (
+            <li key={u.id}>
+              <button
+                type="button"
+                disabled={alreadyHere}
+                onClick={() => chooseUniverse(u.id)}
+                className="flex w-full flex-col items-start gap-0.5 rounded-lg border border-glass-border bg-white/5 px-3 py-2 text-left text-sm text-ink hover:enabled:bg-white/10 disabled:cursor-not-allowed disabled:opacity-50"
+              >
+                <span>{u.name}</span>
+                {u.updatedAt && (
+                  <span className="text-xs text-ink-muted">
+                    updated {formatRelative(u.updatedAt)}
+                  </span>
+                )}
+              </button>
+              {alreadyHere && (
+                <p className="mt-1 text-xs text-ink-muted">
+                  You already have a copy of this world on this device. Open Settings &rsaquo; Sync to
+                  connect it.
+                </p>
               )}
-            </button>
-          </li>
-        ))}
+            </li>
+          );
+        })}
       </ul>
       <Button type="button" variant="ghost" onClick={onCancel}>
         Cancel
@@ -220,21 +257,31 @@ function ProgressPane({
   failedStep,
   error,
   retry,
+  onCancel,
 }: {
   step: ConnectStep;
   failedStep: ConnectStep | null;
   error: { message: string; code?: string } | null;
   retry?: () => Promise<void>;
+  onCancel: () => void;
 }) {
   if (failedStep) {
     return (
       <div role="alert" className="rounded-lg border border-rose-500/30 bg-rose-500/10 p-3 text-sm text-rose-300">
         <p>{error?.message}</p>
-        {retry && (
-          <Button type="button" variant="ghost" className="mt-2" onClick={() => retry()}>
-            Try again
+        <div className="mt-2 flex gap-2">
+          {retry && (
+            <Button type="button" variant="ghost" onClick={() => retry()}>
+              Try again
+            </Button>
+          )}
+          {/* A FAILED state must never be a one-way door, even though a step
+              genuinely in flight (no failedStep yet) offers no Cancel — there
+              is no abort semantics for work already dispatched to the server. */}
+          <Button type="button" variant="ghost" onClick={onCancel}>
+            Cancel
           </Button>
-        )}
+        </div>
       </div>
     );
   }
