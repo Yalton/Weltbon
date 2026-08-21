@@ -285,6 +285,7 @@ const postRemoteRoute = createRoute({
   },
   responses: {
     201: { content: { 'application/json': { schema: maskedRemoteSchema } }, description: 'Remote registered. Response is masked.' },
+    200: { content: { 'application/json': { schema: maskedRemoteSchema } }, description: 'Remote already registered for this base URL; the stored token was replaced. Response is masked.' },
     400: err400,
     // Specific rather than the shared err401: this is the one route whose 401
     // wording calls out the D-10 PAT rule by name.
@@ -687,7 +688,35 @@ export const syncClientRoutes = new OpenAPIHono<AppEnv>()
       throw err;
     }
 
+    // OB-03. A user pressing Connect twice, or retrying a flow that failed
+    // after this step, must not strand a second remote (and a second
+    // encrypted PAT) for the same instance. Scoped to userId: two users
+    // registering the same peer legitimately hold separate rows.
+    //
+    // No unique index backs this. Production rows predate the rule and may
+    // already contain duplicates, and sync_links.remoteId references them,
+    // so collapsing them is a data migration out of proportion to the
+    // benefit. The residual race — two simultaneous submissions — yields one
+    // extra row, not corruption.
+    const [existing] = await getDb()
+      .select()
+      .from(syncRemotes)
+      .where(and(eq(syncRemotes.userId, userId), eq(syncRemotes.baseUrl, normalizedUrl)))
+      .limit(1);
+
     const enc: EncryptedSecret = encryptSecret(pat, cfg.llmKeyEncryptionKey);
+
+    if (existing) {
+      // Re-registering with a fresh credential is the repair path for a
+      // revoked PAT, so the token is replaced rather than left stale.
+      const [updated] = await getDb()
+        .update(syncRemotes)
+        .set({ encryptedPat: enc })
+        .where(eq(syncRemotes.id, existing.id))
+        .returning();
+      return c.json(toMaskedRemote(updated), 200);
+    }
+
     const [row] = await getDb()
       .insert(syncRemotes)
       .values({ userId, label, baseUrl: normalizedUrl, encryptedPat: enc })
