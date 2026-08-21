@@ -48,6 +48,14 @@ export function EntryList() {
   // errored AND never once synced. Both halves matter: a link that synced
   // fine for weeks and then failed today has a non-null lastSyncedAt and
   // must NOT show this "first sync didn't finish" copy.
+  //
+  // `.find` deliberately surfaces only the FIRST such link. A universe with
+  // links to two different peers could have two links matching this
+  // condition at once, and retrying the first (which invalidates and
+  // refetches every sync link) would clear the banner even though the
+  // second link is still broken. Fine for today — the one-button flow only
+  // ever creates one link per universe — but a future multi-peer universe
+  // would need this to surface (or cycle through) every match, not just one.
   const failedFirstSyncLink = syncLinks?.find(
     (link) => link.status === 'error' && link.lastSyncedAt === null,
   );
