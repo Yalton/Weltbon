@@ -311,8 +311,8 @@ const postRemoteRoute = createRoute({
     // Specific rather than the shared err401: this is the one route whose 401
     // wording calls out the D-10 PAT rule by name. Also covers OB-02's peer
     // credential rejection (PeerAuthError, code 'peer_credentials_rejected').
-    401: { content: { 'application/json': { schema: errorSchema } }, description: 'Missing or invalid JWT bearer (or PAT — D-10), or the peer instance rejected the given email/password.' },
-    502: { content: { 'application/json': { schema: errorSchema } }, description: 'The peer instance was unreachable, or did not answer as a Weltbon instance.' },
+    401: { content: { 'application/json': { schema: syncErrorSchema } }, description: 'Missing or invalid JWT bearer (or PAT — D-10), or the peer instance rejected the given email/password.' },
+    502: { content: { 'application/json': { schema: syncErrorSchema } }, description: 'The peer instance was unreachable, or did not answer as a Weltbon instance.' },
     503: err503,
   },
 });
