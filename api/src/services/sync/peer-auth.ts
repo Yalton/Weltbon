@@ -27,11 +27,30 @@ export type PeerAuthCode =
   | 'peer_unreachable'
   | 'peer_not_weltbon';
 
+/**
+ * WHY `peer_credentials_rejected` IS 422 AND NOT 401 (fix wave, finding I6).
+ *
+ * The peer rejecting the user's email/password is not "you are unauthenticated
+ * with THIS server" — the caller's own JWT was valid, or `requireJwtAuth`
+ * would never have let the request reach here. Returning 401 conflates the two,
+ * and the SPA's fetch wrapper acts on that conflation: web/src/api/client.ts
+ * retries any non-`/auth/` 401 through `attemptRefresh()`, and when the refresh
+ * cookie has expired it clears the access token and throws
+ * `UnauthenticatedError`. A typo'd PEER password would therefore rotate the
+ * user's LOCAL session, re-send their peer credentials a second time, and could
+ * sign them out of the desktop app entirely — a "Not authenticated" screen where
+ * the design spec's error table demands "Email or password wasn't accepted by
+ * that instance", "never a generic failure".
+ *
+ * 422 says what actually happened: the request was well-formed and
+ * authenticated, but a value inside it was not accepted by the upstream this
+ * route depends on. The route's OWN missing-JWT 401 is untouched.
+ */
 export class PeerAuthError extends Error {
   constructor(
     message: string,
     readonly code: PeerAuthCode,
-    readonly status: 400 | 401 | 502,
+    readonly status: 400 | 422 | 502,
   ) {
     super(message);
     this.name = 'PeerAuthError';
@@ -92,7 +111,7 @@ export async function mintPatFromCredentials(args: {
     throw new PeerAuthError(
       'that instance did not accept the email and password',
       'peer_credentials_rejected',
-      401,
+      422,
     );
   }
   if (!loginRes.ok) {

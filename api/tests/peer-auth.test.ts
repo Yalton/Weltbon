@@ -64,14 +64,18 @@ describe('mintPatFromCredentials', () => {
     expect(peer.calls[1].auth).toBe('Bearer peer-jwt');
   });
 
-  it('maps a rejected login to a 401 PeerAuthError and does not attempt to mint', async () => {
+  // 422, NOT 401 (fix wave, I6). The peer's own 401 on /auth/login is the
+  // INPUT here; the status this class carries is what OUR route returns to the
+  // desktop client, and a 401 there makes web/src/api/client.ts treat the
+  // user's LOCAL session as expired — see PeerAuthError's docstring.
+  it('maps a rejected login to a 422 PeerAuthError and does not attempt to mint', async () => {
     const peer = fakePeer({ loginStatus: 401 });
     await expect(
       mintPatFromCredentials({
         baseUrl: 'https://peer.example', email: 'me@example.com',
         password: 'wrong', label: 'Desktop', fetchImpl: peer.impl,
       }),
-    ).rejects.toMatchObject({ code: 'peer_credentials_rejected', status: 401 });
+    ).rejects.toMatchObject({ code: 'peer_credentials_rejected', status: 422 });
     expect(peer.calls).toHaveLength(1);
   });
 

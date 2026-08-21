@@ -47,6 +47,7 @@ describe('POST /api/sync/remotes — idempotency (OB-03)', () => {
   let app: any;
   let token: string;
   let otherUserJwt: string;
+  let userId: string;
 
   beforeAll(async () => {
     process.env.UPLOADS_DIR = await mkdtemp(join(tmpdir(), 'weltbon-syncconnect-'));
@@ -65,6 +66,7 @@ describe('POST /api/sync/remotes — idempotency (OB-03)', () => {
     const user = await createTestUser(handle, { email: 'owner@test.dev', password: 'password123' });
     const other = await createTestUser(handle, { email: 'other@test.dev', password: 'password123' });
     const { issueAccessToken } = await import('../src/services/auth.js');
+    userId = user.id;
     token = await issueAccessToken(user.id);
     otherUserJwt = await issueAccessToken(other.id);
   });
@@ -102,9 +104,46 @@ describe('POST /api/sync/remotes — idempotency (OB-03)', () => {
     expect(other.status).toBe(201);
   });
 
-  it('still 400s an invalid URL', async () => {
+  it('still 400s an invalid URL, and names the code so the client can render its own copy', async () => {
     const res = await postRemote({ label: 'Bad', baseUrl: 'not-a-url', pat: 'wbn_pat_x' });
     expect(res.status).toBe(400);
+    // The reason string is operator vocabulary ("Invalid remote URL: ..."), so
+    // the desktop flow keys off `code` instead — see web/src/lib/connectErrorCopy.ts.
+    const body = await res.json();
+    expect(body.code).toBe('invalid-remote-url');
+    expect(body.error).toContain('not a valid absolute URL');
+  });
+
+  // Fix wave, I8. Production predates OB-03 and may already hold duplicate
+  // (userId, baseUrl) rows that sync_links.remoteId points at. Which one this
+  // route hands back decides whether an already-synced universe reports
+  // 'linked' (adoptable path) or 'present' (the picker disables it), so the
+  // pick must be deterministic rather than whatever the planner returns.
+  it('picks the OLDEST of pre-existing duplicate rows, deterministically', async () => {
+    const older = '2020-01-01T00:00:00.000Z';
+    const newer = '2024-01-01T00:00:00.000Z';
+    const enc = (suffix: string) => ({
+      ciphertext: '00', iv: '00', authTag: '00', bodySuffix: suffix, version: 1 as const,
+    });
+    const [oldRow] = await handle.db.insert(syncRemotes).values({
+      userId, label: 'Older', baseUrl: 'https://dupe.example',
+      encryptedPat: enc('oldd'), createdAt: new Date(older),
+    }).returning();
+    await handle.db.insert(syncRemotes).values({
+      userId, label: 'Newer', baseUrl: 'https://dupe.example',
+      encryptedPat: enc('neww'), createdAt: new Date(newer),
+    }).returning();
+
+    // Repeated, because a non-deterministic pick can agree by luck once.
+    for (let i = 0; i < 3; i++) {
+      const res = await postRemote({ baseUrl: 'https://dupe.example', pat: `wbn_pat_${i}` });
+      expect(res.status).toBe(200);
+      expect((await res.json()).id).toBe(oldRow.id);
+    }
+
+    // And it collapsed nothing: OB-03 deliberately refused that migration.
+    const list = await listRemotes();
+    expect(list.filter((r: { baseUrl: string }) => r.baseUrl === 'https://dupe.example')).toHaveLength(2);
   });
 });
 
@@ -174,13 +213,28 @@ describe('POST /api/sync/remotes — credential shape (OB-02)', () => {
     expect(res.status).toBe(400);
   });
 
-  it('surfaces rejected peer credentials as 401 with a code the client can attribute', async () => {
+  // 422, not 401 (fix wave, I6): the caller's own JWT was fine — an upstream
+  // instance rejected a value inside the body. A 401 here is read by the SPA's
+  // fetch wrapper as "your local session expired" and can sign the desktop user
+  // out over a typo'd PEER password.
+  it('surfaces rejected peer credentials as 422 with a code the client can attribute', async () => {
     mockMintPatFromCredentials.mockRejectedValueOnce(
-      new PeerAuthError('that instance did not accept the email and password', 'peer_credentials_rejected', 401),
+      new PeerAuthError('that instance did not accept the email and password', 'peer_credentials_rejected', 422),
     );
     const res = await postRemote({ baseUrl: 'https://peer.example', email: 'me@example.com', password: 'wrong' });
-    expect(res.status).toBe(401);
+    expect(res.status).toBe(422);
     expect((await res.json()).code).toBe('peer_credentials_rejected');
+  });
+
+  // The 401 this route still returns is ONLY the local one. Pinned so a future
+  // edit cannot quietly fold the peer rejection back into it.
+  it('still 401s a request with no JWT at all', async () => {
+    const res = await app.request('/api/sync/remotes', {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ baseUrl: 'https://peer.example', email: 'me@example.com', password: 'pw' }),
+    });
+    expect(res.status).toBe(401);
   });
 
   it('never persists or returns the password', async () => {

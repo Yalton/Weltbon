@@ -26,7 +26,7 @@
  * Task 7 (the drive loop) lands in this same file, so keep it clean.
  */
 import { OpenAPIHono, createRoute, z } from '@hono/zod-openapi';
-import { and, eq } from 'drizzle-orm';
+import { and, asc, eq } from 'drizzle-orm';
 import { db as getDb } from '../db/client.js';
 import { syncRemotes, syncLinks, universes } from '../db/schema.js';
 import { requireJwtAuth, type AuthVariables } from '../middleware/auth.js';
@@ -307,11 +307,21 @@ const postRemoteRoute = createRoute({
   responses: {
     201: { content: { 'application/json': { schema: maskedRemoteSchema } }, description: 'Remote registered. Response is masked.' },
     200: { content: { 'application/json': { schema: maskedRemoteSchema } }, description: 'Remote already registered for this base URL; the stored token was replaced. Response is masked.' },
-    400: err400,
+    // syncErrorSchema, not the shared err400: this route's 400 carries
+    // InvalidRemoteUrlError's `code` alongside `error` so the client can render
+    // its own address-shaped copy instead of the operator-facing reason string
+    // ("Invalid remote URL: not a valid absolute URL"), which names a "remote"
+    // and a "PAT" — vocabulary the #42 desktop flow must never show.
+    400: { content: { 'application/json': { schema: syncErrorSchema } }, description: 'Invalid base URL (D-04), code `invalid-remote-url`; or both a pat and a password were sent.' },
     // Specific rather than the shared err401: this is the one route whose 401
-    // wording calls out the D-10 PAT rule by name. Also covers OB-02's peer
-    // credential rejection (PeerAuthError, code 'peer_credentials_rejected').
-    401: { content: { 'application/json': { schema: syncErrorSchema } }, description: 'Missing or invalid JWT bearer (or PAT — D-10), or the peer instance rejected the given email/password.' },
+    // wording calls out the D-10 PAT rule by name. It is now ONLY the local
+    // auth failure — see the 422 below.
+    401: { content: { 'application/json': { schema: syncErrorSchema } }, description: 'Missing or invalid JWT bearer (or PAT — D-10).' },
+    // OB-02's peer credential rejection. Deliberately NOT 401: the caller IS
+    // authenticated here, and a 401 makes the SPA's fetch wrapper rotate the
+    // user's local session and potentially sign them out — see PeerAuthError's
+    // docstring in services/sync/peer-auth.ts.
+    422: { content: { 'application/json': { schema: syncErrorSchema } }, description: 'The peer instance rejected the given email/password (code `peer_credentials_rejected`).' },
     502: { content: { 'application/json': { schema: syncErrorSchema } }, description: 'The peer instance was unreachable, or did not answer as a Weltbon instance.' },
     503: err503,
   },
@@ -706,7 +716,9 @@ export const syncClientRoutes = new OpenAPIHono<AppEnv>()
       normalizedUrl = normalizeRemoteUrl(baseUrl);
     } catch (err) {
       if (err instanceof InvalidRemoteUrlError) {
-        return c.json({ error: err.message }, 400);
+        // `code` so the client can map this to its own copy. The message
+        // itself stays as-is for operators and for every existing caller.
+        return c.json({ error: err.message, code: err.code }, 400);
       }
       throw err;
     }
@@ -745,10 +757,23 @@ export const syncClientRoutes = new OpenAPIHono<AppEnv>()
     // so collapsing them is a data migration out of proportion to the
     // benefit. The residual race — two simultaneous submissions — yields one
     // extra row, not corruption.
+    //
+    // ORDER BY IS LOAD-BEARING, not tidiness. `limit(1)` with no ordering lets
+    // the database return ANY of a duplicate pair, and it need not return the
+    // same one twice running. That matters because everything downstream is
+    // keyed on the remote id this returns: `sync_links.remoteId` points at one
+    // specific duplicate, and `localState` in the discovery listing is computed
+    // per remoteId. Hand the flow the OTHER duplicate and an already-synced
+    // universe reports `'present'` instead of `'linked'`, which the #42 picker
+    // disables — a dead end for exactly the legacy-duplicate users OB-03 exists
+    // to protect. Oldest-first, because the oldest row is the one any existing
+    // link is likeliest to reference. `id` breaks a createdAt tie so the pick
+    // is total, not merely usually-stable.
     const [existing] = await getDb()
       .select()
       .from(syncRemotes)
       .where(and(eq(syncRemotes.userId, userId), eq(syncRemotes.baseUrl, normalizedUrl)))
+      .orderBy(asc(syncRemotes.createdAt), asc(syncRemotes.id))
       .limit(1);
 
     const enc: EncryptedSecret = encryptSecret(pat, cfg.llmKeyEncryptionKey);
