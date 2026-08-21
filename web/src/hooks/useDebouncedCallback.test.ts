@@ -63,4 +63,32 @@ describe('useDebouncedCallback', () => {
     expect(second).toHaveBeenCalledTimes(1);
     expect(second).toHaveBeenCalledWith('hello');
   });
+
+  // ── issue #54 ───────────────────────────────────────────────────────────────
+  // A pending write must be abandonable. Without this, a caller that clears the
+  // thing being written (a draft the user just committed or discarded) has a
+  // save still in flight, which lands ~ms later and resurrects it — the user
+  // then sees a resumable draft for work they already finished.
+  it('cancel() abandons a pending invocation', () => {
+    const fn = vi.fn();
+    const { result } = renderHook(() => useDebouncedCallback(fn, 300));
+
+    result.current('doomed');
+    result.current.cancel();
+    vi.advanceTimersByTime(1000);
+
+    expect(fn).not.toHaveBeenCalled();
+  });
+
+  it('cancel() is safe with nothing pending, and does not disable later calls', () => {
+    const fn = vi.fn();
+    const { result } = renderHook(() => useDebouncedCallback(fn, 300));
+
+    result.current.cancel(); // nothing queued — must not throw
+
+    result.current('later');
+    vi.advanceTimersByTime(300);
+    expect(fn).toHaveBeenCalledTimes(1);
+    expect(fn).toHaveBeenCalledWith('later');
+  });
 });

@@ -37,6 +37,7 @@ import { syncRoutes } from './routes/sync.js';
 import { syncClientRoutes } from './routes/sync-client.js';
 import { buildRuntimeRoutes } from './routes/runtime.js';
 import { recoverOrphanAuditRuns } from './services/audit-recovery.js';
+import { recoverOrphanSyncLinks } from './services/sync/link-recovery.js';
 import { wireSigtermDrain } from './services/audit-shutdown.js';
 import { requireAuth } from './middleware/auth.js';
 import { forwarded } from './middleware/forwarded.js';
@@ -314,6 +315,17 @@ export async function startServer(): Promise<{ server: ReturnType<typeof serve>;
     await recoverOrphanAuditRuns(db());
   } catch (err) {
     console.warn('[audit-recovery] failed at boot; orphan rows may persist:', err);
+  }
+  // Issue #55: the same orphan problem for sync links. A run interrupted
+  // between claimLink() and safeRelease() leaves the row 'syncing' forever,
+  // which both hides #42's first-sync-failed banner and blocks a manual retry
+  // with SyncBusyError for a full lease period. Same placement rationale as
+  // above: BEFORE serve(), so no inbound HTTP races the UPDATE, and a failure
+  // warns rather than crashing the API.
+  try {
+    await recoverOrphanSyncLinks(db());
+  } catch (err) {
+    console.warn('[sync-recovery] failed at boot; interrupted links may persist:', err);
   }
 
   const server = serve({ fetch: app.fetch, port: cfg.port, hostname: cfg.bindHost });
