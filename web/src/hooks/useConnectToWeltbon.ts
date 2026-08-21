@@ -13,7 +13,7 @@ import { useCallback, useRef, useState } from 'react';
 import { useQueryClient } from '@tanstack/react-query';
 import { api, ApiError } from '../api/client';
 import { SYNC_REMOTES_QUERY_KEY } from './syncKeys';
-import type { RemoteUniverse } from './useAdoptUniverse';
+import { invalidateAfterLinking, type RemoteUniverse } from './useAdoptUniverse';
 import type { SyncRemote } from './useSyncRemotes';
 
 export type ConnectStep =
@@ -138,6 +138,17 @@ export function useConnectToWeltbon() {
           if (!found) throw e;
           s = { ...s, linkId: found.id };
         }
+        // Both branches above mean the universe now exists locally and is
+        // linked, so every cache useAdoptUniverse's own mutation would have
+        // invalidated must be invalidated here too — above all ['universes'],
+        // which is what puts the adopted universe in the user's list. Nothing
+        // else on this path touches that key (the user did not create the
+        // universe through useCreateUniverse), and the list has a 30s
+        // staleTime and never unmounts, so without this a first-time user
+        // watches the flow succeed and is returned to "Start a universe".
+        // Calling the shared helper rather than re-listing the keys is
+        // deliberate: see its docstring.
+        invalidateAfterLinking(qc, s.remoteId!);
         from = 'syncing';
       }
 

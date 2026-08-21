@@ -49,8 +49,17 @@ export function useRemoteUniverses(remoteId: string | undefined) {
   });
 }
 
-/** Every key an adoption or a link changes. Shared so the two cannot drift. */
-function invalidateAfterLinking(qc: ReturnType<typeof useQueryClient>, remoteId: string) {
+/**
+ * Every key an adoption or a link changes. Shared so the two cannot drift —
+ * and EXPORTED, because a third caller now exists: the #42 one-button connect
+ * flow (hooks/useConnectToWeltbon.ts) adopts through the same endpoint without
+ * going through either mutation below, and a private copy of this list there
+ * is exactly the drift this function was written to prevent. It broke that way
+ * once already: the flow invalidated only the remotes key, so the universe it
+ * had just adopted was missing from a `staleTime: 30_000` universe list that
+ * never unmounts, and a first-time user landed back on "Start a universe".
+ */
+export function invalidateAfterLinking(qc: ReturnType<typeof useQueryClient>, remoteId: string) {
   // The row's localState changed, so the browse list must refetch.
   qc.invalidateQueries({ queryKey: remoteUniversesKey(remoteId) });
   // A link now exists for a universe whose Sync tab may be mounted. The PREFIX,

@@ -107,8 +107,13 @@ describe('useConnectToWeltbon', () => {
   });
 
   it('attributes a rejected credential to the authenticating step', async () => {
+    // 422, not 401 (fix wave, I6). The route returns 422 for a peer credential
+    // rejection precisely so the real client's 401 branch — refresh, retry,
+    // and possibly sign the desktop user out — never fires for a typo'd PEER
+    // password. Constructing this double as a 401 would test a status the
+    // server no longer sends.
     const err = new ApiError(
-      401,
+      422,
       { error: 'that instance did not accept the email and password', code: 'peer_credentials_rejected' },
       'that instance did not accept the email and password',
     );
@@ -153,6 +158,50 @@ describe('useConnectToWeltbon', () => {
     expect(result.current.failedStep).toBeNull();
     expect(result.current.linkId).toBe('link-1');
     expect(mockApi).toHaveBeenCalledTimes(5);
+  });
+
+  it('makes the adopted universe visible in the universe list', async () => {
+    // Fix wave, I2. Invalidating only the remotes key left the just-adopted
+    // universe out of a ['universes'] query with a 30s staleTime that never
+    // unmounts, so a first-time user was returned to the "Start a universe"
+    // empty state after a successful connect. useAdoptUniverse's own docstring
+    // states the rule; this path now calls the same shared helper.
+    const qc = new QueryClient({
+      defaultOptions: { queries: { retry: false }, mutations: { retry: false } },
+    });
+    const spy = vi.spyOn(qc, 'invalidateQueries');
+    const localWrapper = ({ children }: { children: ReactNode }) => (
+      <QueryClientProvider client={qc}>{children}</QueryClientProvider>
+    );
+
+    queue(REMOTE, ONE_ABSENT, LINK, { ok: true });
+    const { result } = renderHook(() => useConnectToWeltbon(), { wrapper: localWrapper });
+    await act(() => result.current.start({ baseUrl: 'https://peer.example', email: 'a@b.c', password: 'pw' }));
+    await waitFor(() => expect(result.current.step).toBe('done'));
+
+    expect(spy).toHaveBeenCalledWith({ queryKey: ['universes'] });
+    // And the rest of the set useAdoptUniverse invalidates, so the two paths
+    // cannot drift apart again.
+    expect(spy).toHaveBeenCalledWith({ queryKey: ['sync', 'remote-universes', 'remote-1'] });
+    expect(spy).toHaveBeenCalledWith({ queryKey: ['sync', 'links'] });
+  });
+
+  it('invalidates the universe list on the already-adopted recovery path too', async () => {
+    const qc = new QueryClient({
+      defaultOptions: { queries: { retry: false }, mutations: { retry: false } },
+    });
+    const spy = vi.spyOn(qc, 'invalidateQueries');
+    const localWrapper = ({ children }: { children: ReactNode }) => (
+      <QueryClientProvider client={qc}>{children}</QueryClientProvider>
+    );
+
+    const already = new ApiError(409, { error: 'already local', code: 'universe-already-local' }, 'already local');
+    queue(REMOTE, ONE_ABSENT, already, [{ id: 'link-1', universeId: 'u1', remoteId: 'remote-1' }], { ok: true });
+    const { result } = renderHook(() => useConnectToWeltbon(), { wrapper: localWrapper });
+    await act(() => result.current.start({ baseUrl: 'https://peer.example', email: 'a@b.c', password: 'pw' }));
+    await waitFor(() => expect(result.current.step).toBe('done'));
+
+    expect(spy).toHaveBeenCalledWith({ queryKey: ['universes'] });
   });
 
   it('reaches done-with-empty-universe when only the first pull fails, keeping the universe', async () => {
