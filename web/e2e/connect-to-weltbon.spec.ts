@@ -60,21 +60,31 @@
  *
  *        pnpm exec playwright test -c playwright.sync.config.ts e2e/connect-to-weltbon.spec.ts
  *
- * DO NOT run `pnpm test:e2e:sync` unqualified expecting both spec files to
- * pass in one invocation. `playwright.sync.config.ts`'s `testMatch` lists
- * both `sync.spec.ts` and this file so each is DISCOVERABLE in that config,
- * but the two specs need instance A in OPPOSITE auth modes — sync.spec.ts's
- * `login()` requires 'server' mode and will fail outright against a
- * local-mode A (no `/login` form to fill in; `App.tsx` redirects it away).
- * Run them as two separate invocations against instance A restarted in the
- * matching mode each time; `sync-global-setup.ts` reruns fixture setup for
- * both, so nothing else about the rig needs to change between them.
+ * `pnpm test:e2e:sync` RUNS BOTH SPECS IN ONE INVOCATION, and only one of them
+ * can pass on any given rig: `playwright.sync.config.ts`'s `testMatch` lists
+ * both `sync.spec.ts` and this file, but the two need instance A in OPPOSITE
+ * auth modes — sync.spec.ts's `login()` requires 'server' mode and has no
+ * `/login` form to fill in against a local-mode A (`App.tsx` redirects it away).
+ *
+ * So the mode mismatch below SKIPS rather than throws (fix wave, I7). A throw
+ * made the documented `pnpm test:e2e:sync` command permanently red on the
+ * standard server-mode rig — a command that was green before this branch — by
+ * reporting "this rig is configured for the other spec" as a test failure.
+ * Skipping reports it as what it is: not applicable here. Run this spec
+ * against instance A restarted in local mode:
+ *
+ *   pnpm exec playwright test -c playwright.sync.config.ts e2e/connect-to-weltbon.spec.ts
+ *
+ * `sync-global-setup.ts` reruns fixture setup for both, so nothing else about
+ * the rig needs to change between the two invocations. The skip annotation
+ * carries the same remedy the throw used to.
  *
  * `e2e/sync-global-setup.ts` probes instance A's API, instance A's Vite
  * server, and instance B before anything runs, and refuses with the exact
  * command to fix whichever is missing — but it does NOT check instance A's
- * auth mode, so a misconfigured local-mode flag will surface here instead, as
- * the `beforeAll` runtime-mode assertion below, not as a silent hang.
+ * auth mode, so a wrong-mode instance A surfaces here instead, as the
+ * runtime-mode skip below, not as a silent hang on a button that never
+ * renders.
  *
  * WHAT THIS COVERS (Feature #42, Task 7 — OB-01..OB-04 end to end):
  *
@@ -140,18 +150,27 @@ const entryTitle = `Waystone of ${stamp}`;
 let context: BrowserContext;
 let page: Page;
 
+/**
+ * Set when instance A is not in local mode, which makes every test here skip
+ * with that reason rather than fail. Not a throw: this spec and sync.spec.ts
+ * need opposite modes on the same rig, so "the rig is set up for the other
+ * spec" is a not-applicable, not a defect — and `pnpm test:e2e:sync` runs both.
+ */
+let wrongModeReason: string | null = null;
+
 test.beforeAll(async ({ browser }: { browser: Browser }) => {
-  // ─── Fail fast, with the actual remedy, if A isn't in local mode ────────
-  // Without this, a misconfigured rig would instead hang on the "Connect to
+  // ─── Bail out early, with the actual remedy, if A isn't in local mode ────
+  // Without this, a wrong-mode rig would instead hang on the "Connect to
   // Weltbon" button click below (it simply never renders in 'server' mode)
   // and the failure would say nothing about why.
   const runtime = (await (await fetch(`${A_API}/runtime`)).json()) as { authMode?: string };
   if (runtime.authMode !== 'local') {
-    throw new Error(
+    wrongModeReason =
       `Instance A must run with WELTBON_LOCAL_MODE=1 for this spec (its ` +
-        `reported authMode is '${runtime.authMode}'). See this file's header ` +
-        `comment for exactly what to change and why.`,
-    );
+      `reported authMode is '${runtime.authMode}'). See this file's header ` +
+      `comment for exactly what to change and why.`;
+    // Seed nothing and open no browser context: every test below skips.
+    return;
   }
 
   // ─── Fixture data over instance B's API only (fast, and not what's under
@@ -176,6 +195,12 @@ test.beforeAll(async ({ browser }: { browser: Browser }) => {
   context = await browser.newContext({ viewport: { width: 1280, height: 800 } });
   page = await context.newPage();
   page.on('pageerror', (e) => console.log('[browser pageerror]', e.message));
+});
+
+// `test.skip(condition, reason)` belongs in beforeEach, not beforeAll —
+// Playwright only honours it from a test body, a fixture, or a beforeEach.
+test.beforeEach(() => {
+  test.skip(wrongModeReason !== null, wrongModeReason ?? '');
 });
 
 test.afterAll(async () => {
@@ -233,12 +258,14 @@ test('2. a wrong password shows the credential error and stays on the form', asy
 
   const alert = page.getByRole('alert');
   await expect(alert).toBeVisible({ timeout: 20_000 });
-  // PeerAuthError's actual copy (api/src/services/sync/peer-auth.ts:92),
-  // 'peer_credentials_rejected' — NOT the generic "Something went wrong"
-  // fallback, which would mean the error path mis-attributed some other
-  // failure as a rejected credential.
-  await expect(alert).toContainText(/did not accept the email and password/i);
+  // The connect flow's own copy for 'peer_credentials_rejected'
+  // (web/src/lib/connectErrorCopy.ts) — NOT the server's own sentence, which
+  // this pane must never print, and NOT the step-attributed fallback, which
+  // would mean the error was mis-attributed rather than recognised.
+  await expect(alert).toContainText(/email or password wasn't accepted by that instance/i);
   await expect(alert).not.toContainText(/something went wrong/i);
+  // And it names the step, per the Definition of Done.
+  await expect(alert).toContainText(/stopped while signing you in/i);
 
   // Still on the credentials form, not bounced anywhere, and the address the
   // user typed is preserved so they don't have to retype it.
