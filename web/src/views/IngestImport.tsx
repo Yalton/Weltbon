@@ -236,6 +236,20 @@ export function IngestImport() {
     }
   }, [decisions, preview, step.kind, debouncedSave]);
 
+  /**
+   * Clear the draft AND abandon any save still in flight (issue #54).
+   *
+   * A decision change queues a 300ms debounced write. Clearing without
+   * cancelling left that write pending, so it landed a moment later and
+   * resurrected the draft the user had just discarded — or, on the commit
+   * path, one they had already imported. Every clear site must go through
+   * here; calling clearDraft() directly reintroduces the bug.
+   */
+  const discardDraft = useCallback(() => {
+    debouncedSave.cancel();
+    clearDraft();
+  }, [debouncedSave, clearDraft]);
+
   const handleResumeContinue = () => {
     if (!draft) return;
     setPreview(draft.preview);
@@ -245,7 +259,7 @@ export function IngestImport() {
   };
 
   const handleResumeDiscard = () => {
-    clearDraft();
+    discardDraft();
     setStep({ kind: 'upload' });
   };
 
@@ -445,7 +459,7 @@ export function IngestImport() {
 
   const handleDiscard = () => setDiscardOpen(true);
   const handleDiscardConfirm = () => {
-    clearDraft();
+    discardDraft();
     setPreview(null);
     setDecisions({});
     setFocusedPath(null);
@@ -475,7 +489,7 @@ export function IngestImport() {
         },
       );
       // Success path (D-28): clear localStorage, invalidate caches, navigate.
-      clearDraft();
+      discardDraft();
       qc.invalidateQueries({ queryKey: ['entries', uid] });
       qc.invalidateQueries({ queryKey: ['entry', uid] });
       qc.invalidateQueries({ queryKey: ['categories', uid] });

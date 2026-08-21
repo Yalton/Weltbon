@@ -464,4 +464,49 @@ describe('IngestImport (Phase 12 E2E)', () => {
     ).not.toBeInTheDocument();
     expect(localStorage.getItem(STORAGE_KEY)).toBeNull();
   });
+
+  // ── issue #54 ───────────────────────────────────────────────────────────────
+  // Clearing the draft must also abandon any save still in flight. A decision
+  // change queues a 300ms debounced write; discarding (or committing) right
+  // afterwards cleared localStorage but left that write pending, so it landed a
+  // moment later and resurrected the draft. The user then returns to a "resume
+  // your import" prompt for work they deliberately threw away — or, on the
+  // commit path, for an import they already completed.
+  //
+  // This also removes the flakiness that made this file fail intermittently in
+  // the full suite: the pending write was racing the assertions, so the same
+  // bug showed up as a timing-dependent test rather than as the product defect
+  // it actually is.
+  it('a save queued just before a discard does not resurrect the draft (#54)', async () => {
+    setupBaseApi();
+    renderImport();
+
+    expect(
+      await screen.findByRole('heading', { name: /^Import notes$/ }),
+    ).toBeInTheDocument();
+    await uploadSimpleZip();
+    expect(
+      await screen.findByRole('main', { name: /Import review/i }),
+    ).toBeInTheDocument();
+    await waitFor(() =>
+      expect(localStorage.getItem(STORAGE_KEY)).not.toBeNull(),
+    );
+
+    // Queue a write, then discard before the debounce window closes.
+    await userEvent.click(
+      screen.getByRole('button', { name: /Reject this entry/ }),
+    );
+    await userEvent.click(screen.getByRole('button', { name: /Discard draft/ }));
+    const dialog = await screen.findByRole('dialog');
+    await userEvent.click(
+      within(dialog).getByRole('button', { name: 'Discard draft' }),
+    );
+
+    expect(localStorage.getItem(STORAGE_KEY)).toBeNull();
+
+    // The real assertion: still gone once the debounce window has fully
+    // elapsed. Without cancellation the queued write lands in here.
+    await new Promise((r) => setTimeout(r, 400));
+    expect(localStorage.getItem(STORAGE_KEY)).toBeNull();
+  });
 });
