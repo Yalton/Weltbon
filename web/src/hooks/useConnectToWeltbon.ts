@@ -93,9 +93,19 @@ export function useConnectToWeltbon() {
           `/sync/remotes/${s.remoteId}/universes`,
         );
         s = { ...s, universes };
-        // A picker with one option asks a question with one answer.
-        if (universes.length === 1) {
-          s = { ...s, universeId: universes[0].id };
+        // A picker with one option asks a question with one answer -- UNLESS
+        // that one option is already 'present' on this instance. Adopting a
+        // 'present' universe always 409s (SyncUniverseAlreadyLocalError covers
+        // both 'present' and 'linked'), and the recovery below only resolves
+        // for 'linked' (it resumes an existing link); 'present' has none by
+        // definition, so the lookup fails and the same error rethrows on every
+        // retry -- a permanent dead end with no valid auto-answer. That case
+        // has no single right action for this flow to take on the user's
+        // behalf, so it goes to the picker, where the disabled entry explains
+        // why and points at Settings -> Sync instead of pretending to adopt.
+        const only = universes.length === 1 ? universes[0] : undefined;
+        if (only && only.localState !== 'present') {
+          s = { ...s, universeId: only.id };
           from = 'adopting';
         } else {
           setState({ ...s, step: 'choosing' });

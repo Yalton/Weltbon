@@ -48,14 +48,26 @@ const TWO = { universes: [
   { id: 'u1', name: 'Alpha', description: '', updatedAt: '', localState: 'absent' },
   { id: 'u2', name: 'Beta',  description: '', updatedAt: '', localState: 'absent' },
 ] };
-const ONE = { universes: [TWO.universes[0]] };
+// Explicit, not incidental: this fixture's single universe is 'absent' on
+// this instance, which is the ordinary case the length===1 auto-skip exists
+// for. Kept as its own name (rather than a bare `ONE`) so it reads as a
+// deliberate choice next to ONE_PRESENT below, not an accident of sharing
+// TWO's first entry.
+const ONE_ABSENT = { universes: [TWO.universes[0]] };
+// The other single-universe case: already 'present' on this instance. The
+// length===1 auto-skip must NOT fire here -- see useConnectToWeltbon.ts's
+// comment on the 'discovering' step for why an auto-adopt of this fixture
+// can never succeed.
+const ONE_PRESENT = { universes: [
+  { id: 'u1', name: 'Alpha', description: '', updatedAt: '', localState: 'present' },
+] };
 const LINK = { id: 'link-1', universeId: 'u1' };
 
 describe('useConnectToWeltbon', () => {
   beforeEach(() => mockApi.mockReset());
 
   it('runs the whole flow and ends done', async () => {
-    queue(REMOTE, ONE, LINK, { ok: true });
+    queue(REMOTE, ONE_ABSENT, LINK, { ok: true });
     const { result } = renderHook(() => useConnectToWeltbon(), { wrapper });
 
     await act(() => result.current.start({ baseUrl: 'https://peer.example', email: 'a@b.c', password: 'pw' }));
@@ -76,6 +88,24 @@ describe('useConnectToWeltbon', () => {
     expect(mockApi).toHaveBeenCalledTimes(2);
   });
 
+  it('stops at choosing, without ever adopting, when the lone universe is already present', async () => {
+    // Only two calls queued: remotes, then universes. If the auto-skip fired
+    // here, a THIRD call (POST /sync/adopt) would be made against a queue
+    // that has nothing left for it, which is exactly how this test would
+    // catch a regression back to auto-adopting a 'present' single universe.
+    queue(REMOTE, ONE_PRESENT);
+    const { result } = renderHook(() => useConnectToWeltbon(), { wrapper });
+
+    await act(() => result.current.start({ baseUrl: 'https://peer.example', email: 'a@b.c', password: 'pw' }));
+
+    await waitFor(() => expect(result.current.step).toBe('choosing'));
+    expect(result.current.universes).toHaveLength(1);
+    expect(result.current.universes[0].localState).toBe('present');
+    // Pins the absence of the adopt call, not just its effect: exactly the
+    // two discovery-phase calls, no third call for POST /sync/adopt.
+    expect(mockApi).toHaveBeenCalledTimes(2);
+  });
+
   it('attributes a rejected credential to the authenticating step', async () => {
     const err = new ApiError(
       401,
@@ -92,7 +122,7 @@ describe('useConnectToWeltbon', () => {
   });
 
   it('resumes at the failed step without repeating earlier ones', async () => {
-    queue(REMOTE, ONE, LINK, new Error('sync exploded'));
+    queue(REMOTE, ONE_ABSENT, LINK, new Error('sync exploded'));
     const { result } = renderHook(() => useConnectToWeltbon(), { wrapper });
     await act(() => result.current.start({ baseUrl: 'https://peer.example', email: 'a@b.c', password: 'pw' }));
     await waitFor(() => expect(result.current.failedStep).toBe('syncing'));
@@ -114,7 +144,7 @@ describe('useConnectToWeltbon', () => {
     // before it can run the sync. That's 5 calls total, not 4: remotes,
     // universes, adopt (fails already-adopted), the links lookup, sync run.
     const existingLinks = [{ id: 'link-1', universeId: 'u1', remoteId: 'remote-1' }];
-    queue(REMOTE, ONE, already, existingLinks, { ok: true });
+    queue(REMOTE, ONE_ABSENT, already, existingLinks, { ok: true });
     const { result } = renderHook(() => useConnectToWeltbon(), { wrapper });
 
     await act(() => result.current.start({ baseUrl: 'https://peer.example', email: 'a@b.c', password: 'pw' }));
@@ -126,7 +156,7 @@ describe('useConnectToWeltbon', () => {
   });
 
   it('reaches done-with-empty-universe when only the first pull fails, keeping the universe', async () => {
-    queue(REMOTE, ONE, LINK, new Error('sync exploded'));
+    queue(REMOTE, ONE_ABSENT, LINK, new Error('sync exploded'));
     const { result } = renderHook(() => useConnectToWeltbon(), { wrapper });
 
     await act(() => result.current.start({ baseUrl: 'https://peer.example', email: 'a@b.c', password: 'pw' }));
