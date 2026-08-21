@@ -138,7 +138,7 @@ export function useConnectToWeltbon() {
 
       setState({ ...s, step: 'done' });
     } catch (e) {
-      setState({ ...s, step: s.step, failedStep: from, error: toError(e) });
+      setState({ ...s, step: from, failedStep: from, error: toError(e) });
     }
   }, [qc]);
 
