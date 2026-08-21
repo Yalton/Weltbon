@@ -9,7 +9,7 @@
     "start": "electron .",
     "rebuild": "electron-rebuild -f -w bcrypt,sharp -m ../api",
     "test": "tsc && node --test dist/*.test.js",
-    "build:app": "cd ../web && ./node_modules/.bin/vite build && cd ../api && ./node_modules/.bin/tsc -p tsconfig.build.json; cd .. && rm -rf api/web-dist && cp -r web/dist api/web-dist && cd desktop && ./node_modules/.bin/tsc",
+    "build:app": "cd ../web && ./node_modules/.bin/vite build && cd ../api && { ./node_modules/.bin/tsc -p tsconfig.build.json || true; } && cd .. && rm -rf api/web-dist && cp -r web/dist api/web-dist && cd desktop && ./node_modules/.bin/tsc",
     "stage": "bash scripts/stage-api.sh",
     "dist": "pnpm run build && pnpm run stage && electron-builder --linux --config electron-builder.yml"
   },
