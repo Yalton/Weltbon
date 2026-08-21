@@ -112,6 +112,8 @@ const DB_GATED_TESTS = [
   'tests/sync-conflicts.test.ts',
   // Plan D Task 4 — extracted asset materialization.
   'tests/sync-materialize.test.ts',
+  // Task 2 (OB-03, desktop one-button adoption) — POST /remotes idempotency.
+  'tests/sync-client-connect.test.ts',
   // Plan D Task 5 — sync remotes/links CRUD.
   'tests/sync-client-crud.test.ts',
   // Plan D Task 8 — two-instance acceptance for the sync drive loop.

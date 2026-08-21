@@ -3,6 +3,7 @@ import { Link, useLocation, useParams } from 'react-router-dom';
 import { useFilterParams } from '../hooks/useFilterParams';
 import { useFilteredEntries } from '../hooks/useFilteredEntries';
 import { useUniverse } from '../hooks/useUniverse';
+import { useSyncLinks, useRunSyncLink } from '../hooks/useSyncLinks';
 import { EntryCard } from '../components/EntryCard';
 import { EmptyState } from '../components/EmptyState';
 import { ImportDialog } from '../components/ImportDialog';
@@ -32,6 +33,32 @@ export function EntryList() {
   const [filters, updateFilters] = useFilterParams();
   const { data: entries, isLoading } = useFilteredEntries(uid!, filters);
   const { data: universe } = useUniverse(uid);
+
+  // Feature #42 (task 7) — the first-sync-failed banner. The connect flow
+  // deliberately does NOT roll back when a first sync fails: the user keeps
+  // the adopted universe and lands right here. An empty universe with no
+  // explanation is indistinguishable from data loss, so this banner is what
+  // makes that state legible. It is driven by PERSISTED server state (the
+  // sync link row), not component/session state, so it survives a reload —
+  // a transient toast would not. Skipped in share mode: a visitor has no
+  // sync links to explain and no ability to retry one.
+  const { data: syncLinks } = useSyncLinks(isShareMode ? undefined : uid);
+  const runSyncLink = useRunSyncLink(uid ?? '');
+  // Condition is exactly `status === 'error' && lastSyncedAt === null` —
+  // errored AND never once synced. Both halves matter: a link that synced
+  // fine for weeks and then failed today has a non-null lastSyncedAt and
+  // must NOT show this "first sync didn't finish" copy.
+  //
+  // `.find` deliberately surfaces only the FIRST such link. A universe with
+  // links to two different peers could have two links matching this
+  // condition at once, and retrying the first (which invalidates and
+  // refetches every sync link) would clear the banner even though the
+  // second link is still broken. Fine for today — the one-button flow only
+  // ever creates one link per universe — but a future multi-peer universe
+  // would need this to surface (or cycle through) every match, not just one.
+  const failedFirstSyncLink = syncLinks?.find(
+    (link) => link.status === 'error' && link.lastSyncedAt === null,
+  );
 
   const [importOpen, setImportOpen] = useState(false);
   const [pickerOpen, setPickerOpen] = useState(false);
@@ -68,6 +95,29 @@ export function EntryList() {
 
   return (
     <div className="max-w-4xl mx-auto">
+      {/* First-sync-failed banner (Feature #42, task 7). Persisted-state
+          driven so it survives a reload — see the hook usage above. */}
+      {failedFirstSyncLink && (
+        <div
+          role="alert"
+          data-testid="first-sync-failed-banner"
+          className="mb-4 rounded-lg border border-rose-500/30 bg-rose-500/10 p-3 text-sm text-rose-700 dark:text-rose-300"
+        >
+          <p>
+            The first sync didn't finish, so this universe may look empty right
+            now. Nothing has been lost — try again to bring your content in.
+          </p>
+          <button
+            type="button"
+            onClick={() => runSyncLink.mutate({ id: failedFirstSyncLink.id })}
+            disabled={runSyncLink.isPending}
+            className="mt-2 rounded-md border border-rose-400/50 px-3 py-1.5 text-sm font-medium hover:bg-rose-500/10 disabled:opacity-50"
+          >
+            Try again
+          </button>
+        </div>
+      )}
+
       {/* Search + filter UI above the existing toolbar */}
       <div className="mb-4 space-y-3">
         <SearchBar />

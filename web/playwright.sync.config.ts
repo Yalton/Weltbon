@@ -20,12 +20,21 @@ import { defineConfig } from '@playwright/test';
  *
  * Timeouts are large because a first sync genuinely copies image bytes across
  * instances and the run is awaited inline in the UI (F-02/F-06).
+ *
+ * `testMatch` is an array, not a single string, because Feature #42's
+ * `connect-to-weltbon.spec.ts` (Task 7) needs this SAME rig — instance A's UI
+ * under test, instance B as the peer it connects to — and a bare string here
+ * would only ever pick up `sync.spec.ts`, silently leaving the new spec
+ * undiscovered. Adding a file here does not change what rig this config
+ * targets or how it is set up (still `sync-global-setup.ts`, still no
+ * `webServer` block) — it only widens which spec files in `testDir` run
+ * against that same rig.
  */
 const CHROMIUM = process.env.PLAYWRIGHT_CHROMIUM_PATH || '/usr/bin/chromium';
 
 export default defineConfig({
   testDir: './e2e',
-  testMatch: 'sync.spec.ts',
+  testMatch: ['sync.spec.ts', 'connect-to-weltbon.spec.ts'],
   globalSetup: './e2e/sync-global-setup.ts',
   // One universe, one link, one lease — these tests are a sequence, not a set.
   fullyParallel: false,

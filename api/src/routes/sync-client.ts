@@ -26,7 +26,7 @@
  * Task 7 (the drive loop) lands in this same file, so keep it clean.
  */
 import { OpenAPIHono, createRoute, z } from '@hono/zod-openapi';
-import { and, eq } from 'drizzle-orm';
+import { and, asc, eq } from 'drizzle-orm';
 import { db as getDb } from '../db/client.js';
 import { syncRemotes, syncLinks, universes } from '../db/schema.js';
 import { requireJwtAuth, type AuthVariables } from '../middleware/auth.js';
@@ -46,6 +46,7 @@ import { mapSyncApplyError } from '../services/sync/apply-error-response.js';
 import { runSync, testRemote } from '../services/sync/run-sync.js';
 import { adoptUniverse, listRemoteUniverses } from '../services/sync/adopt.js';
 import { SyncRunError } from '../services/sync/run-errors.js';
+import { mintPatFromCredentials, PeerAuthError } from '../services/sync/peer-auth.js';
 import { env } from '../config.js';
 
 type AppEnv = { Variables: AuthVariables };
@@ -68,11 +69,31 @@ const err403 = { content: { 'application/json': { schema: errorSchema } }, descr
 const err404 = { content: { 'application/json': { schema: errorSchema } }, description: 'Remote not found / not owned.' };
 const err503 = { content: { 'application/json': { schema: errorSchema } }, description: 'Server not configured for encryption.' };
 
-const createRemoteBodySchema = z.object({
-  label: z.string().trim().default(''),
-  baseUrl: z.string(),
-  pat: z.string().min(1),
-});
+/**
+ * OB-02. Two credential shapes, exactly one per request.
+ *
+ * A refine rather than a discriminated union: the discriminant would have to
+ * be a field the client sends purely to describe its own body, which is a
+ * worse contract than inferring it from what is present. Both-present is
+ * rejected rather than silently preferring one, so a client bug surfaces as a
+ * 400 instead of a token being ignored.
+ */
+const createRemoteBodySchema = z
+  .object({
+    label: z.string().trim().default(''),
+    baseUrl: z.string(),
+    pat: z.string().min(1).optional(),
+    email: z.string().min(1).optional(),
+    password: z.string().min(1).optional(),
+  })
+  .refine(
+    (b) => (b.pat === undefined) !== (b.email === undefined && b.password === undefined),
+    { message: 'provide either pat, or email and password — not both' },
+  )
+  .refine(
+    (b) => b.pat !== undefined || (b.email !== undefined && b.password !== undefined),
+    { message: 'email and password must be supplied together' },
+  );
 
 const updateRemoteBodySchema = z.object({
   label: z.string().trim().optional(),
@@ -285,10 +306,23 @@ const postRemoteRoute = createRoute({
   },
   responses: {
     201: { content: { 'application/json': { schema: maskedRemoteSchema } }, description: 'Remote registered. Response is masked.' },
-    400: err400,
+    200: { content: { 'application/json': { schema: maskedRemoteSchema } }, description: 'Remote already registered for this base URL; the stored token was replaced. Response is masked.' },
+    // syncErrorSchema, not the shared err400: this route's 400 carries
+    // InvalidRemoteUrlError's `code` alongside `error` so the client can render
+    // its own address-shaped copy instead of the operator-facing reason string
+    // ("Invalid remote URL: not a valid absolute URL"), which names a "remote"
+    // and a "PAT" — vocabulary the #42 desktop flow must never show.
+    400: { content: { 'application/json': { schema: syncErrorSchema } }, description: 'Invalid base URL (D-04), code `invalid-remote-url`; or both a pat and a password were sent.' },
     // Specific rather than the shared err401: this is the one route whose 401
-    // wording calls out the D-10 PAT rule by name.
-    401: { content: { 'application/json': { schema: errorSchema } }, description: 'Missing or invalid JWT bearer (or PAT — D-10).' },
+    // wording calls out the D-10 PAT rule by name. It is now ONLY the local
+    // auth failure — see the 422 below.
+    401: { content: { 'application/json': { schema: syncErrorSchema } }, description: 'Missing or invalid JWT bearer (or PAT — D-10).' },
+    // OB-02's peer credential rejection. Deliberately NOT 401: the caller IS
+    // authenticated here, and a 401 makes the SPA's fetch wrapper rotate the
+    // user's local session and potentially sign them out — see PeerAuthError's
+    // docstring in services/sync/peer-auth.ts.
+    422: { content: { 'application/json': { schema: syncErrorSchema } }, description: 'The peer instance rejected the given email/password (code `peer_credentials_rejected`).' },
+    502: { content: { 'application/json': { schema: syncErrorSchema } }, description: 'The peer instance was unreachable, or did not answer as a Weltbon instance.' },
     503: err503,
   },
 });
@@ -675,22 +709,89 @@ export const syncClientRoutes = new OpenAPIHono<AppEnv>()
     }
 
     const userId = c.var.userId;
-    const { label, baseUrl, pat } = c.req.valid('json');
+    const { label, baseUrl, pat: suppliedPat, email, password } = c.req.valid('json');
 
     let normalizedUrl: string;
     try {
       normalizedUrl = normalizeRemoteUrl(baseUrl);
     } catch (err) {
       if (err instanceof InvalidRemoteUrlError) {
-        return c.json({ error: err.message }, 400);
+        // `code` so the client can map this to its own copy. The message
+        // itself stays as-is for operators and for every existing caller.
+        return c.json({ error: err.message, code: err.code }, 400);
       }
       throw err;
     }
 
+    // OB-02. A label is optional now, because asking a first-time user to
+    // invent one is friction with no payoff. The host is a better default
+    // than anything they would type.
+    const effectiveLabel = label !== '' ? label : new URL(normalizedUrl).host;
+
+    let pat: string;
+    if (suppliedPat !== undefined) {
+      pat = suppliedPat;
+    } else {
+      try {
+        pat = await mintPatFromCredentials({
+          baseUrl: normalizedUrl,
+          email: email as string,
+          password: password as string,
+          label: `Weltbon Desktop (${effectiveLabel})`,
+        });
+      } catch (err) {
+        if (err instanceof PeerAuthError) {
+          return c.json({ error: err.message, code: err.code }, err.status);
+        }
+        throw err;
+      }
+    }
+
+    // OB-03. A user pressing Connect twice, or retrying a flow that failed
+    // after this step, must not strand a second remote (and a second
+    // encrypted PAT) for the same instance. Scoped to userId: two users
+    // registering the same peer legitimately hold separate rows.
+    //
+    // No unique index backs this. Production rows predate the rule and may
+    // already contain duplicates, and sync_links.remoteId references them,
+    // so collapsing them is a data migration out of proportion to the
+    // benefit. The residual race — two simultaneous submissions — yields one
+    // extra row, not corruption.
+    //
+    // ORDER BY IS LOAD-BEARING, not tidiness. `limit(1)` with no ordering lets
+    // the database return ANY of a duplicate pair, and it need not return the
+    // same one twice running. That matters because everything downstream is
+    // keyed on the remote id this returns: `sync_links.remoteId` points at one
+    // specific duplicate, and `localState` in the discovery listing is computed
+    // per remoteId. Hand the flow the OTHER duplicate and an already-synced
+    // universe reports `'present'` instead of `'linked'`, which the #42 picker
+    // disables — a dead end for exactly the legacy-duplicate users OB-03 exists
+    // to protect. Oldest-first, because the oldest row is the one any existing
+    // link is likeliest to reference. `id` breaks a createdAt tie so the pick
+    // is total, not merely usually-stable.
+    const [existing] = await getDb()
+      .select()
+      .from(syncRemotes)
+      .where(and(eq(syncRemotes.userId, userId), eq(syncRemotes.baseUrl, normalizedUrl)))
+      .orderBy(asc(syncRemotes.createdAt), asc(syncRemotes.id))
+      .limit(1);
+
     const enc: EncryptedSecret = encryptSecret(pat, cfg.llmKeyEncryptionKey);
+
+    if (existing) {
+      // Re-registering with a fresh credential is the repair path for a
+      // revoked PAT, so the token is replaced rather than left stale.
+      const [updated] = await getDb()
+        .update(syncRemotes)
+        .set({ encryptedPat: enc })
+        .where(eq(syncRemotes.id, existing.id))
+        .returning();
+      return c.json(toMaskedRemote(updated), 200);
+    }
+
     const [row] = await getDb()
       .insert(syncRemotes)
-      .values({ userId, label, baseUrl: normalizedUrl, encryptedPat: enc })
+      .values({ userId, label: effectiveLabel, baseUrl: normalizedUrl, encryptedPat: enc })
       .returning();
     return c.json(toMaskedRemote(row), 201);
   })

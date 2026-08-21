@@ -5,30 +5,71 @@ import { MemoryRouter, Routes, Route } from 'react-router-dom';
 import { QueryClient, QueryClientProvider } from '@tanstack/react-query';
 import { UniverseList } from './UniverseList';
 import { setAccessToken } from '../api/client';
+import type { AuthMode } from '../runtime/RuntimeProvider';
 
-function renderList() {
+// Mirrors SettingsLayout.test.tsx's runtime mocking: mock the whole module
+// rather than wrapping tests in a real RuntimeProvider (which would require
+// stubbing /api/runtime + /api/auth/local-session + /api/auth/me for every
+// test). Wrapped in vi.hoisted so the mock factory — hoisted above these
+// imports by Vitest — can close over a mutable box that individual tests
+// can repoint via `mockUseRuntime.mockReturnValue(...)`.
+const { mockUseRuntime } = vi.hoisted(() => ({
+  mockUseRuntime: vi.fn(() => ({ authMode: 'server' as AuthMode })),
+}));
+vi.mock('../runtime/RuntimeProvider', () => ({
+  useRuntime: mockUseRuntime,
+}));
+
+/**
+ * Extends the original `renderList()` helper (previously two separate
+ * functions: `renderList` and `renderListWithRoutes`) with the
+ * `{ universes, authMode }` options the brief's new tests need, while
+ * staying source-compatible with every existing call site: called with no
+ * arguments, it stubs nothing itself and defaults `authMode` to 'server' —
+ * exactly the prior behavior, where each test stubbed its own `fetch`
+ * beforehand and no runtime concept existed yet.
+ */
+function renderUniverseList(
+  options: { universes?: unknown[]; authMode?: AuthMode; routes?: boolean } = {},
+) {
+  const { universes, authMode = 'server', routes = false } = options;
+  mockUseRuntime.mockReturnValue({ authMode });
+
+  if (universes) {
+    vi.stubGlobal(
+      'fetch',
+      vi.fn().mockResolvedValue(
+        new Response(JSON.stringify(universes), {
+          status: 200,
+          headers: { 'Content-Type': 'application/json' },
+        }),
+      ),
+    );
+  }
+
   const qc = new QueryClient({ defaultOptions: { queries: { retry: false }, mutations: { retry: false } } });
   return render(
     <QueryClientProvider client={qc}>
-      <MemoryRouter>
-        <UniverseList />
+      <MemoryRouter initialEntries={['/']}>
+        {routes ? (
+          <Routes>
+            <Route path="/" element={<UniverseList />} />
+            <Route path="/universes/:id/settings" element={<div>SETTINGS_ROUTE</div>} />
+          </Routes>
+        ) : (
+          <UniverseList />
+        )}
       </MemoryRouter>
     </QueryClientProvider>
   );
 }
 
+function renderList() {
+  return renderUniverseList();
+}
+
 function renderListWithRoutes() {
-  const qc = new QueryClient({ defaultOptions: { queries: { retry: false }, mutations: { retry: false } } });
-  return render(
-    <QueryClientProvider client={qc}>
-      <MemoryRouter initialEntries={['/']}>
-        <Routes>
-          <Route path="/" element={<UniverseList />} />
-          <Route path="/universes/:id/settings" element={<div>SETTINGS_ROUTE</div>} />
-        </Routes>
-      </MemoryRouter>
-    </QueryClientProvider>
-  );
+  return renderUniverseList({ routes: true });
 }
 
 function makeUniverseFixture() {
@@ -76,6 +117,10 @@ function makeFetchMock(deleteStatus: number = 204) {
 describe('UniverseList view', () => {
   beforeEach(() => {
     vi.restoreAllMocks();
+    // vi.restoreAllMocks() only restores vi.spyOn mocks to their original
+    // implementation; mockUseRuntime is a plain vi.fn() with no "original"
+    // to fall back to, so it must be re-pinned to the default explicitly.
+    mockUseRuntime.mockReturnValue({ authMode: 'server' });
     setAccessToken('fake-access-token');
     // Radix Dialog sets `pointer-events: none` on document.body when open;
     // if a previous test left the dialog open at teardown, the next test
@@ -403,5 +448,31 @@ describe('UniverseList view', () => {
     const img = await screen.findByTestId('theme-backdrop');
     expect(img).toHaveClass('absolute');
     expect((img as HTMLImageElement).src).toContain('/assets/a1/thumb');
+  });
+});
+
+// --- Task 6 (#42, OB-05) — Connect to Weltbon entry point ---
+
+describe('Connect to Weltbon entry point (OB-05)', () => {
+  beforeEach(() => {
+    vi.restoreAllMocks();
+    mockUseRuntime.mockReturnValue({ authMode: 'server' });
+    setAccessToken('fake-access-token');
+    document.body.style.pointerEvents = '';
+  });
+
+  it('offers Connect in the empty state when authMode is local', async () => {
+    renderUniverseList({ universes: [], authMode: 'local' });
+    expect(await screen.findByRole('button', { name: /connect to weltbon/i })).toBeInTheDocument();
+  });
+
+  it('offers Connect alongside universes when some already exist', async () => {
+    renderUniverseList({ universes: [{ id: 'u1', name: 'Alpha' }], authMode: 'local' });
+    expect(await screen.findByRole('button', { name: /connect to weltbon/i })).toBeInTheDocument();
+  });
+
+  it('offers nothing when authMode is server', async () => {
+    renderUniverseList({ universes: [], authMode: 'server' });
+    expect(screen.queryByRole('button', { name: /connect to weltbon/i })).not.toBeInTheDocument();
   });
 });

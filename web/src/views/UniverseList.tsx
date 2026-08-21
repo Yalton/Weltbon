@@ -10,9 +10,11 @@ import {
   useDeleteUniverse,
   type Universe,
 } from '../hooks/useUniverse';
+import { useRuntime } from '../runtime/RuntimeProvider';
 import { ThemeScope } from '../components/theme/ThemeScope';
 import { EmptyState } from '../components/EmptyState';
 import { ConfirmDialog } from '../components/ConfirmDialog';
+import { ConnectToWeltbon } from '../components/ConnectToWeltbon';
 import { Toast } from '../components/Toast';
 import { Panel } from '../components/ui/Panel';
 import { Input } from '../components/ui/Input';
@@ -35,7 +37,9 @@ export function UniverseList() {
   const create = useCreateUniverse();
   const del = useDeleteUniverse();
   const navigate = useNavigate();
+  const { authMode } = useRuntime();
   const [showForm, setShowForm] = useState(false);
+  const [showConnect, setShowConnect] = useState(false);
   const [target, setTarget] = useState<Universe | null>(null);
   const [toast, setToast] = useState<ToastState>(null);
   const { register, handleSubmit, reset, formState: { errors } } = useForm<FormValues>({
@@ -64,6 +68,16 @@ export function UniverseList() {
 
   const isEmpty = !universes || universes.length === 0;
 
+  const openCreateForm = () => {
+    setShowConnect(false);
+    setShowForm((v) => !v);
+  };
+
+  const openConnect = () => {
+    setShowForm(false);
+    setShowConnect((v) => !v);
+  };
+
   return (
     <div className="max-w-4xl mx-auto">
       <PageHeader
@@ -71,9 +85,16 @@ export function UniverseList() {
         subtitle={universes && universes.length > 0 ? `${universes.length} universe${universes.length === 1 ? '' : 's'}` : undefined}
         actions={
           !isEmpty && (
-            <Button onClick={() => setShowForm((v) => !v)} variant={showForm ? 'ghost' : 'primary'}>
-              {showForm ? 'Cancel' : 'Create universe'}
-            </Button>
+            <div className="flex gap-2">
+              {authMode === 'local' && (
+                <Button onClick={openConnect} variant="ghost">
+                  {showConnect ? 'Cancel' : 'Connect to Weltbon'}
+                </Button>
+              )}
+              <Button onClick={openCreateForm} variant={showForm ? 'ghost' : 'primary'}>
+                {showForm ? 'Cancel' : 'Create universe'}
+              </Button>
+            </div>
           )
         }
       />
@@ -94,12 +115,29 @@ export function UniverseList() {
         </form>
       )}
 
+      {showConnect && (
+        <Panel className="mb-6 p-4">
+          <ConnectToWeltbon
+            onDone={(universeId) => {
+              setShowConnect(false);
+              navigate(`/universes/${universeId}/entries`);
+            }}
+            onCancel={() => setShowConnect(false)}
+          />
+        </Panel>
+      )}
+
       {isEmpty ? (
         <EmptyState
           title="Start a universe"
           body="A universe is a self-contained world — its own entries, categories, and timeline. Create one to get going."
           action={
-            <Button onClick={() => setShowForm(true)}>New universe</Button>
+            <div className="flex flex-wrap justify-center gap-3">
+              <Button onClick={() => setShowForm(true)}>New universe</Button>
+              {authMode === 'local' && (
+                <Button onClick={() => setShowConnect(true)}>Connect to Weltbon</Button>
+              )}
+            </div>
           }
         />
       ) : (
