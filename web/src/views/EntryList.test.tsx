@@ -30,20 +30,53 @@ function mkEntry(id: string, title: string, overrides: Record<string, unknown> =
   };
 }
 
+function mkSyncLink(id: string, overrides: Record<string, unknown> = {}) {
+  return {
+    id,
+    universeId: 'U1',
+    remoteId: 'remote-1',
+    remoteLabel: 'Home instance',
+    remoteBaseUrl: 'https://example.test',
+    status: 'idle',
+    lastSyncedAt: '2025-01-01T00:00:00.000Z',
+    lastError: null,
+    createdAt: '2025-01-01T00:00:00.000Z',
+    ...overrides,
+  };
+}
+
 function setupApi({
   universe,
   categories,
   entriesByQuery,
+  syncLinks = [],
 }: {
   universe: { id: string; entryTypes: string[] };
   categories: Array<{ id: string; label: string; icon: string; sortOrder: number; entryCount: number }>;
   entriesByQuery: (path: string) => unknown;
+  syncLinks?: Array<Record<string, unknown>>;
 }) {
-  vi.mocked(api).mockImplementation(async (path?: string) => {
+  vi.mocked(api).mockImplementation(async (path?: string, init?: { method?: string }) => {
     if (!path) return undefined;
     if (path === '/universes/U1') return universe;
     if (path === '/universes/U1/categories') return { categories, uncategorizedCount: 0 };
     if (path.startsWith('/universes/U1/entries')) return entriesByQuery(path);
+    if (path.startsWith('/sync/links?universeId=')) return syncLinks;
+    if (/^\/sync\/links\/[^/]+\/run/.test(path) && init?.method === 'POST') {
+      return {
+        linkId: 'link-1',
+        bootstrapped: true,
+        conflicts: 0,
+        blobsPushed: 0,
+        blobsPulled: 0,
+        assetsRepairedLocally: 0,
+        assetsRepairedOnPeer: 0,
+        assetsSweptOnPeer: 0,
+        assetsUnrepairable: 0,
+        pushed: { upserted: {}, deleted: {} },
+        appliedLocally: { upserted: {}, deleted: {} },
+      };
+    }
     return undefined;
   });
 }
@@ -201,5 +234,73 @@ describe('EntryList', () => {
 
     // After clearing, the universe-empty copy should appear (no filters → no results → default empty state).
     expect(await screen.findByText(/start with one idea/i)).toBeInTheDocument();
+  });
+
+  describe('first-sync-failed banner', () => {
+    it('renders the banner with a retry action for a link that errored and never synced', async () => {
+      setupApi({
+        universe: { id: 'U1', entryTypes: ['character'] },
+        categories: [],
+        entriesByQuery: () => [],
+        syncLinks: [mkSyncLink('link-1', { status: 'error', lastSyncedAt: null })],
+      });
+
+      renderAt('/universes/U1/entries');
+
+      expect(await screen.findByText(/didn.t finish/i)).toBeInTheDocument();
+      expect(
+        screen.getByRole('button', { name: /try again/i }),
+      ).toBeInTheDocument();
+    });
+
+    it('does not render the banner for a link that errored AFTER a previous successful sync', async () => {
+      setupApi({
+        universe: { id: 'U1', entryTypes: ['character'] },
+        categories: [],
+        entriesByQuery: () => [mkEntry('e1', 'Alpha')],
+        syncLinks: [
+          mkSyncLink('link-1', { status: 'error', lastSyncedAt: '2025-06-01T00:00:00.000Z' }),
+        ],
+      });
+
+      renderAt('/universes/U1/entries');
+
+      // Wait for the list to settle so the query has resolved either way.
+      expect(await screen.findByText('Alpha')).toBeInTheDocument();
+      expect(screen.queryByTestId('first-sync-failed-banner')).not.toBeInTheDocument();
+    });
+
+    it('renders no banner for a healthy (idle) link', async () => {
+      setupApi({
+        universe: { id: 'U1', entryTypes: ['character'] },
+        categories: [],
+        entriesByQuery: () => [mkEntry('e1', 'Alpha')],
+        syncLinks: [mkSyncLink('link-1', { status: 'idle', lastSyncedAt: '2025-06-01T00:00:00.000Z' })],
+      });
+
+      renderAt('/universes/U1/entries');
+
+      expect(await screen.findByText('Alpha')).toBeInTheDocument();
+      expect(screen.queryByTestId('first-sync-failed-banner')).not.toBeInTheDocument();
+    });
+
+    it('clicking "Try again" runs sync for that link', async () => {
+      setupApi({
+        universe: { id: 'U1', entryTypes: ['character'] },
+        categories: [],
+        entriesByQuery: () => [],
+        syncLinks: [mkSyncLink('link-1', { status: 'error', lastSyncedAt: null })],
+      });
+
+      renderAt('/universes/U1/entries');
+
+      const retryBtn = await screen.findByRole('button', { name: /try again/i });
+      await userEvent.click(retryBtn);
+
+      expect(vi.mocked(api)).toHaveBeenCalledWith(
+        '/sync/links/link-1/run',
+        expect.objectContaining({ method: 'POST' }),
+      );
+    });
   });
 });
