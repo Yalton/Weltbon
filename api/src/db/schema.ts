@@ -248,7 +248,12 @@ export const shareTokens = pgTable('share_tokens', {
   // Sync LWW timestamp (Plan A, sync spec S-03). $onUpdate bumps it on every
   // ORM .update() without touching route code.
   updatedAt: timestamp('updated_at', { withTimezone: true }).defaultNow().notNull().$onUpdate(() => new Date()),
-});
+}, (t) => ({
+  // #44: universeFingerprint() aggregates this table filtered by universe_id
+  // on every poll (~5s locally, plus every peer probe) — Postgres does not
+  // auto-index FKs, so without this it is a sequential scan.
+  universeIdIdx: index('share_tokens_universe_id_idx').on(t.universeId),
+}));
 
 export const shareTokensRelations = relations(shareTokens, ({ one }) => ({
   user:     one(users, { fields: [shareTokens.userId], references: [users.id], relationName: 'share_owner' }),
@@ -299,7 +304,12 @@ export const categories = pgTable('categories', {
   // Sync LWW timestamp (Plan A, sync spec S-03). $onUpdate bumps it on every
   // ORM .update() without touching route code.
   updatedAt: timestamp('updated_at', { withTimezone: true }).defaultNow().notNull().$onUpdate(() => new Date()),
-});
+}, (t) => ({
+  // #44: universeFingerprint() aggregates this table filtered by universe_id
+  // on every poll (~5s locally, plus every peer probe) — Postgres does not
+  // auto-index FKs, so without this it is a sequential scan.
+  universeIdIdx: index('categories_universe_id_idx').on(t.universeId),
+}));
 
 export const entries = pgTable('entries', {
   id:           uuid('id').primaryKey().defaultRandom(),
@@ -331,7 +341,12 @@ export const entries = pgTable('entries', {
   // `assets` is declared AFTER `entries` in this file — forward-reference gotcha.
   // eslint-disable-next-line @typescript-eslint/no-use-before-define
   coverImageId: uuid('cover_image_id').references((): any => assets.id, { onDelete: 'set null' }),
-});
+}, (t) => ({
+  // #44: universeFingerprint() aggregates this table filtered by universe_id
+  // on every poll (~5s locally, plus every peer probe) — Postgres does not
+  // auto-index FKs, so without this it is a sequential scan.
+  universeIdIdx: index('entries_universe_id_idx').on(t.universeId),
+}));
 
 export const links = pgTable('links', {
   id:            uuid('id').primaryKey().defaultRandom(),
@@ -355,7 +370,12 @@ export const links = pgTable('links', {
   diagramId:     uuid('diagram_id').references((): any => diagrams.id, { onDelete: 'set null' }),
   lineStyle:     text('line_style'),
   color:         text('color'),
-});
+}, (t) => ({
+  // #44: universeFingerprint() aggregates this table filtered by universe_id
+  // on every poll (~5s locally, plus every peer probe) — Postgres does not
+  // auto-index FKs, so without this it is a sequential scan.
+  universeIdIdx: index('links_universe_id_idx').on(t.universeId),
+}));
 
 /**
  * Phase 24 AUDIT-01: Per-run audit telemetry table.
@@ -453,7 +473,12 @@ export const issues = pgTable('issues', {
   dismissalSnoozeRemaining: integer('dismissal_snooze_remaining'),
   linkedIssueId: uuid('linked_issue_id').references(() => issues.id, { onDelete: 'set null' }),
   category: text('category'),                        // AuditCategory value; null for human issues
-});
+}, (t) => ({
+  // #44: universeFingerprint() aggregates this table filtered by universe_id
+  // on every poll (~5s locally, plus every peer probe) — Postgres does not
+  // auto-index FKs, so without this it is a sequential scan.
+  universeIdIdx: index('issues_universe_id_idx').on(t.universeId),
+}));
 
 export const issueEntries = pgTable('issue_entries', {
   issueId: uuid('issue_id').references(() => issues.id, { onDelete: 'cascade' }).notNull(),
@@ -502,7 +527,12 @@ export const diagrams = pgTable('diagrams', {
   // Sync LWW timestamp (Plan A, sync spec S-03). $onUpdate bumps it on every
   // ORM .update() without touching route code.
   updatedAt: timestamp('updated_at', { withTimezone: true }).defaultNow().notNull().$onUpdate(() => new Date()),
-});
+}, (t) => ({
+  // #44: universeFingerprint() aggregates this table filtered by universe_id
+  // on every poll (~5s locally, plus every peer probe) — Postgres does not
+  // auto-index FKs, so without this it is a sequential scan.
+  universeIdIdx: index('diagrams_universe_id_idx').on(t.universeId),
+}));
 
 /**
  * Phase 31 DIAGRAM-01: Positioned entry nodes within a named diagram.
@@ -590,7 +620,14 @@ export const dictionaryWords = pgTable('dictionary_words', {
   updatedAt:       timestamp('updated_at', { withTimezone: true }).defaultNow().notNull().$onUpdate(() => new Date()),
   // NOTE: scope-unique index with lower(word) + COALESCE sentinel lives in migration 0018 only —
   // Drizzle TS uniqueIndex() cannot express COALESCE-sentinel or lower() expressions.
-});
+}, (t) => ({
+  // #44: universeFingerprint() aggregates this table filtered by universe_id
+  // on every poll (~5s locally, plus every peer probe) — Postgres does not
+  // auto-index FKs, so without this it is a sequential scan. Migration 0018's
+  // lower(word)+COALESCE unique index does not lead with universe_id and
+  // cannot serve this.
+  universeIdIdx: index('dictionary_words_universe_id_idx').on(t.universeId),
+}));
 
 /**
  * Phase 39 MAPS-01 (D-01, D-02, D-03): Per-universe image-backed map definitions.
@@ -614,7 +651,12 @@ export const maps = pgTable('maps', {
   // Phase 40 MAPS-05 (D-03): nullable JSON legend caption overrides.
   // A Record<string, string> keyed by color/icon combo stored as text.
   legendLabels: text('legend_labels'),  // nullable JSON: Record<string, string>
-});
+}, (t) => ({
+  // #44: universeFingerprint() aggregates this table filtered by universe_id
+  // on every poll (~5s locally, plus every peer probe) — Postgres does not
+  // auto-index FKs, so without this it is a sequential scan.
+  universeIdIdx: index('maps_universe_id_idx').on(t.universeId),
+}));
 
 /**
  * Phase 39 MAPS-02/MAPS-03 (D-10, D-11): Entry-linked pins within a map.
@@ -648,7 +690,11 @@ export const mapPins = pgTable('map_pins', {
   // Sync LWW timestamp (Plan A, sync spec S-03). $onUpdate bumps it on every
   // ORM .update() without touching route code.
   updatedAt: timestamp('updated_at', { withTimezone: true }).defaultNow().notNull().$onUpdate(() => new Date()),
-});
+}, (t) => ({
+  // #44: Postgres does not auto-index FKs; this is the foreign-key column
+  // pins are looked up by (mirrors mapRegions/mapRoutes' map_id indexes).
+  mapIdIdx: index('map_pins_map_id_idx').on(t.mapId),
+}));
 
 /**
  * Phase 40 MAPS-04 (D-09): Region polygons within a map.
@@ -686,7 +732,11 @@ export const mapRegions = pgTable('map_regions', {
   // so deleting a target map nulls the link rather than cascade-deleting the source region.
   // eslint-disable-next-line @typescript-eslint/no-use-before-define
   targetMapId: uuid('target_map_id').references((): any => maps.id, { onDelete: 'set null' }),
-});
+}, (t) => ({
+  // #44: Postgres does not auto-index FKs; this is the foreign-key column
+  // regions are looked up by (mirrors mapPins/mapRoutes' map_id indexes).
+  mapIdIdx: index('map_regions_map_id_idx').on(t.mapId),
+}));
 
 /**
  * Phase 51 ROUTE-01: Per-map journey/route polylines.
@@ -718,7 +768,11 @@ export const mapRoutes = pgTable('map_routes', {
   // Server-side share filter in share-views.ts drops items where secret=true.
   // Inverse polarity of entries.isPublic: false = visible, true = excluded from share.
   secret: boolean('secret').default(false).notNull(),
-});
+}, (t) => ({
+  // #44: Postgres does not auto-index FKs; this is the foreign-key column
+  // routes are looked up by (mirrors mapPins/mapRegions' map_id indexes).
+  mapIdIdx: index('map_routes_map_id_idx').on(t.mapId),
+}));
 
 /**
  * Phase 42 LAYER-01/LAYER-02: Universe-scoped terrain layer definitions.
@@ -744,7 +798,12 @@ export const mapLayers = pgTable('map_layers', {
   // Server-side share filter in share-views.ts drops items where secret=true.
   // Inverse polarity of entries.isPublic: false = visible, true = excluded from share.
   secret: boolean('secret').default(false).notNull(),
-});
+}, (t) => ({
+  // #44: universeFingerprint() aggregates this table filtered by universe_id
+  // on every poll (~5s locally, plus every peer probe) — Postgres does not
+  // auto-index FKs, so without this it is a sequential scan.
+  universeIdIdx: index('map_layers_universe_id_idx').on(t.universeId),
+}));
 
 /**
  * Phase 42 LAYER-01/LAYER-03: Terrain type definitions within a layer.
@@ -766,7 +825,12 @@ export const terrainTypes = pgTable('terrain_types', {
   // Sync LWW timestamp (Plan A, sync spec S-03). $onUpdate bumps it on every
   // ORM .update() without touching route code.
   updatedAt: timestamp('updated_at', { withTimezone: true }).defaultNow().notNull().$onUpdate(() => new Date()),
-});
+}, (t) => ({
+  // #44: Postgres does not auto-index FKs; this is the foreign-key column
+  // relations traverse from a layer (mirrors mapPins/mapRegions/mapRoutes'
+  // map_id indexes below).
+  layerIdIdx: index('terrain_types_layer_id_idx').on(t.layerId),
+}));
 
 /**
  * Sync Foundation (Plan A — sync spec "Data model", decisions S-01..S-10).
@@ -794,6 +858,18 @@ export const syncLinks = pgTable('sync_links', {
   lastError:       text('last_error'),
   createdAt:       timestamp('created_at', { withTimezone: true }).defaultNow().notNull(),
   updatedAt:       timestamp('updated_at', { withTimezone: true }).defaultNow().notNull().$onUpdate(() => new Date()),
+  // ── #44 auto-sync scheduling state (AS-05) ────────────────────────────────
+  // Only what must survive a restart. Debounce bookkeeping is in-memory by
+  // design: its worst case after a restart is syncing immediately.
+  autoSync:              boolean('auto_sync').default(true).notNull(),
+  /** Local fingerprint captured AFTER the last successful run — see AS-05. */
+  lastSyncedFingerprint: text('last_synced_fingerprint'),
+  lastRemoteFingerprint: text('last_remote_fingerprint'),
+  nextPollAt:            timestamp('next_poll_at', { withTimezone: true }),
+  /** Consecutive transient failures. Reset to 0 by ANY success, manual included. */
+  failureCount:          integer('failure_count').default(0).notNull(),
+  /** Non-null means a permanent failure stopped auto-sync for this link. */
+  pausedReason:          text('paused_reason'),
 }, (t) => ({
   universeRemoteUnique: uniqueIndex('sync_links_universe_remote_unique').on(t.universeId, t.remoteId),
 }));
