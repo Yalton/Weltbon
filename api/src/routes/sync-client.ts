@@ -26,7 +26,7 @@
  * Task 7 (the drive loop) lands in this same file, so keep it clean.
  */
 import { OpenAPIHono, createRoute, z } from '@hono/zod-openapi';
-import { and, asc, eq } from 'drizzle-orm';
+import { and, asc, eq, inArray, isNull, or } from 'drizzle-orm';
 import { db as getDb } from '../db/client.js';
 import { syncRemotes, syncLinks, universes } from '../db/schema.js';
 import { requireJwtAuth, type AuthVariables } from '../middleware/auth.js';
@@ -45,7 +45,7 @@ import { SyncApplyError } from '../services/sync/errors.js';
 import { mapSyncApplyError } from '../services/sync/apply-error-response.js';
 import { runSync, testRemote } from '../services/sync/run-sync.js';
 import { adoptUniverse, listRemoteUniverses } from '../services/sync/adopt.js';
-import { SyncRunError } from '../services/sync/run-errors.js';
+import { SyncRunError, TOKEN_FIXABLE_PAUSE_REASONS } from '../services/sync/run-errors.js';
 import { mintPatFromCredentials, PeerAuthError } from '../services/sync/peer-auth.js';
 import { env } from '../config.js';
 import { isUniqueViolation } from '../db/pg-error.js';
@@ -906,11 +906,29 @@ export const syncClientRoutes = new OpenAPIHono<AppEnv>()
     // credential and must not silently resume a link paused for some unrelated
     // reason. failure_count/next_poll_at go with it for the same reason the
     // auto-sync toggle resets them — a link must not resume mid-backoff.
+    //
+    // Scoped a second way (#66): only links a token can actually unblock. This
+    // used to clear paused_reason for every link on the remote, including ones
+    // paused for a deleted remote universe or a lapsed subscription — resumed
+    // for exactly one run, which re-paused them, after a window of the UI
+    // saying they were fine. See TOKEN_FIXABLE_PAUSE_REASONS for the rule.
+    //
+    // Links that are NOT paused stay in scope, so a link merely serving out a
+    // backoff still gets its counters reset as before; it is only a pause this
+    // token cannot lift that is now left alone.
     if (pat !== undefined) {
       await getDb()
         .update(syncLinks)
         .set({ pausedReason: null, failureCount: 0, nextPollAt: null })
-        .where(eq(syncLinks.remoteId, id));
+        .where(
+          and(
+            eq(syncLinks.remoteId, id),
+            or(
+              isNull(syncLinks.pausedReason),
+              inArray(syncLinks.pausedReason, [...TOKEN_FIXABLE_PAUSE_REASONS]),
+            ),
+          ),
+        );
     }
 
     return c.json(toMaskedRemote(row), 200);
