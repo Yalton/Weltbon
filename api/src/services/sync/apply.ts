@@ -53,6 +53,7 @@ import {
 } from './apply-tables.js';
 import { SyncApplyError } from './errors.js';
 import type { ManifestRow } from './manifest.js';
+import { pgErrorOf, PG_UNIQUE_VIOLATION } from '../../db/pg-error.js';
 
 // Re-exported so a route can import every sync-apply error from one module.
 // InvalidSyncTimestampError is raised by the row mappers in apply-tables.ts,
@@ -207,24 +208,6 @@ export class ConstraintCollisionError extends SyncApplyError {
     );
     this.name = 'ConstraintCollisionError';
   }
-}
-
-/**
- * Postgres error fields, dug out from under Drizzle's wrapper. Drizzle 0.45
- * rethrows driver errors as DrizzleQueryError with the original on `.cause`,
- * and PGlite nests one deeper again, so walk the chain rather than reading
- * `err.code` off the top.
- */
-function pgErrorOf(err: unknown): { code?: string; constraint?: string } | null {
-  let cur: unknown = err;
-  for (let depth = 0; depth < 5 && cur !== null && typeof cur === 'object'; depth += 1) {
-    const candidate = cur as { code?: unknown; constraint?: unknown; cause?: unknown };
-    if (typeof candidate.code === 'string') {
-      return { code: candidate.code, constraint: typeof candidate.constraint === 'string' ? candidate.constraint : undefined };
-    }
-    cur = candidate.cause;
-  }
-  return null;
 }
 
 /** Chunk size for `inArray` delete predicates and multi-row join inserts. */
@@ -546,7 +529,7 @@ export async function applyManifestOps(
     });
   } catch (err) {
     const pg = pgErrorOf(err);
-    if (pg?.code === '23505') {
+    if (pg?.code === PG_UNIQUE_VIOLATION) {
       throw new ConstraintCollisionError(pg.constraint ?? 'unknown', writing);
     }
     throw err;

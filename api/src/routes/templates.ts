@@ -25,6 +25,7 @@ import { and, desc, eq } from 'drizzle-orm';
 import { db as getDb } from '../db/client.js';
 import { entryTemplates } from '../db/schema.js';
 import { requireAuth, type AuthVariables } from '../middleware/auth.js';
+import { isUniqueViolation } from '../db/pg-error.js';
 
 type AppEnv = { Variables: AuthVariables };
 
@@ -269,12 +270,7 @@ export const templates = new OpenAPIHono<AppEnv>()
         .returning();
       return c.json(toResponseShape(row), 201);
     } catch (e: unknown) {
-      // Drizzle wraps the PG error: the '23505' code may be on the top-level
-      // error (e.code) or on the cause (e.cause.code) depending on the Drizzle
-      // version. Check both to be safe.
-      const err = e as { code?: string; cause?: { code?: string } } | null;
-      const code = err?.code ?? err?.cause?.code;
-      if (code === '23505') {
+      if (isUniqueViolation(e)) {
         return c.json(
           {
             error: `A template named "${name}" already exists for the ${entryType} entry type. Pick a different name.`,
@@ -317,9 +313,7 @@ export const templates = new OpenAPIHono<AppEnv>()
     } catch (e: unknown) {
       // Drizzle wraps the PG error: the '23505' code may be on the top-level
       // error (e.code) or on the cause (e.cause.code) depending on the Drizzle version.
-      const err = e as { code?: string; cause?: { code?: string } } | null;
-      const code = err?.code ?? err?.cause?.code;
-      if (code === '23505') {
+      if (isUniqueViolation(e)) {
         // Use existing.entryType (not the payload — entryType not in rename body)
         return c.json(
           {

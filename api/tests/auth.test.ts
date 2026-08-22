@@ -116,6 +116,49 @@ describe('auth routes (AUTH-01..06)', () => {
     expect(second.status).toBe(400);
   });
 
+  // D-INV-11: a duplicate email must be INDISTINGUISHABLE from a bad invite.
+  // Both collapse to the same 400, or an attacker holding one valid invite can
+  // probe which emails are registered by watching the status code.
+  it('register: a duplicate email is indistinguishable from an invalid invite (D-INV-11)', async () => {
+    await createTestUser(handle, { email: 'taken@test.com', password: 'longenoughpw12' });
+
+    // Probe A: valid invite, email that IS registered.
+    const takenCode = await seedInvite('probe-invite-taken');
+    const taken = await appRequest('POST', '/api/auth/register', {
+      body: {
+        email: 'taken@test.com',
+        password: 'longenoughpw12',
+        displayName: 'Impostor',
+        inviteCode: takenCode,
+      },
+    });
+
+    // Probe B: invalid invite, email that is NOT registered.
+    const free = await appRequest('POST', '/api/auth/register', {
+      body: {
+        email: 'free@test.com',
+        password: 'longenoughpw12',
+        displayName: 'Nobody',
+        inviteCode: 'not-a-real-invite',
+      },
+    });
+
+    // The oracle is the difference between these two responses, so compare them
+    // to each other rather than only to a literal.
+    expect(taken.status).toBe(400);
+    expect(taken.status).toBe(free.status);
+    expect(taken.body).toEqual(free.body);
+
+    // The rollback half of D-INV-11: the probe must not burn the invite, and
+    // must not have created a second row for the existing email.
+    const [invite] = await handle.db
+      .select({ usedAt: inviteCodes.usedAt })
+      .from(inviteCodes)
+      .where(eq(inviteCodes.hash, hashInviteToken(takenCode)));
+    expect(invite.usedAt).toBeNull();
+    expect(await handle.db.$count(users)).toBe(1);
+  });
+
   // AUTH-02: login
   it('login: returns access token on correct credentials', async () => {
     await createTestUser(handle, { email: 'e@test.com', password: 'longenoughpw12' });

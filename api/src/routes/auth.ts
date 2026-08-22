@@ -20,6 +20,7 @@ import {
 import { hashInviteToken } from '../services/invite.js';
 import { ensureLocalUser } from '../services/local-mode.js';
 import { env } from '../config.js';
+import { isUniqueViolation } from '../db/pg-error.js';
 
 type AppEnv = { Variables: AuthVariables };
 
@@ -335,10 +336,14 @@ export function buildAuthRoutes(): OpenAPIHono<AppEnv> {
             .insert(users)
             .values({ email, displayName, passwordHash })
             .returning({ id: users.id, email: users.email, displayName: users.displayName });
-        } catch (err: any) {
-          if (err?.code === '23505') {
-            // Duplicate email: collapse to InvalidInvite so the consumption
-            // rolls back and the response never confirms email existence.
+        } catch (err: unknown) {
+          // Duplicate email: collapse to InvalidInvite so the consumption rolls
+          // back and the response never confirms email existence (D-INV-11).
+          // isUniqueViolation, not `err.code` — Drizzle wraps the driver error,
+          // so reading the code off the top level made this branch unreachable
+          // and turned a duplicate email into a 500 an attacker could tell apart
+          // from the 400 an unregistered one gets.
+          if (isUniqueViolation(err)) {
             throw InvalidInvite;
           }
           throw err;

@@ -44,6 +44,7 @@ import {
   LLMError,
 } from '../providers/llm/index.js';
 import { env } from '../config.js';
+import { isUniqueViolation } from '../db/pg-error.js';
 
 type AppEnv = { Variables: AuthVariables };
 
@@ -416,8 +417,7 @@ export const llmKeyRoutes = new OpenAPIHono<AppEnv>()
         .returning();
       return c.json(toMaskedRow(row), 200);
     } catch (e: unknown) {
-      const code = (e as { code?: string } | null)?.code;
-      if (code === '23505') {
+      if (isUniqueViolation(e)) {
         return c.json(
           { error: 'A key for this provider already exists. Use PUT /api/llm-keys/{id} to replace it.' },
           409,

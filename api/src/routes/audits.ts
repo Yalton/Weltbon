@@ -17,6 +17,7 @@
 
 import { OpenAPIHono, createRoute, z } from '@hono/zod-openapi';
 import { and, eq, inArray, count, desc } from 'drizzle-orm';
+import { isUniqueViolation } from '../db/pg-error.js';
 import { HTTPException } from 'hono/http-exception';
 import { db } from '../db/client.js';
 import { auditRuns, issues, entries, universes } from '../db/schema.js';
@@ -467,8 +468,7 @@ export const auditRoutes = new OpenAPIHono<AppEnv>()
       // unique index audit_runs_universe_active_unique (drizzle/0009_phase24_audit_runs_concurrent_unique.sql)
       // is what makes this branch live: without it, both INSERTs would succeed and AUDIT-10's
       // "a parallel-audit attempt returns HTTP 409" guarantee would be violated.
-      const code = (e as { code?: string } | null)?.code;
-      if (code === '23505') {
+      if (isUniqueViolation(e)) {
         return c.json({ error: 'An audit is already in progress for this universe' }, 409);
       }
       throw e;
