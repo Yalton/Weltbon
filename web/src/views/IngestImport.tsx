@@ -34,7 +34,12 @@ import {
   type ReviewFilters,
 } from '../components/import/ImportSidebarFilters';
 import { ImportStickyBar } from '../components/import/ImportStickyBar';
-import { ImportUploadStep } from '../components/import/ImportUploadStep';
+import {
+  ImportUploadStep,
+  requestPreview,
+  type UploadSource,
+} from '../components/import/ImportUploadStep';
+import { SplitLevelControl } from '../components/import/SplitLevelControl';
 
 /**
  * Phase 12 integration view at /universes/:uid/import.
@@ -197,6 +202,13 @@ export function IngestImport() {
   const [focusedPath, setFocusedPath] = useState<string | null>(null);
   const [filters, setFilters] = useState<ReviewFilters>(DEFAULT_FILTERS);
   const [discardOpen, setDiscardOpen] = useState(false);
+  // #37: the upload as posted, kept so the reviewer can re-request the preview
+  // at a different split level. Null when the session was resumed from a
+  // saved draft — the files are gone, so the control cannot be offered.
+  const [source, setSource] = useState<UploadSource | null>(null);
+  // True while a split re-preview is in flight, so a double click cannot race
+  // two requests and land the slower one last.
+  const [resplitting, setResplitting] = useState(false);
   const committingRef = useRef<HTMLDivElement>(null);
 
   // Mount: check-draft → resume-prompt | upload. Only on first render.
@@ -263,12 +275,45 @@ export function IngestImport() {
     setStep({ kind: 'upload' });
   };
 
-  const handleParsed = (newPreview: IngestPreview) => {
+  const handleParsed = (newPreview: IngestPreview, newSource: UploadSource) => {
     setPreview(newPreview);
+    setSource(newSource);
     setDecisions({});
     setFocusedPath(newPreview.entries[0]?.path ?? null);
     setStep({ kind: 'review' });
     saveDraft({ preview: newPreview, decisions: {} });
+  };
+
+  /**
+   * #37 SP-04: re-request the preview at the level the user picked.
+   *
+   * Every decision is dropped, deliberately. A different split level produces
+   * a different set of entries with different synthetic paths, and decisions
+   * are keyed by path — carrying them over would silently reapply a user's
+   * "reject" to whatever entry inherited that path. Nothing has been committed
+   * at this point, so there is nothing to lose but the review itself.
+   *
+   * discardDraft() rather than clearDraft(): a debounced save carrying the OLD
+   * preview may still be pending, and would otherwise land after the new one
+   * and resurrect it (issue #54).
+   */
+  const handleSplitLevelChange = async (level: number | null) => {
+    if (!source || !uid || resplitting) return;
+    setResplitting(true);
+    try {
+      const next = await requestPreview(uid, source.files, source.kind, level);
+      discardDraft();
+      setPreview(next);
+      setDecisions({});
+      setFocusedPath(next.entries[0]?.path ?? null);
+      saveDraft({ preview: next, decisions: {} });
+    } catch (err) {
+      // Same canned-copy rule as the commit path (T-12-22): never surface a
+      // raw error message. The existing preview stays on screen untouched.
+      setStep({ kind: 'commit-error', message: classifyError(err) });
+    } finally {
+      setResplitting(false);
+    }
   };
 
   const handleUploadCancel = () => {
@@ -461,6 +506,7 @@ export function IngestImport() {
   const handleDiscardConfirm = () => {
     discardDraft();
     setPreview(null);
+    setSource(null);
     setDecisions({});
     setFocusedPath(null);
     setStep({ kind: 'upload' });
@@ -646,6 +692,21 @@ export function IngestImport() {
           entryCount={counts.accepted}
           done={false}
           ariaLabel="Commit progress"
+        />
+      )}
+      {/*
+        #37 SP-04: only for a single-document batch (`eligible`), and only when
+        the source files are still in hand — a resumed draft has the preview
+        but not the upload, so re-splitting is impossible and offering the
+        control would be a dead end.
+      */}
+      {preview.split?.eligible && source && (
+        <SplitLevelControl
+          detected={preview.split.detected}
+          applied={preview.split.applied}
+          counts={preview.split.counts}
+          onChange={handleSplitLevelChange}
+          disabled={resplitting || isCommitting}
         />
       )}
       <div className="flex-1 flex min-h-0 overflow-hidden">
