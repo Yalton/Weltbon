@@ -398,6 +398,52 @@ describe('sync client CRUD (Plan D)', () => {
       expect((await res.json()).pausedReason).toBeNull();
     });
 
+    it('saving a new PAT unpauses that remote\'s links (AS-08, re-entered credentials)', async () => {
+      // The second of AS-08's three unpause paths, and the one the paused copy
+      // literally instructs the user to take: "sign in to the remote instance
+      // again and save a fresh access token." Before this fix, doing exactly
+      // that left every link on the remote paused, because PATCH /remotes only
+      // ever touched the remote row.
+      const link = await createLink();
+      await setPausedReasonDirectly(link.id, 'remote-unauthorized');
+      const { syncLinks } = await import('../src/db/schema.js');
+      await handle.db
+        .update(syncLinks)
+        .set({ failureCount: 5, nextPollAt: new Date(Date.now() + 30 * 60_000) })
+        .where(eq(syncLinks.id, link.id));
+
+      const res = await app.request(`/api/sync/remotes/${link.remoteId}`, {
+        method: 'PATCH',
+        headers: { 'Content-Type': 'application/json', ...authHeader(token) },
+        body: JSON.stringify({ pat: 'wbn_pat_freshfreshfresh' }),
+      });
+      expect(res.status).toBe(200);
+
+      const [row] = await handle.db.select().from(syncLinks).where(eq(syncLinks.id, link.id));
+      expect(row.pausedReason).toBeNull();
+      expect(row.failureCount).toBe(0);
+      expect(row.nextPollAt).toBeNull();
+    });
+
+    it('renaming a remote does NOT unpause its links — only credentials do', async () => {
+      // Scoped to a PAT change on purpose. A label edit is not a credential,
+      // and must not silently resume a link paused for an unrelated reason
+      // (over quota, incompatible versions) that changing the label cannot fix.
+      const link = await createLink();
+      await setPausedReasonDirectly(link.id, 'remote-quota-exceeded');
+
+      const res = await app.request(`/api/sync/remotes/${link.remoteId}`, {
+        method: 'PATCH',
+        headers: { 'Content-Type': 'application/json', ...authHeader(token) },
+        body: JSON.stringify({ label: 'Renamed only' }),
+      });
+      expect(res.status).toBe(200);
+
+      const { syncLinks } = await import('../src/db/schema.js');
+      const [row] = await handle.db.select().from(syncLinks).where(eq(syncLinks.id, link.id));
+      expect(row.pausedReason).toBe('remote-quota-exceeded');
+    });
+
     it("404s on another user's link", async () => {
       const link = await createLink();
       const other = await createTestUser(handle, { email: 'otherpatch@test.dev', password: 'password123' });

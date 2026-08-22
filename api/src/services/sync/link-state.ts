@@ -89,7 +89,40 @@ export interface ReleaseOutcome {
   baseAdvanced?: boolean;
 }
 
+/**
+ * Write the outcome of a run and drop the claim.
+ *
+ * `status: 'idle'` IS the success signal — runSync passes 'error' on every
+ * failure path — and a successful run additionally clears the auto-sync
+ * failure state: `paused_reason`, `failure_count`, `next_poll_at`.
+ *
+ * WHY HERE, and not in each caller (#44 whole-branch review, FIX 1/FIX 2).
+ * AS-08 binds THREE ways a paused link clears: a successful MANUAL run,
+ * re-entered credentials, or toggling auto-sync off and on. Only the toggle
+ * existed. The scheduler cleared these columns itself after its own successful
+ * run, so the manual route — the remedy the paused status line actually tells
+ * the user to reach for — left the link paused after a run that plainly
+ * succeeded, and the only working escape was unchecking a checkbox that was
+ * already checked. Every successful run, from either caller, flows through
+ * exactly this one UPDATE, which is why the clear belongs here rather than
+ * duplicated into runSync and the scheduler as two copies that must agree
+ * forever.
+ *
+ * FAILURE-COUNT RESET IS THE SAME FACT (AS-08: "failure_count resets to 0 on
+ * any successful run, including a manual one"). Without it a manual "Sync now"
+ * that succeeded after a failure streak left the link inside the scheduler's
+ * backoff — skipped by auto-sync for up to half an hour, and rendered as
+ * "Retrying in 30m" by syncStatusCopy, on a link the user had just synced.
+ *
+ * NOT A SECOND WRITER RACING THE SCHEDULER. The scheduler's post-run UPDATE
+ * still owns `last_synced_fingerprint`, `last_remote_fingerprint` and the
+ * forward `next_poll_at`; it runs strictly AFTER `runSync` has returned, so
+ * the two writes are sequential within one tick, never concurrent — and the
+ * scheduler no longer sets `paused_reason`/`failure_count` at all, so there is
+ * one writer for the successful-run clear, not two.
+ */
 export async function releaseLink(linkId: string, outcome: ReleaseOutcome): Promise<void> {
+  const succeeded = outcome.status === 'idle';
   await db()
     .update(syncLinks)
     .set({
@@ -97,6 +130,10 @@ export async function releaseLink(linkId: string, outcome: ReleaseOutcome): Prom
       lastError: outcome.lastError ?? null,
       ...(outcome.lastSyncedAt ? { lastSyncedAt: outcome.lastSyncedAt } : {}),
       ...(outcome.baseAdvanced ? { baseSnapshotKey: baseSnapshotKey(linkId) } : {}),
+      // `next_poll_at: null` means "due now", not "never" — the link has just
+      // converged, so the next tick is free to poll it. The scheduler
+      // immediately overwrites it with its own `at + pollMs` on the auto path.
+      ...(succeeded ? { pausedReason: null, failureCount: 0, nextPollAt: null } : {}),
     })
     .where(eq(syncLinks.id, linkId));
 }

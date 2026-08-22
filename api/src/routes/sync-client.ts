@@ -351,7 +351,10 @@ const patchRemoteRoute = createRoute({
   path: '/remotes/{id}',
   tags: ['Sync Remotes'],
   summary: 'Update a remote\'s label, base URL, and/or PAT',
-  description: 'Any omitted field is left unchanged. JWT auth required.',
+  description:
+    'Any omitted field is left unchanged. Saving a new PAT counts as ' +
+    're-entered credentials (AS-08): it clears pausedReason and resets the ' +
+    'backoff on every link that uses this remote. JWT auth required.',
   security: [{ bearerJwtAuth: [] }],
   middleware: [requireJwtAuth] as const,
   request: {
@@ -889,6 +892,26 @@ export const syncClientRoutes = new OpenAPIHono<AppEnv>()
       .set(updateValues)
       .where(and(eq(syncRemotes.id, id), eq(syncRemotes.userId, userId)))
       .returning();
+
+    // AS-08: "re-entered credentials" is one of the three explicit user
+    // actions that unpause a link, and this route is where credentials are
+    // re-entered. A PAT that expired pauses every link on this remote with
+    // `remote-unauthorized`, and the status row tells the user to sign in
+    // again and save a fresh token — so saving one has to actually undo what
+    // the stale one caused. Without this the user does exactly what they were
+    // asked and the links stay paused.
+    //
+    // Scoped to a PAT change only: a label or base-URL edit is not a
+    // credential and must not silently resume a link paused for some unrelated
+    // reason. failure_count/next_poll_at go with it for the same reason the
+    // auto-sync toggle resets them — a link must not resume mid-backoff.
+    if (pat !== undefined) {
+      await getDb()
+        .update(syncLinks)
+        .set({ pausedReason: null, failureCount: 0, nextPollAt: null })
+        .where(eq(syncLinks.remoteId, id));
+    }
+
     return c.json(toMaskedRemote(row), 200);
   })
 
