@@ -36,6 +36,25 @@ import { APPLY_ORDER } from './apply-tables.js';
  * the BYTE-IDENTICAL string. A fingerprint whose field order wobbled between
  * calls would never equal itself and would trigger an endless sync loop; see
  * the test that pins this.
+ *
+ * NOT OPAQUE, NOT A HASH (fix round 1): the returned string embeds real
+ * per-collection row counts and raw max(updated_at) timestamps in plain
+ * text, e.g. `universe:1:1699999999999|entries:5:1699999999999|maps:0:-`.
+ * Anyone holding the string can read those counts and times directly.
+ *
+ * SAFE ONLY BEHIND THE SAME AUTHORIZATION AS THE FULL CONTENT: this is fine
+ * on the peer fingerprint route (`GET /universes/{uid}/fingerprint`) only
+ * because that route gates on the identical `requireUniverse` check as
+ * `/universes/{uid}/snapshot` — any caller who can read this fingerprint can
+ * already fetch the full snapshot, which discloses every row's actual
+ * content, not just counts and timestamps. The fingerprint therefore reveals
+ * strictly less than that same credential already reaches.
+ *
+ * If this value is ever exposed on a WEAKER surface than that — a share
+ * token, an unauthenticated health probe, anything not already gated the way
+ * /snapshot is — the counts and timestamps embedded here WOULD be a genuine
+ * disclosure, and the value must be hashed first before being returned
+ * there. Do not assume opacity just because the string looks arbitrary.
  */
 export async function universeFingerprint(universeId: string): Promise<string> {
   // The universe row FIRST, and separately, because APPLY_ORDER does not

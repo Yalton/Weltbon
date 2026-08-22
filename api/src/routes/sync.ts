@@ -135,7 +135,11 @@ const fingerprintRoute = createRoute({
     200: {
       content: { 'application/json': { schema: z.object({ fingerprint: z.string() }) } },
       description:
-        'Opaque value that changes when the universe changes. Compare for INEQUALITY only.',
+        'Compare for INEQUALITY only, never parse it. It summarises per-collection row ' +
+        'counts and last-modified times for this universe — not a hash, and not opaque. ' +
+        'That summary is safe here because this route is owner-scoped exactly like ' +
+        '/snapshot, which already discloses every row this summarises; it must not be ' +
+        'exposed on a weaker surface.',
     },
     401: err401,
     403: err403,
