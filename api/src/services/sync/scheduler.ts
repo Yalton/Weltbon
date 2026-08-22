@@ -7,11 +7,14 @@
  *
  * NO DURABLE MEMORY. Everything that must survive a restart is a sync_links
  * column, so a fresh scheduler rebuilds its entire picture from the database on
- * its first tick. The one exception is the debounce window, which is in-memory
- * on purpose: its worst case after a restart is syncing immediately, which is
- * what a user would want anyway.
+ * its first tick. Three things are in-memory on purpose, and each is a
+ * statement about THIS PROCESS rather than about the link: the debounce window
+ * (worst case after a restart is syncing immediately, which is what a user
+ * would want anyway), the first-boot stagger (which exists precisely because
+ * the process just started), and the round-robin cursor (worst case is one
+ * tick that starts from the top of the list).
  */
-import { eq } from 'drizzle-orm';
+import { asc, eq } from 'drizzle-orm';
 import { db } from '../../db/client.js';
 import { syncLinks, syncRemotes, universes } from '../../db/schema.js';
 import { universeFingerprint } from './fingerprint.js';
@@ -22,6 +25,8 @@ import {
   decide,
   nextDebounce,
   backoffDelayMs,
+  rotateToCursor,
+  staggerDelayMs,
   type DebounceState,
   type LinkSchedulingState,
 } from './schedule.js';
@@ -34,13 +39,35 @@ export interface Scheduler {
 
 const DEFAULT_TICK_MS = 5_000;
 const DEFAULT_POLL_MS = 60_000;
-/** Wall-clock a single tick may spend, so one slow link delays rather than starves. */
+/**
+ * Wall-clock a single tick may spend, so one slow link delays rather than
+ * starves. Checked only BETWEEN links — runSync is not interruptible — which
+ * is why the budget alone is not enough and the round-robin cursor below moves
+ * the cut point every tick.
+ */
 const TICK_BUDGET_MS = 30_000;
 
 export interface SchedulerOptions {
   tickMs?: number;
   pollIntervalMs?: number;
   now?: () => Date;
+  /** See TICK_BUDGET_MS. */
+  tickBudgetMs?: number;
+  /**
+   * How wide the first-observation stagger window is (FIX 4). Production wants
+   * the default (one poll interval); a test that is not about the stagger
+   * passes 0 to switch it off, so its first tick acts immediately.
+   */
+  startupStaggerMs?: number;
+  /**
+   * Elapsed-time source for the tick BUDGET only — never for scheduling, which
+   * uses `now`/`at`. Separate from `now` on purpose: the budget must measure
+   * real elapsed work (see the note in tick()), so it cannot ride on the
+   * injectable, freely-positioned scheduling clock. Injectable all the same,
+   * per AS-11, because "what happens to the links past the budget" is only
+   * testable if a test can make the budget expire on demand.
+   */
+  monotonic?: () => number;
   /**
    * D-05's peer transport, threaded through to runSync and to the fingerprint
    * poll. Production leaves it undefined and gets global fetch; the
@@ -55,7 +82,28 @@ export function createScheduler(opts: SchedulerOptions = {}): Scheduler {
   const pollMs = opts.pollIntervalMs ?? DEFAULT_POLL_MS;
   const now = opts.now ?? (() => new Date());
 
+  const tickBudgetMs = opts.tickBudgetMs ?? TICK_BUDGET_MS;
+  const staggerMs = opts.startupStaggerMs ?? pollMs;
+  const monotonic = opts.monotonic ?? (() => Date.now());
+
   const debounce = new Map<string, DebounceState>();
+  /**
+   * FIX 4's first-observation hold, keyed by link id.
+   *
+   * ABSENT means "this process has never seen this link". PRESENT means it
+   * has, and the value is the instant the link is free to be scheduled — the
+   * jittered slot for a link that was staggered, or simply the moment it was
+   * first seen for one that owed no stagger. In-memory like `debounce`, and
+   * for the same reason: it describes this process's startup, not the link.
+   */
+  const staggerUntil = new Map<string, Date>();
+  /**
+   * Round-robin position (FIX 3): the id of the last link the previous tick
+   * REACHED. The next tick resumes after it, so the point where the budget
+   * cuts the list moves every tick instead of pinning the same prefix.
+   * In-memory: losing it on a restart costs one tick that starts from the top.
+   */
+  let cursor: string | null = null;
   let timer: NodeJS.Timeout | null = null;
   let running = false;
 
@@ -68,31 +116,54 @@ export function createScheduler(opts: SchedulerOptions = {}): Scheduler {
     // Measured against the REAL clock, not `at`: `at` is injectable and may sit
     // anywhere relative to wall time, and a budget computed from it would
     // either expire instantly or never.
-    const startedAt = Date.now();
+    const startedAt = monotonic();
 
     try {
       // The universes join is not incidental: runSync(linkId, ownerId) checks
       // ownerId against universes.userId and throws SyncLinkForbiddenError on a
       // mismatch. The HTTP route gets that id from a JWT; the scheduler has no
       // request, so it reads the universe's owner directly.
+      //
+      // ORDER BY is load-bearing, not tidiness (#44 whole-branch review, FIX
+      // 3). This loop stops at the tick budget, so an unordered result set
+      // means the set of links that get served is whatever the planner
+      // happened to return first — and since every tick restarted from the
+      // top of that set, links in the tail could starve indefinitely once the
+      // budget was routinely hit. A stable order is what makes "resume where
+      // the last tick stopped" below expressible at all.
       const rows = await db()
         .select({ link: syncLinks, remote: syncRemotes, ownerId: universes.userId })
         .from(syncLinks)
         .innerJoin(syncRemotes, eq(syncLinks.remoteId, syncRemotes.id))
         .innerJoin(universes, eq(syncLinks.universeId, universes.id))
-        .where(eq(syncLinks.autoSync, true));
+        .where(eq(syncLinks.autoSync, true))
+        .orderBy(asc(syncLinks.id));
 
       // FIX 5: the debounce Map is keyed by link id and nothing else ever
       // removes from it, so a deleted link (or one whose auto-sync was turned
       // off) would keep its entry for the life of the process. Prune against
-      // the rows actually in play before touching any of them.
+      // the rows actually in play before touching any of them. staggerUntil is
+      // keyed and pruned identically, for the identical reason.
       const live = new Set(rows.map((r) => r.link.id));
       for (const id of debounce.keys()) {
         if (!live.has(id)) debounce.delete(id);
       }
+      for (const id of staggerUntil.keys()) {
+        if (!live.has(id)) staggerUntil.delete(id);
+      }
 
-      for (const { link, remote, ownerId } of rows) {
-        if (Date.now() - startedAt > TICK_BUDGET_MS) break; // carry the rest to the next tick
+      // The other half of FIX 3: start after the link the last tick reached,
+      // wrapping at the end. Without this the budget always cuts the SAME
+      // prefix and one user's slow link can keep every other tenant's link
+      // from ever being reached. runSync is not preemptible, so a single slow
+      // run still blocks the tick it is in — this bounds the DAMAGE (nobody
+      // starves forever) rather than eliminating the delay.
+      for (const { link, remote, ownerId } of rotateToCursor(rows, (r) => r.link.id, cursor)) {
+        if (monotonic() - startedAt > tickBudgetMs) break; // carry the rest to the next tick
+        // Set for every link this tick REACHES, including ones it skips: a
+        // link that has been looked at this tick is behind us either way, and
+        // the next tick should move on rather than re-examine it first.
+        cursor = link.id;
 
         // A paused link cannot produce any decision but 'idle' (decide()
         // checks pausedReason first and never reasons past it), so measuring
@@ -109,6 +180,50 @@ export function createScheduler(opts: SchedulerOptions = {}): Scheduler {
         if (!link.autoSync || link.pausedReason !== null) {
           debounce.delete(link.id);
           continue;
+        }
+
+        // FIX 4 (#44 whole-branch review) — the first-boot stagger.
+        //
+        // Migration 0038 backfills auto_sync = true on EVERY pre-existing
+        // link, with last_synced_fingerprint NULL (so all local work reads as
+        // pending) and next_poll_at NULL (so a poll is immediately due).
+        // Untreated, roughly ten seconds after a new version boots every
+        // pre-existing link in the deployment builds a full manifest and
+        // handshakes its peer, simultaneously. Give a link this process has
+        // never seen before a jittered slot somewhere in the next poll
+        // interval, and leave it alone until that slot arrives.
+        //
+        // WHY THE IN-MEMORY HOLD AND NOT next_poll_at ALONE: decide() consults
+        // nextPollAt only on the POLL branch — deliberately, so a wait can
+        // never block a user's own edits (see schedule.ts) — and a backfilled
+        // link takes the run/local branch, because its lastSyncedFingerprint
+        // is NULL. Stamping the column without holding the link would defer
+        // the fleet by exactly one tick and then stampede on the next. The
+        // column is still written, so a process that restarts mid-stagger
+        // inherits the slot instead of re-rolling the whole herd.
+        //
+        // BOUNDED, and it cannot strand a genuinely new link: at most one
+        // window, at most once per link per process, and "Sync now" is
+        // unaffected the entire time.
+        if (staggerMs > 0) {
+          const readyAt = staggerUntil.get(link.id);
+          if (readyAt === undefined) {
+            if (link.nextPollAt === null) {
+              const until = new Date(at.getTime() + staggerDelayMs(staggerMs));
+              staggerUntil.set(link.id, until);
+              await db()
+                .update(syncLinks)
+                .set({ nextPollAt: until })
+                .where(eq(syncLinks.id, link.id));
+              continue;
+            }
+            // Already scheduled by some earlier tick or earlier process, so
+            // there is no herd to spread here. Record it as seen, owing
+            // nothing, and never consider it again.
+            staggerUntil.set(link.id, at);
+          } else if (readyAt.getTime() > at.getTime()) {
+            continue;
+          }
         }
 
         // A link with consecutive failures is inside the backoff window
@@ -251,14 +366,21 @@ export function createScheduler(opts: SchedulerOptions = {}): Scheduler {
             settledRemote = remoteFingerprint;
           }
 
+          // failureCount and pausedReason are DELIBERATELY absent from this
+          // SET (#44 whole-branch review, FIX 1): releaseLink now clears both
+          // — plus nextPollAt — inside runSync, on every successful run, so
+          // the manual route gets the identical clear instead of only this
+          // one. Re-adding them here would recreate the second, divergent
+          // copy that fix removed. This UPDATE runs after runSync has
+          // returned, so its nextPollAt is simply the later of two sequential
+          // writes, and the scheduler keeps sole ownership of the fingerprints
+          // and of when the NEXT poll is due.
           await db()
             .update(syncLinks)
             .set({
               lastSyncedFingerprint: settledLocal,
               // Only overwrite what we actually observed.
               ...(settledRemote !== null ? { lastRemoteFingerprint: settledRemote } : {}),
-              failureCount: 0,
-              pausedReason: null,
               nextPollAt: new Date(at.getTime() + pollMs),
             })
             .where(eq(syncLinks.id, link.id));

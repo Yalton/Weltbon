@@ -28,7 +28,11 @@ import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import { eq } from 'drizzle-orm';
 import { createTestDb, cleanDb, createTestUser, authHeader, type TestDbHandle } from './helpers.js';
-import { createScheduler, type Scheduler } from '../src/services/sync/scheduler.js';
+import {
+  createScheduler,
+  type Scheduler,
+  type SchedulerOptions,
+} from '../src/services/sync/scheduler.js';
 import { MAX_PENDING_TICKS, STABLE_TICKS_REQUIRED } from '../src/services/sync/schedule.js';
 import type { FetchLike } from '../src/services/sync/remote-client.js';
 
@@ -156,8 +160,21 @@ describe('auto-sync scheduler (#44)', () => {
     };
   }
 
-  function mk(): Scheduler {
-    return createScheduler({ now: () => clock, fetchImpl: peerFetch() });
+  /**
+   * `startupStaggerMs: 0` switches OFF the first-boot stagger for every test
+   * that is not about it. The stagger holds a link the process has never seen
+   * before until a jittered instant inside the next poll interval — correct in
+   * production, and fatal here, where `clock` never advances on its own: every
+   * link would be held for the whole test. The two tests that DO exercise it
+   * pass a real window and move the clock themselves.
+   */
+  function mk(over: Partial<SchedulerOptions> = {}): Scheduler {
+    return createScheduler({
+      now: () => clock,
+      fetchImpl: peerFetch(),
+      startupStaggerMs: 0,
+      ...over,
+    });
   }
 
   const runsStarted = () => handshakes;
@@ -434,7 +451,201 @@ describe('auto-sync scheduler (#44)', () => {
     expect(await entryTitles('B')).toEqual(['first', 'second']);
   });
 
-  // ── 10. continuous editing ────────────────────────────────────────────────
+  // ── 10. a successful run clears the pause and the backoff ────────────────
+
+  describe('a successful run clears the auto-sync failure state (AS-08)', () => {
+    async function forceFailureState(over: {
+      pausedReason?: string | null;
+      failureCount?: number;
+      nextPollAt?: Date | null;
+    }): Promise<void> {
+      const { syncLinks } = await import('../src/db/schema.js');
+      await use('A');
+      await A.db.update(syncLinks).set(over).where(eq(syncLinks.id, linkId));
+    }
+
+    async function manualRun(): Promise<void> {
+      const { runSync } = await import('../src/services/sync/run-sync.js');
+      await use('A');
+      await runSync(linkId, ownerA.id, { fetchImpl: peerFetch() });
+    }
+
+    it('a MANUAL run clears pausedReason — the remedy the paused row names', async () => {
+      // The exact trap this fix exists for: a PAT expires, the scheduler pauses
+      // the link with `remote-unauthorized`, and the status line tells the user
+      // to sign in again and save a fresh token. They do, they press "Sync
+      // now", the run succeeds — and before this fix the row still said Paused
+      // and auto-sync never resumed, because the ONLY code that cleared
+      // paused_reason was the scheduler's own post-run UPDATE and the auto-sync
+      // toggle. Pausing does not set auto_sync = false, so the only working
+      // escape was unchecking and re-checking a box that was already checked.
+      await seedEntry('A', 'written-while-paused');
+      await forceFailureState({
+        pausedReason: 'remote-unauthorized',
+        failureCount: 3,
+        nextPollAt: new Date(clock.getTime() + 30 * 60_000),
+      });
+
+      await manualRun();
+
+      const link = await linkRow();
+      expect(link.pausedReason).toBeNull();
+      expect(link.failureCount).toBe(0);
+      expect(link.nextPollAt).toBeNull();
+      // ...and it was a real sync, not just a state reset.
+      expect(await entryTitles('B')).toEqual(['written-while-paused']);
+    });
+
+    it('a MANUAL run ends a real backoff, instead of leaving "Retrying in 30m" on a link just synced', async () => {
+      // The streak is genuine, not injected: ticks against a dead peer.
+      const sched = mk();
+      peerMode = 'down';
+      await seedEntry('A', 'stranded');
+      await tickN(sched, SETTLE_TICKS);
+
+      const failing = await linkRow();
+      expect(failing.failureCount).toBeGreaterThan(0);
+      expect(failing.nextPollAt!.getTime()).toBeGreaterThan(clock.getTime());
+
+      // The user stops waiting and presses "Sync now". The peer is back.
+      peerMode = 'up';
+      await manualRun();
+
+      // failure_count resets on ANY successful run, including a manual one
+      // (AS-08). Without this the scheduler goes on skipping the link for the
+      // rest of the backoff window — up to half an hour — and syncStatusCopy,
+      // which checks failureCount BEFORE lastSyncedAt, renders "Retrying in
+      // 30m" on a link the user just synced by hand.
+      const recovered = await linkRow();
+      expect(recovered.failureCount).toBe(0);
+      expect(recovered.nextPollAt).toBeNull();
+
+      // And auto-sync picks the link straight back up rather than skipping it
+      // until a window it is no longer inside expires.
+      const before = runsStarted();
+      await seedEntry('A', 'after-manual');
+      await tickN(sched, SETTLE_TICKS);
+      expect(runsStarted()).toBeGreaterThan(before);
+      expect(await entryTitles('B')).toEqual(['after-manual', 'stranded']);
+    });
+
+    it('a FAILED run leaves the pause alone', async () => {
+      // The clear is bound to success, not to "a run happened". A run that
+      // fails against the same rejected credentials must not unpause the link
+      // and hand it back to the scheduler to fail again every tick.
+      await seedEntry('A', 'still-stuck');
+      await forceFailureState({ pausedReason: 'remote-unauthorized', failureCount: 3 });
+      peerMode = 'unauthorized';
+
+      const { runSync } = await import('../src/services/sync/run-sync.js');
+      await use('A');
+      await expect(runSync(linkId, ownerA.id, { fetchImpl: peerFetch() })).rejects.toThrow();
+
+      const link = await linkRow();
+      expect(link.pausedReason).toBe('remote-unauthorized');
+      expect(link.failureCount).toBe(3);
+    });
+  });
+
+  // ── 11. fairness: the tick budget must not starve the tail ───────────────
+
+  describe('the tick budget rotates (FIX 3)', () => {
+    /**
+     * A second link, on its own universe, sharing the remote. Two links is all
+     * the starvation shape needs: one budget that admits exactly one link per
+     * tick, and a question about which one.
+     */
+    async function secondLink(): Promise<string> {
+      const { universes, syncLinks, syncRemotes } = await import('../src/db/schema.js');
+      await use('A');
+      const [u2] = await A.db
+        .insert(universes)
+        .values({ userId: ownerA.id, name: 'Second World' })
+        .returning();
+      const [remote] = await A.db.select().from(syncRemotes).where(eq(syncRemotes.userId, ownerA.id));
+      const [link] = await A.db
+        .insert(syncLinks)
+        .values({ universeId: u2.id, remoteId: remote.id })
+        .returning();
+      return link.id;
+    }
+
+    /**
+     * A budget that admits exactly ONE link per tick, deterministically: the
+     * clock the budget reads jumps 1000ms per call, and the budget is 1500ms.
+     * Per tick that is start=T, first link T+1000 (within budget), second link
+     * T+2000 (over) — break. Real elapsed time never enters into it, so this
+     * cannot flake on a loaded machine.
+     */
+    function oneLinkPerTick(): Partial<SchedulerOptions> {
+      let t = 0;
+      return { monotonic: () => (t += 1000), tickBudgetMs: 1500 };
+    }
+
+    async function pollAtOf(id: string): Promise<Date | null> {
+      const { syncLinks } = await import('../src/db/schema.js');
+      const [row] = await A.db.select().from(syncLinks).where(eq(syncLinks.id, id));
+      return row.nextPollAt;
+    }
+
+    it('reaches on a later tick a link that was past the budget on an earlier one', async () => {
+      const otherId = await secondLink();
+      // The stagger stamp is the observable here: it is the first thing the
+      // loop does to a link it reaches, and it costs no peer traffic at all,
+      // so "was this link reached?" is answered without a sync run muddying
+      // the budget arithmetic.
+      const sched = mk({ ...oneLinkPerTick(), startupStaggerMs: 60_000 });
+      const [first, second] = [linkId, otherId].sort();
+
+      await tickN(sched, 1);
+      expect(await pollAtOf(first)).not.toBeNull();
+      expect(await pollAtOf(second)).toBeNull(); // past the budget, carried over
+
+      // Before this fix, every tick restarted from the top of an UNORDERED
+      // result set: the same link was reached again and the tail starved for
+      // as long as the budget kept being hit.
+      await tickN(sched, 1);
+      expect(await pollAtOf(second)).not.toBeNull();
+    });
+  });
+
+  // ── 12. the first boot after a deploy must not sync the whole fleet ───────
+
+  describe('the first-boot stagger (FIX 4)', () => {
+    it('defers a link it has never seen instead of syncing it on the first tick', async () => {
+      // 0038 backfills auto_sync = true with last_synced_fingerprint NULL and
+      // next_poll_at NULL on every pre-existing link, which is exactly the
+      // state of the link this suite builds. Untreated, every such link in a
+      // deployment runs a full sync within a tick or two of boot.
+      const window = 10 * 60_000;
+      const sched = mk({ startupStaggerMs: window });
+      await seedEntry('A', 'pre-existing');
+
+      // Pinned jitter, so the slot is an exact instant rather than "somewhere
+      // in ten minutes" — the spread itself is staggerDelayMs's own unit test.
+      const random = vi.spyOn(Math, 'random').mockReturnValue(0.5);
+      try {
+        await tickN(sched, SETTLE_TICKS);
+      } finally {
+        random.mockRestore();
+      }
+      expect(runsStarted()).toBe(0);
+
+      // Deferred into the window, and the slot is written down so a process
+      // that restarts mid-stagger inherits it rather than re-rolling the herd.
+      const held = await linkRow();
+      expect(held.nextPollAt).not.toBeNull();
+      expect(held.nextPollAt!.getTime()).toBe(clock.getTime() + window / 2);
+
+      // Bounded, not indefinite: once the slot passes, the link syncs normally.
+      clock = new Date(clock.getTime() + window + 1);
+      await tickN(sched, SETTLE_TICKS);
+      expect(runsStarted()).toBe(1);
+      expect(await entryTitles('B')).toEqual(['pre-existing']);
+    });
+  });
+
+  // ── 13. continuous editing ────────────────────────────────────────────────
 
   it('runs a continuously-edited universe once per ceiling window, not once per tick', async () => {
     const sched = mk();

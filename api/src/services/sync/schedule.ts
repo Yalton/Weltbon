@@ -139,6 +139,52 @@ export function backoffDelayMs(
 }
 
 /**
+ * How long the FIRST observation of a link defers it, spread uniformly across
+ * `windowMs` (#44 whole-branch review, FIX 4).
+ *
+ * NOT `backoffDelayMs`, and deliberately a separate function rather than a
+ * clever reuse of it: backoff answers "this peer just failed, how long before
+ * we bother it again?" and grows with the failure count. This answers "the
+ * process just started and every link is due at once, which slot does this one
+ * get?" — flat, one-shot, and unrelated to whether anything has failed.
+ * Collapsing the two would make `failure_count = 0` mean two different things.
+ *
+ * Uniform over the whole window, with no exponential shape and no floor: the
+ * point is that N links landing on this at the same instant end up spread
+ * evenly across the window rather than bunched at either end.
+ */
+export function staggerDelayMs(
+  windowMs: number,
+  jitter: (n: number) => number = (n) => Math.random() * n,
+): number {
+  return Math.max(0, Math.round(jitter(Math.max(0, windowMs))));
+}
+
+/**
+ * Rotate an ORDERED list so it resumes after `cursor` (#44 whole-branch
+ * review, FIX 3) — the round-robin half of the tick budget.
+ *
+ * `rows` MUST already be sorted ascending by the same id `idOf` returns; the
+ * scheduler gets that from an ORDER BY, which is the half of this fix that
+ * makes "resume after X" a meaningful instruction at all. Against an unordered
+ * result set there is no "after".
+ *
+ * A cursor that is missing, or at/past the end of the set (every id <= it —
+ * including a link deleted since the last tick), starts over from the top,
+ * which is the same wrap the round-robin performs on every full pass.
+ */
+export function rotateToCursor<T>(
+  rows: readonly T[],
+  idOf: (row: T) => string,
+  cursor: string | null,
+): T[] {
+  if (cursor === null || rows.length === 0) return [...rows];
+  const start = rows.findIndex((row) => idOf(row) > cursor);
+  if (start <= 0) return [...rows];
+  return [...rows.slice(start), ...rows.slice(0, start)];
+}
+
+/**
  * The single scheduling decision for one tick. Order matters: paused/off is
  * checked first because neither is a state the scheduler may reason past,
  * then remote is checked before local stability, then local's own ceiling

@@ -1,6 +1,7 @@
 import { describe, it, expect } from 'vitest';
 import {
   decide, nextDebounce, hasUnsyncedLocalWork, backoffDelayMs,
+  rotateToCursor, staggerDelayMs,
   STABLE_TICKS_REQUIRED, MAX_PENDING_TICKS,
   type LinkSchedulingState, type DebounceState, type Decision,
 } from '../src/services/sync/schedule.js';
@@ -289,5 +290,68 @@ describe('backoffDelayMs', () => {
 
   it('returns the base delay for the first failure', () => {
     expect(backoffDelayMs(1, { ...noJitter, baseMs: 1000 })).toBe(1000);
+  });
+});
+
+describe('rotateToCursor (FIX 3 — the tick budget must not always cut the same prefix)', () => {
+  const rows = ['a', 'b', 'c', 'd'];
+  const id = (r: string) => r;
+
+  it('starts from the top when there is no cursor', () => {
+    expect(rotateToCursor(rows, id, null)).toEqual(['a', 'b', 'c', 'd']);
+  });
+
+  it('resumes AFTER the cursor', () => {
+    expect(rotateToCursor(rows, id, 'b')).toEqual(['c', 'd', 'a', 'b']);
+  });
+
+  it('wraps to the top once the cursor reaches the end', () => {
+    expect(rotateToCursor(rows, id, 'd')).toEqual(['a', 'b', 'c', 'd']);
+  });
+
+  it('resumes after a cursor whose link no longer exists', () => {
+    // The link the last tick stopped on can be deleted before the next one.
+    // "After b" is still a well-defined place in an ORDERED set even when b
+    // itself is gone — which is the whole reason the query has an ORDER BY.
+    expect(rotateToCursor(['a', 'c', 'd'], id, 'b')).toEqual(['c', 'd', 'a']);
+  });
+
+  it('never drops or duplicates a row, wherever the cursor sits', () => {
+    for (const cursor of [null, 'a', 'b', 'c', 'd', 'z']) {
+      expect([...rotateToCursor(rows, id, cursor)].sort()).toEqual(rows);
+    }
+  });
+
+  it('handles an empty set', () => {
+    expect(rotateToCursor([], id, 'a')).toEqual([]);
+  });
+});
+
+describe('staggerDelayMs (FIX 4 — the first boot after a deploy)', () => {
+  it('spreads uniformly across the window, unlike the exponential backoff', () => {
+    expect(staggerDelayMs(60_000, () => 0)).toBe(0);
+    expect(staggerDelayMs(60_000, (n) => n / 2)).toBe(30_000);
+    expect(staggerDelayMs(60_000, (n) => n)).toBe(60_000);
+  });
+
+  it('never exceeds the window and is never negative', () => {
+    for (let i = 0; i < 200; i += 1) {
+      const d = staggerDelayMs(60_000);
+      expect(d).toBeGreaterThanOrEqual(0);
+      expect(d).toBeLessThanOrEqual(60_000);
+    }
+  });
+
+  it('is zero for a zero window, so the stagger can be switched off', () => {
+    expect(staggerDelayMs(0)).toBe(0);
+  });
+
+  it('is NOT backoffDelayMs: it does not grow, and knows nothing of failures', () => {
+    // Conflating the two would make failure_count mean two different things.
+    // Same jitter, same window, same answer every time.
+    const flat = [1, 2, 3, 4].map(() => staggerDelayMs(60_000, (n) => n / 4));
+    expect(flat).toEqual([15_000, 15_000, 15_000, 15_000]);
+    const growing = [1, 2, 3, 4].map((n) => backoffDelayMs(n, { jitter: () => 0, baseMs: 60_000 }));
+    expect(new Set(growing).size).toBeGreaterThan(1);
   });
 });
