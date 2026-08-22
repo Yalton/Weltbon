@@ -4,6 +4,7 @@
  * Wire shape (api/src/routes/sync-client.ts, JWT-only):
  *   GET    /sync/links?universeId=  → SyncLink[]
  *   POST   /sync/links              → SyncLink (201)  body {universeId, remoteId}
+ *   PATCH  /sync/links/:id          → SyncLink        body {autoSync}  (#44, AS-10)
  *   DELETE /sync/links/:id          → { deleted: true }
  *   POST   /sync/links/:id/run      → SyncRunResult   (?force=true optional)
  *
@@ -48,6 +49,18 @@ export interface SyncLink {
    */
   lastError: string | null;
   createdAt: string;
+  /** #44 (AS-01/AS-10): per-link auto-sync toggle. Existing links migrated to true. */
+  autoSync: boolean;
+  /**
+   * Non-null means a permanent failure paused this link — the value is a
+   * `SyncRunError` code (api/src/services/sync/run-errors.ts). Render it
+   * through `syncStatusCopy`, never directly.
+   */
+  pausedReason: string | null;
+  /** When the next scheduled poll is due. Backoff (AS-08) is expressed by pushing this out. */
+  nextPollAt: string | null;
+  /** Consecutive transient failures since the last success; 0 after any success. */
+  failureCount: number;
 }
 
 /** Per-collection row counts from one direction of a run. */
@@ -84,12 +97,22 @@ export interface SyncRunResult {
  * `string | undefined`, and the server validates `universeId: z.string().uuid()`.
  * Without the gate a first render would send `universeId=undefined` and paint a
  * 400 on a tab where the user has done nothing wrong.
+ *
+ * `refetchInterval` defaults OFF: this hook is also mounted by `EntryList`
+ * (the #42 first-sync-failed banner), which has no business polling in the
+ * background. Only `SyncTab` (#44, AS-10) opts in — an auto-sync run has no
+ * user-initiated origin to invalidate the cache on, so the tab is the one
+ * caller that needs a modest poll to notice a run the SCHEDULER started.
  */
-export function useSyncLinks(universeId: string | undefined) {
+export function useSyncLinks(
+  universeId: string | undefined,
+  options: { refetchInterval?: number } = {},
+) {
   return useQuery({
     queryKey: syncLinksKey(universeId ?? ''),
     queryFn: () => api<SyncLink[]>(`/sync/links?universeId=${encodeURIComponent(universeId!)}`),
     enabled: !!universeId,
+    refetchInterval: options.refetchInterval,
   });
 }
 
@@ -122,6 +145,28 @@ export function useDeleteSyncLink(universeId: string) {
       // Conflicts survive the link that produced them — `sync_conflicts` is
       // keyed on universe_id alone and nothing cascades from this DELETE — so
       // invalidating that key here would refetch rows that cannot have changed.
+    },
+  });
+}
+
+/**
+ * Toggle one link's auto-sync flag (#44, AS-10).
+ *
+ * Re-enabling clears `pausedReason` and resets `failureCount`/`nextPollAt`
+ * SERVER-SIDE (api/src/routes/sync-client.ts) — this mutation does not need
+ * to, and must not, fake that locally; invalidating and letting the refetch
+ * carry the real values is enough.
+ */
+export function useSetLinkAutoSync(universeId: string) {
+  const qc = useQueryClient();
+  return useMutation({
+    mutationFn: (vars: { linkId: string; autoSync: boolean }) =>
+      api<SyncLink>(`/sync/links/${vars.linkId}`, {
+        method: 'PATCH',
+        body: JSON.stringify({ autoSync: vars.autoSync }),
+      }),
+    onSuccess: () => {
+      qc.invalidateQueries({ queryKey: syncLinksKey(universeId) });
     },
   });
 }

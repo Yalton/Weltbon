@@ -198,6 +198,70 @@ describe('SyncTab — the link list', () => {
   });
 });
 
+describe('SyncTab — #44 auto-sync toggle and status', () => {
+  it('PATCHes autoSync when the checkbox is toggled', async () => {
+    vi.mocked(api).mockImplementation(
+      dispatch(
+        { 'PATCH /sync/links/l1': { ...LINK, autoSync: false } },
+        [{ ...LINK, autoSync: true }],
+      ),
+    );
+    const user = userEvent.setup();
+
+    renderTab();
+    const checkbox = await screen.findByRole('checkbox', { name: /auto-sync with laptop/i });
+    expect(checkbox).toBeChecked();
+
+    await user.click(checkbox);
+
+    await waitFor(() =>
+      expect(api).toHaveBeenCalledWith(
+        '/sync/links/l1',
+        expect.objectContaining({ method: 'PATCH' }),
+      ),
+    );
+    const call = vi
+      .mocked(api)
+      .mock.calls.find(([p, i]) => p === '/sync/links/l1' && (i as RequestInit | undefined)?.method === 'PATCH');
+    expect(JSON.parse(String((call![1] as RequestInit).body))).toEqual({ autoSync: false });
+  });
+
+  it('shows the paused remedy and keeps Sync now enabled so a manual run can clear it', async () => {
+    // AS-08: a successful manual run is one of the ways a user escapes a
+    // pause, so the button must never be disabled here.
+    vi.mocked(api).mockImplementation(
+      dispatch({}, [{ ...LINK, status: 'error', pausedReason: 'remote-unauthorized' }]),
+    );
+
+    renderTab();
+
+    const status = await screen.findByTestId('sync-link-status-l1');
+    expect(status).toHaveTextContent(/sign in/i);
+    expect(screen.getByRole('button', { name: /sync now/i })).toBeEnabled();
+  });
+
+  it('names the backoff wait instead of implying the link is broken', async () => {
+    vi.mocked(api).mockImplementation(
+      dispatch(
+        {},
+        [
+          {
+            ...LINK,
+            autoSync: true,
+            failureCount: 2,
+            nextPollAt: new Date(Date.now() + 5 * 60_000).toISOString(),
+          },
+        ],
+      ),
+    );
+
+    renderTab();
+
+    const status = await screen.findByTestId('sync-link-status-l1');
+    expect(status).toHaveTextContent(/retrying in/i);
+  });
+});
+
 describe('SyncTab — F-06, a run in flight', () => {
   it('shows elapsed time, and warns about a slow FIRST sync', async () => {
     vi.mocked(api).mockImplementation(

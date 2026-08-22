@@ -4,6 +4,7 @@ import { useFilterParams } from '../hooks/useFilterParams';
 import { useFilteredEntries } from '../hooks/useFilteredEntries';
 import { useUniverse } from '../hooks/useUniverse';
 import { useSyncLinks, useRunSyncLink } from '../hooks/useSyncLinks';
+import { useSyncConflicts } from '../hooks/useSyncConflicts';
 import { EntryCard } from '../components/EntryCard';
 import { EmptyState } from '../components/EmptyState';
 import { ImportDialog } from '../components/ImportDialog';
@@ -60,6 +61,17 @@ export function EntryList() {
     (link) => link.status === 'error' && link.lastSyncedAt === null,
   );
 
+  // #44 (AS-09, task 7) — the unresolved-conflict count. Under MANUAL sync a
+  // conflict arrived while the user was watching the screen they had just
+  // clicked "Sync now" on; under auto-sync, LWW losers can pile up for days
+  // with nobody opening the Sync tab, and a silently discarded edit is the
+  // worst outcome this feature can produce. Reuses `useSyncConflicts` (the
+  // Sync tab's own query, same cache key) rather than a second query, so this
+  // count and the tab's list can never disagree. Skipped in share mode for
+  // the same reason as the banner above: a visitor has no sync links.
+  const { data: conflicts } = useSyncConflicts(isShareMode ? undefined : uid);
+  const conflictCount = conflicts?.length ?? 0;
+
   const [importOpen, setImportOpen] = useState(false);
   const [pickerOpen, setPickerOpen] = useState(false);
   const [auditDialogOpen, setAuditDialogOpen] = useState(false);
@@ -115,6 +127,29 @@ export function EntryList() {
           >
             Try again
           </button>
+        </div>
+      )}
+
+      {/* Unresolved sync conflicts (#44, AS-09). Count only, plus a link into
+          the Sync tab — resolving/restoring a conflict is that tab's job, not
+          this one's. */}
+      {conflictCount > 0 && (
+        <div
+          role="status"
+          data-testid="sync-conflicts-banner"
+          className="mb-4 rounded-lg border border-amber-500/30 bg-amber-500/10 p-3 text-sm text-amber-700 dark:text-amber-300"
+        >
+          <p>
+            {conflictCount} unresolved sync {conflictCount === 1 ? 'conflict' : 'conflicts'} on
+            this universe — an edit made here and on a synced instance at close to the same time,
+            where one side's version was kept and the other's saved for review.
+          </p>
+          <Link
+            to={`/universes/${uid}/settings?tab=sync`}
+            className="mt-2 inline-block rounded-md border border-amber-400/50 px-3 py-1.5 text-sm font-medium hover:bg-amber-500/10"
+          >
+            Review in Sync
+          </Link>
         </div>
       )}
 

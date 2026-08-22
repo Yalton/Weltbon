@@ -50,11 +50,13 @@ function setupApi({
   categories,
   entriesByQuery,
   syncLinks = [],
+  syncConflicts = [],
 }: {
   universe: { id: string; entryTypes: string[] };
   categories: Array<{ id: string; label: string; icon: string; sortOrder: number; entryCount: number }>;
   entriesByQuery: (path: string) => unknown;
   syncLinks?: Array<Record<string, unknown>>;
+  syncConflicts?: Array<Record<string, unknown>>;
 }) {
   vi.mocked(api).mockImplementation(async (path?: string, init?: { method?: string }) => {
     if (!path) return undefined;
@@ -62,6 +64,7 @@ function setupApi({
     if (path === '/universes/U1/categories') return { categories, uncategorizedCount: 0 };
     if (path.startsWith('/universes/U1/entries')) return entriesByQuery(path);
     if (path.startsWith('/sync/links?universeId=')) return syncLinks;
+    if (path.startsWith('/sync/conflicts?universeId=')) return syncConflicts;
     if (/^\/sync\/links\/[^/]+\/run/.test(path) && init?.method === 'POST') {
       return {
         linkId: 'link-1',
@@ -301,6 +304,54 @@ describe('EntryList', () => {
         '/sync/links/link-1/run',
         expect.objectContaining({ method: 'POST' }),
       );
+    });
+  });
+
+  describe('unresolved sync conflicts banner (#44, AS-09)', () => {
+    function mkConflict(id: string, overrides: Record<string, unknown> = {}) {
+      return {
+        id,
+        universeId: 'U1',
+        tableName: 'entries',
+        rowId: 'e1',
+        winner: 'local',
+        loserPayload: { name: 'Replaced name' },
+        resolvedAt: null,
+        createdAt: '2025-01-01T00:00:00.000Z',
+        ...overrides,
+      };
+    }
+
+    it('shows the count and a link into the Sync tab when conflicts are unresolved', async () => {
+      setupApi({
+        universe: { id: 'U1', entryTypes: ['character'] },
+        categories: [],
+        entriesByQuery: () => [mkEntry('e1', 'Alpha')],
+        syncConflicts: [mkConflict('c1'), mkConflict('c2')],
+      });
+
+      renderAt('/universes/U1/entries');
+
+      const banner = await screen.findByTestId('sync-conflicts-banner');
+      expect(banner).toHaveTextContent('2');
+      expect(screen.getByRole('link', { name: /review in sync/i })).toHaveAttribute(
+        'href',
+        '/universes/U1/settings?tab=sync',
+      );
+    });
+
+    it('renders no banner when there are no unresolved conflicts', async () => {
+      setupApi({
+        universe: { id: 'U1', entryTypes: ['character'] },
+        categories: [],
+        entriesByQuery: () => [mkEntry('e1', 'Alpha')],
+        syncConflicts: [],
+      });
+
+      renderAt('/universes/U1/entries');
+
+      expect(await screen.findByText('Alpha')).toBeInTheDocument();
+      expect(screen.queryByTestId('sync-conflicts-banner')).not.toBeInTheDocument();
     });
   });
 });
