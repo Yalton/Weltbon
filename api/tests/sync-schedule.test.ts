@@ -1,6 +1,7 @@
 import { describe, it, expect } from 'vitest';
 import {
-  decide, nextDebounce, backoffDelayMs, STABLE_TICKS_REQUIRED, MAX_PENDING_TICKS,
+  decide, nextDebounce, hasUnsyncedLocalWork, backoffDelayMs,
+  STABLE_TICKS_REQUIRED, MAX_PENDING_TICKS,
   type LinkSchedulingState, type DebounceState, type Decision,
 } from '../src/services/sync/schedule.js';
 
@@ -19,35 +20,109 @@ const link = (over: Partial<LinkSchedulingState> = {}): LinkSchedulingState => (
 
 describe('nextDebounce', () => {
   it('starts a fresh window when the fingerprint first changes', () => {
-    expect(nextDebounce(undefined, 'FP1')).toEqual({ fingerprint: 'FP1', stableTicks: 0, pendingTicks: 0 });
+    expect(nextDebounce(undefined, 'FP1', link())).toEqual({ fingerprint: 'FP1', stableTicks: 0, pendingTicks: 0 });
   });
 
   it('counts consecutive ticks where the fingerprint held still', () => {
-    const a = nextDebounce(undefined, 'FP1');
-    const b = nextDebounce(a, 'FP1');
+    const a = nextDebounce(undefined, 'FP1', link());
+    const b = nextDebounce(a, 'FP1', link());
     expect(b.stableTicks).toBe(1);
-    expect(nextDebounce(b, 'FP1').stableTicks).toBe(2);
+    expect(nextDebounce(b, 'FP1', link()).stableTicks).toBe(2);
   });
 
   it('resets the count when the fingerprint moves again — this is the coalescing', () => {
-    const a = nextDebounce(nextDebounce(undefined, 'FP1'), 'FP1');
+    const a = nextDebounce(nextDebounce(undefined, 'FP1', link()), 'FP1', link());
     expect(a.stableTicks).toBe(1);
-    const moved = nextDebounce(a, 'FP2');
+    const moved = nextDebounce(a, 'FP2', link());
     expect(moved).toEqual({ fingerprint: 'FP2', stableTicks: 0, pendingTicks: 2 });
   });
 
   it('accumulates pendingTicks across fingerprint changes — unlike stableTicks, a change never resets it', () => {
     let d: DebounceState | undefined = undefined;
-    d = nextDebounce(d, 'FP1');
-    d = nextDebounce(d, 'FP2'); // changed
-    d = nextDebounce(d, 'FP2'); // held
-    d = nextDebounce(d, 'FP3'); // changed again
+    d = nextDebounce(d, 'FP1', link());
+    d = nextDebounce(d, 'FP2', link()); // changed
+    d = nextDebounce(d, 'FP2', link()); // held
+    d = nextDebounce(d, 'FP3', link()); // changed again
     // 3 ticks have elapsed since work first started waiting (the first call
     // establishes tick 0), regardless of how many times the fingerprint
     // itself moved in between.
     expect(d.pendingTicks).toBe(3);
     // stableTicks, by contrast, was reset by the last change.
     expect(d.stableTicks).toBe(0);
+  });
+
+  it('does not accumulate pendingTicks on an IDLE link, however long it idles', () => {
+    // The counter never resets itself, so if a link with nothing waiting were
+    // still allowed to advance it, an untouched universe would cross
+    // MAX_PENDING_TICKS purely by the scheduler ticking — and the user's NEXT
+    // edit would then satisfy `pendingExpired` on its first tick and sync on
+    // the opening keystroke, with coalescing dead for the life of the process.
+    // Idling for four times the ceiling is well past where that would show.
+    const idle = link({ lastSyncedFingerprint: 'FP-settled' });
+    let d: DebounceState | undefined = undefined;
+    for (let i = 0; i < MAX_PENDING_TICKS * 4; i++) {
+      d = nextDebounce(d, 'FP-settled', idle);
+    }
+    expect(d!.pendingTicks).toBe(0);
+
+    // And the proof that it matters: one real edit now, and the very first
+    // tick must still be "settling", not "the ceiling already expired".
+    const afterEdit = nextDebounce(d, 'FP-edited', idle);
+    // One tick of waiting, counted from the edit — not the thousands of ticks
+    // the process happened to have been up for.
+    expect(afterEdit.pendingTicks).toBe(1);
+    expect(afterEdit.pendingTicks).toBeLessThan(MAX_PENDING_TICKS);
+    expect(
+      decide({
+        link: idle, localFingerprint: 'FP-edited',
+        debounce: afterEdit, remoteFingerprint: null, now: NOW,
+      }).kind,
+    ).not.toBe('run');
+  });
+
+  it('rebases a window carried over from work that has since synced', () => {
+    // The same rule from the other direction: a window built while work was
+    // pending must not survive into the state where that work is synced.
+    const pending = link({ lastSyncedFingerprint: 'FP-old' });
+    let d = nextDebounce(undefined, 'FP-new', pending);
+    d = nextDebounce(d, 'FP-new', pending);
+    expect(d.pendingTicks).toBe(1);
+
+    const synced = link({ lastSyncedFingerprint: 'FP-new' });
+    expect(nextDebounce(d, 'FP-new', synced)).toEqual({
+      fingerprint: 'FP-new', stableTicks: 0, pendingTicks: 0,
+    });
+  });
+});
+
+describe('hasUnsyncedLocalWork', () => {
+  it('is true when the link has never synced', () => {
+    expect(hasUnsyncedLocalWork({ lastSyncedFingerprint: null }, 'FP1')).toBe(true);
+  });
+
+  it('is true when the local fingerprint has moved past what was synced', () => {
+    expect(hasUnsyncedLocalWork({ lastSyncedFingerprint: 'FP1' }, 'FP2')).toBe(true);
+  });
+
+  it('is false when local matches what was last synced', () => {
+    expect(hasUnsyncedLocalWork({ lastSyncedFingerprint: 'FP1' }, 'FP1')).toBe(false);
+  });
+
+  it('is the SAME predicate decide() uses for localChanged', () => {
+    // One definition, two consumers. If these ever diverged, the debounce
+    // window would be rebased on ticks decide() considers to have pending
+    // work — coalescing would break in production with every test still green,
+    // which is exactly why the predicate is not written out twice.
+    for (const [lastSynced, fp] of [[null, 'FP1'], ['FP1', 'FP2'], ['FP1', 'FP1']] as const) {
+      const l = link({ lastSyncedFingerprint: lastSynced, nextPollAt: new Date(NOW.getTime() + 60_000) });
+      const settledWindow: DebounceState = {
+        fingerprint: fp, stableTicks: STABLE_TICKS_REQUIRED, pendingTicks: STABLE_TICKS_REQUIRED,
+      };
+      const wouldRun =
+        decide({ link: l, localFingerprint: fp, debounce: settledWindow, remoteFingerprint: null, now: NOW })
+          .kind === 'run';
+      expect(wouldRun).toBe(hasUnsyncedLocalWork(l, fp));
+    }
   });
 });
 
@@ -164,7 +239,7 @@ describe('decide', () => {
 
     // A short burst of distinct edits, well under the pending ceiling.
     for (const fp of ['FP1', 'FP2', 'FP3']) {
-      debounce = nextDebounce(debounce, fp);
+      debounce = nextDebounce(debounce, fp, link());
       d = decide({ link: link(), localFingerprint: fp, debounce, remoteFingerprint: null, now: NOW });
       expect(d.kind).not.toBe('run');
     }
@@ -173,12 +248,12 @@ describe('decide', () => {
     // STABLE_TICKS_REQUIRED ticks before anything runs.
     const finalFp = 'FP3';
     for (let i = 0; i < STABLE_TICKS_REQUIRED - 1; i++) {
-      debounce = nextDebounce(debounce, finalFp);
+      debounce = nextDebounce(debounce, finalFp, link());
       d = decide({ link: link(), localFingerprint: finalFp, debounce, remoteFingerprint: null, now: NOW });
       expect(d.kind).not.toBe('run');
     }
 
-    debounce = nextDebounce(debounce, finalFp);
+    debounce = nextDebounce(debounce, finalFp, link());
     d = decide({ link: link(), localFingerprint: finalFp, debounce, remoteFingerprint: null, now: NOW });
     expect(d).toEqual({ kind: 'run', reason: 'local' });
   });

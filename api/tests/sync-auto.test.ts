@@ -280,7 +280,15 @@ describe('auto-sync scheduler (#44)', () => {
     await tickN(sched, SETTLE_TICKS);
 
     const failed = await linkRow();
-    expect(failed.failureCount).toBeGreaterThanOrEqual(1);
+    // EXACTLY one, not "at least one". The count is what pins the runtime's
+    // backoff gate: the first tick's poll fails and records failure 1, and
+    // every tick after it must be skipped entirely until the recorded backoff
+    // elapses. Delete the gate and decide() returns run/local on each of the
+    // remaining ticks, every one of them attempting a handshake against a dead
+    // peer — the count reaches 4 here and would climb without bound in
+    // production. `toBeGreaterThanOrEqual(1)` passes in both worlds, which is
+    // why it is not allowed to stand.
+    expect(failed.failureCount).toBe(1);
     expect(failed.nextPollAt).not.toBeNull();
     expect(failed.nextPollAt!.getTime()).toBeGreaterThan(clock.getTime());
     // Unreachable is NOT a pause: a closed laptop must not permanently stop a

@@ -349,17 +349,27 @@ export async function startServer(): Promise<{ server: ReturnType<typeof serve>;
   // inbound HTTP races its UPDATE, this one has nothing to race.
   const autoSync = cfg.autoSyncEnabled ? createScheduler() : null;
   autoSync?.start();
-  // The scheduler's lifetime IS the server's. Without this, any caller that
-  // shuts down by closing the server rather than by SIGTERM — every test that
-  // boots startServer(), and Electron's own teardown — leaves a live interval
-  // behind that goes on querying a database somebody else has already closed.
-  server.on('close', () => autoSync?.stop());
 
   // Registered BEFORE wireSigtermDrain so it runs first: Node fires SIGTERM
   // listeners in registration order, and the drain's handler ends in
   // process.exit(). Stopping the timer before the server drains means no tick
   // can start a fresh sync run into a process that is on its way out.
-  process.on('SIGTERM', () => autoSync?.stop());
+  //
+  // `once` plus the explicit removal below because startServer() is callable
+  // more than once in a process — tests/start-server.test.ts boots three
+  // times, Electron boots on demand — and a listener added per boot and never
+  // removed is a MaxListenersExceededWarning waiting for the eleventh caller.
+  const stopAutoSyncOnSigterm = () => autoSync?.stop();
+  process.once('SIGTERM', stopAutoSyncOnSigterm);
+
+  // The scheduler's lifetime IS the server's. Without this, any caller that
+  // shuts down by closing the server rather than by SIGTERM — every test that
+  // boots startServer(), and Electron's own teardown — leaves a live interval
+  // behind that goes on querying a database somebody else has already closed.
+  server.on('close', () => {
+    autoSync?.stop();
+    process.off('SIGTERM', stopAutoSyncOnSigterm);
+  });
 
   // D-04: register SIGTERM handler after serve() so the handler has the server reference.
   wireSigtermDrain(server, cfg.auditShutdownGraceMs);

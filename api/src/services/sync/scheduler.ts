@@ -82,8 +82,34 @@ export function createScheduler(opts: SchedulerOptions = {}): Scheduler {
         .innerJoin(universes, eq(syncLinks.universeId, universes.id))
         .where(eq(syncLinks.autoSync, true));
 
+      // FIX 5: the debounce Map is keyed by link id and nothing else ever
+      // removes from it, so a deleted link (or one whose auto-sync was turned
+      // off) would keep its entry for the life of the process. Prune against
+      // the rows actually in play before touching any of them.
+      const live = new Set(rows.map((r) => r.link.id));
+      for (const id of debounce.keys()) {
+        if (!live.has(id)) debounce.delete(id);
+      }
+
       for (const { link, remote, ownerId } of rows) {
         if (Date.now() - startedAt > TICK_BUDGET_MS) break; // carry the rest to the next tick
+
+        // A paused link cannot produce any decision but 'idle' (decide()
+        // checks pausedReason first and never reasons past it), so measuring
+        // its fingerprint is eighteen aggregate queries per tick, forever, for
+        // an answer that cannot change. decide() is still the authority on the
+        // decision — this only declines to do expensive work to reach a
+        // foregone one. Its window goes too: a link that cannot run has no
+        // work waiting, and a human unpausing it should get a fresh
+        // coalescing window rather than one aged during the pause.
+        //
+        // autoSync is already excluded by the query's WHERE, and is re-checked
+        // here only so this short-circuit matches decide()'s own guard exactly
+        // rather than depending on the query staying that way.
+        if (!link.autoSync || link.pausedReason !== null) {
+          debounce.delete(link.id);
+          continue;
+        }
 
         // A link with consecutive failures is inside the backoff window
         // recordFailure wrote. decide() consults nextPollAt only on the POLL
@@ -103,24 +129,6 @@ export function createScheduler(opts: SchedulerOptions = {}): Scheduler {
 
         const localFingerprint = await universeFingerprint(link.universeId);
 
-        // `pendingTicks` (schedule.ts) counts ticks that local work has been
-        // WAITING to sync, and nextDebounce cannot see the link row, so it
-        // increments on every tick including ones where nothing is waiting at
-        // all. Handing it a fresh window whenever this link has nothing
-        // unsynced is what keeps an idle link from climbing past
-        // MAX_PENDING_TICKS — otherwise the first edit after a quiet stretch
-        // bypasses coalescing entirely and syncs on the opening keystroke of
-        // every burst. The condition is the negation of decide()'s own
-        // `localChanged`; it is checked here because DebounceState has no
-        // self-reset and the pure module has nothing to reset it from.
-        const hasUnsyncedLocalWork =
-          link.lastSyncedFingerprint === null || link.lastSyncedFingerprint !== localFingerprint;
-        const nextWindow = nextDebounce(
-          hasUnsyncedLocalWork ? debounce.get(link.id) : undefined,
-          localFingerprint,
-        );
-        debounce.set(link.id, nextWindow);
-
         const state: LinkSchedulingState = {
           linkId: link.id,
           autoSync: link.autoSync,
@@ -130,6 +138,16 @@ export function createScheduler(opts: SchedulerOptions = {}): Scheduler {
           nextPollAt: link.nextPollAt,
           failureCount: link.failureCount,
         };
+
+        // The link row goes IN because whether the window has anything to
+        // measure is a scheduling rule, and every scheduling rule lives in
+        // schedule.ts. This used to be a `hasUnsyncedLocalWork ? previous :
+        // undefined` ternary right here, which quietly made the runtime a
+        // second home for decide()'s `localChanged` predicate — two copies
+        // that had to agree forever, whose disagreement kills coalescing in
+        // production without failing a single test.
+        const nextWindow = nextDebounce(debounce.get(link.id), localFingerprint, state);
+        debounce.set(link.id, nextWindow);
 
         let decision = decide({
           link: state,
@@ -183,6 +201,34 @@ export function createScheduler(opts: SchedulerOptions = {}): Scheduler {
           // applied remote ops has just changed local state, so a value read
           // before the run would look like pending local edits and re-trigger
           // this link forever.
+          //
+          // KNOWN WINDOW, PARKED DELIBERATELY (#44 review round 1). An edit
+          // that lands DURING the run — after drive() called
+          // buildSyncManifest, before the run returns — was never in the
+          // manifest that went to the peer, yet it IS in this fingerprint. So
+          // it is recorded as synced when it was not, and it reaches the peer
+          // only when some later run happens to rebuild a manifest. The
+          // post-run remote re-probe below has the mirror of this window.
+          //
+          // Capturing after the run is still the RIGHT choice: capturing
+          // before it is not a smaller bug but a much larger one — a run that
+          // applied remote ops would leave lastSyncedFingerprint permanently
+          // behind local state, decide() would return run/local on every tick
+          // from then on, and the link would sync in a loop forever against an
+          // untouched universe. Losing an edit until the next run beats that
+          // by a wide margin.
+          //
+          // It is also bounded rather than permanent: ANY later run in EITHER
+          // direction rebuilds a fresh manifest and carries the stranded edit
+          // with it, so only a link that never syncs again strands it — and
+          // such a link is one nobody is editing either.
+          //
+          // The durable fix is for runSync to RETURN the local (and remote)
+          // fingerprints it actually observed at manifest-build time, so this
+          // records what was really sent instead of what is here now. That
+          // changes runSync's contract, which this plan's "never reach inside
+          // runSync" constraint puts out of scope. Do not paper over it here
+          // with a pre-run capture; see above for why that is worse.
           const settledLocal = await universeFingerprint(link.universeId);
           // BOTH counters, not just stableTicks. pendingTicks accumulates
           // across fingerprint changes by design and nothing else ever clears
