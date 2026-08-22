@@ -32,11 +32,20 @@ import { ImportProgressBar } from './ImportProgressBar';
  */
 export interface ImportUploadStepProps {
   universeId: string;
-  onParsed: (preview: IngestPreview) => void;
+  /**
+   * #37: the SOURCE is handed up alongside the preview because the review
+   * screen can re-request the preview at a different split level, and the
+   * files only ever live here — this component unmounts as soon as review
+   * takes over. Without the source the reviewer would have nothing to re-POST.
+   */
+  onParsed: (preview: IngestPreview, source: UploadSource) => void;
   onCancel: () => void;
 }
 
-type UploadKind = 'zip' | 'folder' | 'md';
+export type UploadKind = 'zip' | 'folder' | 'md';
+
+/** The upload as posted, retained so the preview can be re-requested (#37). */
+export type UploadSource = { files: File[]; kind: UploadKind };
 
 type UploadState =
   | { step: 'idle' }
@@ -101,8 +110,18 @@ function enforceBatchLimits(files: File[], kind: UploadKind): string | null {
   return null;
 }
 
-function buildFormData(files: File[], kind: UploadKind): FormData {
+function buildFormData(
+  files: File[],
+  kind: UploadKind,
+  splitLevel?: number | null,
+): FormData {
   const fd = new FormData();
+  // #37 SP-04: three states on the wire. Omitted = auto-detect; the literal
+  // string "null" = do not split; "1".."6" = an explicit override. Multipart
+  // carries text, so the level is stringified rather than sent as JSON.
+  if (splitLevel !== undefined) {
+    fd.append('split_level', splitLevel === null ? 'null' : String(splitLevel));
+  }
   if (kind === 'zip') {
     fd.append('zip', files[0]!);
   } else {
@@ -115,6 +134,24 @@ function buildFormData(files: File[], kind: UploadKind): FormData {
     }
   }
   return fd;
+}
+
+/**
+ * The ONE preview request path (#37). Both the first upload and the reviewer's
+ * split-level re-request go through here, so the multipart contract — the
+ * relative-path third argument, the zip part, the split_level encoding — has a
+ * single definition rather than a copy per call site.
+ */
+export function requestPreview(
+  universeId: string,
+  files: File[],
+  kind: UploadKind,
+  splitLevel?: number | null,
+): Promise<IngestPreview> {
+  return api<IngestPreview>(`/universes/${universeId}/ingest`, {
+    method: 'POST',
+    body: buildFormData(files, kind, splitLevel),
+  });
 }
 
 function describeSelection(files: File[], kind: UploadKind): string {
@@ -212,11 +249,7 @@ export function ImportUploadStep({
     tick();
 
     try {
-      const fd = buildFormData(files, kind);
-      const preview = await api<IngestPreview>(
-        `/universes/${universeId}/ingest`,
-        { method: 'POST', body: fd },
-      );
+      const preview = await requestPreview(universeId, files, kind);
       if (timerRef.current != null) {
         window.clearTimeout(timerRef.current);
         timerRef.current = null;
@@ -226,7 +259,7 @@ export function ImportUploadStep({
       // it does not, we land in a clean idle state without the progress
       // bar lingering.
       setState({ step: 'idle' });
-      onParsed(preview);
+      onParsed(preview, { files, kind });
     } catch (err) {
       if (timerRef.current != null) {
         window.clearTimeout(timerRef.current);

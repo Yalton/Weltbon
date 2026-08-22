@@ -12,7 +12,7 @@ vi.mock('../../api/client', async () => {
 });
 
 import { api, ApiError } from '../../api/client';
-import { ImportUploadStep } from './ImportUploadStep';
+import { ImportUploadStep, type UploadSource } from './ImportUploadStep';
 
 function makeMdFile(name: string, sizeBytes = 100, relativePath?: string): File {
   const f = new File(['x'.repeat(sizeBytes)], name, { type: 'text/markdown' });
@@ -46,7 +46,7 @@ function fixturePreview(): IngestPreview {
 function renderStep(
   overrides: Partial<{
     universeId: string;
-    onParsed: (p: IngestPreview) => void;
+    onParsed: (p: IngestPreview, source: UploadSource) => void;
     onCancel: () => void;
   }> = {},
 ) {
@@ -234,8 +234,13 @@ describe('ImportUploadStep — idle render and interactive flows', () => {
     const upload = screen.getByRole('button', { name: /upload/i });
     await userEvent.click(upload);
 
+    // #37: the source travels up with the preview so the reviewer can
+    // re-request it at another split level.
     await waitFor(() => {
-      expect(onParsed).toHaveBeenCalledWith(preview);
+      expect(onParsed).toHaveBeenCalledWith(preview, {
+        files: [zip],
+        kind: 'zip',
+      });
     });
 
     expect(api).toHaveBeenCalledTimes(1);
@@ -261,7 +266,10 @@ describe('ImportUploadStep — idle render and interactive flows', () => {
     await userEvent.click(upload);
 
     await waitFor(() => {
-      expect(onParsed).toHaveBeenCalledWith(preview);
+      expect(onParsed).toHaveBeenCalledWith(preview, {
+        files: [f1, f2, f3],
+        kind: 'folder',
+      });
     });
 
     const [, init] = vi.mocked(api).mock.calls[0]!;
@@ -349,7 +357,9 @@ describe('ImportUploadStep — idle render and interactive flows', () => {
       resolveApi(preview);
     });
 
-    await waitFor(() => expect(onParsed).toHaveBeenCalledWith(preview));
+    await waitFor(() =>
+      expect(onParsed).toHaveBeenCalledWith(preview, expect.any(Object)),
+    );
     // Progress bar removed once we transition out of uploading state — the
     // success path resets state.step to 'idle' (parent typically unmounts
     // first; this exercises the state-machine fallback inside the

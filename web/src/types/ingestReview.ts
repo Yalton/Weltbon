@@ -43,6 +43,23 @@ export type PreviewEntry = {
   titleCollision?: boolean;
 };
 
+/**
+ * #37 SP-04 — split detection metadata the preview reports for a
+ * single-document batch. `detected` is what the server auto-detected;
+ * `applied` is what THIS preview actually used (they diverge on an override,
+ * or when the user opted out with an explicit null).
+ *
+ * OPTIONAL because a draft saved to localStorage before #37 shipped has no
+ * `split` key, and IngestImport rehydrates those drafts verbatim.
+ */
+export type SplitInfo = {
+  eligible: boolean;
+  detected: number | null;
+  applied: number | null;
+  /** Level -> entry count. Keys are strings because they arrive as JSON keys. */
+  counts: Record<string, number>;
+};
+
 export type IngestPreview = {
   summary: {
     markdown_files_parsed: number;
@@ -53,6 +70,7 @@ export type IngestPreview = {
   };
   entries: PreviewEntry[];
   warnings: Array<{ file: string; message: string }>;
+  split?: SplitInfo;
 };
 
 // ---------------------------------------------------------------------------

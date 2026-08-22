@@ -26,6 +26,8 @@ import { unified } from 'unified';
 import remarkParse from 'remark-parse';
 import { visit } from 'unist-util-visit';
 import type { Root } from 'mdast';
+import { splitMarkdownFile, type SplitLevel } from './ingest-split.js';
+import { normalizeFilename } from './ingest-filename.js';
 
 // ---------------------------------------------------------------------------
 // Exported Types
@@ -183,24 +185,11 @@ export function parseFrontmatter(content: string): { data: Record<string, unknow
 // normalizeFilename — D-10a
 // ---------------------------------------------------------------------------
 
-/**
- * Normalize a filename for use as a title fallback (D-10 step 3).
- *
- * Rules (D-10a):
- *   1. Strip `.md` extension (case-insensitive).
- *   2. Replace runs of `_` and `-` with a single space.
- *   3. Trim leading/trailing whitespace.
- *   4. Capitalize the first character only; middle words preserve their
- *      original case to avoid mangling acronyms.
- *
- * @param filename  Bare filename (basename), e.g. "my-cool-entry.md".
- * @returns         Human-readable title, e.g. "My cool entry".
- */
-export function normalizeFilename(filename: string): string {
-  const base = filename.replace(/\.md$/i, '');
-  const s = base.replace(/[_-]+/g, ' ').trim();
-  return s.charAt(0).toUpperCase() + s.slice(1);
-}
+// Lives in its own dependency-free module (#37 fix-round-2) so that
+// ingest-split.ts can use it without creating a cycle back into this file.
+// Re-exported here because callers (including tests) import it from
+// ingest-markdown.js.
+export { normalizeFilename };
 
 // ---------------------------------------------------------------------------
 // inferTitle — D-10 / D-10a
@@ -580,6 +569,14 @@ export type ParseBatchContext = {
    * categories on parsed entries (D-07a). Case-sensitive comparison.
    */
   existingCategories: string[];
+  /**
+   * Issue #37. When set, and when exactly one markdown file survives
+   * pre-filtering, that file is replaced by one virtual file per section
+   * before Pass 1. Everything downstream — titles, collisions, wikilinks,
+   * categories — then treats the sections as ordinary batch files, which is
+   * why splitting needs no changes below this point.
+   */
+  splitLevel?: SplitLevel | null;
 };
 
 /**
@@ -638,6 +635,19 @@ export function parseBatch(files: FileInput[], ctx: ParseBatchContext): IngestPr
   }
 
   // -------------------------------------------------------------------------
+  // Step A2 — Split pre-pass (#37 SP-01/SP-02)
+  //
+  // Only a single-document batch is eligible: the upload's shape decides, so a
+  // fifty-file vault import is never shredded. `splitMarkdownFile` returns the
+  // file unchanged when the level yields nothing to split, so no guard beyond
+  // the count is needed.
+  // -------------------------------------------------------------------------
+  let effectiveFiles = mdFiles;
+  if (ctx.splitLevel != null && mdFiles.length === 1) {
+    effectiveFiles = splitMarkdownFile(mdFiles[0], ctx.splitLevel);
+  }
+
+  // -------------------------------------------------------------------------
   // Step B — Pass 1 (per-file inference + title map)
   // -------------------------------------------------------------------------
   type ParsedRecord = {
@@ -657,7 +667,7 @@ export function parseBatch(files: FileInput[], ctx: ParseBatchContext): IngestPr
   // collision titles: titles that appeared more than once
   const collisionTitles = new Set<string>();
 
-  for (const file of mdFiles) {
+  for (const file of effectiveFiles) {
     const content = typeof file.content === 'string' ? file.content : String(file.content);
     const { data, body } = parseFrontmatter(content);
     const filename = file.path.split('/').pop()!;
@@ -795,7 +805,7 @@ export function parseBatch(files: FileInput[], ctx: ParseBatchContext): IngestPr
   // -------------------------------------------------------------------------
   return {
     summary: {
-      markdown_files_parsed: mdFiles.length,
+      markdown_files_parsed: effectiveFiles.length,
       non_markdown_files_skipped: nonMdCount,
       hidden_paths_filtered: hiddenCount,
       duplicate_titles_in_batch: collisionTitles.size,
