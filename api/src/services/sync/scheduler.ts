@@ -77,6 +77,13 @@ export interface SchedulerOptions {
   fetchImpl?: FetchLike;
 }
 
+/** Total of a per-collection count map — how much a run actually wrote. */
+function sumCounts(counts: Record<string, number>): number {
+  let total = 0;
+  for (const n of Object.values(counts)) total += n;
+  return total;
+}
+
 export function createScheduler(opts: SchedulerOptions = {}): Scheduler {
   const tickMs = opts.tickMs ?? DEFAULT_TICK_MS;
   const pollMs = opts.pollIntervalMs ?? DEFAULT_POLL_MS;
@@ -97,6 +104,33 @@ export function createScheduler(opts: SchedulerOptions = {}): Scheduler {
    * for the same reason: it describes this process's startup, not the link.
    */
   const staggerUntil = new Map<string, Date>();
+  /**
+   * Links whose peer answered the fingerprint probe with 404, and for which
+   * this process has already forced one run to find out why (#62).
+   *
+   * A 404 is genuinely ambiguous: the peer may have deleted the universe, or
+   * it may simply predate the fingerprint endpoint. `client.fingerprint`
+   * answers null for both, and null is not a change, so `decide` returns
+   * poll-remote again on the next tick and the link polls a dead peer forever
+   * without ever adjudicating — no pause, no status, nothing a user can see.
+   *
+   * Rather than teach the scheduler to tell those two apart — which would mean
+   * version-sniffing a peer, or fetching a whole snapshot just to test
+   * existence — force ONE run and let the adjudication that already exists
+   * decide. `drive()` fetches the snapshot it needs anyway, and
+   * `remote === null && base !== null` is exactly the severed case; it raises
+   * SyncLinkSeveredError, whose 'stop' policy pauses the link with
+   * `remote-universe-missing`. A peer that is merely old still holds the
+   * universe, so its run simply succeeds and auto-sync carries on driven by
+   * local edits alone.
+   *
+   * This set is what keeps that bounded to one run per episode instead of one
+   * per poll. Cleared as soon as the peer answers a fingerprint again, so a
+   * peer that comes back is re-probed. In-memory like the maps above: a
+   * restart costs one extra run, which is the same run this would have made
+   * anyway.
+   */
+  const severanceProbed = new Set<string>();
   /**
    * Round-robin position (FIX 3): the id of the last link the previous tick
    * REACHED. The next tick resumes after it, so the point where the budget
@@ -305,25 +339,66 @@ export function createScheduler(opts: SchedulerOptions = {}): Scheduler {
             remoteFingerprint,
             now: at,
           });
+
+          // #62: a null fingerprint is a 404 the peer gave us, not an error and
+          // not a change — so decide() has no reason to run and the link would
+          // otherwise poll a possibly-deleted universe forever. Force one run
+          // to make the peer state adjudicable; see severanceProbed.
+          // `lastSyncedFingerprint !== null` is the precondition that makes a
+          // 404 mean anything. Severance is `remote === null && base !== null`,
+          // and a link this scheduler has never carried to a successful run has
+          // no base — its 404 is the ordinary "the peer has never seen this
+          // universe" that every fresh link answers before its first push.
+          // Forcing a run there would sync on the first tick and defeat the
+          // debounce, which is the whole coalescing behaviour.
+          //
+          // A link synced ONLY by manual runs can have a base while this column
+          // is still null, and is therefore not probed here; it keeps the old
+          // behaviour of adjudicating when some local edit drives a run.
+          if (remoteFingerprint === null && link.lastSyncedFingerprint !== null) {
+            if (!severanceProbed.has(link.id)) {
+              severanceProbed.add(link.id);
+              // Anything that is not already a run: `decide` returns
+              // poll-remote here, not idle, because `state` still carries the
+              // nextPollAt from before this tick's own UPDATE. Gating on idle
+              // alone would never fire.
+              if (decision.kind !== 'run') decision = { kind: 'run', reason: 'remote' };
+            }
+          } else if (remoteFingerprint !== null) {
+            severanceProbed.delete(link.id);
+          }
         }
 
         if (decision.kind !== 'run') continue;
 
         try {
-          await runSync(link.id, ownerId, { fetchImpl: opts.fetchImpl });
+          const result = await runSync(link.id, ownerId, { fetchImpl: opts.fetchImpl });
 
           // AS-05: capture the local fingerprint AFTER the run. A sync that
           // applied remote ops has just changed local state, so a value read
           // before the run would look like pending local edits and re-trigger
           // this link forever.
           //
-          // KNOWN WINDOW, PARKED DELIBERATELY (#44 review round 1). An edit
-          // that lands DURING the run — after drive() called
-          // buildSyncManifest, before the run returns — was never in the
-          // manifest that went to the peer, yet it IS in this fingerprint. So
-          // it is recorded as synced when it was not, and it reaches the peer
-          // only when some later run happens to rebuild a manifest. The
-          // post-run remote re-probe below has the mirror of this window.
+          // THE MID-RUN EDIT WINDOW (#61). An edit that lands DURING the run
+          // — after drive() called buildSyncManifest, before the run returns —
+          // was never in the manifest that went to the peer, yet it IS in this
+          // fingerprint. Recording it as synced is what used to strand it.
+          //
+          // Detected rather than eliminated, and the detection is exact in the
+          // case that matters. When the run applied NOTHING locally, the run
+          // itself cannot have moved local state, so any difference between the
+          // fingerprint measured before the run and the one measured after it
+          // is someone else's write. Recording the PRE-run value then leaves
+          // `lastSyncedFingerprint` describing exactly what was pushed, so the
+          // next tick sees the edit as unsynced work and runs again.
+          //
+          // That is precisely the unbounded case: a link strands an edit
+          // forever only if it never runs again, and a link that never runs
+          // again is one whose peer is not changing either — which is the same
+          // as saying the run applied nothing. When a run DID apply remote ops
+          // the window remains, because a changed fingerprint no longer tells
+          // us who changed it; that case is bounded by an active peer, whose
+          // next change drives another run that carries the edit.
           //
           // Capturing after the run is still the RIGHT choice: capturing
           // before it is not a smaller bug but a much larger one — a run that
@@ -333,22 +408,24 @@ export function createScheduler(opts: SchedulerOptions = {}): Scheduler {
           // untouched universe. Losing an edit until the next run beats that
           // by a wide margin.
           //
-          // It is also bounded rather than permanent: ANY later run in EITHER
-          // direction rebuilds a fresh manifest and carries the stranded edit
-          // with it, so only a link that never syncs again strands it — and
-          // such a link is one nobody is editing either.
-          //
-          // The durable fix is for runSync to RETURN the local (and remote)
-          // fingerprints it actually observed at manifest-build time, so this
-          // records what was really sent instead of what is here now. That
-          // changes runSync's contract, which this plan's "never reach inside
-          // runSync" constraint puts out of scope. Do not paper over it here
-          // with a pre-run capture; see above for why that is worse.
           const settledLocal = await universeFingerprint(link.universeId);
+
+          // `appliedLocally` counts what the run wrote to OUR database. All
+          // zero means local state is the run's own output only, so the
+          // comparison below is attributable.
+          const appliedLocally =
+            sumCounts(result.appliedLocally.upserted) +
+            sumCounts(result.appliedLocally.deleted);
+          const editedDuringRun = appliedLocally === 0 && settledLocal !== localFingerprint;
+          const syncedFingerprint = editedDuringRun ? localFingerprint : settledLocal;
           // BOTH counters, not just stableTicks. pendingTicks accumulates
           // across fingerprint changes by design and nothing else ever clears
           // it, so a window left half-reset here makes MAX_PENDING_TICKS
           // permanently expired and every later edit skip its debounce.
+          // settledLocal, not syncedFingerprint: the debounce window tracks what
+          // the universe actually looks like now, so an edit that landed
+          // mid-run gets debounced like any other rather than skipping its
+          // stability wait.
           debounce.set(link.id, { fingerprint: settledLocal, stableTicks: 0, pendingTicks: 0 });
 
           // The peer has just changed BECAUSE OF US. Re-probe so
@@ -366,6 +443,20 @@ export function createScheduler(opts: SchedulerOptions = {}): Scheduler {
             settledRemote = remoteFingerprint;
           }
 
+          // #62: this post-run probe is the authority on whether the 404
+          // episode is over, and it separates the two cases a forced run cannot
+          // tell apart by succeeding alone.
+          //
+          // A real answer means the peer both HOLDS the universe and HAS the
+          // endpoint — the ordinary case after a fresh link's first push, whose
+          // bootstrap 404 must not consume the one probe a real deletion will
+          // later need. Still null means the peer serves snapshots but not
+          // fingerprints, i.e. it is simply too old; re-forcing a run on its
+          // next poll would do that forever, which is the cost this guard
+          // exists to prevent. Leaving the id in the set parks that peer on
+          // local-edit-driven sync, which is the best it can support.
+          if (settledRemote !== null) severanceProbed.delete(link.id);
+
           // failureCount and pausedReason are DELIBERATELY absent from this
           // SET (#44 whole-branch review, FIX 1): releaseLink now clears both
           // — plus nextPollAt — inside runSync, on every successful run, so
@@ -378,7 +469,7 @@ export function createScheduler(opts: SchedulerOptions = {}): Scheduler {
           await db()
             .update(syncLinks)
             .set({
-              lastSyncedFingerprint: settledLocal,
+              lastSyncedFingerprint: syncedFingerprint,
               // Only overwrite what we actually observed.
               ...(settledRemote !== null ? { lastRemoteFingerprint: settledRemote } : {}),
               nextPollAt: new Date(at.getTime() + pollMs),
