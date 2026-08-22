@@ -38,10 +38,32 @@ describe('universeFingerprint', () => {
     otherUniverseId = other.id;
   });
 
-  it('is stable when nothing changes', async () => {
-    const a = await universeFingerprint(universeId);
-    const b = await universeFingerprint(universeId);
-    expect(a).toBe(b);
+  it('is stable when nothing changes, including under concurrent calls, with parts in APPLY_ORDER order', async () => {
+    // Fix round 1 (#44): universeFingerprint now issues its 17 APPLY_ORDER
+    // collection aggregates via Promise.all instead of one at a time. This
+    // pins the property that change could break: same DB state -> the exact
+    // same byte-identical string, whether the calls race each other or run
+    // one after another, AND the assembled string's field order always
+    // follows APPLY_ORDER's fixed index order rather than resolution order.
+    // A regression here (e.g. building `parts` from whichever query settles
+    // first) would make an unchanged universe fingerprint differently across
+    // polls and trigger an endless sync loop.
+    const [a, b, c] = await Promise.all([
+      universeFingerprint(universeId),
+      universeFingerprint(universeId),
+      universeFingerprint(universeId),
+    ]);
+    expect(b).toBe(a);
+    expect(c).toBe(a);
+
+    // A fourth call, sequential rather than raced against the three above,
+    // must still produce the same string.
+    const d = await universeFingerprint(universeId);
+    expect(d).toBe(a);
+
+    const fields = a.split('|');
+    expect(fields[0]).toMatch(/^universe:/);
+    expect(fields.slice(1).map((f) => f.split(':')[0])).toEqual(APPLY_ORDER.map((desc) => desc.collection));
   });
 
   it('moves when an entry is edited', async () => {
