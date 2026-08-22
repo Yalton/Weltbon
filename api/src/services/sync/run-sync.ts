@@ -215,6 +215,26 @@ function manifestToOps(manifest: SyncManifest): Record<string, { upserts: Manife
   return ops;
 }
 
+/**
+ * Build a client for a remote row. Exported because three call sites need it —
+ * the drive loop, testRemote, and the #44 scheduler's fingerprint poll — and a
+ * third hand-rolled copy of the decrypt step is how one of them ends up not
+ * checking whether decryption returned null.
+ */
+export function remoteClientFor(
+  // Pick<> off the schema row rather than a hand-written {baseUrl, encryptedPat}:
+  // encryptedPat is the branded EncryptedSecret, and widening it to `string`
+  // here would let an un-encrypted value be handed to decryptSecret.
+  remoteRow: Pick<typeof syncRemotes.$inferSelect, 'baseUrl' | 'encryptedPat'>,
+  fetchImpl?: RunSyncOptions['fetchImpl'],
+): SyncRemoteClient {
+  const cfg = env();
+  if (!cfg.llmKeyEncryptionKey) throw new SyncRemoteKeyError('encryption key not configured');
+  const pat = decryptSecret(remoteRow.encryptedPat, cfg.llmKeyEncryptionKey);
+  if (pat === null) throw new SyncRemoteKeyError('could not decrypt stored PAT');
+  return new SyncRemoteClient({ baseUrl: remoteRow.baseUrl, pat, fetchImpl });
+}
+
 async function drive(
   link: typeof syncLinks.$inferSelect,
   remoteRow: typeof syncRemotes.$inferSelect,
@@ -223,12 +243,7 @@ async function drive(
 ): Promise<SyncRunResult> {
   const universeId = link.universeId;
 
-  const cfg = env();
-  if (!cfg.llmKeyEncryptionKey) throw new SyncRemoteKeyError('encryption key not configured');
-  const pat = decryptSecret(remoteRow.encryptedPat, cfg.llmKeyEncryptionKey);
-  if (pat === null) throw new SyncRemoteKeyError('could not decrypt stored PAT');
-
-  const client = new SyncRemoteClient({ baseUrl: remoteRow.baseUrl, pat, fetchImpl: opts.fetchImpl });
+  const client = remoteClientFor(remoteRow, opts.fetchImpl);
   const identity: InstanceIdentityLike = await localIdentity();
   await client.handshake(identity);
 
@@ -608,11 +623,6 @@ export async function testRemote(remoteId: string, ownerId: string, fetchImpl?: 
     .limit(1);
   if (!remote) throw new SyncLinkNotFoundError();
 
-  const cfg = env();
-  if (!cfg.llmKeyEncryptionKey) throw new SyncRemoteKeyError('encryption key not configured');
-  const pat = decryptSecret(remote.encryptedPat, cfg.llmKeyEncryptionKey);
-  if (pat === null) throw new SyncRemoteKeyError('could not decrypt stored PAT');
-
-  const client = new SyncRemoteClient({ baseUrl: remote.baseUrl, pat, fetchImpl });
+  const client = remoteClientFor(remote, fetchImpl);
   return client.handshake(await localIdentity());
 }

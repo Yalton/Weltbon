@@ -32,6 +32,16 @@ export interface Env {
    * must never be reachable from the LAN.
    */
   bindHost: string | undefined;
+  /**
+   * #44 (AS-07): run the auto-sync scheduler in this process.
+   *
+   * ON by default and only the literal 'off' disables it — auto-sync is the
+   * feature, and an operator who has to discover a flag to get it has a broken
+   * install, not a configured one. The escape hatch exists for the cases where
+   * a background loop is genuinely unwanted: a one-shot container, a migration
+   * run, or an operator debugging a link by hand.
+   */
+  autoSyncEnabled: boolean;
 }
 
 export function loadEnv(source: NodeJS.ProcessEnv = process.env): Env {
@@ -152,6 +162,9 @@ export function loadEnv(source: NodeJS.ProcessEnv = process.env): Env {
     // but the intent here is "undefined means unset", not "empty string is a
     // valid hostname").
     bindHost: source.WELTBON_BIND_HOST || undefined,
+    // Default ON: anything other than the literal 'off' — unset included —
+    // leaves auto-sync running.
+    autoSyncEnabled: source.WELTBON_AUTO_SYNC !== 'off',
   };
 }
 

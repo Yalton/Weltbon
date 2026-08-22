@@ -125,6 +125,10 @@ const DB_GATED_TESTS = [
   'tests/sync-adopt.test.ts',
   // Issue #25 — persisted database-owned identity on both database drivers.
   'tests/sync-instance-identity.test.ts',
+  // Issue #44 — universe fingerprint aggregates (DB-gated).
+  'tests/sync-fingerprint.test.ts',
+  // Issue #44 Task 6 — auto-sync scheduler, two-instance (DB-gated).
+  'tests/sync-auto.test.ts',
 ];
 
 export default defineConfig({

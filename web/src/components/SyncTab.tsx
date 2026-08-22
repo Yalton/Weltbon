@@ -46,6 +46,7 @@ import {
   useCreateSyncLink,
   useDeleteSyncLink,
   useRunSyncLink,
+  useSetLinkAutoSync,
   type SyncLink,
   type SyncRunResult,
 } from '../hooks/useSyncLinks';
@@ -56,11 +57,11 @@ import {
   combineRunError,
   type SyncCopy,
 } from '../lib/syncErrorCopy';
+import { syncStatusCopy, type SyncStatusTone } from '../lib/syncStatusCopy';
 import { SyncErrorNotice } from './SyncErrorNotice';
 import { SyncRunSummary } from './SyncRunSummary';
 import { SyncConflictList } from './SyncConflictList';
 import { ConfirmDialog } from './ConfirmDialog';
-import { formatRelative } from '../utils/formatRelative';
 
 /**
  * One link's in-flight / just-finished run, as this session saw it.
@@ -103,17 +104,30 @@ function ElapsedTime({ since, testId }: { since: number; testId: string }) {
   );
 }
 
+/** Tailwind color classes for each `syncStatusCopy` tone. */
+const STATUS_TONE_CLASS: Record<SyncStatusTone, string> = {
+  ok: 'text-ink-secondary',
+  busy: 'text-[color:var(--color-accent)]',
+  waiting: 'text-amber-500 dark:text-amber-400',
+  paused: 'text-rose-500 dark:text-rose-400',
+};
+
 /** One linked remote: its state, its run controls, and this run's outcome. */
 function SyncLinkRow({
   link,
   state,
   onRun,
   onRemove,
+  onSetAutoSync,
+  autoSyncPending,
 }: {
   link: SyncLink;
   state: RunState | undefined;
   onRun: (link: SyncLink, force?: boolean) => void;
   onRemove: (link: SyncLink) => void;
+  onSetAutoSync: (link: SyncLink, autoSync: boolean) => void;
+  /** True while THIS link's own auto-sync toggle mutation is in flight. */
+  autoSyncPending: boolean;
 }) {
   // A run this session FAILED gets `combineRunError`, which either folds the
   // refetched column into the thrown copy (same code) or hands it back to be
@@ -131,6 +145,13 @@ function SyncLinkRow({
   // something already superseded, so it stays hidden.
   const persisted = state ? (combined?.unmergedPersisted ?? null) : lastErrorMessage(link.lastError);
 
+  // #44 (AS-10): driven by the SERVER's `link.status`/`pausedReason`/
+  // `autoSync`/`failureCount`/`nextPollAt`, not by `state` above. `state` only
+  // exists for a run THIS session started by pressing "Sync now" — an
+  // auto-sync run started by the scheduler has no such local origin, so this
+  // line is the only place it becomes visible at all.
+  const status = syncStatusCopy(link, new Date());
+
   return (
     <li
       data-testid={`sync-link-row-${link.id}`}
@@ -144,18 +165,48 @@ function SyncLinkRow({
           <p className="font-mono text-xs text-ink-muted">{link.remoteBaseUrl}</p>
         </div>
         <div className="flex items-center gap-3">
-          <span className="text-xs text-ink-secondary">
-            {link.lastSyncedAt ? (
-              <>
-                Last synced{' '}
-                <time dateTime={link.lastSyncedAt} title={new Date(link.lastSyncedAt).toLocaleString()}>
-                  {formatRelative(link.lastSyncedAt)}
-                </time>
-              </>
+          <label className="flex items-center gap-1.5 text-xs text-ink-secondary">
+            <input
+              type="checkbox"
+              checked={link.autoSync}
+              disabled={autoSyncPending}
+              onChange={(e) => onSetAutoSync(link, e.target.checked)}
+              aria-label={`Auto-sync with ${link.remoteLabel || link.remoteBaseUrl}`}
+              className="disabled:opacity-50"
+            />
+            Auto-sync
+          </label>
+          <span
+            data-testid={`sync-link-status-${link.id}`}
+            className={`text-xs ${STATUS_TONE_CLASS[status.tone]}`}
+          >
+            {/* `<time>` ONLY on the branch that is actually a time. This used
+                to wrap every status string, so a screen reader was handed
+                `<time datetime="2026-…">Paused: sign in again…</time>` and
+                `<time datetime="2026-…">Retrying in 5m</time>` — a timestamp
+                announcement attached to a sentence that is not a timestamp,
+                and one that names a moment the sentence has nothing to do
+                with. `status.kind` is what distinguishes them; `tone` cannot,
+                because 'ok' covers three different branches. */}
+            {status.kind === 'synced' && link.lastSyncedAt ? (
+              <time dateTime={link.lastSyncedAt} title={new Date(link.lastSyncedAt).toLocaleString()}>
+                {status.text}
+              </time>
             ) : (
-              'Never synced'
+              status.text
             )}
           </span>
+          {/* AS-08: "Sync now" stays enabled on a paused link — a successful
+              manual run is one of the three ways a user clears a pause, and
+              disabling it here would trap them. Only a run THIS button
+              started (`state?.phase === 'running'`) disables it.
+
+              The clear itself lives in `releaseLink`
+              (api/src/services/sync/link-state.ts), on the success path every
+              run flows through. It genuinely did not exist until the #44
+              whole-branch review: the button was enabled, the run succeeded,
+              and the row stayed paused — so an enabled button here is only
+              half the remedy, and this comment is the other half's pointer. */}
           <button
             type="button"
             onClick={() => onRun(link)}
@@ -224,12 +275,23 @@ function SyncLinkRow({
   );
 }
 
+// #44 (AS-10): modest poll while the tab is mounted, so a run the SCHEDULER
+// started (no "Sync now" click, so no local `state` transition) becomes
+// visible without the user manually refreshing. The scheduler itself ticks
+// every 5s and polls a due link at most once a minute (api/src/services/sync
+// /scheduler.ts); 15s keeps this comfortably more frequent than that poll
+// cadence without hammering the server on every render.
+const LINKS_REFETCH_INTERVAL_MS = 15_000;
+
 export function SyncTab({ universeId }: { universeId: string }) {
-  const { data: links, isPending, error: listError } = useSyncLinks(universeId);
+  const { data: links, isPending, error: listError } = useSyncLinks(universeId, {
+    refetchInterval: LINKS_REFETCH_INTERVAL_MS,
+  });
   const { data: remotes, isPending: remotesPending, error: remotesError } = useSyncRemotes();
   const createLink = useCreateSyncLink(universeId);
   const deleteLink = useDeleteSyncLink(universeId);
   const runLink = useRunSyncLink(universeId);
+  const setAutoSync = useSetLinkAutoSync(universeId);
 
   const [runs, setRuns] = useState<Record<string, RunState>>({});
   const [chosenRemote, setChosenRemote] = useState('');
@@ -258,6 +320,15 @@ export function SyncTab({ universeId }: { universeId: string }) {
     } catch (err) {
       setRuns((prev) => ({ ...prev, [link.id]: { phase: 'failed', error: syncErrorMessage(err) } }));
     }
+  };
+
+  // Errors are silently absorbed here on purpose: `setAutoSync` is a fire-and
+  // -forget checkbox toggle, not a form submission, and the mutation's own
+  // cache (still holding the pre-toggle value on failure) is what makes the
+  // checkbox visibly snap back — no separate error banner is needed for a
+  // single boolean the user can just click again.
+  const handleSetAutoSync = (link: SyncLink, autoSync: boolean) => {
+    setAutoSync.mutate({ linkId: link.id, autoSync });
   };
 
   return (
@@ -320,6 +391,8 @@ export function SyncTab({ universeId }: { universeId: string }) {
               state={runs[link.id]}
               onRun={handleRun}
               onRemove={setRemoveTarget}
+              onSetAutoSync={handleSetAutoSync}
+              autoSyncPending={setAutoSync.isPending && setAutoSync.variables?.linkId === link.id}
             />
           ))}
         </ul>

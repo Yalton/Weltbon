@@ -198,6 +198,94 @@ describe('SyncTab — the link list', () => {
   });
 });
 
+describe('SyncTab — #44 auto-sync toggle and status', () => {
+  it('PATCHes autoSync when the checkbox is toggled', async () => {
+    vi.mocked(api).mockImplementation(
+      dispatch(
+        { 'PATCH /sync/links/l1': { ...LINK, autoSync: false } },
+        [{ ...LINK, autoSync: true }],
+      ),
+    );
+    const user = userEvent.setup();
+
+    renderTab();
+    const checkbox = await screen.findByRole('checkbox', { name: /auto-sync with laptop/i });
+    expect(checkbox).toBeChecked();
+
+    await user.click(checkbox);
+
+    await waitFor(() =>
+      expect(api).toHaveBeenCalledWith(
+        '/sync/links/l1',
+        expect.objectContaining({ method: 'PATCH' }),
+      ),
+    );
+    const call = vi
+      .mocked(api)
+      .mock.calls.find(([p, i]) => p === '/sync/links/l1' && (i as RequestInit | undefined)?.method === 'PATCH');
+    expect(JSON.parse(String((call![1] as RequestInit).body))).toEqual({ autoSync: false });
+  });
+
+  it('shows the paused remedy and keeps Sync now enabled so a manual run can clear it', async () => {
+    // AS-08: a successful manual run is one of the three ways a user escapes a
+    // pause, so the button must never be disabled here.
+    //
+    // WHAT THIS TEST DOES AND DOES NOT PROVE. It asserts the button is
+    // reachable, and nothing more — the run itself, and the clear that follows
+    // it, are server-side. That distinction is not pedantic: the clear did not
+    // exist until the #44 whole-branch review, this test passed the entire
+    // time, and the pause was inescapable in practice. The API-side proof is
+    // in api/tests/sync-auto.test.ts ("a successful manual run clears…").
+    vi.mocked(api).mockImplementation(
+      dispatch({}, [{ ...LINK, status: 'error', pausedReason: 'remote-unauthorized' }]),
+    );
+
+    renderTab();
+
+    const status = await screen.findByTestId('sync-link-status-l1');
+    expect(status).toHaveTextContent(/sign in/i);
+    // Not a time (FIX 6): the row HAS a lastSyncedAt, but this sentence is a
+    // remedy, not a timestamp, and wrapping it in <time dateTime> announces a
+    // datetime that has nothing to do with what is being read out.
+    expect(status.querySelector('time')).toBeNull();
+    expect(screen.getByRole('button', { name: /sync now/i })).toBeEnabled();
+  });
+
+  it('names the backoff wait instead of implying the link is broken', async () => {
+    vi.mocked(api).mockImplementation(
+      dispatch(
+        {},
+        [
+          {
+            ...LINK,
+            autoSync: true,
+            failureCount: 2,
+            nextPollAt: new Date(Date.now() + 5 * 60_000).toISOString(),
+          },
+        ],
+      ),
+    );
+
+    renderTab();
+
+    const status = await screen.findByTestId('sync-link-status-l1');
+    expect(status).toHaveTextContent(/retrying in/i);
+    expect(status.querySelector('time')).toBeNull(); // FIX 6 — not a timestamp
+  });
+
+  it('marks up the last-synced line, and only that line, as a <time>', async () => {
+    vi.mocked(api).mockImplementation(dispatch({}, [{ ...LINK, autoSync: true }]));
+
+    renderTab();
+
+    const status = await screen.findByTestId('sync-link-status-l1');
+    expect(status).toHaveTextContent(/^Synced /);
+    const time = status.querySelector('time');
+    expect(time).not.toBeNull();
+    expect(time).toHaveAttribute('dateTime', LINK.lastSyncedAt);
+  });
+});
+
 describe('SyncTab — F-06, a run in flight', () => {
   it('shows elapsed time, and warns about a slow FIRST sync', async () => {
     vi.mocked(api).mockImplementation(

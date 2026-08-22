@@ -133,6 +133,11 @@ const linkSchema = z.object({
   lastSyncedAt: z.string().nullable(),
   lastError: z.string().nullable(),
   createdAt: z.string(),
+  // #44 AS-05: auto-sync scheduling state.
+  autoSync: z.boolean(),
+  pausedReason: z.string().nullable(),
+  nextPollAt: z.string().nullable(),
+  failureCount: z.number().int(),
 });
 
 const listConflictsQuerySchema = z.object({
@@ -346,7 +351,10 @@ const patchRemoteRoute = createRoute({
   path: '/remotes/{id}',
   tags: ['Sync Remotes'],
   summary: 'Update a remote\'s label, base URL, and/or PAT',
-  description: 'Any omitted field is left unchanged. JWT auth required.',
+  description:
+    'Any omitted field is left unchanged. Saving a new PAT counts as ' +
+    're-entered credentials (AS-08): it clears pausedReason and resets the ' +
+    'backoff on every link that uses this remote. JWT auth required.',
   security: [{ bearerJwtAuth: [] }],
   middleware: [requireJwtAuth] as const,
   request: {
@@ -552,6 +560,32 @@ const deleteLinkRoute = createRoute({
   },
 });
 
+const patchLinkRoute = createRoute({
+  method: 'patch',
+  path: '/links/{id}',
+  tags: ['Sync Links'],
+  summary: 'Turn auto-sync on or off for one link (#44)',
+  description:
+    'Re-enabling auto-sync clears pausedReason and resets failureCount (AS-08) — ' +
+    'one of the three explicit user actions that unpause a link. JWT auth required.',
+  security: [{ bearerJwtAuth: [] }],
+  middleware: [requireJwtAuth] as const,
+  request: {
+    params: idParams,
+    body: {
+      content: { 'application/json': { schema: z.object({ autoSync: z.boolean() }) } },
+      required: true,
+    },
+  },
+  responses: {
+    200: { content: { 'application/json': { schema: linkSchema } }, description: 'Updated link.' },
+    401: err401,
+    // Specific rather than the shared err404: "link" here, not "remote" —
+    // deleteLinkRoute's wording, matching this route's row type.
+    404: { content: { 'application/json': { schema: errorSchema } }, description: 'Link not found / not owned.' },
+  },
+});
+
 const runLinkRoute = createRoute({
   method: 'post',
   path: '/links/{id}/run',
@@ -669,6 +703,10 @@ function toLinkWire(row: {
   lastSyncedAt: Date | null;
   lastError: string | null;
   createdAt: Date;
+  autoSync: boolean;
+  pausedReason: string | null;
+  nextPollAt: Date | null;
+  failureCount: number;
 }, remote: { label: string; baseUrl: string }) {
   return {
     id: row.id,
@@ -680,6 +718,10 @@ function toLinkWire(row: {
     lastSyncedAt: row.lastSyncedAt ? row.lastSyncedAt.toISOString() : null,
     lastError: row.lastError,
     createdAt: row.createdAt.toISOString(),
+    autoSync: row.autoSync,
+    pausedReason: row.pausedReason,
+    nextPollAt: row.nextPollAt ? row.nextPollAt.toISOString() : null,
+    failureCount: row.failureCount,
   };
 }
 
@@ -850,6 +892,26 @@ export const syncClientRoutes = new OpenAPIHono<AppEnv>()
       .set(updateValues)
       .where(and(eq(syncRemotes.id, id), eq(syncRemotes.userId, userId)))
       .returning();
+
+    // AS-08: "re-entered credentials" is one of the three explicit user
+    // actions that unpause a link, and this route is where credentials are
+    // re-entered. A PAT that expired pauses every link on this remote with
+    // `remote-unauthorized`, and the status row tells the user to sign in
+    // again and save a fresh token — so saving one has to actually undo what
+    // the stale one caused. Without this the user does exactly what they were
+    // asked and the links stay paused.
+    //
+    // Scoped to a PAT change only: a label or base-URL edit is not a
+    // credential and must not silently resume a link paused for some unrelated
+    // reason. failure_count/next_poll_at go with it for the same reason the
+    // auto-sync toggle resets them — a link must not resume mid-backoff.
+    if (pat !== undefined) {
+      await getDb()
+        .update(syncLinks)
+        .set({ pausedReason: null, failureCount: 0, nextPollAt: null })
+        .where(eq(syncLinks.remoteId, id));
+    }
+
     return c.json(toMaskedRemote(row), 200);
   })
 
@@ -1020,6 +1082,37 @@ export const syncClientRoutes = new OpenAPIHono<AppEnv>()
     await deleteBaseSnapshot(link.id);
     await getDb().delete(syncLinks).where(eq(syncLinks.id, id));
     return c.json({ deleted: true as const }, 200);
+  })
+
+  .openapi(patchLinkRoute, async (c) => {
+    const userId = c.var.userId;
+    const { id } = c.req.valid('param');
+    const { autoSync } = c.req.valid('json');
+
+    // ownedLink is the existing ownership check — a link belonging to another
+    // user must be indistinguishable from one that does not exist.
+    const link = await ownedLink(id, userId);
+    if (!link) return c.json({ error: 'Link not found' }, 404);
+
+    // Re-enabling auto-sync CLEARS pausedReason: it is one of the three
+    // explicit user actions that unpause a link (AS-08). Without this the
+    // toggle would flip and the scheduler would keep skipping the link.
+    // failureCount resets with it so the link does not resume mid-backoff.
+    await getDb()
+      .update(syncLinks)
+      .set(
+        autoSync
+          ? { autoSync: true, pausedReason: null, failureCount: 0, nextPollAt: null }
+          : { autoSync: false },
+      )
+      .where(eq(syncLinks.id, id));
+
+    const [row] = await getDb()
+      .select({ link: syncLinks, remote: syncRemotes })
+      .from(syncLinks)
+      .innerJoin(syncRemotes, eq(syncLinks.remoteId, syncRemotes.id))
+      .where(eq(syncLinks.id, id));
+    return c.json(toLinkWire(row!.link, row!.remote), 200);
   })
 
   .openapi(runLinkRoute, async (c) => {

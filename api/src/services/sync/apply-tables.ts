@@ -72,6 +72,13 @@ export interface ApplyDescriptor extends ApplyTarget {
    */
   foreignKeysWhere: ((keys: string[], universeId: string) => SQL) | null;
   /**
+   * WHERE selecting EVERY row of this collection within `universeId`,
+   * independent of keys. Supplied by the same ownScoped/parentScoped spreads
+   * that supply keysWhere, so a descriptor cannot have one without the other.
+   * Used by fingerprint.ts (#44) to aggregate a collection without loading it.
+   */
+  scopeWhere: (universeId: string) => SQL;
+  /**
    * Name of this table's UNIQUE constraint/index OTHER than its primary key, or
    * null when it has none. Purely declarative — nothing renders it into SQL —
    * but it is what makes apply.ts run this collection's deletes immediately
@@ -146,6 +153,7 @@ function ownScoped(table: any) {
       and(inArray(table.id, keys), eq(table.universeId, universeId))!,
     foreignKeysWhere: (keys: string[], universeId: string) =>
       and(inArray(table.id, keys), ne(table.universeId, universeId))!,
+    scopeWhere: (universeId: string) => eq(table.universeId, universeId),
   };
 }
 
@@ -171,6 +179,7 @@ function parentScoped(table: any, parent: any, fkCol: AnyColumn) {
       and(inArray(table.id, keys), via(universeId))!,
     foreignKeysWhere: (keys: string[], universeId: string) =>
       and(inArray(table.id, keys), sql`NOT (${via(universeId)})`)!,
+    scopeWhere: (universeId: string) => via(universeId),
   };
 }
 
@@ -352,6 +361,7 @@ export const APPLY_ORDER: ApplyDescriptor[] = [
       and(inArray(graphPositions.entryId, keys), eq(graphPositions.universeId, universeId))!,
     // Identity is (universeId, entryId) — a foreign row cannot be addressed.
     foreignKeysWhere: null,
+    scopeWhere: (universeId) => eq(graphPositions.universeId, universeId),
     // Identity IS the natural key: (universe_id, entry_id) is the PRIMARY KEY,
     // already the onConflict target above, so there is no second constraint.
     secondaryUnique: null,

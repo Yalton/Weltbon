@@ -314,6 +314,31 @@ export class SyncRemoteClient {
   }
 
   /**
+   * #44 (AS-03): the peer's cheap change probe.
+   *
+   * Null means the same thing it means for `snapshot`: the peer does not hold
+   * this universe. That is NOT a failure and must not be reported as one — it
+   * is the ordinary state of a link that has not bootstrapped yet, and a
+   * scheduler that counted it as an error would put a brand-new link into
+   * backoff before its first sync.
+   *
+   * A peer too old to have the endpoint (404 is indistinguishable from the
+   * above, so it lands here too) or one answering rubbish must likewise not
+   * poison lastRemoteFingerprint — an unusable answer is not a change.
+   */
+  async fingerprint(uid: string): Promise<string | null> {
+    const res = await this.send('GET', `/universes/${uid}/fingerprint`);
+    if (res.status === 404) return null;
+    if (res.status !== 200) throw new SyncUnreachableError(`fingerprint returned ${res.status}`);
+    const body = (await this.readJson(res, 'fingerprint')) as { fingerprint?: unknown };
+    const fp = body.fingerprint;
+    if (typeof fp !== 'string' || fp === '') {
+      throw new SyncUnreachableError('remote returned no usable fingerprint');
+    }
+    return fp;
+  }
+
+  /**
    * A-04: the universes the PAT's owner holds on the peer.
    *
    * Sanitized on the same principle as missingAssets' hash array (C-21), and

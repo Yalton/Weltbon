@@ -38,6 +38,7 @@ import { syncClientRoutes } from './routes/sync-client.js';
 import { buildRuntimeRoutes } from './routes/runtime.js';
 import { recoverOrphanAuditRuns } from './services/audit-recovery.js';
 import { recoverOrphanSyncLinks } from './services/sync/link-recovery.js';
+import { createScheduler } from './services/sync/scheduler.js';
 import { wireSigtermDrain } from './services/audit-shutdown.js';
 import { requireAuth } from './middleware/auth.js';
 import { forwarded } from './middleware/forwarded.js';
@@ -338,6 +339,36 @@ export async function startServer(): Promise<{ server: ReturnType<typeof serve>;
     const addr = server.address();
     if (addr) read();
     else server.once('listening', read);
+  });
+
+  // #44 (AS-07): auto-sync. Started HERE and only here — after serve(), never
+  // at app construction — because the api integration lane builds the app
+  // dozens of times per run and a background timer ticking inside those builds
+  // would sync real links out from under the test that owns the database.
+  // Unlike recoverOrphanSyncLinks above, which must finish BEFORE serve() so no
+  // inbound HTTP races its UPDATE, this one has nothing to race.
+  const autoSync = cfg.autoSyncEnabled ? createScheduler() : null;
+  autoSync?.start();
+
+  // Registered BEFORE wireSigtermDrain so it runs first: Node fires SIGTERM
+  // listeners in registration order, and the drain's handler ends in
+  // process.exit(). Stopping the timer before the server drains means no tick
+  // can start a fresh sync run into a process that is on its way out.
+  //
+  // `once` plus the explicit removal below because startServer() is callable
+  // more than once in a process — tests/start-server.test.ts boots three
+  // times, Electron boots on demand — and a listener added per boot and never
+  // removed is a MaxListenersExceededWarning waiting for the eleventh caller.
+  const stopAutoSyncOnSigterm = () => autoSync?.stop();
+  process.once('SIGTERM', stopAutoSyncOnSigterm);
+
+  // The scheduler's lifetime IS the server's. Without this, any caller that
+  // shuts down by closing the server rather than by SIGTERM — every test that
+  // boots startServer(), and Electron's own teardown — leaves a live interval
+  // behind that goes on querying a database somebody else has already closed.
+  server.on('close', () => {
+    autoSync?.stop();
+    process.off('SIGTERM', stopAutoSyncOnSigterm);
   });
 
   // D-04: register SIGTERM handler after serve() so the handler has the server reference.

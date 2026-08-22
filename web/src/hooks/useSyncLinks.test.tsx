@@ -24,6 +24,7 @@ import {
   useCreateSyncLink,
   useDeleteSyncLink,
   useRunSyncLink,
+  useSetLinkAutoSync,
   type SyncLink,
   type SyncRunResult,
 } from './useSyncLinks';
@@ -61,6 +62,10 @@ const LINK: SyncLink = {
   lastSyncedAt: '2026-08-04T00:00:00.000Z',
   lastError: null,
   createdAt: '2026-08-01T00:00:00.000Z',
+  autoSync: true,
+  pausedReason: null,
+  nextPollAt: null,
+  failureCount: 0,
 };
 
 const RESULT: SyncRunResult = {
@@ -183,6 +188,41 @@ describe('useDeleteSyncLink', () => {
 
     await act(async () => {
       await result.current.mutateAsync({ id: 'l1' });
+    });
+
+    expect(spy).toHaveBeenCalledWith({ queryKey: syncLinksKey('u1') });
+    expect(spy).not.toHaveBeenCalledWith({ queryKey: SYNC_REMOTES_QUERY_KEY });
+  });
+});
+
+describe('useSetLinkAutoSync', () => {
+  it('PATCHes /sync/links/:id with { autoSync }', async () => {
+    vi.mocked(api).mockResolvedValue({ ...LINK, autoSync: false });
+    const qc = makeClient();
+
+    const { result } = renderHook(() => useSetLinkAutoSync('u1'), { wrapper: makeWrapper(qc) });
+
+    await act(async () => {
+      await result.current.mutateAsync({ linkId: 'l1', autoSync: false });
+    });
+
+    expect(api).toHaveBeenCalledWith(
+      '/sync/links/l1',
+      expect.objectContaining({ method: 'PATCH' }),
+    );
+    const body = String((vi.mocked(api).mock.calls[0][1] as RequestInit).body);
+    expect(JSON.parse(body)).toEqual({ autoSync: false });
+  });
+
+  it('invalidates this universe’s links, and not the remotes list', async () => {
+    vi.mocked(api).mockResolvedValue({ ...LINK, autoSync: true });
+    const qc = makeClient();
+    const spy = vi.spyOn(qc, 'invalidateQueries');
+
+    const { result } = renderHook(() => useSetLinkAutoSync('u1'), { wrapper: makeWrapper(qc) });
+
+    await act(async () => {
+      await result.current.mutateAsync({ linkId: 'l1', autoSync: true });
     });
 
     expect(spy).toHaveBeenCalledWith({ queryKey: syncLinksKey('u1') });
