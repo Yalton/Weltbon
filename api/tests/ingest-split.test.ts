@@ -84,6 +84,25 @@ describe('splitMarkdownFile', () => {
     expect(out[0].content).toContain('Intro prose.');
   });
 
+  it('titles the preamble from its own leading heading when there is no frontmatter title (#37 fix-round-1)', () => {
+    const doc = '# Regions of the North\n\nIntro prose.\n\n## Vale\n\nA.\n\n## Frostmere\n\nB.\n';
+    const out = splitMarkdownFile(f(doc), 2);
+    expect(out).toHaveLength(3);
+    expect(out[0].content).toContain('title: Regions of the North');
+    expect(out[0].content).toContain('Intro prose.');
+  });
+
+  it('falls back to the normalized ORIGINAL filename when the preamble has no frontmatter title and no heading of its own (#37 fix-round-1)', () => {
+    const doc = 'Intro prose.\n\n## Vale\n\nA.\n\n## Frostmere\n\nB.\n';
+    const out = splitMarkdownFile(f(doc), 2);
+    expect(out).toHaveLength(3);
+    // f() uses path 'regions.md' -> normalizeFilename('regions.md') = 'Regions',
+    // never the synthetic per-section path ('00-regions.md' -> 'Regions').
+    expect(out[0].content).toContain('title: Regions');
+    expect(out[0].content).not.toContain('title: regions');
+    expect(out[0].content).toContain('Intro prose.');
+  });
+
   it('creates no preamble entry when there is nothing before the first heading', () => {
     const doc = '## Vale\n\nA.\n\n## Frostmere\n\nB.\n';
     const out = splitMarkdownFile(f(doc), 2);

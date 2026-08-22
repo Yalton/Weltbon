@@ -17,16 +17,7 @@ describe('parseBatch with splitLevel (SP-02)', () => {
       doc('# Regions\n\nIntro.\n\n## Vale\n\nA.\n\n## Frostmere\n\nB.\n'),
       ctx({ splitLevel: 2 }),
     );
-    // NOTE: the preamble section's title is 'regions', not 'Regions'. The
-    // already-committed `splitMarkdownFile` (Task 1) stamps every emitted
-    // section's frontmatter `title` from `data.title` when present, else the
-    // filename stem (`regions.md` -> 'regions') — it never re-derives the
-    // title from a leading H1 already inside that section's own body. Since
-    // `inferTitle` (this file) reads frontmatter `title` FIRST, the visible
-    // "# Regions" heading in the preamble's body is shadowed by the
-    // filename-derived frontmatter title. This is a pre-existing quirk of
-    // ingest-split.ts, out of scope here (see task-2-report.md).
-    expect(preview.entries.map((e) => e.title)).toEqual(['regions', 'Vale', 'Frostmere']);
+    expect(preview.entries.map((e) => e.title)).toEqual(['Regions', 'Vale', 'Frostmere']);
   });
 
   it('is unchanged when splitLevel is absent', () => {

@@ -2,7 +2,7 @@ import matter from 'gray-matter';
 import { unified } from 'unified';
 import remarkParse from 'remark-parse';
 import type { Root, Heading } from 'mdast';
-import type { FileInput } from './ingest-markdown.js';
+import { normalizeFilename, type FileInput } from './ingest-markdown.js';
 
 export type SplitLevel = 1 | 2 | 3 | 4 | 5 | 6;
 
@@ -119,10 +119,22 @@ export function splitMarkdownFile(file: FileInput, level: SplitLevel): FileInput
   if (at.length < 2) return [file];
 
   const base = file.path.replace(/\.md$/i, '');
+
+  // docTitle precedence (#37 fix-round-1): frontmatter title, else the text
+  // of the first heading that actually precedes the first split boundary —
+  // i.e. the document's own heading, at any level — else the normalized
+  // ORIGINAL filename. `boundaries` is in document order and includes every
+  // heading level (not just `level`), so the first entry with a start before
+  // `at[0].start` is that preamble heading, if the document has one; using
+  // the ORIGINAL basename (not the synthetic per-section path) matters
+  // because normalizeFilename must see 'regions.md', not '00-regions.md'.
+  const preambleHeading = boundaries.find((h) => h.start < at[0].start);
   const docTitle =
     typeof data.title === 'string' && data.title.trim() !== ''
       ? data.title.trim()
-      : base.split('/').pop()!;
+      : preambleHeading
+        ? preambleHeading.title
+        : normalizeFilename(base.split('/').pop()!);
 
   const out: FileInput[] = [];
 
