@@ -25,9 +25,21 @@ import { formatRelative } from '../utils/formatRelative';
 
 export type SyncStatusTone = 'ok' | 'busy' | 'waiting' | 'paused';
 
+/**
+ * WHICH branch produced the line, as opposed to how it should be COLOURED.
+ * `tone` cannot answer that — 'ok' covers "synced 2m ago", "never synced" and
+ * "auto-sync off" alike — and the caller has one question that needs the
+ * branch: only `'synced'` is a line ABOUT A TIME, so only `'synced'` may be
+ * wrapped in `<time dateTime=…>`. Marking up "Paused: sign in again" as a
+ * timestamp announces a datetime to assistive technology for a sentence that
+ * is not one.
+ */
+export type SyncStatusKind = 'paused' | 'auto-off' | 'syncing' | 'retrying' | 'never' | 'synced';
+
 export interface SyncStatusResult {
   text: string;
   tone: SyncStatusTone;
+  kind: SyncStatusKind;
 }
 
 /** Remedy copy for the `SyncRunError` codes that can actually pause a link. */
@@ -73,15 +85,15 @@ function abbreviateAgo(relative: string): string {
 /** One status line for a sync link row. See the precedence order above. */
 export function syncStatusCopy(link: SyncLink, now: Date): SyncStatusResult {
   if (link.pausedReason) {
-    return { text: pausedText(link.pausedReason), tone: 'paused' };
+    return { text: pausedText(link.pausedReason), tone: 'paused', kind: 'paused' };
   }
 
   if (!link.autoSync) {
-    return { text: 'Auto-sync off. Use Sync now to sync manually.', tone: 'ok' };
+    return { text: 'Auto-sync off. Use Sync now to sync manually.', tone: 'ok', kind: 'auto-off' };
   }
 
   if (link.status === 'syncing') {
-    return { text: 'Syncing…', tone: 'busy' };
+    return { text: 'Syncing…', tone: 'busy', kind: 'syncing' };
   }
 
   // Backoff (AS-08): `failureCount > 0` while the link is neither paused nor
@@ -93,11 +105,11 @@ export function syncStatusCopy(link: SyncLink, now: Date): SyncStatusResult {
   if (link.failureCount > 0) {
     const targetMs = link.nextPollAt !== null ? new Date(link.nextPollAt).getTime() : now.getTime();
     const minutes = Math.max(1, Math.ceil((targetMs - now.getTime()) / 60_000));
-    return { text: `Retrying in ${minutes}m`, tone: 'waiting' };
+    return { text: `Retrying in ${minutes}m`, tone: 'waiting', kind: 'retrying' };
   }
 
   if (link.lastSyncedAt === null) {
-    return { text: 'Never synced', tone: 'ok' };
+    return { text: 'Never synced', tone: 'ok', kind: 'never' };
   }
 
   // `formatRelative` capitalises "Just now" for its own (sentence-start)
@@ -109,5 +121,5 @@ export function syncStatusCopy(link: SyncLink, now: Date): SyncStatusResult {
   // digit and is unaffected).
   const relative = abbreviateAgo(formatRelative(link.lastSyncedAt, now));
   const lowered = relative.charAt(0).toLowerCase() + relative.slice(1);
-  return { text: `Synced ${lowered}`, tone: 'ok' };
+  return { text: `Synced ${lowered}`, tone: 'ok', kind: 'synced' };
 }

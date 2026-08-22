@@ -180,7 +180,15 @@ function SyncLinkRow({
             data-testid={`sync-link-status-${link.id}`}
             className={`text-xs ${STATUS_TONE_CLASS[status.tone]}`}
           >
-            {link.lastSyncedAt ? (
+            {/* `<time>` ONLY on the branch that is actually a time. This used
+                to wrap every status string, so a screen reader was handed
+                `<time datetime="2026-…">Paused: sign in again…</time>` and
+                `<time datetime="2026-…">Retrying in 5m</time>` — a timestamp
+                announcement attached to a sentence that is not a timestamp,
+                and one that names a moment the sentence has nothing to do
+                with. `status.kind` is what distinguishes them; `tone` cannot,
+                because 'ok' covers three different branches. */}
+            {status.kind === 'synced' && link.lastSyncedAt ? (
               <time dateTime={link.lastSyncedAt} title={new Date(link.lastSyncedAt).toLocaleString()}>
                 {status.text}
               </time>
@@ -189,9 +197,16 @@ function SyncLinkRow({
             )}
           </span>
           {/* AS-08: "Sync now" stays enabled on a paused link — a successful
-              manual run is one of the ways a user clears a pause, and
+              manual run is one of the three ways a user clears a pause, and
               disabling it here would trap them. Only a run THIS button
-              started (`state?.phase === 'running'`) disables it. */}
+              started (`state?.phase === 'running'`) disables it.
+
+              The clear itself lives in `releaseLink`
+              (api/src/services/sync/link-state.ts), on the success path every
+              run flows through. It genuinely did not exist until the #44
+              whole-branch review: the button was enabled, the run succeeded,
+              and the row stayed paused — so an enabled button here is only
+              half the remedy, and this comment is the other half's pointer. */}
           <button
             type="button"
             onClick={() => onRun(link)}
