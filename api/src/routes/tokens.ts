@@ -4,6 +4,7 @@ import { db as getDb } from '../db/client.js';
 import { personalAccessTokens } from '../db/schema.js';
 import { requireJwtAuth, type AuthVariables } from '../middleware/auth.js';
 import { generatePatToken } from '../services/pat.js';
+import { isUniqueViolation } from '../db/pg-error.js';
 
 type AppEnv = { Variables: AuthVariables };
 
@@ -197,7 +198,7 @@ export const tokenRoutes = new OpenAPIHono<AppEnv>()
         });
       return c.json({ ...row, plaintext, createdAt: row.createdAt.toISOString() }, 200);
     } catch (err: any) {
-      if (err?.code === '23505') {
+      if (isUniqueViolation(err)) {
         return c.json({ error: 'Token collision, please retry' }, 409);
       }
       throw err;

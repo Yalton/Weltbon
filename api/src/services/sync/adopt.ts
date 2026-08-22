@@ -30,6 +30,7 @@ import {
   SyncUniverseNotOnRemoteError,
 } from './run-errors.js';
 import type { ManifestRow } from './manifest.js';
+import { isUniqueViolation } from '../../db/pg-error.js';
 
 /**
  * What this instance can do with a universe the remote holds (A-07).
@@ -196,15 +197,7 @@ export async function adoptUniverse(opts: {
     const [link] = await db().insert(syncLinks).values({ universeId, remoteId }).returning();
     return { link, remote };
   } catch (e: unknown) {
-    // Drizzle wraps the PG error: the '23505' code may be on the top-level
-    // error (e.code) or on the cause (e.cause.code) depending on the Drizzle
-    // version. Check both to be safe — same idiom as templates.ts, llm-keys.ts,
-    // dictionary.ts and audits.ts. A bare `err?.code` (what this used to read)
-    // never matches: Drizzle 0.45 rethrows driver errors as DrizzleQueryError,
-    // which carries no `.code` of its own.
-    const err = e as { code?: string; cause?: { code?: string } } | null;
-    const code = err?.code ?? err?.cause?.code;
-    if (code === '23505') {
+    if (isUniqueViolation(e)) {
       const [link] = await db()
         .select()
         .from(syncLinks)

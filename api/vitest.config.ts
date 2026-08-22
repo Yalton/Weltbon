@@ -129,6 +129,7 @@ const DB_GATED_TESTS = [
   'tests/sync-fingerprint.test.ts',
   // Issue #44 Task 6 — auto-sync scheduler, two-instance (DB-gated).
   'tests/sync-auto.test.ts',
+  'tests/pg-error-driver.test.ts',
 ];
 
 export default defineConfig({

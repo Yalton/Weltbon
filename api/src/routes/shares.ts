@@ -5,6 +5,7 @@ import { shareTokens, universes } from '../db/schema.js';
 import { requireJwtAuth, type AuthVariables } from '../middleware/auth.js';
 import { generateShareToken } from '../services/share-token.js';
 import { buildPublicUrl } from '../middleware/forwarded.js';
+import { isUniqueViolation } from '../db/pg-error.js';
 
 type AppEnv = { Variables: AuthVariables };
 
@@ -284,7 +285,7 @@ export const shareCrudRoutes = new OpenAPIHono<AppEnv>()
       // T-29-09 mirror tokens.ts L184-205: 23505 = unique-constraint violation on
       // share_tokens_hash_unique. Surface literal collision string so the
       // caller can retry with a freshly generated token.
-      if (err?.code === '23505') {
+      if (isUniqueViolation(err)) {
         return c.json({ error: 'Token collision, please retry' }, 409);
       }
       throw err;

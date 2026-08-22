@@ -4,6 +4,7 @@ import { db as getDb } from '../db/client.js';
 import { inviteCodes } from '../db/schema.js';
 import { requireJwtAuth, type AuthVariables } from '../middleware/auth.js';
 import { generateInviteToken } from '../services/invite.js';
+import { isUniqueViolation } from '../db/pg-error.js';
 
 type AppEnv = { Variables: AuthVariables };
 
@@ -149,7 +150,7 @@ export const inviteRoutes = new OpenAPIHono<AppEnv>()
         200
       );
     } catch (err: any) {
-      if (err?.code === '23505') {
+      if (isUniqueViolation(err)) {
         return c.json({ error: 'Invite code collision, please retry' }, 409);
       }
       throw err;

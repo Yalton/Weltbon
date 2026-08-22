@@ -25,6 +25,7 @@ import { dictionaryWords, entries } from '../db/schema.js';
 import { requireUniverse } from '../utils/ownership.js';
 import type { AuthVariables } from '../middleware/auth.js';
 import { importDictionaryCsv } from '../services/dictionary-import.js';
+import { isUniqueViolation } from '../db/pg-error.js';
 
 type AppEnv = { Variables: AuthVariables };
 
@@ -364,10 +365,7 @@ export const dictionaryRoutes = new OpenAPIHono<AppEnv>()
         201,
       );
     } catch (e: unknown) {
-      // Drizzle wraps the PG error: check both top-level and cause (mirrors templates.ts L272-277)
-      const err = e as { code?: string; cause?: { code?: string } } | null;
-      const code = err?.code ?? err?.cause?.code;
-      if (code === '23505') {
+      if (isUniqueViolation(e)) {
         return c.json({ error: 'Word already exists in this dictionary scope' }, 409);
       }
       throw e;
@@ -428,9 +426,7 @@ export const dictionaryRoutes = new OpenAPIHono<AppEnv>()
         200,
       );
     } catch (e: unknown) {
-      const err = e as { code?: string; cause?: { code?: string } } | null;
-      const code = err?.code ?? err?.cause?.code;
-      if (code === '23505') {
+      if (isUniqueViolation(e)) {
         return c.json({ error: 'Word already exists in this dictionary scope' }, 409);
       }
       throw e;
