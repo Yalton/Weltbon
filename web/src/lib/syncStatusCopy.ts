@@ -100,5 +100,14 @@ export function syncStatusCopy(link: SyncLink, now: Date): SyncStatusResult {
     return { text: 'Never synced', tone: 'ok' };
   }
 
-  return { text: `Synced ${abbreviateAgo(formatRelative(link.lastSyncedAt, now))}`, tone: 'ok' };
+  // `formatRelative` capitalises "Just now" for its own (sentence-start)
+  // callers; composed mid-sentence here ("Synced Just now") that reads as a
+  // typo. Lower-casing only the leading character of the COMPOSED string —
+  // not touching `formatRelative` or `abbreviateAgo` themselves, both of
+  // which are otherwise reused as-is — fixes this for every shape they can
+  // emit ("Just now" -> "just now"; every other shape already starts with a
+  // digit and is unaffected).
+  const relative = abbreviateAgo(formatRelative(link.lastSyncedAt, now));
+  const lowered = relative.charAt(0).toLowerCase() + relative.slice(1);
+  return { text: `Synced ${lowered}`, tone: 'ok' };
 }

@@ -1,5 +1,5 @@
 import { describe, it, expect, beforeEach, vi } from 'vitest';
-import { render, screen } from '@testing-library/react';
+import { render, screen, act, waitFor } from '@testing-library/react';
 import userEvent from '@testing-library/user-event';
 import { MemoryRouter, Routes, Route } from 'react-router-dom';
 import { QueryClient, QueryClientProvider } from '@tanstack/react-query';
@@ -12,6 +12,7 @@ vi.mock('../api/client', () => ({
 }));
 import { api } from '../api/client';
 import { EntryList } from './EntryList';
+import { syncConflictsKey } from '../hooks/syncKeys';
 
 function mkEntry(id: string, title: string, overrides: Record<string, unknown> = {}) {
   return {
@@ -90,15 +91,22 @@ function renderAt(path: string, opts: { state?: unknown } = {}) {
   });
   const initial =
     opts.state !== undefined ? [{ pathname: path, state: opts.state }] : [path];
-  return render(
-    <QueryClientProvider client={qc}>
-      <MemoryRouter initialEntries={initial}>
-        <Routes>
-          <Route path="/universes/:uid/entries" element={<EntryList />} />
-        </Routes>
-      </MemoryRouter>
-    </QueryClientProvider>,
-  );
+  // Returns `qc` alongside the render result (spread, not just returned bare)
+  // so a test can drive a REFETCH of one query directly — needed to pin the
+  // "no stale count after a failed background refetch" behaviour, which
+  // cannot be reached by controlling only the FIRST response a mock gives.
+  return {
+    ...render(
+      <QueryClientProvider client={qc}>
+        <MemoryRouter initialEntries={initial}>
+          <Routes>
+            <Route path="/universes/:uid/entries" element={<EntryList />} />
+          </Routes>
+        </MemoryRouter>
+      </QueryClientProvider>,
+    ),
+    qc,
+  };
 }
 
 describe('EntryList', () => {
@@ -352,6 +360,49 @@ describe('EntryList', () => {
 
       expect(await screen.findByText('Alpha')).toBeInTheDocument();
       expect(screen.queryByTestId('sync-conflicts-banner')).not.toBeInTheDocument();
+    });
+
+    it('does not keep displaying a stale count after a failed background refetch', async () => {
+      // Pins the review-round-1 fix: EntryList must use `useSyncConflictCount`
+      // (which explicitly zeroes on `error`), not a hand-derived
+      // `conflicts?.length ?? 0` off `useSyncConflicts` directly — TanStack
+      // Query keeps the previous successful rows in `data` across a FAILED
+      // REFETCH, so a hand-derived count would keep asserting "2" here after
+      // the query has already moved to its error state, while the Sidebar
+      // badge (also on `useSyncConflictCount`) has gone silent about it. Two
+      // surfaces disagreeing, with the wrong one looking more authoritative.
+      let conflictsCall = 0;
+      vi.mocked(api).mockImplementation(async (path?: string, init?: { method?: string }) => {
+        if (!path) return undefined;
+        if (path === '/universes/U1') return { id: 'U1', entryTypes: ['character'] };
+        if (path === '/universes/U1/categories') return { categories: [], uncategorizedCount: 0 };
+        if (path.startsWith('/universes/U1/entries')) return [mkEntry('e1', 'Alpha')];
+        if (path.startsWith('/sync/links?universeId=')) return [];
+        if (path.startsWith('/sync/conflicts?universeId=')) {
+          conflictsCall += 1;
+          if (conflictsCall === 1) return [mkConflict('c1'), mkConflict('c2')];
+          throw new Error('boom');
+        }
+        void init;
+        return undefined;
+      });
+
+      const { qc } = renderAt('/universes/U1/entries');
+
+      // Positive precondition: the banner really did show the count from the
+      // FIRST, successful fetch, so its later absence is not just "it never
+      // rendered".
+      const banner = await screen.findByTestId('sync-conflicts-banner');
+      expect(banner).toHaveTextContent('2');
+
+      // A background refetch of the SAME query, which fails.
+      await act(async () => {
+        await qc.refetchQueries({ queryKey: syncConflictsKey('U1') });
+      });
+
+      await waitFor(() =>
+        expect(screen.queryByTestId('sync-conflicts-banner')).not.toBeInTheDocument(),
+      );
     });
   });
 });

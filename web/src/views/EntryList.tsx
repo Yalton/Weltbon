@@ -4,7 +4,7 @@ import { useFilterParams } from '../hooks/useFilterParams';
 import { useFilteredEntries } from '../hooks/useFilteredEntries';
 import { useUniverse } from '../hooks/useUniverse';
 import { useSyncLinks, useRunSyncLink } from '../hooks/useSyncLinks';
-import { useSyncConflicts } from '../hooks/useSyncConflicts';
+import { useSyncConflictCount } from '../hooks/useSyncConflicts';
 import { EntryCard } from '../components/EntryCard';
 import { EmptyState } from '../components/EmptyState';
 import { ImportDialog } from '../components/ImportDialog';
@@ -65,12 +65,17 @@ export function EntryList() {
   // conflict arrived while the user was watching the screen they had just
   // clicked "Sync now" on; under auto-sync, LWW losers can pile up for days
   // with nobody opening the Sync tab, and a silently discarded edit is the
-  // worst outcome this feature can produce. Reuses `useSyncConflicts` (the
-  // Sync tab's own query, same cache key) rather than a second query, so this
-  // count and the tab's list can never disagree. Skipped in share mode for
-  // the same reason as the banner above: a visitor has no sync links.
-  const { data: conflicts } = useSyncConflicts(isShareMode ? undefined : uid);
-  const conflictCount = conflicts?.length ?? 0;
+  // worst outcome this feature can produce. Uses `useSyncConflictCount`
+  // (already consumed the same way by Sidebar.tsx's badge) rather than
+  // deriving the length from `useSyncConflicts` by hand — it shares that
+  // hook's query key, so no extra network traffic, but ALSO zeroes the count
+  // on a failed background refetch, where TanStack Query would otherwise keep
+  // serving the previous successful `data`. Re-deriving `.length` locally
+  // would drop that hardening and let this banner keep asserting a stale
+  // count after the Sidebar badge has already gone silent about it. Skipped
+  // in share mode for the same reason as the banner above: a visitor has no
+  // sync links.
+  const conflictCount = useSyncConflictCount(isShareMode ? undefined : uid);
 
   const [importOpen, setImportOpen] = useState(false);
   const [pickerOpen, setPickerOpen] = useState(false);
