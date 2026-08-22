@@ -26,6 +26,7 @@ import { unified } from 'unified';
 import remarkParse from 'remark-parse';
 import { visit } from 'unist-util-visit';
 import type { Root } from 'mdast';
+import { splitMarkdownFile, type SplitLevel } from './ingest-split.js';
 
 // ---------------------------------------------------------------------------
 // Exported Types
@@ -580,6 +581,14 @@ export type ParseBatchContext = {
    * categories on parsed entries (D-07a). Case-sensitive comparison.
    */
   existingCategories: string[];
+  /**
+   * Issue #37. When set, and when exactly one markdown file survives
+   * pre-filtering, that file is replaced by one virtual file per section
+   * before Pass 1. Everything downstream — titles, collisions, wikilinks,
+   * categories — then treats the sections as ordinary batch files, which is
+   * why splitting needs no changes below this point.
+   */
+  splitLevel?: SplitLevel | null;
 };
 
 /**
@@ -638,6 +647,19 @@ export function parseBatch(files: FileInput[], ctx: ParseBatchContext): IngestPr
   }
 
   // -------------------------------------------------------------------------
+  // Step A2 — Split pre-pass (#37 SP-01/SP-02)
+  //
+  // Only a single-document batch is eligible: the upload's shape decides, so a
+  // fifty-file vault import is never shredded. `splitMarkdownFile` returns the
+  // file unchanged when the level yields nothing to split, so no guard beyond
+  // the count is needed.
+  // -------------------------------------------------------------------------
+  let effectiveFiles = mdFiles;
+  if (ctx.splitLevel != null && mdFiles.length === 1) {
+    effectiveFiles = splitMarkdownFile(mdFiles[0], ctx.splitLevel);
+  }
+
+  // -------------------------------------------------------------------------
   // Step B — Pass 1 (per-file inference + title map)
   // -------------------------------------------------------------------------
   type ParsedRecord = {
@@ -657,7 +679,7 @@ export function parseBatch(files: FileInput[], ctx: ParseBatchContext): IngestPr
   // collision titles: titles that appeared more than once
   const collisionTitles = new Set<string>();
 
-  for (const file of mdFiles) {
+  for (const file of effectiveFiles) {
     const content = typeof file.content === 'string' ? file.content : String(file.content);
     const { data, body } = parseFrontmatter(content);
     const filename = file.path.split('/').pop()!;
@@ -795,7 +817,7 @@ export function parseBatch(files: FileInput[], ctx: ParseBatchContext): IngestPr
   // -------------------------------------------------------------------------
   return {
     summary: {
-      markdown_files_parsed: mdFiles.length,
+      markdown_files_parsed: effectiveFiles.length,
       non_markdown_files_skipped: nonMdCount,
       hidden_paths_filtered: hiddenCount,
       duplicate_titles_in_batch: collisionTitles.size,
