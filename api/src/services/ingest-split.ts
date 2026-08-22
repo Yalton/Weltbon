@@ -2,7 +2,8 @@ import matter from 'gray-matter';
 import { unified } from 'unified';
 import remarkParse from 'remark-parse';
 import type { Root, Heading } from 'mdast';
-import { normalizeFilename, type FileInput } from './ingest-markdown.js';
+import { normalizeFilename } from './ingest-filename.js';
+import type { FileInput } from './ingest-markdown.js';
 
 export type SplitLevel = 1 | 2 | 3 | 4 | 5 | 6;
 

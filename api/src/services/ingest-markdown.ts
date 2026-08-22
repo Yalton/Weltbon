@@ -27,6 +27,7 @@ import remarkParse from 'remark-parse';
 import { visit } from 'unist-util-visit';
 import type { Root } from 'mdast';
 import { splitMarkdownFile, type SplitLevel } from './ingest-split.js';
+import { normalizeFilename } from './ingest-filename.js';
 
 // ---------------------------------------------------------------------------
 // Exported Types
@@ -184,24 +185,11 @@ export function parseFrontmatter(content: string): { data: Record<string, unknow
 // normalizeFilename — D-10a
 // ---------------------------------------------------------------------------
 
-/**
- * Normalize a filename for use as a title fallback (D-10 step 3).
- *
- * Rules (D-10a):
- *   1. Strip `.md` extension (case-insensitive).
- *   2. Replace runs of `_` and `-` with a single space.
- *   3. Trim leading/trailing whitespace.
- *   4. Capitalize the first character only; middle words preserve their
- *      original case to avoid mangling acronyms.
- *
- * @param filename  Bare filename (basename), e.g. "my-cool-entry.md".
- * @returns         Human-readable title, e.g. "My cool entry".
- */
-export function normalizeFilename(filename: string): string {
-  const base = filename.replace(/\.md$/i, '');
-  const s = base.replace(/[_-]+/g, ' ').trim();
-  return s.charAt(0).toUpperCase() + s.slice(1);
-}
+// Lives in its own dependency-free module (#37 fix-round-2) so that
+// ingest-split.ts can use it without creating a cycle back into this file.
+// Re-exported here because callers (including tests) import it from
+// ingest-markdown.js.
+export { normalizeFilename };
 
 // ---------------------------------------------------------------------------
 // inferTitle — D-10 / D-10a
