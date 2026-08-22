@@ -18,14 +18,12 @@
 import { and, eq, inArray } from 'drizzle-orm';
 import { db } from '../../db/client.js';
 import { syncLinks, syncRemotes, universes } from '../../db/schema.js';
-import { env } from '../../config.js';
-import { decryptSecret } from '../crypto.js';
 import { applyManifestOps } from './apply.js';
-import { SyncRemoteClient, type FetchLike } from './remote-client.js';
+import { remoteClientFor } from './run-sync.js';
+import { type FetchLike } from './remote-client.js';
 import { localIdentity } from './handshake.js';
 import {
   SyncLinkNotFoundError,
-  SyncRemoteKeyError,
   SyncUniverseAlreadyLocalError,
   SyncUniverseNotOnRemoteError,
 } from './run-errors.js';
@@ -60,15 +58,6 @@ async function ownedRemote(remoteId: string, ownerId: string) {
   return remote;
 }
 
-/** A connected client for `remote`, or a typed key error. Mirrors testRemote. */
-function clientFor(remote: typeof syncRemotes.$inferSelect, fetchImpl?: FetchLike): SyncRemoteClient {
-  const cfg = env();
-  if (!cfg.llmKeyEncryptionKey) throw new SyncRemoteKeyError('encryption key not configured');
-  const pat = decryptSecret(remote.encryptedPat, cfg.llmKeyEncryptionKey);
-  if (pat === null) throw new SyncRemoteKeyError('could not decrypt stored PAT');
-  return new SyncRemoteClient({ baseUrl: remote.baseUrl, pat, fetchImpl });
-}
-
 /**
  * The universes `remoteId` holds for its stored PAT's owner, each annotated
  * with what this instance can do with it (A-07).
@@ -84,7 +73,7 @@ export async function listRemoteUniverses(
   fetchImpl?: FetchLike,
 ): Promise<RemoteUniverse[]> {
   const remote = await ownedRemote(remoteId, ownerId);
-  const client = clientFor(remote, fetchImpl);
+  const client = remoteClientFor(remote, fetchImpl);
   await client.handshake(await localIdentity());
   const rows = await client.listUniverses();
   if (rows.length === 0) return [];
@@ -150,7 +139,7 @@ export async function adoptUniverse(opts: {
   const { remoteId, universeId, ownerId } = opts;
 
   const remote = await ownedRemote(remoteId, ownerId);
-  const client = clientFor(remote, opts.fetchImpl);
+  const client = remoteClientFor(remote, opts.fetchImpl);
   await client.handshake(await localIdentity());
 
   const rows = await client.listUniverses();

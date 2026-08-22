@@ -865,6 +865,41 @@ describe('auto-sync scheduler (#44)', () => {
       expect(runsStarted()).toBe(1);
       expect(await entryTitles('B')).toEqual(['pre-existing']);
     });
+
+    it('defaults the stagger window to the poll interval, not to zero (#65)', async () => {
+      // Nothing pinned `startupStaggerMs ?? pollMs`. A regression to `?? 0` —
+      // an easy "simplification" for someone who does not know why the default
+      // is there — would silently restore the first-boot fleet spike that FIX 4
+      // exists to prevent, and no test would have failed.
+      //
+      // Note this builds the scheduler directly rather than through mk(), which
+      // forces startupStaggerMs: 0 for every other test in this file. Passing
+      // the option is precisely what must NOT happen here.
+      //
+      // The poll interval is deliberately not the default 60s either, so a
+      // passing run means "the window followed pollMs" rather than "the window
+      // happened to be 60s".
+      const pollIntervalMs = 4 * 60_000;
+      const sched = createScheduler({
+        now: () => clock,
+        fetchImpl: peerFetch(),
+        pollIntervalMs,
+      });
+      await seedEntry('A', 'pre-existing');
+
+      const random = vi.spyOn(Math, 'random').mockReturnValue(0.5);
+      try {
+        await tickN(sched, SETTLE_TICKS);
+      } finally {
+        random.mockRestore();
+      }
+
+      // Held, not run — which is the behaviour `?? 0` would destroy.
+      expect(runsStarted()).toBe(0);
+      const held = await linkRow();
+      expect(held.nextPollAt).not.toBeNull();
+      expect(held.nextPollAt!.getTime()).toBe(clock.getTime() + pollIntervalMs / 2);
+    });
   });
 
   // ── 13. continuous editing ────────────────────────────────────────────────
