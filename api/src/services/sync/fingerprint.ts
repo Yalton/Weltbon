@@ -28,6 +28,16 @@ import { APPLY_ORDER } from './apply-tables.js';
  * FIRST and separately, still sequential ahead of the batch (see below for
  * why), so a call costs two round-trip "waves" rather than one or eighteen.
  *
+ * WHAT THAT CONCURRENCY BUYS DEPENDS ON THE DRIVER, and only one of the two
+ * deployments gains wall-clock time from it. Against pooled node-postgres
+ * (hosted prod, a self-hosted server) the 17 statements really do go out on
+ * separate pooled connections and overlap. Against PGlite — the desktop build
+ * — there is one embedded engine that serialises internally, so Promise.all
+ * there is SAFE but not FASTER: the 17 queries still execute one after another
+ * and simply arrive pre-queued. Nothing needs changing for it; the note exists
+ * so nobody profiles the desktop app, sees 17 serial queries, and concludes
+ * the Promise.all is broken.
+ *
  * ORDERING IS LOAD-BEARING: the assembled string parts are built by
  * APPLY_ORDER's fixed index order, never by which concurrent query happens to
  * resolve first. Promise.all already preserves input order in its result
@@ -38,9 +48,26 @@ import { APPLY_ORDER } from './apply-tables.js';
  * the test that pins this.
  *
  * NOT OPAQUE, NOT A HASH (fix round 1): the returned string embeds real
- * per-collection row counts and raw max(updated_at) timestamps in plain
- * text, e.g. `universe:1:1699999999999|entries:5:1699999999999|maps:0:-`.
+ * per-collection row counts and raw max(updated_at) values in plain text.
  * Anyone holding the string can read those counts and times directly.
+ *
+ * THE TWO HALVES ARE NOT FORMATTED ALIKE, and the shape below is what the
+ * code actually produces rather than a tidied version of it. The universe part
+ * is built from a Date this module converts itself, so it is epoch
+ * milliseconds. The collection parts interpolate whatever the DRIVER hands
+ * back for `max(updated_at)` — under node-postgres that is a `Date`, and
+ * template interpolation stringifies it via `toString()`, which renders in the
+ * PROCESS's local timezone, not UTC:
+ *
+ *   universe:1:1754179200000|entries:5:Sun Aug 03 2026 00:00:00 GMT-0500 (Central Daylight Time)|maps:0:-
+ *
+ * That inconsistency is harmless, because a fingerprint is only ever compared
+ * against another value produced by the SAME code on the SAME side (the local
+ * one against last_synced_fingerprint, the peer's against
+ * last_remote_fingerprint) — never parsed, never compared across instances,
+ * and never compared across drivers. It is written down because the previous
+ * version of this example claimed epoch milliseconds throughout, which sends
+ * the next reader looking for a timestamp normalisation that does not exist.
  *
  * SAFE ONLY BEHIND THE SAME AUTHORIZATION AS THE FULL CONTENT: this is fine
  * on the peer fingerprint route (`GET /universes/{uid}/fingerprint`) only
