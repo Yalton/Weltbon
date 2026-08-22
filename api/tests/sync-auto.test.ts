@@ -58,11 +58,13 @@ describe('auto-sync scheduler (#44)', () => {
   let tokenB: string;
   let universeId: string;
   let linkId: string;
+  /** Set by a test to run a write in the middle of a sync. See peerFetch. */
+  let duringSnapshot: (() => Promise<void>) | null = null;
 
   /** The scheduler's clock. Advanced by assignment, never by a real timer. */
   let clock: Date;
   /** 'down' throws at the transport; 'unauthorized' answers 401 to everything. */
-  let peerMode: 'up' | 'down' | 'unauthorized';
+  let peerMode: 'up' | 'down' | 'unauthorized' | 'no-fingerprint-endpoint';
   /**
    * How many sync RUNS the scheduler has started. Counted at the transport,
    * on POST /handshake — the first request every run makes and one no poll
@@ -140,10 +142,28 @@ describe('auto-sync scheduler (#44)', () => {
       const u = new URL(url);
       const path = u.pathname + u.search;
       if (path.endsWith('/handshake')) handshakes += 1;
+      // The mid-run injection point (#61). drive() calls handshake, THEN
+      // buildSyncManifest, THEN snapshot — so a write made while the snapshot
+      // request is in flight lands strictly after the manifest was built, which
+      // is exactly the window the fix is about. Fires once.
+      if (path.includes('/snapshot') && duringSnapshot !== null) {
+        const hook = duringSnapshot;
+        duringSnapshot = null;
+        await hook();
+      }
       if (peerMode === 'down') {
         // What an offline peer actually looks like to fetch(): a rejected
         // promise, not a status code.
         throw Object.assign(new Error('connect ECONNREFUSED'), { name: 'TypeError' });
+      }
+      // A peer too old to have the fingerprint endpoint: 404 there, healthy
+      // everywhere else. Indistinguishable from a deleted universe at the
+      // probe, which is the whole difficulty in #62.
+      if (peerMode === 'no-fingerprint-endpoint' && path.includes('/fingerprint')) {
+        return new Response(JSON.stringify({ error: 'not found' }), {
+          status: 404,
+          headers: { 'Content-Type': 'application/json' },
+        });
       }
       if (peerMode === 'unauthorized') {
         return new Response(JSON.stringify({ error: 'invalid token' }), {
@@ -178,6 +198,37 @@ describe('auto-sync scheduler (#44)', () => {
   }
 
   const runsStarted = () => handshakes;
+
+  /**
+   * Tick until exactly one more run has completed, then stop. `tickN(SETTLE_TICKS)`
+   * is too coarse for the #61 tests: the whole point of the fix is that a second
+   * run follows on its own, so a fixed batch of ticks can contain both runs and
+   * hide which one carried what.
+   */
+  /**
+   * Tick with the clock moving past the poll interval each time, so
+   * `nextPollAt` actually comes due and the scheduler issues a remote probe.
+   * Plain `tickN` holds the clock still, which is right for the debounce tests
+   * but means a poll NEVER fires — a #62 test run that way passes without ever
+   * reaching the code it is meant to cover.
+   */
+  async function tickPolling(sched: Scheduler, n: number): Promise<void> {
+    for (let i = 0; i < n; i += 1) {
+      clock = new Date(clock.getTime() + 61_000); // > DEFAULT_POLL_MS
+      await use('A');
+      await sched.tick(clock);
+    }
+  }
+
+  async function tickUntilRun(sched: Scheduler, cap = 20): Promise<void> {
+    const before = runsStarted();
+    for (let i = 0; i < cap; i += 1) {
+      await use('A');
+      await sched.tick(clock);
+      if (runsStarted() > before) return;
+    }
+    throw new Error(`no run completed within ${cap} ticks`);
+  }
 
   async function tickN(sched: Scheduler, n: number): Promise<void> {
     for (let i = 0; i < n; i += 1) {
@@ -221,6 +272,7 @@ describe('auto-sync scheduler (#44)', () => {
     clock = new Date();
     peerMode = 'up';
     handshakes = 0;
+    duringSnapshot = null;
 
     await use('A');
     await cleanDb(A);
@@ -544,6 +596,176 @@ describe('auto-sync scheduler (#44)', () => {
       const link = await linkRow();
       expect(link.pausedReason).toBe('remote-unauthorized');
       expect(link.failureCount).toBe(3);
+    });
+  });
+
+  // ── mid-run edits (#61) ───────────────────────────────────────────────────
+
+  describe('an edit that lands mid-run is not recorded as synced (#61)', () => {
+    /**
+     * The failure this pins: `lastSyncedFingerprint` was captured AFTER the run,
+     * so an edit made while the run was in flight — never in the manifest that
+     * went to the peer — was folded in as though it had been pushed. The link
+     * then looked settled, and on a link nothing else ever touches it stayed
+     * that way, so the edit never reached the peer at all.
+     */
+    it('leaves the mid-run edit visible as unsynced work rather than folding it in', async () => {
+      await seedEntry('A', 'first');
+
+      // Land a second entry while the run is mid-flight, straight into the DB
+      // so it does not disturb the shared app pointer.
+      duringSnapshot = async () => {
+        const { entries } = await import('../src/db/schema.js');
+        await A.db.insert(entries).values({
+          universeId,
+          title: 'written-mid-run',
+          entryType: 'concept',
+          summary: 'landed after the manifest was built',
+        });
+      };
+
+      const sched = mk();
+      await tickUntilRun(sched);
+
+      // The run happened and pushed what it had.
+      expect(await entryTitles('B')).toEqual(['first']);
+      // ...and the entry that arrived mid-run is on A but not on B.
+      expect(await entryTitles('A')).toEqual(['first', 'written-mid-run']);
+
+      // The assertion that matters: the link must NOT claim the current local
+      // state is synced, because it is not.
+      const { universeFingerprint } = await import('../src/services/sync/fingerprint.js');
+      await use('A');
+      const link = await linkRow();
+      expect(link.lastSyncedFingerprint).not.toBe(await universeFingerprint(universeId));
+    });
+
+    it('carries that edit to the peer on the following run, without another edit to prompt it', async () => {
+      await seedEntry('A', 'first');
+      duringSnapshot = async () => {
+        const { entries } = await import('../src/db/schema.js');
+        await A.db.insert(entries).values({
+          universeId,
+          title: 'written-mid-run',
+          entryType: 'concept',
+          summary: 'landed after the manifest was built',
+        });
+      };
+
+      const sched = mk();
+      await tickUntilRun(sched);
+      expect(await entryTitles('B')).toEqual(['first']);
+
+      // No new edit, no peer change — nothing but time. Before the fix this
+      // link was inert and 'written-mid-run' never moved.
+      await tickUntilRun(sched);
+
+      expect(await entryTitles('B')).toEqual(['first', 'written-mid-run']);
+      const { universeFingerprint } = await import('../src/services/sync/fingerprint.js');
+      await use('A');
+      const link = await linkRow();
+      expect(link.lastSyncedFingerprint).toBe(await universeFingerprint(universeId));
+    });
+
+    it('still settles a quiet link, so the detection cannot cause a permanent sync loop', async () => {
+      // The mirror risk of the fix: if a run that applies nothing always looked
+      // like a mid-run edit, every link would sync forever. Nothing is injected
+      // here, so the fingerprints must match and the link must go quiet.
+      await seedEntry('A', 'only');
+
+      const sched = mk();
+      await tickN(sched, SETTLE_TICKS);
+      const runsAfterFirst = runsStarted();
+
+      await tickN(sched, 6);
+
+      expect(runsStarted()).toBe(runsAfterFirst);
+      const { universeFingerprint } = await import('../src/services/sync/fingerprint.js');
+      await use('A');
+      const link = await linkRow();
+      expect(link.lastSyncedFingerprint).toBe(await universeFingerprint(universeId));
+    });
+  });
+
+  // ── a universe deleted on the peer (#62) ─────────────────────────────────
+
+  describe('a universe deleted on the peer is adjudicated, not probed forever (#62)', () => {
+    /** Drop the universe on B, the way deleting it in that instance's UI would. */
+    async function deleteUniverseOnPeer(): Promise<void> {
+      const { universes } = await import('../src/db/schema.js');
+      await B.db.delete(universes).where(eq(universes.id, universeId));
+    }
+
+    it('pauses the link with remote-universe-missing instead of polling a dead peer', async () => {
+      // Establish the link properly first: severance is only meaningful once a
+      // base snapshot exists, which is what distinguishes "deleted" from
+      // "never pushed".
+      await seedEntry('A', 'before-the-delete');
+      const sched = mk();
+      await tickN(sched, SETTLE_TICKS);
+      expect(await entryTitles('B')).toEqual(['before-the-delete']);
+
+      await deleteUniverseOnPeer();
+
+      // No local edit — nothing but polling. Before the fix this looped
+      // forever: the probe 404s, null is not a change, decide() returns
+      // poll-remote again, and the link never reached an adjudication.
+      await tickPolling(sched, 3);
+
+      const link = await linkRow();
+      expect(link.pausedReason).toBe('remote-universe-missing');
+    });
+
+    it('does not pause a peer that merely lacks the fingerprint endpoint', async () => {
+      // The ambiguity the fix must not get wrong: same 404, universe intact.
+      await seedEntry('A', 'before');
+      const sched = mk();
+      await tickN(sched, SETTLE_TICKS);
+      expect(await entryTitles('B')).toEqual(['before']);
+
+      peerMode = 'no-fingerprint-endpoint';
+      const runsBefore = runsStarted();
+      await tickPolling(sched, 3);
+
+      const link = await linkRow();
+      expect(link.pausedReason).toBeNull();
+      // Proves the probe path was actually reached: a 404 forced exactly one
+      // run. Without this the assertion above would also pass on a test that
+      // never polled at all.
+      expect(runsStarted()).toBe(runsBefore + 1);
+    });
+
+    it('still syncs local edits to a peer that lacks the fingerprint endpoint', async () => {
+      await seedEntry('A', 'before');
+      const sched = mk();
+      await tickN(sched, SETTLE_TICKS);
+
+      peerMode = 'no-fingerprint-endpoint';
+      await seedEntry('A', 'after');
+      await tickPolling(sched, SETTLE_TICKS);
+
+      // Auto-sync degrades to local-edit-driven, rather than stopping.
+      expect(await entryTitles('B')).toEqual(['after', 'before']);
+    });
+
+    it('forces only ONE run per 404 episode, not one per poll', async () => {
+      // The cost control. Without the guard, an old peer would get a full
+      // handshake-and-snapshot every single poll interval forever.
+      await seedEntry('A', 'before');
+      const sched = mk();
+      await tickN(sched, SETTLE_TICKS);
+
+      peerMode = 'no-fingerprint-endpoint';
+      const runsBefore = runsStarted();
+      await tickPolling(sched, 2);
+      const afterFirstProbe = runsStarted();
+      // The episode really did force its one run.
+      expect(afterFirstProbe).toBe(runsBefore + 1);
+
+      // Ten more polls, no local edits: the probe must not keep forcing runs.
+      await tickPolling(sched, 10);
+
+      expect(runsStarted()).toBe(afterFirstProbe);
     });
   });
 

@@ -45,6 +45,17 @@ describe('syncStatusCopy', () => {
       .toMatch(/subscription|billing/i);
   });
 
+  it('does not tell the user to press Sync now when the remote universe is gone (#62)', () => {
+    // The generic pause line ends "See Sync now to try clearing it manually",
+    // which for this code sends the user to a button that raises the same
+    // error. Auto-sync reaches this state on its own now, so the wrong remedy
+    // would be the common case rather than a rare one.
+    const { text, tone } = syncStatusCopy(link({ pausedReason: 'remote-universe-missing' }), NOW);
+    expect(text).toMatch(/no longer exists on the remote/i);
+    expect(text).not.toMatch(/sync now/i);
+    expect(tone).toBe('paused');
+  });
+
   it('says auto-sync is off rather than implying a failure', () => {
     const { text, tone } = syncStatusCopy(link({ autoSync: false }), NOW);
     expect(text).toMatch(/auto-sync off/i);

@@ -52,10 +52,17 @@ const PAUSED_REMEDY: Record<string, string> = {
     'Paused: the remote instance is out of storage. Free up space there to resume.',
   'remote-incompatible':
     'Paused: the two instances are running incompatible versions. Update the older one to resume.',
+  // Named explicitly because the generic line ends "See Sync now to try
+  // clearing it manually", and for this code that advice is wrong: the
+  // universe is gone from the remote, so a manual run raises the very same
+  // error. Auto-sync can now reach this state on its own (#62), where before
+  // only a manual run could, so the wrong remedy would be seen far more often.
+  'remote-universe-missing':
+    'Paused: this universe no longer exists on the remote. Re-link it there, or remove this link.',
 };
 
 /**
- * Every other pause code (`remote-universe-missing`, `forbidden`,
+ * Every other pause code (`forbidden`,
  * `remote-universe-forbidden`, `blob-unavailable`, `link-not-found`,
  * `remote-key-undecryptable`, `apply-rejected`, or any future code this map
  * has not caught up to) falls back to a generic line that still NAMES the
