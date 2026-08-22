@@ -8,7 +8,11 @@ import { SyncRunError } from '../src/services/sync/run-errors.js';
  * which is the entire point of declaring the policy on the class.
  */
 function everySubclass(): Array<new (...args: never[]) => SyncRunError> {
-  return Object.values(errors).filter(
+  // `as unknown[]` because the module also exports non-class values now
+  // (TOKEN_FIXABLE_PAUSE_REASONS). The runtime filter below already excludes
+  // them via `typeof v === 'function'`; this only stops the type predicate
+  // being checked against a union it was never meant to narrow.
+  return (Object.values(errors) as unknown[]).filter(
     (v): v is new (...args: never[]) => SyncRunError =>
       typeof v === 'function' &&
       v !== SyncRunError &&

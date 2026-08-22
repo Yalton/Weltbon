@@ -368,6 +368,15 @@ describe('sync client CRUD (Plan D)', () => {
 
     const patchLink = (id: string, body: unknown) => patchLinkAs(token, id, body);
 
+    /** PATCH the remote with a fresh credential — AS-08's "re-entered credentials". */
+    function savePat(remoteId: string) {
+      return app.request(`/api/sync/remotes/${remoteId}`, {
+        method: 'PATCH',
+        headers: { 'Content-Type': 'application/json', ...authHeader(token) },
+        body: JSON.stringify({ pat: 'wbn_pat_freshfreshfresh' }),
+      });
+    }
+
     async function setPausedReasonDirectly(id: string, reason: string) {
       const { syncLinks } = await import('../src/db/schema.js');
       await handle.db.update(syncLinks).set({ pausedReason: reason }).where(eq(syncLinks.id, id));
@@ -423,6 +432,71 @@ describe('sync client CRUD (Plan D)', () => {
       expect(row.pausedReason).toBeNull();
       expect(row.failureCount).toBe(0);
       expect(row.nextPollAt).toBeNull();
+    });
+
+    it('saving a PAT leaves a pause a token cannot fix (#66)', async () => {
+      // The other half of AS-08's credential path. Clearing every pause on the
+      // remote resumed links a new token cannot help — a universe deleted on
+      // the peer, a lapsed subscription — for exactly one run, which re-paused
+      // them. The cost was a wasted sync and a spell of the UI reporting a
+      // healthy link that was not.
+      const link = await createLink();
+      await setPausedReasonDirectly(link.id, 'remote-universe-missing');
+
+      const res = await savePat(link.remoteId);
+      expect(res.status).toBe(200);
+
+      const { syncLinks } = await import('../src/db/schema.js');
+      const [row] = await handle.db.select().from(syncLinks).where(eq(syncLinks.id, link.id));
+      expect(row.pausedReason).toBe('remote-universe-missing');
+    });
+
+    it('saving a PAT still clears a pause a token CAN fix, on the same remote', async () => {
+      // Paired with the test above rather than relying on the AS-08 test alone:
+      // together they pin that the new predicate splits the links instead of
+      // simply never clearing anything.
+      const { syncLinks, universes } = await import('../src/db/schema.js');
+      // ONE remote, TWO universes — createLink() builds a fresh remote each
+      // call, and the whole point here is two links that share one.
+      const { body: remote } = await createRemote();
+      const [second] = await handle.db
+        .insert(universes)
+        .values({ userId, name: 'CRUD U2' })
+        .returning();
+      const fixable = await (await post('/api/sync/links', { universeId, remoteId: remote.id })).json();
+      const notFixable = await (
+        await post('/api/sync/links', { universeId: second.id, remoteId: remote.id })
+      ).json();
+      expect(fixable.remoteId).toBe(notFixable.remoteId);
+
+      await setPausedReasonDirectly(fixable.id, 'remote-unauthorized');
+      await setPausedReasonDirectly(notFixable.id, 'remote-universe-missing');
+
+      expect((await savePat(remote.id)).status).toBe(200);
+
+      const [a] = await handle.db.select().from(syncLinks).where(eq(syncLinks.id, fixable.id));
+      const [b] = await handle.db.select().from(syncLinks).where(eq(syncLinks.id, notFixable.id));
+      expect(a.pausedReason).toBeNull();
+      expect(b.pausedReason).toBe('remote-universe-missing');
+    });
+
+    it('saving a PAT still resets the backoff on a link that is not paused at all', async () => {
+      // Regression guard on the narrowing: an unpaused link serving out a
+      // backoff has no paused_reason to match, and must not fall outside the
+      // new predicate.
+      const { syncLinks } = await import('../src/db/schema.js');
+      const link = await createLink();
+      await handle.db
+        .update(syncLinks)
+        .set({ failureCount: 4, nextPollAt: new Date(Date.now() + 30 * 60_000) })
+        .where(eq(syncLinks.id, link.id));
+
+      expect((await savePat(link.remoteId)).status).toBe(200);
+
+      const [row] = await handle.db.select().from(syncLinks).where(eq(syncLinks.id, link.id));
+      expect(row.failureCount).toBe(0);
+      expect(row.nextPollAt).toBeNull();
+      expect(row.pausedReason).toBeNull();
     });
 
     it('renaming a remote does NOT unpause its links — only credentials do', async () => {

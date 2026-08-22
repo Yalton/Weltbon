@@ -197,6 +197,30 @@ export class SyncLocalMaterializationError extends SyncRunError {
  * a cascade delete of our copy — merging against an "empty" remote would read as
  * "remote deleted every row" and LWW would erase the local universe.
  */
+/**
+ * The pause reasons that saving a fresh PAT actually resolves (#66).
+ *
+ * AS-08 makes "re-entered credentials" one of the three user actions that
+ * unpause a link, and the PATCH-remote route used to honour that by clearing
+ * `paused_reason` for EVERY link on the remote. That resumed links paused for
+ * reasons a credential cannot touch — a universe deleted on the peer, a lapsed
+ * subscription, an apply the peer rejected — each of which then re-paused
+ * itself on its next run, after a wasted sync and a spell of the UI claiming a
+ * link was healthy when it was not.
+ *
+ * Membership test for anything added here: would pasting a NEW TOKEN, and
+ * nothing else, make the next run succeed? `remote-unauthorized` (the token was
+ * rejected) and `remote-key-undecryptable` (the stored token could not be
+ * decrypted, and saving re-encrypts it with the current key) both pass. A
+ * lapsed subscription or an exhausted quota does not — those are resolved on
+ * the remote, and their links still have two working remedies in AS-08's other
+ * two actions: a successful "Sync now", or the auto-sync toggle.
+ */
+export const TOKEN_FIXABLE_PAUSE_REASONS = [
+  'remote-unauthorized',
+  'remote-key-undecryptable',
+] as const;
+
 export class SyncLinkSeveredError extends SyncRunError {
   readonly code = 'remote-universe-missing';
   readonly status = 409;
