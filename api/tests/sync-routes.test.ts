@@ -653,6 +653,55 @@ describe('/api/sync surface (Plan C)', () => {
     expect(body.collisions).toEqual([{ collection: 'entries', count: 1 }]);
   });
 
+  // ── fingerprint (#44 AS-03) ─────────────────────────────────────────────────
+
+  describe('GET /api/sync/universes/:uid/fingerprint (#44 AS-03)', () => {
+    const peerGet = (uid: string, token: string = ownerToken) =>
+      app.request(`/api/sync/universes/${uid}/fingerprint`, { headers: authHeader(token) });
+    const unauthenticatedGet = (uid: string) => app.request(`/api/sync/universes/${uid}/fingerprint`);
+
+    it('returns a fingerprint for an owned universe', async () => {
+      const res = await peerGet(universeId);
+      expect(res.status).toBe(200);
+      const body = await res.json();
+      expect(typeof body.fingerprint).toBe('string');
+      expect(body.fingerprint.length).toBeGreaterThan(0);
+    });
+
+    it('changes after an edit, and is stable otherwise', async () => {
+      const { entries } = await import('../src/db/schema.js');
+      const [entry] = await handle.db
+        .insert(entries)
+        .values({ universeId, title: 'Original', entryType: 'concept' })
+        .returning();
+
+      const first = (await (await peerGet(universeId)).json()).fingerprint;
+      const again = (await (await peerGet(universeId)).json()).fingerprint;
+      expect(again).toBe(first);
+
+      const editSomeEntry = async () => {
+        const { eq } = await import('drizzle-orm');
+        await handle.db.update(entries).set({ title: 'Edited' }).where(eq(entries.id, entry.id));
+      };
+      await editSomeEntry();
+
+      const after = (await (await peerGet(universeId)).json()).fingerprint;
+      expect(after).not.toBe(first);
+    });
+
+    it('401s without a peer credential', async () => {
+      const res = await unauthenticatedGet(universeId);
+      expect(res.status).toBe(401);
+    });
+
+    it("403s for another owner's universe", async () => {
+      // universeId belongs to ownerToken's user; otherToken is a different
+      // owner's credential, mirroring the snapshot 403 test above.
+      const res = await peerGet(universeId, otherToken);
+      expect(res.status).toBe(403);
+    });
+  });
+
   // ── universe discovery (A-04) ──────────────────────────────────────────────
 
   describe('GET /api/sync/universes (A-04, A-11)', () => {

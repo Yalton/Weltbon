@@ -28,6 +28,7 @@ import { storageBackend } from '../services/storage/local.js';
 // to be the canonical home just because it was the first consumer.
 import { maxFileBytes, maxUniverseQuota } from '../services/media/limits.js';
 import { buildSyncManifest } from '../services/sync/snapshot.js';
+import { universeFingerprint } from '../services/sync/fingerprint.js';
 import { sha256Hex } from '../services/sync/asset-hash.js';
 import { localIdentity, MigrationHeadUnavailableError } from '../services/sync/handshake.js';
 import { applyManifestOps } from '../services/sync/apply.js';
@@ -115,6 +116,27 @@ const snapshotRoute = createRoute({
   request: { params: uidParams },
   responses: {
     200: { content: { 'application/json': { schema: z.any() } }, description: 'Manifest' },
+    401: err401,
+    403: err403,
+    404: err404,
+  },
+});
+
+// ── fingerprint (#44 AS-03) ─────────────────────────────────────────────────
+
+const fingerprintRoute = createRoute({
+  method: 'get',
+  path: '/universes/{uid}/fingerprint',
+  tags: ['Sync'],
+  summary: 'Cheap change probe — does this universe differ from what you last saw?',
+  security: [{ bearerAuth: [] }],
+  request: { params: uidParams },
+  responses: {
+    200: {
+      content: { 'application/json': { schema: z.object({ fingerprint: z.string() }) } },
+      description:
+        'Opaque value that changes when the universe changes. Compare for INEQUALITY only.',
+    },
     401: err401,
     403: err403,
     404: err404,
@@ -324,6 +346,15 @@ export const syncRoutes = new OpenAPIHono<AppEnv>()
     // caching layer in front of /snapshot must account for that.
     const manifest = await buildSyncManifest(uid);
     return c.json(manifest as any, 200);
+  })
+
+  .openapi(fingerprintRoute, async (c) => {
+    const { uid } = c.req.valid('param');
+    await requireUniverse(uid, c.var.userId);
+    // Unlike /snapshot, this really is read-only: no ensureAssetHashes, no
+    // backfill. It is polled on an interval by every linked client, so it must
+    // stay that way — a write here would multiply across the whole fleet.
+    return c.json({ fingerprint: await universeFingerprint(uid) }, 200);
   })
 
   .openapi(listUniversesRoute, async (c) => {
