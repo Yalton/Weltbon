@@ -4,7 +4,7 @@
  * Wire shape (api/src/routes/sync-client.ts, JWT-only — a PAT cannot enumerate
  * a user's remotes):
  *   GET    /api/sync/remotes            → SyncRemote[]  (masked)
- *   POST   /api/sync/remotes            → SyncRemote    (201)
+ *   POST   /api/sync/remotes            → SyncRemote    (201 new, 200 already registered)
  *   PATCH  /api/sync/remotes/:id        → SyncRemote
  *   DELETE /api/sync/remotes/:id        → 200 { deleted: true }
  *   POST   /api/sync/remotes/:id/test   → TestRemoteResult
