@@ -14,11 +14,26 @@
  */
 import { SyncApplyError } from './errors.js';
 
+/**
+ * #44 (AS-08). What the auto-sync scheduler does with this failure.
+ *
+ *   'skip'  — not a failure at all. No backoff, no failure_count, never shown.
+ *   'retry' — transient. Backoff grows; the link recovers on its own.
+ *   'stop'  — a retry cannot fix it. Pause the link and show the remedy.
+ *
+ * Declared per subclass for the same reason `code` and `status` are (C-19): a
+ * new class that has not thought about this must be a COMPILE error, not a
+ * runtime surprise that silently inherits someone else's default.
+ */
+export type RetryPolicy = 'skip' | 'retry' | 'stop';
+
 export abstract class SyncRunError extends Error {
   abstract readonly code: string;
   abstract readonly status: number;
   /** Operator-safe, never derived from a remote response body (D-09). */
   abstract readonly safeDetail: string;
+  /** What the auto-sync scheduler does with this failure (AS-08). */
+  abstract readonly retry: RetryPolicy;
 
   constructor(message: string, options?: ErrorOptions) {
     super(message, options);
@@ -33,6 +48,7 @@ export class SyncLinkNotFoundError extends SyncRunError {
   constructor() {
     super('Sync link not found');
   }
+  get retry(): RetryPolicy { return 'stop'; } // nothing to sync
 }
 
 export class SyncLinkForbiddenError extends SyncRunError {
@@ -42,6 +58,7 @@ export class SyncLinkForbiddenError extends SyncRunError {
   constructor() {
     super('Forbidden');
   }
+  get retry(): RetryPolicy { return 'stop'; } // ownership
 }
 
 export class SyncBusyError extends SyncRunError {
@@ -51,6 +68,7 @@ export class SyncBusyError extends SyncRunError {
   constructor() {
     super('A sync is already running for this link');
   }
+  get retry(): RetryPolicy { return 'skip'; } // another run holds the lease
 }
 
 export class SyncRemoteKeyError extends SyncRunError {
@@ -61,6 +79,7 @@ export class SyncRemoteKeyError extends SyncRunError {
     super(`Cannot use the stored remote credential: ${reason}`);
     this.safeDetail = reason;
   }
+  get retry(): RetryPolicy { return 'stop'; } // key undecryptable until re-entered
 }
 
 export class SyncUnreachableError extends SyncRunError {
@@ -75,6 +94,7 @@ export class SyncUnreachableError extends SyncRunError {
     // the transport error's name — never from a response body.
     this.safeDetail = what;
   }
+  get retry(): RetryPolicy { return 'retry'; } // the offline laptop
 }
 
 export class SyncAuthError extends SyncRunError {
@@ -84,6 +104,7 @@ export class SyncAuthError extends SyncRunError {
   constructor() {
     super('The remote rejected the stored PAT');
   }
+  get retry(): RetryPolicy { return 'stop'; } // needs credentials
 }
 
 export class SyncRemoteOwnershipError extends SyncRunError {
@@ -94,6 +115,7 @@ export class SyncRemoteOwnershipError extends SyncRunError {
   constructor() {
     super('The remote refused access to this universe identity');
   }
+  get retry(): RetryPolicy { return 'stop'; } // ownership
 }
 
 export class SyncPaymentError extends SyncRunError {
@@ -103,6 +125,7 @@ export class SyncPaymentError extends SyncRunError {
   constructor() {
     super('The remote requires an active subscription');
   }
+  get retry(): RetryPolicy { return 'stop'; } // paid tier lapsed
 }
 
 export class SyncQuotaError extends SyncRunError {
@@ -112,6 +135,7 @@ export class SyncQuotaError extends SyncRunError {
   constructor() {
     super('The remote is out of storage quota');
   }
+  get retry(): RetryPolicy { return 'stop'; } // over quota until freed
 }
 
 export interface InstanceIdentityLike {
@@ -128,6 +152,7 @@ export class SyncSelfRemoteError extends SyncRunError {
   constructor() {
     super('This remote resolves to this Weltbon instance and cannot be linked or synced');
   }
+  get retry(): RetryPolicy { return 'stop'; } // adoption-path; unreachable from a run
 }
 
 export class SyncIncompatibleError extends SyncRunError {
@@ -148,6 +173,7 @@ export class SyncIncompatibleError extends SyncRunError {
       `local ${local.weltbonVersion}/${local.migrationHead} vs ` +
       `remote ${remote?.weltbonVersion ?? '?'}/${remote?.migrationHead ?? '?'}`;
   }
+  get retry(): RetryPolicy { return 'stop'; } // needs an upgrade
 }
 
 /**
@@ -162,6 +188,7 @@ export class SyncLocalMaterializationError extends SyncRunError {
   constructor(readonly collection: string, readonly expected: number, readonly applied: number) {
     super(`Local sync apply incomplete for ${collection}: expected ${expected}, applied ${applied}`);
   }
+  get retry(): RetryPolicy { return 'retry'; } // base unadvanced so a re-run repairs
 }
 
 /**
@@ -177,6 +204,7 @@ export class SyncLinkSeveredError extends SyncRunError {
   constructor() {
     super('The universe no longer exists on the remote — re-link or remove this link');
   }
+  get retry(): RetryPolicy { return 'stop'; } // already link-severing
 }
 
 /**
@@ -193,6 +221,7 @@ export class SyncUniverseNotOnRemoteError extends SyncRunError {
   constructor() {
     super('That universe is not on the remote instance');
   }
+  get retry(): RetryPolicy { return 'stop'; } // adoption-path
 }
 
 /**
@@ -209,6 +238,7 @@ export class SyncUniverseAlreadyLocalError extends SyncRunError {
   constructor() {
     super('This instance already has that universe — link it instead of adopting it');
   }
+  get retry(): RetryPolicy { return 'stop'; } // adoption-path
 }
 
 /** Which side of the link could not produce the bytes — see the class docstring. */
@@ -250,6 +280,11 @@ export class SyncBlobUnavailableError extends SyncRunError {
     super(`Asset bytes unavailable for ${hashes.length} content hash(es)`);
     this.safeDetail = `${hashes.length} asset blob(s) ${SIDE_DETAIL[side]}`;
   }
+  get retry(): RetryPolicy {
+    // 'remote' is the C-12 race — the peer 404'd bytes it had just advertised.
+    // 'local' and 'neither' need a human: re-upload, or accept the loss.
+    return this.side === 'remote' ? 'retry' : 'stop';
+  }
 }
 
 /**
@@ -278,6 +313,7 @@ export class SyncApplyRejectedError extends SyncRunError {
     }
     this.safeDetail = parts.join('; ');
   }
+  get retry(): RetryPolicy { return 'stop'; } // identical delta, identical refusal
 }
 
 /**
