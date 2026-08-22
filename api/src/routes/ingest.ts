@@ -35,7 +35,17 @@ import { ZodError } from 'zod';
 import { db } from '../db/client.js';
 import { universes, entries, categories } from '../db/schema.js';
 import { requireUniverse } from '../utils/ownership.js';
-import { parseBatch, type FileInput } from '../services/ingest-markdown.js';
+import {
+  parseBatch,
+  isMarkdownFile,
+  isHiddenPath,
+  type FileInput,
+} from '../services/ingest-markdown.js';
+import {
+  detectSplitLevel,
+  sectionCountsByLevel,
+  type SplitLevel,
+} from '../services/ingest-split.js';
 import { unpackZip, BatchLimitError } from '../services/ingest-zip.js';
 import {
   commitIngest,
@@ -94,6 +104,16 @@ const ingestPreviewSchema = z.object({
   }),
   entries: z.array(previewEntrySchema),
   warnings: z.array(z.object({ file: z.string(), message: z.string() })),
+  // #37 SP-04: split detection/cap metadata. `detected` always reports what the
+  // document looks like; `applied` reports what THIS preview actually used —
+  // they diverge when the caller overrides the level, or passes `split_level:
+  // null` to opt out of a detected split.
+  split: z.object({
+    eligible: z.boolean(),
+    detected: z.number().int().min(1).max(6).nullable(),
+    applied: z.number().int().min(1).max(6).nullable(),
+    counts: z.record(z.string(), z.number().int()),
+  }),
 });
 
 // Multipart body schema — Hono's zod-openapi documents the upload contract.
@@ -122,6 +142,28 @@ const multipartBodySchema = z.object({
     type: 'string',
     format: 'binary',
     description: 'Single ZIP archive containing .md files. PK\\x03\\x04 magic checked.',
+  }),
+  // #37. Absent = auto-detect (and apply what was detected). An explicit level
+  // overrides detection. Explicit null means "do not split", which is why
+  // absent and null are different states — see ingest-split.ts and the
+  // `split` response field. Transmitted as a multipart TEXT field ("2",
+  // "null", or omitted) — like `files`/`zip` above, this is `z.any()` so the
+  // OpenAPIHono pre-handler validator (which actually runs, unlike the
+  // handler's own re-parse) does not reject the string wire value against a
+  // number/null schema; the handler parses and validates the real string.
+  // NOTE: no `nullable: true` here. The served document declares OpenAPI
+  // 3.0.0 (src/index.ts), but @hono/zod-openapi's metadata type is 3.1-based,
+  // where `nullable` was dropped in favour of type arrays — passing it is a
+  // build error. Every other route expresses nullability with Zod's
+  // `.nullable()`, which is unavailable while this stays `z.any()` for the
+  // wire. The null case is documented in prose instead.
+  split_level: z.any().optional().openapi({
+    type: 'integer',
+    minimum: 1,
+    maximum: 6,
+    description:
+      'Absent = auto-detect. An explicit 1-6 overrides detection. The literal ' +
+      'value `null` = do not split, even when a level was detected.',
   }),
 });
 
@@ -340,6 +382,29 @@ export const ingestRoutes = new OpenAPIHono<AppEnv>()
     const filesField = body['files'];
     const zipField = body['zip'];
 
+    // #37 SP-04: `split_level` arrives as a multipart text field, so it's a
+    // string (or absent) here, never a JS number/null — unlike `files`/`zip`
+    // this route accepts no JSON body, so there's no other transport for it.
+    // Three states, not two: absent -> undefined (auto-detect); the literal
+    // string "null" -> explicit null (do not split, even if detected);
+    // "1".."6" -> an explicit override level.
+    const splitLevelField = body['split_level'];
+    const splitLevelRaw = Array.isArray(splitLevelField) ? splitLevelField[0] : splitLevelField;
+    let requestedSplitLevel: SplitLevel | null | undefined;
+    if (splitLevelRaw === undefined) {
+      requestedSplitLevel = undefined;
+    } else if (typeof splitLevelRaw !== 'string') {
+      return c.json({ error: 'Invalid split_level' }, 400);
+    } else if (splitLevelRaw === 'null') {
+      requestedSplitLevel = null;
+    } else {
+      const n = Number(splitLevelRaw);
+      if (!Number.isInteger(n) || n < 1 || n > 6) {
+        return c.json({ error: 'Invalid split_level' }, 400);
+      }
+      requestedSplitLevel = n as SplitLevel;
+    }
+
     // Normalise to arrays.
     const filesArr: File[] = !filesField
       ? []
@@ -438,6 +503,37 @@ export const ingestRoutes = new OpenAPIHono<AppEnv>()
       }
     }
 
+    // #37 SP-04: split detection/cap metadata, computed BEFORE any DB access
+    // so an over-cap post-split batch is rejected as cheaply as file_count is
+    // (T-11-08 philosophy: counted before doing expensive work).
+    //
+    // Eligibility is purely a shape question — exactly one markdown file in
+    // the batch — independent of whether a level was requested/detected.
+    const mdOnly = inputs.filter((f) => isMarkdownFile(f.path) && !isHiddenPath(f.path));
+    const eligible = mdOnly.length === 1;
+
+    const detected = eligible ? detectSplitLevel(mdOnly[0].content) : null;
+    const counts = eligible ? sectionCountsByLevel(mdOnly[0].content) : {};
+
+    // `applied` is the three-state resolution: absent -> what was detected;
+    // an explicit level -> that level, overriding detection; explicit null ->
+    // never split, even though a level may have been detected. Collapsing
+    // absent and null here is exactly the bug this shape guards against.
+    const applied: SplitLevel | null = !eligible
+      ? null
+      : requestedSplitLevel === undefined
+        ? detected
+        : requestedSplitLevel;
+
+    // Nothing else caps the POST-split entry count — MAX_FILES above bounds
+    // uploaded files, not sections a split produces from a single document.
+    if (applied !== null && (counts[applied] ?? 0) > MAX_FILES) {
+      return c.json(
+        { error: `Batch limit exceeded: file_count (max ${MAX_FILES})` },
+        413,
+      );
+    }
+
     // 5. Read parser context — ONE query for entries (id+title only, T-11-04
     //    bound), one for categories. parseBatch is IO-free; the endpoint owns
     //    these reads per the 11-02 SUMMARY contract.
@@ -464,6 +560,7 @@ export const ingestRoutes = new OpenAPIHono<AppEnv>()
         validTypes: universe.entryTypes,
         existingEntries,
         existingCategories,
+        splitLevel: applied,
       });
     } catch (err) {
       // T-11-04: parser errors are NEVER returned in detail.
@@ -471,7 +568,15 @@ export const ingestRoutes = new OpenAPIHono<AppEnv>()
       return c.json({ error: 'Internal error' }, 500);
     }
 
-    return c.json(preview, 200);
+    return c.json(
+      {
+        ...preview,
+        // #37 SP-04: `detected` always reports what the document looks like;
+        // `applied` reports what THIS preview actually used.
+        split: { eligible, detected, applied, counts },
+      },
+      200,
+    );
   },
   )
   .openapi(

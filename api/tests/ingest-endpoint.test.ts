@@ -122,6 +122,37 @@ describe('POST /api/universes/:uid/ingest (Phase 11-03 Task 2)', () => {
     return new File([buf], name, { type: 'application/zip' });
   }
 
+  let postPreviewCounter = 0;
+
+  // #37 SP-04: posts a fresh preview request against its own user+universe
+  // (each test gets an isolated batch) and returns the raw Response, so
+  // callers can `await res.json()` / check `res.status` directly the way the
+  // task brief's test cases do. `split_level` is transmitted as a multipart
+  // text field: omitted when undefined (auto-detect), the literal string
+  // "null" for explicit null (do not split), else the level as a string.
+  async function postPreview(opts: {
+    files: Array<{ path: string; content: string }>;
+    split_level?: number | null;
+  }): Promise<Response> {
+    const { userId, jwt } = await createUserAndJwt(
+      `split-preview-${postPreviewCounter++}@test.com`
+    );
+    const u = await createUniverse(userId);
+    const fd = new FormData();
+    for (const f of opts.files) {
+      fd.append('files', makeFile(f.path, f.content));
+    }
+    if (opts.split_level !== undefined) {
+      fd.append('split_level', opts.split_level === null ? 'null' : String(opts.split_level));
+    }
+    const req = new Request(`http://localhost/api/universes/${u.id}/ingest`, {
+      method: 'POST',
+      headers: { Authorization: `Bearer ${jwt}` },
+      body: fd,
+    });
+    return app.fetch(req);
+  }
+
   // ─── Auth gating ─────────────────────────────────────────────────────────
 
   it('returns 401 when Authorization header is missing', async () => {
@@ -381,6 +412,61 @@ describe('POST /api/universes/:uid/ingest (Phase 11-03 Task 2)', () => {
     const res = await ingestRequest(u.id, fd, `Bearer ${jwt}`);
     expect(res.status).toBe(400);
     expect(String(res.body.error)).toMatch(/Invalid path/);
+  });
+
+  // ─── Split preview metadata (#37 SP-04) ─────────────────────────────────
+
+  describe('preview split metadata (SP-04)', () => {
+    it('reports eligibility, the detected level and per-level counts', async () => {
+      const res = await postPreview({
+        files: [{ path: 'regions.md', content: '# R\n\n## Vale\n\nA.\n\n## Frostmere\n\nB.\n' }],
+      });
+      const body = await res.json();
+      expect(body.split.eligible).toBe(true);
+      expect(body.split.detected).toBe(2);
+      expect(body.split.applied).toBe(2);
+      expect(body.split.counts['2']).toBe(2);
+    });
+
+    it('is ineligible for a multi-file batch', async () => {
+      const res = await postPreview({
+        files: [
+          { path: 'a.md', content: '## One\n\nA.\n\n## Two\n\nB.\n' },
+          { path: 'b.md', content: '## Three\n\nC.\n' },
+        ],
+      });
+      const body = await res.json();
+      expect(body.split.eligible).toBe(false);
+      expect(body.split.applied).toBeNull();
+    });
+
+    it('honours an explicit split_level over the detected one', async () => {
+      const res = await postPreview({
+        files: [{ path: 'r.md', content: '# A\n\n## B\n\nx.\n\n# C\n\n## D\n\ny.\n' }],
+        split_level: 2,
+      });
+      const body = await res.json();
+      expect(body.split.detected).toBe(1);
+      expect(body.split.applied).toBe(2);
+    });
+
+    it('split_level: null means do not split, even when a level was detected', async () => {
+      const res = await postPreview({
+        files: [{ path: 'r.md', content: '## Vale\n\nA.\n\n## Frostmere\n\nB.\n' }],
+        split_level: null,
+      });
+      const body = await res.json();
+      expect(body.split.detected).toBe(2);
+      expect(body.split.applied).toBeNull();
+      expect(body.entries).toHaveLength(1);
+    });
+
+    it('rejects a post-split entry count above the batch cap', async () => {
+      const many = Array.from({ length: 5000 }, (_, i) => `## S${i}\n\nB${i}.\n`).join('\n');
+      const res = await postPreview({ files: [{ path: 'r.md', content: many }], split_level: 2 });
+      expect(res.status).toBe(413);
+      expect((await res.json()).error).toMatch(/file_count|limit/i);
+    });
   });
 
   // ─── OpenAPI doc presence ────────────────────────────────────────────────
