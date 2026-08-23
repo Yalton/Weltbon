@@ -45,7 +45,7 @@ describe('listOllamaModels', () => {
   it('marks a tools-capable model usable and a vision-only model not', async () => {
     const { listOllamaModels } = await import('../src/providers/llm/ollama.js');
     const models = await listOllamaModels(
-      'http://box:11434',
+      { baseUrl: 'http://box:11434' },
       fakeFetch({
         '/api/tags': { models: [{ name: 'qwen3:32b' }, { name: 'llava:latest' }] },
         '/api/show:qwen3:32b': fx('show-qwen3-32b'),
@@ -63,13 +63,60 @@ describe('listOllamaModels', () => {
     // runtime window is num_ctx, which we always set ourselves (spec D-4).
     const { listOllamaModels } = await import('../src/providers/llm/ollama.js');
     const models = await listOllamaModels(
-      'http://box:11434',
+      { baseUrl: 'http://box:11434' },
       fakeFetch({
         '/api/tags': { models: [{ name: 'qwen3:32b' }] },
         '/api/show:qwen3:32b': fx('show-qwen3-32b'),
       }) as unknown as typeof fetch,
     );
     expect(models[0].contextLength).toBe(40960);
+  });
+
+  it('sends the proxy bearer on both /api/tags and /api/show when the connection has one', async () => {
+    // Fix round 2 (#48 whole-branch review, Important 3). This function used
+    // to take a bare base URL and send no Authorization header, while
+    // `validate()` sent one. Behind an authenticating reverse proxy that made
+    // the "Save and test" green "Reachable" indicator actively misleading: the
+    // request it reported on succeeded, and every model listing after it
+    // 401'd — empty dropdown, and runAudit's run-time capability re-check
+    // failing the same way. /api/show is asserted separately from /api/tags
+    // because the N+1 listing makes two DIFFERENT requests and threading the
+    // header through only the first would leave the same 401 in place.
+    const { listOllamaModels } = await import('../src/providers/llm/ollama.js');
+    const seen: Record<string, string | null> = {};
+    const capturing = (async (url: string, init?: RequestInit): Promise<Response> => {
+      const kind = url.includes('/api/show') ? 'show' : 'tags';
+      seen[kind] = new Headers(init?.headers).get('authorization');
+      return fakeFetch({
+        '/api/tags': { models: [{ name: 'qwen3:32b' }] },
+        '/api/show:qwen3:32b': fx('show-qwen3-32b'),
+      })(url, init);
+    }) as unknown as typeof fetch;
+
+    await listOllamaModels(
+      { baseUrl: 'http://box:11434', secret: 'proxy-token' },
+      capturing,
+    );
+    expect(seen.tags).toBe('Bearer proxy-token');
+    expect(seen.show).toBe('Bearer proxy-token');
+  });
+
+  it('sends no Authorization header when the connection has no secret', async () => {
+    // Ollama itself has no auth; a bare `Bearer undefined` (or `Bearer `)
+    // against a plain server is the kind of header that gets rejected by
+    // whatever sits in front of it for no reason the user could diagnose.
+    const { listOllamaModels } = await import('../src/providers/llm/ollama.js');
+    let auth: string | null = 'not-called';
+    const capturing = (async (url: string, init?: RequestInit): Promise<Response> => {
+      if (!url.includes('/api/show')) auth = new Headers(init?.headers).get('authorization');
+      return fakeFetch({
+        '/api/tags': { models: [{ name: 'qwen3:32b' }] },
+        '/api/show:qwen3:32b': fx('show-qwen3-32b'),
+      })(url, init);
+    }) as unknown as typeof fetch;
+
+    await listOllamaModels({ baseUrl: 'http://box:11434' }, capturing);
+    expect(auth).toBeNull();
   });
 });
 
@@ -199,8 +246,89 @@ describe('OllamaProvider.runAudit', () => {
     // to its own default, commonly 2048/4096) would silently truncate
     // context on any audit whose prompt exceeds that default — this is the
     // one place that failure mode is caught.
-    expect(typeof capturedBody?.options?.num_ctx).toBe('number');
-    expect(capturedBody?.options?.num_ctx).toBeGreaterThan(0);
+    //
+    // Fix round 2 (Minor 6): this used to assert only `typeof === 'number'`
+    // and `> 0`, which a hardcoded `num_ctx: 1` would satisfy just as well as
+    // the real sizing. Pinned to the exact derived value instead:
+    //   'short prompt'          = 12 chars
+    //   estimate()              = ceil(12 / 4)        = 3 tokens
+    //   safety factor (1.8)     = ceil(3 * 1.8)       = 6 tokens
+    //   OUTPUT_HEADROOM_TOKENS  = 2048
+    //   num_ctx                 = 6 + 2048            = 2054
+    // Changing either constant is a deliberate act and should land here.
+    expect(capturedBody?.options?.num_ctx).toBe(2054);
+  });
+
+  it('pads the sizing estimate above the raw chars/4 heuristic, which undercounts a UUID-dense digest', async () => {
+    // Fix round 2 (#48 whole-branch review, Critical 2). The real audit prompt
+    // is the structural digest, which serializes every entry UUID three times,
+    // and a UUID tokenizes at ~1.7 chars/token — not 4. Measured on a
+    // digest-shaped payload (200 entries / 300 links / 50 pins) with
+    // js-tiktoken o200k_base: 76,269 chars, chars/4 says 19,068 tokens, the
+    // encoder says 33,726. num_ctx was therefore sized at roughly two thirds
+    // of the real prompt, and Ollama dropped the difference off the FRONT —
+    // the system message carrying the digest — with no error at all.
+    //
+    // Teeth: removing PROMPT_TOKEN_SAFETY_FACTOR from ollama.ts's chooseNumCtx
+    // call site makes num_ctx exactly `unmultiplied` and both assertions fail.
+    const { getProvider } = await import('../src/providers/llm/index.js');
+    let capturedBody: { options?: { num_ctx?: number } } | undefined;
+    vi.stubGlobal('fetch', async (url: string, init?: RequestInit) => {
+      if (typeof url === 'string' && url.includes('/api/chat')) {
+        capturedBody = JSON.parse(init?.body as string);
+        return new Response(JSON.stringify(chatFixture), {
+          status: 200,
+          headers: { 'Content-Type': 'application/json' },
+        });
+      }
+      return fakeFetch(routesWithChat(chatFixture))(url, init);
+    });
+    const chars = 40_000;
+    const p = getProvider('ollama');
+    await p.runAudit({
+      credential: { baseUrl: 'http://box:11434' },
+      model: 'qwen3:14b',
+      messages: [{ role: 'user', content: 'x'.repeat(chars) }],
+    });
+    const numCtx = capturedBody!.options!.num_ctx!;
+    const heuristicTokens = Math.ceil(chars / 4); // 10,000
+    const headroom = 2048;
+    const unmultiplied = heuristicTokens + headroom;
+
+    expect(numCtx).toBeGreaterThan(unmultiplied);
+    // At least the 1.66x the review measured, so a token gesture of a
+    // multiplier (1.05, say) fails here too — not just its outright removal.
+    expect(numCtx).toBeGreaterThanOrEqual(Math.ceil(heuristicTokens * 1.66) + headroom);
+  });
+
+  it('refuses loudly when the server reports it tokenized more prompt than the window we asked for', async () => {
+    // The part that makes D-4 impossible rather than merely unlikely. Every
+    // other guard in this file is a PREDICTION of prompt size; this is the
+    // server reporting what it actually tokenized. Ollama truncates over-long
+    // prompts silently — no error, no flag — so an audit that lost its digest
+    // returns confident, normal-looking findings computed against part of the
+    // universe. `prompt_eval_count` was already parsed (it feeds usage
+    // telemetry) and simply never compared to num_ctx.
+    //
+    // Teeth: deleting the `promptEvalCount >= numCtx` branch in ollama.ts
+    // makes this resolve with the fixture's findings instead of rejecting.
+    const { getProvider } = await import('../src/providers/llm/index.js');
+    const { LLMError } = await import('../src/providers/llm/interface.js');
+    // 2054 is exactly the num_ctx this prompt sizes to (see the derivation in
+    // the explicit-num_ctx test above) — i.e. the clamped count a genuinely
+    // truncated prompt reports, not an implausibly large sentinel.
+    const truncated = { ...chatFixture, prompt_eval_count: 2054 };
+    vi.stubGlobal('fetch', fakeFetch(routesWithChat(truncated)) as unknown as typeof fetch);
+    const p = getProvider('ollama');
+    const promise = p.runAudit({
+      credential: { baseUrl: 'http://box:11434' },
+      model: 'qwen3:14b',
+      messages: [{ role: 'user', content: 'short prompt' }],
+    });
+    await expect(promise).rejects.toMatchObject({ variant: LLMError.ModelNotAvailable });
+    // Both numbers must be in the message: "your prompt was too long" is not
+    // actionable, "2054 tokens into a 2054-token window" is.
+    await expect(promise).rejects.toThrow(/2054/);
   });
 
   it('accounts for a large tool schema in num_ctx sizing, not just the prompt (fix round 1)', async () => {

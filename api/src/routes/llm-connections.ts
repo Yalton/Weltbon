@@ -374,20 +374,26 @@ export const llmConnectionRoutes = new OpenAPIHono<AppEnv>()
   .openapi(modelsRoute, async (c) => {
     if (!env().localMode) return c.json({ error: NOT_LOCAL_MODE_ERROR }, 403);
 
+    const cfg = env();
     const userId = c.var.userId;
     const { provider } = c.req.valid('param');
 
-    // No decryption needed: listOllamaModels (ollama.ts) sends no
-    // Authorization header at all — it is a plain GET /api/tags + POST
-    // /api/show — so the connection's secret (proxy bearer) is irrelevant
-    // to this call. Only the base URL matters here.
-    const conn = await getConnection(userId, provider);
+    // Decrypt the secret here too. Fix round 2 (#48 whole-branch review,
+    // Important 3): this handler used to skip decryption on the grounds that
+    // listOllamaModels sent no Authorization header — which was true, and was
+    // the bug. Behind an authenticating proxy the testRoute above validated
+    // WITH the bearer and reported "Reachable", then this route 401'd and the
+    // dropdown came back empty with a green indicator still showing.
+    const conn = await getConnection(userId, provider, cfg.llmKeyEncryptionKey);
     if (conn === null) {
       return c.json({ error: 'No connection configured for this provider' }, 404);
     }
 
     try {
-      const models = await listOllamaModels(conn.baseUrl);
+      const models = await listOllamaModels({
+        baseUrl: conn.baseUrl,
+        secret: conn.secret ?? undefined,
+      });
       return c.json(models, 200);
     } catch (err) {
       if (err instanceof LLMProviderError) {

@@ -265,7 +265,10 @@ export async function getModels(
     // an empty listing on failure — the same shape the unconfigured-baseUrl
     // case above already produces — rather than a stale/synthesized one.
     try {
-      const installed = await listOllamaModels(baseUrl);
+      // Fix round 2 (Important 3): the whole credential, so a proxy bearer
+      // reaches the listing call and not only `validate`. `baseUrl` is still
+      // read above purely for the not-yet-configured early return.
+      const installed = await listOllamaModels(credential);
       return {
         // Only tools-capable models are offered: a model that cannot
         // tool-call cannot return findings at all, so listing it as

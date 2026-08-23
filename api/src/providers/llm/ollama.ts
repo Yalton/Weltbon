@@ -96,15 +96,29 @@ async function callOllama(
 /**
  * List installed models with tool-capability and context-length metadata.
  *
+ * Takes the whole `ProviderCredential`, not a bare base URL. Fix round 2 (#48
+ * whole-branch review, Important 3): it used to take only the URL and send no
+ * `Authorization` header, while `validate()` below sent one. For a user whose
+ * Ollama sits behind an authenticating reverse proxy, that split the feature
+ * in half in the most misleading way available: "Save and test" validated WITH
+ * the bearer and lit up a green "Reachable", and then every model listing
+ * 401'd — an empty dropdown, plus `runAudit`'s run-time capability re-check
+ * failing against the same 401. A success indicator sitting downstream of a
+ * different request than the one that fails is worse than no indicator.
+ *
  * `fetchImpl` defaults to the global `fetch` but is overridable so tests
  * never touch a real network (see `tests/llm-ollama.test.ts`'s `fakeFetch`).
  */
 export async function listOllamaModels(
-  baseUrl: string,
+  credential: ProviderCredential,
   fetchImpl: typeof fetch = fetch,
 ): Promise<OllamaModelInfo[]> {
-  const root = baseUrl.replace(/\/+$/, '');
-  const tagsRes = await callOllama(`${root}/api/tags`, { method: 'GET' }, fetchImpl);
+  const root = requireBaseUrl(credential);
+  const tagsRes = await callOllama(
+    `${root}/api/tags`,
+    { method: 'GET', headers: headers(credential) },
+    fetchImpl,
+  );
   if (!tagsRes.ok) {
     throw new LLMProviderError(LLMError.NetworkError, `Ollama /api/tags returned ${tagsRes.status}`);
   }
@@ -115,7 +129,7 @@ export async function listOllamaModels(
   for (const name of names) {
     const showRes = await callOllama(
       `${root}/api/show`,
-      { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ model: name }) },
+      { method: 'POST', headers: headers(credential), body: JSON.stringify({ model: name }) },
       fetchImpl,
     );
     if (!showRes.ok) {
@@ -145,6 +159,44 @@ export async function listOllamaModels(
   }
   return out;
 }
+
+/**
+ * Multiplier applied to `estimate()`'s chars/4 output BEFORE it is handed to
+ * `chooseNumCtx` — sizing input only, never the estimate itself.
+ *
+ * Why this exists (fix round 2, #48 whole-branch review, Critical 2): the real
+ * audit prompt is the structural digest, and `services/structural-digest.ts`
+ * serializes every entry UUID THREE times (the entry rows, the link tuples,
+ * and `validEntryIds`). A UUID does not tokenize at 4 chars/token — measured
+ * with js-tiktoken's `o200k_base`, a single UUID is 36 chars and 21 tokens,
+ * i.e. ~1.7 chars/token. On a digest-shaped payload (200 entries / 300 links /
+ * 50 pins) the whole-document ratio comes out at:
+ *
+ *     chars 76,269 | heuristic (chars/4) 19,068 | actual 33,726 | ratio 1.77x
+ *
+ * (The review that found this measured 1.66x on a slightly different content
+ * mix; the factor below covers both, with a little margin, rather than being
+ * tuned to one sample.)
+ *
+ * What the undercount cost: `chooseNumCtx` sized a ~35k-token prompt at ~23k,
+ * and Ollama then dropped ~12k tokens off the FRONT — the `role:'system'`
+ * message carrying the digest — silently. The audit returned normal-looking
+ * findings computed against part of the universe, which is precisely the
+ * failure D-4 exists to make impossible, arrived at THROUGH the guard meant to
+ * prevent it. It also deferred the loud refusal when a prompt genuinely
+ * exceeds the architectural maximum.
+ *
+ * Being wrong high costs a larger KV cache on the user's own box, and (at the
+ * extreme) a spurious pre-run refusal for a prompt that would in fact have
+ * fit. Being wrong low used to cost a quietly partial audit — no longer, since
+ * the post-response `prompt_eval_count` check in `runAudit` now turns any
+ * remaining undercount into a loud failure rather than a silent one.
+ *
+ * NOT folded into `estimate()`: that method's contract is documented as
+ * messages-only and feeds the pre-run cost UI for every provider path, so a
+ * change there has a blast radius well beyond this one call site.
+ */
+const PROMPT_TOKEN_SAFETY_FACTOR = 1.8;
 
 export class OllamaProvider implements LLMProvider {
   /**
@@ -202,7 +254,7 @@ export class OllamaProvider implements LLMProvider {
       throw new LLMProviderError(LLMError.ModelNotAvailable, 'no Ollama model selected');
     }
 
-    const models = await listOllamaModels(baseUrl);
+    const models = await listOllamaModels(opts.credential);
     const info = models.find((m) => m.name === model);
     if (info === undefined) {
       throw new LLMProviderError(
@@ -249,7 +301,14 @@ export class OllamaProvider implements LLMProvider {
     // see ollama-wire.ts. `info.contextLength` is that architectural
     // maximum, NOT a runtime window (Task 4); num_ctx below is the only
     // place the runtime window is ever set.
-    const numCtx = chooseNumCtx(estimatedMessageTokens + toolTokens, info.contextLength);
+    // PROMPT_TOKEN_SAFETY_FACTOR (see its definition) corrects the chars/4
+    // heuristic for the UUID-dense digest this prompt actually is. Applied to
+    // the sum: the tool schema is identifier-dense too, so the same
+    // undercount applies to it.
+    const sizingTokens = Math.ceil(
+      (estimatedMessageTokens + toolTokens) * PROMPT_TOKEN_SAFETY_FACTOR,
+    );
+    const numCtx = chooseNumCtx(sizingTokens, info.contextLength);
 
     const res = await callOllama(
       `${baseUrl}/api/chat`,
@@ -292,6 +351,28 @@ export class OllamaProvider implements LLMProvider {
       prompt_eval_count?: number;
       eval_count?: number;
     };
+
+    // The one check that makes D-4 actually impossible rather than merely
+    // unlikely. Everything above is a PREDICTION of the prompt size; this is
+    // the server telling us what it really tokenized. Ollama truncates a
+    // prompt that exceeds num_ctx silently — no error, no flag, just an audit
+    // performed against part of the universe — so a prompt_eval_count that
+    // reaches the window we asked for is the only evidence available that it
+    // happened. `>=` rather than `>`: a truncated prompt is clamped TO the
+    // window, so equality is the truncation signature, not a coincidence. The
+    // cost of the off-by-one going the other way (a genuine prompt landing
+    // exactly on num_ctx and being refused) is a loud, actionable error on a
+    // free local run; the cost of missing it is findings the user trusts and
+    // shouldn't.
+    const promptEvalCount = body.prompt_eval_count ?? 0;
+    if (promptEvalCount >= numCtx) {
+      throw new LLMProviderError(
+        LLMError.ModelNotAvailable,
+        `Ollama tokenized ${promptEvalCount} prompt tokens into a ${numCtx}-token context window, ` +
+          `so part of this audit's prompt was dropped and the findings would cover only part of ` +
+          `your universe. Audit a smaller scope, or choose a model with a larger context window.`,
+      );
+    }
 
     return {
       text: body.message?.content ?? '',
