@@ -10,12 +10,15 @@
  * build no zips.
  *
  * ENTITY REJECTION IS CATEGORICAL, AND HAPPENS BEFORE THE PARSER RUNS.
- * See rejectDoctype(). It scans the WHOLE prolog — everything up to the root
- * start tag — not a fixed-size prefix of it. The prolog is unbounded: comments,
- * processing instructions and whitespace may all precede the DOCTYPE, so any
- * fixed window is padded past trivially. Do not replace this with an expansion
- * budget, and do not move it onto the parser's `doctype` event: both let the
- * parser start work on a payload whose entire cost is in the work.
+ * See rejectDoctype(). It walks the WHOLE prolog — every comment, processing
+ * instruction and run of whitespace up to the root start tag — rather than
+ * looking at a prefix of it or searching for the root tag. The prolog is
+ * unbounded, so any fixed window is padded past; and its items can contain
+ * anything, so searching for the first `<letter` finds a comment's CONTENTS and
+ * truncates the scan short of the construct. Both of those shipped here and both
+ * were bypassable. Do not replace this with an expansion budget, and do not move
+ * it onto the parser's `doctype` event: both let the parser start work on a
+ * payload whose entire cost is in the work.
  *
  * It is worth being precise about what this defense does and does not rest on.
  * saxes 6 happens to capture a DOCTYPE's internal subset as opaque text without
@@ -88,36 +91,69 @@ export interface DocxDocument { blocks: DocxBlock[]; counters: DocxCounters }
  * and LibreOffice all emit entity-free XML, so there is no legitimate document
  * this turns away.
  *
- * A string scan rather than the parser's `doctype` event because the parser
- * must never begin: by the time a doctype handler could fire, a sufficiently
- * nested payload has already been read, and the point of the defense was to not
- * pay for it.
+ * A scan of the raw string rather than the parser's `doctype` event because the
+ * parser must never begin: by the time a doctype handler could fire, a
+ * sufficiently nested payload has already been read, and the point of the
+ * defense was to not pay for it.
  *
  * The cost if this reasoning is wrong is a refused file from some exotic
  * generator, surfaced as a clear 400 — not silence, and not corruption.
  */
 function rejectDoctype(xml: string): void {
-  // The scan is bounded by the PROLOG, not by a byte count. A DTD is only legal
-  // before the root element, so a match after it is ordinary text — a document
-  // that happens to discuss DOCTYPEs in its prose — and not ours to refuse.
+  // Walk the prolog item by item. Two weaker versions of this check shipped and
+  // both were bypassable, in ways worth recording so neither comes back:
   //
-  // This was a fixed 4096-char window and that was wrong: nothing bounds the
-  // prolog's length. `<!-- 5000 chars of padding -->` then the DOCTYPE, or a
-  // long processing instruction, or plain whitespace, all push the construct
-  // past any fixed offset, and a window can also be straddled so the literal
-  // spans its edge. Every one of those parsed cleanly. Do not reintroduce a
-  // byte cap here "for performance": the search below stops at the first
-  // element start tag, which in a real document is within the first ~100 bytes.
+  //   1. A fixed 4096-char window. Nothing bounds a prolog's length — comments,
+  //      processing instructions and whitespace may all precede the DOCTYPE in
+  //      any quantity — so padding walked past it, and a literal straddling the
+  //      edge was cut in half and matched neither side.
+  //   2. `xml.search(/<[A-Za-z_:]/)` to find the root element. A plain string
+  //      search has no idea what a comment is, so `<!-- pad <Az -->` was read as
+  //      the root tag; the prolog was truncated before the real DOCTYPE, which
+  //      then passed uninspected. That needed about fifteen bytes, not four
+  //      thousand — strictly worse than the bug it replaced.
   //
-  // `<[A-Za-z_:]` is exactly the root start tag: a name may begin with a letter,
-  // an underscore or a colon, while `<!DOCTYPE`, `<!--` and `<?` all begin with
-  // a character the class excludes. So the boundary lands on the root element
-  // and nowhere earlier.
-  const rootAt = xml.search(/<[A-Za-z_:]/);
-  const prolog = rootAt === -1 ? xml : xml.slice(0, rootAt);
-  if (/<!DOCTYPE/i.test(prolog) || /<!ENTITY/i.test(prolog)) {
-    throw new DocxFormatError('Not a valid .docx (unsupported XML construct)');
+  // A regex cannot do this correctly at all, which is the reason for the loop:
+  // skipping a comment means finding its TERMINATOR, and that is a scan, not a
+  // pattern. Do not "simplify" this back into a search.
+  let i = 0;
+  for (;;) {
+    // `/\s/` is deliberate rather than a hand-rolled " \t\n\r" test: in
+    // ECMAScript it also matches U+FEFF, and saxes skips a leading BOM
+    // (saxes.js:778). A stricter whitespace test here would let `\uFEFF` +
+    // DOCTYPE past this check and straight into a parser that tolerates it.
+    while (i < xml.length && /\s/.test(xml[i])) i += 1;
+
+    // Every give-up below is safe for the same reason: the input is malformed,
+    // so saxes refuses it a moment later and nothing is silently accepted. That
+    // is a property of the pairing, not of this function alone — the tests pin
+    // it by asserting the resulting message is the parser's, not ours.
+    if (i >= xml.length) return;          // no root element at all
+    if (xml[i] !== '<') return;           // stray text before the root
+    if (xml.startsWith('<!--', i)) {
+      const end = xml.indexOf('-->', i + 4);
+      if (end === -1) return;             // unterminated comment
+      i = end + 3;
+      continue;
+    }
+    if (xml.startsWith('<?', i)) {        // includes the XML declaration
+      const end = xml.indexOf('?>', i + 2);
+      if (end === -1) return;             // unterminated PI
+      i = end + 2;
+      continue;
+    }
+    // Anything else opening `<!` in the prolog is a declaration: DOCTYPE,
+    // ENTITY, or any other. Refused categorically rather than budgeted, because
+    // no real writer emits one — Word, Google Docs, Pages and LibreOffice all
+    // produce entity-free XML — so there is no legitimate document this turns
+    // away, and no budget to tune or be just under.
+    if (xml.startsWith('<!', i)) {
+      throw new DocxFormatError('Not a valid .docx (unsupported XML construct)');
+    }
+    return;                               // root element start tag: prolog over
   }
+  // Terminates on every input: each branch either returns or advances `i` past
+  // at least one character.
 }
 
 interface RunFormat {
