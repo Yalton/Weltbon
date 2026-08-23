@@ -12,7 +12,13 @@ vi.mock('../../api/client', async () => {
 });
 
 import { api, ApiError } from '../../api/client';
-import { ImportUploadStep, type UploadSource } from './ImportUploadStep';
+import {
+  ImportUploadStep,
+  classifyAndDetectKind,
+  enforceBatchLimits,
+  describeKind,
+  type UploadSource,
+} from './ImportUploadStep';
 
 function makeMdFile(name: string, sizeBytes = 100, relativePath?: string): File {
   const f = new File(['x'.repeat(sizeBytes)], name, { type: 'text/markdown' });
@@ -195,7 +201,7 @@ describe('ImportUploadStep — idle render and interactive flows', () => {
     expect(
       screen.getByRole('alert'),
     ).toHaveTextContent(
-      /Only \.md or \.markdown files, folders of Markdown files, or a \.zip are accepted\./i,
+      /Only \.md, \.markdown or \.docx files, folders of them, or a \.zip are accepted\./i,
     );
     expect(api).not.toHaveBeenCalled();
   });
@@ -365,5 +371,108 @@ describe('ImportUploadStep — idle render and interactive flows', () => {
     // first; this exercises the state-machine fallback inside the
     // component when the parent does NOT immediately unmount).
     expect(screen.queryByRole('progressbar')).not.toBeInTheDocument();
+  });
+});
+
+describe('.docx classification (#35)', () => {
+  const docx = (name: string, bytes = 1024) =>
+    new File([new Uint8Array(bytes)], name, {
+      type: 'application/vnd.openxmlformats-officedocument.wordprocessingml.document',
+    });
+  const md = (name: string) => new File(['# x'], name, { type: 'text/markdown' });
+
+  it('classifies a lone .docx as a file upload, not an error', () => {
+    expect(classifyAndDetectKind([docx('vale.docx')])).toEqual({ kind: 'md' });
+  });
+
+  it('accepts a mixed .md + .docx batch', () => {
+    expect(classifyAndDetectKind([md('a.md'), docx('b.docx')])).toEqual({ kind: 'md' });
+  });
+
+  it('accepts .markdown alongside .docx', () => {
+    // The server accepts .markdown as of DOCX-13; the client always claimed to.
+    expect(classifyAndDetectKind([md('a.markdown'), docx('b.docx')])).toEqual({ kind: 'md' });
+  });
+
+  it('still rejects an unrelated extension', () => {
+    expect(classifyAndDetectKind([docx('a.docx'), md('b.pdf')]))
+      .toHaveProperty('error');
+  });
+
+  it('rejects a .docx over the size cap with an actionable message', () => {
+    const err = enforceBatchLimits([docx('huge.docx', 26 * 1024 * 1024)], 'md');
+    expect(err).toContain('25');
+    expect(err).toContain('.docx');
+  });
+
+  it('rejects more than the docx count cap', () => {
+    const many = Array.from({ length: 51 }, (_, i) => docx(`f${i}.docx`));
+    expect(enforceBatchLimits(many, 'md')).toContain('50');
+  });
+
+  it('does not apply the .docx size cap to markdown files', () => {
+    // The two caps are different by two orders of magnitude; applying the
+    // wrong one to the wrong file type would reject valid uploads.
+    expect(enforceBatchLimits([md('small.md')], 'md')).toBeNull();
+  });
+
+  it('does not apply the markdown 1 MB cap to a valid multi-MB .docx', () => {
+    // The inverse of the previous test, and the one that actually catches
+    // the cross-wiring the brief warns about: a 2 MB .docx is comfortably
+    // under the 25 MB docx cap but well over the 1 MB markdown cap. If the
+    // per-file markdown loop ever stops skipping docx parts, this file gets
+    // rejected with a message about the wrong format even though it is
+    // entirely valid. A test that only exercises a 26 MB docx (over BOTH
+    // caps) cannot tell these two code paths apart — this one can.
+    const twoMb = docx('report.docx', 2 * 1024 * 1024);
+    expect(enforceBatchLimits([twoMb], 'md')).toBeNull();
+  });
+
+  it('applies each cap independently within one mixed batch', () => {
+    // Fix-round-1 gap: a batch that mixes a valid .docx with an oversized
+    // .md must be rejected for the MARKDOWN reason, not silently accepted
+    // because the docx part passed its own (much larger) cap, and not
+    // rejected with the docx message either -- the two caps are independent
+    // and per-file, not batch-wide or cross-applied.
+    const validDocx = docx('report.docx', 2 * 1024 * 1024); // under 25 MB docx cap
+    const oversizedMd = md('huge.md');
+    Object.defineProperty(oversizedMd, 'size', {
+      value: 2 * 1024 * 1024, // over the 1 MB markdown cap
+      configurable: true,
+    });
+    const err = enforceBatchLimits([validDocx, oversizedMd], 'md');
+    expect(err).toContain('1 MB per file');
+    expect(err).not.toContain('.docx');
+  });
+
+  describe('describeKind summary copy (#35 fix round 1)', () => {
+    it('describes an all-markdown selection as before', () => {
+      expect(describeKind('md', [md('a.md'), md('b.md')])).toBe('2 .md files');
+      expect(describeKind('md', [md('a.md')])).toBe('.md file');
+    });
+
+    it('describes a lone .docx as a .docx file, not a .md file', () => {
+      expect(describeKind('md', [docx('vale.docx')])).toBe('.docx file');
+    });
+
+    it('describes multiple .docx files as N .docx files', () => {
+      expect(describeKind('md', [docx('a.docx'), docx('b.docx')])).toBe(
+        '2 .docx files',
+      );
+    });
+
+    it('describes a mixed batch honestly rather than lying about the format', () => {
+      expect(
+        describeKind('md', [md('a.md'), docx('b.docx'), docx('c.docx')]),
+      ).toBe('3 files (1 .md, 2 .docx)');
+    });
+
+    it('renders the .docx summary copy in the selected-file card', () => {
+      const { container } = renderStep();
+      selectFiles(container, [docx('vale.docx')]);
+      expect(screen.getByText('vale.docx')).toBeInTheDocument();
+      expect(screen.getByText(/\.docx file/)).toBeInTheDocument();
+      expect(screen.queryByText(/\.md file/)).not.toBeInTheDocument();
+    });
   });
 });

@@ -436,12 +436,17 @@ export function inferCategory(path: string): string | null {
 // ---------------------------------------------------------------------------
 
 /**
- * Returns true if the filename has a `.md` extension (case-insensitive) (D-08).
+ * Returns true if the filename has a Markdown extension (case-insensitive) (D-08).
  *
- * @param filename  Any filename or path string.
+ * Both `.md` and `.markdown`: ImportUploadStep.tsx has always told users that
+ * both are accepted and its own classifier lets both through, so accepting only
+ * `.md` here meant a `.markdown` upload passed client validation and was then
+ * counted into non_markdown_files_skipped — an empty preview with no error.
+ * Extensions are matched exactly, so `.mdx` (a different format) stays out.
  */
 export function isMarkdownFile(filename: string): boolean {
-  return filename.toLowerCase().endsWith('.md');
+  const lower = filename.toLowerCase();
+  return lower.endsWith('.md') || lower.endsWith('.markdown');
 }
 
 /**

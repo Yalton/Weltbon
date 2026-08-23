@@ -95,7 +95,7 @@ export function ImportDropZone({ onSelect, disabled }: ImportDropZoneProps) {
         onDragLeave={handleDragLeave}
         onDrop={handleDrop}
         disabled={disabled}
-        aria-label="Drop Markdown files or a ZIP, or choose Markdown files"
+        aria-label="Drop Markdown or Word files, or a ZIP, or choose files"
         aria-describedby="import-dropzone-helper"
         className={[
           'w-full mt-6 border-2 border-dashed rounded-md p-8 text-center transition-colors cursor-pointer disabled:cursor-not-allowed',
@@ -105,7 +105,7 @@ export function ImportDropZone({ onSelect, disabled }: ImportDropZoneProps) {
         ].join(' ')}
       >
         <p className="text-sm">
-          Drop .md files, a folder, or a .zip here.
+          Drop .md, .markdown or .docx files, a folder, or a .zip here.
         </p>
         <p
           id="import-dropzone-helper"
@@ -149,7 +149,7 @@ export function ImportDropZone({ onSelect, disabled }: ImportDropZoneProps) {
       <input
         ref={markdownInputRef}
         type="file"
-        accept=".md,.markdown,text/markdown"
+        accept=".md,.markdown,.docx,text/markdown,application/vnd.openxmlformats-officedocument.wordprocessingml.document"
         multiple
         aria-label="Choose Markdown files"
         onChange={handleChange}
@@ -158,7 +158,7 @@ export function ImportDropZone({ onSelect, disabled }: ImportDropZoneProps) {
       <input
         ref={folderInputRef}
         type="file"
-        accept=".md,.markdown,text/markdown"
+        accept=".md,.markdown,.docx,text/markdown,application/vnd.openxmlformats-officedocument.wordprocessingml.document"
         multiple
         aria-label="Choose folder"
         onChange={handleChange}
