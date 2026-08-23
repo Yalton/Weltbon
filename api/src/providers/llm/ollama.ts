@@ -217,17 +217,39 @@ export class OllamaProvider implements LLMProvider {
       );
     }
 
-    const estimatedTokens = await this.estimate({
+    const estimatedMessageTokens = await this.estimate({
       credential: opts.credential,
       messages: opts.messages,
       model,
     });
+    // Computed once, reused for both sizing (below) and the request body
+    // (below that) — never estimate from `opts.tools` and serialize a
+    // separately-derived shape, or the two could drift.
+    const wireTools = opts.tools ? toOllamaTools(opts.tools) : undefined;
+    // `estimate()` (above) counts only `messages` + `system`, per its
+    // documented contract for the pre-run cost UI — it does NOT count
+    // `opts.tools`. But tool definitions ARE serialized onto the wire below
+    // (a real audit's `emit_findings` schema, generated via `z.toJSONSchema`
+    // in audit-engine.ts, is not small). Sizing `chooseNumCtx` from
+    // `estimatedMessageTokens` alone would silently undercount, which
+    // defeats the whole point of setting `num_ctx` explicitly (D-4: make
+    // truncation impossible, not merely unlikely) — a model near its
+    // ceiling could pass this check on the prompt alone and then still get
+    // silently truncated once the tool schema is added on the wire. Added
+    // here, at the sizing site, rather than widening `estimate()` itself:
+    // `estimate()`'s contract is documented as messages-only and also feeds
+    // the pre-run cost UI for every provider path, so widening it has a
+    // blast radius beyond this one call site. If this local addition is
+    // ever wrong (e.g. Ollama's tool wire format changes shape), the
+    // failure mode is contained to Ollama's own num_ctx sizing rather than
+    // corrupting the cost estimate other providers' UI reads too.
+    const toolTokens = wireTools ? Math.ceil(JSON.stringify(wireTools).length / 4) : 0;
     // Throws ModelNotAvailable (before any /api/chat call) when the
     // estimated prompt cannot fit even the model's architectural maximum —
     // see ollama-wire.ts. `info.contextLength` is that architectural
     // maximum, NOT a runtime window (Task 4); num_ctx below is the only
     // place the runtime window is ever set.
-    const numCtx = chooseNumCtx(estimatedTokens, info.contextLength);
+    const numCtx = chooseNumCtx(estimatedMessageTokens + toolTokens, info.contextLength);
 
     const res = await callOllama(
       `${baseUrl}/api/chat`,
@@ -239,7 +261,7 @@ export class OllamaProvider implements LLMProvider {
           stream: false,
           options: { num_ctx: numCtx, temperature: 0 },
           messages: opts.messages,
-          tools: opts.tools ? toOllamaTools(opts.tools) : undefined,
+          tools: wireTools,
         }),
       },
       fetch,

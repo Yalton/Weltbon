@@ -203,6 +203,69 @@ describe('OllamaProvider.runAudit', () => {
     expect(capturedBody?.options?.num_ctx).toBeGreaterThan(0);
   });
 
+  it('accounts for a large tool schema in num_ctx sizing, not just the prompt (fix round 1)', async () => {
+    // A regression that sizes num_ctx from opts.messages alone (ignoring
+    // opts.tools) would pass every assertion in the test above — tools ARE
+    // serialized onto the wire (see that test) but were NOT counted toward
+    // sizing until this fix. A model near its architectural ceiling could
+    // then pass chooseNumCtx on the prompt alone and still get silently
+    // truncated once the (uncounted) tool schema is added on the wire —
+    // exactly the failure D-4 exists to make impossible, not merely
+    // unlikely. Proven red/green against the fix: reverting the toolTokens
+    // addition in ollama.ts's runAudit makes withTools === withoutTools,
+    // failing this assertion.
+    const { getProvider } = await import('../src/providers/llm/index.js');
+
+    async function capturedNumCtx(tools?: unknown[]): Promise<number> {
+      let capturedBody: { options?: { num_ctx?: number } } | undefined;
+      vi.stubGlobal('fetch', async (url: string, init?: RequestInit) => {
+        if (typeof url === 'string' && url.includes('/api/chat')) {
+          capturedBody = JSON.parse(init?.body as string);
+          return new Response(JSON.stringify(chatFixture), {
+            status: 200,
+            headers: { 'Content-Type': 'application/json' },
+          });
+        }
+        return fakeFetch(routesWithChat(chatFixture))(url, init);
+      });
+      const p = getProvider('ollama');
+      await p.runAudit({
+        credential: { baseUrl: 'http://box:11434' },
+        model: 'qwen3:14b',
+        messages: [{ role: 'user', content: 'short prompt' }],
+        tools,
+      });
+      return capturedBody!.options!.num_ctx!;
+    }
+
+    const withoutTools = await capturedNumCtx(undefined);
+    // A JSON Schema shaped like what z.toJSONSchema would actually produce
+    // for a real audit tool — many properties, not a toy one-field object —
+    // so the size difference below cannot pass by accident or noise.
+    const bigProperties: Record<string, unknown> = {};
+    for (let i = 0; i < 40; i++) {
+      bigProperties[`field${i}`] = {
+        type: 'string',
+        description: `A fairly verbose description of field ${i}, long enough to matter.`,
+      };
+    }
+    const withTools = await capturedNumCtx([
+      {
+        name: 'emit_findings',
+        description: 'Call once when ready to deliver findings.',
+        input_schema: {
+          type: 'object',
+          properties: bigProperties,
+          required: Object.keys(bigProperties),
+        },
+      },
+    ]);
+
+    // The schema above stringifies to roughly 3500+ chars, ~900+ tokens at
+    // the chars/4 heuristic — comfortably bigger than any incidental noise.
+    expect(withTools - withoutTools).toBeGreaterThan(500);
+  });
+
   it('throws ModelNotAvailable when no model is selected, before any network call', async () => {
     const { getProvider } = await import('../src/providers/llm/index.js');
     const { LLMError } = await import('../src/providers/llm/interface.js');
