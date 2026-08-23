@@ -10,9 +10,20 @@
  * build no zips.
  *
  * ENTITY REJECTION IS CATEGORICAL, AND HAPPENS BEFORE THE PARSER RUNS.
- * See rejectDoctype(). Do not replace it with an expansion budget, and do not
- * move it onto the parser's `doctype` event: both let the parser start work on
- * a payload whose whole cost is in the work.
+ * See rejectDoctype(). It scans the WHOLE prolog — everything up to the root
+ * start tag — not a fixed-size prefix of it. The prolog is unbounded: comments,
+ * processing instructions and whitespace may all precede the DOCTYPE, so any
+ * fixed window is padded past trivially. Do not replace this with an expansion
+ * budget, and do not move it onto the parser's `doctype` event: both let the
+ * parser start work on a payload whose entire cost is in the work.
+ *
+ * It is worth being precise about what this defense does and does not rest on.
+ * saxes 6 happens to capture a DOCTYPE's internal subset as opaque text without
+ * ever populating its entity table, so a reference to a declared entity fails as
+ * "undefined entity" rather than expanding. That is a property of the vendor
+ * parser, it is undocumented, and no test of ours pins it — so it is a backstop,
+ * not the mechanism. A saxes upgrade or a parser swap could remove it silently.
+ * rejectDoctype() is what must hold.
  *
  * DELETIONS ARE DROPPED HERE, NOT DOWNSTREAM. w:delText never reaches the
  * output at all, so no consumer can forget to filter it. The failure mode this
@@ -86,10 +97,24 @@ export interface DocxDocument { blocks: DocxBlock[]; counters: DocxCounters }
  * generator, surfaced as a clear 400 — not silence, and not corruption.
  */
 function rejectDoctype(xml: string): void {
-  // Bounded prefix: a DTD is only legal in the prolog, so a match further in is
-  // ordinary text (a document that happens to discuss DOCTYPEs) and not ours to
-  // refuse. Scanning the whole string would make prose about XML unimportable.
-  const prolog = xml.slice(0, 4096);
+  // The scan is bounded by the PROLOG, not by a byte count. A DTD is only legal
+  // before the root element, so a match after it is ordinary text — a document
+  // that happens to discuss DOCTYPEs in its prose — and not ours to refuse.
+  //
+  // This was a fixed 4096-char window and that was wrong: nothing bounds the
+  // prolog's length. `<!-- 5000 chars of padding -->` then the DOCTYPE, or a
+  // long processing instruction, or plain whitespace, all push the construct
+  // past any fixed offset, and a window can also be straddled so the literal
+  // spans its edge. Every one of those parsed cleanly. Do not reintroduce a
+  // byte cap here "for performance": the search below stops at the first
+  // element start tag, which in a real document is within the first ~100 bytes.
+  //
+  // `<[A-Za-z_:]` is exactly the root start tag: a name may begin with a letter,
+  // an underscore or a colon, while `<!DOCTYPE`, `<!--` and `<?` all begin with
+  // a character the class excludes. So the boundary lands on the root element
+  // and nowhere earlier.
+  const rootAt = xml.search(/<[A-Za-z_:]/);
+  const prolog = rootAt === -1 ? xml : xml.slice(0, rootAt);
   if (/<!DOCTYPE/i.test(prolog) || /<!ENTITY/i.test(prolog)) {
     throw new DocxFormatError('Not a valid .docx (unsupported XML construct)');
   }

@@ -9,11 +9,13 @@
  */
 import { describe, it, expect } from 'vitest';
 import { parseDocumentXml } from '../src/services/ingest-docx/parse.js';
+import type { DocxRun } from '../src/services/ingest-docx/parse.js';
 import { DOCX_LIMITS } from '../src/services/ingest-docx/limits.js';
+import type { DocxLimits } from '../src/services/ingest-docx/limits.js';
 import { DocxFormatError } from '../src/services/ingest-docx/unpack.js';
 import { documentWith } from './helpers/docx-fixture.js';
 
-const p = (xml: string) => parseDocumentXml(documentWith(xml), DOCX_LIMITS);
+const p = (xml: string, limits: DocxLimits = DOCX_LIMITS) => parseDocumentXml(documentWith(xml), limits);
 
 describe('parseDocumentXml — entity expansion (T-35-02)', () => {
   it('rejects a DOCTYPE outright', () => {
@@ -191,5 +193,185 @@ describe('parseDocumentXml — non-text blocks', () => {
     expect(table.rows).toHaveLength(2);
     expect(table.rows[0].map((c) => c.runs.map((r) => r.text).join(''))).toEqual(['A', 'B']);
     expect(table.hasMergedCells).toBe(true);
+  });
+});
+
+/*
+ * ---------------------------------------------------------------------------
+ * Below this line: tests added in review, not part of the original brief.
+ *
+ * Two kinds. First, the padded-prolog bypasses — the original scan looked at a
+ * fixed 4096-char prefix, and the prolog has no length bound, so a comment, a
+ * processing instruction or plain whitespace pushed a DOCTYPE clean past it.
+ * Second, the anti-vacuity tests: the 20 tests above can ALL pass while a
+ * mechanism is dead, and these are the ones that notice. Each is annotated with
+ * the specific green-test-dead-mechanism state it rules out.
+ * ---------------------------------------------------------------------------
+ */
+
+/** The thrown message, or a sentinel. Four defenses share DocxFormatError, so
+ *  `toThrow(DocxFormatError)` alone cannot say which of them fired. */
+const msg = (fn: () => unknown): string => {
+  try { fn(); } catch (e) { return (e as Error).message; }
+  return '<<did not throw>>';
+};
+
+describe('parseDocumentXml — the prolog scan cannot be padded past (T-35-02)', () => {
+  // Nothing bounds the length of an XML prolog. Every payload here parsed
+  // cleanly against a fixed 4096-char window.
+  const REJECTED = 'Not a valid .docx (unsupported XML construct)';
+  const doc = '<w:document xmlns:w="x"><w:body><w:p><w:r><w:t>hi</w:t></w:r></w:p></w:body></w:document>';
+
+  it('rejects a DOCTYPE hidden behind a comment longer than any fixed window', () => {
+    const xml = `<?xml version="1.0"?><!--${'A'.repeat(5000)}-->` +
+                `<!DOCTYPE d [<!ENTITY a "AAAA">]>${doc}`;
+    expect(msg(() => parseDocumentXml(xml, DOCX_LIMITS))).toBe(REJECTED);
+  });
+
+  it('rejects a DOCTYPE hidden behind a long processing instruction', () => {
+    const xml = `<?xml version="1.0"?><?pad ${'A'.repeat(5000)}?>` +
+                `<!DOCTYPE d [<!ENTITY a "AAAA">]>${doc}`;
+    expect(msg(() => parseDocumentXml(xml, DOCX_LIMITS))).toBe(REJECTED);
+  });
+
+  it('rejects an external SYSTEM DOCTYPE hidden behind a comment (T-35-06)', () => {
+    const xml = `<?xml version="1.0"?><!--${'A'.repeat(5000)}-->` +
+                `<!DOCTYPE w:document SYSTEM "http://evil.example/x.dtd">${doc}`;
+    expect(msg(() => parseDocumentXml(xml, DOCX_LIMITS))).toBe(REJECTED);
+  });
+
+  it('rejects a DOCTYPE that straddles the old window boundary', () => {
+    // Padded so `<!DOCTYPE` starts at index 4090 and runs to 4098, spanning the
+    // old 4096 edge: the prolog slice ended mid-literal at `<!DOCTY`, so it
+    // matched neither the window nor anything after it. A cap does not merely
+    // let a payload past, it can be cut in half by one.
+    const xml = `${' '.repeat(4090)}<!DOCTYPE d [<!ENTITY a "AAAA">]>${doc}`;
+    expect(xml.indexOf('<!DOCTYPE')).toBe(4090);
+    expect(msg(() => parseDocumentXml(xml, DOCX_LIMITS))).toBe(REJECTED);
+  });
+
+  it('still does not refuse a document whose prose merely mentions a DOCTYPE', () => {
+    // The other direction, and the reason the scan is bounded by the prolog
+    // rather than run over the whole string: escaped prose about XML must
+    // remain importable. 201 blocks, not "did not throw" — a count, so a
+    // silently truncated parse could not satisfy it.
+    const pad = '<w:p><w:r><w:t>pad</w:t></w:r></w:p>'.repeat(200);
+    const doc2 = p(pad + '<w:p><w:r><w:t>&lt;!DOCTYPE evil&gt;</w:t></w:r></w:p>');
+    expect(doc2.blocks).toHaveLength(201);
+  });
+});
+
+describe('parseDocumentXml — hyperlinks and footnote references', () => {
+  // Task 6 consumes both of these and builds its own runs from object literals,
+  // so an error here would stay invisible until Task 7.
+  it('puts r:id and w:anchor on the runs inside w:hyperlink, and only those', () => {
+    const doc = p('<w:p><w:hyperlink r:id="rId9" w:anchor="sec1">' +
+                  '<w:r><w:t>link</w:t></w:r></w:hyperlink>' +
+                  '<w:r><w:t>plain</w:t></w:r></w:p>');
+    const runs = (doc.blocks[0] as { runs: DocxRun[] }).runs;
+    // Comparing the two runs rather than asserting one: a frame that is pushed
+    // and never popped would decorate 'plain' too, and asserting only the first
+    // run would never notice.
+    expect(runs.map((r) => r.text)).toEqual(['link', 'plain']);
+    expect(runs[0].hyperlink).toEqual({ relId: 'rId9', anchor: 'sec1' });
+    expect(runs[1].hyperlink).toBeNull();
+  });
+
+  it('reads an anchor-only hyperlink as a null relId, not an empty string', () => {
+    const doc = p('<w:p><w:hyperlink w:anchor="top"><w:r><w:t>up</w:t></w:r></w:hyperlink></w:p>');
+    expect((doc.blocks[0] as { runs: DocxRun[] }).runs[0].hyperlink)
+      .toEqual({ relId: null, anchor: 'top' });
+  });
+
+  it('emits w:footnoteReference as a numeric footnoteRef on its own marker run', () => {
+    const doc = p('<w:p><w:r><w:t>x</w:t><w:footnoteReference w:id="3"/></w:r></w:p>');
+    const runs = (doc.blocks[0] as { runs: DocxRun[] }).runs;
+    expect(runs.map((r) => r.text)).toEqual(['x', '']);
+    expect(runs[0].footnoteRef).toBeNull();
+    // A number, not the string '3'. Task 6 keys footnotes by string, so that
+    // lookup needs String(...); pinning the type here is what makes the
+    // mismatch visible at the seam instead of as a silently missing footnote.
+    expect(runs[1].footnoteRef).toBe(3);
+    expect(typeof runs[1].footnoteRef).toBe('number');
+  });
+
+  it('yields a null footnoteRef for a non-numeric w:id rather than NaN', () => {
+    // Known lossy edge, pinned deliberately: the reference is dropped with no
+    // warning. If that ever needs to become a counter, this test is where the
+    // decision is recorded.
+    const doc = p('<w:p><w:r><w:footnoteReference w:id="ftn1"/></w:r></w:p>');
+    expect((doc.blocks[0] as { runs: DocxRun[] }).runs[0].footnoteRef).toBeNull();
+  });
+});
+
+describe('parseDocumentXml — the caps fire for their own reason', () => {
+  // Both cap tests above only move a limit, so nothing in them distinguishes
+  // "the cap fired" from "the document was refused for some other reason" —
+  // and <w:x> repeated 300 times is an element the parser has never seen.
+  it('parses the same 300-deep XML cleanly when only the depth cap moves', () => {
+    const deep = '<w:x>'.repeat(300) + '</w:x>'.repeat(300);
+    expect(p(deep, { ...DOCX_LIMITS, docxXmlDepth: 1000 }).blocks).toEqual([]);
+    expect(msg(() => p(deep))).toBe('Not a valid .docx (XML nesting too deep)');
+  });
+
+  it('applies the depth cap exactly: 299 levels pass, 300 do not, at a cap of 301', () => {
+    const mk = (n: number) => '<w:x>'.repeat(n) + '</w:x>'.repeat(n);
+    const lim = { ...DOCX_LIMITS, docxXmlDepth: 301 }; // w:document + w:body = 2
+    expect(msg(() => p(mk(299), lim))).toBe('<<did not throw>>');
+    expect(msg(() => p(mk(300), lim))).toBe('Not a valid .docx (XML nesting too deep)');
+  });
+
+  it('parses the same 50 paragraphs to 50 blocks when only the block cap moves', () => {
+    const many = '<w:p><w:r><w:t>x</w:t></w:r></w:p>'.repeat(50);
+    expect(p(many).blocks).toHaveLength(50);
+    expect(msg(() => p(many, { ...DOCX_LIMITS, docxBlockCount: 10 })))
+      .toBe('Not a valid .docx (too many blocks)');
+  });
+
+  it('applies the block cap exactly: 10 blocks pass at a cap of 10, 11 do not', () => {
+    const mk = (n: number) => '<w:p><w:r><w:t>x</w:t></w:r></w:p>'.repeat(n);
+    const lim = { ...DOCX_LIMITS, docxBlockCount: 10 };
+    expect(msg(() => p(mk(10), lim))).toBe('<<did not throw>>');
+    expect(msg(() => p(mk(11), lim))).toBe('Not a valid .docx (too many blocks)');
+  });
+
+  it('gives each defense its own message', () => {
+    // Four defenses share one error class. Without this, a single over-broad
+    // reject — a depth cap of 1, say — would satisfy all four toThrow() tests.
+    expect(msg(() => parseDocumentXml('<?xml version="1.0"?><!DOCTYPE foo><w:document/>', DOCX_LIMITS)))
+      .toBe('Not a valid .docx (unsupported XML construct)');
+    expect(msg(() => parseDocumentXml('<w:document><w:body>', DOCX_LIMITS)))
+      .toBe('Not a valid .docx (malformed XML)');
+  });
+});
+
+describe('parseDocumentXml — the suppression stack is live, not incidental', () => {
+  it('captures w:delText as text when no w:del frame is open', () => {
+    // THE assertion that makes every deletion test above non-vacuous. If
+    // w:delText were simply never read — the obvious shortcut, and what the
+    // brief suggested — "drops w:del content" would still pass with the
+    // suppression stack deleted outright.
+    const doc = p('<w:p><w:r><w:delText>gone</w:delText></w:r></w:p>');
+    expect((doc.blocks[0] as { runs: DocxRun[] }).runs.map((r) => r.text).join(''))
+      .toBe('gone');
+  });
+
+  it('pops the w:del frame: text after a deletion survives', () => {
+    // A frame that is pushed and never popped silently swallows the remainder
+    // of any real document, and every one of the 20 brief tests still passes,
+    // because nothing follows the suppressed region in any of them.
+    const doc = p('<w:p><w:del><w:r><w:delText>gone</w:delText></w:r></w:del>' +
+                  '<w:r><w:t>after</w:t></w:r></w:p>');
+    expect((doc.blocks[0] as { runs: DocxRun[] }).runs.map((r) => r.text).join(''))
+      .toBe('after');
+  });
+
+  it('pops the w:txbxContent frame: the outer paragraph keeps taking runs', () => {
+    const doc = p('<w:p><w:r><w:pict><v:textbox><w:txbxContent>' +
+                  '<w:p><w:r><w:t>inside</w:t></w:r></w:p>' +
+                  '</w:txbxContent></v:textbox></w:pict></w:r>' +
+                  '<w:r><w:t>outside</w:t></w:r></w:p>');
+    const para = doc.blocks.find((b) => b.kind === 'paragraph') as { runs: DocxRun[] };
+    expect(para.runs.map((r) => r.text).join('')).toBe('outside');
   });
 });
