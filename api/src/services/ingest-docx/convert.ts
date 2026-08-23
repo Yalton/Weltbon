@@ -93,11 +93,17 @@ export interface ConvertResult {
  *
  * The set is the characters that change INLINE structure anywhere they appear:
  * `` \ * _ [ ] ` # | ~ < ``. `|` is here for table cells, `~` because
- * strikethrough is emitted by us, and `<` because an html node is not rendered
- * at all downstream — react-markdown runs without rehype-raw, so a Word
- * paragraph reading `<div>note</div>` loses the word "note" entirely rather
- * than showing it. `>` is NOT here: it is inert mid-line and is handled at
- * line start by escapeLineStarts, which keeps ordinary prose ("a > b") clean.
+ * strikethrough is emitted by us, and `<` because an html mdast node is
+ * DROPPED by a real consumer of entries.body: the PDF export pipeline
+ * (services/export/pdf/template.ts) is a bare
+ * remarkParse→remarkGfm→remarkRehype→rehypeStringify chain with no
+ * allowDangerousHtml, and `<div>note</div>` through it returns the empty
+ * string — the word "note" is gone. (The web editor's react-markdown is NOT
+ * the consumer that loses it: it disables HTML parsing outright and renders
+ * the literal text. The distinction is recorded because the first version of
+ * this comment named react-markdown from memory and was wrong.)
+ * `>` is NOT here: it is inert mid-line and is handled at line start by
+ * escapeLineStarts, which keeps ordinary prose ("a > b") clean.
  */
 export function escapeMarkdown(text: string): string {
   return text.replace(/[\\*_[\]`#|~<]/g, (ch) => `\\${ch}`);
@@ -117,25 +123,55 @@ export function escapeMarkdown(text: string): string {
  *              body comes out EMPTY.
  *   `- + >`    list item / block quote the author did not write.
  *   `1.` `1)`  ordered list, same.
- *   `===`      setext underline: turns the PRECEDING line into an H1.
- *   4+ spaces  indented code block, swallowing the paragraph whole.
+ *   `===` `--` setext underline: turns the PRECEDING line into a heading.
+ *              Reachable inside one paragraph, via a w:br: "Title\" + "===" 
+ *              renders as <h1>Title\</h1>.
+ *   4+ spaces  indented code block, swallowing the paragraph whole. A tab
+ *              counts as four, so it opens one on its own.
  *
- * The indent case cannot use a backslash — a space is not escapable ASCII
- * punctuation — so the first whitespace character becomes a numeric character
- * reference. That is a CommonMark character reference, not raw HTML, so it
- * survives a renderer with no rehype-raw and decodes back to the original
- * character.
+ * TWO THINGS THIS DELIBERATELY DOES NOT DO, both because the cost lands in
+ * the STORED SOURCE rather than in the rendering:
+ *
+ * 1. The indent is collapsed to three spaces, not escaped. A space is not
+ *    escapable ASCII punctuation; the trick that does work is a numeric
+ *    character reference (`&#32;`), and it renders correctly — but entry.body
+ *    is edited in a plain textarea (web/src/views/EntryEditor.tsx), so the
+ *    user would meet the literal `&#32;` and have to know what it is to
+ *    repair their own paragraph. CommonMark only escalates at four, so three
+ *    defuses it with no artifact at all. The trade is exact space-count
+ *    fidelity, which for incidental Word indentation is not an author-
+ *    meaningful signal.
+ *
+ * 2. `-`, `+` and the ordinal markers are escaped ONLY when whitespace or the
+ *    end of the line follows, which is what CommonMark requires of a list
+ *    marker. Escaping them unconditionally put a gratuitous backslash into
+ *    "1.1 Scope", "2.3.4 Details", "-5 degrees" and "1.5 kg" — numbered
+ *    clause headings are ordinary content in exactly the formal documents
+ *    this feature exists to ingest. `>` correctly needs no such check: `>x`
+ *    is a block quote immediately.
+ *
+ * Structure characters are tested after up to three leading spaces, because
+ * that much indentation does not stop a marker forming a block.
  */
 function escapeLineStarts(text: string): string {
   return text.split('\n').map((line) => {
-    if (/^(?: {4,}|\t)/.test(line)) {
-      return `&#${line[0] === '\t' ? 9 : 32};${line.slice(1)}`;
+    const split = /^([ \t]*)([\s\S]*)$/.exec(line);
+    if (split === null) return line;
+    let [, lead, rest] = split;
+    if (rest === '') return line;
+    if (lead.includes('\t') || lead.length >= 4) lead = '   ';
+
+    // A dash line that is only dashes and spaces is a thematic break or a
+    // setext underline, and needs no trailing whitespace to be one.
+    if (/^-(?=[ \t]|$)/.test(rest) || /^[- \t]+$/.test(rest)) return `${lead}\\${rest}`;
+    if (/^\+(?=[ \t]|$)/.test(rest)) return `${lead}\\${rest}`;
+    if (/^>/.test(rest)) return `${lead}\\${rest}`;
+    const ordered = /^(\d{1,9})[.)](?=[ \t]|$)/.exec(rest);
+    if (ordered !== null) {
+      return `${lead}${ordered[1]}\\${rest.slice(ordered[1].length)}`;
     }
-    if (/^[-+>]/.test(line)) return `\\${line}`;
-    const ordered = /^(\d{1,9})([.)])/.exec(line);
-    if (ordered !== null) return `${ordered[1]}\\${line.slice(ordered[1].length)}`;
-    if (/^=+\s*$/.test(line)) return `\\${line}`;
-    return line;
+    if (/^=+[ \t]*$/.test(rest)) return `${lead}\\${rest}`;
+    return `${lead}${rest}`;
   }).join('\n');
 }
 

@@ -392,13 +392,81 @@ describe('convertDocument — prose must not restructure the document', () => {
     expect(r.markdown).toContain('1\\. not an ordered list');
   });
 
-  it('keeps a deeply indented paragraph out of a code block', () => {
-    // Four leading spaces make an indented code block, which would swallow the
-    // prose whole. A backslash cannot escape a space, so the first one becomes
-    // a character reference — which remark decodes back to a space.
+  it('keeps a deeply indented paragraph out of a code block, leaving no artifact', () => {
+    // Four leading spaces make an indented code block, which swallows the
+    // prose whole. The indent is collapsed to three rather than escaped: a
+    // space is not escapable punctuation, and the character-reference trick
+    // that does work (&#32;) would sit in the stored source forever — the
+    // entry editor binds entry.body to a plain textarea, so the user would
+    // meet the literal entity and have to know what it was to delete it.
     const r = convert([para([run('    indented prose')])]);
-    expect(r.markdown).toContain('&#32;   indented prose');
+    expect(r.markdown).toContain('   indented prose');
+    expect(r.markdown).not.toContain('&#');
     expect(r.markdown).not.toMatch(/^ {4}/m);
+  });
+
+  it('collapses a leading tab, which also opens a code block', () => {
+    const r = convert([para([run('\tindented prose')])]);
+    expect(r.markdown).toContain('   indented prose');
+    expect(r.markdown).not.toContain('&#');
+    expect(r.markdown).not.toContain('\t');
+  });
+
+  it('leaves numbers and dashes alone when they cannot form a list', () => {
+    // CommonMark needs whitespace after the marker. Numbered clause headings
+    // are ordinary content in exactly the formal documents this feature
+    // exists to ingest, and a backslash in every one of them is noise the
+    // user then has to edit out by hand.
+    const r = convert([
+      para([run('1.1 Scope')]),
+      para([run('2.3.4 Details of the system')]),
+      para([run('-5 degrees outside')]),
+      para([run('1.5 kg of item')]),
+    ]);
+    expect(r.markdown).toContain('1.1 Scope');
+    expect(r.markdown).toContain('2.3.4 Details of the system');
+    expect(r.markdown).toContain('-5 degrees outside');
+    expect(r.markdown).toContain('1.5 kg of item');
+    expect(r.markdown).not.toContain('\\');
+  });
+
+  it('still escapes the same characters when they DO form a list', () => {
+    // The other half of the pair above: these two tests together are what
+    // stops the rule swinging back on either side.
+    const r = convert([
+      para([run('- item')]),
+      para([run('+ item')]),
+      para([run('1. item')]),
+      para([run('2) item')]),
+    ]);
+    expect(r.markdown).toContain('\\- item');
+    expect(r.markdown).toContain('\\+ item');
+    expect(r.markdown).toContain('1\\. item');
+    expect(r.markdown).toContain('2\\) item');
+  });
+
+  it('escapes a block quote marker even with no space after it', () => {
+    // `>` is the one marker that needs NO trailing whitespace: `>x` is a
+    // block quote immediately. This test exists because a mutation giving `>`
+    // the same whitespace requirement as `-` and `+` killed nothing.
+    const r = convert([para([run('>x quote')])]);
+    expect(r.markdown).toContain('\\>x quote');
+  });
+
+  it('escapes a list marker that is hiding behind an indent', () => {
+    // Up to three leading spaces do not stop a marker forming a block, and
+    // the indent collapse puts a four-space indent into exactly that range —
+    // so structure has to be tested after the indent, not at column 0.
+    const r = convert([para([run('    - indented list marker')])]);
+    expect(r.markdown).toContain('   \\- indented list marker');
+  });
+
+  it('escapes a dash rule that needs no trailing space to be one', () => {
+    // `---` is a thematic break with nothing after it, so the
+    // whitespace-required rule above must not be the only guard.
+    const r = convert([para([run('---')]), para([run('- - -')])]);
+    expect(r.markdown).toContain('\\---');
+    expect(r.markdown).toContain('\\- - -');
   });
 
   it('escapes a line of equals signs that would turn the line above into a heading', () => {
