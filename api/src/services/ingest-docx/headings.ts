@@ -34,6 +34,7 @@
  */
 import { SaxesParser } from 'saxes';
 import { DocxFormatError } from './unpack.js';
+import { rejectDoctype } from './parse.js';
 import type { DocxBlock, DocxParagraph } from './parse.js';
 
 export type HeadingLevel = 1 | 2 | 3 | 4 | 5 | 6;
@@ -74,8 +75,18 @@ interface RawStyleDef {
   basedOn: string | null;
 }
 
-/** Parses styles.xml into styleId → {name, basedOn}. No resolution here. */
+/**
+ * Parses styles.xml into styleId → {name, basedOn}. No resolution here.
+ *
+ * rejectDoctype FIRST. styles.xml is uploaded content, so it carries the same
+ * billion-laughs exposure document.xml does — and the defense is not ambient:
+ * it applies to a part only where it is called. The guard lives here rather
+ * than at the caller because this is the only place styles.xml is ever handed
+ * to a parser, so there is no second call site that could forget it.
+ */
 function parseRawStyleDefs(stylesXml: string): Map<string, RawStyleDef> {
+  rejectDoctype(stylesXml);
+
   const defs = new Map<string, RawStyleDef>();
   const parser = new SaxesParser({ xmlns: false });
 

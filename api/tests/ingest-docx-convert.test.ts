@@ -10,6 +10,9 @@ import { describe, it, expect } from 'vitest';
 import { convertDocument, escapeMarkdown } from '../src/services/ingest-docx/convert.js';
 import { buildStyleIndex } from '../src/services/ingest-docx/headings.js';
 import type { DocxDocument, DocxParagraph, DocxRun } from '../src/services/ingest-docx/parse.js';
+import { convertDocx } from '../src/services/ingest-docx/index.js';
+import { DocxFormatError } from '../src/services/ingest-docx/unpack.js';
+import { makeDocx, documentWith } from './helpers/docx-fixture.js';
 import { parseFrontmatter } from '../src/services/ingest-markdown.js';
 
 const NO_COUNTERS = {
@@ -521,6 +524,28 @@ describe('convertDocument — line breaks and caps', () => {
   });
 });
 
+describe('convertDocument — headings and redundant bold', () => {
+  it('drops bold when the whole heading is bold', () => {
+    // `# **The Vale**` is not merely noisy: inferTitle (ingest-markdown) and
+    // ingest-split's headingText both slice the H1 from the SOURCE, markup
+    // included, so the entry would be titled literally `**The Vale**`.
+    const r = convert([
+      para([run('The Vale', { bold: true })], { styleId: 'Heading1' }),
+    ]);
+    expect(r.markdown).toContain('# The Vale');
+    expect(r.markdown).not.toContain('**');
+  });
+
+  it('keeps bold that covers only part of the heading', () => {
+    // A contrast the author drew inside the line is their text's meaning, not
+    // our duplicated formatting.
+    const r = convert([
+      para([run('The '), run('Vale', { bold: true })], { styleId: 'Heading1' }),
+    ]);
+    expect(r.markdown).toContain('# The **Vale**');
+  });
+});
+
 describe('convertDocument — list indentation', () => {
   it('indents a nested ordered list by the width of its marker', () => {
     // Two spaces is correct content-indent for `-` and wrong for `1.`, which
@@ -538,5 +563,181 @@ describe('convertDocument — list indentation', () => {
       para([run('b')], { numbering: { numId: '1', ilvl: 1 } }),
     ]);
     expect(r.markdown).toContain('- a\n  - b');
+  });
+});
+
+/**
+ * Issue #35 (DOCX-02 / DOCX-07 / DOCX-09) — convertDocx end to end.
+ *
+ * This block is about the WIRING, not about any single module's behaviour:
+ * every assertion here fails if index.ts drops a part on the floor, and each
+ * of those failures is otherwise silent (a missing numbering.xml parse turns
+ * an ordered list into a bullet list, a missing [Content_Types].xml parse
+ * leaves the manifest's contentType null, and neither throws).
+ */
+describe('convertDocx — end to end', () => {
+  it('converts a styled document to Markdown headings', async () => {
+    const buf = await makeDocx({
+      documentXml: documentWith(
+        '<w:p><w:pPr><w:pStyle w:val="Heading1"/></w:pPr><w:r><w:t>The Vale</w:t></w:r></w:p>' +
+        '<w:p><w:r><w:t>Cold and high.</w:t></w:r></w:p>',
+      ),
+    });
+    const out = await convertDocx(buf, { promoteHeadings: false });
+    expect(out.markdown).toContain('# The Vale');
+    expect(out.markdown).toContain('Cold and high.');
+    expect(out.headings.styled).toBe(1);
+    expect(out.headings.promoted).toBe(false);
+  });
+
+  it('reports unstyled candidates without promoting them by default', async () => {
+    const body =
+      '<w:p><w:r><w:rPr><w:b/><w:sz w:val="32"/></w:rPr><w:t>The Vale</w:t></w:r></w:p>' +
+      '<w:p><w:r><w:rPr><w:sz w:val="22"/></w:rPr><w:t>Cold and high.</w:t></w:r></w:p>';
+    const buf = await makeDocx({ documentXml: documentWith(body) });
+
+    const off = await convertDocx(buf, { promoteHeadings: false });
+    expect(off.headings.unstyledCandidates).toBe(1);
+    expect(off.headings.promoted).toBe(false);
+    expect(off.markdown).not.toContain('# The Vale');
+    expect(off.warnings.some((w) => w.code === 'unstyled-headings-detected')).toBe(true);
+
+    const on = await convertDocx(buf, { promoteHeadings: true });
+    expect(on.headings.promoted).toBe(true);
+    expect(on.markdown).toContain('# The Vale');
+  });
+
+  it('propagates a DocxFormatError from a malformed archive', async () => {
+    await expect(convertDocx(Buffer.from('nope'), { promoteHeadings: false }))
+      .rejects.toThrow(DocxFormatError);
+  });
+
+  // DOCX-09's gate, and the reason it lives in index.ts: detectUnstyledHeadings
+  // is style-blind (hand it a Heading1 paragraph and it will still rank it), so
+  // nothing below this layer can refuse to promote. A document that mixes real
+  // Heading styles with incidental bold lines is already structured; promoting
+  // on top of it invents boundaries the author never wrote.
+  it('refuses to promote when the deterministic pass already found headings', async () => {
+    const buf = await makeDocx({
+      documentXml: documentWith(
+        '<w:p><w:pPr><w:pStyle w:val="Heading1"/></w:pPr><w:r><w:t>Chapter One</w:t></w:r></w:p>' +
+        '<w:p><w:r><w:rPr><w:b/><w:sz w:val="32"/></w:rPr><w:t>The Vale</w:t></w:r></w:p>' +
+        '<w:p><w:r><w:rPr><w:sz w:val="22"/></w:rPr><w:t>Cold and high.</w:t></w:r></w:p>',
+      ),
+    });
+
+    const out = await convertDocx(buf, { promoteHeadings: true });
+    expect(out.headings.styled).toBe(1);
+    expect(out.headings.promoted).toBe(false);
+    expect(out.markdown).toContain('# Chapter One');
+    expect(out.markdown).not.toContain('# The Vale');
+    // Still bold prose, exactly as the author wrote it.
+    expect(out.markdown).toContain('**The Vale**');
+    // And the affordance is not offered, because accepting it would do
+    // nothing — the gate would refuse the promotion the UI just promised.
+    expect(out.headings.unstyledCandidates).toBe(0);
+    expect(out.warnings.some((w) => w.code === 'unstyled-headings-detected')).toBe(false);
+  });
+
+  // DOCX-07: the manifest names contentType, and [Content_Types].xml is the
+  // only source for it. Nothing decompresses a media byte to get there.
+  it('fills the media manifest contentType from [Content_Types].xml', async () => {
+    const buf = await makeDocx({
+      documentXml: documentWith(
+        '<w:p><w:r><w:drawing><a:blip r:embed="rId5"/></w:drawing></w:r></w:p>',
+      ),
+      relsXml:
+        '<?xml version="1.0"?><Relationships>' +
+        '<Relationship Id="rId5" Type="http://schemas.openxmlformats.org/officeDocument/2006/relationships/image" Target="media/image1.png"/>' +
+        '</Relationships>',
+      contentTypesXml:
+        '<?xml version="1.0"?><Types>' +
+        '<Default Extension="png" ContentType="image/png"/>' +
+        '<Override PartName="/word/media/logo.jpeg" ContentType="image/jpeg"/>' +
+        '</Types>',
+      extraEntries: [{ name: 'word/media/image1.png', content: Buffer.alloc(64, 7) }],
+    });
+
+    const out = await convertDocx(buf, { promoteHeadings: false });
+    expect(out.media).toHaveLength(1);
+    expect(out.media[0].name).toBe('word/media/image1.png');
+    expect(out.media[0].contentType).toBe('image/png');
+    expect(out.media[0].declaredBytes).toBe(64);
+    expect(out.markdown).toContain('![image omitted: image1.png]()');
+  });
+
+  // Carry: rejectDoctype is the billion-laughs defense, and it applies to a
+  // part only if that part is routed through it. styles.xml is parsed by
+  // buildStyleIndex with its own SaxesParser, and an attacker controls it
+  // exactly as much as they control document.xml.
+  it('rejects a DOCTYPE in styles.xml, not only in document.xml', async () => {
+    const buf = await makeDocx({
+      documentXml: documentWith('<w:p><w:r><w:t>Hi</w:t></w:r></w:p>'),
+      stylesXml: '<!DOCTYPE lol [<!ENTITY a "aaaaaaaaaa">]><w:styles/>',
+    });
+    await expect(convertDocx(buf, { promoteHeadings: false }))
+      .rejects.toThrow(/unsupported XML construct/);
+  });
+
+  it('rejects a DOCTYPE in docProps/core.xml', async () => {
+    const buf = await makeDocx({
+      documentXml: documentWith('<w:p><w:r><w:t>Hi</w:t></w:r></w:p>'),
+      corePropsXml: '<!DOCTYPE lol [<!ENTITY a "aaaaaaaaaa">]><cp:coreProperties/>',
+    });
+    await expect(convertDocx(buf, { promoteHeadings: false }))
+      .rejects.toThrow(/unsupported XML construct/);
+  });
+
+  it('resolves list format from numbering.xml', async () => {
+    const buf = await makeDocx({
+      documentXml: documentWith(
+        '<w:p><w:pPr><w:numPr><w:ilvl w:val="0"/><w:numId w:val="3"/></w:numPr></w:pPr>' +
+        '<w:r><w:t>First</w:t></w:r></w:p>',
+      ),
+      numberingXml:
+        '<w:numbering>' +
+        '<w:abstractNum w:abstractNumId="7"><w:lvl w:ilvl="0"><w:numFmt w:val="decimal"/></w:lvl></w:abstractNum>' +
+        '<w:num w:numId="3"><w:abstractNumId w:val="7"/></w:num>' +
+        '</w:numbering>',
+    });
+    const out = await convertDocx(buf, { promoteHeadings: false });
+    // Bullet is the fallback for an unresolvable list, so "- First" here means
+    // numbering.xml was never read rather than that it said "bullet".
+    expect(out.markdown).toContain('1. First');
+  });
+
+  it('wires rels, footnotes and core properties into the conversion', async () => {
+    const buf = await makeDocx({
+      documentXml: documentWith(
+        '<w:p><w:hyperlink r:id="rId9"><w:r><w:t>the vale</w:t></w:r></w:hyperlink>' +
+        '<w:r><w:footnoteReference w:id="2"/></w:r></w:p>',
+      ),
+      relsXml:
+        '<?xml version="1.0"?><Relationships>' +
+        '<Relationship Id="rId9" Type="http://schemas.openxmlformats.org/officeDocument/2006/relationships/hyperlink" Target="https://example.com/vale" TargetMode="External"/>' +
+        '</Relationships>',
+      footnotesXml:
+        '<w:footnotes>' +
+        '<w:footnote w:type="separator" w:id="-1"><w:p><w:r><w:separator/></w:r></w:p></w:footnote>' +
+        '<w:footnote w:id="2"><w:p><w:r><w:t>A cold place.</w:t></w:r></w:p></w:footnote>' +
+        '</w:footnotes>',
+      corePropsXml:
+        '<?xml version="1.0"?><cp:coreProperties>' +
+        '<dc:title>Document1</dc:title><dc:creator>Ariel</dc:creator>' +
+        '<dcterms:created>2026-08-22T10:00:00Z</dcterms:created>' +
+        '</cp:coreProperties>',
+    });
+
+    const out = await convertDocx(buf, { promoteHeadings: false });
+    expect(out.markdown).toContain('[the vale](https://example.com/vale)');
+    expect(out.markdown).toContain('[^2]');
+    expect(out.markdown).toContain('[^2]: A cold place.');
+    // DOCX-01: core props land under a namespaced `docx:` key, never as a
+    // top-level `title:` that would beat the body's first H1.
+    expect(out.markdown).toContain('docx:');
+    expect(out.markdown).toContain('creator: Ariel');
+    expect(out.markdown).not.toMatch(/^title:/m);
+    const parsed = parseFrontmatter(out.markdown);
+    expect((parsed.data as { docx?: Record<string, string> }).docx?.title).toBe('Document1');
   });
 });

@@ -98,8 +98,17 @@ export interface DocxDocument { blocks: DocxBlock[]; counters: DocxCounters }
  *
  * The cost if this reasoning is wrong is a refused file from some exotic
  * generator, surfaced as a clear 400 — not silence, and not corruption.
+ *
+ * EXPORTED, AND EVERY PARSED PART MUST GO THROUGH IT. document.xml is not the
+ * only attacker-controlled XML in a .docx: styles.xml, numbering.xml,
+ * footnotes.xml, endnotes.xml, document.xml.rels, core.xml and
+ * [Content_Types].xml are all written by whoever uploaded the file, and a
+ * billion-laughs payload in any of them costs exactly as much. A part parsed
+ * with a bare SaxesParser is simply not covered by this defense — nothing
+ * fails, nothing warns, the guard just is not there. If you add a parser for a
+ * new part, call this first.
  */
-function rejectDoctype(xml: string): void {
+export function rejectDoctype(xml: string): void {
   // Walk the prolog item by item. Two weaker versions of this check shipped and
   // both were bypassable, in ways worth recording so neither comes back:
   //

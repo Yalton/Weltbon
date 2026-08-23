@@ -40,10 +40,12 @@ export interface DocxWarning { code: DocxWarningCode; message: string; count: nu
  * is deliberately NOT called `bytes`: nothing here was decompressed, and a name
  * suggesting otherwise would invite a future reader to trust it as a real size.
  *
- * `contentType` has no source in ConvertOptions today and is therefore always
- * null; `[Content_Types].xml` is unpacked but not parsed on this branch. The
- * field is kept because the spec's manifest shape names it and the seam is
- * where a future extraction change will fill it in.
+ * `contentType` has no source in ConvertOptions and is therefore always null
+ * AS EMITTED HERE. index.ts fills it in from `[Content_Types].xml` after this
+ * function returns — that part is a package-level concern (extension defaults
+ * plus part-name overrides), and threading it through this pure model→Markdown
+ * pass would buy nothing but a second thing to keep in sync. Read the manifest
+ * from convertDocx, not from convertDocument, if you want the type populated.
  */
 export interface DocxMediaRef {
   blockIndex: number; relId: string | null; contentType: string | null;
@@ -338,9 +340,26 @@ function renderParagraph(
   if (styled !== null) counts.styled += 1;
 
   if (level !== null) {
+    // A heading whose runs are ALL bold drops the bold. `# **The Vale**` is not
+    // cosmetically noisy, it is corrupting: inferTitle (ingest-markdown.ts) and
+    // ingest-split's headingText both take the H1's SOURCE SLICE, markup
+    // included, so the entry's title comes out literally `**The Vale**`. Every
+    // heuristically promoted heading hits this case by construction — DOCX-09
+    // rule 5 requires a uniform emphatic signature — and Word's own Heading
+    // styles emit run-level bold often enough that styled documents hit it too.
+    //
+    // Only when EVERY text-bearing run is bold. A partially bold heading is a
+    // contrast the author drew inside the line, and dropping that would be
+    // discarding their text's meaning rather than de-duplicating ours. Italic
+    // and strike are kept for the same reason at any coverage: `## The *Vale*
+    // chronicles` distinguishes a work's title, whereas bold inside a heading
+    // says only "this is a heading", which the `#` already said.
+    const bolds = block.runs.filter((r) => r.text !== '');
+    const allBold = bolds.length > 0 && bolds.every((r) => r.bold);
+    const runs = allBold ? block.runs.map((r) => ({ ...r, bold: false })) : block.runs;
     // singleLine: a heading cannot contain a line break without ending itself,
     // so a w:br inside one degrades to a space.
-    const text = renderRuns(block.runs, ctx, true).trim();
+    const text = renderRuns(runs, ctx, true).trim();
     if (text === '') return null;
     counts.headings += 1;
     return { text: `${'#'.repeat(level)} ${text}`, listItem: false };
