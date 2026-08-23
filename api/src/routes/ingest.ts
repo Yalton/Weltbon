@@ -52,6 +52,8 @@ import {
   TitleCollisionError,
   CommitSizeError,
 } from '../services/ingest-commit.js';
+import { convertDocx, DocxFormatError, type DocxConversion } from '../services/ingest-docx/index.js';
+import { DOCX_LIMITS } from '../services/ingest-docx/limits.js';
 import type { AuthVariables } from '../middleware/auth.js';
 
 type AppEnv = { Variables: AuthVariables };
@@ -62,6 +64,26 @@ const MAX_FILES = 1000;
 const MAX_FILE_SIZE = 1 * 1024 * 1024;
 const MAX_ZIP_SIZE = 50 * 1024 * 1024;
 const MAX_TOTAL_UNCOMPRESSED = 100 * 1024 * 1024;
+
+// Issue #35 (DOCX-01). Case-insensitive: Word/Finder/Explorer all tolerate
+// `.DOCX`, and matching only the lowercase form would silently route those
+// uploads through the plain-text .md decode path instead of convertDocx.
+// Exported so the wiring test (ingest-docx-route-wiring.test.ts, which cannot
+// carry a DB) can exercise the ACTUAL predicate rather than a re-implemented
+// copy that could drift from it.
+export function isDocxFile(name: string): boolean {
+  return name.toLowerCase().endsWith('.docx');
+}
+
+// Issue #35 (DOCX-01). THE LOAD-BEARING REWRITE: isMarkdownFile() gates
+// parseBatch, so a FileInput still named .docx would be silently counted into
+// non_markdown_files_skipped and the converted document would vanish from the
+// preview with no error — the same failure mode as the .markdown bug fixed
+// earlier on this branch (DOCX-13). Exported for the same reason as
+// isDocxFile above: the wiring test must exercise this exact function.
+export function docxToMarkdownPath(name: string): string {
+  return name.replace(/\.docx$/i, '.md');
+}
 
 // ─── Path / response schemas ────────────────────────────────────────────────
 
@@ -101,6 +123,8 @@ const ingestPreviewSchema = z.object({
     hidden_paths_filtered: z.number(),
     duplicate_titles_in_batch: z.number(),
     unresolved_wikilinks: z.number(),
+    // #35 (DOCX-10).
+    docx_files_converted: z.number(),
   }),
   entries: z.array(previewEntrySchema),
   warnings: z.array(z.object({ file: z.string(), message: z.string() })),
@@ -113,6 +137,38 @@ const ingestPreviewSchema = z.object({
     detected: z.number().int().min(1).max(6).nullable(),
     applied: z.number().int().min(1).max(6).nullable(),
     counts: z.record(z.string(), z.number().int()),
+  }),
+  // #35 (DOCX-10). One row per converted .docx part, keyed by the ORIGINAL
+  // .docx path — DOCX-01 rewrites it to .md before parseBatch runs, and a
+  // warning naming chapter.md would name a file the user never uploaded.
+  docx: z.object({
+    files: z.array(
+      z.object({
+        path: z.string(),
+        headings: z.object({
+          styled: z.number().int(),
+          // POST-GATE, not a raw heuristic count: this is already 0 whenever
+          // styled headings exist, because promotion is refused in that case
+          // (DOCX-09) and offering a control that provably changes nothing
+          // would be worse than not offering it. Do not re-derive this
+          // client-side by counting bold paragraphs — the gate's decision
+          // lives only here.
+          unstyledCandidates: z.number().int().openapi({
+            description:
+              'What the heuristic would promote — already 0 whenever styled ' +
+              'headings exist, because promotion is refused once the ' +
+              'deterministic pass found any heading at all (DOCX-09). This ' +
+              'is the post-gate count, not a raw heuristic count: do not ' +
+              're-derive it client-side by counting bold paragraphs.',
+          }),
+          promoted: z.boolean(),
+        }),
+        // DOCX-07 manifest length. Bytes and names are never present here —
+        // the manifest text originates in the uploaded archive and is
+        // untrusted; only the count crosses into this response.
+        mediaCount: z.number().int(),
+      }),
+    ),
   }),
 });
 
@@ -165,6 +221,17 @@ const multipartBodySchema = z.object({
       'Absent = auto-detect. An explicit 1-6 overrides detection. The literal ' +
       'value `null` = do not split, even when a level was detected.',
   }),
+  // #35 (DOCX-10). Multipart text field, so this is a string or absent here —
+  // never a JS boolean. Same reason split_level above is z.any(): the
+  // pre-handler validator runs against the wire value, and a z.boolean() would
+  // reject the string "true" before the handler ever saw it.
+  docx_promote_headings: z.any().optional().openapi({
+    type: 'boolean',
+    description:
+      'Absent = only Word Heading styles and outline levels become headings. ' +
+      '"true" additionally promotes heading-shaped unstyled paragraphs, and ' +
+      'only when the document has no styled headings at all.',
+  }),
 });
 
 // ─── Route definition ────────────────────────────────────────────────────────
@@ -175,7 +242,7 @@ const ingestRoute = createRoute({
   tags: ['Ingest'],
   summary: 'Parse a markdown batch (preview only — no DB writes)',
   description:
-    'Accepts a multipart upload of either `files[]` (one part per .md file) OR a single `zip` part. Runs the deterministic Obsidian-flavored parser and returns the IngestPreview JSON. NO database writes occur — Phase 12 owns the commit. Enforces D-15 batch limits (1000 files / 1 MB per .md / 50 MB ZIP / 100 MB total uncompressed).',
+    'Accepts a multipart upload of either `files[]` (one part per .md or .docx file) OR a single `zip` part (.docx inside a zip is not supported — DOCX-08). Runs the deterministic Obsidian-flavored parser and returns the IngestPreview JSON. NO database writes occur — Phase 12 owns the commit. Enforces D-15 batch limits (1000 files / 1 MB per .md / 50 MB ZIP / 100 MB total uncompressed) plus #35\'s own .docx caps (25 MB per file / 50 .docx parts per batch).',
   security: [{ bearerAuth: [] }],
   request: {
     params: uidParams,
@@ -195,7 +262,8 @@ const ingestRoute = createRoute({
     },
     400: {
       content: { 'application/json': { schema: errorSchema } },
-      description: 'Invalid upload (no files+zip, both supplied, or non-zip bytes).',
+      description:
+        'Invalid upload (no files+zip, both supplied, non-zip bytes, invalid split_level/docx_promote_headings), or #35 (DOCX-11): a .docx part we will not parse (not a valid archive, missing word/document.xml, malformed XML, DOCTYPE/ENTITY present, or a duplicate allowlisted part).',
     },
     401: {
       content: { 'application/json': { schema: errorSchema } },
@@ -212,7 +280,7 @@ const ingestRoute = createRoute({
     413: {
       content: { 'application/json': { schema: errorSchema } },
       description:
-        'Batch limit exceeded. Body names which limit (file_count, zip_size, file_size, total_uncompressed_size).',
+        'Batch limit exceeded. Body names which limit (file_count, zip_size, file_size, total_uncompressed_size, or #35\'s docx_size / docx_count / docx_entry_count / docx_part_size / docx_total_uncompressed).',
     },
     500: {
       content: { 'application/json': { schema: errorSchema } },
@@ -405,6 +473,23 @@ export const ingestRoutes = new OpenAPIHono<AppEnv>()
       requestedSplitLevel = n as SplitLevel;
     }
 
+    // #35 (DOCX-10). Same reasoning as split_level above: a multipart field
+    // arrives as a string, never a JS boolean. Two states, not three — unlike
+    // split_level, promotion already defaults to off (DOCX-09), so there is
+    // no distinct "explicit off" to represent; only absent and "true" mean
+    // anything, and anything else is a 400 rather than a silent no-op.
+    const promoteHeadingsField = body['docx_promote_headings'];
+    const promoteHeadingsRaw = Array.isArray(promoteHeadingsField)
+      ? promoteHeadingsField[0]
+      : promoteHeadingsField;
+    let promoteDocxHeadings = false;
+    if (promoteHeadingsRaw !== undefined) {
+      if (promoteHeadingsRaw !== 'true') {
+        return c.json({ error: 'Invalid docx_promote_headings' }, 400);
+      }
+      promoteDocxHeadings = true;
+    }
+
     // Normalise to arrays.
     const filesArr: File[] = !filesField
       ? []
@@ -436,6 +521,11 @@ export const ingestRoutes = new OpenAPIHono<AppEnv>()
 
     // 4. Materialise FileInput[] for parseBatch, enforcing the D-15 caps.
     //    Each branch wraps in try/catch so BatchLimitError → 413.
+    // #35 (DOCX-10): accumulates one entry per converted .docx part, keyed by
+    // the ORIGINAL .docx name, so the response can be built after `inputs` is
+    // done — docx.files reports the name the user uploaded, never the
+    // rewritten .md path (see the rewrite comment below).
+    const docxConversions: Array<{ path: string; conversion: DocxConversion }> = [];
     let inputs: FileInput[];
     try {
       if (zipFile) {
@@ -468,8 +558,38 @@ export const ingestRoutes = new OpenAPIHono<AppEnv>()
           throw new BatchLimitError('file_count', MAX_FILES);
         }
 
+        // #35 (DOCX-06): docx_count is its own cap, counted before any
+        // conversion runs. Conversion is CPU-bound, not just byte-bound, and
+        // a Word document costs far more per part than a markdown file does —
+        // MAX_FILES does not bound that cost.
+        const docxPartCount = filesArr.filter((f) => isDocxFile(f.name)).length;
+        if (docxPartCount > DOCX_LIMITS.docxCount) {
+          throw new BatchLimitError('docx_count', DOCX_LIMITS.docxCount);
+        }
+
         inputs = await Promise.all(
           filesArr.map(async (f) => {
+            if (isDocxFile(f.name)) {
+              // T-11-09 shape: cap on File.size BEFORE arrayBuffer. A .docx
+              // has its own, larger cap because MAX_FILE_SIZE (1 MB) is sized
+              // for markdown, and a Word file is far heavier per word than
+              // the prose it holds.
+              if (f.size > DOCX_LIMITS.docxSize) {
+                throw new BatchLimitError('docx_size', DOCX_LIMITS.docxSize);
+              }
+              const conversion = await convertDocx(
+                Buffer.from(await f.arrayBuffer()),
+                { promoteHeadings: promoteDocxHeadings },
+              );
+              docxConversions.push({ path: f.name, conversion });
+              // LOAD-BEARING, not cosmetic: isMarkdownFile() gates parseBatch,
+              // so a FileInput still named .docx here would be silently
+              // counted into non_markdown_files_skipped and the whole
+              // converted document would vanish from the preview with no
+              // error — the same failure mode as the .markdown bug fixed
+              // earlier on this branch (DOCX-13).
+              return { path: docxToMarkdownPath(f.name), content: conversion.markdown };
+            }
             // T-11-02: per-file cap BEFORE arrayBuffer to keep peak memory bounded.
             if (f.size > MAX_FILE_SIZE) {
               throw new BatchLimitError('file_size', MAX_FILE_SIZE);
@@ -486,6 +606,14 @@ export const ingestRoutes = new OpenAPIHono<AppEnv>()
     } catch (err) {
       if (err instanceof BatchLimitError) {
         return c.json({ error: err.message }, 413);
+      }
+      // #35 (DOCX-11): 400, not 500 — this means "we will not parse this",
+      // not "too big" (that's BatchLimitError above) and not "unexpected"
+      // (that's the 500 below). The module's message is already the
+      // actionable, neutral text T-11-04 requires (e.g. "Not a valid .docx
+      // (missing word/document.xml)"); never collapse it to "Invalid file".
+      if (err instanceof DocxFormatError) {
+        return c.json({ error: err.message }, 400);
       }
       // Unknown error during ZIP unpack or buffer materialisation.
       // T-11-04: do not echo internal details; map to 500 with neutral text.
@@ -568,12 +696,42 @@ export const ingestRoutes = new OpenAPIHono<AppEnv>()
       return c.json({ error: 'Internal error' }, 500);
     }
 
+    // #35 (DOCX-05/DOCX-10): per-file conversion warnings append to the
+    // EXISTING warnings array (same { file, message } shape the review UI
+    // already renders for markdown) rather than growing a second, duplicate
+    // display path inside `docx`. `file` is the original .docx path, matching
+    // docx.files[].path below.
+    const docxWarnings = docxConversions.flatMap(({ path, conversion }) =>
+      conversion.warnings.map((w) => ({ file: path, message: w.message })),
+    );
+
+    // #35 (DOCX-10). `path` is the ORIGINAL .docx name — DOCX-01 rewrites it
+    // to .md before parseBatch sees it, and reporting against a chapter.md
+    // the user never uploaded would name a file that does not exist from
+    // their side. `headings` is passed through convertDocx's result
+    // unchanged: unstyledCandidates is already the post-gate count (0
+    // whenever styled headings exist), and re-deriving it here would risk
+    // reintroducing the raw count DOCX-09's gate exists to suppress.
+    const docxFiles = docxConversions.map(({ path, conversion }) => ({
+      path,
+      headings: conversion.headings,
+      mediaCount: conversion.media.length,
+    }));
+
     return c.json(
       {
         ...preview,
+        warnings: [...preview.warnings, ...docxWarnings],
+        summary: {
+          ...preview.summary,
+          // #35 (DOCX-10).
+          docx_files_converted: docxConversions.length,
+        },
         // #37 SP-04: `detected` always reports what the document looks like;
         // `applied` reports what THIS preview actually used.
         split: { eligible, detected, applied, counts },
+        // #35 (DOCX-10).
+        docx: { files: docxFiles },
       },
       200,
     );
