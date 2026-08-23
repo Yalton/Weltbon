@@ -58,15 +58,13 @@ export interface DocxMediaRef {
 
 export interface ConvertOptions {
   styleIndex: StyleIndex;
-  /** Block index → level, from the opt-in heuristic. Consulted only where the
-   *  deterministic pass resolved nothing; the caller decides whether to run it
-   *  at all (headings.ts enforces no such gate itself). */
+  /** Block index → level, from the opt-in heuristic. Consulted only for a
+   *  paragraph the deterministic pass did not already resolve; the caller
+   *  owns document-level eligibility (headings.ts enforces no gate itself). */
   promotedHeadings: Map<number, HeadingLevel>;
   /** relId → relationship target, from word/_rels/document.xml.rels. */
   rels: Map<string, string>;
-  /** Footnote/endnote `w:id` AS IT APPEARS IN THE XML → note text. Keyed by
-   *  string, and looked up with String(run.footnoteRef): the id is an XML
-   *  attribute, and a number-keyed map would miss every lookup silently. */
+  /** Footnote/endnote `w:id` AS IT APPEARS IN THE XML → note text. */
   footnotes: Map<string, string>;
   /** Central-directory rows for word/media/*. No bytes, ever. */
   mediaEntries: Array<{ name: string; declaredBytes: number }>;
@@ -373,9 +371,7 @@ function renderRun(
   if (r.tab) return ' ';
   if (plain && r.footnoteRef !== null) return '';
   if (r.footnoteRef !== null) {
-    // String(): `footnotes` is keyed by the raw XML w:id. A number key here
-    // misses every entry and drops the note with no warning at all.
-    const id = String(r.footnoteRef);
+    const id = r.footnoteRef;
     if (!ctx.footnoteOrder.includes(id)) ctx.footnoteOrder.push(id);
     return `[^${id}]`;
   }
@@ -447,11 +443,14 @@ function renderParagraph(
 function renderTable(block: DocxTable, ctx: RenderContext): Chunk | null {
   if (block.rows.length === 0) return null;
   if (block.hasMergedCells) ctx.bump('table-flattened');
-  // A reduce, NOT `Math.max(...rows.map(...))`. A spread past ~125 000
-  // arguments is a hard V8 RangeError ("Maximum call stack size exceeded"),
-  // and the route has no branch for that, so a 1 678-byte .docx holding
-  // 130 000 rows left as a 500 instead of DOCX-11's 400. parse.ts now charges
-  // rows and cells against docxBlockCount so such a table is refused upstream,
+  // A reduce, NOT `Math.max(...rows.map(...))`. A sufficiently wide spread can
+  // exhaust V8's stack, but the boundary depends on current stack depth:
+  // measured failures began at 125,284 arguments at top level, 121,684 at
+  // +200 frames, and 89,284 at +2,000. The 130,000-row regression is beyond
+  // every observation. The route has no branch for that RangeError, so a tiny
+  // compressed .docx could become a 500 instead of DOCX-11's 400. parse.ts
+  // now charges rows and cells against docxBlockCount, so such a table is
+  // refused upstream,
   // but this must not depend on that: convertDocument is exported and is
   // driven directly with hand-built models by most of its tests, and a width
   // computation that can throw on row count is a bug here whatever the parser

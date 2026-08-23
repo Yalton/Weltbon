@@ -108,10 +108,12 @@ describe('convertDocument — blocks', () => {
   });
 
   /**
-   * A1. `Math.max(...block.rows.map(...))` is a spread, and a spread past
-   * ~125 000 arguments is a hard V8 RangeError ("Maximum call stack size
-   * exceeded"), not a slow path. The route has no branch for that, so it fell
-   * through to `Internal error` / 500 — for a 1 678-byte upload.
+   * A1. `Math.max(...block.rows.map(...))` is a spread whose V8 failure
+   * boundary depends on current stack depth. Measurements began failing at
+   * 125,284 arguments at top level, 121,684 at +200 frames, and 89,284 at
+   * +2,000. The 130,000-row fixture is beyond every observation. The route has
+   * no branch for that RangeError, so it fell through to `Internal error` /
+   * 500 — for a tiny compressed upload.
    *
    * parse.ts now refuses a table that large (see the block-cap tests in
    * ingest-docx-parse.test.ts), but this assertion is deliberately NOT allowed
@@ -367,7 +369,7 @@ describe('convertDocument — warnings and media', () => {
   });
 
   it('renders footnote references and appends definitions', () => {
-    const r = convert([para([run('claim', { footnoteRef: 2 })])],
+    const r = convert([para([run('claim', { footnoteRef: '2' })])],
       { footnotes: new Map([['2', 'The source.']]) });
     expect(r.markdown).toContain('[^2]');
     expect(r.markdown).toContain('[^2]: The source.');
@@ -375,16 +377,32 @@ describe('convertDocument — warnings and media', () => {
 
   it('appends definitions once, in reference order, and only when defined', () => {
     const r = convert([
-      para([run('a', { footnoteRef: 3 })]),
-      para([run('b', { footnoteRef: 1 })]),
-      para([run('c', { footnoteRef: 3 })]),
-      para([run('d', { footnoteRef: 9 })]),
+      para([run('a', { footnoteRef: '3' })]),
+      para([run('b', { footnoteRef: '1' })]),
+      para([run('c', { footnoteRef: '3' })]),
+      para([run('d', { footnoteRef: '9' })]),
     ], { footnotes: new Map([['1', 'One.'], ['3', 'Three *starred*.']]) });
     expect(r.markdown.indexOf('[^3]: ')).toBeLessThan(r.markdown.indexOf('[^1]: '));
     expect(r.markdown.match(/^\[\^3\]: /gm)).toHaveLength(1);
     expect(r.markdown).not.toContain('[^9]: ');
     // Footnote text comes from footnotes.xml — escaped like any other run.
     expect(r.markdown).toContain('[^3]: Three \\*starred\\*.');
+  });
+
+  it('renders raw footnote IDs with matching definitions', () => {
+    const out = convert([para([
+      run('See'),
+      run('', { footnoteRef: 'a1' }),
+      run(' and'),
+      run('', { footnoteRef: '9007199254740993' }),
+    ])], { footnotes: new Map([
+      ['a1', 'Alpha note'],
+      ['9007199254740993', 'Large note'],
+    ]) });
+
+    expect(out.markdown).toContain('See[^a1] and[^9007199254740993]');
+    expect(out.markdown).toContain('[^a1]: Alpha note');
+    expect(out.markdown).toContain('[^9007199254740993]: Large note');
   });
 });
 
@@ -668,94 +686,51 @@ describe('convertDocx — end to end', () => {
       .rejects.toThrow(DocxFormatError);
   });
 
-  // DOCX-09's gate, and the reason it lives in index.ts: detectUnstyledHeadings
-  // is style-blind (hand it a Heading1 paragraph and it will still rank it), so
-  // nothing below this layer can refuse to promote. A document that mixes real
-  // Heading styles with incidental bold lines is already structured; promoting
-  // on top of it invents boundaries the author never wrote.
-  it('refuses to promote when the deterministic pass already found headings', async () => {
-    const buf = await makeDocx({
-      documentXml: documentWith(
-        '<w:p><w:pPr><w:pStyle w:val="Heading1"/></w:pPr><w:r><w:t>Chapter One</w:t></w:r></w:p>' +
-        '<w:p><w:r><w:rPr><w:b/><w:sz w:val="32"/></w:rPr><w:t>The Vale</w:t></w:r></w:p>' +
-        '<w:p><w:r><w:rPr><w:sz w:val="22"/></w:rPr><w:t>Cold and high.</w:t></w:r></w:p>',
-      ),
-    });
-
-    const out = await convertDocx(buf, { promoteHeadings: true });
-    expect(out.headings.styled).toBe(1);
-    expect(out.headings.promoted).toBe(false);
-    expect(out.markdown).toContain('# Chapter One');
-    expect(out.markdown).not.toContain('# The Vale');
-    // Still bold prose, exactly as the author wrote it.
-    expect(out.markdown).toContain('**The Vale**');
-    // And the affordance is not offered, because accepting it would do
-    // nothing — the gate would refuse the promotion the UI just promised.
-    expect(out.headings.unstyledCandidates).toBe(0);
-    expect(out.warnings.some((w) => w.code === 'unstyled-headings-detected')).toBe(false);
-  });
-
-  /**
-   * A2 — the DOCX-09 mixed-document blind spot, and its control.
-   *
-   * The gate ran the heuristic ONLY when styledCount === 0, so a single
-   * accidental Heading 1 — and styling the document TITLE as Heading 1 is
-   * Word's default — removed the promotion affordance AND every diagnostic at
-   * once. Executed before the fix:
-   *
-   *   MIXED   (1 styled + 8 hand-formatted sections):
-   *     headings = {"styled":1,"unstyledCandidates":0,"promoted":false}
-   *     warnings = []                        <- nothing at all
-   *   CONTROL (0 styled + the same 8 sections):
-   *     headings = {"styled":0,"unstyledCandidates":8,"promoted":false}
-   *     warnings = ["no-headings","unstyled-headings-detected"]
-   *
-   * Only the DIAGNOSTIC half is fixed. Whether promotion should be OFFERED for
-   * a mixed document is a product decision that has not been made; DOCX-09
-   * forbids it deliberately, so `unstyledCandidates` stays 0 post-gate and the
-   * client's `unstyledCandidates > 0` condition keeps meaning what it means.
-   * The new counts ride in the warning and nowhere else.
-   */
-  const mixedBody = (withStyledTitle: boolean) => {
-    const sections = Array.from({ length: 8 }, (_, i) =>
-      `<w:p><w:r><w:rPr><w:b/><w:sz w:val="32"/></w:rPr><w:t>Section ${i + 1}</w:t></w:r></w:p>` +
-      `<w:p><w:r><w:rPr><w:sz w:val="22"/></w:rPr><w:t>Body prose for ${i + 1}.</w:t></w:r></w:p>`,
+  const mixedBody = (styledCount: number, candidateCount: number) => {
+    const styled = Array.from({ length: styledCount }, (_, i) =>
+      `<w:p><w:pPr><w:pStyle w:val="Heading1"/></w:pPr><w:r><w:t>Styled ${i + 1}</w:t></w:r></w:p>` +
+      `<w:p><w:r><w:rPr><w:sz w:val="22"/></w:rPr><w:t>Styled body ${i + 1}.</w:t></w:r></w:p>`,
     ).join('');
-    const title = '<w:p><w:pPr><w:pStyle w:val="Heading1"/></w:pPr>' +
-      '<w:r><w:t>The Vale</w:t></w:r></w:p>';
-    return documentWith((withStyledTitle ? title : '') + sections);
+    const candidates = Array.from({ length: candidateCount }, (_, i) =>
+      `<w:p><w:r><w:rPr><w:b/><w:sz w:val="32"/></w:rPr><w:t>Candidate ${i + 1}</w:t></w:r></w:p>` +
+      `<w:p><w:r><w:rPr><w:sz w:val="22"/></w:rPr><w:t>Candidate body ${i + 1}.</w:t></w:r></w:p>`,
+    ).join('');
+    return documentWith(styled + candidates);
   };
 
-  it('says so when a mostly-unstyled document carries one styled heading', async () => {
-    const buf = await makeDocx({ documentXml: mixedBody(true) });
-    const out = await convertDocx(buf, { promoteHeadings: false });
+  const mixed = async (styledCount: number, candidateCount: number) =>
+    convertDocx(
+      await makeDocx({ documentXml: mixedBody(styledCount, candidateCount) }),
+      { promoteHeadings: false },
+    );
 
-    expect(out.headings.styled).toBe(1);
-    // Unchanged, and deliberately: the gate still refuses, so the affordance
-    // must stay off. This is the assertion that fails if someone "fixes" the
-    // promotion half along with the diagnostic half.
-    expect(out.headings.unstyledCandidates).toBe(0);
-    expect(out.headings.promoted).toBe(false);
-
-    const warning = out.warnings.find((w) => w.code === 'mixed-headings-detected');
-    expect(warning).toBeDefined();
-    // Both counts must be IN the message: the user's whole problem is that one
-    // number is 1 and the other is 8, and a message naming neither explains
-    // nothing.
-    expect(warning?.message).toContain('1 styled heading');
-    expect(warning?.message).toContain('8 paragraphs');
-    expect(warning?.count).toBe(8);
-    // The promotion offer is NOT repeated here — it would be a lie, because
-    // accepting it would change nothing.
-    expect(out.warnings.some((w) => w.code === 'unstyled-headings-detected')).toBe(false);
+  it('offers mixed-document promotion at the exact ratio and absolute boundaries', async () => {
+    expect((await mixed(20, 9)).headings.unstyledCandidates).toBe(0);
+    expect((await mixed(20, 10)).headings.unstyledCandidates).toBe(10);
+    expect((await mixed(1, 3)).headings.unstyledCandidates).toBe(3);
+    expect((await mixed(2, 5)).headings.unstyledCandidates).toBe(0);
   });
 
-  it('control: the same document with no styled heading warns the OLD way', async () => {
-    // Without this the test above is satisfied by an implementation that emits
-    // `mixed-headings-detected` unconditionally, which would double-report
-    // every unstyled document and make the two codes indistinguishable.
-    const buf = await makeDocx({ documentXml: mixedBody(false) });
-    const out = await convertDocx(buf, { promoteHeadings: false });
+  it('promotes eligible mixed candidates while preserving styled headings and reversibility data', async () => {
+    const buf = await makeDocx({ documentXml: mixedBody(1, 3) });
+
+    const off = await convertDocx(buf, { promoteHeadings: false });
+    const on = await convertDocx(buf, { promoteHeadings: true });
+
+    expect(off.markdown).toContain('# Styled 1');
+    expect(on.markdown).toContain('# Styled 1');
+    expect(off.markdown).not.toContain('# Candidate 1');
+    expect(on.markdown).toContain('# Candidate 1');
+    expect(off.headings.unstyledCandidates).toBeGreaterThan(0);
+    expect(on.headings).toEqual({ ...off.headings, promoted: true });
+    expect(off.warnings.find((w) => w.code === 'mixed-headings-detected')?.message)
+      .toContain('styled heading is preserved');
+    expect(on.warnings.some((w) => w.code === 'mixed-headings-detected')).toBe(true);
+    expect(on.warnings.some((w) => w.code === 'unstyled-headings-detected')).toBe(false);
+  });
+
+  it('control: a document with no styled heading keeps the ordinary promotion offer', async () => {
+    const out = await mixed(0, 8);
 
     expect(out.headings.styled).toBe(0);
     expect(out.headings.unstyledCandidates).toBe(8);

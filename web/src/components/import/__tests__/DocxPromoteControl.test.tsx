@@ -4,10 +4,20 @@ import userEvent from '@testing-library/user-event';
 import { DocxPromoteControl } from '../DocxPromoteControl';
 import type { DocxFileInfo } from '../../../types/ingestReview';
 
-function file(overrides: Partial<DocxFileInfo['headings']> = {}): DocxFileInfo {
+function file(
+  uploadIndex: number,
+  path: string,
+  overrides: Partial<DocxFileInfo['headings']> = {},
+): DocxFileInfo {
   return {
-    path: 'chapter.docx',
-    headings: { styled: 0, unstyledCandidates: 0, promoted: false, ...overrides },
+    uploadIndex,
+    path,
+    headings: {
+      styled: 0,
+      unstyledCandidates: 0,
+      promoted: false,
+      ...overrides,
+    },
     mediaCount: 0,
   };
 }
@@ -15,73 +25,82 @@ function file(overrides: Partial<DocxFileInfo['headings']> = {}): DocxFileInfo {
 describe('DocxPromoteControl (#35 DOCX-09)', () => {
   it('renders nothing when no file has unstyled candidates', () => {
     const { container } = render(
-      <DocxPromoteControl files={[file()]} onPromote={vi.fn()} />,
-    );
-    expect(container).toBeEmptyDOMElement();
-  });
-
-  it('renders nothing when the only candidates are already promoted', () => {
-    const { container } = render(
       <DocxPromoteControl
-        files={[file({ unstyledCandidates: 5, promoted: true })]}
-        onPromote={vi.fn()}
+        files={[file(0, 'chapter.docx')]}
+        onChange={vi.fn()}
       />,
     );
     expect(container).toBeEmptyDOMElement();
   });
 
-  it('offers to promote using the server-reported count alone, regardless of styled', () => {
-    // The server guarantees unstyledCandidates is 0 whenever styled > 0
-    // (DOCX-09), but the client's condition must not re-derive that gate.
-    // This fixture deliberately violates the invariant to prove the client
-    // reads unstyledCandidates alone rather than checking styled === 0.
-    render(
-      <DocxPromoteControl
-        files={[file({ styled: 3, unstyledCandidates: 7 })]}
-        onPromote={vi.fn()}
-      />,
-    );
-    expect(
-      screen.getByRole('button', { name: /treat 7 bold paragraphs as headings/i }),
-    ).toBeInTheDocument();
-  });
-
-  it('sums unstyled candidates across eligible files', () => {
+  it('offers each eligible file independently and keeps promoted files reversible', async () => {
+    const onChange = vi.fn();
     render(
       <DocxPromoteControl
         files={[
-          file({ unstyledCandidates: 4 }),
-          file({ unstyledCandidates: 2, promoted: true }), // excluded: already promoted
-          file({ unstyledCandidates: 3 }),
+          file(3, 'chapter.docx', { unstyledCandidates: 4 }),
+          file(7, 'chapter.docx', {
+            unstyledCandidates: 6,
+            promoted: true,
+          }),
+          file(8, 'notes.docx'),
         ]}
-        onPromote={vi.fn()}
+        onChange={onChange}
       />,
     );
+
+    const promote = screen.getByRole('button', {
+      name: /chapter\.docx.*treat 4 bold paragraphs as headings/i,
+    });
+    const restore = screen.getByRole('button', {
+      name: /chapter\.docx.*use styled headings only/i,
+    });
+
+    await userEvent.click(promote);
+    await userEvent.click(restore);
+
+    expect(onChange).toHaveBeenNthCalledWith(1, 3, true);
+    expect(onChange).toHaveBeenNthCalledWith(2, 7, false);
+  });
+
+  it('explains that existing styled headings remain for an eligible mixed file', () => {
+    render(
+      <DocxPromoteControl
+        files={[
+          file(2, 'mixed.docx', {
+            styled: 3,
+            unstyledCandidates: 7,
+          }),
+        ]}
+        onChange={vi.fn()}
+      />,
+    );
+
+    expect(screen.getByText(/styled headings remain/i)).toBeInTheDocument();
     expect(
-      screen.getByRole('button', { name: /treat 7 bold paragraphs as headings/i }),
+      screen.getByRole('button', {
+        name: /mixed\.docx.*treat 7 bold paragraphs as headings/i,
+      }),
     ).toBeInTheDocument();
   });
 
-  it('calls onPromote when clicked', async () => {
-    const onPromote = vi.fn();
+  it('disables every file control while a re-request is in flight', () => {
     render(
       <DocxPromoteControl
-        files={[file({ unstyledCandidates: 1 })]}
-        onPromote={onPromote}
-      />,
-    );
-    await userEvent.click(screen.getByRole('button', { name: /treat 1 bold paragraph as headings/i }));
-    expect(onPromote).toHaveBeenCalledTimes(1);
-  });
-
-  it('disables the button while a re-request is in flight', () => {
-    render(
-      <DocxPromoteControl
-        files={[file({ unstyledCandidates: 1 })]}
-        onPromote={vi.fn()}
+        files={[
+          file(1, 'one.docx', { unstyledCandidates: 1 }),
+          file(2, 'two.docx', {
+            unstyledCandidates: 2,
+            promoted: true,
+          }),
+        ]}
+        onChange={vi.fn()}
         disabled
       />,
     );
-    expect(screen.getByRole('button')).toBeDisabled();
+
+    for (const button of screen.getAllByRole('button')) {
+      expect(button).toBeDisabled();
+    }
   });
 });

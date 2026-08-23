@@ -207,12 +207,14 @@ export function IngestImport() {
   // at a different split level. Null when the session was resumed from a
   // saved draft — the files are gone, so the control cannot be offered.
   const [source, setSource] = useState<UploadSource | null>(null);
-  // True while a split re-preview is in flight, so a double click cannot race
-  // two requests and land the slower one last.
-  const [resplitting, setResplitting] = useState(false);
-  // #35 DOCX-09: same race guard as `resplitting`, for the heading-promotion
-  // re-request.
-  const [promotingHeadings, setPromotingHeadings] = useState(false);
+  // Split and DOCX promotion are two controls over one server preview. They
+  // therefore share one pending lifecycle and one request generation: only
+  // the newest request may replace the review, save its draft, or clear the
+  // pending state. The ref also closes the same-render window before React
+  // has committed the disabled controls.
+  const [repreviewing, setRepreviewing] = useState(false);
+  const repreviewPendingRef = useRef(false);
+  const repreviewGenerationRef = useRef(0);
   const committingRef = useRef<HTMLDivElement>(null);
 
   // Mount: check-draft → resume-prompt | upload. Only on first render.
@@ -288,72 +290,93 @@ export function IngestImport() {
     saveDraft({ preview: newPreview, decisions: {} });
   };
 
-  /**
-   * #37 SP-04: re-request the preview at the level the user picked.
-   *
-   * Every decision is dropped, deliberately. A different split level produces
-   * a different set of entries with different synthetic paths, and decisions
-   * are keyed by path — carrying them over would silently reapply a user's
-   * "reject" to whatever entry inherited that path. Nothing has been committed
-   * at this point, so there is nothing to lose but the review itself.
-   *
-   * discardDraft() rather than clearDraft(): a debounced save carrying the OLD
-   * preview may still be pending, and would otherwise land after the new one
-   * and resurrect it (issue #54).
-   */
-  const handleSplitLevelChange = async (level: number | null) => {
-    if (!source || !uid || resplitting) return;
-    setResplitting(true);
-    try {
-      const next = await requestPreview(uid, source.files, source.kind, level);
-      discardDraft();
-      setPreview(next);
-      setDecisions({});
-      setFocusedPath(next.entries[0]?.path ?? null);
-      saveDraft({ preview: next, decisions: {} });
-    } catch (err) {
-      // Same canned-copy rule as the commit path (T-12-22): never surface a
-      // raw error message. The existing preview stays on screen untouched.
-      setStep({ kind: 'commit-error', message: classifyError(err) });
-    } finally {
-      setResplitting(false);
-    }
-  };
+  const promotedIndicesFrom = (currentPreview: IngestPreview) =>
+    new Set(
+      (currentPreview.docx?.files ?? [])
+        .filter((file) => file.headings.promoted)
+        .map((file) => file.uploadIndex),
+    );
 
   /**
-   * #35 DOCX-09: re-request the preview with `docx_promote_headings=true`.
+   * Replace the server preview using the complete split + promotion state.
    *
-   * Same re-request path as `handleSplitLevelChange` — requestPreview(),
-   * discardDraft() before swapping state, decisions reset — for the same
-   * reason: a promoted document produces a different entry set (unstyled
-   * paragraphs become real headings, which can change how the document
-   * splits), and decisions are keyed by path.
+   * Every decision is dropped, deliberately. A replacement can produce a
+   * different set of entries with different synthetic paths, and decisions
+   * are keyed by path — carrying them over would silently reapply a user's
+   * choice to whatever entry inherited that path.
    *
-   * The current split level is carried over (rather than omitted, which
-   * would re-run auto-detection) so that turning on promotion does not
-   * silently discard a split-level choice the user already made.
+   * A generation check is still required despite disabled controls: two DOM
+   * events can enter during one React render before the disabled state lands.
+   * The newest request wins even when promises settle out of order. A failure
+   * never mutates the old preview or draft, and an older response cannot do so
+   * after that failure.
    */
-  const handlePromoteHeadings = async () => {
-    if (!source || !uid || promotingHeadings) return;
-    setPromotingHeadings(true);
+  const requestReplacementPreview = async (
+    splitLevel: number | null,
+    promotedDocxIndices: ReadonlySet<number>,
+  ) => {
+    if (!source || !uid) return;
+    const generation = ++repreviewGenerationRef.current;
+    repreviewPendingRef.current = true;
+    setRepreviewing(true);
     try {
       const next = await requestPreview(
         uid,
         source.files,
         source.kind,
-        preview?.split?.applied,
-        true,
+        splitLevel,
+        promotedDocxIndices,
       );
+      if (generation !== repreviewGenerationRef.current) return;
+      // discardDraft() rather than clearDraft(): a debounced save carrying the
+      // old preview may still be pending and would otherwise resurrect it.
       discardDraft();
       setPreview(next);
       setDecisions({});
       setFocusedPath(next.entries[0]?.path ?? null);
       saveDraft({ preview: next, decisions: {} });
     } catch (err) {
+      if (generation !== repreviewGenerationRef.current) return;
+      // Same canned-copy rule as the commit path (T-12-22): never surface a
+      // raw error message. The existing preview stays on screen untouched.
       setStep({ kind: 'commit-error', message: classifyError(err) });
     } finally {
-      setPromotingHeadings(false);
+      if (generation === repreviewGenerationRef.current) {
+        repreviewPendingRef.current = false;
+        setRepreviewing(false);
+      }
     }
+  };
+
+  /** #37 SP-04: re-request the preview at the level the user picked. */
+  const handleSplitLevelChange = async (level: number | null) => {
+    if (!preview || repreviewing) return;
+    await requestReplacementPreview(level, promotedIndicesFrom(preview));
+  };
+
+  /**
+   * #35 DOCX-09: re-request with the complete next set of promoted uploads.
+   * The server response is the source of truth, so toggling one row copies
+   * every current `promoted` index before adding or deleting that row.
+   *
+   * The shared replacement path preserves the applied split level, abandons a
+   * queued old draft, resets path-keyed decisions, and ignores stale replies.
+   */
+  const handleDocxPromotionChange = async (
+    uploadIndex: number,
+    promoted: boolean,
+  ) => {
+    if (!preview || repreviewing) return;
+    const promotedDocxIndices = promotedIndicesFrom(preview);
+    if (promoted) {
+      promotedDocxIndices.add(uploadIndex);
+    } else {
+      promotedDocxIndices.delete(uploadIndex);
+    }
+    await requestReplacementPreview(
+      preview.split?.applied ?? null,
+      promotedDocxIndices,
+    );
   };
 
   const handleUploadCancel = () => {
@@ -555,7 +578,7 @@ export function IngestImport() {
   const handleClearFilters = () => setFilters(DEFAULT_FILTERS);
 
   const handleCommit = async () => {
-    if (!preview || !uid) return;
+    if (!preview || !uid || repreviewPendingRef.current) return;
     const body = buildCommitBody(preview, decisions);
     // D-29 belt-and-braces guard: sticky bar already disables commit when
     // accepted === 0; this is the parent's last line of defense.
@@ -722,6 +745,7 @@ export function IngestImport() {
         conflictCount={counts.conflicts}
         acceptedCount={counts.accepted}
         isCommitting={isCommitting}
+        isPreviewPending={repreviewing}
         metaInvalid={counts.metaInvalid}
         onDiscard={handleDiscard}
         onCommit={handleCommit}
@@ -746,7 +770,7 @@ export function IngestImport() {
           applied={preview.split.applied}
           counts={preview.split.counts}
           onChange={handleSplitLevelChange}
-          disabled={resplitting || isCommitting}
+          disabled={repreviewing || isCommitting}
         />
       )}
       {/*
@@ -759,8 +783,8 @@ export function IngestImport() {
       {preview.docx && source && (
         <DocxPromoteControl
           files={preview.docx.files}
-          onPromote={handlePromoteHeadings}
-          disabled={promotingHeadings || isCommitting}
+          onChange={handleDocxPromotionChange}
+          disabled={repreviewing || isCommitting}
         />
       )}
       <div className="flex-1 flex min-h-0 overflow-hidden">

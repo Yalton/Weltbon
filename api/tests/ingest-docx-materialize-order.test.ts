@@ -1,35 +1,25 @@
 /**
- * Issue #35, Task 8 fix round 1 — pins the ordering fix in
- * `materializeFileParts` (routes/ingest.ts): `docxConversions` (and therefore
- * `docx.files[]` and the appended warnings) must come back in UPLOAD order,
- * not `Promise.all` completion order.
- *
- * Code review's live-route repro showed a 328-byte file finishing conversion
- * before a 57 KB file queued ahead of it, because the original code
- * `push()`ed into `docxConversions` from inside the `Promise.all` map. This
- * file reproduces that shape deterministically by mocking `convertDocx` with
- * a delay that tracks input buffer size — real XML-parsing cost also scales
- * with document size, so this is the same shape without depending on real
- * wall-clock timing (which would make the test flaky rather than reliably
- * red/green).
- *
- * Kept in its own file, separate from ingest-docx-route-wiring.test.ts,
- * because vi.mock rewrites the whole module for every test in the file that
- * loads it — the other file needs the REAL convertDocx for its conversion
- * tests.
+ * Issue #74, Task 2 — DOCX parts are materialised sequentially in upload order
+ * so one shared parser budget has deterministic ownership when it is exhausted.
  */
-import { describe, it, expect, vi } from 'vitest';
+import { describe, it, expect, vi, beforeEach } from 'vitest';
+
+const conversionControl = vi.hoisted(() => ({
+  starts: [] as number[],
+  releaseFirst: null as (() => void) | null,
+}));
 
 vi.mock('../src/services/ingest-docx/index.js', async (importOriginal) => {
   const actual = await importOriginal<typeof import('../src/services/ingest-docx/index.js')>();
   return {
     ...actual,
     convertDocx: vi.fn(async (buffer: Buffer) => {
-      // Larger buffer = slower "conversion", deterministically, via setTimeout
-      // rather than real CPU-bound XML parsing — this is what makes the test
-      // reliable instead of a race.
-      const delayMs = Math.min(buffer.length / 200, 40);
-      await new Promise((resolve) => setTimeout(resolve, delayMs));
+      conversionControl.starts.push(buffer.length);
+      if (conversionControl.starts.length === 1) {
+        await new Promise<void>((resolve) => {
+          conversionControl.releaseFirst = resolve;
+        });
+      }
       return {
         markdown: `# ${buffer.length}`,
         warnings: [],
@@ -40,38 +30,52 @@ vi.mock('../src/services/ingest-docx/index.js', async (importOriginal) => {
   };
 });
 
-// Imported AFTER vi.mock so materializeFileParts's internal call to
-// convertDocx resolves to the mock above.
 const { materializeFileParts } = await import('../src/routes/ingest.js');
 
-function docxFile(name: string, byteLength: number): File {
-  return new File([new Uint8Array(byteLength)], name);
-}
+describe('materializeFileParts — deterministic DOCX work ordering', () => {
+  beforeEach(() => {
+    conversionControl.starts = [];
+    conversionControl.releaseFirst = null;
+  });
 
-describe('materializeFileParts — docx ordering survives uneven completion times (Issue #35 Task 8 fix round 1)', () => {
-  it('returns docxConversions in UPLOAD order for wildly different file sizes, not completion order', async () => {
-    // Deliberately queued largest-first, matching the review's repro shape:
-    // if a later, smaller part in this array finishes converting first (it
-    // will, under the mock's size-scaled delay), a naive `push()` inside the
-    // Promise.all map would record IT first instead.
+  it('starts DOCX conversions sequentially and preserves mixed upload positions', async () => {
+    const bigDocx = new Uint8Array(6_000);
+    const smallDocx = new Uint8Array(328);
+    expect(bigDocx.byteLength).toBeGreaterThan(smallDocx.byteLength * 2);
+
     const files = [
-      docxFile('aaa-slow.docx', 57669),
-      docxFile('mmm-medium.docx', 5000),
-      docxFile('zzz-fast.docx', 328),
+      new File(['# Intro'], 'intro.md', { type: 'text/markdown' }),
+      new File([bigDocx], 'big.docx'),
+      new File([smallDocx], '.hidden.docx'),
+      new File([smallDocx], 'small.docx'),
+      new File(['# Outro'], 'outro.markdown', { type: 'text/markdown' }),
     ];
 
-    const result = await materializeFileParts(files, { promoteDocxHeadings: false });
+    const materializing = materializeFileParts(files, { promoteDocxIndices: new Set() });
 
-    expect(result.docxConversions.map((c) => c.path)).toEqual([
-      'aaa-slow.docx',
-      'mmm-medium.docx',
-      'zzz-fast.docx',
+    await vi.waitFor(() => {
+      expect(conversionControl.starts).toEqual([bigDocx.byteLength]);
+    });
+    conversionControl.releaseFirst?.();
+    await vi.waitFor(() => {
+      expect(conversionControl.starts).toEqual([
+        bigDocx.byteLength,
+        smallDocx.byteLength,
+      ]);
+    });
+
+    const result = await materializing;
+    expect(result.inputs.map((input) => input.path)).toEqual([
+      'intro.md',
+      'big.md',
+      '.hidden.docx',
+      'small.md',
+      'outro.markdown',
     ]);
-    // Same invariant must hold for the FileInput[] handed to parseBatch.
-    expect(result.inputs.map((i) => i.path)).toEqual([
-      'aaa-slow.md',
-      'mmm-medium.md',
-      'zzz-fast.md',
+    expect(result.docxConversions.map((row) => row.path)).toEqual([
+      'big.docx',
+      'small.docx',
     ]);
+    expect(result.docxConversions.map((row) => row.uploadIndex)).toEqual([1, 3]);
   });
 });

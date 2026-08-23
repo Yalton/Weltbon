@@ -89,7 +89,7 @@ describe('materializeFileParts — hidden-path .docx is skipped BEFORE conversio
     const visibleFile = new File([buf], 'chapter.docx');
 
     const result = await materializeFileParts([hiddenFile, visibleFile], {
-      promoteDocxHeadings: false,
+      promoteDocxIndices: new Set(),
     });
 
     // Only the VISIBLE .docx was actually converted — this is the assertion

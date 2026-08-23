@@ -139,7 +139,7 @@ function buildFormData(
   files: File[],
   kind: UploadKind,
   splitLevel?: number | null,
-  promoteHeadings?: boolean,
+  promotedDocxIndices?: ReadonlySet<number>,
 ): FormData {
   const fd = new FormData();
   // #37 SP-04: three states on the wire. Omitted = auto-detect; the literal
@@ -148,11 +148,13 @@ function buildFormData(
   if (splitLevel !== undefined) {
     fd.append('split_level', splitLevel === null ? 'null' : String(splitLevel));
   }
-  // #35 DOCX-09/DOCX-10: two states, not three. Absent means "do not
-  // promote" (the server default); the only other value the server accepts
-  // is the literal string "true" — never a JS boolean, never "false".
-  if (promoteHeadings) {
-    fd.append('docx_promote_headings', 'true');
+  // #35 DOCX-09/DOCX-10: every selected upload index is sent as a repeated
+  // multipart field. Numeric sorting makes otherwise unordered Set values
+  // stable on the wire and in diagnostics.
+  for (const index of [...(promotedDocxIndices ?? [])].sort(
+    (a, b) => a - b,
+  )) {
+    fd.append('docx_promote_index', String(index));
   }
   if (kind === 'zip') {
     fd.append('zip', files[0]!);
@@ -179,11 +181,11 @@ export function requestPreview(
   files: File[],
   kind: UploadKind,
   splitLevel?: number | null,
-  promoteHeadings?: boolean,
+  promotedDocxIndices?: ReadonlySet<number>,
 ): Promise<IngestPreview> {
   return api<IngestPreview>(`/universes/${universeId}/ingest`, {
     method: 'POST',
-    body: buildFormData(files, kind, splitLevel, promoteHeadings),
+    body: buildFormData(files, kind, splitLevel, promotedDocxIndices),
   });
 }
 

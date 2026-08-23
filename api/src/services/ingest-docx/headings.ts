@@ -9,10 +9,10 @@
  *      DETERMINISTIC and always on. A styleId or w:name that resolves to a
  *      heading level is an author-declared fact about the document; we never
  *      second-guess it.
- *   2. The unstyled heuristic (detectUnstyledHeadings) is OPT-IN: it only
- *      runs when the deterministic pass found nothing to work with, because
- *      it is a guess (bold/size/caps standing in for structure) and a wrong
- *      guess should never be able to override an explicit style.
+ *   2. The unstyled heuristic (detectUnstyledHeadings) is advisory: index.ts
+ *      always measures its candidates, then applies only the eligible subset
+ *      when the upload opts in. A styled heading still wins for its paragraph,
+ *      so the heuristic can add eligible structure without overriding it.
  *
  * DETERMINISM IS A CORRECTNESS PROPERTY HERE. The heuristic decides where the
  * document is split; if its result could vary between runs, the same file
@@ -253,11 +253,10 @@ function signatureKey(sig: CandidateSignature): string {
 }
 
 /**
- * DOCX-09's unstyled heuristic. Opt-in: callers only reach for this when
- * resolveStyledHeading found nothing anywhere in the document, so a wrong
- * guess here is bounded — the default is to promote nothing, and any
- * promotion that IS made is visible in the preview entry list before
- * anything is committed.
+ * DOCX-09's unstyled heuristic. This only detects candidates; index.ts owns
+ * document-level eligibility and the explicit promotion opt-in. A wrong guess
+ * is therefore bounded — the default is to promote nothing, and any promotion
+ * that is made is visible in the preview before anything is committed.
  */
 export function detectUnstyledHeadings(blocks: DocxBlock[]): Map<number, HeadingLevel> {
   const result = new Map<number, HeadingLevel>();

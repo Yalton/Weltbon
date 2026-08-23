@@ -488,23 +488,29 @@ describe('POST /api/universes/:uid/ingest (Phase 11-03 Task 2)', () => {
   // #35 (DOCX-10): the wire contract is only a contract if it is DOCUMENTED.
   // The multipart schema on this route is z.any()-based (a File body defeats
   // z.string()/z.boolean() at the validator layer), so the only thing that
-  // keeps `docx_promote_headings` and the `docx` response block from silently
+  // keeps `docx_promote_index` and the `docx` response block from silently
   // disappearing from /api/openapi.json is an assertion against the GENERATED
   // document — not against the Zod source, which would pass even if the
   // route stopped serving them.
-  it('GET /api/openapi.json documents #35: docx_promote_headings, docx_files_converted, docx block', async () => {
+  it('GET /api/openapi.json documents per-file DOCX promotion and upload indices', async () => {
     const res = await app.fetch(new Request('http://localhost/api/openapi.json'));
     expect(res.status).toBe(200);
     const doc = (await res.json()) as any;
     const post = doc.paths['/universes/{uid}/ingest'].post;
 
     const requestSchema = post.requestBody.content['multipart/form-data'].schema;
-    expect(Object.keys(requestSchema.properties)).toContain('docx_promote_headings');
-    // NOT 'boolean'. The handler accepts only the literal string "true" and
-    // 400s on everything else, "false" included — a client generated from a
-    // boolean schema would send `false` for "do not promote" and get a 400.
-    expect(requestSchema.properties.docx_promote_headings.type).toBe('string');
-    expect(requestSchema.properties.docx_promote_headings.enum).toEqual(['true']);
+    expect(Object.keys(requestSchema.properties)).toContain('docx_promote_index');
+    expect(Object.keys(requestSchema.properties)).not.toContain('docx_promote_headings');
+    expect(requestSchema.properties.docx_promote_index.type).toBe('array');
+    expect(requestSchema.properties.docx_promote_index.items.type).toBe('string');
+    expect(requestSchema.properties.docx_promote_index.items.pattern)
+      .toBe('^(0|[1-9]\\d*)$');
+    expect(requestSchema.properties.docx_promote_index.description).toContain(
+      'Repeat once per .docx to promote',
+    );
+    expect(requestSchema.properties.docx_promote_index.description).toContain(
+      'zero-based position in the `files` parts',
+    );
 
     const okSchema = post.responses['200'].content['application/json'].schema;
     expect(Object.keys(okSchema.properties.summary.properties))
@@ -513,8 +519,21 @@ describe('POST /api/universes/:uid/ingest (Phase 11-03 Task 2)', () => {
 
     const docxFile = okSchema.properties.docx.properties.files.items;
     expect(Object.keys(docxFile.properties).sort())
-      .toEqual(['headings', 'mediaCount', 'path']);
+      .toEqual(['headings', 'mediaCount', 'path', 'uploadIndex']);
+    expect(docxFile.properties.uploadIndex.type).toBe('integer');
     expect(Object.keys(docxFile.properties.headings.properties).sort())
       .toEqual(['promoted', 'styled', 'unstyledCandidates']);
+    const candidateDescription =
+      docxFile.properties.headings.properties.unstyledCandidates.description;
+    expect(candidateDescription).toContain(
+      'after server-side eligibility checks',
+    );
+    expect(candidateDescription).toContain(
+      'may be positive in a mixed document',
+    );
+    expect(candidateDescription).toContain(
+      'existing styled headings are preserved',
+    );
+    expect(post.responses['413'].description).toContain('docx_batch_block_count');
   });
 });

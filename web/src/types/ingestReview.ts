@@ -67,15 +67,14 @@ export type SplitInfo = {
  * server's internal `.md` rewrite (DOCX-01) — a review UI that warned about
  * `chapter.md` would be talking about a file the user never uploaded.
  *
- * `unstyledCandidates` is reported POST-GATE: the server already zeroes it
- * out when the deterministic pass found styled headings, because promotion
- * only ever applies when that pass found nothing. The client must not
- * re-derive that gate (e.g. `styled === 0 && unstyledCandidates > 0`) —
- * `unstyledCandidates > 0` alone is the complete, correct condition, and
- * duplicating the rule here would drift from the server's the moment either
- * side changes it.
+ * `unstyledCandidates` is the server's eligible candidate count, not the raw
+ * heuristic count. It may be positive when styled headings exist if the mixed
+ * ratio-or-absolute threshold is met; otherwise it is zero. The client uses
+ * `unstyledCandidates > 0` and must not duplicate that server-side rule.
  */
 export type DocxFileInfo = {
+  /** Stable position in the original multipart upload. Paths are not unique. */
+  uploadIndex: number;
   path: string;
   headings: {
     styled: number;
@@ -101,11 +100,9 @@ export type IngestPreview = {
      *
      * Optional HERE ONLY as tolerance for a response this client did not
      * produce — an older API, a fixture, a hand-written stub. It is NOT
-     * absent on a preview with no .docx parts, which is what this comment
-     * used to claim: `ingestPreviewSchema` declares it required, the handler
-     * emits it unconditionally, and `docx_promote_headings=true with no .docx
-     * in the batch` asserts it comes back as 0. Do not write code that reads
-     * `undefined` as "there were no .docx files" — 0 is that signal.
+     * absent on a preview with no .docx parts: `ingestPreviewSchema` declares
+     * it required and the handler emits it unconditionally. Do not write code
+     * that reads `undefined` as "there were no .docx files" — 0 is that signal.
      */
     docx_files_converted?: number;
   };

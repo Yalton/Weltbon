@@ -10,12 +10,18 @@
 import { describe, it, expect } from 'vitest';
 import { parseDocumentXml } from '../src/services/ingest-docx/parse.js';
 import type { DocxRun } from '../src/services/ingest-docx/parse.js';
-import { DOCX_LIMITS } from '../src/services/ingest-docx/limits.js';
+import {
+  DOCX_LIMITS,
+  createDocxWorkBudget,
+} from '../src/services/ingest-docx/limits.js';
 import type { DocxLimits } from '../src/services/ingest-docx/limits.js';
 import { DocxFormatError } from '../src/services/ingest-docx/unpack.js';
 import { documentWith } from './helpers/docx-fixture.js';
 
 const p = (xml: string, limits: DocxLimits = DOCX_LIMITS) => parseDocumentXml(documentWith(xml), limits);
+const blockCapMessage = (limit: number) =>
+  `Not a valid .docx (docx_block_count max ${limit}; simplify or split the document)`;
+const docWithUnits = (units: number) => documentWith('<w:p/>'.repeat(units));
 
 describe('parseDocumentXml — entity expansion (T-35-02)', () => {
   it('rejects a DOCTYPE outright', () => {
@@ -70,6 +76,34 @@ describe('parseDocumentXml — resource caps (T-35-04)', () => {
 
   it('rejects malformed XML', () => {
     expect(() => parseDocumentXml('<w:document><w:body>', DOCX_LIMITS)).toThrow(DocxFormatError);
+  });
+
+  it('charges retained nodes cumulatively against one shared batch budget', () => {
+    const budget = createDocxWorkBudget(5);
+
+    parseDocumentXml(
+      docWithUnits(3),
+      { ...DOCX_LIMITS, docxBlockCount: 10 },
+      budget,
+    );
+
+    expect(budget.used).toBe(3);
+    expect(() => parseDocumentXml(
+      docWithUnits(3),
+      { ...DOCX_LIMITS, docxBlockCount: 10 },
+      budget,
+    )).toThrow('docx_batch_block_count (max 5)');
+  });
+
+  it('checks the per-file cap before charging the shared batch budget', () => {
+    const budget = createDocxWorkBudget(5);
+
+    expect(() => parseDocumentXml(
+      docWithUnits(3),
+      { ...DOCX_LIMITS, docxBlockCount: 2 },
+      budget,
+    )).toThrow(blockCapMessage(2));
+    expect(budget.used).toBe(2);
   });
 });
 
@@ -364,24 +398,25 @@ describe('parseDocumentXml — hyperlinks and footnote references', () => {
       .toEqual({ relId: null, anchor: 'top' });
   });
 
-  it('emits w:footnoteReference as a numeric footnoteRef on its own marker run', () => {
+  it('emits w:footnoteReference as a raw string footnoteRef on its own marker run', () => {
     const doc = p('<w:p><w:r><w:t>x</w:t><w:footnoteReference w:id="3"/></w:r></w:p>');
     const runs = (doc.blocks[0] as { runs: DocxRun[] }).runs;
     expect(runs.map((r) => r.text)).toEqual(['x', '']);
     expect(runs[0].footnoteRef).toBeNull();
-    // A number, not the string '3'. Task 6 keys footnotes by string, so that
-    // lookup needs String(...); pinning the type here is what makes the
-    // mismatch visible at the seam instead of as a silently missing footnote.
-    expect(runs[1].footnoteRef).toBe(3);
-    expect(typeof runs[1].footnoteRef).toBe('number');
+    expect(runs[1].footnoteRef).toBe('3');
+    expect(typeof runs[1].footnoteRef).toBe('string');
   });
 
-  it('yields a null footnoteRef for a non-numeric w:id rather than NaN', () => {
-    // Known lossy edge, pinned deliberately: the reference is dropped with no
-    // warning. If that ever needs to become a counter, this test is where the
-    // decision is recorded.
-    const doc = p('<w:p><w:r><w:footnoteReference w:id="ftn1"/></w:r></w:p>');
-    expect((doc.blocks[0] as { runs: DocxRun[] }).runs[0].footnoteRef).toBeNull();
+  it('preserves footnote w:id as an exact raw string', () => {
+    const doc = p(
+      '<w:p><w:r><w:footnoteReference w:id="a1"/></w:r>'
+      + '<w:r><w:endnoteReference w:id="9007199254740993"/></w:r></w:p>',
+    );
+    const para = doc.blocks[0] as { runs: DocxRun[] };
+    expect(para.runs.map((run) => run.footnoteRef)).toEqual([
+      'a1',
+      '9007199254740993',
+    ]);
   });
 });
 
@@ -406,7 +441,7 @@ describe('parseDocumentXml — the caps fire for their own reason', () => {
     const many = '<w:p><w:r><w:t>x</w:t></w:r></w:p>'.repeat(50);
     expect(p(many).blocks).toHaveLength(50);
     expect(msg(() => p(many, { ...DOCX_LIMITS, docxBlockCount: 10 })))
-      .toBe('Not a valid .docx (too many blocks)');
+      .toBe(blockCapMessage(10));
   });
 
   it('applies the block cap exactly: 10 units pass at a cap of 10, 11 do not', () => {
@@ -417,13 +452,13 @@ describe('parseDocumentXml — the caps fire for their own reason', () => {
     const empty = (n: number) => '<w:p/>'.repeat(n);
     const lim = { ...DOCX_LIMITS, docxBlockCount: 10 };
     expect(msg(() => p(empty(10), lim))).toBe('<<did not throw>>');
-    expect(msg(() => p(empty(11), lim))).toBe('Not a valid .docx (too many blocks)');
+    expect(msg(() => p(empty(11), lim))).toBe(blockCapMessage(10));
 
     // The other half of the same rule: a paragraph carrying one run costs two,
     // so five pass at the same cap and six do not.
     const withRun = (n: number) => '<w:p><w:r><w:t>x</w:t></w:r></w:p>'.repeat(n);
     expect(msg(() => p(withRun(5), lim))).toBe('<<did not throw>>');
-    expect(msg(() => p(withRun(6), lim))).toBe('Not a valid .docx (too many blocks)');
+    expect(msg(() => p(withRun(6), lim))).toBe(blockCapMessage(10));
   });
 
   it('gives each defense its own message', () => {
@@ -496,7 +531,7 @@ describe('parseDocumentXml — the block cap charges rows, cells and runs (A1)',
     let err: unknown;
     try { p(tableOf(40_000)); } catch (e) { err = e; }
     expect(err).toBeInstanceOf(DocxFormatError);
-    expect((err as Error).message).toBe('Not a valid .docx (too many blocks)');
+    expect((err as Error).message).toBe(blockCapMessage(100_000));
   });
 
   it('still parses a large-but-legal table: 1 000 rows x 3 cells', () => {
@@ -519,7 +554,7 @@ describe('parseDocumentXml — the block cap charges rows, cells and runs (A1)',
     expect(msg(() => p(xml, { ...DOCX_LIMITS, docxBlockCount: 13 })))
       .toBe('<<did not throw>>');
     expect(msg(() => p(xml, { ...DOCX_LIMITS, docxBlockCount: 12 })))
-      .toBe('Not a valid .docx (too many blocks)');
+      .toBe(blockCapMessage(12));
   });
 
   it('charges runs, so one paragraph of a million runs cannot slip the cap', () => {
@@ -527,6 +562,6 @@ describe('parseDocumentXml — the block cap charges rows, cells and runs (A1)',
     // <w:p> (or a single <w:tc>) holding unbounded runs is still one block.
     const runs = '<w:r><w:t>x</w:t></w:r>'.repeat(20);
     expect(msg(() => p(`<w:p>${runs}</w:p>`, { ...DOCX_LIMITS, docxBlockCount: 10 })))
-      .toBe('Not a valid .docx (too many blocks)');
+      .toBe(blockCapMessage(10));
   });
 });

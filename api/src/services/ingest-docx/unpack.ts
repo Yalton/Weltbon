@@ -70,7 +70,7 @@ export class DocxFormatError extends Error {
   }
 }
 
-function openZip(buffer: Buffer): Promise<yauzl.ZipFile> {
+function openZip(buffer: Buffer): Promise<yauzl.ZipFile<Buffer>> {
   return new Promise((resolve, reject) => {
     // decodeStrings: false. This is not just a workaround for yauzl's
     // default decode path aborting the WHOLE zipfile the moment any one
@@ -129,12 +129,12 @@ export async function unpackDocx(buffer: Buffer, limits: DocxLimits): Promise<Do
     zipfile.on('error', () => settle(() => reject(new DocxFormatError('Not a valid .docx (unreadable archive)'))));
     zipfile.on('end', () => settle(resolve));
 
-    zipfile.on('entry', (entry: yauzl.Entry) => {
+    zipfile.on('entry', (entry: yauzl.Entry<Buffer>) => {
       // decodeStrings:false (see openZip) leaves fileName as raw bytes, not a
-      // decoded string, despite what the @types declaration claims. OOXML
-      // part names are always ASCII, so a plain utf8 decode is exact and
+      // decoded string. OOXML part names are always ASCII, so a plain utf8
+      // decode is exact and
       // — unlike yauzl's own decode path — never runs yauzl's path validation.
-      const fileName = (entry.fileName as unknown as Buffer).toString('utf8');
+      const fileName = entry.fileName.toString('utf8');
 
       // CHARGED BEFORE the directory-entry check, not after. A directory entry
       // is still a central-directory record we enumerate, and skipping the

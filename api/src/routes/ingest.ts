@@ -61,7 +61,10 @@ import {
   CommitSizeError,
 } from '../services/ingest-commit.js';
 import { convertDocx, DocxFormatError, type DocxConversion } from '../services/ingest-docx/index.js';
-import { DOCX_LIMITS } from '../services/ingest-docx/limits.js';
+import {
+  DOCX_LIMITS,
+  createDocxWorkBudget,
+} from '../services/ingest-docx/limits.js';
 import type { AuthVariables } from '../middleware/auth.js';
 
 type AppEnv = { Variables: AuthVariables };
@@ -93,24 +96,29 @@ export function docxToMarkdownPath(name: string): string {
   return name.replace(/\.docx$/i, '.md');
 }
 
+export interface MaterializedDocx {
+  uploadIndex: number;
+  path: string;
+  conversion: DocxConversion;
+}
+
 export interface MaterializeFilesResult {
   inputs: FileInput[];
-  docxConversions: Array<{ path: string; conversion: DocxConversion }>;
+  docxConversions: MaterializedDocx[];
 }
 
 /**
- * #35 (DOCX-10 fix round 1). Extracted out of the route handler so the
- * ordering fix below (index-assigned slots, compacted after `Promise.all`)
- * is directly unit-testable without a database: every DB read the route
- * makes (`requireUniverse`, existing entries/categories) happens before this
- * is ever called, so a caller here needs only a `File[]`.
+ * #35 (DOCX-10 fix round 1). Extracted out of the route handler so input and
+ * conversion ordering are directly unit-testable without a database: every DB
+ * read the route makes (`requireUniverse`, existing entries/categories) happens
+ * before this is ever called, so a caller here needs only a `File[]`.
  *
  * Throws `BatchLimitError` (→ 413) or `DocxFormatError` (→ 400); the route's
  * existing `catch` maps both — unchanged by this extraction.
  */
 export async function materializeFileParts(
   filesArr: File[],
-  opts: { promoteDocxHeadings: boolean },
+  opts: { promoteDocxIndices: ReadonlySet<number> },
 ): Promise<MaterializeFilesResult> {
   // file_count cap (T-11-08): count BEFORE reading any bytes.
   if (filesArr.length > MAX_FILES) {
@@ -126,77 +134,65 @@ export async function materializeFileParts(
     throw new BatchLimitError('docx_count', DOCX_LIMITS.docxCount);
   }
 
-  // #35 (DOCX-10, fix round 1): one slot per uploaded file part, index-
-  // matched to `filesArr`, so `docx.files`/warnings come back in UPLOAD
-  // order rather than in whichever order `Promise.all` below happens to
-  // finish converting — conversion completion order varies with file size
-  // (a small file can finish before a large one queued ahead of it) and is
-  // not something a caller can rely on. `push`ing inside the map would
-  // record completion order instead. Non-.docx parts and hidden .docx parts
-  // (skipped before conversion, see below) leave their slot `undefined`; the
-  // compaction after `Promise.all` recovers the in-order result once every
-  // part has settled.
-  const docxSlots: Array<{ path: string; conversion: DocxConversion } | undefined> =
-    new Array(filesArr.length).fill(undefined);
+  // #74: DOCX work is charged against one shared meter. Iterating in upload
+  // order makes both ownership of the final allowed unit and the file that
+  // reports exhaustion deterministic; it also stops reading later parts once
+  // the meter is exhausted.
+  const batchBudget = createDocxWorkBudget();
+  const inputs: FileInput[] = [];
+  const docxConversions: MaterializedDocx[] = [];
 
-  const inputs = await Promise.all(
-    filesArr.map(async (f, i) => {
-      if (isDocxFile(f.name)) {
-        // Skip-before-convert: a hidden .docx (dotfile or a path under a
-        // hidden directory) is always discarded by parseBatch's hidden-path
-        // filter (D-08a), which runs BEFORE its non-markdown filter — same
-        // as any hidden .md file. Converting it first would spend real
-        // XML-parsing CPU on attacker-supplied bytes that were never going
-        // to survive into the preview, and would leave
-        // summary.docx_files_converted counting a file that then
-        // contributes zero entries and zero warnings — a self-contradicting
-        // response. Left unrewritten (still .docx) and with no slot
-        // assigned, so it lands in hidden_paths_filtered, not
-        // non_markdown_files_skipped, which would misreport why it vanished.
-        if (isHiddenPath(f.name)) {
-          return { path: f.name, content: '' };
-        }
-        // T-11-09 shape: cap on File.size BEFORE arrayBuffer. A .docx has
-        // its own, larger cap because MAX_FILE_SIZE (1 MB) is sized for
-        // markdown, and a Word file is far heavier per word than the prose
-        // it holds.
-        if (f.size > DOCX_LIMITS.docxSize) {
-          throw new BatchLimitError('docx_size', DOCX_LIMITS.docxSize);
-        }
-        const conversion = await convertDocx(
-          Buffer.from(await f.arrayBuffer()),
-          { promoteHeadings: opts.promoteDocxHeadings },
-        );
-        // Index-assigned, not pushed — see the comment above `docxSlots`.
-        docxSlots[i] = { path: f.name, conversion };
-        // LOAD-BEARING, not cosmetic: isMarkdownFile() gates parseBatch, so
-        // a FileInput still named .docx here would be silently counted into
-        // non_markdown_files_skipped and the whole converted document would
-        // vanish from the preview with no error — the same failure mode as
-        // the .markdown bug fixed earlier on this branch (DOCX-13).
-        return { path: docxToMarkdownPath(f.name), content: conversion.markdown };
+  for (const [uploadIndex, file] of filesArr.entries()) {
+    if (isDocxFile(file.name)) {
+      // Skip-before-convert: a hidden .docx (dotfile or a path under a
+      // hidden directory) is always discarded by parseBatch's hidden-path
+      // filter (D-08a), which runs BEFORE its non-markdown filter — same
+      // as any hidden .md file. Converting it first would spend real
+      // XML-parsing CPU on attacker-supplied bytes that were never going
+      // to survive into the preview, and would leave
+      // summary.docx_files_converted counting a file that then
+      // contributes zero entries and zero warnings — a self-contradicting
+      // response. Left unrewritten (still .docx) and with no slot
+      // assigned, so it lands in hidden_paths_filtered, not
+      // non_markdown_files_skipped, which would misreport why it vanished.
+      if (isHiddenPath(file.name)) {
+        inputs.push({ path: file.name, content: '' });
+        continue;
       }
-      // T-11-02: per-file cap BEFORE arrayBuffer to keep peak memory bounded.
-      if (f.size > MAX_FILE_SIZE) {
-        throw new BatchLimitError('file_size', MAX_FILE_SIZE);
+      // T-11-09 shape: cap on File.size BEFORE arrayBuffer. A .docx has
+      // its own, larger cap because MAX_FILE_SIZE (1 MB) is sized for
+      // markdown, and a Word file is far heavier per word than the prose
+      // it holds.
+      if (file.size > DOCX_LIMITS.docxSize) {
+        throw new BatchLimitError('docx_size', DOCX_LIMITS.docxSize);
       }
-      const buf = Buffer.from(await f.arrayBuffer());
-      // The browser's <input type=file webkitdirectory> sets the relative
-      // path on `webkitRelativePath`; the standard File.name is the bare
-      // filename. Hono's parseBody hands us a File; we use .name and let
-      // operators upload via the JSON or multipart contract that suits them.
-      return { path: f.name, content: buf.toString('utf8') };
-    })
-  );
-
-  // Compact the index-matched slots into upload order. `docxSlots` is fully
-  // settled here — every branch above has either assigned its slot or left
-  // it `undefined` — so a plain `filter` recovers exactly the converted
-  // parts, in the order they were uploaded, regardless of which one
-  // finished converting first.
-  const docxConversions = docxSlots.filter(
-    (slot): slot is { path: string; conversion: DocxConversion } => slot !== undefined,
-  );
+      const conversion = await convertDocx(
+        Buffer.from(await file.arrayBuffer()),
+        { promoteHeadings: opts.promoteDocxIndices.has(uploadIndex), batchBudget },
+      );
+      docxConversions.push({ uploadIndex, path: file.name, conversion });
+      // LOAD-BEARING, not cosmetic: isMarkdownFile() gates parseBatch, so
+      // a FileInput still named .docx here would be silently counted into
+      // non_markdown_files_skipped and the whole converted document would
+      // vanish from the preview with no error — the same failure mode as
+      // the .markdown bug fixed earlier on this branch (DOCX-13).
+      inputs.push({
+        path: docxToMarkdownPath(file.name),
+        content: conversion.markdown,
+      });
+      continue;
+    }
+    // T-11-02: per-file cap BEFORE arrayBuffer to keep peak memory bounded.
+    if (file.size > MAX_FILE_SIZE) {
+      throw new BatchLimitError('file_size', MAX_FILE_SIZE);
+    }
+    const buf = Buffer.from(await file.arrayBuffer());
+    // The browser's <input type=file webkitdirectory> sets the relative
+    // path on `webkitRelativePath`; the standard File.name is the bare
+    // filename. Hono's parseBody hands us a File; we use .name and let
+    // operators upload via the JSON or multipart contract that suits them.
+    inputs.push({ path: file.name, content: buf.toString('utf8') });
+  }
 
   return { inputs, docxConversions };
 }
@@ -260,22 +256,21 @@ const ingestPreviewSchema = z.object({
   docx: z.object({
     files: z.array(
       z.object({
+        uploadIndex: z.number().int().min(0).openapi({
+          description: 'Zero-based position of this .docx in the uploaded files parts.',
+        }),
         path: z.string(),
         headings: z.object({
           styled: z.number().int(),
-          // POST-GATE, not a raw heuristic count: this is already 0 whenever
-          // styled headings exist, because promotion is refused in that case
-          // (DOCX-09) and offering a control that provably changes nothing
-          // would be worse than not offering it. Do not re-derive this
-          // client-side by counting bold paragraphs — the gate's decision
-          // lives only here.
+          // Post-eligibility, not a raw heuristic count. Mixed documents may
+          // expose candidates when they cross the server's ratio or absolute
+          // threshold; styled headings remain deterministic and are preserved.
           unstyledCandidates: z.number().int().openapi({
             description:
-              'What the heuristic would promote — already 0 whenever styled ' +
-              'headings exist, because promotion is refused once the ' +
-              'deterministic pass found any heading at all (DOCX-09). This ' +
-              'is the post-gate count, not a raw heuristic count: do not ' +
-              're-derive it client-side by counting bold paragraphs.',
+              'What the heading heuristic would promote after server-side ' +
+              'eligibility checks. This may be positive in a mixed document; ' +
+              'existing styled headings are preserved. Do not re-derive this ' +
+              'client-side by counting bold paragraphs.',
           }),
           promoted: z.boolean(),
         }),
@@ -337,24 +332,16 @@ const multipartBodySchema = z.object({
       'Absent = auto-detect. An explicit 1-6 overrides detection. The literal ' +
       'value `null` = do not split, even when a level was detected.',
   }),
-  // #35 (DOCX-10). Multipart text field, so this is a string or absent here —
-  // never a JS boolean. Same reason split_level above is z.any(): the
-  // pre-handler validator runs against the wire value, and a z.boolean() would
-  // reject the string "true" before the handler ever saw it.
-  // The published type is `string` with a single-member enum, NOT `boolean`.
-  // The handler below accepts the literal string "true" and 400s on everything
-  // else INCLUDING "false", so a client generated from a boolean schema would
-  // send `false` to mean "do not promote" and get a 400 for it. There are two
-  // states here, not three (see the handler's comment), and `enum: ['true']`
-  // is the only shape that says so on the wire.
-  docx_promote_headings: z.any().optional().openapi({
-    type: 'string',
-    enum: ['true'],
+  // Repeated multipart text field. z.any() keeps both the one-value string and
+  // Hono's repeated-value array acceptable to the pre-handler validator; the
+  // handler below validates every raw value and rejects duplicates.
+  docx_promote_index: z.any().optional().openapi({
+    type: 'array',
+    items: { type: 'string', pattern: '^(0|[1-9]\\d*)$' },
     description:
-      'Absent = only Word Heading styles and outline levels become headings. ' +
-      'The literal string "true" additionally promotes heading-shaped unstyled ' +
-      'paragraphs, and only when the document has no styled headings at all. ' +
-      'Any other value, "false" included, is a 400 — omit the field instead.',
+      'Repeat once per .docx to promote, using its zero-based position in the ' +
+      '`files` parts. Values must be canonical decimal strings and must target ' +
+      'eligible .docx uploads; duplicates and invalid targets are rejected.',
   }),
 });
 
@@ -387,7 +374,7 @@ const ingestRoute = createRoute({
     400: {
       content: { 'application/json': { schema: errorSchema } },
       description:
-        'Invalid upload (no files+zip, both supplied, non-zip bytes, invalid split_level/docx_promote_headings), or #35 (DOCX-11): a .docx part we will not parse (not a valid archive, missing word/document.xml, malformed XML, DOCTYPE/ENTITY present, or a duplicate allowlisted part).',
+        'Invalid upload (no files+zip, both supplied, non-zip bytes, invalid split_level/docx_promote_index), or #35 (DOCX-11): a .docx part we will not parse (not a valid archive, missing word/document.xml, malformed XML, DOCTYPE/ENTITY present, or a duplicate allowlisted part).',
     },
     401: {
       content: { 'application/json': { schema: errorSchema } },
@@ -404,7 +391,7 @@ const ingestRoute = createRoute({
     413: {
       content: { 'application/json': { schema: errorSchema } },
       description:
-        'Batch limit exceeded. Body names which limit (file_count, zip_size, file_size, total_uncompressed_size, or #35\'s docx_size / docx_count / docx_entry_count / docx_part_size / docx_total_uncompressed).',
+        'Batch limit exceeded. Body names which limit (file_count, zip_size, file_size, total_uncompressed_size, or #35\'s docx_size / docx_count / docx_entry_count / docx_part_size / docx_total_uncompressed / docx_batch_block_count).',
     },
     500: {
       content: { 'application/json': { schema: errorSchema } },
@@ -597,22 +584,29 @@ export const ingestRoutes = new OpenAPIHono<AppEnv>()
       requestedSplitLevel = n as SplitLevel;
     }
 
-    // #35 (DOCX-10). Same reasoning as split_level above: a multipart field
-    // arrives as a string, never a JS boolean. Two states, not three — unlike
-    // split_level, promotion already defaults to off (DOCX-09), so there is
-    // no distinct "explicit off" to represent; only absent and "true" mean
-    // anything, and anything else is a 400 rather than a silent no-op.
-    const promoteHeadingsField = body['docx_promote_headings'];
-    const promoteHeadingsRaw = Array.isArray(promoteHeadingsField)
-      ? promoteHeadingsField[0]
-      : promoteHeadingsField;
-    let promoteDocxHeadings = false;
-    if (promoteHeadingsRaw !== undefined) {
-      if (promoteHeadingsRaw !== 'true') {
-        return c.json({ error: 'Invalid docx_promote_headings' }, 400);
-      }
-      promoteDocxHeadings = true;
+    // The old batch-wide field is rejected whenever present: accepting it
+    // would silently apply an obsolete contract to every .docx in the batch.
+    if (body['docx_promote_headings'] !== undefined) {
+      return c.json({ error: 'Invalid docx_promote_index' }, 400);
     }
+
+    const promoteIndexField = body['docx_promote_index'];
+    const promoteIndexValues = promoteIndexField === undefined
+      ? []
+      : Array.isArray(promoteIndexField)
+        ? promoteIndexField
+        : [promoteIndexField];
+    const promoteIndexPattern = /^(0|[1-9]\d*)$/;
+    if (promoteIndexValues.some(
+      (value) => typeof value !== 'string' || !promoteIndexPattern.test(value),
+    )) {
+      return c.json({ error: 'Invalid docx_promote_index' }, 400);
+    }
+    const promoteIndexStrings = promoteIndexValues as string[];
+    if (new Set(promoteIndexStrings).size !== promoteIndexStrings.length) {
+      return c.json({ error: 'Invalid docx_promote_index' }, 400);
+    }
+    const promoteDocxIndices = new Set(promoteIndexStrings.map(Number));
 
     // Normalise to arrays.
     const filesArr: File[] = !filesField
@@ -630,6 +624,13 @@ export const ingestRoutes = new OpenAPIHono<AppEnv>()
           ? (zipField[0] as File)
           : null;
 
+    for (const uploadIndex of promoteDocxIndices) {
+      const selected = filesArr[uploadIndex];
+      if (selected === undefined || !isDocxFile(selected.name)) {
+        return c.json({ error: 'Invalid docx_promote_index' }, 400);
+      }
+    }
+
     // 3. Validate exactly-one-of {files[], zip}.
     const hasFiles = filesArr.length > 0;
     const hasZip = zipFile !== null;
@@ -645,7 +646,7 @@ export const ingestRoutes = new OpenAPIHono<AppEnv>()
 
     // 4. Materialise FileInput[] for parseBatch, enforcing the D-15 caps.
     //    Each branch wraps in try/catch so BatchLimitError → 413.
-    let docxConversions: Array<{ path: string; conversion: DocxConversion }> = [];
+    let docxConversions: MaterializedDocx[] = [];
     let inputs: FileInput[];
     // #35 (DOCX-08 + 11). Counted, not converted: a .docx inside a .zip is
     // itself a zip, and opening one inside unpackZip would make it a
@@ -686,9 +687,18 @@ export const ingestRoutes = new OpenAPIHono<AppEnv>()
           (f) => isDocxFile(f.path) && !isHiddenPath(f.path),
         ).length;
       } else {
-        const result = await materializeFileParts(filesArr, { promoteDocxHeadings });
+        const result = await materializeFileParts(filesArr, { promoteDocxIndices });
         inputs = result.inputs;
         docxConversions = result.docxConversions;
+        for (const uploadIndex of promoteDocxIndices) {
+          const selected = docxConversions.find((row) => row.uploadIndex === uploadIndex);
+          if (
+            selected === undefined
+            || selected.conversion.headings.unstyledCandidates === 0
+          ) {
+            return c.json({ error: 'Invalid docx_promote_index' }, 400);
+          }
+        }
       }
     } catch (err) {
       if (err instanceof BatchLimitError) {
@@ -812,10 +822,10 @@ export const ingestRoutes = new OpenAPIHono<AppEnv>()
     // to .md before parseBatch sees it, and reporting against a chapter.md
     // the user never uploaded would name a file that does not exist from
     // their side. `headings` is passed through convertDocx's result
-    // unchanged: unstyledCandidates is already the post-gate count (0
-    // whenever styled headings exist), and re-deriving it here would risk
-    // reintroducing the raw count DOCX-09's gate exists to suppress.
-    const docxFiles = docxConversions.map(({ path, conversion }) => ({
+    // unchanged: unstyledCandidates is already the post-eligibility count,
+    // and re-deriving it here would risk drifting from the server gate.
+    const docxFiles = docxConversions.map(({ uploadIndex, path, conversion }) => ({
+      uploadIndex,
       path,
       headings: conversion.headings,
       mediaCount: conversion.media.length,
