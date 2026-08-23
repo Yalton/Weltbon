@@ -42,6 +42,7 @@ import {
   type RunAuditOpts,
   type RunAuditResult,
 } from './interface.js';
+import { toOllamaTools, fromOllamaToolCalls, chooseNumCtx } from './ollama-wire.js';
 
 export interface OllamaModelInfo {
   name: string;
@@ -177,8 +178,111 @@ export class OllamaProvider implements LLMProvider {
     return Math.ceil(chars / 4);
   }
 
-  async runAudit(_opts: RunAuditOpts): Promise<RunAuditResult> {
-    throw new Error('implemented in Task 5');
+  /**
+   * Single-turn wire adapter (D-01) against `/api/chat`.
+   *
+   * Two things this method must always do, both load-bearing:
+   *
+   *   1. Re-check tool-capability at run time via `listOllamaModels`, not
+   *      just trust the model name string. Local models get deleted /
+   *      re-pulled outside this app's control, so a model valid at
+   *      selection time may be gone or replaced (by a same-named but
+   *      differently-capable pull) by the time an audit actually runs.
+   *
+   *   2. Always set `options.num_ctx` explicitly via `chooseNumCtx`, never
+   *      let the request omit it. Ollama's server-side default (commonly
+   *      2048 or 4096 depending on version) has no relationship to what a
+   *      given audit prompt needs; omitting it would silently truncate
+   *      context on any prompt longer than that default with no error.
+   */
+  async runAudit(opts: RunAuditOpts): Promise<RunAuditResult> {
+    const baseUrl = requireBaseUrl(opts.credential);
+    const model = opts.model;
+    if (model === undefined) {
+      throw new LLMProviderError(LLMError.ModelNotAvailable, 'no Ollama model selected');
+    }
+
+    const models = await listOllamaModels(baseUrl);
+    const info = models.find((m) => m.name === model);
+    if (info === undefined) {
+      throw new LLMProviderError(
+        LLMError.ModelNotAvailable,
+        `model ${model} is no longer installed on this Ollama server`,
+      );
+    }
+    if (!info.supportsTools) {
+      throw new LLMProviderError(
+        LLMError.ModelNotAvailable,
+        `model ${model} does not support tool calling, which audits require`,
+      );
+    }
+
+    const estimatedTokens = await this.estimate({
+      credential: opts.credential,
+      messages: opts.messages,
+      model,
+    });
+    // Throws ModelNotAvailable (before any /api/chat call) when the
+    // estimated prompt cannot fit even the model's architectural maximum —
+    // see ollama-wire.ts. `info.contextLength` is that architectural
+    // maximum, NOT a runtime window (Task 4); num_ctx below is the only
+    // place the runtime window is ever set.
+    const numCtx = chooseNumCtx(estimatedTokens, info.contextLength);
+
+    const res = await callOllama(
+      `${baseUrl}/api/chat`,
+      {
+        method: 'POST',
+        headers: headers(opts.credential),
+        body: JSON.stringify({
+          model,
+          stream: false,
+          options: { num_ctx: numCtx, temperature: 0 },
+          messages: opts.messages,
+          tools: opts.tools ? toOllamaTools(opts.tools) : undefined,
+        }),
+      },
+      fetch,
+    );
+    if (!res.ok) {
+      throw new LLMProviderError(LLMError.NetworkError, `Ollama /api/chat returned ${res.status}`);
+    }
+
+    const body = (await res.json()) as {
+      message?: {
+        content?: string;
+        /**
+         * qwen3-family "thinking" models put their prose reasoning HERE, not
+         * in `content` — confirmed against a real captured response
+         * (`tests/fixtures/ollama/chat-tool-call.json`: `content` is `''`
+         * while `thinking` is 2095 chars). `text` below reads ONLY
+         * `message.content`, deliberately — the audit engine treats
+         * non-empty prose text in a final turn as a D-10 contract
+         * violation, so surfacing `thinking` as `text` would falsely trip
+         * that on every thinking-model response. Kept in this type (rather
+         * than left untyped/dropped) purely so a future reader who logs
+         * `body` locally while debugging can see the field is named and
+         * intentionally unused, without this file ever needing to log the
+         * user's audit content itself to make that visible.
+         */
+        thinking?: string;
+      };
+      prompt_eval_count?: number;
+      eval_count?: number;
+    };
+
+    return {
+      text: body.message?.content ?? '',
+      toolUse: fromOllamaToolCalls(body.message),
+      usage: {
+        inputTokens: body.prompt_eval_count ?? 0,
+        outputTokens: body.eval_count ?? 0,
+        cacheCreationInputTokens: 0,
+        cacheReadInputTokens: 0,
+      },
+      // Always zero: Ollama is free, and the engine's cost_unknown path expects it.
+      costUsd: 0,
+    };
   }
 
   /**
