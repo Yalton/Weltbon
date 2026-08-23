@@ -484,4 +484,33 @@ describe('POST /api/universes/:uid/ingest (Phase 11-03 Task 2)', () => {
       expect.arrayContaining([expect.objectContaining({ bearerAuth: [] })])
     );
   });
+
+  // #35 (DOCX-10): the wire contract is only a contract if it is DOCUMENTED.
+  // The multipart schema on this route is z.any()-based (a File body defeats
+  // z.string()/z.boolean() at the validator layer), so the only thing that
+  // keeps `docx_promote_headings` and the `docx` response block from silently
+  // disappearing from /api/openapi.json is an assertion against the GENERATED
+  // document — not against the Zod source, which would pass even if the
+  // route stopped serving them.
+  it('GET /api/openapi.json documents #35: docx_promote_headings, docx_files_converted, docx block', async () => {
+    const res = await app.fetch(new Request('http://localhost/api/openapi.json'));
+    expect(res.status).toBe(200);
+    const doc = (await res.json()) as any;
+    const post = doc.paths['/universes/{uid}/ingest'].post;
+
+    const requestSchema = post.requestBody.content['multipart/form-data'].schema;
+    expect(Object.keys(requestSchema.properties)).toContain('docx_promote_headings');
+    expect(requestSchema.properties.docx_promote_headings.type).toBe('boolean');
+
+    const okSchema = post.responses['200'].content['application/json'].schema;
+    expect(Object.keys(okSchema.properties.summary.properties))
+      .toContain('docx_files_converted');
+    expect(Object.keys(okSchema.properties)).toContain('docx');
+
+    const docxFile = okSchema.properties.docx.properties.files.items;
+    expect(Object.keys(docxFile.properties).sort())
+      .toEqual(['headings', 'mediaCount', 'path']);
+    expect(Object.keys(docxFile.properties.headings.properties).sort())
+      .toEqual(['promoted', 'styled', 'unstyledCandidates']);
+  });
 });
