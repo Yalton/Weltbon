@@ -136,6 +136,8 @@ const DB_GATED_TESTS = [
   // Issue #44 Task 6 — auto-sync scheduler, two-instance (DB-gated).
   'tests/sync-auto.test.ts',
   'tests/pg-error-driver.test.ts',
+  // Issue #35 — .docx ingestion through the preview endpoint (DB-gated).
+  'tests/ingest-docx.test.ts',
 ];
 
 export default defineConfig({

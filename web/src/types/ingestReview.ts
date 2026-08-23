@@ -60,6 +60,35 @@ export type SplitInfo = {
   counts: Record<string, number>;
 };
 
+/**
+ * #35 DOCX-10 — per-.docx heading-conversion report.
+ *
+ * `path` is the ORIGINAL uploaded name (e.g. `Chapter.DOCX`), never the
+ * server's internal `.md` rewrite (DOCX-01) — a review UI that warned about
+ * `chapter.md` would be talking about a file the user never uploaded.
+ *
+ * `unstyledCandidates` is reported POST-GATE: the server already zeroes it
+ * out when the deterministic pass found styled headings, because promotion
+ * only ever applies when that pass found nothing. The client must not
+ * re-derive that gate (e.g. `styled === 0 && unstyledCandidates > 0`) —
+ * `unstyledCandidates > 0` alone is the complete, correct condition, and
+ * duplicating the rule here would drift from the server's the moment either
+ * side changes it.
+ */
+export type DocxFileInfo = {
+  path: string;
+  headings: {
+    styled: number;
+    unstyledCandidates: number;
+    promoted: boolean;
+  };
+  mediaCount: number;
+};
+
+export type DocxInfo = {
+  files: DocxFileInfo[];
+};
+
 export type IngestPreview = {
   summary: {
     markdown_files_parsed: number;
@@ -67,10 +96,28 @@ export type IngestPreview = {
     hidden_paths_filtered: number;
     duplicate_titles_in_batch: number;
     unresolved_wikilinks: number;
+    /**
+     * #35 DOCX-10.
+     *
+     * Optional HERE ONLY as tolerance for a response this client did not
+     * produce — an older API, a fixture, a hand-written stub. It is NOT
+     * absent on a preview with no .docx parts, which is what this comment
+     * used to claim: `ingestPreviewSchema` declares it required, the handler
+     * emits it unconditionally, and `docx_promote_headings=true with no .docx
+     * in the batch` asserts it comes back as 0. Do not write code that reads
+     * `undefined` as "there were no .docx files" — 0 is that signal.
+     */
+    docx_files_converted?: number;
   };
   entries: PreviewEntry[];
   warnings: Array<{ file: string; message: string }>;
   split?: SplitInfo;
+  /**
+   * #35 DOCX-10. Optional on the same terms as `summary.docx_files_converted`
+   * above: required in the server's schema and emitted unconditionally, so a
+   * .docx-free preview arrives as `{ files: [] }` — never absent.
+   */
+  docx?: DocxInfo;
 };
 
 // ---------------------------------------------------------------------------
