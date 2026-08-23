@@ -40,6 +40,7 @@ import {
   type UploadSource,
 } from '../components/import/ImportUploadStep';
 import { SplitLevelControl } from '../components/import/SplitLevelControl';
+import { DocxPromoteControl } from '../components/import/DocxPromoteControl';
 
 /**
  * Phase 12 integration view at /universes/:uid/import.
@@ -209,6 +210,9 @@ export function IngestImport() {
   // True while a split re-preview is in flight, so a double click cannot race
   // two requests and land the slower one last.
   const [resplitting, setResplitting] = useState(false);
+  // #35 DOCX-09: same race guard as `resplitting`, for the heading-promotion
+  // re-request.
+  const [promotingHeadings, setPromotingHeadings] = useState(false);
   const committingRef = useRef<HTMLDivElement>(null);
 
   // Mount: check-draft → resume-prompt | upload. Only on first render.
@@ -313,6 +317,42 @@ export function IngestImport() {
       setStep({ kind: 'commit-error', message: classifyError(err) });
     } finally {
       setResplitting(false);
+    }
+  };
+
+  /**
+   * #35 DOCX-09: re-request the preview with `docx_promote_headings=true`.
+   *
+   * Same re-request path as `handleSplitLevelChange` — requestPreview(),
+   * discardDraft() before swapping state, decisions reset — for the same
+   * reason: a promoted document produces a different entry set (unstyled
+   * paragraphs become real headings, which can change how the document
+   * splits), and decisions are keyed by path.
+   *
+   * The current split level is carried over (rather than omitted, which
+   * would re-run auto-detection) so that turning on promotion does not
+   * silently discard a split-level choice the user already made.
+   */
+  const handlePromoteHeadings = async () => {
+    if (!source || !uid || promotingHeadings) return;
+    setPromotingHeadings(true);
+    try {
+      const next = await requestPreview(
+        uid,
+        source.files,
+        source.kind,
+        preview?.split?.applied,
+        true,
+      );
+      discardDraft();
+      setPreview(next);
+      setDecisions({});
+      setFocusedPath(next.entries[0]?.path ?? null);
+      saveDraft({ preview: next, decisions: {} });
+    } catch (err) {
+      setStep({ kind: 'commit-error', message: classifyError(err) });
+    } finally {
+      setPromotingHeadings(false);
     }
   };
 
@@ -707,6 +747,20 @@ export function IngestImport() {
           counts={preview.split.counts}
           onChange={handleSplitLevelChange}
           disabled={resplitting || isCommitting}
+        />
+      )}
+      {/*
+        #35 DOCX-09: only when the source files are still in hand — a
+        resumed draft has the preview but not the upload, so re-requesting
+        with promotion is impossible, same reasoning as the split control
+        above. DocxPromoteControl itself renders nothing when there is
+        nothing eligible to promote.
+      */}
+      {preview.docx && source && (
+        <DocxPromoteControl
+          files={preview.docx.files}
+          onPromote={handlePromoteHeadings}
+          disabled={promotingHeadings || isCommitting}
         />
       )}
       <div className="flex-1 flex min-h-0 overflow-hidden">

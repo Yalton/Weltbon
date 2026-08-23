@@ -7,6 +7,8 @@ import {
   BATCH_LIMIT_MB,
   BATCH_LIMIT_FILE_SIZE_MB,
   BATCH_LIMIT_TOTAL_UNCOMPRESSED_MB,
+  BATCH_LIMIT_DOCX_MB,
+  BATCH_LIMIT_DOCX_FILES,
 } from '../../lib/ingestLimits';
 import type { IngestPreview } from '../../types/ingestReview';
 import { ImportDropZone } from './ImportDropZone';
@@ -59,14 +61,21 @@ type UploadState =
     };
 
 const COPY_INVALID_FILE_TYPE =
-  'Only .md or .markdown files, folders of Markdown files, or a .zip are accepted.';
+  'Only .md, .markdown or .docx files, folders of them, or a .zip are accepted.';
 
 function isMarkdown(name: string): boolean {
   const n = name.toLowerCase();
   return n.endsWith('.md') || n.endsWith('.markdown');
 }
 
-function classifyAndDetectKind(
+// #35 DOCX-08: a batch may mix .md/.markdown and .docx. `.docx` inside a
+// `.zip` is out of scope for v1 (DOCX-08) — this only classifies the
+// files[]-part upload path.
+function isDocx(name: string): boolean {
+  return name.toLowerCase().endsWith('.docx');
+}
+
+export function classifyAndDetectKind(
   files: File[],
 ):
   | { kind: UploadKind }
@@ -76,17 +85,17 @@ function classifyAndDetectKind(
   if (files.length === 1 && files[0]!.name.toLowerCase().endsWith('.zip')) {
     return { kind: 'zip' };
   }
-  // All files must be markdown.
+  // Every file must be markdown or docx.
   for (const f of files) {
-    if (!isMarkdown(f.name)) return { error: COPY_INVALID_FILE_TYPE };
+    if (!isMarkdown(f.name) && !isDocx(f.name)) return { error: COPY_INVALID_FILE_TYPE };
   }
   // Folder pick when any file has a non-empty webkitRelativePath; otherwise
-  // bare .md drop(s).
+  // bare file drop(s).
   const hasRelativePath = files.some((f) => Boolean(f.webkitRelativePath));
   return { kind: hasRelativePath ? 'folder' : 'md' };
 }
 
-function enforceBatchLimits(files: File[], kind: UploadKind): string | null {
+export function enforceBatchLimits(files: File[], kind: UploadKind): string | null {
   if (kind === 'zip') {
     if (files[0]!.size > BATCH_LIMIT_MB * 1024 * 1024) {
       return `That ZIP is too large (max ${BATCH_LIMIT_MB} MB compressed). Try splitting it.`;
@@ -94,10 +103,26 @@ function enforceBatchLimits(files: File[], kind: UploadKind): string | null {
     return null;
   }
   // folder | md
+  //
+  // .docx caps are checked separately from, and BEFORE, the markdown per-file
+  // loop below — DOCX_MB (25) and the markdown FILE_SIZE_MB (1) cap are two
+  // orders of magnitude apart, and a docx part must never be measured against
+  // the markdown cap or a valid multi-MB Word file gets rejected with a
+  // message about the wrong format.
+  const docxFiles = files.filter((f) => isDocx(f.name));
+  if (docxFiles.length > BATCH_LIMIT_DOCX_FILES) {
+    return `Too many Word documents (max ${BATCH_LIMIT_DOCX_FILES}). Try splitting your upload.`;
+  }
+  for (const f of docxFiles) {
+    if (f.size > BATCH_LIMIT_DOCX_MB * 1024 * 1024) {
+      return `${f.name} is too large (max ${BATCH_LIMIT_DOCX_MB} MB for a .docx).`;
+    }
+  }
   if (files.length > BATCH_LIMIT_FILES) {
     return `Too many files (max ${BATCH_LIMIT_FILES}). Try splitting your upload.`;
   }
   for (const f of files) {
+    if (isDocx(f.name)) continue; // markdown cap does not apply to docx parts.
     if (f.size > BATCH_LIMIT_FILE_SIZE_MB * 1024 * 1024) {
       return `One file is too large (max ${BATCH_LIMIT_FILE_SIZE_MB} MB per file).`;
     }
@@ -114,6 +139,7 @@ function buildFormData(
   files: File[],
   kind: UploadKind,
   splitLevel?: number | null,
+  promoteHeadings?: boolean,
 ): FormData {
   const fd = new FormData();
   // #37 SP-04: three states on the wire. Omitted = auto-detect; the literal
@@ -121,6 +147,12 @@ function buildFormData(
   // carries text, so the level is stringified rather than sent as JSON.
   if (splitLevel !== undefined) {
     fd.append('split_level', splitLevel === null ? 'null' : String(splitLevel));
+  }
+  // #35 DOCX-09/DOCX-10: two states, not three. Absent means "do not
+  // promote" (the server default); the only other value the server accepts
+  // is the literal string "true" — never a JS boolean, never "false".
+  if (promoteHeadings) {
+    fd.append('docx_promote_headings', 'true');
   }
   if (kind === 'zip') {
     fd.append('zip', files[0]!);
@@ -147,10 +179,11 @@ export function requestPreview(
   files: File[],
   kind: UploadKind,
   splitLevel?: number | null,
+  promoteHeadings?: boolean,
 ): Promise<IngestPreview> {
   return api<IngestPreview>(`/universes/${universeId}/ingest`, {
     method: 'POST',
-    body: buildFormData(files, kind, splitLevel),
+    body: buildFormData(files, kind, splitLevel, promoteHeadings),
   });
 }
 

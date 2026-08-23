@@ -60,6 +60,35 @@ export type SplitInfo = {
   counts: Record<string, number>;
 };
 
+/**
+ * #35 DOCX-10 — per-.docx heading-conversion report.
+ *
+ * `path` is the ORIGINAL uploaded name (e.g. `Chapter.DOCX`), never the
+ * server's internal `.md` rewrite (DOCX-01) — a review UI that warned about
+ * `chapter.md` would be talking about a file the user never uploaded.
+ *
+ * `unstyledCandidates` is reported POST-GATE: the server already zeroes it
+ * out when the deterministic pass found styled headings, because promotion
+ * only ever applies when that pass found nothing. The client must not
+ * re-derive that gate (e.g. `styled === 0 && unstyledCandidates > 0`) —
+ * `unstyledCandidates > 0` alone is the complete, correct condition, and
+ * duplicating the rule here would drift from the server's the moment either
+ * side changes it.
+ */
+export type DocxFileInfo = {
+  path: string;
+  headings: {
+    styled: number;
+    unstyledCandidates: number;
+    promoted: boolean;
+  };
+  mediaCount: number;
+};
+
+export type DocxInfo = {
+  files: DocxFileInfo[];
+};
+
 export type IngestPreview = {
   summary: {
     markdown_files_parsed: number;
@@ -67,10 +96,14 @@ export type IngestPreview = {
     hidden_paths_filtered: number;
     duplicate_titles_in_batch: number;
     unresolved_wikilinks: number;
+    /** #35 DOCX-10. Optional: absent on a preview with no .docx parts. */
+    docx_files_converted?: number;
   };
   entries: PreviewEntry[];
   warnings: Array<{ file: string; message: string }>;
   split?: SplitInfo;
+  /** #35 DOCX-10. Optional: absent on a preview with no .docx parts. */
+  docx?: DocxInfo;
 };
 
 // ---------------------------------------------------------------------------

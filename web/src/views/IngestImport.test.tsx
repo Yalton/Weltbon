@@ -161,6 +161,23 @@ async function uploadSimpleZip() {
   await userEvent.click(screen.getByRole('button', { name: /^Upload$/ }));
 }
 
+/** #35: same drive as uploadSimpleZip, but a lone .docx (classifies as kind='md'). */
+async function uploadDocx(name = 'Chapter.docx') {
+  const input = document.querySelector(
+    'input[type="file"]',
+  ) as HTMLInputElement | null;
+  if (!input) throw new Error('hidden file input not found');
+  const file = new File([new Uint8Array(100)], name, {
+    type: 'application/vnd.openxmlformats-officedocument.wordprocessingml.document',
+  });
+  Object.defineProperty(input, 'files', {
+    value: [file],
+    configurable: true,
+  });
+  fireEvent.change(input);
+  await userEvent.click(screen.getByRole('button', { name: /^Upload$/ }));
+}
+
 describe('IngestImport (Phase 12 E2E)', () => {
   beforeEach(() => {
     vi.mocked(api).mockReset();
@@ -508,5 +525,115 @@ describe('IngestImport (Phase 12 E2E)', () => {
     // elapsed. Without cancellation the queued write lands in here.
     await new Promise((r) => setTimeout(r, 400));
     expect(localStorage.getItem(STORAGE_KEY)).toBeNull();
+  });
+
+  // #35 DOCX-09/DOCX-10: the promotion control's re-request path.
+  it('promoting headings re-POSTs with docx_promote_headings=true and swaps the preview', async () => {
+    let ingestCalls = 0;
+    vi.mocked(api).mockImplementation(
+      async (path?: string, init?: RequestInit) => {
+        if (!path) return undefined;
+        if (path === '/universes/U1') {
+          return {
+            id: 'U1',
+            userId: 'user1',
+            name: 'My World',
+            description: '',
+            entryTypes: ['concept', 'character', 'location'],
+            createdAt: '2025-01-01',
+            updatedAt: '2025-01-01',
+          };
+        }
+        if (
+          path === '/universes/U1/entries' &&
+          (!init || init.method === undefined)
+        ) {
+          return [];
+        }
+        if (path === '/universes/U1/categories') {
+          return { categories: [], uncategorizedCount: 0 };
+        }
+        if (path === '/universes/U1/ingest' && init?.method === 'POST') {
+          ingestCalls += 1;
+          const promoted = ingestCalls > 1;
+          const preview: IngestPreview = {
+            summary: {
+              markdown_files_parsed: 0,
+              non_markdown_files_skipped: 0,
+              hidden_paths_filtered: 0,
+              duplicate_titles_in_batch: 0,
+              unresolved_wikilinks: 0,
+              docx_files_converted: 1,
+            },
+            entries: [
+              {
+                filename: 'Chapter.md',
+                path: 'Chapter.md',
+                title: 'Chapter',
+                type: 'concept',
+                tags: [],
+                category: null,
+                body: promoted ? '# Intro\ncontent' : 'flat content',
+                meta: {},
+                linksOut: [],
+              },
+            ],
+            warnings: [],
+            docx: {
+              files: [
+                {
+                  path: 'Chapter.docx',
+                  headings: {
+                    styled: 0,
+                    unstyledCandidates: promoted ? 0 : 6,
+                    promoted,
+                  },
+                  mediaCount: 0,
+                },
+              ],
+            },
+          };
+          return preview;
+        }
+        return undefined;
+      },
+    );
+
+    renderImport();
+    expect(
+      await screen.findByRole('heading', { name: /^Import notes$/ }),
+    ).toBeInTheDocument();
+    await uploadDocx();
+    expect(
+      await screen.findByRole('main', { name: /Import review/i }),
+    ).toBeInTheDocument();
+
+    const promoteButton = await screen.findByRole('button', {
+      name: /treat 6 bold paragraphs as headings/i,
+    });
+    await userEvent.click(promoteButton);
+
+    // The control disappears once the re-fetched preview reports promoted.
+    await waitFor(() => {
+      expect(
+        screen.queryByRole('button', { name: /treat .* as headings/i }),
+      ).not.toBeInTheDocument();
+    });
+
+    const ingestPostCalls = vi
+      .mocked(api)
+      .mock.calls.filter(
+        ([p, i]) =>
+          p === '/universes/U1/ingest' &&
+          (i as RequestInit | undefined)?.method === 'POST',
+      );
+    expect(ingestPostCalls).toHaveLength(2);
+
+    const firstBody = (ingestPostCalls[0]![1] as RequestInit).body as FormData;
+    expect(firstBody.get('docx_promote_headings')).toBeNull();
+
+    const secondBody = (ingestPostCalls[1]![1] as RequestInit)
+      .body as FormData;
+    expect(secondBody.get('docx_promote_headings')).toBe('true');
   });
 });
