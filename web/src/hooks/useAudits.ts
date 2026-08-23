@@ -289,9 +289,16 @@ export function useEstimateAudit(
  * keyId is NOT in the query parameters: each user has at most one key per
  * provider (Phase 22 schema constraint), so the backend resolves the active
  * `keyId` from the authenticated user (see api/src/routes/llm-models.ts).
+ *
+ * Issue #48 Task 7 fix: this signature previously excluded `'ollama'`, which
+ * meant the frontend could never even FORM a request for it — the backend
+ * had served `provider=ollama` end-to-end since Task 6 (llm-models.ts's
+ * PROVIDER_NAMES branch), but this type made that unreachable. Widened to
+ * match `LlmProvider` (api/src/services/llm-key.ts). See
+ * UniverseSettings.tsx for the caller that now actually passes 'ollama'.
  */
 export function useListModels(
-  provider: 'anthropic' | 'openai' | undefined,
+  provider: 'anthropic' | 'openai' | 'ollama' | undefined,
 ): UseQueryResult<ListingsResult> {
   return useQuery({
     queryKey: ['llm-models', provider],

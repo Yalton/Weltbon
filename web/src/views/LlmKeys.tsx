@@ -41,6 +41,7 @@ import { EmptyState } from '../components/EmptyState';
 import { ConfirmDialog } from '../components/ConfirmDialog';
 import { CreateLlmKeyDialog } from '../components/CreateLlmKeyDialog';
 import { PricingTable } from '../components/PricingTable';
+import { OllamaConnectionSection } from '../components/OllamaConnectionSection';
 import { formatRelative } from '../utils/formatRelative';
 import { ApiError } from '../api/client';
 
@@ -78,6 +79,13 @@ export default function LlmKeys() {
   if (consent.isPending) {
     return (
       <div className="max-w-3xl">
+        {/* Issue #48 Task 7: mounted ABOVE the BYOK consent gate deliberately
+            — Ollama is a separate, local-only feature that sends no content
+            to a third party, so it must not wait on the "I accept" consent
+            this section's own copy has nothing to do with. Self-gates on
+            local mode; renders nothing on a hosted instance or while still
+            loading /api/config. */}
+        <OllamaConnectionSection />
         <div className="mt-6 h-24 rounded-md bg-neutral-100 dark:bg-neutral-800 animate-pulse" />
       </div>
     );
@@ -87,6 +95,7 @@ export default function LlmKeys() {
   if (!hasConsented) {
     return (
       <div className="max-w-3xl">
+        <OllamaConnectionSection />
         <section
           aria-labelledby="llm-consent-heading"
           data-testid="llm-consent-block"
@@ -149,6 +158,8 @@ export default function LlmKeys() {
 
   return (
     <div className="max-w-3xl">
+      <OllamaConnectionSection />
+
       {/* Page header */}
       <div className="flex items-center justify-between">
         <h1 className="text-2xl font-semibold tracking-tight">LLM API keys</h1>
