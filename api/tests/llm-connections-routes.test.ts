@@ -110,6 +110,61 @@ describe('llm-connections routes', () => {
     expect([403, 404]).toContain(res.status);
   });
 
+  it('re-checks localMode inside every handler, not only at route registration (spec D-5 layer 2)', async () => {
+    // Spec D-5 requires TWO independent layers because layer 1 can break: a
+    // future refactor that mounts the router unconditionally, or a test/dev
+    // harness that builds the app once and reuses it, silently removes it.
+    //
+    // Fix round 2 (#48 whole-branch review, Minor 5): the existing off-mode
+    // tests all call boot(false), so the router is never mounted and the 404
+    // they get satisfies `expect([403, 404]).toContain(...)`. Deleting all
+    // five `if (!env().localMode) ... 403` handler guards left the whole suite
+    // green — layer 2 had no coverage of its own at all.
+    //
+    // This test boots ON (router mounted, layer 1 satisfied) and then flips
+    // the flag WITHOUT rebuilding the app, so the routes stay registered and
+    // the only thing that can produce a 403 is the handler's own live re-check
+    // (`env()` read at call time, never captured at module scope — the
+    // routes/auth.ts DV-11 pattern). A 404 here would mean the request never
+    // reached a handler and the assertion would be testing layer 1 again;
+    // hence `toBe(403)`, never `toContain`.
+    await boot(true);
+    // Liveness probe: a PUT that actually succeeds. A GET would 404 here for
+    // the mundane reason that no row exists yet — indistinguishable from the
+    // router not being mounted, which is the exact confusion this test exists
+    // to remove.
+    const live = await app.request('/api/llm-connections/ollama', {
+      method: 'PUT',
+      headers: { 'Content-Type': 'application/json', ...authHeader(token) },
+      body: JSON.stringify({ baseUrl: 'http://box:11434' }),
+    });
+    expect(live.status).toBe(200); // layer 1 is satisfied: the router IS mounted
+
+    delete process.env.WELTBON_LOCAL_MODE;
+    const { _resetEnvForTests } = await import('../src/config.js');
+    _resetEnvForTests();
+
+    // All five handlers, because all five carry their own guard and any one of
+    // them left unguarded is a hosted instance accepting a user-supplied
+    // endpoint (the SSRF shape the desktop-only rule exists to avoid).
+    const cases: Array<[string, string, unknown?]> = [
+      ['GET', '/api/llm-connections/ollama'],
+      ['PUT', '/api/llm-connections/ollama', { baseUrl: 'http://box:11434' }],
+      ['DELETE', '/api/llm-connections/ollama'],
+      ['POST', '/api/llm-connections/ollama/test'],
+      ['GET', '/api/llm-connections/ollama/models'],
+    ];
+    for (const [method, path, body] of cases) {
+      const init: RequestInit = { method, headers: { ...authHeader(token) } };
+      if (body !== undefined) {
+        (init.headers as Record<string, string>)['Content-Type'] = 'application/json';
+        init.body = JSON.stringify(body);
+      }
+      const res = await app.request(path, init);
+      expect(res.status, `${method} ${path} must 403 from its own handler guard`).toBe(403);
+    }
+  });
+
   it('accepts and reads back a connection when localMode is ON', async () => {
     await boot(true);
     const put = await app.request('/api/llm-connections/ollama', {

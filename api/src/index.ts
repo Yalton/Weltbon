@@ -107,9 +107,11 @@ export function createApp() {
   // to the full /api/llm/models URL. JWT-only via the route's own requireJwtAuth
   // middleware — no apiR.use() needed (mirrors llmKeyRoutes' per-route gate).
   apiR.route('/', llmModelsRoutes);
-  // Issue #48 Task 6: GET /api/config is unauthenticated and unconditional —
-  // the frontend needs `localMode` before login to decide which settings
-  // sections even exist (see routes/config.ts).
+  // Issue #48 Task 6: GET /api/config is UNCONDITIONAL (mounted on hosted and
+  // desktop alike) but NOT unauthenticated — routes/config.ts gates it with
+  // `requireAuth`, deliberately, so a share-token-only request cannot reach it
+  // (SHARE-03 / T-29-22). The frontend reads `localMode` from it after login,
+  // to decide which settings sections exist at all.
   apiR.route('/config', configRoutes);
   // Issue #48 Task 6: llm-connections (Ollama endpoint config) is DESKTOP-ONLY,
   // enforced first here by conditional REGISTRATION — mirrors the local-session

@@ -104,9 +104,16 @@ describe('fromOllamaToolCalls', () => {
 });
 
 describe('chooseNumCtx', () => {
-  it('sizes above the prompt rather than trusting a server default', async () => {
+  it('adds output headroom above the prompt rather than sizing to the prompt exactly', async () => {
     const { chooseNumCtx } = await import('../src/providers/llm/ollama-wire.js');
-    expect(chooseNumCtx(5000, 40960)).toBeGreaterThanOrEqual(5000);
+    // Fix round 2 (Minor 6): this asserted `toBeGreaterThanOrEqual(5000)`,
+    // which `chooseNumCtx = (est) => est` satisfies — i.e. it passed with
+    // OUTPUT_HEADROOM_TOKENS deleted entirely, the one thing it names. A
+    // window sized to the prompt with no room for the answer means the model
+    // starts generating into a full context, which is the truncation D-4
+    // exists to prevent arriving from the other end. Pinned exactly:
+    // 5000 + OUTPUT_HEADROOM_TOKENS (2048).
+    expect(chooseNumCtx(5000, 40960)).toBe(7048);
   });
 
   it('refuses a prompt larger than the architectural maximum', async () => {
@@ -114,8 +121,18 @@ describe('chooseNumCtx', () => {
     expect(() => chooseNumCtx(50000, 40960)).toThrow(/context/i);
   });
 
-  it('falls back to a conservative window when the maximum is unknown', async () => {
+  it('falls back to a conservative CEILING when the architectural maximum is unknown', async () => {
     const { chooseNumCtx } = await import('../src/providers/llm/ollama-wire.js');
-    expect(chooseNumCtx(1000, null)).toBeGreaterThanOrEqual(1000);
+    // Fix round 2 (Minor 6): the old assertion here was
+    // `toBeGreaterThanOrEqual(1000)`, which says nothing at all about the
+    // fallback this test is named for — it passed whether CONSERVATIVE_MAX
+    // was 8192, infinity, or absent. The behaviour that matters when
+    // /api/show reports no context_length is that a ceiling still applies:
+    // without one, an unknown-context model would accept any num_ctx we asked
+    // for and truncate silently at whatever its real window turned out to be.
+    expect(chooseNumCtx(1000, null)).toBe(3048);
+    // Above CONSERVATIVE_MAX (8192) the fallback must still refuse:
+    // 7000 + 2048 = 9048 > 8192.
+    expect(() => chooseNumCtx(7000, null)).toThrow(/8192/);
   });
 });

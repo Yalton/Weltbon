@@ -17,12 +17,12 @@
  * ── Why installed models are listed, not filtered ────────────────────────
  * `useOllamaModels` returns EVERY installed model, including tool-incapable
  * ones (e.g. `llava`, a vision model with no tool-calling support). A model
- * that cannot tool-call cannot return audit findings, so it is rendered
- * disabled with the reason inline rather than omitted — a user who just
- * pulled it should see why it is unavailable here, not wonder whether the
- * pull failed. (Contrast: `useListModels('ollama')` in useAudits.ts, which
- * backs the per-universe audit picker, gets the PRE-filtered tools-only list
- * from the server — that dropdown has no use for a model it can never run.)
+ * that cannot tool-call cannot return audit findings, so it is listed with
+ * the reason inline rather than omitted — a user who just pulled it should
+ * see why it is unavailable here, not wonder whether the pull failed.
+ * (Contrast: `useListModels('ollama')` in useAudits.ts, which backs the
+ * per-universe audit picker, gets the PRE-filtered tools-only list from the
+ * server — that dropdown has no use for a model it can never run.)
  *
  * ── Why baseUrl is a plain input, not treated as a secret ────────────────
  * The connection's `baseUrl` is a LAN/loopback address, not a credential —
@@ -157,36 +157,49 @@ export function OllamaConnectionSection() {
       </div>
 
       <div className="mt-5">
-        <label htmlFor="ollama-model" className="block text-sm mb-1">
+        {/*
+          A LIST, not a <select>. Fix round 2 (#48 whole-branch review, Minor
+          8): this was a real `<select>` with no `value` and no `onChange` — a
+          control that looks like it sets something and sets nothing. There is
+          nothing here for it to set: the model an audit uses is chosen per
+          universe (see the note below), so this section's only job is to tell
+          the user what their server has installed and which of it can run an
+          audit. Rendering that as a list says so honestly; a dead dropdown
+          reads as a bug and eventually gets reported as one.
+        */}
+        <p id="ollama-models-heading" className="text-sm mb-1">
           Installed models
-        </label>
+        </p>
         {modelsLoading && (
           <p className="text-sm text-neutral-500 italic">Checking your Ollama server…</p>
         )}
         {!modelsLoading && (models === undefined || models.length === 0) && (
-          <p id="ollama-model" role="status" className="text-sm text-neutral-500 dark:text-neutral-400 italic">
+          <p role="status" className="text-sm text-neutral-500 dark:text-neutral-400 italic">
             No models found. Save a reachable server address, then pull a model with tool support
             (e.g. <code>ollama pull qwen3</code>).
           </p>
         )}
         {!modelsLoading && models !== undefined && models.length > 0 && (
-          <select
-            id="ollama-model"
-            defaultValue=""
-            className="w-full rounded-md border border-neutral-300 dark:border-neutral-700 bg-transparent px-3 py-2 text-sm"
+          <ul
+            aria-labelledby="ollama-models-heading"
+            className="rounded-md border border-neutral-200 dark:border-neutral-800 divide-y divide-neutral-200 dark:divide-neutral-800 text-sm"
           >
-            <option value="" disabled>
-              Select a model to audit with (choose per universe in its Settings)
-            </option>
             {models.map((m) => (
-              // Disabled rather than hidden: a user who pulled a
-              // vision-only model like llava should see why it is
-              // unavailable instead of wondering where it went.
-              <option key={m.name} value={m.name} disabled={!m.supportsTools}>
-                {m.supportsTools ? m.name : `${m.name} — no tool support, cannot run audits`}
-              </option>
+              // Listed rather than hidden: a user who pulled a vision-only
+              // model like llava should see why it cannot run audits instead
+              // of wondering whether the pull failed.
+              <li key={m.name} className="px-3 py-2 flex items-baseline justify-between gap-3">
+                <span className={m.supportsTools ? '' : 'text-neutral-500 dark:text-neutral-400'}>
+                  {m.name}
+                </span>
+                {!m.supportsTools && (
+                  <span className="text-xs text-neutral-500 dark:text-neutral-400 shrink-0">
+                    no tool support, cannot run audits
+                  </span>
+                )}
+              </li>
             ))}
-          </select>
+          </ul>
         )}
         <p className="mt-1 text-xs text-neutral-500">
           The actual model used for an audit is chosen per universe, in that universe&rsquo;s Settings

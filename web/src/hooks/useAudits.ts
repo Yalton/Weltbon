@@ -249,7 +249,7 @@ export function useEstimateAudit(
   universeId: string | undefined,
   scope: AuditScope,
   entryId?: string,
-  provider?: 'anthropic' | 'openai',
+  provider?: 'anthropic' | 'openai' | 'ollama',
   model?: string,
   options?: UseEstimateAuditOptions,
 ): UseQueryResult<AuditEstimate> {
