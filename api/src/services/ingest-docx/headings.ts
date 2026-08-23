@@ -15,14 +15,22 @@
  *      guess should never be able to override an explicit style.
  *
  * DETERMINISM IS A CORRECTNESS PROPERTY HERE. The heuristic decides where the
- * document is split; if its result could vary between runs (e.g. because a
- * sort order depended on Map/Set insertion order), the same file would
- * shatter differently each time and the preview-before-commit safety check
- * would stop meaning anything. That is why the signature sort below breaks
- * ties on the signature string itself rather than leaving the comparator
- * partial — a partial comparator's result on ties is whatever the engine's
- * sort implementation happens to do with equal elements, which is not
- * something a document-splitting decision should depend on.
+ * document is split; if its result could vary between runs, the same file
+ * would shatter differently each time and the preview-before-commit safety
+ * check would stop meaning anything.
+ *
+ * CORRECTION (fix round 1): an earlier version of this comment, and the
+ * commit that introduced this file, claimed the tie-break at the end of the
+ * signature comparator (below) was what supplied that guarantee. It is not.
+ * `signatureKey()` injectively encodes exactly the (bold, size, caps) fields
+ * the comparator sorts on, and the array being sorted is deduplicated by that
+ * key before sorting ever runs — so any two entries reaching the comparator
+ * already differ on at least one of its first three branches, and the
+ * tie-break is unreachable. Determinism here comes from ranking by
+ * DISTINCT signature, not from having a total order over duplicates that
+ * don't exist. The tie-break is kept as cheap insurance against a future
+ * refactor that stops deduplicating first, not because it does anything
+ * today; see the comment at its call site.
  */
 import { SaxesParser } from 'saxes';
 import { DocxFormatError } from './unpack.js';
@@ -219,14 +227,20 @@ function signatureKey(sig: CandidateSignature): string {
 export function detectUnstyledHeadings(blocks: DocxBlock[]): Map<number, HeadingLevel> {
   const result = new Map<number, HeadingLevel>();
 
-  // Gather every paragraph that could conceivably be a heading at all:
-  // rule 4 (no list items) and rule 5 (uniform run signature) applied here,
-  // up front, because both exclude a paragraph categorically regardless of
-  // formatting or context.
+  // Gather every paragraph that could conceivably be a heading at all: rule 2
+  // (no list items — "not inside a table" is satisfied by construction, since
+  // parse.ts flattens table content into DocxTable.rows[].runs and it never
+  // surfaces as a standalone `kind: 'paragraph'` block), rule 3's single-line
+  // requirement (a <w:br/> inside the paragraph is a marker run with
+  // lineBreak: true — see parse.ts's w:br handling — so a paragraph can be one
+  // <w:p> and still be two visual lines), and rule 5's uniform-signature
+  // requirement are all applied here, up front, because each excludes a
+  // paragraph categorically regardless of formatting or context.
   const paraEntries: CandidateEntry[] = [];
   blocks.forEach((b, index) => {
     if (b.kind !== 'paragraph') return;
     if (b.numbering !== null) return;
+    if (b.runs.some((r) => r.lineBreak)) return;
     const sig = uniformSignature(b);
     if (sig === null) return;
     paraEntries.push({ index, sig, text: paragraphText(b) });
@@ -253,18 +267,27 @@ export function detectUnstyledHeadings(blocks: DocxBlock[]): Map<number, Heading
     }
   }
 
-  const sizeFlagged = others.filter((e) => e.sig.size !== null && e.sig.size > bodySize);
+  // Spec's emphatic-signature rule 5 requires size >= body size + 2pt, i.e.
+  // +4 half-points — not "any amount over". A candidate only 1pt larger than
+  // body copy is exactly the false positive the floor exists to exclude.
+  const SIZE_FLOOR_HALF_POINTS = 4; // 2pt
+  const sizeFlagged = others.filter(
+    (e) => e.sig.size !== null && e.sig.size >= bodySize + SIZE_FLOOR_HALF_POINTS,
+  );
   const prominent = new Set<number>([...boldOrCapsFlagged, ...sizeFlagged].map((e) => e.index));
 
-  // Rules 2 and 3: length and terminal punctuation. A question mark or
-  // exclamation mark is allowed — those are heading-shaped too — but a full
-  // stop marks an ordinary sentence, not a title.
+  // Rule 3 (length; single-line already excluded up front) and rule 4
+  // (terminal punctuation: `.` `,` `;` `:` all reject, but `?` and `!` are
+  // allowed — those are heading-shaped too, e.g. "What is the Vale?"; a
+  // trailing comma, semicolon, or colon marks lead-in prose, not a title —
+  // "See below:" is exactly the case rule 4 exists to exclude).
+  const TERMINAL_PUNCTUATION = new Set(['.', ',', ';', ':']);
   const shapeOk = new Set<number>();
   for (const e of paraEntries) {
     if (!prominent.has(e.index)) continue;
     const text = e.text.trim();
     if (text.length === 0 || text.length > 100) continue;
-    if (text[text.length - 1] === '.') continue;
+    if (TERMINAL_PUNCTUATION.has(text[text.length - 1])) continue;
     shapeOk.add(e.index);
   }
 
@@ -284,12 +307,22 @@ export function detectUnstyledHeadings(blocks: DocxBlock[]): Map<number, Heading
 
   if (finalCandidates.length === 0) return result;
 
-  // Rank distinct signatures by prominence: size descending, then bold, then
-  // caps, THEN the signature string itself. That last key is what makes the
-  // comparator total — without it, two signatures that tie on every other
-  // key sort however the engine happens to place equal elements, and the
-  // heuristic's whole determinism guarantee rests on there being no such
-  // "however" left.
+  // Rank DISTINCT signatures by prominence: size descending, then bold, then
+  // caps. `bySignature` below deduplicates by `signatureKey()` before this
+  // sort ever runs, and that key is an injective encoding of exactly the
+  // three fields the comparator sorts on — so any two entries the comparator
+  // is asked to order already differ on at least one of the first three
+  // branches, and they never reach the fourth.
+  //
+  // The fourth branch — `ka < kb ? ... : ...` — is therefore dead code today,
+  // not the source of the determinism guarantee. (An earlier version of this
+  // comment, and this file's original commit message, claimed the opposite;
+  // that was checked by mutation and found false — dropping this branch
+  // changes nothing observable, because no two elements of `rankedKeys` are
+  // ever equal on the first three keys.) It is kept anyway as insurance
+  // against a future refactor that stops deduplicating before sorting — at
+  // that point it would start mattering, and having it already in place
+  // means that refactor doesn't get to silently reintroduce order-dependence.
   const bySignature = new Map<string, CandidateSignature>();
   for (const e of finalCandidates) bySignature.set(signatureKey(e.sig), e.sig);
 
@@ -301,7 +334,7 @@ export function detectUnstyledHeadings(blocks: DocxBlock[]): Map<number, Heading
     if (sizeA !== sizeB) return sizeB - sizeA;
     if (a.bold !== b.bold) return a.bold ? -1 : 1;
     if (a.caps !== b.caps) return a.caps ? -1 : 1;
-    return ka < kb ? -1 : ka > kb ? 1 : 0;
+    return ka < kb ? -1 : ka > kb ? 1 : 0; // dead code today — see comment above
   });
 
   const levelByKey = new Map<string, HeadingLevel>();

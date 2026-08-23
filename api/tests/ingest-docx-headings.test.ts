@@ -204,4 +204,88 @@ describe('detectUnstyledHeadings (DOCX-09)', () => {
   it('returns an empty map for a document with no candidates', () => {
     expect(detectUnstyledHeadings([para('Just prose.', {}, BODY)]).size).toBe(0);
   });
+
+  // --- Fix round 1: three deviations from the design spec's exact algorithm
+  // (project documentation, "DOCX-09 —
+  // The heuristic, as an algorithm"). Each of these failed against the
+  // pre-fix implementation before the corresponding fix landed.
+
+  it('rejects a candidate ending in a comma, semicolon, or colon (rule 4)', () => {
+    // Spec rule 4 rejects `.` `,` `;` `:` and allows only `?` `!`. A trailing
+    // colon matters most in practice: "See below:" is exactly the lead-in
+    // prose the rule exists to exclude, not a title.
+    for (const suffix of [',', ';', ':']) {
+      const blocks = [
+        para(`See below${suffix}`, {}, { bold: true, ...BODY }),
+        para('Prose.', {}, BODY),
+      ];
+      expect(detectUnstyledHeadings(blocks).size).toBe(0);
+    }
+  });
+
+  it('requires size >= body size + 2pt (4 half-points), not any amount over (rule 5)', () => {
+    const blocks = [
+      // body is 22 half-points (11pt); 24 is only +1pt over, short of the +2pt floor.
+      para('The Vale', {}, { sizeHalfPoints: 24 }),
+      para('Prose about the Vale.', {}, BODY),
+    ];
+    expect(detectUnstyledHeadings(blocks).size).toBe(0);
+  });
+
+  it('promotes at exactly the +2pt (4 half-point) size floor (rule 5)', () => {
+    const blocks = [
+      para('The Vale', {}, { sizeHalfPoints: 26 }), // body 22 + 4 half-points = +2pt exactly
+      para('Prose about the Vale.', {}, BODY),
+    ];
+    expect(detectUnstyledHeadings(blocks).get(0)).toBe(1);
+  });
+
+  it('rejects a paragraph containing an embedded line break — not single line (rule 3)', () => {
+    // parse.ts represents a w:br as a marker run with lineBreak: true inside
+    // the same paragraph (parse.ts:441), so a paragraph can be one <w:p> and
+    // still be two visual lines. Under the 100-char cap is not enough.
+    const blocks: DocxParagraph[] = [
+      {
+        kind: 'paragraph', styleId: null, outlineLvl: null, numbering: null,
+        runs: [
+          run('The Vale', { bold: true, ...BODY }),
+          run('', { bold: true, ...BODY, lineBreak: true }),
+          run('Continued', { bold: true, ...BODY }),
+        ],
+      },
+      para('Prose.', {}, BODY),
+    ];
+    expect(detectUnstyledHeadings(blocks).size).toBe(0);
+  });
+
+  it('assigns the same level to each signature regardless of physical block order', () => {
+    // The prior "reruns one fixed input 20 times" test proves nothing about
+    // order-independence — it never varies the input. This builds the same
+    // two signature groups in two different physical orderings and checks
+    // that ranking depends on prominence, not position.
+    const groupA = { sizeHalfPoints: 36, bold: true };
+    const groupB = { sizeHalfPoints: 28, bold: true };
+
+    const orderOne = [
+      para('Part One', {}, groupA), para('Prose.', {}, BODY),
+      para('Chapter A', {}, groupB), para('Prose.', {}, BODY),
+    ];
+    const orderTwo = [
+      para('Chapter A', {}, groupB), para('Prose.', {}, BODY),
+      para('Part One', {}, groupA), para('Prose.', {}, BODY),
+    ];
+
+    const gotOne = detectUnstyledHeadings(orderOne);
+    const gotTwo = detectUnstyledHeadings(orderTwo);
+
+    const levelA1 = gotOne.get(0);   // 'Part One' at index 0 in orderOne
+    const levelA2 = gotTwo.get(2);   // 'Part One' at index 2 in orderTwo
+    const levelB1 = gotOne.get(2);   // 'Chapter A' at index 2 in orderOne
+    const levelB2 = gotTwo.get(0);   // 'Chapter A' at index 0 in orderTwo
+
+    expect(levelA1).toBe(levelA2);
+    expect(levelB1).toBe(levelB2);
+    expect(levelA1).toBe(1);
+    expect(levelB1).toBe(2);
+  });
 });
