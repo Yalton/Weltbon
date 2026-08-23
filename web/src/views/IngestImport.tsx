@@ -321,28 +321,38 @@ export function IngestImport() {
   };
 
   /**
-   * #35 DOCX-09: re-request the preview with `docx_promote_headings=true`.
+   * #35 DOCX-09: re-request with the complete next set of promoted uploads.
+   * The server response is the source of truth, so toggling one row copies
+   * every current `promoted` index before adding or deleting that row.
    *
-   * Same re-request path as `handleSplitLevelChange` — requestPreview(),
-   * discardDraft() before swapping state, decisions reset — for the same
-   * reason: a promoted document produces a different entry set (unstyled
-   * paragraphs become real headings, which can change how the document
-   * splits), and decisions are keyed by path.
-   *
-   * The current split level is carried over (rather than omitted, which
-   * would re-run auto-detection) so that turning on promotion does not
-   * silently discard a split-level choice the user already made.
+   * Same safe re-preview path as `handleSplitLevelChange`: preserve the
+   * applied split level, abandon a queued old draft, replace the preview,
+   * reset path-keyed decisions, focus the first new entry, and persist the
+   * replacement. A failed request never mutates the old review state.
    */
-  const handlePromoteHeadings = async () => {
-    if (!source || !uid || promotingHeadings) return;
+  const handleDocxPromotionChange = async (
+    uploadIndex: number,
+    promoted: boolean,
+  ) => {
+    if (!source || !uid || !preview || promotingHeadings) return;
+    const promotedDocxIndices = new Set(
+      (preview.docx?.files ?? [])
+        .filter((file) => file.headings.promoted)
+        .map((file) => file.uploadIndex),
+    );
+    if (promoted) {
+      promotedDocxIndices.add(uploadIndex);
+    } else {
+      promotedDocxIndices.delete(uploadIndex);
+    }
     setPromotingHeadings(true);
     try {
       const next = await requestPreview(
         uid,
         source.files,
         source.kind,
-        preview?.split?.applied,
-        true,
+        preview.split?.applied,
+        promotedDocxIndices,
       );
       discardDraft();
       setPreview(next);
@@ -759,7 +769,7 @@ export function IngestImport() {
       {preview.docx && source && (
         <DocxPromoteControl
           files={preview.docx.files}
-          onPromote={handlePromoteHeadings}
+          onChange={handleDocxPromotionChange}
           disabled={promotingHeadings || isCommitting}
         />
       )}

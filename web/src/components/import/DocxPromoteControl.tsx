@@ -5,11 +5,9 @@ import type { DocxFileInfo } from '../../types/ingestReview';
  * (issue #35, DOCX-09).
  *
  * Shown above the entry list when the preview reports at least one .docx
- * part whose deterministic pass found NO headings but whose heuristic pass
- * WOULD find some (`unstyledCandidates > 0`) and that part has not already
- * been promoted. Promotion is opt-in (DOCX-09): the default import is
- * deterministic and predictable, and this control is the only way to ask
- * for the heuristic pass instead.
+ * part whose heuristic pass found candidates (`unstyledCandidates > 0`).
+ * Each eligible upload has its own reversible control because names are not
+ * unique and the server identifies uploads by their stable multipart index.
  *
  * The eligibility check is deliberately just `unstyledCandidates > 0`.
  * `unstyledCandidates` already arrives POST-GATE — the server reports 0
@@ -25,48 +23,55 @@ import type { DocxFileInfo } from '../../types/ingestReview';
 
 interface DocxPromoteControlProps {
   files: DocxFileInfo[];
-  onPromote: () => void;
+  onChange: (uploadIndex: number, promoted: boolean) => void;
   /** True while a re-preview is in flight, so a double click cannot race two requests. */
   disabled?: boolean;
 }
 
-/**
- * Total unstyled-heading candidates across .docx parts that are eligible for
- * promotion (not already promoted). Exported so the "should this control
- * render at all" decision and its N-count are computed by one function
- * rather than duplicated between a render guard and the label.
- */
-export function eligibleUnstyledCandidateCount(files: DocxFileInfo[]): number {
-  return files
-    .filter((f) => !f.headings.promoted)
-    .reduce((sum, f) => sum + f.headings.unstyledCandidates, 0);
-}
-
 export function DocxPromoteControl({
   files,
-  onPromote,
+  onChange,
   disabled = false,
 }: DocxPromoteControlProps) {
-  const total = eligibleUnstyledCandidateCount(files);
-  if (total <= 0) return null;
+  const eligibleFiles = files.filter(
+    (file) => file.headings.unstyledCandidates > 0,
+  );
+  if (eligibleFiles.length === 0) return null;
 
   return (
     <section
       aria-label="Unstyled heading promotion"
       className="border-b border-neutral-200 dark:border-neutral-800 px-4 py-3"
     >
-      <p className="text-sm text-neutral-600 dark:text-neutral-400 mb-2">
-        One or more Word documents have no styled headings, but look like
-        they have hand-formatted ones.
-      </p>
-      <button
-        type="button"
-        disabled={disabled}
-        onClick={onPromote}
-        className="text-sm px-2 py-1 rounded border border-neutral-200 dark:border-neutral-800 hover:bg-neutral-100 dark:hover:bg-neutral-800 disabled:opacity-50 disabled:cursor-not-allowed"
-      >
-        Treat {total} bold paragraph{total === 1 ? '' : 's'} as headings
-      </button>
+      <div className="space-y-3">
+        {eligibleFiles.map((file) => {
+          const { styled, unstyledCandidates, promoted } = file.headings;
+          return (
+            <div key={file.uploadIndex} className="space-y-1">
+              <p className="text-sm text-neutral-600 dark:text-neutral-400">
+                {styled > 0
+                  ? 'Styled headings remain; choose whether to also use hand-formatted paragraphs.'
+                  : 'This document has no styled headings but has hand-formatted candidates.'}
+              </p>
+              <button
+                type="button"
+                disabled={disabled}
+                onClick={() => onChange(file.uploadIndex, !promoted)}
+                className="text-sm px-2 py-1 rounded border border-neutral-200 dark:border-neutral-800 hover:bg-neutral-100 dark:hover:bg-neutral-800 disabled:opacity-50 disabled:cursor-not-allowed"
+              >
+                {file.path}: {promoted ? (
+                  'Use styled headings only.'
+                ) : (
+                  <>
+                    Treat {unstyledCandidates} bold paragraph
+                    {unstyledCandidates === 1 ? '' : 's'} as headings
+                  </>
+                )}
+              </button>
+            </div>
+          );
+        })}
+      </div>
     </section>
   );
 }
