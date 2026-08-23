@@ -10,6 +10,7 @@ import { describe, it, expect } from 'vitest';
 import { convertDocument, escapeMarkdown } from '../src/services/ingest-docx/convert.js';
 import { buildStyleIndex } from '../src/services/ingest-docx/headings.js';
 import type { DocxDocument, DocxParagraph, DocxRun } from '../src/services/ingest-docx/parse.js';
+import { parseFrontmatter } from '../src/services/ingest-markdown.js';
 
 const NO_COUNTERS = {
   insertionsKept: 0, deletionsDropped: 0, commentsDropped: 0,
@@ -355,5 +356,119 @@ describe('convertDocument — warnings and media', () => {
     expect(r.markdown).not.toContain('[^9]: ');
     // Footnote text comes from footnotes.xml — escaped like any other run.
     expect(r.markdown).toContain('[^3]: Three \\*starred\\*.');
+  });
+});
+
+/**
+ * Round-1 review defects. Every one of these produced VALID Markdown that
+ * rendered as something the author did not write — structure invented, or in
+ * two cases text deleted outright. Each expectation below was checked against
+ * the real pipeline (remark-parse + remark-gfm, and gray-matter for the
+ * frontmatter case) before it was written here.
+ */
+describe('convertDocument — prose must not restructure the document', () => {
+  it('escapes a paragraph that is nothing but a horizontal rule', () => {
+    // Unescaped, `---` is a thematic break: the user's text is deleted, not
+    // restyled. As the FIRST block it is worse — gray-matter eats it as a
+    // frontmatter fence and the entry body comes out empty.
+    const r = convert([para([run('---')]), para([run('Second paragraph.')])]);
+    expect(r.markdown.split('\n')[0]).toBe('\\---');
+    const fm = parseFrontmatter(r.markdown);
+    expect(fm.data).toEqual({});
+    expect(fm.body).toContain('---');
+    expect(fm.body).toContain('Second paragraph.');
+  });
+
+  it('escapes the other line-start structure characters', () => {
+    const r = convert([
+      para([run('- not a list')]),
+      para([run('+ not a list either')]),
+      para([run('> not a quote')]),
+      para([run('1. not an ordered list')]),
+    ]);
+    expect(r.markdown).toContain('\\- not a list');
+    expect(r.markdown).toContain('\\+ not a list either');
+    expect(r.markdown).toContain('\\> not a quote');
+    expect(r.markdown).toContain('1\\. not an ordered list');
+  });
+
+  it('keeps a deeply indented paragraph out of a code block', () => {
+    // Four leading spaces make an indented code block, which would swallow the
+    // prose whole. A backslash cannot escape a space, so the first one becomes
+    // a character reference — which remark decodes back to a space.
+    const r = convert([para([run('    indented prose')])]);
+    expect(r.markdown).toContain('&#32;   indented prose');
+    expect(r.markdown).not.toMatch(/^ {4}/m);
+  });
+
+  it('escapes a line of equals signs that would turn the line above into a heading', () => {
+    const r = convert([para([run('Title'), run('', { lineBreak: true }), run('===')])]);
+    expect(r.markdown).toContain('\\===');
+  });
+
+  it('escapes angle brackets so inline HTML cannot delete the text', () => {
+    // react-markdown runs without rehype-raw, so an html node renders as
+    // nothing: `<div>note</div>` on its own line loses the word "note".
+    const r = convert([para([run('<div>note</div>')])]);
+    expect(r.markdown).toContain('\\<div>note\\</div>');
+  });
+
+  it('escapes ordinary prose at the call site, not only inside escapeMarkdown', () => {
+    // The escapeMarkdown describe block tests the function in isolation and
+    // would not notice if the call vanished from the body path.
+    const r = convert([para([run('*not emphasis* and # not a heading')])]);
+    expect(r.markdown).toContain('\\*not emphasis\\* and \\# not a heading');
+  });
+});
+
+describe('convertDocument — line breaks and caps', () => {
+  it('drops a trailing hard break instead of emitting a stray backslash', () => {
+    // Shift+Enter at the end of a paragraph is constant in Word. A trailing
+    // backslash at the end of a block is a LITERAL backslash in CommonMark.
+    const r = convert([para([run('a'), run('', { lineBreak: true })])]);
+    expect(r.markdown).toBe('a\n');
+  });
+
+  it('does not leave a backslash behind when a break is flattened in a list item', () => {
+    const r = convert([para([run('a'), run('', { lineBreak: true }), run('b')],
+      { numbering: { numId: '1', ilvl: 0 } })]);
+    expect(r.markdown).toContain('- a b');
+    expect(r.markdown).not.toContain('\\');
+  });
+
+  it('keeps a heading on one line when the paragraph contains a break', () => {
+    const r = convert([para([run('The'), run('', { lineBreak: true }), run('Vale')],
+      { styleId: 'Heading1' })]);
+    expect(r.markdown).toContain('# The Vale');
+    expect(r.markdown).not.toContain('\\\n');
+  });
+
+  it('applies w:caps to the text and warns about nothing', () => {
+    // caps is not formatting Markdown cannot express — it is a transform on
+    // the visible text, and the flag is in hand. Applying it faithfully means
+    // nothing was lost, so there is nothing to warn about.
+    const r = convert([para([run('the vale', { caps: true }), run(' is cold')])]);
+    expect(r.markdown).toContain('THE VALE is cold');
+    expect(r.warnings.filter((w) => w.code === 'formatting-dropped')).toHaveLength(0);
+  });
+});
+
+describe('convertDocument — list indentation', () => {
+  it('indents a nested ordered list by the width of its marker', () => {
+    // Two spaces is correct content-indent for `-` and wrong for `1.`, which
+    // needs three: at two, remark flattens the nesting away entirely.
+    const r = convert([
+      para([run('a')], { numbering: { numId: '7', ilvl: 0 } }),
+      para([run('b')], { numbering: { numId: '7', ilvl: 1 } }),
+    ], { numberingFormats: new Map([['7', 'ordered' as const]]) });
+    expect(r.markdown).toContain('1. a\n   1. b');
+  });
+
+  it('still indents a nested bullet by two', () => {
+    const r = convert([
+      para([run('a')], { numbering: { numId: '1', ilvl: 0 } }),
+      para([run('b')], { numbering: { numId: '1', ilvl: 1 } }),
+    ]);
+    expect(r.markdown).toContain('- a\n  - b');
   });
 });

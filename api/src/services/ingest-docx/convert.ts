@@ -91,12 +91,68 @@ export interface ConvertResult {
  * fails against a sequential wrong-order implementation, which is the property
  * that matters.
  *
- * The set is exactly the characters that change block or inline STRUCTURE when
- * this converter emits its own markers around them: `` \ * _ [ ] ` # | ~ ``.
- * `|` is here for table cells and `~` because strikethrough is emitted by us.
+ * The set is the characters that change INLINE structure anywhere they appear:
+ * `` \ * _ [ ] ` # | ~ < ``. `|` is here for table cells, `~` because
+ * strikethrough is emitted by us, and `<` because an html node is not rendered
+ * at all downstream — react-markdown runs without rehype-raw, so a Word
+ * paragraph reading `<div>note</div>` loses the word "note" entirely rather
+ * than showing it. `>` is NOT here: it is inert mid-line and is handled at
+ * line start by escapeLineStarts, which keeps ordinary prose ("a > b") clean.
  */
 export function escapeMarkdown(text: string): string {
-  return text.replace(/[\\*_[\]`#|~]/g, (ch) => `\\${ch}`);
+  return text.replace(/[\\*_[\]`#|~<]/g, (ch) => `\\${ch}`);
+}
+
+/**
+ * Characters that only mean something at the START of a line, escaped after
+ * the inline pass because they need position, not just identity.
+ *
+ * Every rule here was checked against remark-parse + remark-gfm, and every one
+ * of them was a case where the author's text was RESTRUCTURED OR DELETED, not
+ * merely restyled:
+ *
+ *   `---`      thematic break; the text vanishes. As the document's first
+ *              line it is worse still — gray-matter (ingest-markdown's
+ *              parseFrontmatter) eats it as a frontmatter fence and the entry
+ *              body comes out EMPTY.
+ *   `- + >`    list item / block quote the author did not write.
+ *   `1.` `1)`  ordered list, same.
+ *   `===`      setext underline: turns the PRECEDING line into an H1.
+ *   4+ spaces  indented code block, swallowing the paragraph whole.
+ *
+ * The indent case cannot use a backslash — a space is not escapable ASCII
+ * punctuation — so the first whitespace character becomes a numeric character
+ * reference. That is a CommonMark character reference, not raw HTML, so it
+ * survives a renderer with no rehype-raw and decodes back to the original
+ * character.
+ */
+function escapeLineStarts(text: string): string {
+  return text.split('\n').map((line) => {
+    if (/^(?: {4,}|\t)/.test(line)) {
+      return `&#${line[0] === '\t' ? 9 : 32};${line.slice(1)}`;
+    }
+    if (/^[-+>]/.test(line)) return `\\${line}`;
+    const ordered = /^(\d{1,9})([.)])/.exec(line);
+    if (ordered !== null) return `${ordered[1]}\\${line.slice(ordered[1].length)}`;
+    if (/^=+\s*$/.test(line)) return `\\${line}`;
+    return line;
+  }).join('\n');
+}
+
+/**
+ * A hard break at the END of a block breaks nothing — there is no following
+ * line — and CommonMark then renders the backslash as a literal backslash.
+ * Word users press Shift+Enter at the end of a line constantly, so this is the
+ * common case, not the exotic one.
+ */
+function stripTrailingBreaks(text: string): string {
+  return text.replace(/(?:\\\n)+$/, '');
+}
+
+/** Collapse a hard break into a space, backslash included. Dropping only the
+ *  newline leaves `a\ b`, and a backslash before a space is not an escape. */
+function flattenBreaks(text: string): string {
+  return text.replace(/\\\n/g, ' ').replace(/\n/g, ' ');
 }
 
 /** A rendered chunk plus whether it is a list item, which decides whether the
@@ -107,8 +163,10 @@ const HARD_BREAK = '\\\n';
 
 /**
  * DOCX-04: text preserved, formatting dropped, warned once per document.
- * `caps` is deliberately NOT counted: it is a render directive, the text is
- * emitted exactly as authored, and nothing was lost that a user could act on.
+ * `caps` is NOT counted here because it is APPLIED instead (see renderRun) —
+ * nothing is lost, so there is nothing to warn about. It was previously
+ * neither applied nor counted, which silently lower-cased headings the author
+ * had capitalised.
  */
 function hasDroppedFormatting(r: DocxRun): boolean {
   return r.underline || r.highlight || r.vertAlign !== 'baseline';
@@ -225,7 +283,14 @@ function renderRun(r: DocxRun, ctx: RenderContext, singleLine: boolean): string 
     if (!ctx.footnoteOrder.includes(id)) ctx.footnoteOrder.push(id);
     return `[^${id}]`;
   }
-  return decorate(escapeMarkdown(r.text), r);
+  // w:caps is applied rather than dropped, and deliberately not warned about.
+  // Unlike underline it is not formatting Markdown cannot express — it is a
+  // transform on the visible text, and the flag is in hand: Word shows
+  // "THE VALE", so the entry says THE VALE and nothing is lost. NOT extended
+  // to w:smallCaps, which parse.ts does not capture and which has no faithful
+  // text equivalent (upper-casing it would corrupt the author's text).
+  const text = r.caps ? r.text.toUpperCase() : r.text;
+  return decorate(escapeMarkdown(text), r);
 }
 
 function renderParagraph(
@@ -237,13 +302,15 @@ function renderParagraph(
   if (styled !== null) counts.styled += 1;
 
   if (level !== null) {
+    // singleLine: a heading cannot contain a line break without ending itself,
+    // so a w:br inside one degrades to a space.
     const text = renderRuns(block.runs, ctx, true).trim();
     if (text === '') return null;
     counts.headings += 1;
     return { text: `${'#'.repeat(level)} ${text}`, listItem: false };
   }
 
-  const body = renderRuns(block.runs, ctx, false);
+  const body = stripTrailingBreaks(renderRuns(block.runs, ctx, false));
   if (body.trim() === '') return null;
 
   if (block.numbering !== null) {
@@ -253,14 +320,24 @@ function renderParagraph(
     // reset rules (nesting, interruption, restarts) that can disagree with
     // what the reader finally sees.
     const marker = format === 'ordered' ? '1.' : '-';
-    const indent = '  '.repeat(Math.max(0, block.numbering.ilvl));
-    return { text: `${indent}${marker} ${body.replace(/\n/g, ' ')}`, listItem: true };
+    // Indent by the MARKER's width, not a flat two spaces: a nested "1." at
+    // two spaces is not nested at all — remark flattens it into one list and
+    // the author's outline is gone. (DOCX-04 says both "1." and "two-space
+    // indent"; those are incompatible, and preserving the outline is the
+    // point of the rule.)
+    const indent = (marker === '-' ? '  ' : '   ').repeat(Math.max(0, block.numbering.ilvl));
+    // Escaped AFTER flattening, because flattening is what puts the item's
+    // second line at the start of a line for the first time.
+    return { text: `${indent}${marker} ${escapeLineStarts(flattenBreaks(body))}`, listItem: true };
   }
 
+  // Line starts are escaped before our own markers go on, so a quote's "> "
+  // and a list's "- " are the only structure characters left unescaped.
+  const escaped = escapeLineStarts(body);
   if (isQuoteStyle(block.styleId)) {
-    return { text: body.split('\n').map((l) => `> ${l}`).join('\n'), listItem: false };
+    return { text: escaped.split('\n').map((l) => `> ${l}`).join('\n'), listItem: false };
   }
-  return { text: body, listItem: false };
+  return { text: escaped, listItem: false };
 }
 
 /**
@@ -474,7 +551,7 @@ export function convertDocument(doc: DocxDocument, opts: ConvertOptions): Conver
 
   const definitions = ctx.footnoteOrder
     .filter((id) => opts.footnotes.has(id))
-    .map((id) => `[^${id}]: ${escapeMarkdown(opts.footnotes.get(id) ?? '')}`);
+    .map((id) => `[^${id}]: ${escapeLineStarts(escapeMarkdown(opts.footnotes.get(id) ?? ''))}`);
 
   const sections = [renderFrontmatter(opts.coreProps), body.join(''), definitions.join('\n\n')]
     .filter((s): s is string => s !== null && s !== '');
