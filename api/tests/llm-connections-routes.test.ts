@@ -124,15 +124,21 @@ describe('llm-connections routes', () => {
 
   it('reports localMode through GET /api/config so the shared frontend can branch', async () => {
     await boot(true);
-    const res = await app.request('/api/config');
+    const res = await app.request('/api/config', { headers: authHeader(token) });
     expect((await res.json()).localMode).toBe(true);
   });
 
   it('GET /api/config reports localMode: false when off — round-trips both directions, not just the ON case', async () => {
     await boot(false);
-    const res = await app.request('/api/config');
+    const res = await app.request('/api/config', { headers: authHeader(token) });
     expect(res.status).toBe(200);
     expect((await res.json()).localMode).toBe(false);
+  });
+
+  it('GET /api/config requires authentication (fix round 1, Finding 1: a share token must not reach it either — see share-boundary.test.ts)', async () => {
+    await boot(true);
+    const res = await app.request('/api/config');
+    expect(res.status).toBe(401);
   });
 
   it('requires authentication', async () => {
