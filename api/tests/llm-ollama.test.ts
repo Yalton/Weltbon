@@ -325,7 +325,7 @@ describe('OllamaProvider.runAudit', () => {
       model: 'qwen3:14b',
       messages: [{ role: 'user', content: 'short prompt' }],
     });
-    await expect(promise).rejects.toMatchObject({ variant: LLMError.ModelNotAvailable });
+    await expect(promise).rejects.toMatchObject({ variant: LLMError.ContextTruncated });
     // Both numbers must be in the message: "your prompt was too long" is not
     // actionable, "2054 tokens into a 2054-token window" is.
     await expect(promise).rejects.toThrow(/2054/);
@@ -465,7 +465,7 @@ describe('OllamaProvider.runAudit', () => {
         model: 'tiny-ctx',
         messages: [{ role: 'user', content: 'hi' }],
       }),
-    ).rejects.toMatchObject({ variant: LLMError.ModelNotAvailable });
+    ).rejects.toMatchObject({ variant: LLMError.ContextTruncated });
     expect(chatCalled).toBe(false);
   });
 });

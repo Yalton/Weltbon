@@ -133,3 +133,34 @@ describe('AuditCompletionBanner — Phase 27 D-06 cost_unknown chip', () => {
     expect(screen.queryByText(/cost unknown/i)).not.toBeInTheDocument();
   });
 });
+
+describe('AuditCompletionBanner — context truncation', () => {
+  beforeEach(() => {
+    vi.mocked(useEstimateAudit).mockReturnValue({ data: undefined } as never);
+    vi.mocked(useUniverse).mockReturnValue({ data: { auditEnabled: true } } as never);
+    vi.mocked(useIssues).mockReturnValue({ data: [] } as never);
+  });
+
+  it('tells the user to narrow the audit scope instead of diagnosing model availability', () => {
+    vi.mocked(useAuditRun).mockReturnValue({
+      data: {
+        ...BASE_RUN,
+        status: 'failed',
+        error: 'context_truncated',
+        suggestionCount: 0,
+      },
+    } as never);
+
+    render(
+      <AuditCompletionBanner universeId={BASE_RUN.universeId} runId={BASE_RUN.id} />,
+      { wrapper: Wrapper },
+    );
+
+    expect(
+      screen.getByText(
+        /The audit scope is too large for the selected model's context window\. Try a narrower audit scope\./,
+      ),
+    ).toBeInTheDocument();
+    expect(screen.queryByText(/not available on this account/i)).not.toBeInTheDocument();
+  });
+});

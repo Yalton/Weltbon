@@ -57,6 +57,8 @@ const ERROR_COPY: Record<string, string> = {
     'The provider account is out of credits. Top up and try again.',
   model_not_available:
     'The selected model is not available on this account. Pick a different model in universe settings.',
+  context_truncated:
+    "The audit scope is too large for the selected model's context window. Try a narrower audit scope.",
   content_blocked:
     'The provider blocked some content for safety reasons. Try a narrower audit scope.',
   fallback:

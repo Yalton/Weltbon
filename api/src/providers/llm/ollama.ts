@@ -296,7 +296,7 @@ export class OllamaProvider implements LLMProvider {
     // failure mode is contained to Ollama's own num_ctx sizing rather than
     // corrupting the cost estimate other providers' UI reads too.
     const toolTokens = wireTools ? Math.ceil(JSON.stringify(wireTools).length / 4) : 0;
-    // Throws ModelNotAvailable (before any /api/chat call) when the
+    // Throws ContextTruncated (before any /api/chat call) when the
     // estimated prompt cannot fit even the model's architectural maximum —
     // see ollama-wire.ts. `info.contextLength` is that architectural
     // maximum, NOT a runtime window (Task 4); num_ctx below is the only
@@ -367,7 +367,7 @@ export class OllamaProvider implements LLMProvider {
     const promptEvalCount = body.prompt_eval_count ?? 0;
     if (promptEvalCount >= numCtx) {
       throw new LLMProviderError(
-        LLMError.ModelNotAvailable,
+        LLMError.ContextTruncated,
         `Ollama tokenized ${promptEvalCount} prompt tokens into a ${numCtx}-token context window, ` +
           `so part of this audit's prompt was dropped and the findings would cover only part of ` +
           `your universe. Audit a smaller scope, or choose a model with a larger context window.`,

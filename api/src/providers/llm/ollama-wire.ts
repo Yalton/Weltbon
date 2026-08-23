@@ -89,7 +89,7 @@ export function chooseNumCtx(
   const ceiling = architecturalMax ?? CONSERVATIVE_MAX;
   if (needed > ceiling) {
     throw new LLMProviderError(
-      LLMError.ModelNotAvailable,
+      LLMError.ContextTruncated,
       `this audit needs about ${needed} tokens of context but the model supports at most ${ceiling}. ` +
         `Choose a model with a larger context window, or audit a smaller scope.`,
     );

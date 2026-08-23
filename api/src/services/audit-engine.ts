@@ -105,6 +105,7 @@ export const ENGINE_ERROR = {
   INVALID_API_KEY: 'invalid_api_key',
   INSUFFICIENT_CREDITS: 'insufficient_credits',
   MODEL_NOT_AVAILABLE: 'model_not_available',
+  CONTEXT_TRUNCATED: 'context_truncated',
   CONTENT_BLOCKED: 'content_blocked',
   RATE_LIMITED: 'rate_limited',
   NETWORK_ERROR: 'network_error',
@@ -121,6 +122,8 @@ function llmErrorToTag(variant: LLMError): EngineErrorTag {
       return ENGINE_ERROR.INSUFFICIENT_CREDITS;
     case LLMError.ModelNotAvailable:
       return ENGINE_ERROR.MODEL_NOT_AVAILABLE;
+    case LLMError.ContextTruncated:
+      return ENGINE_ERROR.CONTEXT_TRUNCATED;
     case LLMError.ContentBlockedBySafetyFilter:
       return ENGINE_ERROR.CONTENT_BLOCKED;
     case LLMError.RateLimited:
