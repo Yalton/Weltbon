@@ -37,8 +37,7 @@ import { Buffer } from 'node:buffer';
 import { SaxesParser } from 'saxes';
 import { unpackDocx, DocxFormatError } from './unpack.js';
 import { parseDocumentXml, rejectDoctype } from './parse.js';
-import type { DocxBlock } from './parse.js';
-import { buildStyleIndex, detectUnstyledHeadings, resolveStyledHeading } from './headings.js';
+import { buildStyleIndex, countStyledHeadings, detectUnstyledHeadings } from './headings.js';
 import type { HeadingLevel } from './headings.js';
 import { convertDocument } from './convert.js';
 import type { DocxMediaRef, DocxWarning } from './convert.js';
@@ -346,15 +345,6 @@ function resolveContentType(name: string | null, index: ContentTypeIndex | null)
   return index.byExtension.get(name.slice(dot + 1).toLowerCase()) ?? null;
 }
 
-function countStyledHeadings(blocks: DocxBlock[], styleIndex: ReturnType<typeof buildStyleIndex>): number {
-  let n = 0;
-  for (const block of blocks) {
-    if (block.kind !== 'paragraph') continue;
-    if (resolveStyledHeading(block, styleIndex) !== null) n += 1;
-  }
-  return n;
-}
-
 export async function convertDocx(
   buffer: Buffer,
   opts: ConvertDocxOptions,
@@ -380,19 +370,19 @@ export async function convertDocx(
   // declared size while walking, and that is all DOCX-07 asks for.
   const mediaEntries = parts.otherEntries.filter((e) => e.name.startsWith('word/media/'));
 
-  // DOCX-09's gate. detectUnstyledHeadings runs unconditionally — the preview
-  // needs the count to offer the affordance at all, and running it costs one
-  // linear pass over blocks already in memory — but its result is only allowed
-  // to become headings when the deterministic pass found nothing.
+  // DOCX-09's gate. The heuristic's result may only become headings when the
+  // deterministic pass found nothing, so it is not even run otherwise — the
+  // count would be discarded, and reporting it would be wrong (see below).
   const styledCount = countStyledHeadings(doc.blocks, styleIndex);
-  const detected = detectUnstyledHeadings(doc.blocks);
 
   // Reported as 0 when styled headings exist, because that is what the
   // heuristic WOULD promote here: nothing, the gate refuses. Reporting the raw
   // count instead would make the preview offer "treat N bold paragraphs as
   // headings", and accepting it would change nothing at all — a control that
   // silently does not work is worse than one that is absent.
-  const candidates: Map<number, HeadingLevel> = styledCount === 0 ? detected : new Map();
+  const candidates: Map<number, HeadingLevel> = styledCount === 0
+    ? detectUnstyledHeadings(doc.blocks)
+    : new Map();
   const promoted = opts.promoteHeadings && candidates.size > 0;
 
   const result = convertDocument(doc, {
@@ -431,7 +421,7 @@ export async function convertDocx(
     warnings,
     media,
     headings: {
-      styled: result.styledHeadings,
+      styled: styledCount,
       unstyledCandidates: candidates.size,
       promoted,
     },

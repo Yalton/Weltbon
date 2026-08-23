@@ -193,6 +193,30 @@ export function resolveStyledHeading(block: DocxParagraph, index: StyleIndex): H
   return null;
 }
 
+/**
+ * How many paragraphs the DETERMINISTIC pass resolves as headings.
+ *
+ * Here rather than in convert.ts because resolveStyledHeading is this module's
+ * predicate and index.ts needs the answer BEFORE conversion runs — the DOCX-09
+ * gate decides what `promotedHeadings` to hand convertDocument. One producer,
+ * one walk: a second tally kept inside the renderer would agree with this one
+ * only by inspection, and the two disagreeing is a silent failure (a document
+ * gets promoted headings on top of styled ones, or the preview under-reports).
+ *
+ * Counts a styled paragraph even when its text is empty. The number answers
+ * "did the author structure this document", which an empty styled heading
+ * still evidences; whether a heading is RENDERED is convert.ts's separate
+ * tally, and that is the one the no-headings warning is keyed to.
+ */
+export function countStyledHeadings(blocks: DocxBlock[], index: StyleIndex): number {
+  let n = 0;
+  for (const block of blocks) {
+    if (block.kind !== 'paragraph') continue;
+    if (resolveStyledHeading(block, index) !== null) n += 1;
+  }
+  return n;
+}
+
 interface CandidateSignature {
   bold: boolean;
   caps: boolean;

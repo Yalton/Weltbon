@@ -13,7 +13,8 @@ import type { DocxDocument, DocxParagraph, DocxRun } from '../src/services/inges
 import { convertDocx } from '../src/services/ingest-docx/index.js';
 import { DocxFormatError } from '../src/services/ingest-docx/unpack.js';
 import { makeDocx, documentWith } from './helpers/docx-fixture.js';
-import { parseFrontmatter } from '../src/services/ingest-markdown.js';
+import { parseFrontmatter, inferTitle } from '../src/services/ingest-markdown.js';
+import { splitMarkdownFile } from '../src/services/ingest-split.js';
 
 const NO_COUNTERS = {
   insertionsKept: 0, deletionsDropped: 0, commentsDropped: 0,
@@ -78,7 +79,6 @@ describe('convertDocument — blocks', () => {
   it('renders a styled heading at its level', () => {
     const r = convert([para([run('The Vale')], { styleId: 'Heading2' })]);
     expect(r.markdown).toContain('## The Vale');
-    expect(r.styledHeadings).toBe(1);
   });
 
   it('renders a promoted heading at the level it was given', () => {
@@ -126,9 +126,17 @@ describe('convertDocument — blocks', () => {
     expect(r.markdown).toContain('> loud');
   });
 
-  it('escapes heading text like any other run', () => {
+  it('does NOT escape heading text, unlike every other run', () => {
+    // Reversed deliberately in fix round 1. Escaping is right everywhere the
+    // escape stays inside the rendered body, and wrong in a heading, because
+    // inferTitle and ingest-split's headingText slice the H1 from the SOURCE:
+    // `# \\#1 \\*The\\* Vale` titled the entry `\\#1 \\*The\\* Vale`,
+    // backslashes and all, and named its file from that. Nothing structural is
+    // lost by not escaping — the `#` prefix owns the start of the line, so no
+    // marker in the text can open a block.
     const r = convert([para([run('#1 *The* Vale')], { styleId: 'Heading1' })]);
-    expect(r.markdown).toContain('# \\#1 \\*The\\* Vale');
+    expect(r.markdown).toContain('# #1 *The* Vale');
+    expect(r.markdown).not.toContain('\\');
   });
 
   it('renders an ordered list when numbering.xml said the format is ordered', () => {
@@ -280,7 +288,6 @@ describe('convertDocument — warnings and media', () => {
     const r = convert([para([run('The Vale')]), para([run('Prose.')])],
       { promotedHeadings: new Map([[0, 1 as const]]) });
     expect(r.warnings.some((w) => w.code === 'no-headings')).toBe(false);
-    expect(r.styledHeadings).toBe(0);
   });
 
   it('aggregates every counter-driven code into one warning carrying its count', () => {
@@ -524,25 +531,50 @@ describe('convertDocument — line breaks and caps', () => {
   });
 });
 
-describe('convertDocument — headings and redundant bold', () => {
-  it('drops bold when the whole heading is bold', () => {
-    // `# **The Vale**` is not merely noisy: inferTitle (ingest-markdown) and
-    // ingest-split's headingText both slice the H1 from the SOURCE, markup
-    // included, so the entry would be titled literally `**The Vale**`.
-    const r = convert([
-      para([run('The Vale', { bold: true })], { styleId: 'Heading1' }),
-    ]);
-    expect(r.markdown).toContain('# The Vale');
-    expect(r.markdown).not.toContain('**');
-  });
-
-  it('keeps bold that covers only part of the heading', () => {
-    // A contrast the author drew inside the line is their text's meaning, not
-    // our duplicated formatting.
-    const r = convert([
+describe('convertDocument — heading text is plain text', () => {
+  it('drops every emphasis marker, at any coverage', () => {
+    // Emphasis inside a heading can only reach the user as literal title text
+    // (see renderRun's PLAIN MODE note), so there is no coverage at which
+    // emitting it is right — including the partially bold case, where the
+    // contrast the author drew is invisible in the title either way.
+    const shapes: Array<Partial<DocxRun>> = [
+      { bold: true }, { italic: true }, { bold: true, italic: true }, { strike: true },
+    ];
+    for (const shape of shapes) {
+      const r = convert([para([run('The Vale', shape)], { styleId: 'Heading1' })]);
+      expect(r.markdown).toContain('# The Vale');
+      expect(r.markdown).not.toMatch(/[*~]/);
+    }
+    const partial = convert([
       para([run('The '), run('Vale', { bold: true })], { styleId: 'Heading1' }),
     ]);
-    expect(r.markdown).toContain('# The **Vale**');
+    expect(partial.markdown).toContain('# The Vale');
+    expect(partial.markdown).not.toContain('**');
+  });
+
+  it('leaves heading text unescaped so the title is the author\'s text', () => {
+    // The accepted trade: the body H1 renders "Vale" emphasised, and the title
+    // — which persists and names the file — is exactly what Word showed.
+    const r = convert([para([run('The *Vale*')], { styleId: 'Heading1' })]);
+    expect(r.markdown).toContain('# The *Vale*');
+    const under = convert([para([run('The_Vale')], { styleId: 'Heading1' })]);
+    expect(under.markdown).toContain('# The_Vale');
+  });
+
+  it('unwraps a hyperlink in a heading to its text', () => {
+    const r = convert([
+      para([run('The Vale', { hyperlink: { relId: 'rId9', anchor: null } })],
+        { styleId: 'Heading1' }),
+    ], { rels: new Map([['rId9', 'https://example.com/vale']]) });
+    expect(r.markdown).toContain('# The Vale');
+    expect(r.markdown).not.toContain('https://example.com/vale');
+  });
+
+  it('still escapes and decorates the same runs in body prose', () => {
+    // The plain path is heading-only: prose keeps every marker and every
+    // escape, which is what the rest of DOCX-04 asks for.
+    const r = convert([para([run('The *Vale*', { italic: true })])]);
+    expect(r.markdown).toContain('*The \\*Vale\\**');
   });
 });
 
@@ -600,7 +632,12 @@ describe('convertDocx — end to end', () => {
     expect(off.headings.unstyledCandidates).toBe(1);
     expect(off.headings.promoted).toBe(false);
     expect(off.markdown).not.toContain('# The Vale');
-    expect(off.warnings.some((w) => w.code === 'unstyled-headings-detected')).toBe(true);
+    const warning = off.warnings.find((w) => w.code === 'unstyled-headings-detected');
+    // DOCX-05: every warning carries {code, message, count}. The count is what
+    // the preview's "treat N bold paragraphs as headings" control is built on,
+    // so a warning that omits it renders an offer with no number in it.
+    expect(warning?.count).toBe(1);
+    expect(warning?.message).toContain('heading promotion');
 
     const on = await convertDocx(buf, { promoteHeadings: true });
     expect(on.headings.promoted).toBe(true);
@@ -642,28 +679,72 @@ describe('convertDocx — end to end', () => {
   // DOCX-07: the manifest names contentType, and [Content_Types].xml is the
   // only source for it. Nothing decompresses a media byte to get there.
   it('fills the media manifest contentType from [Content_Types].xml', async () => {
+    // Two images so BOTH resolution branches are exercised against a part the
+    // document actually references: image1 by <Default> extension, image2 by
+    // an <Override> that contradicts its extension — which is exactly what an
+    // override is for, and the half of the rule an unreferenced override
+    // would leave untested.
     const buf = await makeDocx({
       documentXml: documentWith(
-        '<w:p><w:r><w:drawing><a:blip r:embed="rId5"/></w:drawing></w:r></w:p>',
+        '<w:p><w:r><w:drawing><a:blip r:embed="rId5"/></w:drawing></w:r></w:p>' +
+        '<w:p><w:r><w:drawing><a:blip r:embed="rId6"/></w:drawing></w:r></w:p>',
       ),
       relsXml:
         '<?xml version="1.0"?><Relationships>' +
         '<Relationship Id="rId5" Type="http://schemas.openxmlformats.org/officeDocument/2006/relationships/image" Target="media/image1.png"/>' +
+        '<Relationship Id="rId6" Type="http://schemas.openxmlformats.org/officeDocument/2006/relationships/image" Target="media/image2.png"/>' +
         '</Relationships>',
       contentTypesXml:
         '<?xml version="1.0"?><Types>' +
         '<Default Extension="png" ContentType="image/png"/>' +
-        '<Override PartName="/word/media/logo.jpeg" ContentType="image/jpeg"/>' +
+        '<Override PartName="/word/media/image2.png" ContentType="image/jpeg"/>' +
         '</Types>',
-      extraEntries: [{ name: 'word/media/image1.png', content: Buffer.alloc(64, 7) }],
+      extraEntries: [
+        { name: 'word/media/image1.png', content: Buffer.alloc(64, 7) },
+        { name: 'word/media/image2.png', content: Buffer.alloc(32, 7) },
+      ],
     });
 
     const out = await convertDocx(buf, { promoteHeadings: false });
-    expect(out.media).toHaveLength(1);
+    expect(out.media).toHaveLength(2);
     expect(out.media[0].name).toBe('word/media/image1.png');
     expect(out.media[0].contentType).toBe('image/png');
     expect(out.media[0].declaredBytes).toBe(64);
+    // Override wins over the extension default.
+    expect(out.media[1].name).toBe('word/media/image2.png');
+    expect(out.media[1].contentType).toBe('image/jpeg');
     expect(out.markdown).toContain('![image omitted: image1.png]()');
+  });
+
+  it('parses endnotes.xml, and lets footnotes.xml win an id collision', async () => {
+    // parse.ts collapses w:footnoteReference and w:endnoteReference into one
+    // `footnoteRef`, so the two parts share an id namespace OOXML does not
+    // give them and both routinely start at 1. First writer wins, and
+    // footnotes.xml is read first — pinned here because the alternative
+    // (endnotes silently overwriting footnote text) reads perfectly well.
+    const buf = await makeDocx({
+      documentXml: documentWith(
+        '<w:p><w:r><w:t>a</w:t><w:footnoteReference w:id="2"/></w:r></w:p>' +
+        '<w:p><w:r><w:t>b</w:t><w:endnoteReference w:id="5"/></w:r></w:p>',
+      ),
+      footnotesXml:
+        '<w:footnotes><w:footnote w:id="2"><w:p><w:r><w:t>From the footnotes part.</w:t></w:r></w:p></w:footnote></w:footnotes>',
+      extraEntries: [{
+        name: 'word/endnotes.xml',
+        content:
+          '<w:endnotes>' +
+          '<w:endnote w:id="2"><w:p><w:r><w:t>From the endnotes part.</w:t></w:r></w:p></w:endnote>' +
+          '<w:endnote w:id="5"><w:p><w:r><w:t>An endnote.</w:t></w:r></w:p></w:endnote>' +
+          '</w:endnotes>',
+      }],
+    });
+
+    const out = await convertDocx(buf, { promoteHeadings: false });
+    // endnotes.xml is read at all...
+    expect(out.markdown).toContain('[^5]: An endnote.');
+    // ...but does not overwrite a footnote sharing its id.
+    expect(out.markdown).toContain('[^2]: From the footnotes part.');
+    expect(out.markdown).not.toContain('From the endnotes part.');
   });
 
   // Carry: rejectDoctype is the billion-laughs defense, and it applies to a
@@ -739,5 +820,120 @@ describe('convertDocx — end to end', () => {
     expect(out.markdown).not.toMatch(/^title:/m);
     const parsed = parseFrontmatter(out.markdown);
     expect((parsed.data as { docx?: Record<string, string> }).docx?.title).toBe('Document1');
+  });
+});
+
+/**
+ * Issue #35 (DOCX-01) — what a heading becomes once the rest of the pipeline
+ * has had it.
+ *
+ * The assertions that matter here are NOT on the emitted Markdown. A heading's
+ * inline markup is carried verbatim into the entry's stored title by two
+ * independent consumers — inferTitle (ingest-markdown.ts) reads the raw H1
+ * slice, and ingest-split's headingText slices from the source and strips only
+ * the ATX prefix/suffix — and ingest-split then slugs the FILENAME from that
+ * title. Asserting only the Markdown would leave both defects alive: the round
+ * that added this block found `# The Vale` correct while `# *The Vale*`,
+ * `# ~~The Vale~~` and `# [The Vale](https://…)` all titled their entries with
+ * the markup still in.
+ *
+ * "Splitting works for free" is the claim DOCX-01 rests on, so the split path
+ * is checked per shape rather than assumed to follow from inferTitle.
+ */
+describe('convertDocx — heading markup never reaches the entry title', () => {
+  async function titlesFor(
+    headingRunXml: string,
+    relsXml?: string,
+  ): Promise<{ markdown: string; inferred: string; sectionTitle: unknown; sectionPath: string }> {
+    const buf = await makeDocx({
+      documentXml: documentWith(
+        `<w:p><w:pPr><w:pStyle w:val="Heading1"/></w:pPr>${headingRunXml}</w:p>` +
+        '<w:p><w:r><w:t>Cold and high.</w:t></w:r></w:p>' +
+        '<w:p><w:pPr><w:pStyle w:val="Heading1"/></w:pPr><w:r><w:t>Second</w:t></w:r></w:p>' +
+        '<w:p><w:r><w:t>More prose.</w:t></w:r></w:p>',
+      ),
+      relsXml,
+    });
+    const out = await convertDocx(buf, { promoteHeadings: false });
+    // Two H1s, so the split actually runs (fewer than two boundaries returns
+    // the file unchanged and would assert nothing).
+    const sections = splitMarkdownFile({ path: 'chapter.md', content: out.markdown }, 1);
+    expect(sections).toHaveLength(2);
+    return {
+      markdown: out.markdown,
+      inferred: inferTitle({}, out.markdown, 'chapter.md'),
+      sectionTitle: parseFrontmatter(sections[0].content).data.title,
+      sectionPath: sections[0].path,
+    };
+  }
+
+  const rpr = (props: string, text = 'The Vale'): string =>
+    `<w:r><w:rPr>${props}</w:rPr><w:t>${text}</w:t></w:r>`;
+
+  const SHAPES: Array<{ name: string; xml: string }> = [
+    { name: 'bold', xml: rpr('<w:b/>') },
+    { name: 'italic', xml: rpr('<w:i/>') },
+    { name: 'bold + italic', xml: rpr('<w:b/><w:i/>') },
+    { name: 'strike', xml: rpr('<w:strike/>') },
+    { name: 'partially bold', xml: '<w:r><w:t>The </w:t></w:r>' + rpr('<w:b/>', 'Vale') },
+  ];
+
+  for (const shape of SHAPES) {
+    it(`titles a ${shape.name} heading "The Vale"`, async () => {
+      const got = await titlesFor(shape.xml);
+      expect(got.markdown).toContain('# The Vale');
+      expect(got.inferred).toBe('The Vale');
+      expect(got.sectionTitle).toBe('The Vale');
+      expect(got.sectionPath).toBe('chapter/00-the-vale.md');
+    });
+  }
+
+  it('titles a hyperlinked heading "The Vale", and slugs it without the URL', async () => {
+    const got = await titlesFor(
+      '<w:hyperlink r:id="rId9"><w:r><w:t>The Vale</w:t></w:r></w:hyperlink>',
+      '<?xml version="1.0"?><Relationships>' +
+      '<Relationship Id="rId9" Type="http://schemas.openxmlformats.org/officeDocument/2006/relationships/hyperlink" Target="https://example.com/vale" TargetMode="External"/>' +
+      '</Relationships>',
+    );
+    expect(got.inferred).toBe('The Vale');
+    expect(got.sectionTitle).toBe('The Vale');
+    // The measured failure was `00-the-vale-https-example-com-vale.md`.
+    expect(got.sectionPath).toBe('chapter/00-the-vale.md');
+  });
+
+  it('carries an asterisk in the author\'s own text into the title unescaped', async () => {
+    // The accepted trade: the body H1 renders "Vale" emphasised, and the
+    // stored title is exactly the text Word displayed.
+    const got = await titlesFor('<w:r><w:t>The *Vale*</w:t></w:r>');
+    expect(got.inferred).toBe('The *Vale*');
+    expect(got.sectionTitle).toBe('The *Vale*');
+  });
+
+  it('carries an underscore into the title unescaped', async () => {
+    const got = await titlesFor('<w:r><w:t>The_Vale</w:t></w:r>');
+    expect(got.inferred).toBe('The_Vale');
+    expect(got.sectionTitle).toBe('The_Vale');
+  });
+
+  it('titles a PROMOTED italic heading correctly too', async () => {
+    // The heuristic path reaches this on the exact case the plain-mode
+    // rationale was written about: a large italic paragraph satisfies DOCX-09
+    // rule 5 through its size signature, gets promoted, and would otherwise
+    // title its entry `*The Vale*`.
+    const buf = await makeDocx({
+      documentXml: documentWith(
+        '<w:p><w:r><w:rPr><w:i/><w:sz w:val="32"/></w:rPr><w:t>The Vale</w:t></w:r></w:p>' +
+        '<w:p><w:r><w:rPr><w:sz w:val="22"/></w:rPr><w:t>Cold and high.</w:t></w:r></w:p>' +
+        '<w:p><w:r><w:rPr><w:i/><w:sz w:val="32"/></w:rPr><w:t>The Reach</w:t></w:r></w:p>' +
+        '<w:p><w:r><w:rPr><w:sz w:val="22"/></w:rPr><w:t>Low and warm.</w:t></w:r></w:p>',
+      ),
+    });
+    const out = await convertDocx(buf, { promoteHeadings: true });
+    expect(out.headings.promoted).toBe(true);
+    expect(out.markdown).toContain('# The Vale');
+    expect(inferTitle({}, out.markdown, 'chapter.md')).toBe('The Vale');
+    const sections = splitMarkdownFile({ path: 'chapter.md', content: out.markdown }, 1);
+    expect(sections).toHaveLength(2);
+    expect(parseFrontmatter(sections[0].content).data.title).toBe('The Vale');
   });
 });

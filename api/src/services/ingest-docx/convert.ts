@@ -68,18 +68,25 @@ export interface ConvertOptions {
   mediaEntries: Array<{ name: string; declaredBytes: number }>;
   coreProps: Record<string, string> | null;
   /**
-   * numId → list format, from numbering.xml's w:numFmt. Optional because the
-   * part is not parsed on this branch yet; absent or unknown means bullet,
-   * which is what an unresolvable list looks like to a reader either way.
-   * DOCX-04 requires the ordered case, so the channel exists rather than the
-   * rule being silently unimplementable.
+   * numId → list format, from numbering.xml's w:numFmt. Wired by index.ts
+   * (parseNumbering); optional only so the pure-model tests need not build a
+   * numbering table. Absent or unknown means bullet, which is what an
+   * unresolvable list looks like to a reader either way.
    */
   numberingFormats?: Map<string, 'bullet' | 'ordered'>;
 }
 
+/**
+ * No `styledHeadings` here. Counting styled headings means walking the blocks
+ * applying resolveStyledHeading, which is headings.ts's predicate, and
+ * index.ts must have that number BEFORE this function runs (the DOCX-09
+ * promotion gate decides what to pass in `promotedHeadings`). Producing it
+ * here as well would be a second walk of the same predicate whose agreement
+ * with the first nothing enforces — exactly the shape project documentation warns about.
+ * countStyledHeadings() in headings.ts is the single producer.
+ */
 export interface ConvertResult {
   markdown: string; warnings: DocxWarning[]; media: DocxMediaRef[];
-  styledHeadings: number;
 }
 
 /**
@@ -271,14 +278,19 @@ interface RenderContext {
  * splits a hyperlink across runs at every formatting and spellcheck boundary,
  * so one link per run would emit `[We](u)[ltbon](u)` for ordinary documents.
  */
-function renderRuns(runs: DocxRun[], ctx: RenderContext, singleLine: boolean): string {
+function renderRuns(
+  runs: DocxRun[], ctx: RenderContext, singleLine: boolean, plain = false,
+): string {
   let out = '';
   let i = 0;
   while (i < runs.length) {
     const link = runs[i].hyperlink;
     const dest = link === null ? null : resolveLink(link, ctx.opts.rels);
-    if (link === null || dest === null) {
-      out += renderRun(runs[i], ctx, singleLine);
+    // plain: a link is unwrapped to its text. See renderRun's PLAIN MODE note —
+    // `# [The Vale](https://…)` titles the entry `[The Vale](https://…)` and
+    // slugs the file `00-the-vale-https-example-com-vale.md`.
+    if (plain || link === null || dest === null) {
+      out += renderRun(runs[i], ctx, singleLine, plain);
       i += 1;
       continue;
     }
@@ -310,10 +322,52 @@ function resolveLink(
   return null;
 }
 
-function renderRun(r: DocxRun, ctx: RenderContext, singleLine: boolean): string {
+/**
+ * PLAIN MODE — used for heading text, and only for heading text.
+ *
+ * A heading's inline markup can only ever reach the user as LITERAL TITLE
+ * TEXT, so emitting any of it corrupts the title rather than styling it.
+ * inferTitle (ingest-markdown.ts) matches /^#\s+(.+?)\s*$/m and returns the
+ * raw slice; ingest-split's headingText slices the heading from the SOURCE and
+ * strips only the ATX prefix/suffix and a setext underline. Both therefore
+ * carry every marker straight into the stored title, and ingest-split then
+ * slugs the filename from it. Measured, per marker:
+ *
+ *   bold        `# **The Vale**`                -> title `**The Vale**`
+ *   italic      `# *The Vale*`                  -> title `*The Vale*`
+ *   strike      `# ~~The Vale~~`                -> title `~~The Vale~~`
+ *   hyperlink   `# [The Vale](https://…)`       -> title `[The Vale](https://…)`,
+ *                                                  slug `00-the-vale-https-example-com-vale`
+ *   literal `*` `# The \*Vale\*`                -> title `The \*Vale\*`
+ *
+ * An earlier version of this fix dropped bold only when EVERY run was bold,
+ * on the theory that partial emphasis is "a contrast the author drew inside
+ * the line". That rationale does not survive contact with the table above:
+ * the contrast is invisible in the title either way, and the title is what
+ * persists. So plain mode drops emphasis at any coverage and for every
+ * marker, unwraps hyperlinks, and skips escapeMarkdown entirely.
+ *
+ * THE TRADE, ACCEPTED DELIBERATELY: a heading whose text genuinely contains
+ * `*` now emits `# The *Vale*`, so the title is right (`The *Vale*`) while
+ * the rendered H1 shows that word emphasised. Title correctness dominates —
+ * the body H1 is largely redundant with the stored title, whereas a wrong
+ * title is permanent, user-visible, and feeds the entry's filename.
+ *
+ * Line-start escaping is not needed and not applied: the `#` prefix owns the
+ * start of the line, so no structure character can begin one.
+ *
+ * A footnote reference inside a heading is DROPPED rather than emitted as
+ * `[^2]` (which would land in the title) and is not registered, so no orphan
+ * definition is emitted for it either. Losing a footnote anchored to a
+ * heading is a smaller, rarer loss than mistitling every entry that has one.
+ */
+function renderRun(
+  r: DocxRun, ctx: RenderContext, singleLine: boolean, plain = false,
+): string {
   if (hasDroppedFormatting(r)) ctx.bump('formatting-dropped');
   if (r.lineBreak) return singleLine ? ' ' : HARD_BREAK;
   if (r.tab) return ' ';
+  if (plain && r.footnoteRef !== null) return '';
   if (r.footnoteRef !== null) {
     // String(): `footnotes` is keyed by the raw XML w:id. A number key here
     // misses every entry and drops the note with no warning at all.
@@ -328,38 +382,24 @@ function renderRun(r: DocxRun, ctx: RenderContext, singleLine: boolean): string 
   // to w:smallCaps, which parse.ts does not capture and which has no faithful
   // text equivalent (upper-casing it would corrupt the author's text).
   const text = r.caps ? r.text.toUpperCase() : r.text;
+  if (plain) return text;
   return decorate(escapeMarkdown(text), r);
 }
 
 function renderParagraph(
   block: DocxParagraph, index: number, ctx: RenderContext,
-  counts: { styled: number; headings: number },
+  counts: { headings: number },
 ): Chunk | null {
   const styled = resolveStyledHeading(block, ctx.opts.styleIndex);
   const level = styled ?? ctx.opts.promotedHeadings.get(index) ?? null;
-  if (styled !== null) counts.styled += 1;
 
   if (level !== null) {
-    // A heading whose runs are ALL bold drops the bold. `# **The Vale**` is not
-    // cosmetically noisy, it is corrupting: inferTitle (ingest-markdown.ts) and
-    // ingest-split's headingText both take the H1's SOURCE SLICE, markup
-    // included, so the entry's title comes out literally `**The Vale**`. Every
-    // heuristically promoted heading hits this case by construction — DOCX-09
-    // rule 5 requires a uniform emphatic signature — and Word's own Heading
-    // styles emit run-level bold often enough that styled documents hit it too.
-    //
-    // Only when EVERY text-bearing run is bold. A partially bold heading is a
-    // contrast the author drew inside the line, and dropping that would be
-    // discarding their text's meaning rather than de-duplicating ours. Italic
-    // and strike are kept for the same reason at any coverage: `## The *Vale*
-    // chronicles` distinguishes a work's title, whereas bold inside a heading
-    // says only "this is a heading", which the `#` already said.
-    const bolds = block.runs.filter((r) => r.text !== '');
-    const allBold = bolds.length > 0 && bolds.every((r) => r.bold);
-    const runs = allBold ? block.runs.map((r) => ({ ...r, bold: false })) : block.runs;
+    // plain: heading text is emitted as literal text, with no emphasis, no
+    // link syntax and no inline escaping — see renderRun's PLAIN MODE note for
+    // the measured table of what each marker did to the entry's title.
     // singleLine: a heading cannot contain a line break without ending itself,
     // so a w:br inside one degrades to a space.
-    const text = renderRuns(runs, ctx, true).trim();
+    const text = renderRuns(block.runs, ctx, true, true).trim();
     if (text === '') return null;
     counts.headings += 1;
     return { text: `${'#'.repeat(level)} ${text}`, listItem: false };
@@ -540,7 +580,7 @@ export function convertDocument(doc: DocxDocument, opts: ConvertOptions): Conver
 
   const media: DocxMediaRef[] = [];
   const ctx: RenderContext = { opts, bump, footnoteOrder: [] };
-  const tally = { styled: 0, headings: 0 };
+  const tally = { headings: 0 };
   const chunks: Chunk[] = [];
 
   doc.blocks.forEach((block: DocxBlock, index) => {
@@ -615,6 +655,5 @@ export function convertDocument(doc: DocxDocument, opts: ConvertOptions): Conver
     markdown: sections.length === 0 ? '' : `${sections.join('\n\n')}\n`,
     warnings,
     media,
-    styledHeadings: tally.styled,
   };
 }
