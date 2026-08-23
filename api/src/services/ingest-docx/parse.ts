@@ -54,7 +54,7 @@ export type DocxRun = {
   vertAlign: 'baseline' | 'superscript' | 'subscript';
   sizeHalfPoints: number | null;
   hyperlink: { relId: string | null; anchor: string | null } | null;
-  footnoteRef: number | null;
+  footnoteRef: string | null;
   lineBreak: boolean;
   tab: boolean;
 };
@@ -292,7 +292,10 @@ export function parseDocumentXml(xml: string, limits: DocxLimits): DocxDocument 
   function charge(): void {
     charged += 1;
     if (charged > limits.docxBlockCount) {
-      throw new DocxFormatError('Not a valid .docx (too many blocks)');
+      throw new DocxFormatError(
+        `Not a valid .docx (docx_block_count max ${limits.docxBlockCount}; `
+        + 'simplify or split the document)',
+      );
     }
   }
 
@@ -487,7 +490,7 @@ export function parseDocumentXml(xml: string, limits: DocxLimits): DocxDocument 
       case 'w:endnoteReference':
         if (fmt !== null) {
           flushText();
-          emitRun('', { footnoteRef: intOrNull(attr(attrs, 'w:id')) });
+          emitRun('', { footnoteRef: attr(attrs, 'w:id') });
         }
         break;
 

@@ -367,7 +367,7 @@ describe('convertDocument — warnings and media', () => {
   });
 
   it('renders footnote references and appends definitions', () => {
-    const r = convert([para([run('claim', { footnoteRef: 2 })])],
+    const r = convert([para([run('claim', { footnoteRef: '2' })])],
       { footnotes: new Map([['2', 'The source.']]) });
     expect(r.markdown).toContain('[^2]');
     expect(r.markdown).toContain('[^2]: The source.');
@@ -375,16 +375,32 @@ describe('convertDocument — warnings and media', () => {
 
   it('appends definitions once, in reference order, and only when defined', () => {
     const r = convert([
-      para([run('a', { footnoteRef: 3 })]),
-      para([run('b', { footnoteRef: 1 })]),
-      para([run('c', { footnoteRef: 3 })]),
-      para([run('d', { footnoteRef: 9 })]),
+      para([run('a', { footnoteRef: '3' })]),
+      para([run('b', { footnoteRef: '1' })]),
+      para([run('c', { footnoteRef: '3' })]),
+      para([run('d', { footnoteRef: '9' })]),
     ], { footnotes: new Map([['1', 'One.'], ['3', 'Three *starred*.']]) });
     expect(r.markdown.indexOf('[^3]: ')).toBeLessThan(r.markdown.indexOf('[^1]: '));
     expect(r.markdown.match(/^\[\^3\]: /gm)).toHaveLength(1);
     expect(r.markdown).not.toContain('[^9]: ');
     // Footnote text comes from footnotes.xml — escaped like any other run.
     expect(r.markdown).toContain('[^3]: Three \\*starred\\*.');
+  });
+
+  it('renders raw footnote IDs with matching definitions', () => {
+    const out = convert([para([
+      run('See'),
+      run('', { footnoteRef: 'a1' }),
+      run(' and'),
+      run('', { footnoteRef: '9007199254740993' }),
+    ])], { footnotes: new Map([
+      ['a1', 'Alpha note'],
+      ['9007199254740993', 'Large note'],
+    ]) });
+
+    expect(out.markdown).toContain('See[^a1] and[^9007199254740993]');
+    expect(out.markdown).toContain('[^a1]: Alpha note');
+    expect(out.markdown).toContain('[^9007199254740993]: Large note');
   });
 });
 

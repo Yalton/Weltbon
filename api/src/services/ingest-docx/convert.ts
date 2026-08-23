@@ -64,9 +64,7 @@ export interface ConvertOptions {
   promotedHeadings: Map<number, HeadingLevel>;
   /** relId → relationship target, from word/_rels/document.xml.rels. */
   rels: Map<string, string>;
-  /** Footnote/endnote `w:id` AS IT APPEARS IN THE XML → note text. Keyed by
-   *  string, and looked up with String(run.footnoteRef): the id is an XML
-   *  attribute, and a number-keyed map would miss every lookup silently. */
+  /** Footnote/endnote `w:id` AS IT APPEARS IN THE XML → note text. */
   footnotes: Map<string, string>;
   /** Central-directory rows for word/media/*. No bytes, ever. */
   mediaEntries: Array<{ name: string; declaredBytes: number }>;
@@ -373,9 +371,7 @@ function renderRun(
   if (r.tab) return ' ';
   if (plain && r.footnoteRef !== null) return '';
   if (r.footnoteRef !== null) {
-    // String(): `footnotes` is keyed by the raw XML w:id. A number key here
-    // misses every entry and drops the note with no warning at all.
-    const id = String(r.footnoteRef);
+    const id = r.footnoteRef;
     if (!ctx.footnoteOrder.includes(id)) ctx.footnoteOrder.push(id);
     return `[^${id}]`;
   }
