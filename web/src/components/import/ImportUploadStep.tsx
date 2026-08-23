@@ -195,10 +195,22 @@ function describeSelection(files: File[], kind: UploadKind): string {
   return files[0]!.name;
 }
 
-function describeKind(kind: UploadKind, n: number): string {
+// #35: a lone .docx classifies as kind='md' (DOCX-08 -- .docx joins the
+// files[] part, it is not a distinct UploadKind), so this cannot infer the
+// summary copy from `kind` alone or a Word document gets described as a
+// ".md file". It counts actual extensions instead.
+export function describeKind(kind: UploadKind, files: File[]): string {
   if (kind === 'zip') return 'ZIP archive';
-  if (kind === 'folder') return `Folder (${n} files)`;
-  return n === 1 ? '.md file' : `${n} .md files`;
+  if (kind === 'folder') return `Folder (${files.length} files)`;
+  const docxCount = files.filter((f) => isDocx(f.name)).length;
+  const mdCount = files.length - docxCount;
+  if (docxCount === 0) {
+    return mdCount === 1 ? '.md file' : `${mdCount} .md files`;
+  }
+  if (mdCount === 0) {
+    return docxCount === 1 ? '.docx file' : `${docxCount} .docx files`;
+  }
+  return `${files.length} files (${mdCount} .md, ${docxCount} .docx)`;
 }
 
 function describeSize(files: File[]): string {
@@ -347,7 +359,7 @@ export function ImportUploadStep({
             </p>
             <p className="text-neutral-400">
               {describeSize(state.files)} ·{' '}
-              {describeKind(state.kind, state.files.length)}
+              {describeKind(state.kind, state.files)}
             </p>
           </div>
           <button

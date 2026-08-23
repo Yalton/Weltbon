@@ -636,4 +636,126 @@ describe('IngestImport (Phase 12 E2E)', () => {
       .body as FormData;
     expect(secondBody.get('docx_promote_headings')).toBe('true');
   });
+
+  // Fix-round-1 gap: nothing pinned that the promotion re-request carries
+  // the CURRENT split level forward. Without this, omitting split_level
+  // would re-run server auto-detection and could silently discard a split
+  // choice the user already made (#54's "don't strand a user's edits"
+  // precedent, applied to the split-level choice instead of a decision).
+  it('carries the current split level forward when promoting headings', async () => {
+    let ingestCalls = 0;
+    vi.mocked(api).mockImplementation(
+      async (path?: string, init?: RequestInit) => {
+        if (!path) return undefined;
+        if (path === '/universes/U1') {
+          return {
+            id: 'U1',
+            userId: 'user1',
+            name: 'My World',
+            description: '',
+            entryTypes: ['concept', 'character', 'location'],
+            createdAt: '2025-01-01',
+            updatedAt: '2025-01-01',
+          };
+        }
+        if (
+          path === '/universes/U1/entries' &&
+          (!init || init.method === undefined)
+        ) {
+          return [];
+        }
+        if (path === '/universes/U1/categories') {
+          return { categories: [], uncategorizedCount: 0 };
+        }
+        if (path === '/universes/U1/ingest' && init?.method === 'POST') {
+          ingestCalls += 1;
+          const promoted = ingestCalls > 1;
+          const preview: IngestPreview = {
+            summary: {
+              markdown_files_parsed: 0,
+              non_markdown_files_skipped: 0,
+              hidden_paths_filtered: 0,
+              duplicate_titles_in_batch: 0,
+              unresolved_wikilinks: 0,
+              docx_files_converted: 1,
+            },
+            entries: [
+              {
+                filename: 'Chapter.md',
+                path: 'Chapter.md',
+                title: 'Chapter',
+                type: 'concept',
+                tags: [],
+                category: null,
+                body: 'flat content',
+                meta: {},
+                linksOut: [],
+              },
+            ],
+            warnings: [],
+            // A user override: detected level is 3, but the preview was
+            // requested (or re-requested) at applied level 2. Promotion
+            // must not lose that override.
+            split: {
+              eligible: true,
+              detected: 3,
+              applied: 2,
+              counts: { '2': 1, '3': 1 },
+            },
+            docx: {
+              files: [
+                {
+                  path: 'Chapter.docx',
+                  headings: {
+                    styled: 0,
+                    unstyledCandidates: promoted ? 0 : 6,
+                    promoted,
+                  },
+                  mediaCount: 0,
+                },
+              ],
+            },
+          };
+          return preview;
+        }
+        return undefined;
+      },
+    );
+
+    renderImport();
+    expect(
+      await screen.findByRole('heading', { name: /^Import notes$/ }),
+    ).toBeInTheDocument();
+    await uploadDocx();
+    expect(
+      await screen.findByRole('main', { name: /Import review/i }),
+    ).toBeInTheDocument();
+
+    const promoteButton = await screen.findByRole('button', {
+      name: /treat 6 bold paragraphs as headings/i,
+    });
+    await userEvent.click(promoteButton);
+
+    await waitFor(() => {
+      expect(
+        screen.queryByRole('button', { name: /treat .* as headings/i }),
+      ).not.toBeInTheDocument();
+    });
+
+    const ingestPostCalls = vi
+      .mocked(api)
+      .mock.calls.filter(
+        ([p, i]) =>
+          p === '/universes/U1/ingest' &&
+          (i as RequestInit | undefined)?.method === 'POST',
+      );
+    expect(ingestPostCalls).toHaveLength(2);
+
+    const secondBody = (ingestPostCalls[1]![1] as RequestInit)
+      .body as FormData;
+    // The applied level (2, the user's/current choice) is carried forward,
+    // NOT the detected level (3) and NOT omitted (which would re-trigger
+    // server auto-detection).
+    expect(secondBody.get('split_level')).toBe('2');
+  });
 });

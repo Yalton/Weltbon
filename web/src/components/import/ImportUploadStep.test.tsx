@@ -16,6 +16,7 @@ import {
   ImportUploadStep,
   classifyAndDetectKind,
   enforceBatchLimits,
+  describeKind,
   type UploadSource,
 } from './ImportUploadStep';
 
@@ -425,5 +426,53 @@ describe('.docx classification (#35)', () => {
     // caps) cannot tell these two code paths apart — this one can.
     const twoMb = docx('report.docx', 2 * 1024 * 1024);
     expect(enforceBatchLimits([twoMb], 'md')).toBeNull();
+  });
+
+  it('applies each cap independently within one mixed batch', () => {
+    // Fix-round-1 gap: a batch that mixes a valid .docx with an oversized
+    // .md must be rejected for the MARKDOWN reason, not silently accepted
+    // because the docx part passed its own (much larger) cap, and not
+    // rejected with the docx message either -- the two caps are independent
+    // and per-file, not batch-wide or cross-applied.
+    const validDocx = docx('report.docx', 2 * 1024 * 1024); // under 25 MB docx cap
+    const oversizedMd = md('huge.md');
+    Object.defineProperty(oversizedMd, 'size', {
+      value: 2 * 1024 * 1024, // over the 1 MB markdown cap
+      configurable: true,
+    });
+    const err = enforceBatchLimits([validDocx, oversizedMd], 'md');
+    expect(err).toContain('1 MB per file');
+    expect(err).not.toContain('.docx');
+  });
+
+  describe('describeKind summary copy (#35 fix round 1)', () => {
+    it('describes an all-markdown selection as before', () => {
+      expect(describeKind('md', [md('a.md'), md('b.md')])).toBe('2 .md files');
+      expect(describeKind('md', [md('a.md')])).toBe('.md file');
+    });
+
+    it('describes a lone .docx as a .docx file, not a .md file', () => {
+      expect(describeKind('md', [docx('vale.docx')])).toBe('.docx file');
+    });
+
+    it('describes multiple .docx files as N .docx files', () => {
+      expect(describeKind('md', [docx('a.docx'), docx('b.docx')])).toBe(
+        '2 .docx files',
+      );
+    });
+
+    it('describes a mixed batch honestly rather than lying about the format', () => {
+      expect(
+        describeKind('md', [md('a.md'), docx('b.docx'), docx('c.docx')]),
+      ).toBe('3 files (1 .md, 2 .docx)');
+    });
+
+    it('renders the .docx summary copy in the selected-file card', () => {
+      const { container } = renderStep();
+      selectFiles(container, [docx('vale.docx')]);
+      expect(screen.getByText('vale.docx')).toBeInTheDocument();
+      expect(screen.getByText(/\.docx file/)).toBeInTheDocument();
+      expect(screen.queryByText(/\.md file/)).not.toBeInTheDocument();
+    });
   });
 });
