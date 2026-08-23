@@ -3,9 +3,9 @@
  *
  * This file is the ONLY surface Phase 24 (audit engine) and Phase 26 (UI) may
  * import from for LLM-provider concerns (D-05a invariant). Concrete provider
- * classes — `AnthropicProvider` (Plan 23-03) and `OpenAIProvider` (Plan 23-04) —
- * MUST NOT be imported directly by downstream code; the only legal entry point
- * is `getProvider(name)` below.
+ * classes — `AnthropicProvider` (Plan 23-03), `OpenAIProvider` (Plan 23-04),
+ * and `OllamaProvider` (Issue #48 Task 4) — MUST NOT be imported directly by
+ * downstream code; the only legal entry point is `getProvider(name)` below.
  *
  * Factory semantics:
  *   - Lazy-singleton cache keyed by `LlmProvider` ('anthropic' | 'openai' | 'ollama').
@@ -35,6 +35,7 @@ import type { LlmProvider } from '../../services/llm-key.js';
 import { type LLMProvider } from './interface.js';
 import { AnthropicProvider } from './anthropic.js';
 import { OpenAIProvider } from './openai.js';
+import { OllamaProvider } from './ollama.js';
 
 // ---------------------------------------------------------------------------
 // Lazy-singleton factory
@@ -48,9 +49,8 @@ import { OpenAIProvider } from './openai.js';
 const providerCache: Record<LlmProvider, LLMProvider | undefined> = {
   anthropic: undefined,
   openai: undefined,
-  // Issue #48: cache slot exists now so the Record stays total (a missing key
-  // here is a compile error, not a runtime surprise). OllamaProvider itself
-  // does not exist until Task 4 — getProvider('ollama') throws below.
+  // Issue #48 Task 4: OllamaProvider (./ollama.js) is now a real
+  // implementation, mirroring Anthropic and OpenAI below.
   ollama: undefined,
 };
 
@@ -75,11 +75,8 @@ export function getProvider(name: LlmProvider): LLMProvider {
       instance = new OpenAIProvider();
       break;
     case 'ollama':
-      // Task 4 adds OllamaProvider. Until then this is the ONE place a
-      // widened-but-unimplemented provider fails — loudly, at the factory
-      // boundary — rather than an undefined `instance` silently reaching a
-      // caller that then NPEs on `.estimate` / `.validate` / etc.
-      throw new Error('OllamaProvider not yet implemented (Task 4)');
+      instance = new OllamaProvider();
+      break;
     default: {
       // Exhaustiveness guard: if LlmProvider grows a fourth member without a
       // case here, this line fails to compile (name is not `never`) instead
