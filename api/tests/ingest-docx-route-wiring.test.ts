@@ -19,7 +19,7 @@
  * running" project convention — not asserted from reading the code.
  */
 import { describe, it, expect } from 'vitest';
-import { isDocxFile, docxToMarkdownPath } from '../src/routes/ingest.js';
+import { isDocxFile, docxToMarkdownPath, materializeFileParts } from '../src/routes/ingest.js';
 import { convertDocx } from '../src/services/ingest-docx/index.js';
 import { makeDocx, documentWith } from './helpers/docx-fixture.js';
 import { isMarkdownFile, parseBatch, type FileInput } from '../src/services/ingest-markdown.js';
@@ -79,5 +79,66 @@ describe('ingest.ts docx wiring — isDocxFile / docxToMarkdownPath (Issue #35 T
     expect(brokenPreview.summary.markdown_files_parsed).toBe(0);
     expect(brokenPreview.summary.non_markdown_files_skipped).toBe(1);
     expect(brokenPreview.entries).toHaveLength(0);
+  });
+});
+
+describe('materializeFileParts — hidden-path .docx is skipped BEFORE conversion (fix round 1, carry #2)', () => {
+  it('a hidden .docx is never converted: no docxConversions entry, not rewritten, content left empty', async () => {
+    const buf = await makeDocx({ documentXml: HEADING_DOCUMENT_XML });
+    const hiddenFile = new File([buf], '.trash/chapter.docx');
+    const visibleFile = new File([buf], 'chapter.docx');
+
+    const result = await materializeFileParts([hiddenFile, visibleFile], {
+      promoteDocxHeadings: false,
+    });
+
+    // Only the VISIBLE .docx was actually converted — this is the assertion
+    // that would fail if the hidden check were removed (or moved after
+    // convertDocx): a converted-but-discarded hidden file would still show
+    // up here, contradicting summary.docx_files_converted's meaning.
+    expect(result.docxConversions).toHaveLength(1);
+    expect(result.docxConversions[0].path).toBe('chapter.docx');
+
+    // The hidden file's FileInput is left as the original .docx name (never
+    // rewritten to .md) with no content — it was never handed to convertDocx
+    // at all. isHiddenPath (checked ahead of isMarkdownFile inside
+    // parseBatch) is what removes it, so it counts as hidden_paths_filtered,
+    // not non_markdown_files_skipped.
+    const hiddenInput = result.inputs.find((i) => i.path === '.trash/chapter.docx');
+    expect(hiddenInput).toBeDefined();
+    expect(hiddenInput?.content).toBe('');
+
+    const preview = parseBatch(result.inputs, BATCH_CTX);
+    expect(preview.summary.hidden_paths_filtered).toBe(1);
+    expect(preview.summary.non_markdown_files_skipped).toBe(0);
+    expect(preview.summary.markdown_files_parsed).toBe(1);
+  });
+});
+
+describe('chapter.docx + chapter.md colliding in one batch (fix round 1, carry #3 — pinned, not fixed)', () => {
+  it('both rewrite to chapter.md and both come back titleCollision — deliberate, not accidental', async () => {
+    const buf = await makeDocx({ documentXml: HEADING_DOCUMENT_XML });
+    const conversion = await convertDocx(buf, { promoteHeadings: false });
+
+    // Same shape the route builds: the docx-derived input is keyed by the
+    // REWRITTEN path once it reaches parseBatch, while docx.files[].path
+    // (simulated here as `docxTrackedPath`) keeps reporting the ORIGINAL name
+    // — the user's only thread back to the Word file they actually uploaded.
+    const docxTrackedPath = 'chapter.docx';
+    const inputs: FileInput[] = [
+      { path: docxToMarkdownPath(docxTrackedPath), content: conversion.markdown },
+      { path: 'chapter.md', content: '# Chapter One\n\nA plain markdown version.' },
+    ];
+
+    const preview = parseBatch(inputs, BATCH_CTX);
+    expect(preview.entries).toHaveLength(2);
+    expect(preview.summary.duplicate_titles_in_batch).toBe(1);
+    expect(preview.entries.every((e) => e.titleCollision === true)).toBe(true);
+    // Both entries report the same (rewritten) path — collision resolution is
+    // the review UI's job, not something invented here.
+    expect(preview.entries.every((e) => e.path === 'chapter.md')).toBe(true);
+    // The docx side's tracked path is untouched by the collision — still the
+    // name the user actually uploaded.
+    expect(docxTrackedPath).toBe('chapter.docx');
   });
 });
