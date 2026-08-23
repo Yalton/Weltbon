@@ -64,6 +64,7 @@ import type {
 } from './interface.js';
 import { LLMError, LLMProviderError } from './interface.js';
 import { PRICING } from './pricing.js';
+import { listOllamaModels } from './ollama.js';
 
 /**
  * Issue #48: PRICING only has entries for the two BYOK SDK providers — it is
@@ -205,12 +206,17 @@ function pricingFallbackListing(provider: PricedProvider): ModelListingWithCover
  * a typed provider error; otherwise reports 'unknown'.
  *
  * #48 Task 3: the third parameter is a `credential` object rather than a bare
- * apiKey string — this function OWNS that signature (a later task's real
- * Ollama branch will read `credential.baseUrl` here instead of an apiKey).
- * Both SDK branches below still read `credential.apiKey`; the `provider ===
- * 'ollama'` early-return a few lines into the body means neither branch ever
- * executes with a credential that lacks one — see that guard's own comment
- * for why the branch order matters.
+ * apiKey string — this function OWNS that signature. Both SDK branches below
+ * still read `credential.apiKey`; the `provider === 'ollama'` branch a few
+ * lines into the body returns before either ever runs, so a credential that
+ * only carries `baseUrl` (no apiKey) never reaches them — see that guard's
+ * own comment for why the branch order matters.
+ *
+ * #48 Task 6: the Ollama branch is now REAL live discovery via
+ * `listOllamaModels` (Task 4), not the interim empty-listing stub Task 2
+ * left here. It deliberately has NO cache and NO stale/PRICING fallback of
+ * its own — see that branch's own comment for why bypassing D-01/D-02 here
+ * is correct rather than a gap.
  */
 export async function getModels(
   provider: LlmProvider,
@@ -241,11 +247,44 @@ export async function getModels(
   // URL is configured — so this is the eventual behavior stated early, not a
   // stub someone has to remember to delete.
   if (provider === 'ollama') {
-    return {
-      models: [],
-      source: 'live',
-      fetchedAt: new Date().toISOString(),
-    };
+    const baseUrl = credential.baseUrl;
+    if (baseUrl === undefined) {
+      // No connection configured yet — same empty-live shape Task 2 left
+      // here originally. Not an error: a brand-new desktop install has no
+      // Ollama connection until the user saves one (routes/llm-connections.ts).
+      return { models: [], source: 'live', fetchedAt: new Date().toISOString() };
+    }
+
+    // #48 Task 6: no cache here, unlike the anthropic/openai path below.
+    // listOllamaModels talks to the user's OWN machine over loopback/LAN —
+    // already fast and free, unlike a BYOK vendor's rate-limited HTTPS API
+    // the D-01 cache exists to shield. There is also no PRICING-fallback
+    // analog to degrade to on failure: Ollama has no PRICING entries at all
+    // (OllamaProvider.listModels() returns [] by contract — see ollama.ts).
+    // D-02's "never throws" promise is upheld instead by simply degrading to
+    // an empty listing on failure — the same shape the unconfigured-baseUrl
+    // case above already produces — rather than a stale/synthesized one.
+    try {
+      const installed = await listOllamaModels(baseUrl);
+      return {
+        // Only tools-capable models are offered: a model that cannot
+        // tool-call cannot return findings at all, so listing it as
+        // selectable would be a trap (spec D-1). hasPricing is always false
+        // — Ollama is free/local and never appears in PRICING.
+        models: installed
+          .filter((m) => m.supportsTools)
+          .map((m) => ({ id: m.name, hasPricing: false })),
+        source: 'live',
+        fetchedAt: new Date().toISOString(),
+      };
+    } catch (err) {
+      // T-24-04-09-style metadata-only log. NEVER the baseUrl (a LAN
+      // hostname/IP the operator may consider sensitive) and NEVER a secret.
+      const variant =
+        err instanceof LLMProviderError ? err.variant : (LLMError.UnknownProviderError as string);
+      console.error('[model-catalog] live Ollama listModels failed:', { provider, variant });
+      return { models: [], source: 'live', fetchedAt: new Date().toISOString() };
+    }
   }
 
   // `resolveCredential` (the only production caller, via llm-models.ts) always

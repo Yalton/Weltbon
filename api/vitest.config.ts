@@ -60,6 +60,8 @@ const DB_GATED_TESTS = [
   'tests/llm-connection.test.ts',
   // Issue #48 Task 3 — resolveCredential (key table + connections table resolver).
   'tests/llm-credential.test.ts',
+  // Issue #48 Task 6 — llm-connections routes CRUD + GET /api/config, gated on localMode.
+  'tests/llm-connections-routes.test.ts',
   'tests/llm-keys-total-spent.test.ts',
   'tests/llm-keys.test.ts',
   'tests/llm-models-cache.test.ts',

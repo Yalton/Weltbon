@@ -26,7 +26,39 @@
  * revision — it lives in llm-pricing.test.ts where the assertion is patched.)
  */
 
-import { describe, it, expect, vi, beforeEach } from 'vitest';
+import { describe, it, expect, vi, beforeEach, afterEach } from 'vitest';
+import { readFileSync } from 'node:fs';
+import { fileURLToPath } from 'node:url';
+import { dirname, resolve } from 'node:path';
+
+const here = dirname(fileURLToPath(import.meta.url));
+const fx = (n: string) => JSON.parse(readFileSync(resolve(here, `fixtures/ollama/${n}.json`), 'utf8'));
+
+/**
+ * Mirrors tests/llm-ollama.test.ts's fakeFetch (Task 4) — duplicated here
+ * because that file does not export it. `/api/show` is a POST whose body
+ * names the model, so routes for it are keyed `/api/show:<model>` and
+ * matched against the parsed request body's `model` field.
+ */
+function fakeFetch(routes: Record<string, unknown>): typeof fetch {
+  return (async (url: string, init?: RequestInit): Promise<Response> => {
+    if (url.includes('/api/show')) {
+      const body = init?.body ? (JSON.parse(init.body as string) as { model?: string }) : {};
+      const key = `/api/show:${body.model ?? ''}`;
+      if (!(key in routes)) return new Response('not found', { status: 404 });
+      return new Response(JSON.stringify(routes[key]), {
+        status: 200,
+        headers: { 'Content-Type': 'application/json' },
+      });
+    }
+    const key = Object.keys(routes).find((k) => url.includes(k));
+    if (key === undefined) return new Response('not found', { status: 404 });
+    return new Response(JSON.stringify(routes[key]), {
+      status: 200,
+      headers: { 'Content-Type': 'application/json' },
+    });
+  }) as typeof fetch;
+}
 
 // Defensive: matches the convention in llm-anthropic.test.ts:42-44. The cache
 // module does not currently transit through config.ts/env(), but a future
@@ -81,6 +113,12 @@ beforeEach(() => {
   mockOpenAIList.mockReset();
   // Reset fake timers between tests (each test that needs them enables them).
   vi.useRealTimers();
+});
+
+afterEach(() => {
+  // Only the two Task 6 live-Ollama-discovery tests below stub the global
+  // fetch; harmless no-op for every other test in this file.
+  vi.unstubAllGlobals();
 });
 
 describe('model-catalog cache (Phase 27 D-01/D-02/D-03 PROV-FOLLOWUP-01)', () => {
@@ -310,5 +348,63 @@ describe('model-catalog cache (Phase 27 D-01/D-02/D-03 PROV-FOLLOWUP-01)', () =>
     // silent-OpenAI-fallback bug this guard exists to prevent).
     expect(mockAnthropicList).not.toHaveBeenCalled();
     expect(mockOpenAIList).not.toHaveBeenCalled();
+  });
+
+  // -----------------------------------------------------------------------
+  // Issue #48 Task 6 — the interim stub above is replaced with real live
+  // discovery once `credential.baseUrl` IS present. No production route
+  // wires provider:'ollama' into getModels() yet (llm-models.ts is scoped to
+  // KEY_PROVIDER_NAMES), so without a test here this branch would have zero
+  // coverage anywhere and a regression that quietly turned it back into the
+  // empty stub would go unnoticed. `listOllamaModels` (called internally)
+  // has no injectable fetchImpl parameter when reached through getModels(),
+  // unlike routes/llm-connections.ts's own /models endpoint which also calls
+  // it directly — so, uniquely in this file, the global `fetch` is stubbed.
+  // -----------------------------------------------------------------------
+  it("getModels('ollama', ..., { baseUrl }) live-discovers installed models, filtering out a tool-incapable one and marking hasPricing false", async () => {
+    const { getModels, _resetModelCacheForTests } = await import(
+      '../src/providers/llm/model-catalog.js'
+    );
+    _resetModelCacheForTests();
+
+    vi.stubGlobal(
+      'fetch',
+      fakeFetch({
+        '/api/tags': { models: [{ name: 'qwen3:32b' }, { name: 'llava:latest' }] },
+        '/api/show:qwen3:32b': fx('show-qwen3-32b'),
+        '/api/show:llava:latest': fx('show-llava'),
+      }),
+    );
+
+    const result = await getModels('ollama', 'unused-cache-id', { baseUrl: 'http://box:11434' });
+
+    expect(result.source).toBe('live');
+    // llava is vision-only (no 'tools' capability) — filtered out per spec
+    // D-1: a model that cannot tool-call cannot return findings, so listing
+    // it as selectable would be a trap.
+    expect(result.models).toEqual([{ id: 'qwen3:32b', hasPricing: false }]);
+    // Neither SDK client should ever be constructed for an Ollama request.
+    expect(mockAnthropicList).not.toHaveBeenCalled();
+    expect(mockOpenAIList).not.toHaveBeenCalled();
+  });
+
+  it("getModels('ollama', ..., { baseUrl }) degrades to an empty listing (never throws) when the server is unreachable", async () => {
+    const { getModels, _resetModelCacheForTests } = await import(
+      '../src/providers/llm/model-catalog.js'
+    );
+    _resetModelCacheForTests();
+
+    vi.stubGlobal('fetch', (async () => {
+      throw new Error('ECONNREFUSED');
+    }) as typeof fetch);
+
+    // If this ever throws, await rejects and the test fails with that
+    // rejection — this module's D-02 contract ("never throws") has no
+    // stale-cache or PRICING fallback to lean on for Ollama (see the
+    // branch's own comment), so the failure path is this file's only proof
+    // that "degrades to empty" actually holds rather than propagating.
+    const result = await getModels('ollama', 'unused-cache-id', { baseUrl: 'http://127.0.0.1:1' });
+
+    expect(result).toEqual({ models: [], source: 'live', fetchedAt: expect.any(String) });
   });
 });
