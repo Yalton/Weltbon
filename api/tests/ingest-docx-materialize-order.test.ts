@@ -51,7 +51,7 @@ describe('materializeFileParts — deterministic DOCX work ordering', () => {
       new File(['# Outro'], 'outro.markdown', { type: 'text/markdown' }),
     ];
 
-    const materializing = materializeFileParts(files, { promoteDocxHeadings: false });
+    const materializing = materializeFileParts(files, { promoteDocxIndices: new Set() });
 
     await vi.waitFor(() => {
       expect(conversionControl.starts).toEqual([bigDocx.byteLength]);

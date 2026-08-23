@@ -95,6 +95,7 @@ interface PreviewBody {
   split: { eligible: boolean; detected: number | null; applied: number | null };
   docx: {
     files: Array<{
+      uploadIndex: number;
       path: string;
       headings: { styled: number; unstyledCandidates: number; promoted: boolean };
       mediaCount: number;
@@ -248,15 +249,11 @@ describe('POST /api/universes/:uid/ingest — .docx (#35)', () => {
     expect(body.summary.docx_files_converted).toBe(1);
   });
 
-  // ─── 5. unstyledCandidates is the POST-GATE count, through the route ──────
+  // ─── 5. unstyledCandidates is the eligible count, through the route ───────
 
   it('a document mixing a styled heading with a bold 16pt paragraph reports 0 candidates', async () => {
-    // DOCX-09's gate: the heuristic may only fire when the deterministic pass
-    // found NOTHING. Reporting the raw heuristic count here would make the
-    // review UI offer "treat 1 bold paragraph as a heading" on a document
-    // where accepting it provably changes nothing — Task 10's affordance is
-    // built on this number, so the pass-through is pinned at the wire, not
-    // only inside the module.
+    // One candidate alongside one styled heading does not meet either mixed
+    // eligibility threshold, so the server must not offer a no-op selection.
     const body = await preview([
       [
         'files',
@@ -277,97 +274,117 @@ describe('POST /api/universes/:uid/ingest — .docx (#35)', () => {
       .toBe(false);
   });
 
-  // ─── 6. Promotion round trip, the two responses compared to each other ────
+  // ─── 6. Promotion is selected per upload index ───────────────────────────
 
-  it('promotion is off by default, on with the flag, and the SAME bytes give different entries', async () => {
+  it.each([0, 2])('docx_promote_index=%i promotes only that same-named DOCX upload', async (selected) => {
     const bodyXml =
       boldBig('The Vale') + bodyText('Cold and high.') +
       boldBig('The Reach') + bodyText('Warm and low.');
-    // Built once and posted twice: comparing two responses to each other only
-    // means something if the input is byte-identical.
     const bytes = await makeDocx({ documentXml: documentWith(bodyXml) });
-    const asFile = () => new File([bytes], 'v.docx', { type: DOCX_MIME });
-
-    const off = await preview([['files', asFile()], ['split_level', '1']]);
-    expect(off.docx.files[0].headings.unstyledCandidates).toBe(2);
-    expect(off.docx.files[0].headings.promoted).toBe(false);
-    expect(off.docx.files[0].headings.styled).toBe(0);
-    const offer = off.warnings.find((w) => /no Heading style/.test(w.message));
-    expect(offer).toBeDefined();
-    expect(offer!.file).toBe('v.docx');
-    // The count reaches the wire inside the message — `warnings[]` carries
-    // { file, message } only, so the number has nowhere else to live.
-    expect(offer!.message).toMatch(/\b2 paragraphs\b/);
-
-    const on = await preview([
-      ['files', asFile()],
-      ['docx_promote_headings', 'true'],
-      ['split_level', '1'],
+    const body = await preview([
+      ['files', new File([bytes], 'same.docx', { type: DOCX_MIME })],
+      ['files', new File(['# Interlude'], 'interlude.md', { type: 'text/markdown' })],
+      ['files', new File([bytes], 'same.docx', { type: DOCX_MIME })],
+      ['docx_promote_index', String(selected)],
     ]);
-    expect(on.docx.files[0].headings.promoted).toBe(true);
-    // Spent affordance: once promoted they ARE headings, so repeating the
-    // offer would be noise.
-    expect(on.warnings.some((w) => /no Heading style/.test(w.message))).toBe(false);
 
-    // THE COMPARISON THAT MATTERS: the flag changed the entry list, not just a
-    // boolean in the metadata. Asserting only `promoted: true` would pass on a
-    // route that reported the flag and threw it away.
-    expect(titles(off)).not.toEqual(titles(on));
-    expect(off.entries).toHaveLength(1);
-    expect(titles(on)).toEqual(['The Reach', 'The Vale']);
+    expect(body.docx.files.map((row) => ({
+      uploadIndex: row.uploadIndex,
+      path: row.path,
+      promoted: row.headings.promoted,
+    }))).toEqual([
+      { uploadIndex: 0, path: 'same.docx', promoted: selected === 0 },
+      { uploadIndex: 2, path: 'same.docx', promoted: selected === 2 },
+    ]);
+    expect(body.docx.files.map((row) => row.headings.unstyledCandidates)).toEqual([2, 2]);
   });
 
-  // ─── 7. docx_promote_headings rejection table ─────────────────────────────
+  it('accepts repeated distinct promotion indices and applies each independently', async () => {
+    const bytes = await makeDocx({
+      documentXml: documentWith(boldBig('The Vale') + bodyText('Cold and high.')),
+    });
+    const body = await preview([
+      ['files', new File([bytes], 'same.docx', { type: DOCX_MIME })],
+      ['files', new File(['# Interlude'], 'interlude.md', { type: 'text/markdown' })],
+      ['files', new File([bytes], 'same.docx', { type: DOCX_MIME })],
+      ['docx_promote_index', '0'],
+      ['docx_promote_index', '2'],
+    ]);
 
-  it.each(['TRUE', '1', 'false', '', 'yes'])(
-    'docx_promote_headings=%o is a 400, not a silent no-op',
-    async (value) => {
+    expect(body.docx.files.map((row) => ({
+      uploadIndex: row.uploadIndex,
+      promoted: row.headings.promoted,
+    }))).toEqual([
+      { uploadIndex: 0, promoted: true },
+      { uploadIndex: 2, promoted: true },
+    ]);
+  });
+
+  // ─── 7. docx_promote_index validation ─────────────────────────────────────
+
+  it.each([
+    ['leading-zero', '01'],
+    ['negative', '-1'],
+    ['non-integer', '1.0'],
+    ['empty', ''],
+    ['File-valued', new File(['0'], 'index.txt')],
+  ] as Array<[string, string | File]>)(
+    'rejects a %s docx_promote_index with neutral copy',
+    async (_label, value) => {
       const res = await previewRes([
-        ['files', await docxFile('v.docx', heading('The Vale'))],
-        ['docx_promote_headings', value],
+        ['files', await docxFile('v.docx', boldBig('The Vale') + bodyText('Cold.'))],
+        ['docx_promote_index', value],
       ]);
       expect(res.status).toBe(400);
-      expect(await errorOf(res)).toBe('Invalid docx_promote_headings');
+      expect(await errorOf(res)).toBe('Invalid docx_promote_index');
     },
   );
 
-  it('a repeated docx_promote_headings field is first-wins, in both orders', async () => {
-    const bodyXml = boldBig('The Vale') + bodyText('Cold.') + boldBig('The Reach') + bodyText('Warm.');
-    const bytes = await makeDocx({ documentXml: documentWith(bodyXml) });
-
-    const firstTrue = await preview([
-      ['files', new File([bytes], 'v.docx', { type: DOCX_MIME })],
-      ['docx_promote_headings', 'true'],
-      ['docx_promote_headings', 'false'],
-    ]);
-    expect(firstTrue.docx.files[0].headings.promoted).toBe(true);
-
-    // Reversed, the first value is the invalid one and it is the one that
-    // decides — a last-wins reading would return 200 here.
-    const firstFalse = await previewRes([
-      ['files', new File([bytes], 'v.docx', { type: DOCX_MIME })],
-      ['docx_promote_headings', 'false'],
-      ['docx_promote_headings', 'true'],
-    ]);
-    expect(firstFalse.status).toBe(400);
-  });
-
-  it('an invalid docx_promote_headings is rejected even when the batch has no .docx at all', async () => {
+  it('rejects a duplicate selected index instead of silently deduplicating it', async () => {
     const res = await previewRes([
-      ['files', new File(['# A'], 'a.md', { type: 'text/markdown' })],
-      ['docx_promote_headings', 'yes'],
+      ['files', await docxFile('v.docx', boldBig('The Vale') + bodyText('Cold.'))],
+      ['docx_promote_index', '0'],
+      ['docx_promote_index', '0'],
     ]);
     expect(res.status).toBe(400);
-    expect(await errorOf(res)).toBe('Invalid docx_promote_headings');
+    expect(await errorOf(res)).toBe('Invalid docx_promote_index');
   });
 
-  it('docx_promote_headings=true with no .docx in the batch is a plain 200', async () => {
-    const body = await preview([
+  it('rejects an out-of-range selected index', async () => {
+    const res = await previewRes([
+      ['files', await docxFile('v.docx', boldBig('The Vale') + bodyText('Cold.'))],
+      ['docx_promote_index', '1'],
+    ]);
+    expect(res.status).toBe(400);
+    expect(await errorOf(res)).toBe('Invalid docx_promote_index');
+  });
+
+  it('rejects an index that targets Markdown', async () => {
+    const res = await previewRes([
       ['files', new File(['# A'], 'a.md', { type: 'text/markdown' })],
+      ['docx_promote_index', '0'],
+    ]);
+    expect(res.status).toBe(400);
+    expect(await errorOf(res)).toBe('Invalid docx_promote_index');
+  });
+
+  it('rejects an index that targets an ineligible DOCX', async () => {
+    const res = await previewRes([
+      ['files', await docxFile('styled.docx', heading('The Vale') + bodyText('Cold.'))],
+      ['docx_promote_index', '0'],
+    ]);
+    expect(res.status).toBe(400);
+    expect(await errorOf(res)).toBe('Invalid docx_promote_index');
+  });
+
+  it('rejects legacy docx_promote_headings whenever it is present', async () => {
+    const res = await previewRes([
+      ['files', await docxFile('v.docx', boldBig('The Vale') + bodyText('Cold.'))],
+      ['docx_promote_index', '0'],
       ['docx_promote_headings', 'true'],
     ]);
-    expect(body.summary.docx_files_converted).toBe(0);
-    expect(body.docx.files).toHaveLength(0);
+    expect(res.status).toBe(400);
+    expect(await errorOf(res)).toBe('Invalid docx_promote_index');
   });
 
   // ─── 8. Error taxonomy at the wire (DOCX-11) ──────────────────────────────
@@ -736,7 +753,9 @@ describe('POST /api/universes/:uid/ingest — .docx (#35)', () => {
     // And NOT duplicated inside the docx block: two sources of truth for the
     // same text is exactly what DOCX-10 forbids.
     expect(JSON.stringify(body.docx)).not.toContain('No headings were found');
-    expect(Object.keys(body.docx.files[0])).toEqual(['path', 'headings', 'mediaCount']);
+    expect(Object.keys(body.docx.files[0])).toEqual([
+      'uploadIndex', 'path', 'headings', 'mediaCount',
+    ]);
   });
 
   // ─── 15. Commit round trip (the issue's acceptance criterion) ─────────────

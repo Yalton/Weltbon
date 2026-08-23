@@ -58,9 +58,9 @@ export interface DocxMediaRef {
 
 export interface ConvertOptions {
   styleIndex: StyleIndex;
-  /** Block index → level, from the opt-in heuristic. Consulted only where the
-   *  deterministic pass resolved nothing; the caller decides whether to run it
-   *  at all (headings.ts enforces no such gate itself). */
+  /** Block index → level, from the opt-in heuristic. Consulted only for a
+   *  paragraph the deterministic pass did not already resolve; the caller
+   *  owns document-level eligibility (headings.ts enforces no gate itself). */
   promotedHeadings: Map<number, HeadingLevel>;
   /** relId → relationship target, from word/_rels/document.xml.rels. */
   rels: Map<string, string>;

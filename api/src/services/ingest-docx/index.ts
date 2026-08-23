@@ -5,22 +5,18 @@
  * pure or single-purpose; this is where the parts meet, and therefore where
  * three decisions live that no other module is in a position to make.
  *
- * 1. THE PROMOTION GATE (DOCX-09). detectUnstyledHeadings is style-blind: hand
- *    it a paragraph carrying styleId "Heading1" and it will happily rank it as
- *    a bold candidate, because it never asks what the deterministic pass
- *    found. The spec says promotion applies ONLY when that pass found no
- *    headings at all, and this file is the only place that knows both answers.
- *    Getting it wrong is silent: a document that mixes real Heading styles with
- *    incidental bold lines would import with extra section boundaries the
- *    author never wrote, and the user would have no way to tell which headings
- *    were theirs.
+ * 1. THE PROMOTION GATE (DOCX-09). detectUnstyledHeadings is style-blind, so
+ *    this layer combines its result with the deterministic styled-heading
+ *    count. Unstyled-only documents are eligible; mixed documents must cross
+ *    the server's floor plus ratio-or-absolute threshold. convertDocument
+ *    still resolves a styled heading before consulting the promoted map, so
+ *    promotion adds eligible structure without replacing authored structure.
  *
  * 2. `unstyled-headings-detected` AND `mixed-headings-detected` ARE EMITTED
  *    HERE, and can only be emitted here. With promotion off, convertDocument
  *    receives an empty promoted map and has nothing to report; the counts that
- *    drive the preview's "treat N bold paragraphs as headings" affordance, and
- *    the mixed-document explanation that replaces it when the gate refuses,
- *    exist only at this layer.
+ *    drive the preview's "treat N bold paragraphs as headings" affordance and
+ *    the mixed-document explanation exist only at this layer.
  *
  * 3. EVERY PART THAT IS PARSED GOES THROUGH rejectDoctype (T-35-02). The
  *    billion-laughs defense is not ambient — it applies to a part only where
@@ -56,7 +52,7 @@ export interface DocxConversion {
   headings: {
     /** Resolved deterministically, from Heading styles + outlineLvl. */
     styled: number;
-    /** What the heuristic WOULD promote — 0 whenever the gate would refuse. */
+    /** What the heuristic would promote under the mixed-document eligibility gate. */
     unstyledCandidates: number;
     /** Whether it did. */
     promoted: boolean;
@@ -67,6 +63,15 @@ export interface ConvertDocxOptions {
   promoteHeadings?: boolean;
   limits?: DocxLimits;
   batchBudget?: DocxWorkBudget;
+}
+
+export function isHeadingPromotionEligible(
+  styledCount: number,
+  candidateCount: number,
+): boolean {
+  if (styledCount === 0) return candidateCount > 0;
+  return candidateCount >= 3
+    && (candidateCount >= styledCount * 3 || candidateCount >= 10);
 }
 
 function attr(attrs: Record<string, string>, name: string): string | null {
@@ -373,8 +378,6 @@ export async function convertDocx(
   // declared size while walking, and that is all DOCX-07 asks for.
   const mediaEntries = parts.otherEntries.filter((e) => e.name.startsWith('word/media/'));
 
-  // DOCX-09's gate. The heuristic's result may only become headings when the
-  // deterministic pass found nothing.
   const styledCount = countStyledHeadings(doc.blocks, styleIndex);
 
   // THE HEURISTIC NOW RUNS UNCONDITIONALLY, and its result is used for two
@@ -394,21 +397,15 @@ export async function convertDocx(
   // as the conversion that follows it.
   const heuristic = detectUnstyledHeadings(doc.blocks);
 
-  // Reported as 0 when styled headings exist, because that is what the
-  // heuristic WOULD promote here: nothing, the gate refuses. Reporting the raw
-  // count instead would make the preview offer "treat N bold paragraphs as
-  // headings", and accepting it would change nothing at all — a control that
-  // silently does not work is worse than one that is absent. The client's
-  // eligibility test is `unstyledCandidates > 0` and nothing else, so this
-  // zeroing is load-bearing on both sides.
-  const candidates: Map<number, HeadingLevel> = styledCount === 0
-    ? heuristic
-    : new Map();
-  const promoted = opts.promoteHeadings === true && candidates.size > 0;
+  const eligibleCandidates: Map<number, HeadingLevel> = isHeadingPromotionEligible(
+    styledCount,
+    heuristic.size,
+  ) ? heuristic : new Map();
+  const promoted = opts.promoteHeadings === true && eligibleCandidates.size > 0;
 
   const result = convertDocument(doc, {
     styleIndex,
-    promotedHeadings: promoted ? candidates : new Map<number, HeadingLevel>(),
+    promotedHeadings: promoted ? eligibleCandidates : new Map<number, HeadingLevel>(),
     rels,
     footnotes,
     mediaEntries,
@@ -421,8 +418,8 @@ export async function convertDocx(
   // empty map and has no idea any candidate exists. Emitted only when the
   // candidates are still on the table — once promoted, they ARE headings, the
   // affordance is spent, and repeating the offer would be noise.
-  if (candidates.size > 0 && !promoted) {
-    const n = candidates.size;
+  if (eligibleCandidates.size > 0 && !promoted) {
+    const n = eligibleCandidates.size;
     warnings.push({
       code: 'unstyled-headings-detected',
       message: `${n} paragraph${n === 1 ? '' : 's'} look${n === 1 ? 's' : ''} like a heading `
@@ -432,40 +429,21 @@ export async function convertDocx(
     });
   }
 
-  // The mixed-document diagnostic. DELIBERATELY DIAGNOSTIC ONLY: whether
-  // promotion should be OFFERED for a mixed document is a product decision that
-  // has not been made, and DOCX-09 forbids it today. So the counts ride in the
-  // warning text and nowhere else — `headings.unstyledCandidates` stays 0, and
-  // the UI's affordance stays off.
-  //
-  // The trigger is "substantially more candidates than styled headings", not
-  // "any candidate at all": a properly styled document with a couple of bold
-  // asides must not be nagged at, or the warning becomes noise and stops being
-  // read. Three times as many, and at least three of them — chosen so the
-  // 1-styled/40-candidates case fires loudly and a 6-styled/1-candidate
-  // document stays silent. If the ratio is wrong the cost is a warning that is
-  // either slightly noisy or slightly quiet; it never changes what is imported.
-  //
-  // Guarded on styledCount > 0 because at zero the case is already reported by
-  // `unstyled-headings-detected` above, and two warnings for one situation is
-  // worse than one.
-  const MIXED_RATIO = 3;
-  const MIXED_FLOOR = 3;
-  if (
-    styledCount > 0
-    && heuristic.size >= MIXED_FLOOR
-    && heuristic.size >= styledCount * MIXED_RATIO
-  ) {
+  // Mixed documents keep their deterministic structure. Promotion only adds
+  // eligible heuristic candidates; it never replaces or downgrades styled
+  // headings. Keep this diagnostic after promotion so the resulting structure
+  // remains explainable, but suppress the separate offer once it is spent.
+  if (styledCount > 0 && eligibleCandidates.size > 0) {
     const one = styledCount === 1;
     const styledWord = `${styledCount} styled heading${one ? '' : 's'}`;
     const lookWord = `${heuristic.size} paragraphs that look like headings`;
     warnings.push({
       code: 'mixed-headings-detected',
       message: `This document has ${styledWord} but ${lookWord} `
-        + `(bold, larger or capitalised). Only the styled heading${one ? '' : 's'} `
-        + `${one ? 'was' : 'were'} used; the rest were imported as ordinary `
-        + 'paragraphs. Add Heading styles in Word to the sections you want '
-        + 'split out.',
+        + `(bold, larger or capitalised). The styled heading${one ? '' : 's'} `
+        + `${one ? 'is' : 'are'} preserved; the candidate paragraphs ${promoted
+          ? 'were also promoted to headings.'
+          : 'were imported as ordinary paragraphs unless heading promotion is selected for this upload.'}`,
       count: heuristic.size,
     });
   }
@@ -481,7 +459,7 @@ export async function convertDocx(
     media,
     headings: {
       styled: styledCount,
-      unstyledCandidates: candidates.size,
+      unstyledCandidates: eligibleCandidates.size,
       promoted,
     },
   };
