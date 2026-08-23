@@ -60,9 +60,20 @@ import type {
   ListingsResult,
   ModelListing,
   ModelListingWithCoverage,
+  ProviderCredential,
 } from './interface.js';
 import { LLMError, LLMProviderError } from './interface.js';
 import { PRICING } from './pricing.js';
+import { listOllamaModels } from './ollama.js';
+
+/**
+ * Issue #48: PRICING only has entries for the two BYOK SDK providers — it is
+ * NOT total over LlmProvider (no 'ollama' key, same reasoning as
+ * RECOMMENDED_CHEAP_MODEL in pricing.ts). `keyof typeof PRICING` derives the
+ * narrower type from PRICING itself rather than hand-declaring a second
+ * 'anthropic' | 'openai' literal that could drift from the object it types.
+ */
+type PricedProvider = keyof typeof PRICING;
 
 // ---------------------------------------------------------------------------
 // Module-private cache (D-01 + D-03)
@@ -140,7 +151,7 @@ async function listOpenAIModelIds(apiKey: string): Promise<string[]> {
  * is self-contained.
  */
 function reconcileWithPricing(
-  provider: LlmProvider,
+  provider: PricedProvider,
   ids: string[],
 ): ModelListingWithCoverage[] {
   const table = PRICING[provider] as Record<string, Record<string, number>>;
@@ -169,7 +180,7 @@ function reconcileWithPricing(
  * `hasPricing: true` by construction — we are synthesizing the catalog from
  * the PRICING constant itself.
  */
-function pricingFallbackListing(provider: LlmProvider): ModelListingWithCoverage[] {
+function pricingFallbackListing(provider: PricedProvider): ModelListingWithCoverage[] {
   return reconcileWithPricing(provider, Object.keys(PRICING[provider]));
 }
 
@@ -193,12 +204,101 @@ function pricingFallbackListing(provider: LlmProvider): ModelListingWithCoverage
  * The diagnostic stderr log on the error path is metadata-only (see T-24-04-09).
  * It uses the `LLMProviderError.variant` discriminant when the thrown error is
  * a typed provider error; otherwise reports 'unknown'.
+ *
+ * #48 Task 3: the third parameter is a `credential` object rather than a bare
+ * apiKey string — this function OWNS that signature. Both SDK branches below
+ * still read `credential.apiKey`; the `provider === 'ollama'` branch a few
+ * lines into the body returns before either ever runs, so a credential that
+ * only carries `baseUrl` (no apiKey) never reaches them — see that guard's
+ * own comment for why the branch order matters.
+ *
+ * #48 Task 6: the Ollama branch is now REAL live discovery via
+ * `listOllamaModels` (Task 4), not the interim empty-listing stub Task 2
+ * left here. It deliberately has NO cache and NO stale/PRICING fallback of
+ * its own — see that branch's own comment for why bypassing D-01/D-02 here
+ * is correct rather than a gap.
  */
 export async function getModels(
   provider: LlmProvider,
   keyId: string,
-  apiKey: string,
+  credential: ProviderCredential,
 ): Promise<ListingsResult> {
+  // Issue #48: this whole module is PRICING-reconciliation for the two BYOK
+  // SDK providers (D-01..D-04 above) — `reconcileWithPricing` indexes
+  // PRICING[provider], which has no 'ollama' key, and the SDK branch below
+  // has exactly two live-list functions. Guarding here (a) keeps this file
+  // typechecking now that LlmProvider is widened without silently narrowing
+  // PRICING's own type — this function narrows to 'anthropic' | 'openai' for
+  // the rest of its body once this branch returns — and (b) matters more
+  // than the type error on its own: without it,
+  // provider === 'anthropic' ? ... : listOpenAIModelIds(apiKey) would have
+  // SILENTLY called the OpenAI SDK for an Ollama request.
+  //
+  // Fix round 1 (#48 review): this branch RETURNS, it does not throw. This
+  // module's own D-02 contract (see file JSDoc) is "always returns something
+  // usable; never blocks the dropdown", and llm-models.ts's call site relies
+  // on that literally ("Per D-02, getModels NEVER throws ... we can
+  // therefore return its result directly without try/catch"). A throwing
+  // guard here would make that comment a lie for the next reader, even
+  // though today no route can reach this branch with provider:'ollama' (both
+  // llm-keys.ts and llm-models.ts now validate against KEY_PROVIDER_NAMES,
+  // which excludes it). The empty-models/source:'live' shape below is
+  // exactly what Task 4's real Ollama implementation returns when no base
+  // URL is configured — so this is the eventual behavior stated early, not a
+  // stub someone has to remember to delete.
+  if (provider === 'ollama') {
+    const baseUrl = credential.baseUrl;
+    if (baseUrl === undefined) {
+      // No connection configured yet — same empty-live shape Task 2 left
+      // here originally. Not an error: a brand-new desktop install has no
+      // Ollama connection until the user saves one (routes/llm-connections.ts).
+      return { models: [], source: 'live', fetchedAt: new Date().toISOString() };
+    }
+
+    // #48 Task 6: no cache here, unlike the anthropic/openai path below.
+    // listOllamaModels talks to the user's OWN machine over loopback/LAN —
+    // already fast and free, unlike a BYOK vendor's rate-limited HTTPS API
+    // the D-01 cache exists to shield. There is also no PRICING-fallback
+    // analog to degrade to on failure: Ollama has no PRICING entries at all
+    // (OllamaProvider.listModels() returns [] by contract — see ollama.ts).
+    // D-02's "never throws" promise is upheld instead by simply degrading to
+    // an empty listing on failure — the same shape the unconfigured-baseUrl
+    // case above already produces — rather than a stale/synthesized one.
+    try {
+      // Fix round 2 (Important 3): the whole credential, so a proxy bearer
+      // reaches the listing call and not only `validate`. `baseUrl` is still
+      // read above purely for the not-yet-configured early return.
+      const installed = await listOllamaModels(credential);
+      return {
+        // Only tools-capable models are offered: a model that cannot
+        // tool-call cannot return findings at all, so listing it as
+        // selectable would be a trap (spec D-1). hasPricing is always false
+        // — Ollama is free/local and never appears in PRICING.
+        models: installed
+          .filter((m) => m.supportsTools)
+          .map((m) => ({ id: m.name, hasPricing: false })),
+        source: 'live',
+        fetchedAt: new Date().toISOString(),
+      };
+    } catch (err) {
+      // T-24-04-09-style metadata-only log. NEVER the baseUrl (a LAN
+      // hostname/IP the operator may consider sensitive) and NEVER a secret.
+      const variant =
+        err instanceof LLMProviderError ? err.variant : (LLMError.UnknownProviderError as string);
+      console.error('[model-catalog] live Ollama listModels failed:', { provider, variant });
+      return { models: [], source: 'live', fetchedAt: new Date().toISOString() };
+    }
+  }
+
+  // `resolveCredential` (the only production caller, via llm-models.ts) always
+  // hands anthropic/openai a `{ apiKey }` credential — but this function's own
+  // D-02 contract is "never throws", so an absent apiKey must degrade rather
+  // than assert. `?? ''` sends an SDK call the provider will reject with an
+  // auth error, which the existing try/catch below already routes to the
+  // stale-cache / PRICING-fallback path — the same resilience D-02 promises
+  // for every other SDK failure, with no separate branch to maintain.
+  const apiKey = credential.apiKey ?? '';
+
   const key = cacheKey(provider, keyId);
   const now = Date.now();
   const cached = modelCache.get(key);

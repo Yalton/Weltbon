@@ -207,7 +207,7 @@ describe('OpenAIProvider (PROVIDER-03 + PROVIDER-05 + PROVIDER-07)', () => {
   it('validate succeeds when models.list resolves', async () => {
     mockModelsList.mockResolvedValueOnce({ data: [], object: 'list' });
     const { getProvider } = await import('../src/providers/llm/index.js');
-    await getProvider('openai').validate('sk-test');
+    await getProvider('openai').validate({ apiKey: 'sk-test' });
     expect(mockModelsList).toHaveBeenCalledTimes(1);
   });
 
@@ -217,7 +217,7 @@ describe('OpenAIProvider (PROVIDER-03 + PROVIDER-05 + PROVIDER-07)', () => {
       '../src/providers/llm/index.js'
     );
     try {
-      await getProvider('openai').validate('bad');
+      await getProvider('openai').validate({ apiKey: 'bad' });
       expect.fail('should have thrown');
     } catch (err) {
       expect(err).toBeInstanceOf(LLMProviderError);
@@ -231,7 +231,7 @@ describe('OpenAIProvider (PROVIDER-03 + PROVIDER-05 + PROVIDER-07)', () => {
       '../src/providers/llm/index.js'
     );
     try {
-      await getProvider('openai').validate('bad');
+      await getProvider('openai').validate({ apiKey: 'bad' });
       expect.fail('should have thrown');
     } catch (err) {
       expect(err).toBeInstanceOf(LLMProviderError);
@@ -245,7 +245,7 @@ describe('OpenAIProvider (PROVIDER-03 + PROVIDER-05 + PROVIDER-07)', () => {
       '../src/providers/llm/index.js'
     );
     try {
-      await getProvider('openai').validate('any');
+      await getProvider('openai').validate({ apiKey: 'any' });
       expect.fail('should have thrown');
     } catch (err) {
       expect(err).toBeInstanceOf(LLMProviderError);
@@ -259,7 +259,7 @@ describe('OpenAIProvider (PROVIDER-03 + PROVIDER-05 + PROVIDER-07)', () => {
       '../src/providers/llm/index.js'
     );
     try {
-      await getProvider('openai').validate('any');
+      await getProvider('openai').validate({ apiKey: 'any' });
       expect.fail('should have thrown');
     } catch (err) {
       expect(err).toBeInstanceOf(LLMProviderError);
@@ -273,7 +273,7 @@ describe('OpenAIProvider (PROVIDER-03 + PROVIDER-05 + PROVIDER-07)', () => {
       '../src/providers/llm/index.js'
     );
     try {
-      await getProvider('openai').validate('any');
+      await getProvider('openai').validate({ apiKey: 'any' });
       expect.fail('should have thrown');
     } catch (err) {
       expect(err).toBeInstanceOf(LLMProviderError);
@@ -287,7 +287,7 @@ describe('OpenAIProvider (PROVIDER-03 + PROVIDER-05 + PROVIDER-07)', () => {
       '../src/providers/llm/index.js'
     );
     try {
-      await getProvider('openai').validate('any');
+      await getProvider('openai').validate({ apiKey: 'any' });
       expect.fail('should have thrown');
     } catch (err) {
       expect(err).toBeInstanceOf(LLMProviderError);
@@ -305,7 +305,7 @@ describe('OpenAIProvider (PROVIDER-03 + PROVIDER-05 + PROVIDER-07)', () => {
       '../src/providers/llm/index.js'
     );
     try {
-      await getProvider('openai').validate('any');
+      await getProvider('openai').validate({ apiKey: 'any' });
       expect.fail('should have thrown');
     } catch (err) {
       expect(err).toBeInstanceOf(LLMProviderError);
@@ -321,7 +321,7 @@ describe('OpenAIProvider (PROVIDER-03 + PROVIDER-05 + PROVIDER-07)', () => {
       '../src/providers/llm/index.js'
     );
     try {
-      await getProvider('openai').validate('any');
+      await getProvider('openai').validate({ apiKey: 'any' });
       expect.fail('should have thrown');
     } catch (err) {
       expect(err).toBeInstanceOf(LLMProviderError);
@@ -337,7 +337,7 @@ describe('OpenAIProvider (PROVIDER-03 + PROVIDER-05 + PROVIDER-07)', () => {
       '../src/providers/llm/index.js'
     );
     try {
-      await getProvider('openai').validate('any');
+      await getProvider('openai').validate({ apiKey: 'any' });
       expect.fail('should have thrown');
     } catch (err) {
       expect(err).toBeInstanceOf(LLMProviderError);
@@ -354,7 +354,7 @@ describe('OpenAIProvider (PROVIDER-03 + PROVIDER-05 + PROVIDER-07)', () => {
   it('estimate returns local tiktoken count (positive integer for short string)', async () => {
     const { getProvider } = await import('../src/providers/llm/index.js');
     const result = await getProvider('openai').estimate({
-      apiKey: 'k',
+      credential: { apiKey: 'k' },
       messages: [{ role: 'user', content: 'hello world from tests' }],
     });
     expect(typeof result).toBe('number');
@@ -367,7 +367,7 @@ describe('OpenAIProvider (PROVIDER-03 + PROVIDER-05 + PROVIDER-07)', () => {
   it('estimate does NOT call any SDK method (PROVIDER-07 local-only)', async () => {
     const { getProvider } = await import('../src/providers/llm/index.js');
     await getProvider('openai').estimate({
-      apiKey: 'k',
+      credential: { apiKey: 'k' },
       messages: [{ role: 'user', content: 'no network please' }],
     });
     expect(mockModelsList).not.toHaveBeenCalled();
@@ -382,13 +382,13 @@ describe('OpenAIProvider (PROVIDER-03 + PROVIDER-05 + PROVIDER-07)', () => {
 
     // Baseline: estimate without system
     const baseCount = await getProvider('openai').estimate({
-      apiKey: 'k',
+      credential: { apiKey: 'k' },
       messages,
     });
 
     // System-aware: estimate with system should be strictly greater
     const systemCount = await getProvider('openai').estimate({
-      apiKey: 'k',
+      credential: { apiKey: 'k' },
       messages,
       system: systemText,
     });
@@ -440,7 +440,7 @@ describe('OpenAIProvider (PROVIDER-03 + PROVIDER-05 + PROVIDER-07)', () => {
 
     const { getProvider } = await import('../src/providers/llm/index.js');
     const result = await getProvider('openai').runAudit({
-      apiKey: 'k',
+      credential: { apiKey: 'k' },
       messages: [{ role: 'user', content: 'find gaps' }],
       model: 'gpt-5-mini',
     });
@@ -490,7 +490,7 @@ describe('OpenAIProvider (PROVIDER-03 + PROVIDER-05 + PROVIDER-07)', () => {
 
     const { getProvider } = await import('../src/providers/llm/index.js');
     const result = await getProvider('openai').runAudit({
-      apiKey: 'k',
+      credential: { apiKey: 'k' },
       messages: [{ role: 'user', content: 'q' }],
       model: 'gpt-5-mini',
     });
@@ -520,7 +520,7 @@ describe('OpenAIProvider (PROVIDER-03 + PROVIDER-05 + PROVIDER-07)', () => {
     );
     try {
       await getProvider('openai').runAudit({
-        apiKey: 'k',
+        credential: { apiKey: 'k' },
         messages: [{ role: 'user', content: 'q' }],
         model: 'gpt-5-mini',
       });
@@ -553,7 +553,7 @@ describe('OpenAIProvider (PROVIDER-03 + PROVIDER-05 + PROVIDER-07)', () => {
     );
     try {
       await getProvider('openai').runAudit({
-        apiKey: 'k',
+        credential: { apiKey: 'k' },
         messages: [{ role: 'user', content: 'q' }],
         model: 'gpt-5-mini',
       });
@@ -584,7 +584,7 @@ describe('OpenAIProvider (PROVIDER-03 + PROVIDER-05 + PROVIDER-07)', () => {
     );
     try {
       await getProvider('openai').runAudit({
-        apiKey: 'k',
+        credential: { apiKey: 'k' },
         messages: [{ role: 'user', content: 'q' }],
         model: 'gpt-5-mini',
       });
@@ -633,7 +633,7 @@ describe('OpenAIProvider (PROVIDER-03 + PROVIDER-05 + PROVIDER-07)', () => {
       },
     ];
     await getProvider('openai').runAudit({
-      apiKey: 'k',
+      credential: { apiKey: 'k' },
       messages: [{ role: 'user', content: 'find gaps' }],
       model: 'gpt-5-mini',
       tools: engineTools,
@@ -686,7 +686,7 @@ describe('OpenAIProvider (PROVIDER-03 + PROVIDER-05 + PROVIDER-07)', () => {
 
     const { getProvider } = await import('../src/providers/llm/index.js');
     const result = await getProvider('openai').runAudit({
-      apiKey: 'k',
+      credential: { apiKey: 'k' },
       messages: [{ role: 'user', content: 'q' }],
       model: 'gpt-5-mini',
     });
@@ -732,7 +732,7 @@ describe('OpenAIProvider (PROVIDER-03 + PROVIDER-05 + PROVIDER-07)', () => {
     );
     try {
       await getProvider('openai').runAudit({
-        apiKey: 'k',
+        credential: { apiKey: 'k' },
         messages: [{ role: 'user', content: 'q' }],
         model: 'gpt-5-mini',
       });

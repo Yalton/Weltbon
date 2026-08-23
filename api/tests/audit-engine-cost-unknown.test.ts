@@ -24,7 +24,7 @@
  *     real PRICING.anthropic lookup AND whose `runAudit` returns a synthetic
  *     final-turn (text='{"suggestions":[]}', toolUse=[], usage zero, costUsd
  *     either 0 or a fixed non-zero value depending on the priced path).
- *   - getDecryptedKey: returns 'fixture-api-key'.
+ *   - resolveCredential: returns { apiKey: 'fixture-api-key' }.
  *   - runCheapFinds: returns empty cheap-finds list.
  *   - buildStructuralDigest: returns a minimal digest + empty validEntryIds.
  *   - validateReferencedEntryIds: returns the input list with droppedCount=0.
@@ -48,7 +48,7 @@ import {
 } from './helpers.js';
 import { setTestDb } from '../src/db/client.js';
 import { auditRuns, universes } from '../src/db/schema.js';
-import { runAudit } from '../src/services/audit-engine.js';
+import { runAudit, type AuditEngineDeps } from '../src/services/audit-engine.js';
 import { PRICING } from '../src/providers/llm/pricing.js';
 
 describe('audit-engine cost_unknown flag (Phase 27 Plan 03 Task 1 / D-06)', () => {
@@ -120,7 +120,15 @@ describe('audit-engine cost_unknown flag (Phase 27 Plan 03 Task 1 / D-06)', () =
    * computed (0 for unpriced; 0.0042 for priced, matching the expected
    * non-zero assertion in Test 2).
    */
-  function makeDeps(opts: { providerCostUsd: number }) {
+  // Explicit AuditEngineDeps return-type annotation (not just inference):
+  // an object literal returned from a function WITHOUT an annotated return
+  // type is not excess-property-checked against the type it's later assigned
+  // to (only a literal assigned/passed directly gets that check) — so a
+  // stale/renamed key here would silently vanish into `deps?: AuditEngineDeps`
+  // with no type error, exactly like the getDecryptedKey → resolveCredential
+  // rename did before this annotation was added. The annotation forces the
+  // check back on at the `return` statement below.
+  function makeDeps(opts: { providerCostUsd: number }): AuditEngineDeps {
     const fakeProvider = {
       validate: vi.fn().mockResolvedValue(undefined),
       estimate: vi.fn().mockResolvedValue(0),
@@ -155,7 +163,7 @@ describe('audit-engine cost_unknown flag (Phase 27 Plan 03 Task 1 / D-06)', () =
 
     return {
       getProvider: vi.fn(() => fakeProvider) as any,
-      getDecryptedKey: vi.fn().mockResolvedValue('fixture-api-key'),
+      resolveCredential: vi.fn().mockResolvedValue({ apiKey: 'fixture-api-key' }),
       runCheapFinds: vi.fn().mockResolvedValue({
         createdIssueCount: 0,
         createdIssueEntryIds: [],

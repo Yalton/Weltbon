@@ -41,7 +41,10 @@
  * Dependencies (D-05a: factory only — never import concrete provider classes):
  *   - getProvider factory from ../providers/llm/index.js
  *   - LLMProviderError, LLMError, MIN_CACHEABLE_TOKENS from same barrel
- *   - getDecryptedKey from ./llm-key.js
+ *   - resolveCredential from ./llm-credential.js (#48: the single point where
+ *     the llm_api_keys table and the llm_connections table meet — replaces
+ *     the direct getDecryptedKey call so the engine works for both key-based
+ *     and endpoint-based providers without a provider-shaped branch here)
  *   - runCheapFinds from ./cheap-finds.js
  *   - buildStructuralDigest from ./structural-digest.js
  *   - getEntryBody, validateReferencedEntryIds from ./audit-tools.js
@@ -49,7 +52,8 @@
  *   - AuditOutputSchema, AuditSuggestionStrictSchema from ./audit-schema.js
  *
  * Security invariants:
- *   - T-24-04-05: apiKey never logged; never written to DB
+ *   - T-24-04-05: credential (apiKey / baseUrl / secret) never logged; never
+ *     written to DB
  *   - T-24-04-09: only taxonomy strings written to audit_runs.error
  *   - T-24-04-07: runId, timestamps, userId kept OUT of the cached prefix
  *   - T-24-04-03: gap_key always engine-computed; never LLM-emitted
@@ -66,7 +70,7 @@ import {
   MIN_CACHEABLE_TOKENS,
   type LlmProvider,
 } from '../providers/llm/index.js';
-import { getDecryptedKey } from './llm-key.js';
+import { resolveCredential } from './llm-credential.js';
 import { runCheapFinds, CATEGORY_SEVERITY } from './cheap-finds.js';
 import { buildStructuralDigest } from './structural-digest.js';
 import { getEntryBody, validateReferencedEntryIds } from './audit-tools.js';
@@ -220,7 +224,7 @@ function recordCacheHitRatio(runId: string, ratio: number): void {
 export interface AuditEngineDeps {
   db?: typeof db;
   getProvider?: typeof getProvider;
-  getDecryptedKey?: typeof getDecryptedKey;
+  resolveCredential?: typeof resolveCredential;
   runCheapFinds?: typeof runCheapFinds;
   buildStructuralDigest?: typeof buildStructuralDigest;
   getEntryBody?: typeof getEntryBody;
@@ -250,7 +254,7 @@ export interface AuditEngineDeps {
  * Per D-01 (stream-persist): each suggestion that survives Zod + AUDIT-09
  * validation is INSERTed immediately — partial results survive crashes.
  *
- * Never logs raw `apiKey` or raw provider error text (T-24-04-05 / T-24-04-09).
+ * Never logs the raw credential or raw provider error text (T-24-04-05 / T-24-04-09).
  *
  * @param runId - The UUID of the audit_runs row to execute.
  * @param deps  - Optional overrides for unit-testing (db, provider, config).
@@ -259,7 +263,7 @@ export async function runAudit(runId: string, deps?: AuditEngineDeps): Promise<v
   // Resolve injected vs real dependencies
   const _db = deps?.db ?? db;
   const _getProvider = deps?.getProvider ?? getProvider;
-  const _getDecryptedKey = deps?.getDecryptedKey ?? getDecryptedKey;
+  const _resolveCredential = deps?.resolveCredential ?? resolveCredential;
   const _runCheapFinds = deps?.runCheapFinds ?? runCheapFinds;
   const _buildStructuralDigest = deps?.buildStructuralDigest ?? buildStructuralDigest;
   const _getEntryBody = deps?.getEntryBody ?? getEntryBody;
@@ -337,11 +341,13 @@ export async function runAudit(runId: string, deps?: AuditEngineDeps): Promise<v
   }
 
   // ---------------------------------------------------------------------------
-  // Step 2: BYOK key resolution (four-case null contract — Phase 22 D-11)
+  // Step 2: credential resolution (four-case null contract — Phase 22 D-11,
+  // extended to endpoint-based providers by #48's resolveCredential — see
+  // that module's doc comment for why "no connection row" is the same null)
   // ---------------------------------------------------------------------------
 
-  const apiKey = await _getDecryptedKey(userId, provider as LlmProvider, encryptionKey);
-  if (apiKey === null) {
+  const credential = await _resolveCredential(userId, provider as LlmProvider, encryptionKey);
+  if (credential === null) {
     await markFailed(runId, ENGINE_ERROR.PROVIDER_ERROR);
     return;
   }
@@ -368,7 +374,7 @@ export async function runAudit(runId: string, deps?: AuditEngineDeps): Promise<v
   // Diagnostic stderr (T-24-04-09 / Phase 27 threat T-27-03-03): when the flag
   // flips on, emit ONE safe-metadata-only log so operators know the unpriced
   // path was exercised. The log is gated by `costUnknownLogged` so a multi-turn
-  // run never spams. No apiKey, no err.message — only { runId, model, provider }.
+  // run never spams. No credential, no err.message — only { runId, model, provider }.
   const priced = _getProvider(provider as LlmProvider).pricing(model);
   const costUnknown: boolean = priced === undefined;
   let costUnknownLogged = false;
@@ -457,7 +463,7 @@ export async function runAudit(runId: string, deps?: AuditEngineDeps): Promise<v
   let digestTokenEstimate = 0;
   try {
     digestTokenEstimate = await _getProvider(provider as LlmProvider).estimate({
-      apiKey,
+      credential,
       messages: [{ role: 'user', content: digest }],
       model,
     });
@@ -581,7 +587,7 @@ When you are ready to deliver your complete list of findings, call the \`emit_fi
     let timeoutHandle: ReturnType<typeof setTimeout> | undefined;
     try {
       const providerCall = _getProvider(provider as LlmProvider).runAudit({
-        apiKey,
+        credential,
         messages,
         model,
         // Phase 27 D-10/D-12: both tools flow on every turn.

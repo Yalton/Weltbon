@@ -52,7 +52,10 @@ export interface AuditEstimate {
   /** USD upper bound of the cost-range. */
   upper: number;
   breakdown: AuditEstimateBreakdown;
-  model: { provider: 'anthropic' | 'openai'; name: string };
+  // Widened for #48: GET /audits/estimate now serves Ollama universes too
+  // (routes/audits.ts resolves an endpoint credential, not only a key), so
+  // this echo of the requested provider can genuinely come back 'ollama'.
+  model: { provider: 'anthropic' | 'openai' | 'ollama'; name: string };
 }
 
 /**

@@ -26,7 +26,39 @@
  * revision — it lives in llm-pricing.test.ts where the assertion is patched.)
  */
 
-import { describe, it, expect, vi, beforeEach } from 'vitest';
+import { describe, it, expect, vi, beforeEach, afterEach } from 'vitest';
+import { readFileSync } from 'node:fs';
+import { fileURLToPath } from 'node:url';
+import { dirname, resolve } from 'node:path';
+
+const here = dirname(fileURLToPath(import.meta.url));
+const fx = (n: string) => JSON.parse(readFileSync(resolve(here, `fixtures/ollama/${n}.json`), 'utf8'));
+
+/**
+ * Mirrors tests/llm-ollama.test.ts's fakeFetch (Task 4) — duplicated here
+ * because that file does not export it. `/api/show` is a POST whose body
+ * names the model, so routes for it are keyed `/api/show:<model>` and
+ * matched against the parsed request body's `model` field.
+ */
+function fakeFetch(routes: Record<string, unknown>): typeof fetch {
+  return (async (url: string, init?: RequestInit): Promise<Response> => {
+    if (url.includes('/api/show')) {
+      const body = init?.body ? (JSON.parse(init.body as string) as { model?: string }) : {};
+      const key = `/api/show:${body.model ?? ''}`;
+      if (!(key in routes)) return new Response('not found', { status: 404 });
+      return new Response(JSON.stringify(routes[key]), {
+        status: 200,
+        headers: { 'Content-Type': 'application/json' },
+      });
+    }
+    const key = Object.keys(routes).find((k) => url.includes(k));
+    if (key === undefined) return new Response('not found', { status: 404 });
+    return new Response(JSON.stringify(routes[key]), {
+      status: 200,
+      headers: { 'Content-Type': 'application/json' },
+    });
+  }) as typeof fetch;
+}
 
 // Defensive: matches the convention in llm-anthropic.test.ts:42-44. The cache
 // module does not currently transit through config.ts/env(), but a future
@@ -83,6 +115,12 @@ beforeEach(() => {
   vi.useRealTimers();
 });
 
+afterEach(() => {
+  // Only the two Task 6 live-Ollama-discovery tests below stub the global
+  // fetch; harmless no-op for every other test in this file.
+  vi.unstubAllGlobals();
+});
+
 describe('model-catalog cache (Phase 27 D-01/D-02/D-03 PROV-FOLLOWUP-01)', () => {
   // -----------------------------------------------------------------------
   // Test 1 — cache hit per D-01
@@ -100,8 +138,8 @@ describe('model-catalog cache (Phase 27 D-01/D-02/D-03 PROV-FOLLOWUP-01)', () =>
     );
     _resetModelCacheForTests();
 
-    const r1 = await getModels('anthropic', 'key-abc', 'sk-ant-test');
-    const r2 = await getModels('anthropic', 'key-abc', 'sk-ant-test');
+    const r1 = await getModels('anthropic', 'key-abc', { apiKey: 'sk-ant-test' });
+    const r2 = await getModels('anthropic', 'key-abc', { apiKey: 'sk-ant-test' });
 
     expect(mockAnthropicList).toHaveBeenCalledTimes(1);
     expect(r1.source).toBe('live');
@@ -123,13 +161,13 @@ describe('model-catalog cache (Phase 27 D-01/D-02/D-03 PROV-FOLLOWUP-01)', () =>
     );
     _resetModelCacheForTests();
 
-    await getModels('anthropic', 'key-ttl', 'sk-ant-test');
+    await getModels('anthropic', 'key-ttl', { apiKey: 'sk-ant-test' });
     expect(mockAnthropicList).toHaveBeenCalledTimes(1);
 
     // Advance 31 minutes — past the 30-min TTL.
     vi.advanceTimersByTime(31 * 60 * 1000);
 
-    await getModels('anthropic', 'key-ttl', 'sk-ant-test');
+    await getModels('anthropic', 'key-ttl', { apiKey: 'sk-ant-test' });
     expect(mockAnthropicList).toHaveBeenCalledTimes(2);
   });
 
@@ -146,8 +184,8 @@ describe('model-catalog cache (Phase 27 D-01/D-02/D-03 PROV-FOLLOWUP-01)', () =>
     );
     _resetModelCacheForTests();
 
-    await getModels('anthropic', 'key-A', 'sk-ant-A');
-    await getModels('anthropic', 'key-B', 'sk-ant-B');
+    await getModels('anthropic', 'key-A', { apiKey: 'sk-ant-A' });
+    await getModels('anthropic', 'key-B', { apiKey: 'sk-ant-B' });
 
     expect(mockAnthropicList).toHaveBeenCalledTimes(2);
     const entries = _peekModelCacheForTests();
@@ -169,7 +207,7 @@ describe('model-catalog cache (Phase 27 D-01/D-02/D-03 PROV-FOLLOWUP-01)', () =>
     );
     _resetModelCacheForTests();
 
-    const fresh = await getModels('anthropic', 'key-stale', 'sk-ant-test');
+    const fresh = await getModels('anthropic', 'key-stale', { apiKey: 'sk-ant-test' });
     expect(fresh.source).toBe('live');
 
     // Now bust the TTL AND make the next SDK call throw.
@@ -181,7 +219,7 @@ describe('model-catalog cache (Phase 27 D-01/D-02/D-03 PROV-FOLLOWUP-01)', () =>
     // console.error is emitted on the error path — silence it for the test.
     const errSpy = vi.spyOn(console, 'error').mockImplementation(() => {});
 
-    const stale = await getModels('anthropic', 'key-stale', 'sk-ant-test');
+    const stale = await getModels('anthropic', 'key-stale', { apiKey: 'sk-ant-test' });
     expect(stale.source).toBe('cache_stale');
     expect(stale.models).toEqual(fresh.models);
     expect(errSpy).toHaveBeenCalled();
@@ -210,7 +248,7 @@ describe('model-catalog cache (Phase 27 D-01/D-02/D-03 PROV-FOLLOWUP-01)', () =>
     const { PRICING } = await import('../src/providers/llm/pricing.js');
     _resetModelCacheForTests();
 
-    const result = await getModels('openai', 'key-no-cache', 'sk-oai-test');
+    const result = await getModels('openai', 'key-no-cache', { apiKey: 'sk-oai-test' });
 
     expect(result.source).toBe('pricing_fallback');
     const ids = result.models.map((m) => m.id).sort();
@@ -240,7 +278,7 @@ describe('model-catalog cache (Phase 27 D-01/D-02/D-03 PROV-FOLLOWUP-01)', () =>
     );
     _resetModelCacheForTests();
 
-    const result = await getModels('anthropic', 'key-unpriced', 'sk-ant-test');
+    const result = await getModels('anthropic', 'key-unpriced', { apiKey: 'sk-ant-test' });
     expect(result.source).toBe('live');
 
     const future = result.models.find((m) => m.id === 'claude-future-2030-snapshot');
@@ -269,7 +307,7 @@ describe('model-catalog cache (Phase 27 D-01/D-02/D-03 PROV-FOLLOWUP-01)', () =>
     _resetModelCacheForTests();
 
     const SECRET = 'sk-ant-LEAK-canary-99';
-    await getModels('anthropic', 'key-secret', SECRET);
+    await getModels('anthropic', 'key-secret', { apiKey: SECRET });
 
     const entries = _peekModelCacheForTests();
     // The Map should have exactly one entry; assert SECRET appears nowhere
@@ -278,5 +316,95 @@ describe('model-catalog cache (Phase 27 D-01/D-02/D-03 PROV-FOLLOWUP-01)', () =>
     expect(serialized).not.toContain(SECRET);
     // Defensive: also check the cache key itself is the keyId form.
     expect(entries[0][0]).toBe('anthropic:key-secret');
+  });
+
+  // -----------------------------------------------------------------------
+  // Fix round 1 (#48 review, Finding 2) — getModels('ollama', ...) must
+  // preserve the module's own D-02 contract ("always returns something
+  // usable; never blocks the dropdown") rather than throw. Unreachable via
+  // the real route today (llm-models.ts validates against KEY_PROVIDER_NAMES,
+  // which excludes 'ollama' — see routes/llm-models.ts), but this module is
+  // documented as never-throws and llm-models.ts's call site relies on that
+  // literally ("Per D-02, getModels NEVER throws ... we can therefore return
+  // its result directly without try/catch"), so the function itself must
+  // still uphold it for any future caller that trusts the doc.
+  // -----------------------------------------------------------------------
+  it("getModels('ollama', ...) resolves (never throws) and returns an empty live listing — D-02 contract preserved for the not-yet-implemented provider", async () => {
+    const { getModels, _resetModelCacheForTests } = await import(
+      '../src/providers/llm/model-catalog.js'
+    );
+    _resetModelCacheForTests();
+
+    // If this ever throws, await rejects and the test fails with that
+    // rejection — no need for an explicit try/catch to prove "never throws".
+    const result = await getModels('ollama', 'key-ollama', { apiKey: 'unused-for-ollama' });
+
+    expect(result).toEqual({
+      models: [],
+      source: 'live',
+      fetchedAt: expect.any(String),
+    });
+    // Neither SDK should ever be touched for an Ollama request (the same
+    // silent-OpenAI-fallback bug this guard exists to prevent).
+    expect(mockAnthropicList).not.toHaveBeenCalled();
+    expect(mockOpenAIList).not.toHaveBeenCalled();
+  });
+
+  // -----------------------------------------------------------------------
+  // Issue #48 Task 6 — the interim stub above is replaced with real live
+  // discovery once `credential.baseUrl` IS present. No production route
+  // wires provider:'ollama' into getModels() yet (llm-models.ts is scoped to
+  // KEY_PROVIDER_NAMES), so without a test here this branch would have zero
+  // coverage anywhere and a regression that quietly turned it back into the
+  // empty stub would go unnoticed. `listOllamaModels` (called internally)
+  // has no injectable fetchImpl parameter when reached through getModels(),
+  // unlike routes/llm-connections.ts's own /models endpoint which also calls
+  // it directly — so, uniquely in this file, the global `fetch` is stubbed.
+  // -----------------------------------------------------------------------
+  it("getModels('ollama', ..., { baseUrl }) live-discovers installed models, filtering out a tool-incapable one and marking hasPricing false", async () => {
+    const { getModels, _resetModelCacheForTests } = await import(
+      '../src/providers/llm/model-catalog.js'
+    );
+    _resetModelCacheForTests();
+
+    vi.stubGlobal(
+      'fetch',
+      fakeFetch({
+        '/api/tags': { models: [{ name: 'qwen3:32b' }, { name: 'llava:latest' }] },
+        '/api/show:qwen3:32b': fx('show-qwen3-32b'),
+        '/api/show:llava:latest': fx('show-llava'),
+      }),
+    );
+
+    const result = await getModels('ollama', 'unused-cache-id', { baseUrl: 'http://box:11434' });
+
+    expect(result.source).toBe('live');
+    // llava is vision-only (no 'tools' capability) — filtered out per spec
+    // D-1: a model that cannot tool-call cannot return findings, so listing
+    // it as selectable would be a trap.
+    expect(result.models).toEqual([{ id: 'qwen3:32b', hasPricing: false }]);
+    // Neither SDK client should ever be constructed for an Ollama request.
+    expect(mockAnthropicList).not.toHaveBeenCalled();
+    expect(mockOpenAIList).not.toHaveBeenCalled();
+  });
+
+  it("getModels('ollama', ..., { baseUrl }) degrades to an empty listing (never throws) when the server is unreachable", async () => {
+    const { getModels, _resetModelCacheForTests } = await import(
+      '../src/providers/llm/model-catalog.js'
+    );
+    _resetModelCacheForTests();
+
+    vi.stubGlobal('fetch', (async () => {
+      throw new Error('ECONNREFUSED');
+    }) as typeof fetch);
+
+    // If this ever throws, await rejects and the test fails with that
+    // rejection — this module's D-02 contract ("never throws") has no
+    // stale-cache or PRICING fallback to lean on for Ollama (see the
+    // branch's own comment), so the failure path is this file's only proof
+    // that "degrades to empty" actually holds rather than propagating.
+    const result = await getModels('ollama', 'unused-cache-id', { baseUrl: 'http://127.0.0.1:1' });
+
+    expect(result).toEqual({ models: [], source: 'live', fetchedAt: expect.any(String) });
   });
 });

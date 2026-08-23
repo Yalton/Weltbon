@@ -3,12 +3,12 @@
  *
  * This file is the ONLY surface Phase 24 (audit engine) and Phase 26 (UI) may
  * import from for LLM-provider concerns (D-05a invariant). Concrete provider
- * classes — `AnthropicProvider` (Plan 23-03) and `OpenAIProvider` (Plan 23-04) —
- * MUST NOT be imported directly by downstream code; the only legal entry point
- * is `getProvider(name)` below.
+ * classes — `AnthropicProvider` (Plan 23-03), `OpenAIProvider` (Plan 23-04),
+ * and `OllamaProvider` (Issue #48 Task 4) — MUST NOT be imported directly by
+ * downstream code; the only legal entry point is `getProvider(name)` below.
  *
  * Factory semantics:
- *   - Lazy-singleton cache keyed by `LlmProvider` ('anthropic' | 'openai').
+ *   - Lazy-singleton cache keyed by `LlmProvider` ('anthropic' | 'openai' | 'ollama').
  *   - First call to `getProvider(name)` instantiates and caches; subsequent
  *     calls return the same reference (verified by Plan 23-02 contract test).
  *   - The cached instance holds NO per-request state (RESEARCH §Common
@@ -35,6 +35,7 @@ import type { LlmProvider } from '../../services/llm-key.js';
 import { type LLMProvider } from './interface.js';
 import { AnthropicProvider } from './anthropic.js';
 import { OpenAIProvider } from './openai.js';
+import { OllamaProvider } from './ollama.js';
 
 // ---------------------------------------------------------------------------
 // Lazy-singleton factory
@@ -48,6 +49,9 @@ import { OpenAIProvider } from './openai.js';
 const providerCache: Record<LlmProvider, LLMProvider | undefined> = {
   anthropic: undefined,
   openai: undefined,
+  // Issue #48 Task 4: OllamaProvider (./ollama.js) is now a real
+  // implementation, mirroring Anthropic and OpenAI below.
+  ollama: undefined,
 };
 
 /**
@@ -63,10 +67,23 @@ export function getProvider(name: LlmProvider): LLMProvider {
   if (cached !== undefined) return cached;
 
   let instance: LLMProvider;
-  if (name === 'anthropic') {
-    instance = new AnthropicProvider();
-  } else {
-    instance = new OpenAIProvider();
+  switch (name) {
+    case 'anthropic':
+      instance = new AnthropicProvider();
+      break;
+    case 'openai':
+      instance = new OpenAIProvider();
+      break;
+    case 'ollama':
+      instance = new OllamaProvider();
+      break;
+    default: {
+      // Exhaustiveness guard: if LlmProvider grows a fourth member without a
+      // case here, this line fails to compile (name is not `never`) instead
+      // of silently falling through to a wrong provider at runtime.
+      const _exhaustive: never = name;
+      throw new Error(`Unknown provider: ${_exhaustive as string}`);
+    }
   }
   providerCache[name] = instance;
   return instance;

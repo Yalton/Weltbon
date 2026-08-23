@@ -4,6 +4,7 @@ import { db } from '../db/client.js';
 import { universes, entries, assets, type UniverseTheme } from '../db/schema.js';
 import { requireUniverse } from '../utils/ownership.js';
 import { signAssetUrl } from '../services/asset-signing.js';
+import { PROVIDER_NAMES } from '../services/llm-key.js';
 import type { AuthVariables } from '../middleware/auth.js';
 
 type AppEnv = { Variables: AuthVariables };
@@ -139,7 +140,7 @@ export const patchSchema = z
     // Phase 24 AUDIT-03: per-universe audit opt-in fields (additive).
     // auditEnabled=true requires auditProvider and auditModel to be non-null.
     auditEnabled: z.boolean().optional(),
-    auditProvider: z.enum(['anthropic', 'openai']).nullable().optional(),
+    auditProvider: z.enum(PROVIDER_NAMES).nullable().optional(),
     auditModel: z.string().nullable().optional(),
     // Phase 30 CALENDAR-01: per-universe fictional calendar (nullable = clear).
     calendar: calendarSchema.optional(),

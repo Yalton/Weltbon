@@ -70,10 +70,93 @@
  * Requirements satisfied:
  *   - PROVIDER-04 (the contract test itself)
  *   - PROVIDER-01 closure (cross-provider conformance to LLMProvider surface)
+ *
+ * Issue #48 Task 8 addendum: a third `describe` block near the end of this
+ * file ("Ollama under PROVIDER-04") brings `OllamaProvider` under this
+ * contract using the REAL captured fixture from Task 5
+ * (`tests/fixtures/ollama/chat-tool-call.json`), fetch-stubbed rather than
+ * `vi.mock`'d (Ollama has no SDK). It is deliberately narrower than the
+ * SHARED_SUGGESTIONS byte-equality above — see that block's own header
+ * comment for why — but locks the property PROVIDER-04 exists to protect:
+ * all three providers round-trip a tool call into the same canonical
+ * `{ id, name, input }` shape.
  */
 
-import { describe, it, expect, vi, beforeEach } from 'vitest';
+import { describe, it, expect, vi, beforeEach, afterEach } from 'vitest';
+import { readFileSync } from 'node:fs';
+import { fileURLToPath } from 'node:url';
+import { dirname, resolve } from 'node:path';
 import type { AuditSuggestion } from '../src/types/audit-suggestion.js';
+
+const here = dirname(fileURLToPath(import.meta.url));
+const ollamaFx = (n: string) =>
+  JSON.parse(readFileSync(resolve(here, `fixtures/ollama/${n}.json`), 'utf8'));
+/**
+ * The REAL captured `/api/chat` tool-call response (Task 5,
+ * `tests/fixtures/ollama/chat-tool-call.json`, from a live Ollama 0.32.12
+ * server) — deliberately NOT hand-written. Its two load-bearing properties
+ * (both contradicted the original plan, per Task 8's brief, and must NOT be
+ * "corrected"):
+ *   - `tool_calls[0].id` is a REAL id (`call_a9wwonwx`), not synthesized.
+ *   - `message.content` is EMPTY; the model's prose lives in
+ *     `message.thinking`, which `OllamaProvider.runAudit` deliberately never
+ *     reads into `text` (see ollama.ts's file-header comment — surfacing it
+ *     would trip the engine's D-10 "prose in a final turn" check on every
+ *     thinking-model response).
+ *
+ * Its suggestion payload is `{ title, detail }`, NOT the `AuditSuggestion`
+ * shape (`category`/`rationale`/`evidence`/`referencedEntryIds`) the
+ * Anthropic/OpenAI mocks above emit — it is a real response captured before
+ * the schema had that exact vocabulary. The contract this section locks is
+ * therefore narrower than PROVIDER-04's SHARED_SUGGESTIONS equality: Ollama
+ * cannot honestly claim byte-identical suggestion content without either
+ * hand-editing the captured fixture (defeating the point of capturing it) or
+ * waiting for a second live capture against the current schema. What IS
+ * asserted, and what actually matters for PROVIDER-04's engine-facing
+ * invariant, is that the tool call round-trips into the same canonical
+ * `{ id, name, input }` shape as the other two providers, with the real
+ * (not positional) id preserved and `text` reflecting `content` only.
+ */
+const ollamaChatFixture = ollamaFx('chat-tool-call');
+
+/**
+ * Ollama has no SDK to `vi.mock` — `OllamaProvider` speaks raw `fetch`
+ * against `/api/tags`, `/api/show`, and `/api/chat` (see `ollama.ts`).
+ * This mirrors `llm-ollama.test.ts`'s `fakeFetch`: `/api/show` is a POST
+ * keyed by the parsed request body's `model` field (the same URL serves
+ * every model), every other route matches by URL substring.
+ */
+function ollamaFakeFetch(routes: Record<string, unknown>) {
+  return async (url: string, init?: RequestInit): Promise<Response> => {
+    if (url.includes('/api/show')) {
+      const body = init?.body ? (JSON.parse(init.body as string) as { model?: string }) : {};
+      const key = `/api/show:${body.model ?? ''}`;
+      if (!(key in routes)) return new Response('not found', { status: 404 });
+      return new Response(JSON.stringify(routes[key]), {
+        status: 200,
+        headers: { 'Content-Type': 'application/json' },
+      });
+    }
+    const key = Object.keys(routes).find((k) => url.includes(k));
+    if (key === undefined) return new Response('not found', { status: 404 });
+    return new Response(JSON.stringify(routes[key]), {
+      status: 200,
+      headers: { 'Content-Type': 'application/json' },
+    });
+  };
+}
+
+/** Routes an OllamaProvider.runAudit() call needs: tags -> show -> chat. */
+function ollamaRoutes(chatBody: unknown) {
+  return {
+    '/api/tags': { models: [{ name: 'qwen3:14b' }] },
+    // The 32b show fixture's content (capabilities include 'tools') is what
+    // matters here, not the 14b/32b size distinction — mirrors
+    // llm-ollama.test.ts's own choice of fixture pairing.
+    '/api/show:qwen3:14b': ollamaFx('show-qwen3-32b'),
+    '/api/chat': chatBody,
+  };
+}
 
 // CRITICAL — must be set BEFORE the *first* env() call in the process. config.ts
 // caches `_env` on first call. This is defensive: neither anthropic.ts nor
@@ -354,6 +437,15 @@ beforeEach(() => {
   vi.clearAllMocks();
 });
 
+// Ollama tests below stub the global `fetch` (it has no SDK to vi.mock).
+// Unstub after every test so a leaked stub can't leak into the
+// Anthropic/OpenAI tests in this same file (those never touch fetch, but a
+// stale global fetch stub surviving across `it` blocks would be a silent
+// footgun for whoever adds a fetch-based assertion here next).
+afterEach(() => {
+  vi.unstubAllGlobals();
+});
+
 // ---------------------------------------------------------------------------
 // Contract assertions
 // ---------------------------------------------------------------------------
@@ -361,9 +453,9 @@ beforeEach(() => {
 describe('LLMProvider contract (PROVIDER-04 + PROVIDER-01)', () => {
   // ---- 1. PROVIDER-01 conformance --------------------------------------
 
-  it('both providers conform to the 5-method LLMProvider interface (PROVIDER-01)', async () => {
+  it('all three providers conform to the 5-method LLMProvider interface (PROVIDER-01)', async () => {
     const { getProvider } = await import('../src/providers/llm/index.js');
-    for (const name of ['anthropic', 'openai'] as const) {
+    for (const name of ['anthropic', 'openai', 'ollama'] as const) {
       const p = getProvider(name);
       expect(typeof p.validate).toBe('function');
       expect(typeof p.estimate).toBe('function');
@@ -379,12 +471,12 @@ describe('LLMProvider contract (PROVIDER-04 + PROVIDER-01)', () => {
     const { getProvider } = await import('../src/providers/llm/index.js');
 
     const anthropicResult = await getProvider('anthropic').runAudit({
-      apiKey: 'a',
+      credential: { apiKey: 'a' },
       messages: SHARED_MESSAGES,
       model: 'claude-haiku-4-5-20251001',
     });
     const openaiResult = await getProvider('openai').runAudit({
-      apiKey: 'o',
+      credential: { apiKey: 'o' },
       messages: SHARED_MESSAGES,
       model: 'gpt-5-mini',
     });
@@ -418,12 +510,12 @@ describe('LLMProvider contract (PROVIDER-04 + PROVIDER-01)', () => {
     const { getProvider } = await import('../src/providers/llm/index.js');
 
     const anthropicResult = await getProvider('anthropic').runAudit({
-      apiKey: 'a',
+      credential: { apiKey: 'a' },
       messages: SHARED_MESSAGES,
       model: 'claude-haiku-4-5-20251001',
     });
     const openaiResult = await getProvider('openai').runAudit({
-      apiKey: 'o',
+      credential: { apiKey: 'o' },
       messages: SHARED_MESSAGES,
       model: 'gpt-5-mini',
     });
@@ -456,12 +548,12 @@ describe('LLMProvider contract (PROVIDER-04 + PROVIDER-01)', () => {
     const { getProvider } = await import('../src/providers/llm/index.js');
 
     const anthropicResult = await getProvider('anthropic').runAudit({
-      apiKey: 'a',
+      credential: { apiKey: 'a' },
       messages: SHARED_MESSAGES,
       model: 'claude-haiku-4-5-20251001',
     });
     const openaiResult = await getProvider('openai').runAudit({
-      apiKey: 'o',
+      credential: { apiKey: 'o' },
       messages: SHARED_MESSAGES,
       model: 'gpt-5-mini',
     });
@@ -476,12 +568,12 @@ describe('LLMProvider contract (PROVIDER-04 + PROVIDER-01)', () => {
     const { getProvider } = await import('../src/providers/llm/index.js');
 
     const anthropicResult = await getProvider('anthropic').runAudit({
-      apiKey: 'a',
+      credential: { apiKey: 'a' },
       messages: SHARED_MESSAGES,
       model: 'claude-haiku-4-5-20251001',
     });
     const openaiResult = await getProvider('openai').runAudit({
-      apiKey: 'o',
+      credential: { apiKey: 'o' },
       messages: SHARED_MESSAGES,
       model: 'gpt-5-mini',
     });
@@ -505,7 +597,7 @@ describe('LLMProvider contract (PROVIDER-04 + PROVIDER-01)', () => {
     // result has the same content. The D-02 invariant is a per-suggestion
     // property — same for both providers.
     const result = await getProvider('anthropic').runAudit({
-      apiKey: 'a',
+      credential: { apiKey: 'a' },
       messages: SHARED_MESSAGES,
       model: 'claude-haiku-4-5-20251001',
     });
@@ -544,8 +636,8 @@ describe('LLMProvider contract (PROVIDER-04 + PROVIDER-01)', () => {
 
   it('validate() resolves for both providers when the SDK ping resolves', async () => {
     const { getProvider } = await import('../src/providers/llm/index.js');
-    await expect(getProvider('anthropic').validate('any-key')).resolves.toBeUndefined();
-    await expect(getProvider('openai').validate('any-key')).resolves.toBeUndefined();
+    await expect(getProvider('anthropic').validate({ apiKey: 'any-key' })).resolves.toBeUndefined();
+    await expect(getProvider('openai').validate({ apiKey: 'any-key' })).resolves.toBeUndefined();
   });
 
   // ---- 8. listModels() shape ------------------------------------------
@@ -658,7 +750,7 @@ describe('engine-shape fixtures (D-11 — would have caught commit 23bb99f)', ()
     // production HTTP 400. The runAudit return must surface the final-turn
     // emit_findings tool_use.
     const result = await getProvider('anthropic').runAudit({
-      apiKey: 'a',
+      credential: { apiKey: 'a' },
       messages: engineMessages,
       model: 'claude-haiku-4-5-20251001',
     });
@@ -721,7 +813,7 @@ describe('engine-shape fixtures (D-11 — would have caught commit 23bb99f)', ()
     ];
 
     const result = await getProvider('openai').runAudit({
-      apiKey: 'o',
+      credential: { apiKey: 'o' },
       messages: engineMessages,
       model: 'gpt-5-mini',
     });
@@ -787,12 +879,12 @@ describe('emit_findings round-trip (D-11)', () => {
 
     const { getProvider } = await import('../src/providers/llm/index.js');
     const anthropicResult = await getProvider('anthropic').runAudit({
-      apiKey: 'a',
+      credential: { apiKey: 'a' },
       messages: SHARED_MESSAGES,
       model: 'claude-haiku-4-5-20251001',
     });
     const openaiResult = await getProvider('openai').runAudit({
-      apiKey: 'o',
+      credential: { apiKey: 'o' },
       messages: SHARED_MESSAGES,
       model: 'gpt-5-mini',
     });
@@ -881,13 +973,13 @@ describe('emit_findings round-trip (D-11)', () => {
 
     const { getProvider } = await import('../src/providers/llm/index.js');
     await getProvider('anthropic').runAudit({
-      apiKey: 'a',
+      credential: { apiKey: 'a' },
       messages: SHARED_MESSAGES,
       model: 'claude-haiku-4-5-20251001',
       tools: engineTools,
     });
     await getProvider('openai').runAudit({
-      apiKey: 'o',
+      credential: { apiKey: 'o' },
       messages: SHARED_MESSAGES,
       model: 'gpt-5-mini',
       tools: engineTools,
@@ -987,12 +1079,12 @@ describe('emit_findings round-trip (D-11)', () => {
 
     const { getProvider } = await import('../src/providers/llm/index.js');
     const anthropicResult = await getProvider('anthropic').runAudit({
-      apiKey: 'a',
+      credential: { apiKey: 'a' },
       messages: SHARED_MESSAGES,
       model: 'claude-haiku-4-5-20251001',
     });
     const openaiResult = await getProvider('openai').runAudit({
-      apiKey: 'o',
+      credential: { apiKey: 'o' },
       messages: SHARED_MESSAGES,
       model: 'gpt-5-mini',
     });
@@ -1005,5 +1097,108 @@ describe('emit_findings round-trip (D-11)', () => {
     const openaiInput = openaiResult.toolUse[0]?.input as { suggestions: Array<{ gap_key?: string }> };
     expect(anthropicInput.suggestions[0]?.gap_key).toBe('v1:smuggled-from-llm');
     expect(openaiInput.suggestions[0]?.gap_key).toBe('v1:smuggled-from-llm');
+  });
+});
+
+// ===========================================================================
+// Issue #48 Task 8 — Ollama under the PROVIDER-04 contract
+// ===========================================================================
+//
+// Why this section is separate from the `describe('LLMProvider contract ...')`
+// block above rather than folded into its per-test loops: those tests drive
+// Anthropic and OpenAI through HAND-WRITTEN mocks that both return
+// SHARED_SUGGESTIONS verbatim, so byte-identical-suggestions equality is a
+// meaningful assertion. Ollama's fixture here is a REAL captured response
+// (Task 5) with a different suggestion vocabulary (`{ title, detail }`, not
+// `AuditSuggestion`'s `{ category, rationale, evidence, referencedEntryIds }`)
+// — hand-editing it to match SHARED_SUGGESTIONS would defeat the entire
+// point of testing against a real capture (see ollama-wire.ts's file header:
+// the fixture already overturned one wrong assumption in the original plan;
+// a "corrected" fixture could hide the next one). What DOES generalize
+// across all three providers, and is what PROVIDER-04 actually exists to
+// protect on the engine side, is the canonical `{ id, name, input }` shape
+// the tool call round-trips into — asserted below against Ollama's real id,
+// real name, and real (structurally-typed) input, plus the RunAuditResult
+// wire-shape parity the other providers are held to.
+describe('Ollama under PROVIDER-04 (Task 8 — real captured fixture, not a hand-written shape)', () => {
+  beforeEach(() => {
+    vi.clearAllMocks();
+  });
+
+  it('round-trips the REAL captured tool call into the canonical {id, name, input} shape shared with Anthropic/OpenAI', async () => {
+    vi.stubGlobal('fetch', ollamaFakeFetch(ollamaRoutes(ollamaChatFixture)));
+    const { getProvider } = await import('../src/providers/llm/index.js');
+    const result = await getProvider('ollama').runAudit({
+      credential: { baseUrl: 'http://box:11434' },
+      model: 'qwen3:14b',
+      messages: SHARED_MESSAGES,
+    });
+
+    expect(result.toolUse).toHaveLength(1);
+    // Same 3-key shape as the Anthropic/OpenAI toolUse entries asserted
+    // throughout this file — no extra/missing keys.
+    expect(Object.keys(result.toolUse[0]).sort()).toEqual(['id', 'input', 'name']);
+    expect(result.toolUse[0].name).toBe('emit_findings');
+    // The REAL id from the captured fixture — NOT a synthesized positional
+    // id. A regression that dropped the "prefer the real id" branch in
+    // `fromOllamaToolCalls` (ollama-wire.ts) would produce `ollama-0` here
+    // instead, silently breaking multi-turn tool_call_id pairing in
+    // production while still passing every OTHER assertion in this test.
+    expect(result.toolUse[0].id).toBe('call_a9wwonwx');
+    // `input` is the parsed (already-an-object, per the fixture) arguments —
+    // structurally present, non-empty, and NOT re-stringified.
+    const input = result.toolUse[0].input as { suggestions: unknown[] };
+    expect(Array.isArray(input.suggestions)).toBe(true);
+    expect(input.suggestions).toHaveLength(1);
+  });
+
+  it("text reflects message.content ONLY — never message.thinking — against the REAL fixture where content is empty", async () => {
+    // This is the assertion the brief calls out by name: the fixture's
+    // `message.content` is '' while `message.thinking` holds ~2000 chars of
+    // prose. A "helpful" future change that merged thinking into `text`
+    // would pass every OTHER test in this file (thinking is nonempty, so a
+    // vacuous-string check wouldn't catch it) but would trip the audit
+    // engine's D-10 "prose in a final turn" contract violation on every
+    // thinking-model response in production.
+    vi.stubGlobal('fetch', ollamaFakeFetch(ollamaRoutes(ollamaChatFixture)));
+    const { getProvider } = await import('../src/providers/llm/index.js');
+    const result = await getProvider('ollama').runAudit({
+      credential: { baseUrl: 'http://box:11434' },
+      model: 'qwen3:14b',
+      messages: SHARED_MESSAGES,
+    });
+    expect(result.text).toBe('');
+    // Sanity check on the fixture itself — if this ever fails, the fixture
+    // was replaced with one that no longer exercises the thinking/content
+    // split, and the test above would stop meaning anything.
+    expect((ollamaChatFixture as { message: { thinking: string } }).message.thinking.length).toBeGreaterThan(0);
+  });
+
+  it('returns RunAuditResult with the same 4-key top-level and 4-key usage shape as Anthropic/OpenAI', async () => {
+    vi.stubGlobal('fetch', ollamaFakeFetch(ollamaRoutes(ollamaChatFixture)));
+    const { getProvider } = await import('../src/providers/llm/index.js');
+    const result = await getProvider('ollama').runAudit({
+      credential: { baseUrl: 'http://box:11434' },
+      model: 'qwen3:14b',
+      messages: SHARED_MESSAGES,
+    });
+
+    expect(Object.keys(result).sort()).toEqual(['costUsd', 'text', 'toolUse', 'usage']);
+    expect(Object.keys(result.usage).sort()).toEqual([
+      'cacheCreationInputTokens',
+      'cacheReadInputTokens',
+      'inputTokens',
+      'outputTokens',
+    ]);
+    // Unlike Anthropic/OpenAI's positive-cost invariant (test #5 above),
+    // Ollama is free: costUsd is always exactly 0 by contract (ollama.ts),
+    // which is what routes the engine into its cost_unknown path rather
+    // than fabricating a number. A regression that computed a nonzero
+    // "cost" for a local model would silently misreport spend.
+    expect(result.costUsd).toBe(0);
+    // usage IS populated (prompt_eval_count / eval_count from the fixture)
+    // even though cost is zero — the two are independent.
+    expect(result.usage.inputTokens).toBeGreaterThan(0);
+    expect(result.usage.outputTokens).toBeGreaterThan(0);
   });
 });

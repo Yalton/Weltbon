@@ -36,7 +36,7 @@ import { requireJwtAuth, type AuthVariables } from '../middleware/auth.js';
 import {
   encryptKey,
   getDecryptedKey,
-  type LlmProvider,
+  KEY_PROVIDER_NAMES,
 } from '../services/llm-key.js';
 import {
   getProvider,
@@ -54,7 +54,23 @@ const errorSchema = z.object({
   error: z.string(),
 });
 
-const providerEnum = z.enum(['anthropic', 'openai']);
+// Fix round 1 (#48 review): this route is BYOK-key CRUD — every row it
+// reads/writes lives in llm_api_keys, which Ollama never has a row in (it's
+// endpoint-based, see llm-connections.ts). KEY_PROVIDER_NAMES, not the wider
+// PROVIDER_NAMES: the wider constant let provider:'ollama' pass validation
+// and reach getProvider('ollama').validate(...), whose not-yet-implemented
+// throw isn't an LLMProviderError, so it escaped this route's catch as a
+// bare 500 instead of a clean 4xx.
+const providerEnum = z.enum(KEY_PROVIDER_NAMES);
+
+/**
+ * TS-level mirror of KEY_PROVIDER_NAMES (derived, not re-declared) — every
+ * `llm_api_keys.provider` value this route reads or writes is one of these
+ * two. Using the wider `LlmProvider` here would have re-created Finding 1's
+ * exact problem one layer down: `toMaskedRow`'s return type would advertise
+ * 'ollama' as a possible response value even though no row can ever have it.
+ */
+type KeyProvider = (typeof KEY_PROVIDER_NAMES)[number];
 
 const postBodySchema = z.object({
   provider: providerEnum,
@@ -130,7 +146,7 @@ type LlmApiKeyRow = typeof llmApiKeys.$inferSelect;
 
 function toMaskedRow(row: LlmApiKeyRow): {
   id: string;
-  provider: LlmProvider;
+  provider: KeyProvider;
   bodySuffix: string;
   label: string;
   createdAt: string;
@@ -138,7 +154,11 @@ function toMaskedRow(row: LlmApiKeyRow): {
 } {
   return {
     id: row.id,
-    provider: row.provider as LlmProvider,
+    // Fix round 1 (#48 review): narrowed from `as LlmProvider` to
+    // `as KeyProvider` — the column can only ever hold what this route's own
+    // POST validated (KEY_PROVIDER_NAMES), so the wider cast was overclaiming
+    // 'ollama' as a possible stored value.
+    provider: row.provider as KeyProvider,
     bodySuffix: row.bodySuffix,
     label: row.label,
     createdAt: row.createdAt.toISOString(),
@@ -387,7 +407,7 @@ export const llmKeyRoutes = new OpenAPIHono<AppEnv>()
     // Phase 23 D-03: routed through getProvider(provider).validate() — InvalidApiKey → 422,
     // every other LLMError variant → 503 (preserves Phase 22 HTTP behavior).
     try {
-      await getProvider(provider).validate(plaintext);
+      await getProvider(provider).validate({ apiKey: plaintext });
     } catch (err) {
       if (err instanceof LLMProviderError) {
         if (err.variant === LLMError.InvalidApiKey) {
@@ -523,12 +543,15 @@ export const llmKeyRoutes = new OpenAPIHono<AppEnv>()
       return c.json({ error: 'LLM key not found' }, 404);
     }
     const existingRow = existingRows[0];
-    const provider = existingRow.provider as LlmProvider;
+    // Fix round 1 (#48 review): KeyProvider, not LlmProvider — this row can
+    // only ever hold what POST validated (KEY_PROVIDER_NAMES). Still assignable
+    // to getProvider()/getDecryptedKey()'s wider LlmProvider parameter below.
+    const provider = existingRow.provider as KeyProvider;
 
     // Validate new plaintext against the EXISTING row's provider (not from request).
     // Phase 23 D-03: routed through getProvider(provider).validate().
     try {
-      await getProvider(provider).validate(plaintext);
+      await getProvider(provider).validate({ apiKey: plaintext });
     } catch (err) {
       if (err instanceof LLMProviderError) {
         if (err.variant === LLMError.InvalidApiKey) {
@@ -596,7 +619,8 @@ export const llmKeyRoutes = new OpenAPIHono<AppEnv>()
       return c.json({ error: 'LLM key not found' }, 404);
     }
     const row = rows[0];
-    const provider = row.provider as LlmProvider;
+    // Fix round 1 (#48 review): see the PUT handler above for why KeyProvider.
+    const provider = row.provider as KeyProvider;
 
     // CR-01 fix: pass cfg.llmKeyEncryptionKey explicitly — same source of truth as
     // the boot fail-fast and the POST/PUT 503 gates. getDecryptedKey no longer
@@ -616,7 +640,7 @@ export const llmKeyRoutes = new OpenAPIHono<AppEnv>()
 
     // Validate at provider. Phase 23 D-03: routed through getProvider(provider).validate().
     try {
-      await getProvider(provider).validate(plaintext);
+      await getProvider(provider).validate({ apiKey: plaintext });
     } catch (err) {
       if (err instanceof LLMProviderError) {
         if (err.variant === LLMError.InvalidApiKey) {

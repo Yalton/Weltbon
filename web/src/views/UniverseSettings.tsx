@@ -12,6 +12,8 @@ import { Toggle } from '../components/Toggle';
 import { AuditHistoryTable } from '../components/AuditHistoryTable';
 import { useLlmKeys } from '../hooks/useLlmKeys';
 import { useListModels } from '../hooks/useAudits';
+import { useInstanceConfig } from '../hooks/useInstanceConfig';
+import { useLlmConnection } from '../hooks/useLlmConnection';
 import { RECOMMENDED_CHEAP_MODEL } from '../data/pricing';
 import type { ModelListingWithCoverage } from '../types/audit';
 import { Loading } from '../components/ui/Loading';
@@ -36,6 +38,33 @@ import { Loading } from '../components/ui/Loading';
  * Server-side invariant: PATCH /universes/:id rejects auditEnabled=true with
  * null provider or model (api/src/routes/universes.ts refine). We surface that
  * error via update.error rather than duplicating validation client-side.
+ */
+
+/**
+ * Issue #48 Task 7: this used to narrow `'ollama'` out of every provider
+ * comparison here (`toDisplayableAuditProvider`, since deleted) on the theory
+ * that the AI Gap Auditor tab had no Ollama picker yet.
+ *
+ * Fix round 1 (Task 7 review): a first pass at this comment claimed the shim
+ * risked *clobbering* a saved Ollama value on an unrelated Save. Traced —
+ * that was wrong. `apFinal` was derived from live local state and never
+ * passed through the shim at all, and the shim was applied to BOTH sides of
+ * the `apFinal !== toDisplayableAuditProvider(data.auditProvider)` diff
+ * check, so a stored `'ollama'` made both sides evaluate to `null`: the diff
+ * read as "unchanged", `auditProvider` was omitted from the PATCH body, and
+ * the stored value was never touched. The shim's only actual effect was
+ * cosmetic: it hid a saved Ollama value from the picker's *display* by
+ * hydrating local state to `''` instead of `'ollama'` on load — the field
+ * looked unset even when the server had it saved.
+ *
+ * The real reason it had to go is a type one, not a data-safety one: once
+ * `auditProvider` (local state) widened to include `'ollama'`, the shim's
+ * return type `'anthropic' | 'openai' | null` could no longer even hold the
+ * value passing through it — `auditProvider`, `Universe.auditProvider`
+ * (useUniverse.ts), and the PATCH body's `auditProvider` field now all carry
+ * the same `'anthropic' | 'openai' | 'ollama' | null` union straight
+ * through, with no translation step to keep in sync or narrow the value on
+ * the way in.
  */
 
 const TABS = [
@@ -80,7 +109,7 @@ export function UniverseSettings() {
 
   // AI Gap Auditor local form state — hydrated from `data` on load.
   const [auditEnabled, setAuditEnabled] = useState(false);
-  const [auditProvider, setAuditProvider] = useState<'anthropic' | 'openai' | ''>('');
+  const [auditProvider, setAuditProvider] = useState<'anthropic' | 'openai' | 'ollama' | ''>('');
   const [auditModel, setAuditModel] = useState<string>('');
 
   useEffect(() => {
@@ -93,9 +122,26 @@ export function UniverseSettings() {
     }
   }, [data]);
 
+  // Issue #48 Task 7: is THIS instance allowed to offer Ollama at all? A
+  // hosted instance has no route to reach a user's local machine (see
+  // OllamaConnectionSection's own file header) — offering the option there
+  // would only ever fail against a 403 the server enforces independently.
+  // `=== true` (not `!!`) so the brief "still loading /config" window reads
+  // as "not local" rather than flashing the option in and out.
+  const { localMode } = useInstanceConfig();
+  const isLocal = localMode === true;
+  // Desktop-only, so only fetched when it could possibly matter — mirrors
+  // OllamaConnectionSection's own `enabled: isLocal` gate for the same
+  // reason (no point asking a hosted server about a connection it will 403).
+  const { data: ollamaConnection } = useLlmConnection('ollama', { enabled: isLocal });
+  const hasOllamaConnection = ollamaConnection !== undefined;
+
   // Phase 27 D-01 — live model catalog for the active provider. Hook is
   // disabled (no fetch) when provider is empty; 30-min staleTime aligns with
-  // backend cache TTL.
+  // backend cache TTL. Issue #48 Task 7: 'ollama' flows through the same
+  // call now that useListModels' signature is widened — the backend
+  // (llm-models.ts) has served it since Task 6; this call site was the only
+  // thing that could not yet ask.
   const { data: modelListing } = useListModels(
     auditProvider === '' ? undefined : auditProvider,
   );
@@ -109,12 +155,17 @@ export function UniverseSettings() {
   //   (1) RECOMMENDED_CHEAP_MODEL[provider] if present in the live list
   //   (2) live[0].id otherwise
   //   (3) '' (with "no models available" UI shown in place of the select)
+  //
+  // RECOMMENDED_CHEAP_MODEL has no 'ollama' entry (pricing.ts — there is no
+  // single "cheapest" local model to recommend), so `recommended` is
+  // `undefined` for that provider and step (1) always falls through to (2)
+  // — exactly the "live[0] fallback" pricing.ts's own comment documents.
   useEffect(() => {
     if (auditProvider === '' || auditModel !== '') return;
     if (modelOptions.length === 0) return; // nothing to pick yet; UI shows empty-state
     const recommended = RECOMMENDED_CHEAP_MODEL[auditProvider];
     const ids = modelOptions.map((m) => m.id);
-    if (ids.includes(recommended)) {
+    if (recommended !== undefined && ids.includes(recommended)) {
       setAuditModel(recommended);
     } else {
       setAuditModel(modelOptions[0].id);
@@ -134,13 +185,13 @@ export function UniverseSettings() {
       name?: string;
       description?: string;
       auditEnabled?: boolean;
-      auditProvider?: 'anthropic' | 'openai' | null;
+      auditProvider?: 'anthropic' | 'openai' | 'ollama' | null;
       auditModel?: string | null;
     } = {};
     if (name !== data.name) patch.name = name;
     if (description !== data.description) patch.description = description;
     if (auditEnabled !== data.auditEnabled) patch.auditEnabled = auditEnabled;
-    const apFinal: 'anthropic' | 'openai' | null = auditProvider === '' ? null : auditProvider;
+    const apFinal: 'anthropic' | 'openai' | 'ollama' | null = auditProvider === '' ? null : auditProvider;
     if (apFinal !== (data.auditProvider ?? null)) patch.auditProvider = apFinal;
     const amFinal: string | null = auditModel === '' ? null : auditModel;
     if (amFinal !== (data.auditModel ?? null)) patch.auditModel = amFinal;
@@ -299,7 +350,7 @@ export function UniverseSettings() {
               id="provider"
               value={auditProvider}
               onChange={(e) => {
-                const next = e.target.value as '' | 'anthropic' | 'openai';
+                const next = e.target.value as '' | 'anthropic' | 'openai' | 'ollama';
                 setAuditProvider(next);
                 // Reset model when provider changes — useEffect will populate default.
                 setAuditModel('');
@@ -314,9 +365,21 @@ export function UniverseSettings() {
               <option value="openai" disabled={!hasOpenAIKey}>
                 OpenAI{!hasOpenAIKey ? ' (no key configured)' : ''}
               </option>
+              {/* Issue #48 Task 7: only offered on a local (desktop) instance
+                  — a hosted instance has no route to a user's machine, so
+                  the option would only ever fail against the server's own
+                  403 (llm-connections.ts). Not merely hidden-but-present:
+                  omitted from the DOM entirely, matching
+                  OllamaConnectionSection's "render nothing" contract for the
+                  same instance fact. */}
+              {isLocal && (
+                <option value="ollama" disabled={!hasOllamaConnection}>
+                  Ollama{!hasOllamaConnection ? ' (no connection configured)' : ''}
+                </option>
+              )}
             </select>
 
-            {/* Add key inline help when selected provider has no key */}
+            {/* Add key / connection inline help when selected provider has none configured */}
             {auditProvider === 'anthropic' && !hasAnthropicKey && (
               <p className="text-xs text-amber-600 dark:text-amber-400 mt-1">
                 Add an Anthropic key in Settings → LLM keys{' '}
@@ -329,13 +392,29 @@ export function UniverseSettings() {
                 <Link to="/settings/llm" className="underline">Add key →</Link>
               </p>
             )}
+            {auditProvider === 'ollama' && !hasOllamaConnection && (
+              <p className="text-xs text-amber-600 dark:text-amber-400 mt-1">
+                Configure a local Ollama connection in Settings → LLM keys{' '}
+                <Link to="/settings/llm" className="underline">Configure →</Link>
+              </p>
+            )}
 
             {/* Model dropdown — Phase 27 D-05/D-08 live-driven, with the
                 `⚠ no pricing` suffix on entries the user's BYOK key can call
                 but PRICING does not yet cover. When the live list resolves
                 to empty (provider has no models at all for this key), the
                 <select> is replaced by an inline "no models available"
-                message (D-08 chain step 3). */}
+                message (D-08 chain step 3).
+
+                Issue #48 Task 7: the suffix is suppressed for 'ollama'.
+                model-catalog.ts's Ollama branch always returns
+                `hasPricing: false` for every entry (Ollama never appears in
+                PRICING — it is free/local, not "priced but uncovered"), so
+                without this guard every single Ollama model would carry a
+                warning suffix that means something different for this
+                provider than for anthropic/openai: there it flags a real
+                gap (BYOK key can call a model PRICING hasn't caught up to
+                yet); here it would just be permanently, meaninglessly true. */}
             <label className="block text-sm mt-4 mb-1" htmlFor="model">Model</label>
             {auditProvider !== '' && modelListing !== undefined && modelOptions.length === 0 ? (
               <p
@@ -359,7 +438,7 @@ export function UniverseSettings() {
                 )}
                 {modelOptions.map((m) => (
                   <option key={m.id} value={m.id}>
-                    {m.id}{m.hasPricing ? '' : ' ⚠ no pricing'}
+                    {m.id}{auditProvider !== 'ollama' && !m.hasPricing ? ' ⚠ no pricing' : ''}
                   </option>
                 ))}
               </select>

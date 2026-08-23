@@ -195,6 +195,32 @@ export const llmApiKeys = pgTable('llm_api_keys', {
   userProviderUnique: unique('llm_api_keys_user_id_provider_unique').on(t.userId, t.provider),
 }));
 
+/**
+ * Endpoint-based LLM providers (#48). Kept apart from `llm_api_keys` because
+ * that table assumes a secret exists — its crypto columns are NOT NULL — and an
+ * Ollama server usually has none. Relaxing them there would make one table mean
+ * two things and force every existing read to handle a null ciphertext.
+ *
+ * The secret columns here are nullable and OPTIONAL: they carry a token only
+ * when the user's Ollama sits behind an authenticating proxy.
+ */
+export const llmConnections = pgTable('llm_connections', {
+  id:                  uuid('id').primaryKey().defaultRandom(),
+  userId:              uuid('user_id').references(() => users.id, { onDelete: 'cascade' }).notNull(),
+  provider:            text('provider').notNull(),
+  baseUrl:             text('base_url').notNull(),
+  label:               text('label').default('').notNull(),
+  ciphertext:          text('ciphertext'),
+  iv:                  text('iv'),
+  authTag:             text('auth_tag'),
+  bodySuffix:          text('body_suffix'),
+  encryptedKeyVersion: integer('encrypted_key_version'),
+  createdAt:           timestamp('created_at', { withTimezone: true }).defaultNow().notNull(),
+  lastValidatedAt:     timestamp('last_validated_at', { withTimezone: true }),
+}, (t) => ({
+  userProviderUnique: unique('llm_connections_user_id_provider_unique').on(t.userId, t.provider),
+}));
+
 export const inviteCodes = pgTable('invite_codes', {
   id:                uuid('id').primaryKey().defaultRandom(),
   ownerId:           uuid('owner_id').references(() => users.id, { onDelete: 'set null' }),

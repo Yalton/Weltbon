@@ -24,7 +24,7 @@
  *      formula constants.
  *
  * Security invariants (T-26-02-01 / T-26-02-04 / T-24-04-05):
- *   - Never logs the raw apiKey.
+ *   - Never logs the raw credential (apiKey, baseUrl or proxy secret).
  *   - Never logs raw provider error text.
  *   - SELECT is scoped to `WHERE universe_id = ?` — no cross-universe leak.
  *   - Ownership/auth is the caller's responsibility (route runs requireUniverse
@@ -49,6 +49,7 @@ import { db as realDb } from '../db/client.js';
 import { entries } from '../db/schema.js';
 import { getProvider, PRICING } from '../providers/llm/index.js';
 import type { LlmProvider } from '../providers/llm/index.js';
+import type { ProviderCredential } from '../providers/llm/interface.js';
 import { env } from '../config.js';
 import type {
   AuditEstimate,
@@ -96,10 +97,22 @@ export interface EstimateInput {
   scope: 'universe' | 'entry';
   /** Required when scope='entry'. */
   entryId?: string;
-  provider: 'anthropic' | 'openai';
+  provider: LlmProvider;
   model: string;
-  /** Decrypted plaintext key; NEVER logged. */
-  apiKey: string;
+  /**
+   * Resolved provider credential — a decrypted plaintext key for the BYOK
+   * providers, a base URL (+ optional proxy bearer) for an endpoint-based one.
+   * NEVER logged, either limb.
+   *
+   * Fix round 2 (#48 whole-branch review, Critical 1): this was `apiKey:
+   * string`, which forced every caller to resolve a KEY — and no `llm_api_keys`
+   * row can ever exist for 'ollama' (see KEY_PROVIDER_NAMES), so the estimate
+   * route 400'd permanently for Ollama universes and the dialog's Run button,
+   * gated on a present estimate, could never enable. Taking the same
+   * `ProviderCredential` the provider methods already take (spec D-3) means
+   * there is no combination for a call site to get wrong.
+   */
+  credential: ProviderCredential;
   /** Used by the caller's auth path; not consumed by the estimator itself. */
   userId: string;
   /**
@@ -196,8 +209,15 @@ export async function estimateAudit(input: EstimateInput): Promise<AuditEstimate
   // T-24-04-09 / T-26-02-01 (never leak raw provider error text) is preserved by
   // the callers: both discard the error object and emit only generic copy — the
   // provider's message and stack never reach the client or a log sink.
-  const basePromptTokens = await getProvider(input.provider as LlmProvider).estimate({
-    apiKey: input.apiKey,
+  const basePromptTokens = await getProvider(input.provider).estimate({
+    // #48 Task 3 / fix round 2: EstimateInput now carries the same
+    // ProviderCredential shape LLMProvider.estimate() takes, so it passes
+    // straight through — no re-wrapping, nothing for a call site to assemble
+    // wrongly. Note that an endpoint-based provider never reaches this line:
+    // Step 2's PRICING miss returns the zero estimate first (Ollama has no
+    // PRICING entries at all). Kept correct anyway rather than relying on
+    // that ordering, which is not this function's to guarantee forever.
+    credential: input.credential,
     messages: [
       // T-26-02-01: apiKey is the only sensitive value in this call — it
       // travels into the provider's tokenizer surface, never into a log.

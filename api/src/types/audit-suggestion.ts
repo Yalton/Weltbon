@@ -169,7 +169,10 @@ export interface AuditEstimate {
   /** USD upper bound of the cost-range. */
   upper: number;
   breakdown: AuditEstimateBreakdown;
-  model: { provider: 'anthropic' | 'openai'; name: string };
+  // Issue #48: widened alongside LlmProvider (services/llm-key.ts). Kept as an
+  // inline literal, not an import — this file documents itself above as
+  // "No imports, no runtime code — pure type exports only."
+  model: { provider: 'anthropic' | 'openai' | 'ollama'; name: string };
 }
 
 /**

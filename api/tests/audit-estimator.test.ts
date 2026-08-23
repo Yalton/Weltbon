@@ -149,7 +149,7 @@ describe('estimateAudit (Phase 26-02 Task 1, LLMUI-04 formula)', () => {
       scope: 'universe',
       provider: 'anthropic',
       model: 'claude-haiku-4-5-20251001',
-      apiKey: API_KEY,
+      credential: { apiKey: API_KEY },
       userId: USER_ID,
       _db: makeDbStub({ entryCount: 47, tracker }) as unknown as typeof import('../src/db/client.js').db,
     });
@@ -170,7 +170,7 @@ describe('estimateAudit (Phase 26-02 Task 1, LLMUI-04 formula)', () => {
       scope: 'universe',
       provider: 'openai',
       model: 'gpt-5-mini',
-      apiKey: API_KEY,
+      credential: { apiKey: API_KEY },
       userId: USER_ID,
       _db: makeDbStub({ entryCount: 47, tracker }) as unknown as typeof import('../src/db/client.js').db,
     });
@@ -194,7 +194,7 @@ describe('estimateAudit (Phase 26-02 Task 1, LLMUI-04 formula)', () => {
       scope: 'universe',
       provider: 'anthropic',
       model: 'claude-haiku-4-5-20251001',
-      apiKey: API_KEY,
+      credential: { apiKey: API_KEY },
       userId: USER_ID,
       _db: makeDbStub({ entryCount: 10, tracker }) as unknown as typeof import('../src/db/client.js').db,
     });
@@ -227,7 +227,7 @@ describe('estimateAudit (Phase 26-02 Task 1, LLMUI-04 formula)', () => {
       scope: 'universe',
       provider: 'anthropic',
       model: 'claude-haiku-4-5-20251001',
-      apiKey: API_KEY,
+      credential: { apiKey: API_KEY },
       userId: USER_ID,
       _db: makeDbStub({ entryCount: 10, tracker }) as unknown as typeof import('../src/db/client.js').db,
     });
@@ -258,7 +258,7 @@ describe('estimateAudit (Phase 26-02 Task 1, LLMUI-04 formula)', () => {
       scope: 'universe',
       provider: 'anthropic',
       model: 'claude-haiku-4-5-20251001',
-      apiKey: API_KEY,
+      credential: { apiKey: API_KEY },
       userId: USER_ID,
       _db: makeDbStub({ entryCount: 1, tracker }) as unknown as typeof import('../src/db/client.js').db,
     });
@@ -275,7 +275,7 @@ describe('estimateAudit (Phase 26-02 Task 1, LLMUI-04 formula)', () => {
       scope: 'universe',
       provider: 'anthropic',
       model: 'claude-haiku-4-5-20251001',
-      apiKey: API_KEY,
+      credential: { apiKey: API_KEY },
       userId: USER_ID,
       _db: makeDbStub({ entryCount: 47, tracker }) as unknown as typeof import('../src/db/client.js').db,
     });
@@ -292,7 +292,7 @@ describe('estimateAudit (Phase 26-02 Task 1, LLMUI-04 formula)', () => {
       scope: 'universe',
       provider: 'anthropic',
       model: 'some-fictional-model-id-not-in-PRICING',
-      apiKey: API_KEY,
+      credential: { apiKey: API_KEY },
       userId: USER_ID,
       _db: makeDbStub({ entryCount: 5, tracker }) as unknown as typeof import('../src/db/client.js').db,
     });
@@ -314,7 +314,7 @@ describe('estimateAudit (Phase 26-02 Task 1, LLMUI-04 formula)', () => {
       scope: 'universe',
       provider: 'anthropic',
       model: 'claude-haiku-4-5-20251001',
-      apiKey: API_KEY,
+      credential: { apiKey: API_KEY },
       userId: USER_ID,
       _db: makeDbStub({ entryCount: 47, tracker }) as unknown as typeof import('../src/db/client.js').db,
     });
@@ -339,7 +339,7 @@ describe('estimateAudit (Phase 26-02 Task 1, LLMUI-04 formula)', () => {
         entryId: ENTRY_ID,
         provider: 'openai',
         model: 'gpt-5-mini',
-        apiKey: API_KEY,
+        credential: { apiKey: API_KEY },
         userId: USER_ID,
         _db: makeDbStub({ entryCount: 3, tracker }) as unknown as typeof import('../src/db/client.js').db,
       });
@@ -385,7 +385,7 @@ describe('estimateAudit (Phase 26-02 Task 1, LLMUI-04 formula)', () => {
         scope: 'universe',
         provider: 'anthropic',
         model: 'claude-haiku-4-5-20251001',
-        apiKey: API_KEY,
+        credential: { apiKey: API_KEY },
         userId: USER_ID,
         _db: makeDbStub({ entryCount: 47, tracker }) as unknown as typeof import('../src/db/client.js').db,
       }),

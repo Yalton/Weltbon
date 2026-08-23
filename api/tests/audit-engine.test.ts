@@ -48,11 +48,11 @@
  *   - vi.hoisted() for env stub + mock handles
  *   - vi.mock('../src/providers/llm/index.js') Strategy A (spread actual,
  *     override getProvider)
- *   - vi.mock('../src/services/llm-key.js')
+ *   - vi.mock('../src/services/llm-credential.js')
  *   - vi.mock('../src/services/cheap-finds.js')
  *   - vi.mock('../src/services/structural-digest.js')
  *   - Deps injection via the optional `deps` parameter on runAudit() for
- *     db, getProvider, getDecryptedKey, runCheapFinds, buildStructuralDigest,
+ *     db, getProvider, resolveCredential, runCheapFinds, buildStructuralDigest,
  *     computeGapKey, getEntryBody, validateReferencedEntryIds
  */
 
@@ -73,7 +73,7 @@ const {
   mockRunAudit,
   mockValidate,
   mockEstimate,
-  mockGetDecryptedKey,
+  mockResolveCredential,
   mockRunCheapFinds,
   mockBuildStructuralDigest,
   mockValidateReferencedEntryIds,
@@ -83,7 +83,7 @@ const {
   mockRunAudit: vi.fn(),
   mockValidate: vi.fn(async () => undefined as void),
   mockEstimate: vi.fn(async () => 0),
-  mockGetDecryptedKey: vi.fn(async () => 'test-api-key'),
+  mockResolveCredential: vi.fn(async () => ({ apiKey: 'test-api-key' })),
   mockRunCheapFinds: vi.fn(async () => ({
     findings: 0,
     collisions: 0,
@@ -135,9 +135,9 @@ vi.mock('../src/providers/llm/index.js', async (orig) => {
 // Service mocks
 // ---------------------------------------------------------------------------
 
-vi.mock('../src/services/llm-key.js', async (orig) => {
-  const actual = (await orig()) as typeof import('../src/services/llm-key.js');
-  return { ...actual, getDecryptedKey: mockGetDecryptedKey };
+vi.mock('../src/services/llm-credential.js', async (orig) => {
+  const actual = (await orig()) as typeof import('../src/services/llm-credential.js');
+  return { ...actual, resolveCredential: mockResolveCredential };
 });
 
 vi.mock('../src/services/cheap-finds.js', async (orig) => {
@@ -324,7 +324,7 @@ beforeEach(() => {
   vi.clearAllMocks();
 
   // Restore safe defaults after reset
-  mockGetDecryptedKey.mockResolvedValue('test-api-key');
+  mockResolveCredential.mockResolvedValue({ apiKey: 'test-api-key' });
   mockRunCheapFinds.mockResolvedValue({
     findings: 0,
     collisions: 0,
@@ -387,7 +387,7 @@ describe('audit-engine runAudit (Phase 24-04)', () => {
 
       await runAudit(RUN_ID, {
         db: dbStub as unknown as typeof import('../src/db/client.js').db,
-        getDecryptedKey: mockGetDecryptedKey,
+        resolveCredential: mockResolveCredential,
         runCheapFinds: mockRunCheapFinds,
         buildStructuralDigest: mockBuildStructuralDigest,
         validateReferencedEntryIds: mockValidateReferencedEntryIds,
@@ -424,7 +424,7 @@ describe('audit-engine runAudit (Phase 24-04)', () => {
 
     await runAudit(RUN_ID, {
       db: dbStub as unknown as typeof import('../src/db/client.js').db,
-      getDecryptedKey: mockGetDecryptedKey,
+      resolveCredential: mockResolveCredential,
       runCheapFinds: mockRunCheapFinds,
       buildStructuralDigest: mockBuildStructuralDigest,
       validateReferencedEntryIds: mockValidateReferencedEntryIds,
@@ -455,7 +455,7 @@ describe('audit-engine runAudit (Phase 24-04)', () => {
     // provider call, guaranteeing budget_exhausted regardless of test timing.
     await runAudit(RUN_ID, {
       db: dbStub as unknown as typeof import('../src/db/client.js').db,
-      getDecryptedKey: mockGetDecryptedKey,
+      resolveCredential: mockResolveCredential,
       runCheapFinds: mockRunCheapFinds,
       buildStructuralDigest: mockBuildStructuralDigest,
       validateReferencedEntryIds: mockValidateReferencedEntryIds,
@@ -493,7 +493,7 @@ describe('audit-engine runAudit (Phase 24-04)', () => {
 
     await runAudit(RUN_ID, {
       db: dbStub as unknown as typeof import('../src/db/client.js').db,
-      getDecryptedKey: mockGetDecryptedKey,
+      resolveCredential: mockResolveCredential,
       runCheapFinds: mockRunCheapFinds,
       buildStructuralDigest: mockBuildStructuralDigest,
       validateReferencedEntryIds: mockValidateReferencedEntryIds,
@@ -531,7 +531,7 @@ describe('audit-engine runAudit (Phase 24-04)', () => {
 
       await runAudit(RUN_ID, {
         db: dbStub as unknown as typeof import('../src/db/client.js').db,
-        getDecryptedKey: mockGetDecryptedKey,
+        resolveCredential: mockResolveCredential,
         runCheapFinds: mockRunCheapFinds,
         buildStructuralDigest: mockBuildStructuralDigest,
         validateReferencedEntryIds: mockValidateReferencedEntryIds,
@@ -572,7 +572,7 @@ describe('audit-engine runAudit (Phase 24-04)', () => {
 
       await runAudit(RUN_ID, {
         db: dbStub as unknown as typeof import('../src/db/client.js').db,
-        getDecryptedKey: mockGetDecryptedKey,
+        resolveCredential: mockResolveCredential,
         runCheapFinds: mockRunCheapFinds,
         buildStructuralDigest: mockBuildStructuralDigest,
         validateReferencedEntryIds: mockValidateReferencedEntryIds,
@@ -604,7 +604,7 @@ describe('audit-engine runAudit (Phase 24-04)', () => {
       const t0 = Date.now();
       await runAudit(RUN_ID, {
         db: dbStub as unknown as typeof import('../src/db/client.js').db,
-        getDecryptedKey: mockGetDecryptedKey,
+        resolveCredential: mockResolveCredential,
         runCheapFinds: mockRunCheapFinds,
         buildStructuralDigest: mockBuildStructuralDigest,
         validateReferencedEntryIds: mockValidateReferencedEntryIds,
@@ -658,7 +658,7 @@ describe('audit-engine runAudit (Phase 24-04)', () => {
 
     await runAudit(RUN_ID, {
       db: dbStub as unknown as typeof import('../src/db/client.js').db,
-      getDecryptedKey: mockGetDecryptedKey,
+      resolveCredential: mockResolveCredential,
       runCheapFinds: mockRunCheapFinds,
       buildStructuralDigest: mockBuildStructuralDigest,
       validateReferencedEntryIds: mockValidateReferencedEntryIds,
@@ -726,7 +726,7 @@ describe('audit-engine runAudit (Phase 24-04)', () => {
 
       await runAudit(RUN_ID, {
         db: dbStub as unknown as typeof import('../src/db/client.js').db,
-        getDecryptedKey: mockGetDecryptedKey,
+        resolveCredential: mockResolveCredential,
         runCheapFinds: mockRunCheapFinds,
         buildStructuralDigest: mockBuildStructuralDigest,
         validateReferencedEntryIds: mockValidateReferencedEntryIds,
@@ -789,7 +789,7 @@ describe('audit-engine runAudit (Phase 24-04)', () => {
 
       await runAudit(RUN_ID, {
         db: dbStub as unknown as typeof import('../src/db/client.js').db,
-        getDecryptedKey: mockGetDecryptedKey,
+        resolveCredential: mockResolveCredential,
         runCheapFinds: mockRunCheapFinds,
         buildStructuralDigest: mockBuildStructuralDigest,
         validateReferencedEntryIds: mockValidateReferencedEntryIds,
@@ -825,7 +825,7 @@ describe('audit-engine runAudit (Phase 24-04)', () => {
 
       await runAudit(RUN_ID, {
         db: dbStub as unknown as typeof import('../src/db/client.js').db,
-        getDecryptedKey: mockGetDecryptedKey,
+        resolveCredential: mockResolveCredential,
         runCheapFinds: mockRunCheapFinds,
         buildStructuralDigest: mockBuildStructuralDigest,
         validateReferencedEntryIds: mockValidateReferencedEntryIds,
@@ -854,14 +854,14 @@ describe('audit-engine runAudit (Phase 24-04)', () => {
   // =========================================================================
   it('BYOK null key → status=failed, error=provider_error', async () => {
     // eslint-disable-next-line @typescript-eslint/no-explicit-any
-    mockGetDecryptedKey.mockResolvedValue(null as any);
+    mockResolveCredential.mockResolvedValue(null as any);
 
     const updateCalls: DbUpdateCall[] = [];
     const { dbStub } = makeDbStub({ updateCalls });
 
     await runAudit(RUN_ID, {
       db: dbStub as unknown as typeof import('../src/db/client.js').db,
-      getDecryptedKey: mockGetDecryptedKey,
+      resolveCredential: mockResolveCredential,
       runCheapFinds: mockRunCheapFinds,
       buildStructuralDigest: mockBuildStructuralDigest,
       validateReferencedEntryIds: mockValidateReferencedEntryIds,
@@ -892,7 +892,7 @@ describe('audit-engine runAudit (Phase 24-04)', () => {
 
       await runAudit(RUN_ID, {
         db: dbStub as unknown as typeof import('../src/db/client.js').db,
-        getDecryptedKey: mockGetDecryptedKey,
+        resolveCredential: mockResolveCredential,
         runCheapFinds: mockRunCheapFinds,
         buildStructuralDigest: mockBuildStructuralDigest,
         validateReferencedEntryIds: mockValidateReferencedEntryIds,
@@ -935,7 +935,7 @@ describe('audit-engine runAudit (Phase 24-04)', () => {
 
     await runAudit(RUN_ID, {
       db: dbStub as unknown as typeof import('../src/db/client.js').db,
-      getDecryptedKey: mockGetDecryptedKey,
+      resolveCredential: mockResolveCredential,
       runCheapFinds: mockRunCheapFinds,
       buildStructuralDigest: mockBuildStructuralDigest,
       validateReferencedEntryIds: mockValidateReferencedEntryIds,
@@ -968,7 +968,7 @@ describe('audit-engine runAudit (Phase 24-04)', () => {
 
       await runAudit(RUN_ID, {
         db: dbStub as unknown as typeof import('../src/db/client.js').db,
-        getDecryptedKey: mockGetDecryptedKey,
+        resolveCredential: mockResolveCredential,
         runCheapFinds: mockRunCheapFinds,
         buildStructuralDigest: mockBuildStructuralDigest,
         validateReferencedEntryIds: mockValidateReferencedEntryIds,
@@ -1017,7 +1017,7 @@ describe('audit-engine runAudit (Phase 24-04)', () => {
 
       await runAudit(RUN_ID, {
         db: dbStub as unknown as typeof import('../src/db/client.js').db,
-        getDecryptedKey: mockGetDecryptedKey,
+        resolveCredential: mockResolveCredential,
         runCheapFinds: mockRunCheapFinds,
         buildStructuralDigest: mockBuildStructuralDigest,
         validateReferencedEntryIds: mockValidateReferencedEntryIds,
@@ -1091,7 +1091,7 @@ describe('audit-engine runAudit (Phase 24-04)', () => {
 
       await runAudit(RUN_ID, {
         db: dbStub as unknown as typeof import('../src/db/client.js').db,
-        getDecryptedKey: mockGetDecryptedKey,
+        resolveCredential: mockResolveCredential,
         runCheapFinds: mockRunCheapFinds,
         buildStructuralDigest: mockBuildStructuralDigest,
         validateReferencedEntryIds: mockValidateReferencedEntryIds,
@@ -1249,7 +1249,7 @@ describe('Phase 25 dismissed-set filter (AISSUE-04, AISSUE-05)', () => {
 
       await runAudit(RUN_ID, {
         db: dbStub as unknown as typeof import('../src/db/client.js').db,
-        getDecryptedKey: mockGetDecryptedKey,
+        resolveCredential: mockResolveCredential,
         runCheapFinds: mockRunCheapFinds,
         buildStructuralDigest: mockBuildStructuralDigest,
         validateReferencedEntryIds: mockValidateReferencedEntryIds,
@@ -1331,7 +1331,7 @@ describe('Phase 25 dismissed-set filter (AISSUE-04, AISSUE-05)', () => {
 
       await runAudit(RUN_ID, {
         db: dbStub as unknown as typeof import('../src/db/client.js').db,
-        getDecryptedKey: mockGetDecryptedKey,
+        resolveCredential: mockResolveCredential,
         runCheapFinds: mockRunCheapFinds,
         buildStructuralDigest: mockBuildStructuralDigest,
         validateReferencedEntryIds: mockValidateReferencedEntryIds,
@@ -1370,7 +1370,7 @@ describe('Phase 25 dismissed-set filter (AISSUE-04, AISSUE-05)', () => {
 
       await runAudit(RUN_ID, {
         db: dbStub as unknown as typeof import('../src/db/client.js').db,
-        getDecryptedKey: mockGetDecryptedKey,
+        resolveCredential: mockResolveCredential,
         runCheapFinds: mockRunCheapFinds,
         buildStructuralDigest: mockBuildStructuralDigest,
         validateReferencedEntryIds: mockValidateReferencedEntryIds,
@@ -1410,7 +1410,7 @@ describe('Phase 25 dismissed-set filter (AISSUE-04, AISSUE-05)', () => {
 
       await runAudit(RUN_ID, {
         db: dbStub as unknown as typeof import('../src/db/client.js').db,
-        getDecryptedKey: mockGetDecryptedKey,
+        resolveCredential: mockResolveCredential,
         runCheapFinds: mockRunCheapFinds,
         buildStructuralDigest: mockBuildStructuralDigest,
         validateReferencedEntryIds: mockValidateReferencedEntryIds,
@@ -1449,7 +1449,7 @@ describe('Phase 25 dismissed-set filter (AISSUE-04, AISSUE-05)', () => {
 
       await runAudit(RUN_ID, {
         db: dbStub as unknown as typeof import('../src/db/client.js').db,
-        getDecryptedKey: mockGetDecryptedKey,
+        resolveCredential: mockResolveCredential,
         runCheapFinds: mockRunCheapFinds,
         buildStructuralDigest: mockBuildStructuralDigest,
         validateReferencedEntryIds: mockValidateReferencedEntryIds,
@@ -1503,7 +1503,7 @@ describe('Phase 25 dismissed-set filter (AISSUE-04, AISSUE-05)', () => {
 
       await runAudit(RUN_ID, {
         db: dbStub as unknown as typeof import('../src/db/client.js').db,
-        getDecryptedKey: mockGetDecryptedKey,
+        resolveCredential: mockResolveCredential,
         runCheapFinds: mockRunCheapFinds,
         buildStructuralDigest: mockBuildStructuralDigest,
         validateReferencedEntryIds: mockValidateReferencedEntryIds,
@@ -1526,10 +1526,10 @@ describe('Phase 25 dismissed-set filter (AISSUE-04, AISSUE-05)', () => {
   it(
     'CR-03: BYOK null → engine early-exits before Step 2.5 → snooze decrement does NOT fire',
     async () => {
-      // getDecryptedKey returns null → engine aborts BEFORE the dismissed-set
+      // resolveCredential returns null → engine aborts BEFORE the dismissed-set
       // SELECT and before the snooze decrement at terminal success.
       // eslint-disable-next-line @typescript-eslint/no-explicit-any
-      mockGetDecryptedKey.mockResolvedValueOnce(null as any);
+      mockResolveCredential.mockResolvedValueOnce(null as any);
 
       const executeCalls: unknown[] = [];
       const { dbStub } = makeDbStubWithExecute({
@@ -1539,7 +1539,7 @@ describe('Phase 25 dismissed-set filter (AISSUE-04, AISSUE-05)', () => {
 
       await runAudit(RUN_ID, {
         db: dbStub as unknown as typeof import('../src/db/client.js').db,
-        getDecryptedKey: mockGetDecryptedKey,
+        resolveCredential: mockResolveCredential,
         runCheapFinds: mockRunCheapFinds,
         buildStructuralDigest: mockBuildStructuralDigest,
         validateReferencedEntryIds: mockValidateReferencedEntryIds,
@@ -1578,7 +1578,7 @@ describe('Phase 25 dismissed-set filter (AISSUE-04, AISSUE-05)', () => {
 
       await runAudit(RUN_ID, {
         db: dbStub as unknown as typeof import('../src/db/client.js').db,
-        getDecryptedKey: mockGetDecryptedKey,
+        resolveCredential: mockResolveCredential,
         runCheapFinds: mockRunCheapFinds,
         buildStructuralDigest: mockBuildStructuralDigest,
         validateReferencedEntryIds: mockValidateReferencedEntryIds,

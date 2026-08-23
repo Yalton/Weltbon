@@ -16,6 +16,8 @@ import { shareCrudRoutes } from './routes/shares.js';
 import { shareRoutes } from './routes/share.js';
 import { llmKeyRoutes } from './routes/llm-keys.js';
 import { llmModelsRoutes } from './routes/llm-models.js';
+import { llmConnectionRoutes } from './routes/llm-connections.js';
+import { configRoutes } from './routes/config.js';
 import { universeRoutes } from './routes/universes.js';
 import { entryRoutes } from './routes/entries.js';
 import { linkRoutes, relationRoutes, linkTypeRoutes } from './routes/links.js';
@@ -105,6 +107,27 @@ export function createApp() {
   // to the full /api/llm/models URL. JWT-only via the route's own requireJwtAuth
   // middleware — no apiR.use() needed (mirrors llmKeyRoutes' per-route gate).
   apiR.route('/', llmModelsRoutes);
+  // Issue #48 Task 6: GET /api/config is UNCONDITIONAL (mounted on hosted and
+  // desktop alike) but NOT unauthenticated — routes/config.ts gates it with
+  // `requireAuth`, deliberately, so a share-token-only request cannot reach it
+  // (SHARE-03 / T-29-22). The frontend reads `localMode` from it after login,
+  // to decide which settings sections exist at all.
+  apiR.route('/config', configRoutes);
+  // Issue #48 Task 6: llm-connections (Ollama endpoint config) is DESKTOP-ONLY,
+  // enforced first here by conditional REGISTRATION — mirrors the local-session
+  // route's DV-11 / "Finding 2 review fix" pattern in routes/auth.ts. `env()`
+  // is read live INSIDE createApp()'s own function body (not the module-scope
+  // `cfg` above, which is captured once at first import) so a test that flips
+  // WELTBON_LOCAL_MODE and calls createApp() again sees the change — same
+  // reasoning as buildAuthRoutes() below. When this branch does not run, the
+  // router has no handler and no OpenAPI path for /llm-connections/*: a
+  // hosted deployment's /api/openapi.json and /api/docs never mention it, and
+  // a probing request 404s exactly like any other unmounted route. Every
+  // handler inside llmConnectionRoutes ALSO re-checks env().localMode live
+  // (the second half of the two-part enforcement) — see that file's header.
+  if (env().localMode) {
+    apiR.route('/llm-connections', llmConnectionRoutes);
+  }
   apiR.route('/auth/invites', inviteRoutes);
   // DV-11: built fresh on every createApp() call so the local-session route's
   // conditional registration (Finding 2 review fix) sees a live env().localMode

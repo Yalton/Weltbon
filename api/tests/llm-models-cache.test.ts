@@ -25,7 +25,10 @@
  * api/vitest.config.ts DB_GATED_TESTS.
  */
 
-import { describe, it, expect, beforeAll, afterAll, beforeEach, vi } from 'vitest';
+import { describe, it, expect, beforeAll, afterAll, beforeEach, afterEach, vi } from 'vitest';
+import { readFileSync } from 'node:fs';
+import { fileURLToPath } from 'node:url';
+import { dirname, resolve } from 'node:path';
 
 // vi.hoisted runs BEFORE the imports below so env() reads the test key.
 vi.hoisted(() => {
@@ -83,6 +86,33 @@ import { setTestDb } from '../src/db/client.js';
 import { createApp } from '../src/index.js';
 import { _resetModelCacheForTests } from '../src/providers/llm/model-catalog.js';
 import { PRICING } from '../src/providers/llm/pricing.js';
+import { upsertConnection } from '../src/services/llm-connection.js';
+
+// #48 Task 6 Fix round 1 (Finding 2) — Ollama fixtures, mirroring the
+// tests/llm-ollama.test.ts / tests/llm-connections-routes.test.ts fakeFetch
+// (not exported anywhere; each file that needs it defines its own copy).
+const here = dirname(fileURLToPath(import.meta.url));
+const fx = (n: string) => JSON.parse(readFileSync(resolve(here, `fixtures/ollama/${n}.json`), 'utf8'));
+
+function fakeFetch(routes: Record<string, unknown>): typeof fetch {
+  return (async (url: string, init?: RequestInit): Promise<Response> => {
+    if (url.includes('/api/show')) {
+      const body = init?.body ? (JSON.parse(init.body as string) as { model?: string }) : {};
+      const key = `/api/show:${body.model ?? ''}`;
+      if (!(key in routes)) return new Response('not found', { status: 404 });
+      return new Response(JSON.stringify(routes[key]), {
+        status: 200,
+        headers: { 'Content-Type': 'application/json' },
+      });
+    }
+    const key = Object.keys(routes).find((k) => url.includes(k));
+    if (key === undefined) return new Response('not found', { status: 404 });
+    return new Response(JSON.stringify(routes[key]), {
+      status: 200,
+      headers: { 'Content-Type': 'application/json' },
+    });
+  }) as typeof fetch;
+}
 
 /**
  * Wrap a plain array as an async iterable so the production code's
@@ -125,6 +155,12 @@ describe('GET /api/llm/models (Phase 27 Plan 03 Task 2 — endpoint integration)
       ]),
     );
     vi.useRealTimers();
+  });
+
+  afterEach(() => {
+    // Only the Ollama-discovery tests below stub the global fetch; harmless
+    // no-op for every other test in this file.
+    vi.unstubAllGlobals();
   });
 
   // --- Helpers ---------------------------------------------------------------
@@ -301,5 +337,86 @@ describe('GET /api/llm/models (Phase 27 Plan 03 Task 2 — endpoint integration)
   it('returns 401 without a bearer token', async () => {
     const res = await req('GET', '/api/llm/models?provider=anthropic');
     expect(res.status).toBe(401);
+  });
+
+  // ── #48 Task 6 Fix round 1 (Finding 2) ─────────────────────────────────────
+  // The universe-settings dropdown calls THIS route, not getModels() directly.
+  // Task 6's original Step 5 fixed getModels() but nothing ever routed
+  // provider=ollama here — the Zod enum rejected it before the handler ran.
+  // These tests exercise the actual dropdown path end-to-end.
+
+  it('regression: provider=ollama is no longer rejected at request validation', async () => {
+    // Before this fix, providerEnum was KEY_PROVIDER_NAMES and this 400'd
+    // before the handler ever ran. Any status other than 400 proves
+    // 'ollama' is accepted as a valid query value again.
+    const userA = await userWithToken('ollama-validation-A@test.com');
+    const res = await req('GET', '/api/llm/models?provider=ollama', { headers: userA.hdrs });
+    expect(res.status).not.toBe(400);
+  });
+
+  it('provider=ollama with no connection configured returns an empty live listing, not 404', async () => {
+    const userA = await userWithToken('ollama-no-conn-A@test.com');
+    // Deliberately no upsertConnection() call — user has no llm_connections row.
+    const res = await req('GET', '/api/llm/models?provider=ollama', { headers: userA.hdrs });
+    expect(res.status).toBe(200);
+    const body = await json(res);
+    expect(body).toEqual({ models: [], source: 'live', fetchedAt: expect.any(String) });
+    // Neither SDK should ever be touched for an Ollama request.
+    expect(mockAnthropicList.mock.calls.length).toBe(0);
+    expect(mockOpenAIList.mock.calls.length).toBe(0);
+  });
+
+  it('provider=ollama with a configured connection live-discovers installed models through the SAME route the dropdown calls', async () => {
+    const userA = await userWithToken('ollama-live-A@test.com');
+    await upsertConnection(userA.user.id, 'ollama', 'http://box:11434', 'Home box');
+
+    vi.stubGlobal(
+      'fetch',
+      fakeFetch({
+        '/api/tags': { models: [{ name: 'qwen3:32b' }, { name: 'llava:latest' }] },
+        '/api/show:qwen3:32b': fx('show-qwen3-32b'),
+        '/api/show:llava:latest': fx('show-llava'),
+      }),
+    );
+
+    const res = await req('GET', '/api/llm/models?provider=ollama', { headers: userA.hdrs });
+    expect(res.status).toBe(200);
+    const body = await json(res);
+    expect(body.source).toBe('live');
+    // llava is vision-only — filtered out (a model that cannot tool-call
+    // cannot return findings; spec D-1). Only the tools-capable model remains.
+    expect(body.models).toEqual([{ id: 'qwen3:32b', hasPricing: false }]);
+    expect(mockAnthropicList.mock.calls.length).toBe(0);
+    expect(mockOpenAIList.mock.calls.length).toBe(0);
+  });
+
+  it('provider=ollama degrades to an empty listing (never 5xx) when the connection is unreachable', async () => {
+    const userA = await userWithToken('ollama-unreachable-A@test.com');
+    await upsertConnection(userA.user.id, 'ollama', 'http://box:11434', 'Home box');
+
+    vi.stubGlobal('fetch', (async () => {
+      throw new Error('ECONNREFUSED');
+    }) as typeof fetch);
+    const errSpy = vi.spyOn(console, 'error').mockImplementation(() => {});
+
+    const res = await req('GET', '/api/llm/models?provider=ollama', { headers: userA.hdrs });
+    expect(res.status).toBe(200);
+    const body = await json(res);
+    expect(body).toEqual({ models: [], source: 'live', fetchedAt: expect.any(String) });
+
+    errSpy.mockRestore();
+  });
+
+  it('a key-based provider still resolves its key exactly as before — not crossed with the endpoint-based path (pins Finding 2\'s fix against re-breaking key-based providers)', async () => {
+    // Same assertion as Test 5 above, restated here deliberately: if this
+    // route's key-based branch were ever accidentally rerouted through
+    // resolveCredential (whose null collapses "no row" and "can't decrypt"
+    // together — see llm-credential.ts), this 404 would silently become a
+    // 200 empty listing instead, and nothing else in this file would catch
+    // that specific regression.
+    const userA = await userWithToken('crossing-check-A@test.com');
+    const res = await req('GET', '/api/llm/models?provider=anthropic', { headers: userA.hdrs });
+    expect(res.status).toBe(404);
+    expect(await json(res)).toEqual({ error: 'no_key_for_provider' });
   });
 });
