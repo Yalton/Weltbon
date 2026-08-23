@@ -53,7 +53,26 @@ export function makeDocx(parts: DocxFixtureParts): Promise<Buffer> {
 
   const add = (name: string, content: string | Buffer | undefined) => {
     if (content === undefined) return;
-    zip.addBuffer(Buffer.isBuffer(content) ? content : Buffer.from(content, 'utf8'), name);
+    const buf = Buffer.isBuffer(content) ? content : Buffer.from(content, 'utf8');
+
+    // yazl's own addBuffer() refuses a metadataPath with a literal ".."
+    // segment (its validateMetadataPath) — which is exactly the
+    // traversal-shaped name the unpack.ts exact-match test needs inside the
+    // archive. We hand yazl a same-length placeholder so its header/offset
+    // bookkeeping is unaffected, then splice the real bytes into the
+    // just-pushed Entry before end() runs. The splice is synchronous, so it
+    // always lands before addBuffer's async zlib.deflateRaw callback writes
+    // the entry's header.
+    const segments = name.split('/');
+    if (segments.includes('..')) {
+      const placeholder = segments.map((s) => (s === '..' ? 'XX' : s)).join('/');
+      zip.addBuffer(buf, placeholder);
+      const entries = (zip as unknown as { entries: Array<{ utf8FileName: Buffer }> }).entries;
+      entries[entries.length - 1].utf8FileName = Buffer.from(name, 'utf8');
+      return;
+    }
+
+    zip.addBuffer(buf, name);
   };
 
   add('word/document.xml', parts.documentXml);

@@ -31,7 +31,15 @@ export type BatchLimit =
   | 'file_count'
   | 'zip_size'
   | 'file_size'
-  | 'total_uncompressed_size';
+  | 'total_uncompressed_size'
+  // #35 (DOCX-11). Reusing BatchLimitError rather than inventing a parallel
+  // error keeps the route's existing 413 branch and the client's existing
+  // message parsing working unchanged.
+  | 'docx_size'
+  | 'docx_count'
+  | 'docx_entry_count'
+  | 'docx_part_size'
+  | 'docx_total_uncompressed';
 
 /**
  * Thrown when any of the four D-15 batch caps is breached.
