@@ -56,6 +56,8 @@ const DB_GATED_TESTS = [
   'tests/issues-fix01-nulls-distinct.test.ts',
   'tests/issues.test.ts',
   'tests/links.test.ts',
+  // Issue #48 — llm_connections (endpoint-based providers, e.g. Ollama).
+  'tests/llm-connection.test.ts',
   'tests/llm-keys-total-spent.test.ts',
   'tests/llm-keys.test.ts',
   'tests/llm-models-cache.test.ts',
