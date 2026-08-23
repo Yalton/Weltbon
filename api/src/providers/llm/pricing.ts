@@ -58,10 +58,24 @@ export const PRICING_AS_OF = '2026-05-27';
  *
  * UI binding: UniverseSettings AI Gap Auditor section seeds the provider/model
  * dropdowns with this value on first opt-in; users can override via the dropdown.
+ *
+ * Issue #48 (ollama): deliberately `Partial` with NO 'ollama' entry. Anthropic
+ * and OpenAI each have one clear cheapest tool-use-capable model in PRICING;
+ * Ollama has no such thing — the available models are whatever the user has
+ * pulled locally, so there is no fixed ID to recommend. Read sites MUST
+ * handle the `undefined` case (see UniverseSettings.tsx's live[0] fallback on
+ * the web side); inventing a placeholder model name here would just move the
+ * "model doesn't exist" failure from a type error to a runtime 404.
+ *
+ * Kept as an inline literal union rather than importing `LlmProvider` from
+ * services/llm-key.ts — this file documents itself as "no relative imports,
+ * pure data file" (see module doc above), and that invariant is worth more
+ * than DRYing out one more copy of the three provider names.
  */
-export const RECOMMENDED_CHEAP_MODEL: Record<'anthropic' | 'openai', string> = {
+export const RECOMMENDED_CHEAP_MODEL: Partial<Record<'anthropic' | 'openai' | 'ollama', string>> = {
   anthropic: 'claude-haiku-4-5-20251001',
   openai: 'gpt-5-mini',
+  // ollama: intentionally absent — see comment above.
 } as const;
 
 // ---------------------------------------------------------------------------

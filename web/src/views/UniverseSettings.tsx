@@ -38,6 +38,22 @@ import { Loading } from '../components/ui/Loading';
  * error via update.error rather than duplicating validation client-side.
  */
 
+/**
+ * Issue #48: `Universe.auditProvider` (useUniverse.ts) now allows 'ollama',
+ * but this component's AI Gap Auditor tab has no Ollama picker option, no
+ * key-presence check, and no live model-catalog wiring for it yet — that is
+ * separate UI-wiring work, not part of widening the provider union. Treating
+ * an 'ollama' value as "not displayable" here (rather than crashing, or
+ * worse, letting apFinal/aiPatchEmpty compare it against `null` and silently
+ * clear a saved Ollama audit config on the next unrelated Save) is the
+ * narrowest correct fix until that UI lands.
+ */
+function toDisplayableAuditProvider(
+  p: 'anthropic' | 'openai' | 'ollama' | null | undefined,
+): 'anthropic' | 'openai' | null {
+  return p === 'anthropic' || p === 'openai' ? p : null;
+}
+
 const TABS = [
   { id: 'general', label: 'General' },
   // Universe theming (2026-07-10 spec) — its own tab: ThemeSection carries its
@@ -88,7 +104,7 @@ export function UniverseSettings() {
       setName(data.name);
       setDescription(data.description);
       setAuditEnabled(data.auditEnabled);
-      setAuditProvider(data.auditProvider ?? '');
+      setAuditProvider(toDisplayableAuditProvider(data.auditProvider) ?? '');
       setAuditModel(data.auditModel ?? '');
     }
   }, [data]);
@@ -141,7 +157,7 @@ export function UniverseSettings() {
     if (description !== data.description) patch.description = description;
     if (auditEnabled !== data.auditEnabled) patch.auditEnabled = auditEnabled;
     const apFinal: 'anthropic' | 'openai' | null = auditProvider === '' ? null : auditProvider;
-    if (apFinal !== (data.auditProvider ?? null)) patch.auditProvider = apFinal;
+    if (apFinal !== toDisplayableAuditProvider(data.auditProvider)) patch.auditProvider = apFinal;
     const amFinal: string | null = auditModel === '' ? null : auditModel;
     if (amFinal !== (data.auditModel ?? null)) patch.auditModel = amFinal;
     if (Object.keys(patch).length === 0) return;
@@ -157,7 +173,7 @@ export function UniverseSettings() {
   // Compute diff for AI-tab Save button disabled state.
   const aiPatchEmpty =
     auditEnabled === data.auditEnabled &&
-    (auditProvider === '' ? null : auditProvider) === (data.auditProvider ?? null) &&
+    (auditProvider === '' ? null : auditProvider) === toDisplayableAuditProvider(data.auditProvider) &&
     (auditModel === '' ? null : auditModel) === (data.auditModel ?? null);
 
   // `modelOptions` is computed above from `useListModels()` (Phase 27 D-01).

@@ -23,7 +23,7 @@ export interface Universe {
   // Phase 24 AUDIT-03 / Phase 26 LLMUI-08: per-universe AI Gap Auditor opt-in.
   // auditEnabled=true requires both provider+model to be non-null (server-enforced).
   auditEnabled: boolean;
-  auditProvider: 'anthropic' | 'openai' | null;
+  auditProvider: 'anthropic' | 'openai' | 'ollama' | null;
   auditModel: string | null;
   // Phase 35 REL-01: per-universe link-type registry (nullable until migration runs).
   // Absent on pre-migration rows → treat as empty record.
@@ -80,7 +80,7 @@ export function useUpdateUniverse(id: string) {
       // Phase 26 LLMUI-08: audit opt-in patch fields (server enforces invariant
       // that auditEnabled=true → provider+model non-null).
       auditEnabled?: boolean;
-      auditProvider?: 'anthropic' | 'openai' | null;
+      auditProvider?: 'anthropic' | 'openai' | 'ollama' | null;
       auditModel?: string | null;
       // Phase 35 REL-01: link-type registry patch (color overrides per D-03 deferred UI).
       linkTypes?: Record<string, { color?: string; directionDefault?: 'directed' | 'undirected'; inverseLabel?: string }>;

@@ -51,6 +51,7 @@ import { llmApiKeys } from '../db/schema.js';
 import { requireJwtAuth, type AuthVariables } from '../middleware/auth.js';
 import {
   getDecryptedKey,
+  PROVIDER_NAMES,
   type LlmProvider,
 } from '../services/llm-key.js';
 import { getModels } from '../providers/llm/index.js';
@@ -64,7 +65,7 @@ const errorSchema = z.object({
   error: z.string(),
 });
 
-const providerEnum = z.enum(['anthropic', 'openai']);
+const providerEnum = z.enum(PROVIDER_NAMES);
 
 // Mirror of ListingsResult / ModelListingWithCoverage in
 // api/src/providers/llm/interface.ts. We re-declare the schema here so the

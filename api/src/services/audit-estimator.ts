@@ -96,7 +96,7 @@ export interface EstimateInput {
   scope: 'universe' | 'entry';
   /** Required when scope='entry'. */
   entryId?: string;
-  provider: 'anthropic' | 'openai';
+  provider: LlmProvider;
   model: string;
   /** Decrypted plaintext key; NEVER logged. */
   apiKey: string;
@@ -196,7 +196,7 @@ export async function estimateAudit(input: EstimateInput): Promise<AuditEstimate
   // T-24-04-09 / T-26-02-01 (never leak raw provider error text) is preserved by
   // the callers: both discard the error object and emit only generic copy — the
   // provider's message and stack never reach the client or a log sink.
-  const basePromptTokens = await getProvider(input.provider as LlmProvider).estimate({
+  const basePromptTokens = await getProvider(input.provider).estimate({
     apiKey: input.apiKey,
     messages: [
       // T-26-02-01: apiKey is the only sensitive value in this call — it

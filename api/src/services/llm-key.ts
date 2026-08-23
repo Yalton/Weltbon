@@ -42,7 +42,15 @@ import { encryptSecret, decryptSecret, type EncryptedSecret } from './crypto.js'
 // callers and stored DB rows are untouched — but is now an alias.
 export type EncryptedKey = EncryptedSecret;
 
-export type LlmProvider = 'anthropic' | 'openai';
+// Issue #48: 'ollama' added. Ollama is endpoint-based (no BYOK key row in
+// llm_api_keys — Task 1's llm_connections carries its base URL instead), but
+// the type lives here regardless: every route that switches on provider name
+// (auditProvider validation, llm-keys, llm-models, audit estimate) must see
+// 'ollama' as a valid value or it 400s before the provider layer ever runs.
+export type LlmProvider = 'anthropic' | 'openai' | 'ollama';
+
+/** Every provider name, for Zod enums and iteration. Widen this, not each copy. */
+export const PROVIDER_NAMES = ['anthropic', 'openai', 'ollama'] as const;
 
 // ---------------------------------------------------------------------------
 // encryptKey

@@ -64,6 +64,15 @@ import type {
 import { LLMError, LLMProviderError } from './interface.js';
 import { PRICING } from './pricing.js';
 
+/**
+ * Issue #48: PRICING only has entries for the two BYOK SDK providers — it is
+ * NOT total over LlmProvider (no 'ollama' key, same reasoning as
+ * RECOMMENDED_CHEAP_MODEL in pricing.ts). `keyof typeof PRICING` derives the
+ * narrower type from PRICING itself rather than hand-declaring a second
+ * 'anthropic' | 'openai' literal that could drift from the object it types.
+ */
+type PricedProvider = keyof typeof PRICING;
+
 // ---------------------------------------------------------------------------
 // Module-private cache (D-01 + D-03)
 // ---------------------------------------------------------------------------
@@ -140,7 +149,7 @@ async function listOpenAIModelIds(apiKey: string): Promise<string[]> {
  * is self-contained.
  */
 function reconcileWithPricing(
-  provider: LlmProvider,
+  provider: PricedProvider,
   ids: string[],
 ): ModelListingWithCoverage[] {
   const table = PRICING[provider] as Record<string, Record<string, number>>;
@@ -169,7 +178,7 @@ function reconcileWithPricing(
  * `hasPricing: true` by construction — we are synthesizing the catalog from
  * the PRICING constant itself.
  */
-function pricingFallbackListing(provider: LlmProvider): ModelListingWithCoverage[] {
+function pricingFallbackListing(provider: PricedProvider): ModelListingWithCoverage[] {
   return reconcileWithPricing(provider, Object.keys(PRICING[provider]));
 }
 
@@ -199,6 +208,20 @@ export async function getModels(
   keyId: string,
   apiKey: string,
 ): Promise<ListingsResult> {
+  // Issue #48: this whole module is PRICING-reconciliation for the two BYOK
+  // SDK providers (D-01..D-04 above) — `reconcileWithPricing` indexes
+  // PRICING[provider], which has no 'ollama' key, and the SDK branch below
+  // has exactly two live-list functions. Guarding here (a) keeps this file
+  // typechecking now that LlmProvider is widened without silently narrowing
+  // PRICING's own type, and (b) matters more than the type error: without
+  // it, provider === 'anthropic' ? ... : listOpenAIModelIds(apiKey) would
+  // have SILENTLY called the OpenAI SDK for an Ollama request. This function
+  // narrows to 'anthropic' | 'openai' for the rest of its body once this
+  // throws. Task 4 replaces this with Ollama's own /api/tags listing.
+  if (provider === 'ollama') {
+    throw new Error("getModels: 'ollama' catalog not yet implemented (Task 4)");
+  }
+
   const key = cacheKey(provider, keyId);
   const now = Date.now();
   const cached = modelCache.get(key);

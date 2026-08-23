@@ -23,10 +23,15 @@ import OpenAI from 'openai';
 import { eq } from 'drizzle-orm';
 import { db, closeDb } from '../db/client.js';
 import { users } from '../db/schema.js';
-import { getDecryptedKey } from '../services/llm-key.js';
+import { getDecryptedKey, type LlmProvider } from '../services/llm-key.js';
 import { PRICING } from '../providers/llm/pricing.js';
 
-type ProviderName = 'anthropic' | 'openai';
+// This script only knows how to list models for the two BYOK-key providers
+// (it drives their SDKs directly, and PRICING has no 'ollama' entry — see
+// pricing.ts). LlmProvider is the canonical type regardless (issue #48); the
+// runtime guard below rejects 'ollama' explicitly rather than letting the
+// PRICING[provider] lookup fail with a confusing message.
+type ProviderName = LlmProvider;
 
 async function listAnthropicModels(apiKey: string): Promise<string[]> {
   const client = new Anthropic({ apiKey });
@@ -55,7 +60,13 @@ async function main() {
     process.exit(1);
   }
   if (provider !== 'anthropic' && provider !== 'openai') {
-    console.error(`Unknown provider '${provider}' — expected 'anthropic' or 'openai'`);
+    // 'ollama' is a valid LlmProvider (issue #48) but not a valid argument
+    // HERE — it has no BYOK key row / SDK model-listing call, and PRICING
+    // has no 'ollama' entry to reconcile against. Say so explicitly instead
+    // of letting the guard read as a stale two-provider check.
+    console.error(
+      `Unsupported provider '${provider}' — this script only lists 'anthropic' or 'openai' models (ollama has no BYOK key / PRICING entry to reconcile)`
+    );
     process.exit(1);
   }
 

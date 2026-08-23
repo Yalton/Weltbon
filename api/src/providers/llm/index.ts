@@ -8,7 +8,7 @@
  * is `getProvider(name)` below.
  *
  * Factory semantics:
- *   - Lazy-singleton cache keyed by `LlmProvider` ('anthropic' | 'openai').
+ *   - Lazy-singleton cache keyed by `LlmProvider` ('anthropic' | 'openai' | 'ollama').
  *   - First call to `getProvider(name)` instantiates and caches; subsequent
  *     calls return the same reference (verified by Plan 23-02 contract test).
  *   - The cached instance holds NO per-request state (RESEARCH §Common
@@ -48,6 +48,10 @@ import { OpenAIProvider } from './openai.js';
 const providerCache: Record<LlmProvider, LLMProvider | undefined> = {
   anthropic: undefined,
   openai: undefined,
+  // Issue #48: cache slot exists now so the Record stays total (a missing key
+  // here is a compile error, not a runtime surprise). OllamaProvider itself
+  // does not exist until Task 4 — getProvider('ollama') throws below.
+  ollama: undefined,
 };
 
 /**
@@ -63,10 +67,26 @@ export function getProvider(name: LlmProvider): LLMProvider {
   if (cached !== undefined) return cached;
 
   let instance: LLMProvider;
-  if (name === 'anthropic') {
-    instance = new AnthropicProvider();
-  } else {
-    instance = new OpenAIProvider();
+  switch (name) {
+    case 'anthropic':
+      instance = new AnthropicProvider();
+      break;
+    case 'openai':
+      instance = new OpenAIProvider();
+      break;
+    case 'ollama':
+      // Task 4 adds OllamaProvider. Until then this is the ONE place a
+      // widened-but-unimplemented provider fails — loudly, at the factory
+      // boundary — rather than an undefined `instance` silently reaching a
+      // caller that then NPEs on `.estimate` / `.validate` / etc.
+      throw new Error('OllamaProvider not yet implemented (Task 4)');
+    default: {
+      // Exhaustiveness guard: if LlmProvider grows a fourth member without a
+      // case here, this line fails to compile (name is not `never`) instead
+      // of silently falling through to a wrong provider at runtime.
+      const _exhaustive: never = name;
+      throw new Error(`Unknown provider: ${_exhaustive as string}`);
+    }
   }
   providerCache[name] = instance;
   return instance;

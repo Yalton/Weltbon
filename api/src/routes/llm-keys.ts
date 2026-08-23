@@ -36,6 +36,7 @@ import { requireJwtAuth, type AuthVariables } from '../middleware/auth.js';
 import {
   encryptKey,
   getDecryptedKey,
+  PROVIDER_NAMES,
   type LlmProvider,
 } from '../services/llm-key.js';
 import {
@@ -54,7 +55,7 @@ const errorSchema = z.object({
   error: z.string(),
 });
 
-const providerEnum = z.enum(['anthropic', 'openai']);
+const providerEnum = z.enum(PROVIDER_NAMES);
 
 const postBodySchema = z.object({
   provider: providerEnum,

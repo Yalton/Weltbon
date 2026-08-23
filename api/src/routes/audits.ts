@@ -23,7 +23,7 @@ import { db } from '../db/client.js';
 import { auditRuns, issues, entries, universes } from '../db/schema.js';
 import { requireUniverse } from '../utils/ownership.js';
 import { runAudit } from '../services/audit-engine.js';
-import { getDecryptedKey } from '../services/llm-key.js';
+import { getDecryptedKey, PROVIDER_NAMES, type LlmProvider } from '../services/llm-key.js';
 import { estimateAudit } from '../services/audit-estimator.js';
 import { env } from '../config.js';
 import type { AuthVariables } from '../middleware/auth.js';
@@ -83,7 +83,7 @@ const auditEstimateResponseSchema = z.object({
   upper: z.number().nonnegative(),
   breakdown: auditEstimateBreakdownSchema,
   model: z.object({
-    provider: z.enum(['anthropic', 'openai']),
+    provider: z.enum(PROVIDER_NAMES),
     name: z.string(),
   }),
 });
@@ -92,7 +92,7 @@ const auditEstimateQuerySchema = z
   .object({
     scope: z.enum(['universe', 'entry']),
     entryId: z.string().uuid().optional(),
-    provider: z.enum(['anthropic', 'openai']).optional(),
+    provider: z.enum(PROVIDER_NAMES).optional(),
     model: z.string().optional(),
   })
   .strict()
@@ -419,7 +419,12 @@ export const auditRoutes = new OpenAPIHono<AppEnv>()
     // callers see no contract change.
     let estimate: { promptTokens: number; estCostUsd: number } = { promptTokens: 0, estCostUsd: 0 };
     try {
-      const provider = universe.auditProvider as 'anthropic' | 'openai';
+      // Not one of the brief's enumerated touchpoints, but caught by the
+      // union test (llm-provider-union.test.ts) anyway — same file, same
+      // stale two-provider literal. universe.auditProvider is DB free text
+      // (not Zod-validated at read time), so this cast is the only place the
+      // widened type actually applies here.
+      const provider = universe.auditProvider as LlmProvider;
       const model = universe.auditModel!;
       const cfg = env();
       const apiKey = await getDecryptedKey(userId, provider, cfg.llmKeyEncryptionKey);
@@ -615,10 +620,7 @@ export const auditRoutes = new OpenAPIHono<AppEnv>()
     }
 
     // Resolve provider/model: query overrides universe defaults; both required.
-    const provider = (query.provider ?? universe.auditProvider) as
-      | 'anthropic'
-      | 'openai'
-      | null;
+    const provider = (query.provider ?? universe.auditProvider) as LlmProvider | null;
     const model = query.model ?? universe.auditModel;
     if (!provider || !model) {
       return c.json(
