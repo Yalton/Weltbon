@@ -72,16 +72,29 @@ export class DocxFormatError extends Error {
 
 function openZip(buffer: Buffer): Promise<yauzl.ZipFile> {
   return new Promise((resolve, reject) => {
-    // decodeStrings: false. yauzl's default string-decoding path runs its own
-    // validateFileName() (rejects any ".." path segment) and, on a hit, fails
-    // the WHOLE zipfile rather than skipping the one entry — which would make
-    // yauzl's internal check the traversal defense instead of our allowlist,
-    // contradicting "no normalisation step to get wrong" above: a hostile
-    // archive with one such name anywhere, even in an entry we would
-    // otherwise just record and ignore, would abort enumeration entirely
-    // (including the DOCX-07 media manifest) rather than leaving that one
-    // entry off the allowlist. We decode fileName ourselves, below, and let
-    // Set membership be the only gate.
+    // decodeStrings: false. This is not just a workaround for yauzl's
+    // default decode path aborting the WHOLE zipfile the moment any one
+    // entry name fails its validateFileName() (which would make yauzl's
+    // internal check the traversal defense instead of our allowlist — a
+    // hostile archive with one such name anywhere, even in an entry we would
+    // otherwise just record and ignore, would abort enumeration entirely,
+    // including the DOCX-07 media manifest). It also closes two concrete
+    // allowlist bypasses present in yauzl's default decode path:
+    //
+    //   1. Backslash normalisation: getFileNameLowLevel() runs
+    //      fileName.replace(/\\/g, "/") before validation, so an entry
+    //      literally named `word\document.xml` is reported to callers as
+    //      `word/document.xml` and would be decompressed as if it were the
+    //      real part.
+    //   2. Info-ZIP Unicode Path extra field (0x7075): yauzl substitutes
+    //      that field's name whenever its CRC matches the entry's CRC32. An
+    //      entry whose real name is `word/media/image1.png` but which
+    //      carries a 0x7075 field naming `word/document.xml` would be
+    //      reported as the latter — under decodeStrings:true that media
+    //      entry gets decompressed, a direct T-35-05 violation.
+    //
+    // We decode fileName ourselves, below, from the raw bytes only, and let
+    // exact Set membership on that raw-decoded name be the only gate.
     yauzl.fromBuffer(buffer, { lazyEntries: true, decodeStrings: false }, (err, zipfile) => {
       if (err || !zipfile) {
         // Deliberately not echoing yauzl's message: it can embed offsets and

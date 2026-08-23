@@ -38,11 +38,16 @@ describe('unpackDocx — happy path', () => {
       relsXml: '<Relationships/>',
       corePropsXml: '<cp:coreProperties/>',
       contentTypesXml: '<Types/>',
+      // makeDocx has no endnotesXml field by design (Task 2); extraEntries is
+      // the only way to add it, and endnotes had zero coverage until this
+      // review round (unpack.ts:209's mapping was copy-paste-shaped).
+      extraEntries: [{ name: 'word/endnotes.xml', content: '<w:endnotes/>' }],
     });
     const parts = await unpackDocx(buf, DOCX_LIMITS);
     expect(parts.styles).toBe('<w:styles/>');
     expect(parts.numbering).toBe('<w:numbering/>');
     expect(parts.footnotes).toBe('<w:footnotes/>');
+    expect(parts.endnotes).toBe('<w:endnotes/>');
     expect(parts.rels).toBe('<Relationships/>');
     expect(parts.coreProps).toBe('<cp:coreProperties/>');
     expect(parts.contentTypes).toBe('<Types/>');
@@ -87,12 +92,17 @@ describe('unpackDocx — the allowlist (T-35-05)', () => {
 
   it('does not match an allowlisted name reached via a traversal path', async () => {
     // Exact-match IS the traversal defense: there is no normalisation to get
-    // wrong, so this entry is simply not on the list.
+    // wrong, so this entry is simply not on the list. Asserting it landed in
+    // otherEntries (rather than only asserting document.xml stayed clean) is
+    // what proves the literal ".." name actually exists in the archive —
+    // without it, a fixture bug that silently drops or mangles the entry
+    // would leave this test green while testing nothing (review round 1).
     const buf = await makeDocx({
       documentXml: MINIMAL_DOCUMENT_XML,
       extraEntries: [{ name: 'word/../word/document.xml', content: '<w:document>EVIL</w:document>' }],
     });
     const parts = await unpackDocx(buf, DOCX_LIMITS);
+    expect(parts.otherEntries.map((e) => e.name)).toContain('word/../word/document.xml');
     expect(parts.document).not.toContain('EVIL');
     expect(parts.document).toContain('Hello');
   });
@@ -117,25 +127,50 @@ describe('unpackDocx — caps (T-35-01)', () => {
   });
 
   it('aborts a bomb in an ALLOWLISTED part before it fully expands', async () => {
-    // 64 MB of zeros in document.xml compresses to a few KB. The cap must fire
-    // from the running chunk total, not from a completed read.
+    // 70 MB of 'a' in document.xml compresses to a few KB. docxPartSize is
+    // raised here to 128 MB so the cheap header early-reject (unpack.ts:151,
+    // which fires on the DECLARED size alone, before openReadStream is ever
+    // called) cannot fire — the default 32 MB cap would trip it and this
+    // test would prove nothing about the running check. With the early
+    // reject out of the way, the archive's own cumulative cap
+    // (docxTotalUncompressed, 64 MB) is what has to fire, and it can only
+    // fire from the running per-chunk total (unpack.ts:178) reading actual
+    // bytes off the stream — there is no "declared cumulative size" field in
+    // a zip header for a header check to short-circuit on.
+    //
+    // Review round 1 found the previous version of this test (elapsedMs <
+    // 5_000 against the default 32 MB docxPartSize) never opened a stream at
+    // all: a full uncapped read of the same 70 MB part finishes in ~200 ms,
+    // so the wall-clock bound could not discriminate a mid-stream abort from
+    // a completed read. Asserting the limit name is structural instead.
     const bomb = 'a'.repeat(70 * 1024 * 1024);
     const buf = await makeDocx({ documentXml: bomb });
 
-    const started = process.hrtime.bigint();
-    const err = await unpackDocx(buf, DOCX_LIMITS).catch((e) => e);
-    const elapsedMs = Number(process.hrtime.bigint() - started) / 1e6;
+    const err = await unpackDocx(buf, { ...DOCX_LIMITS, docxPartSize: 128 * 1024 * 1024 })
+      .catch((e) => e);
 
     expect(err).toBeInstanceOf(BatchLimitError);
-    expect(['docx_part_size', 'docx_total_uncompressed']).toContain(err.limit);
-    // Comparing to a bound rather than asserting absence of a bad state: a
-    // completed 70 MB expansion is far slower than this.
-    expect(elapsedMs).toBeLessThan(5_000);
+    expect(err.limit).toBe('docx_total_uncompressed');
   });
 
-  it('enforces the per-part cap against a lying central-directory header', async () => {
-    // Defense in depth, mirroring unpackZip's live check. Even if a crafted
-    // header under-declares the size, the running byte count must catch it.
+  it('rejects an honestly-oversized part via the cheap header check, not the running count', async () => {
+    // Renamed from "...against a lying central-directory header" (review
+    // round 1): this header is not lying. yazl reports the true ~40 MB size,
+    // and that alone exceeds docxPartSize (32 MB), so unpack.ts's cheap
+    // early reject (before openReadStream is ever called) is what fires —
+    // the running per-chunk count never sees a byte here.
+    //
+    // A header that genuinely under-declares (lies small) cannot be used to
+    // reach our running check either: yauzl's own validateEntrySizes /
+    // AssertByteCountStream (on by default) intercepts the mismatch first
+    // and surfaces it as DocxFormatError('... unreadable part') with zero
+    // bytes ever reaching unpack.ts's 'data' handler. Confirmed only by
+    // disabling that yauzl safeguard (validateEntrySizes: false) as a
+    // one-off probe, which is not something production code should do — at
+    // which point our own running docx_part_size check does fire correctly.
+    // The running per-part check (unpack.ts:173) stays in place as
+    // defense-in-depth per the brief; the bomb test above exercises the same
+    // live per-chunk accumulation for the cumulative cap.
     const buf = await makeDocx({ documentXml: 'b'.repeat(40 * 1024 * 1024) });
     const err = await unpackDocx(buf, { ...DOCX_LIMITS, docxTotalUncompressed: 1024 * 1024 * 1024 })
       .catch((e) => e);
