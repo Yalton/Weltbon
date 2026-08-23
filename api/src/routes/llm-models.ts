@@ -51,7 +51,7 @@ import { llmApiKeys } from '../db/schema.js';
 import { requireJwtAuth, type AuthVariables } from '../middleware/auth.js';
 import {
   getDecryptedKey,
-  PROVIDER_NAMES,
+  KEY_PROVIDER_NAMES,
   type LlmProvider,
 } from '../services/llm-key.js';
 import { getModels } from '../providers/llm/index.js';
@@ -65,7 +65,15 @@ const errorSchema = z.object({
   error: z.string(),
 });
 
-const providerEnum = z.enum(PROVIDER_NAMES);
+// Fix round 1 (#48 review): same reasoning as llm-keys.ts. This route's
+// entire cache key is (provider, llm_api_keys.id) — the handler below looks
+// up a row in llm_api_keys for (userId, provider) and 404s if none exists.
+// Ollama never has a row there (endpoint-based, see llm-connections.ts /
+// `do not modify llm_api_keys`), so provider:'ollama' would always 404 here
+// regardless — but PROVIDER_NAMES still advertised it as a valid value on an
+// endpoint that structurally can never serve it. KEY_PROVIDER_NAMES makes
+// the OpenAPI schema (and Zod validation) honest about that.
+const providerEnum = z.enum(KEY_PROVIDER_NAMES);
 
 // Mirror of ListingsResult / ModelListingWithCoverage in
 // api/src/providers/llm/interface.ts. We re-declare the schema here so the

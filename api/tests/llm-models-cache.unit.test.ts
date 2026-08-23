@@ -279,4 +279,36 @@ describe('model-catalog cache (Phase 27 D-01/D-02/D-03 PROV-FOLLOWUP-01)', () =>
     // Defensive: also check the cache key itself is the keyId form.
     expect(entries[0][0]).toBe('anthropic:key-secret');
   });
+
+  // -----------------------------------------------------------------------
+  // Fix round 1 (#48 review, Finding 2) — getModels('ollama', ...) must
+  // preserve the module's own D-02 contract ("always returns something
+  // usable; never blocks the dropdown") rather than throw. Unreachable via
+  // the real route today (llm-models.ts validates against KEY_PROVIDER_NAMES,
+  // which excludes 'ollama' — see routes/llm-models.ts), but this module is
+  // documented as never-throws and llm-models.ts's call site relies on that
+  // literally ("Per D-02, getModels NEVER throws ... we can therefore return
+  // its result directly without try/catch"), so the function itself must
+  // still uphold it for any future caller that trusts the doc.
+  // -----------------------------------------------------------------------
+  it("getModels('ollama', ...) resolves (never throws) and returns an empty live listing — D-02 contract preserved for the not-yet-implemented provider", async () => {
+    const { getModels, _resetModelCacheForTests } = await import(
+      '../src/providers/llm/model-catalog.js'
+    );
+    _resetModelCacheForTests();
+
+    // If this ever throws, await rejects and the test fails with that
+    // rejection — no need for an explicit try/catch to prove "never throws".
+    const result = await getModels('ollama', 'key-ollama', 'unused-for-ollama');
+
+    expect(result).toEqual({
+      models: [],
+      source: 'live',
+      fetchedAt: expect.any(String),
+    });
+    // Neither SDK should ever be touched for an Ollama request (the same
+    // silent-OpenAI-fallback bug this guard exists to prevent).
+    expect(mockAnthropicList).not.toHaveBeenCalled();
+    expect(mockOpenAIList).not.toHaveBeenCalled();
+  });
 });

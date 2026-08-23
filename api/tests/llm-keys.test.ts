@@ -294,6 +294,30 @@ describe('llm-key routes (Phase 22-04: LLMKEY-01/03/04/05/06)', () => {
       expect(res.status).toBe(400);
     });
 
+    // Fix round 1 (#48 review, Finding 1): 'cohere' above is garbage under
+    // BOTH the old two-provider enum and the new three-provider LlmProvider —
+    // it never exercised the actual regression. 'ollama' is a real
+    // LlmProvider value (services/llm-key.ts), so before this route was
+    // narrowed to KEY_PROVIDER_NAMES, this body passed Zod validation and
+    // reached getProvider('ollama') — whose real (unmocked) implementation
+    // throws a plain, non-LLMProviderError Error that this route's catch
+    // block doesn't handle, so it escaped to app.onError as a bare 500 with
+    // a stack trace. This route's llm-api-keys.ts factory mock above would
+    // have masked that specific 500 (it resolves happily for any provider
+    // name), but it would have let the row insert succeed instead — which is
+    // its own bug: llm_api_keys is never supposed to hold an 'ollama' row
+    // (Ollama is endpoint-based; see llm-connections.ts). Either way, this
+    // route must reject 'ollama' at the validation layer before either
+    // failure mode is reachable.
+    it('returns 400 for provider:"ollama" — llm-keys is BYOK-key-only, Ollama never gets an llm_api_keys row', async () => {
+      const { jwt } = await createUserAndJwt('post-ollama-provider@test.com');
+      const res = await appRequest('POST', '/api/llm-keys', {
+        body: { provider: 'ollama', key: 'sk-test' },
+        headers: { Authorization: `Bearer ${jwt}` },
+      });
+      expect(res.status).toBe(400);
+    });
+
     it('returns 401 when no Authorization header', async () => {
       const res = await appRequest('POST', '/api/llm-keys', {
         body: { provider: 'anthropic', key: 'sk-ant-test' },

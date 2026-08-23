@@ -213,13 +213,30 @@ export async function getModels(
   // PRICING[provider], which has no 'ollama' key, and the SDK branch below
   // has exactly two live-list functions. Guarding here (a) keeps this file
   // typechecking now that LlmProvider is widened without silently narrowing
-  // PRICING's own type, and (b) matters more than the type error: without
-  // it, provider === 'anthropic' ? ... : listOpenAIModelIds(apiKey) would
-  // have SILENTLY called the OpenAI SDK for an Ollama request. This function
-  // narrows to 'anthropic' | 'openai' for the rest of its body once this
-  // throws. Task 4 replaces this with Ollama's own /api/tags listing.
+  // PRICING's own type — this function narrows to 'anthropic' | 'openai' for
+  // the rest of its body once this branch returns — and (b) matters more
+  // than the type error on its own: without it,
+  // provider === 'anthropic' ? ... : listOpenAIModelIds(apiKey) would have
+  // SILENTLY called the OpenAI SDK for an Ollama request.
+  //
+  // Fix round 1 (#48 review): this branch RETURNS, it does not throw. This
+  // module's own D-02 contract (see file JSDoc) is "always returns something
+  // usable; never blocks the dropdown", and llm-models.ts's call site relies
+  // on that literally ("Per D-02, getModels NEVER throws ... we can
+  // therefore return its result directly without try/catch"). A throwing
+  // guard here would make that comment a lie for the next reader, even
+  // though today no route can reach this branch with provider:'ollama' (both
+  // llm-keys.ts and llm-models.ts now validate against KEY_PROVIDER_NAMES,
+  // which excludes it). The empty-models/source:'live' shape below is
+  // exactly what Task 4's real Ollama implementation returns when no base
+  // URL is configured — so this is the eventual behavior stated early, not a
+  // stub someone has to remember to delete.
   if (provider === 'ollama') {
-    throw new Error("getModels: 'ollama' catalog not yet implemented (Task 4)");
+    return {
+      models: [],
+      source: 'live',
+      fetchedAt: new Date().toISOString(),
+    };
   }
 
   const key = cacheKey(provider, keyId);

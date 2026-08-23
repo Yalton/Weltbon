@@ -22,10 +22,24 @@ const FILES = [
   '../../web/src/hooks/useUniverse.ts',
 ];
 
+// Fix round 1 (#48 review): llm-key.ts now legitimately declares
+// KEY_PROVIDER_NAMES = ['anthropic', 'openai'] as const — the BYOK-key-only
+// constant used by llm-keys.ts / llm-models.ts, which never gets an
+// llm_api_keys row for 'ollama' and so must NOT advertise it. That is a
+// deliberate, documented two-provider set, not a missed touchpoint, so the
+// array-pattern check below must not flag it. Every other candidate line in
+// the file (LlmProvider, PROVIDER_NAMES) is still checked at full strength —
+// only this one named declaration is excluded, and only from THIS file.
+const KEY_PROVIDER_NAMES_DECL = /export const KEY_PROVIDER_NAMES = \[[^\]]*\] as const;/;
+
 describe('provider union is widened everywhere it is re-declared', () => {
   for (const rel of FILES) {
     it(`${rel} does not enumerate only anthropic and openai`, () => {
-      const src = readFileSync(resolve(here, rel), 'utf8');
+      const rawSrc = readFileSync(resolve(here, rel), 'utf8');
+      const src =
+        rel === '../src/services/llm-key.ts'
+          ? rawSrc.replace(KEY_PROVIDER_NAMES_DECL, '/* KEY_PROVIDER_NAMES: allow-listed above */')
+          : rawSrc;
       const twoOnly = [
         // Bug found while running Step 2 (task-2 brief): the brief's original
         // lookahead was `(?!\s*\|)`, which also blocks a match when the two

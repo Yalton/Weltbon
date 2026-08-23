@@ -45,12 +45,34 @@ export type EncryptedKey = EncryptedSecret;
 // Issue #48: 'ollama' added. Ollama is endpoint-based (no BYOK key row in
 // llm_api_keys — Task 1's llm_connections carries its base URL instead), but
 // the type lives here regardless: every route that switches on provider name
-// (auditProvider validation, llm-keys, llm-models, audit estimate) must see
-// 'ollama' as a valid value or it 400s before the provider layer ever runs.
+// (auditProvider validation, audit estimate) must see 'ollama' as a valid
+// value or it 400s before the provider layer ever runs.
 export type LlmProvider = 'anthropic' | 'openai' | 'ollama';
 
-/** Every provider name, for Zod enums and iteration. Widen this, not each copy. */
+/**
+ * Every provider name — use where the meaning genuinely is "any LLM
+ * provider" (e.g. universes.auditProvider, the audit-estimate query — a
+ * universe's audit config can legitimately name Ollama once Task 4 lands).
+ * Widen this, not each copy.
+ */
 export const PROVIDER_NAMES = ['anthropic', 'openai', 'ollama'] as const;
+
+/**
+ * Providers that store a row in `llm_api_keys` — i.e. everything BYOK-key
+ * routes (llm-keys.ts CRUD, llm-models.ts's live catalog) actually operate
+ * on. Deliberately narrower than PROVIDER_NAMES: Ollama is endpoint-based
+ * (Task 1's llm_connections, keyed on a base URL) and NEVER gets an
+ * llm_api_keys row — `do not modify llm_api_keys` is a standing constraint,
+ * not a TODO. Using PROVIDER_NAMES on those two routes let
+ * `POST /api/llm-keys {provider:'ollama'}` pass Zod validation and reach
+ * `getProvider('ollama').validate(...)`, which throws a plain (non-
+ * LLMProviderError) Error that route's catch doesn't handle — an
+ * authenticated client could trigger a bare 500 with a stack trace instead
+ * of a clean 4xx, and the OpenAPI schema advertised a provider value the
+ * route could never actually accept. If this constant is ever "simplified"
+ * back to `= PROVIDER_NAMES`, that whole class of bug returns.
+ */
+export const KEY_PROVIDER_NAMES = ['anthropic', 'openai'] as const;
 
 // ---------------------------------------------------------------------------
 // encryptKey
