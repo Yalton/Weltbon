@@ -100,6 +100,7 @@ import {
   type LLMProvider,
   type ModelListing,
   type NormalizedUsage,
+  type ProviderCredential,
   type RunAuditOpts,
   type RunAuditResult,
 } from './interface.js';
@@ -428,12 +429,19 @@ function normalizeUsage(usage: Usage): NormalizedUsage {
  */
 export class AnthropicProvider implements LLMProvider {
   /**
-   * Verify the plaintext key with one zero-billed `messages.countTokens` call.
-   * Throws `LLMProviderError` on any SDK exception (variant per
-   * `mapAnthropicError`). Returns `void` on success.
+   * Verify the key with one zero-billed `messages.countTokens` call. Throws
+   * `LLMProviderError` on any SDK exception (variant per `mapAnthropicError`)
+   * or when `credential.apiKey` is absent (Anthropic is key-based — #48
+   * `resolveCredential` never hands this provider a `baseUrl`-only
+   * credential, but the check keeps the method honest on its own). Returns
+   * `void` on success.
    */
-  async validate(plaintext: string): Promise<void> {
-    const client = new Anthropic({ apiKey: plaintext });
+  async validate(credential: ProviderCredential): Promise<void> {
+    const apiKey = credential.apiKey;
+    if (apiKey === undefined) {
+      throw new LLMProviderError(LLMError.InvalidApiKey, 'no api key supplied');
+    }
+    const client = new Anthropic({ apiKey });
     try {
       await client.messages.countTokens({
         model: defaultModel,
@@ -461,12 +469,16 @@ export class AnthropicProvider implements LLMProvider {
    * MessageParam union ('user' | 'assistant' | 'tool'), so no cast is needed.
    */
   async estimate(opts: {
-    apiKey: string;
+    credential: ProviderCredential;
     messages: RunAuditOpts['messages'];
     model?: string;
     system?: string;
   }): Promise<number> {
-    const client = new Anthropic({ apiKey: opts.apiKey });
+    const apiKey = opts.credential.apiKey;
+    if (apiKey === undefined) {
+      throw new LLMProviderError(LLMError.InvalidApiKey, 'no api key supplied');
+    }
+    const client = new Anthropic({ apiKey });
 
     // Strip any leading role:'system' entry from opts.messages so the messages[]
     // array passed to countTokens never contains system-role entries.
@@ -528,6 +540,10 @@ export class AnthropicProvider implements LLMProvider {
    * NEVER executes emit_findings locally — it's a wire-only construct.
    */
   async runAudit(opts: RunAuditOpts): Promise<RunAuditResult> {
+    const apiKey = opts.credential.apiKey;
+    if (apiKey === undefined) {
+      throw new LLMProviderError(LLMError.InvalidApiKey, 'no api key supplied');
+    }
     const model = opts.model ?? defaultModel;
     const pricing = (PRICING.anthropic as Record<string, AnthropicModelPricing>)[model];
     // Phase 27 D-05/D-06: unpriced models are now first-class. The engine writes
@@ -572,7 +588,7 @@ export class AnthropicProvider implements LLMProvider {
     // no-op'd by Anthropic.
     let promptTokens: number;
     try {
-      const countClient = new Anthropic({ apiKey: opts.apiKey });
+      const countClient = new Anthropic({ apiKey });
       const countRes = await countClient.messages.countTokens({
         model,
         messages: anthropicMessages,
@@ -597,7 +613,7 @@ export class AnthropicProvider implements LLMProvider {
       systemParam = undefined;
     }
 
-    const client = new Anthropic({ apiKey: opts.apiKey });
+    const client = new Anthropic({ apiKey });
     let response;
     try {
       const createParams: MessageCreateParams = {

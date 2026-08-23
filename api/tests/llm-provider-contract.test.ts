@@ -379,12 +379,12 @@ describe('LLMProvider contract (PROVIDER-04 + PROVIDER-01)', () => {
     const { getProvider } = await import('../src/providers/llm/index.js');
 
     const anthropicResult = await getProvider('anthropic').runAudit({
-      apiKey: 'a',
+      credential: { apiKey: 'a' },
       messages: SHARED_MESSAGES,
       model: 'claude-haiku-4-5-20251001',
     });
     const openaiResult = await getProvider('openai').runAudit({
-      apiKey: 'o',
+      credential: { apiKey: 'o' },
       messages: SHARED_MESSAGES,
       model: 'gpt-5-mini',
     });
@@ -418,12 +418,12 @@ describe('LLMProvider contract (PROVIDER-04 + PROVIDER-01)', () => {
     const { getProvider } = await import('../src/providers/llm/index.js');
 
     const anthropicResult = await getProvider('anthropic').runAudit({
-      apiKey: 'a',
+      credential: { apiKey: 'a' },
       messages: SHARED_MESSAGES,
       model: 'claude-haiku-4-5-20251001',
     });
     const openaiResult = await getProvider('openai').runAudit({
-      apiKey: 'o',
+      credential: { apiKey: 'o' },
       messages: SHARED_MESSAGES,
       model: 'gpt-5-mini',
     });
@@ -456,12 +456,12 @@ describe('LLMProvider contract (PROVIDER-04 + PROVIDER-01)', () => {
     const { getProvider } = await import('../src/providers/llm/index.js');
 
     const anthropicResult = await getProvider('anthropic').runAudit({
-      apiKey: 'a',
+      credential: { apiKey: 'a' },
       messages: SHARED_MESSAGES,
       model: 'claude-haiku-4-5-20251001',
     });
     const openaiResult = await getProvider('openai').runAudit({
-      apiKey: 'o',
+      credential: { apiKey: 'o' },
       messages: SHARED_MESSAGES,
       model: 'gpt-5-mini',
     });
@@ -476,12 +476,12 @@ describe('LLMProvider contract (PROVIDER-04 + PROVIDER-01)', () => {
     const { getProvider } = await import('../src/providers/llm/index.js');
 
     const anthropicResult = await getProvider('anthropic').runAudit({
-      apiKey: 'a',
+      credential: { apiKey: 'a' },
       messages: SHARED_MESSAGES,
       model: 'claude-haiku-4-5-20251001',
     });
     const openaiResult = await getProvider('openai').runAudit({
-      apiKey: 'o',
+      credential: { apiKey: 'o' },
       messages: SHARED_MESSAGES,
       model: 'gpt-5-mini',
     });
@@ -505,7 +505,7 @@ describe('LLMProvider contract (PROVIDER-04 + PROVIDER-01)', () => {
     // result has the same content. The D-02 invariant is a per-suggestion
     // property — same for both providers.
     const result = await getProvider('anthropic').runAudit({
-      apiKey: 'a',
+      credential: { apiKey: 'a' },
       messages: SHARED_MESSAGES,
       model: 'claude-haiku-4-5-20251001',
     });
@@ -544,8 +544,8 @@ describe('LLMProvider contract (PROVIDER-04 + PROVIDER-01)', () => {
 
   it('validate() resolves for both providers when the SDK ping resolves', async () => {
     const { getProvider } = await import('../src/providers/llm/index.js');
-    await expect(getProvider('anthropic').validate('any-key')).resolves.toBeUndefined();
-    await expect(getProvider('openai').validate('any-key')).resolves.toBeUndefined();
+    await expect(getProvider('anthropic').validate({ apiKey: 'any-key' })).resolves.toBeUndefined();
+    await expect(getProvider('openai').validate({ apiKey: 'any-key' })).resolves.toBeUndefined();
   });
 
   // ---- 8. listModels() shape ------------------------------------------
@@ -658,7 +658,7 @@ describe('engine-shape fixtures (D-11 — would have caught commit 23bb99f)', ()
     // production HTTP 400. The runAudit return must surface the final-turn
     // emit_findings tool_use.
     const result = await getProvider('anthropic').runAudit({
-      apiKey: 'a',
+      credential: { apiKey: 'a' },
       messages: engineMessages,
       model: 'claude-haiku-4-5-20251001',
     });
@@ -721,7 +721,7 @@ describe('engine-shape fixtures (D-11 — would have caught commit 23bb99f)', ()
     ];
 
     const result = await getProvider('openai').runAudit({
-      apiKey: 'o',
+      credential: { apiKey: 'o' },
       messages: engineMessages,
       model: 'gpt-5-mini',
     });
@@ -787,12 +787,12 @@ describe('emit_findings round-trip (D-11)', () => {
 
     const { getProvider } = await import('../src/providers/llm/index.js');
     const anthropicResult = await getProvider('anthropic').runAudit({
-      apiKey: 'a',
+      credential: { apiKey: 'a' },
       messages: SHARED_MESSAGES,
       model: 'claude-haiku-4-5-20251001',
     });
     const openaiResult = await getProvider('openai').runAudit({
-      apiKey: 'o',
+      credential: { apiKey: 'o' },
       messages: SHARED_MESSAGES,
       model: 'gpt-5-mini',
     });
@@ -881,13 +881,13 @@ describe('emit_findings round-trip (D-11)', () => {
 
     const { getProvider } = await import('../src/providers/llm/index.js');
     await getProvider('anthropic').runAudit({
-      apiKey: 'a',
+      credential: { apiKey: 'a' },
       messages: SHARED_MESSAGES,
       model: 'claude-haiku-4-5-20251001',
       tools: engineTools,
     });
     await getProvider('openai').runAudit({
-      apiKey: 'o',
+      credential: { apiKey: 'o' },
       messages: SHARED_MESSAGES,
       model: 'gpt-5-mini',
       tools: engineTools,
@@ -987,12 +987,12 @@ describe('emit_findings round-trip (D-11)', () => {
 
     const { getProvider } = await import('../src/providers/llm/index.js');
     const anthropicResult = await getProvider('anthropic').runAudit({
-      apiKey: 'a',
+      credential: { apiKey: 'a' },
       messages: SHARED_MESSAGES,
       model: 'claude-haiku-4-5-20251001',
     });
     const openaiResult = await getProvider('openai').runAudit({
-      apiKey: 'o',
+      credential: { apiKey: 'o' },
       messages: SHARED_MESSAGES,
       model: 'gpt-5-mini',
     });

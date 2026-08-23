@@ -58,6 +58,8 @@ const DB_GATED_TESTS = [
   'tests/links.test.ts',
   // Issue #48 — llm_connections (endpoint-based providers, e.g. Ollama).
   'tests/llm-connection.test.ts',
+  // Issue #48 Task 3 — resolveCredential (key table + connections table resolver).
+  'tests/llm-credential.test.ts',
   'tests/llm-keys-total-spent.test.ts',
   'tests/llm-keys.test.ts',
   'tests/llm-models-cache.test.ts',

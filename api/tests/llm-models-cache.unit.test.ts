@@ -100,8 +100,8 @@ describe('model-catalog cache (Phase 27 D-01/D-02/D-03 PROV-FOLLOWUP-01)', () =>
     );
     _resetModelCacheForTests();
 
-    const r1 = await getModels('anthropic', 'key-abc', 'sk-ant-test');
-    const r2 = await getModels('anthropic', 'key-abc', 'sk-ant-test');
+    const r1 = await getModels('anthropic', 'key-abc', { apiKey: 'sk-ant-test' });
+    const r2 = await getModels('anthropic', 'key-abc', { apiKey: 'sk-ant-test' });
 
     expect(mockAnthropicList).toHaveBeenCalledTimes(1);
     expect(r1.source).toBe('live');
@@ -123,13 +123,13 @@ describe('model-catalog cache (Phase 27 D-01/D-02/D-03 PROV-FOLLOWUP-01)', () =>
     );
     _resetModelCacheForTests();
 
-    await getModels('anthropic', 'key-ttl', 'sk-ant-test');
+    await getModels('anthropic', 'key-ttl', { apiKey: 'sk-ant-test' });
     expect(mockAnthropicList).toHaveBeenCalledTimes(1);
 
     // Advance 31 minutes — past the 30-min TTL.
     vi.advanceTimersByTime(31 * 60 * 1000);
 
-    await getModels('anthropic', 'key-ttl', 'sk-ant-test');
+    await getModels('anthropic', 'key-ttl', { apiKey: 'sk-ant-test' });
     expect(mockAnthropicList).toHaveBeenCalledTimes(2);
   });
 
@@ -146,8 +146,8 @@ describe('model-catalog cache (Phase 27 D-01/D-02/D-03 PROV-FOLLOWUP-01)', () =>
     );
     _resetModelCacheForTests();
 
-    await getModels('anthropic', 'key-A', 'sk-ant-A');
-    await getModels('anthropic', 'key-B', 'sk-ant-B');
+    await getModels('anthropic', 'key-A', { apiKey: 'sk-ant-A' });
+    await getModels('anthropic', 'key-B', { apiKey: 'sk-ant-B' });
 
     expect(mockAnthropicList).toHaveBeenCalledTimes(2);
     const entries = _peekModelCacheForTests();
@@ -169,7 +169,7 @@ describe('model-catalog cache (Phase 27 D-01/D-02/D-03 PROV-FOLLOWUP-01)', () =>
     );
     _resetModelCacheForTests();
 
-    const fresh = await getModels('anthropic', 'key-stale', 'sk-ant-test');
+    const fresh = await getModels('anthropic', 'key-stale', { apiKey: 'sk-ant-test' });
     expect(fresh.source).toBe('live');
 
     // Now bust the TTL AND make the next SDK call throw.
@@ -181,7 +181,7 @@ describe('model-catalog cache (Phase 27 D-01/D-02/D-03 PROV-FOLLOWUP-01)', () =>
     // console.error is emitted on the error path — silence it for the test.
     const errSpy = vi.spyOn(console, 'error').mockImplementation(() => {});
 
-    const stale = await getModels('anthropic', 'key-stale', 'sk-ant-test');
+    const stale = await getModels('anthropic', 'key-stale', { apiKey: 'sk-ant-test' });
     expect(stale.source).toBe('cache_stale');
     expect(stale.models).toEqual(fresh.models);
     expect(errSpy).toHaveBeenCalled();
@@ -210,7 +210,7 @@ describe('model-catalog cache (Phase 27 D-01/D-02/D-03 PROV-FOLLOWUP-01)', () =>
     const { PRICING } = await import('../src/providers/llm/pricing.js');
     _resetModelCacheForTests();
 
-    const result = await getModels('openai', 'key-no-cache', 'sk-oai-test');
+    const result = await getModels('openai', 'key-no-cache', { apiKey: 'sk-oai-test' });
 
     expect(result.source).toBe('pricing_fallback');
     const ids = result.models.map((m) => m.id).sort();
@@ -240,7 +240,7 @@ describe('model-catalog cache (Phase 27 D-01/D-02/D-03 PROV-FOLLOWUP-01)', () =>
     );
     _resetModelCacheForTests();
 
-    const result = await getModels('anthropic', 'key-unpriced', 'sk-ant-test');
+    const result = await getModels('anthropic', 'key-unpriced', { apiKey: 'sk-ant-test' });
     expect(result.source).toBe('live');
 
     const future = result.models.find((m) => m.id === 'claude-future-2030-snapshot');
@@ -269,7 +269,7 @@ describe('model-catalog cache (Phase 27 D-01/D-02/D-03 PROV-FOLLOWUP-01)', () =>
     _resetModelCacheForTests();
 
     const SECRET = 'sk-ant-LEAK-canary-99';
-    await getModels('anthropic', 'key-secret', SECRET);
+    await getModels('anthropic', 'key-secret', { apiKey: SECRET });
 
     const entries = _peekModelCacheForTests();
     // The Map should have exactly one entry; assert SECRET appears nowhere
@@ -299,7 +299,7 @@ describe('model-catalog cache (Phase 27 D-01/D-02/D-03 PROV-FOLLOWUP-01)', () =>
 
     // If this ever throws, await rejects and the test fails with that
     // rejection — no need for an explicit try/catch to prove "never throws".
-    const result = await getModels('ollama', 'key-ollama', 'unused-for-ollama');
+    const result = await getModels('ollama', 'key-ollama', { apiKey: 'unused-for-ollama' });
 
     expect(result).toEqual({
       models: [],

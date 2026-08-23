@@ -197,7 +197,11 @@ export async function estimateAudit(input: EstimateInput): Promise<AuditEstimate
   // the callers: both discard the error object and emit only generic copy — the
   // provider's message and stack never reach the client or a log sink.
   const basePromptTokens = await getProvider(input.provider).estimate({
-    apiKey: input.apiKey,
+    // #48 Task 3: LLMProvider.estimate() now takes a ProviderCredential,
+    // not a bare apiKey — this module's own EstimateInput.apiKey field is
+    // untouched (it's the estimator's public contract, unrelated to the
+    // provider-abstraction refactor), so we wrap it at the call boundary.
+    credential: { apiKey: input.apiKey },
     messages: [
       // T-26-02-01: apiKey is the only sensitive value in this call — it
       // travels into the provider's tokenizer surface, never into a log.

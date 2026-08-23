@@ -206,8 +206,10 @@ export const llmModelsRoutes = new OpenAPIHono<AppEnv>().openapi(
     // provider SDK failure it falls back to stale cache or PRICING. We can
     // therefore return its result directly without try/catch. apiKey is a
     // local `const` and is never logged, never returned, never stored in any
-    // cache state (T-27-03-02 mitigation).
-    const result = await getModels(provider as LlmProvider, keyId, apiKey);
+    // cache state (T-27-03-02 mitigation). #48 Task 3: getModels now takes a
+    // ProviderCredential — this route only ever serves KEY_PROVIDER_NAMES
+    // (see providerEnum above), so `{ apiKey }` is always the right shape.
+    const result = await getModels(provider as LlmProvider, keyId, { apiKey });
     return c.json(result, 200);
   },
 );

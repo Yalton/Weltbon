@@ -407,7 +407,7 @@ export const llmKeyRoutes = new OpenAPIHono<AppEnv>()
     // Phase 23 D-03: routed through getProvider(provider).validate() — InvalidApiKey → 422,
     // every other LLMError variant → 503 (preserves Phase 22 HTTP behavior).
     try {
-      await getProvider(provider).validate(plaintext);
+      await getProvider(provider).validate({ apiKey: plaintext });
     } catch (err) {
       if (err instanceof LLMProviderError) {
         if (err.variant === LLMError.InvalidApiKey) {
@@ -551,7 +551,7 @@ export const llmKeyRoutes = new OpenAPIHono<AppEnv>()
     // Validate new plaintext against the EXISTING row's provider (not from request).
     // Phase 23 D-03: routed through getProvider(provider).validate().
     try {
-      await getProvider(provider).validate(plaintext);
+      await getProvider(provider).validate({ apiKey: plaintext });
     } catch (err) {
       if (err instanceof LLMProviderError) {
         if (err.variant === LLMError.InvalidApiKey) {
@@ -640,7 +640,7 @@ export const llmKeyRoutes = new OpenAPIHono<AppEnv>()
 
     // Validate at provider. Phase 23 D-03: routed through getProvider(provider).validate().
     try {
-      await getProvider(provider).validate(plaintext);
+      await getProvider(provider).validate({ apiKey: plaintext });
     } catch (err) {
       if (err instanceof LLMProviderError) {
         if (err.variant === LLMError.InvalidApiKey) {

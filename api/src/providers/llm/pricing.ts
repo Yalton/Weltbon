@@ -4,7 +4,7 @@
  * PRICING is the cost lookup; live `models.list()` drives the catalog
  * (Phase 27 D-01). `pricing(model)` returning `undefined` is an expected
  * branch (unpriced new release), NOT a contract violation. The catalog
- * surface that consumes the live API is `getModels(provider, keyId, apiKey)`
+ * surface that consumes the live API is `getModels(provider, keyId, credential)`
  * exported from `./index.js` (Phase 27 D-01..D-04, see `./model-catalog.js`).
  *
  * Three invariants:

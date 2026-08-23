@@ -117,6 +117,7 @@ import {
   type LLMProvider,
   type ModelListing,
   type NormalizedUsage,
+  type ProviderCredential,
   type RunAuditOpts,
   type RunAuditResult,
 } from './interface.js';
@@ -335,13 +336,17 @@ function normalizeUsage(usage: {
  */
 export class OpenAIProvider implements LLMProvider {
   /**
-   * Verify the plaintext key with one cheap `models.list` call (SDK
-   * equivalent of Phase 22's GET /v1/models cheap auth ping). Throws
-   * `LLMProviderError` on any SDK exception (variant per `mapOpenAIError`).
-   * Returns `void` on success.
+   * Verify the key with one cheap `models.list` call (SDK equivalent of
+   * Phase 22's GET /v1/models cheap auth ping). Throws `LLMProviderError` on
+   * any SDK exception (variant per `mapOpenAIError`) or when
+   * `credential.apiKey` is absent. Returns `void` on success.
    */
-  async validate(plaintext: string): Promise<void> {
-    const client = new OpenAI({ apiKey: plaintext });
+  async validate(credential: ProviderCredential): Promise<void> {
+    const apiKey = credential.apiKey;
+    if (apiKey === undefined) {
+      throw new LLMProviderError(LLMError.InvalidApiKey, 'no api key supplied');
+    }
+    const client = new OpenAI({ apiKey });
     try {
       await client.models.list();
     } catch (err) {
@@ -354,23 +359,24 @@ export class OpenAIProvider implements LLMProvider {
    * Returns an integer estimate of the input token count for the given
    * messages.
    *
-   * NOTE: `opts.apiKey` is accepted by the interface but UNUSED here — the
-   * estimation is fully local with zero network I/O (PROVIDER-07). We still
-   * accept the argument to satisfy the `LLMProvider` interface signature so
-   * callers can pass the same opts they pass to `runAudit`.
+   * NOTE: `opts.credential` is accepted by the interface but UNUSED here —
+   * the estimation is fully local with zero network I/O (PROVIDER-07). We
+   * still accept the argument to satisfy the `LLMProvider` interface
+   * signature so callers can pass the same opts they pass to `runAudit`.
    *
    * When `opts.system` is provided, it is counted as one additional message
    * with the standard per-message overhead (4 tokens for role + delimiters) —
    * keeps the local count comparable to what Anthropic's countTokens would
-   * return for the same logical input. The `apiKey` argument remains unused;
-   * the estimation stays fully local with zero network I/O (PROVIDER-07).
+   * return for the same logical input. The `credential` argument remains
+   * unused; the estimation stays fully local with zero network I/O
+   * (PROVIDER-07).
    *
    * Approach: prepend a synthetic { role: 'system', content: opts.system }
    * message to the array passed to estimateTokensLocal. This applies the same
    * 4-token per-message overhead automatically without modifying the helper.
    */
   async estimate(opts: {
-    apiKey: string;
+    credential: ProviderCredential;
     messages: RunAuditOpts['messages'];
     model?: string;
     system?: string;
@@ -419,6 +425,10 @@ export class OpenAIProvider implements LLMProvider {
    * All three checks happen BEFORE tool_calls are extracted.
    */
   async runAudit(opts: RunAuditOpts): Promise<RunAuditResult> {
+    const apiKey = opts.credential.apiKey;
+    if (apiKey === undefined) {
+      throw new LLMProviderError(LLMError.InvalidApiKey, 'no api key supplied');
+    }
     const model = opts.model ?? defaultModel;
     const pricing = (PRICING.openai as Record<string, OpenAIModelPricing>)[model];
     // Phase 27 D-05/D-06: unpriced models are now first-class. The engine writes
@@ -452,7 +462,7 @@ export class OpenAIProvider implements LLMProvider {
           })
         : undefined;
 
-    const client = new OpenAI({ apiKey: opts.apiKey });
+    const client = new OpenAI({ apiKey });
     let completion;
     try {
       completion = await client.chat.completions.create({

@@ -40,6 +40,27 @@
 import type { AuditSuggestion } from '../../types/audit-suggestion.js';
 
 // ---------------------------------------------------------------------------
+// ProviderCredential (#48 — Ollama as a local LLM provider, Task 3)
+// ---------------------------------------------------------------------------
+
+/**
+ * What a provider needs to talk to its backend.
+ *
+ * One object rather than an `apiKey` string plus an optional `baseUrl`: with two
+ * parameters, every call site has to know which combination is valid for which
+ * provider — two things that must agree forever. Validity is a provider concern
+ * and is checked in one place.
+ */
+export interface ProviderCredential {
+  /** Key-based providers (anthropic, openai). */
+  apiKey?: string;
+  /** Endpoint-based providers (ollama). */
+  baseUrl?: string;
+  /** Optional bearer for an endpoint behind an authenticating proxy. */
+  secret?: string;
+}
+
+// ---------------------------------------------------------------------------
 // Constants
 // ---------------------------------------------------------------------------
 
@@ -203,10 +224,12 @@ export interface ListingsResult {
 /**
  * Single-turn audit invocation inputs.
  *
- * RESEARCH Pitfall #6: `apiKey` is passed per-call, NEVER held as instance
- * state on the provider. Phase 24's engine resolves the user's encrypted key
- * (Phase 22 `getDecryptedKey`) once per audit run and passes the plaintext
- * here; providers MUST construct a fresh SDK client inside the method body.
+ * RESEARCH Pitfall #6: `credential` is passed per-call, NEVER held as instance
+ * state on the provider. Phase 24's engine resolves the user's credential
+ * (#48 `resolveCredential`, which wraps Phase 22 `getDecryptedKey` for
+ * key-based providers and Task 1's `getConnection` for endpoint-based ones)
+ * once per audit run and passes it here; providers MUST construct a fresh
+ * SDK / HTTP client inside the method body.
  *
  * `messages` uses a structural union acceptable to both SDKs; the concrete
  * provider re-shapes internally (Anthropic moves `system` out of the array,
@@ -217,7 +240,7 @@ export interface ListingsResult {
  * Phase 24's tool-shaping helper produces the right per-provider shape.
  */
 export interface RunAuditOpts {
-  apiKey: string;
+  credential: ProviderCredential;
   messages: Array<{ role: 'system' | 'user' | 'assistant' | 'tool'; content: string }>;
   model?: string;
   tools?: unknown[];
@@ -255,8 +278,9 @@ export interface RunAuditResult {
  * The provider-abstraction surface. Five methods, no more (PROVIDER-01).
  *
  * Implementations (Plans 23-03 / 23-04) construct provider SDK clients
- * INSIDE each method using the per-call `apiKey` argument — no constructor
- * arguments, no instance state holding plaintext (RESEARCH Pitfall #6).
+ * INSIDE each method using the per-call `credential` argument (#48
+ * `ProviderCredential`) — no constructor arguments, no instance state
+ * holding plaintext (RESEARCH Pitfall #6).
  *
  * The interface is deliberately small: Phase 24's engine reaches across the
  * boundary five times per audit (validate once at key save, estimate once
@@ -265,9 +289,9 @@ export interface RunAuditResult {
  */
 export interface LLMProvider {
   /**
-   * Verify the plaintext API key by issuing one cheap network call to the
-   * provider. Throws `LLMProviderError(InvalidApiKey, …)` if the provider
-   * unambiguously rejects the key, or `LLMProviderError(NetworkError, …)` /
+   * Verify the credential by issuing one cheap network call to the provider.
+   * Throws `LLMProviderError(InvalidApiKey, …)` if the provider unambiguously
+   * rejects the key, or `LLMProviderError(NetworkError, …)` /
    * `LLMProviderError(UnknownProviderError, …)` for transient or unclassified
    * failures. Returns `void` on success.
    *
@@ -275,7 +299,7 @@ export interface LLMProvider {
    * Route handlers (`api/src/routes/llm-keys.ts`) catch `LLMProviderError`
    * and map `variant === InvalidApiKey → 422`, everything else → `503`.
    */
-  validate(plaintext: string): Promise<void>;
+  validate(credential: ProviderCredential): Promise<void>;
 
   /**
    * Pre-call token estimate for the given messages. Implementations use free /
@@ -294,7 +318,7 @@ export interface LLMProvider {
    * (OpenAI) treat it as additive to the token count.
    */
   estimate(opts: {
-    apiKey: string;
+    credential: ProviderCredential;
     messages: RunAuditOpts['messages'];
     model?: string;
     system?: string;
@@ -318,7 +342,7 @@ export interface LLMProvider {
    * its original semantics (PRICING-derived, offline) and continues to power
    * the offline PRICING-fallback path inside `model-catalog.ts` (D-02) and the
    * `/settings/llm` PricingTable. The new async catalog surface is
-   * `getModels(provider, keyId, apiKey): Promise<ListingsResult>` exposed from
+   * `getModels(provider, keyId, credential): Promise<ListingsResult>` exposed from
    * `./index.js` — that is what the universe-settings model dropdown consumes.
    *
    * `pricing(model)` returning `undefined` is now a documented expected branch

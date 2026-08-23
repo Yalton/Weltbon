@@ -161,7 +161,7 @@ describe('AnthropicProvider (PROVIDER-02 + PROVIDER-05 + PROVIDER-07)', () => {
   it('validate succeeds when countTokens resolves', async () => {
     mockCountTokens.mockResolvedValueOnce({ input_tokens: 0 });
     const { getProvider } = await import('../src/providers/llm/index.js');
-    await getProvider('anthropic').validate('sk-ant-test');
+    await getProvider('anthropic').validate({ apiKey: 'sk-ant-test' });
     expect(mockCountTokens).toHaveBeenCalledTimes(1);
     expect(mockCountTokens).toHaveBeenCalledWith({
       model: 'claude-haiku-4-5-20251001',
@@ -175,7 +175,7 @@ describe('AnthropicProvider (PROVIDER-02 + PROVIDER-05 + PROVIDER-07)', () => {
       '../src/providers/llm/index.js'
     );
     try {
-      await getProvider('anthropic').validate('bad');
+      await getProvider('anthropic').validate({ apiKey: 'bad' });
       expect.fail('should have thrown');
     } catch (err) {
       expect(err).toBeInstanceOf(LLMProviderError);
@@ -189,7 +189,7 @@ describe('AnthropicProvider (PROVIDER-02 + PROVIDER-05 + PROVIDER-07)', () => {
       '../src/providers/llm/index.js'
     );
     try {
-      await getProvider('anthropic').validate('bad');
+      await getProvider('anthropic').validate({ apiKey: 'bad' });
       expect.fail('should have thrown');
     } catch (err) {
       expect(err).toBeInstanceOf(LLMProviderError);
@@ -203,7 +203,7 @@ describe('AnthropicProvider (PROVIDER-02 + PROVIDER-05 + PROVIDER-07)', () => {
       '../src/providers/llm/index.js'
     );
     try {
-      await getProvider('anthropic').validate('any');
+      await getProvider('anthropic').validate({ apiKey: 'any' });
       expect.fail('should have thrown');
     } catch (err) {
       expect(err).toBeInstanceOf(LLMProviderError);
@@ -217,7 +217,7 @@ describe('AnthropicProvider (PROVIDER-02 + PROVIDER-05 + PROVIDER-07)', () => {
       '../src/providers/llm/index.js'
     );
     try {
-      await getProvider('anthropic').validate('any');
+      await getProvider('anthropic').validate({ apiKey: 'any' });
       expect.fail('should have thrown');
     } catch (err) {
       expect(err).toBeInstanceOf(LLMProviderError);
@@ -231,7 +231,7 @@ describe('AnthropicProvider (PROVIDER-02 + PROVIDER-05 + PROVIDER-07)', () => {
       '../src/providers/llm/index.js'
     );
     try {
-      await getProvider('anthropic').validate('any');
+      await getProvider('anthropic').validate({ apiKey: 'any' });
       expect.fail('should have thrown');
     } catch (err) {
       expect(err).toBeInstanceOf(LLMProviderError);
@@ -245,7 +245,7 @@ describe('AnthropicProvider (PROVIDER-02 + PROVIDER-05 + PROVIDER-07)', () => {
       '../src/providers/llm/index.js'
     );
     try {
-      await getProvider('anthropic').validate('any');
+      await getProvider('anthropic').validate({ apiKey: 'any' });
       expect.fail('should have thrown');
     } catch (err) {
       expect(err).toBeInstanceOf(LLMProviderError);
@@ -259,7 +259,7 @@ describe('AnthropicProvider (PROVIDER-02 + PROVIDER-05 + PROVIDER-07)', () => {
       '../src/providers/llm/index.js'
     );
     try {
-      await getProvider('anthropic').validate('any');
+      await getProvider('anthropic').validate({ apiKey: 'any' });
       expect.fail('should have thrown');
     } catch (err) {
       expect(err).toBeInstanceOf(LLMProviderError);
@@ -275,7 +275,7 @@ describe('AnthropicProvider (PROVIDER-02 + PROVIDER-05 + PROVIDER-07)', () => {
       '../src/providers/llm/index.js'
     );
     try {
-      await getProvider('anthropic').validate('any');
+      await getProvider('anthropic').validate({ apiKey: 'any' });
       expect.fail('should have thrown');
     } catch (err) {
       expect(err).toBeInstanceOf(LLMProviderError);
@@ -293,7 +293,7 @@ describe('AnthropicProvider (PROVIDER-02 + PROVIDER-05 + PROVIDER-07)', () => {
       '../src/providers/llm/index.js'
     );
     try {
-      await getProvider('anthropic').validate('any');
+      await getProvider('anthropic').validate({ apiKey: 'any' });
       expect.fail('should have thrown');
     } catch (err) {
       expect(err).toBeInstanceOf(LLMProviderError);
@@ -307,7 +307,7 @@ describe('AnthropicProvider (PROVIDER-02 + PROVIDER-05 + PROVIDER-07)', () => {
       '../src/providers/llm/index.js'
     );
     try {
-      await getProvider('anthropic').validate('any');
+      await getProvider('anthropic').validate({ apiKey: 'any' });
       expect.fail('should have thrown');
     } catch (err) {
       expect(err).toBeInstanceOf(LLMProviderError);
@@ -325,7 +325,7 @@ describe('AnthropicProvider (PROVIDER-02 + PROVIDER-05 + PROVIDER-07)', () => {
     mockCountTokens.mockResolvedValueOnce({ input_tokens: 1234 });
     const { getProvider } = await import('../src/providers/llm/index.js');
     const result = await getProvider('anthropic').estimate({
-      apiKey: 'k',
+      credential: { apiKey: 'k' },
       messages: [{ role: 'user', content: 'hello world' }],
     });
     expect(result).toBe(1234);
@@ -335,7 +335,7 @@ describe('AnthropicProvider (PROVIDER-02 + PROVIDER-05 + PROVIDER-07)', () => {
     mockCountTokens.mockResolvedValueOnce({ input_tokens: 200 });
     const { getProvider } = await import('../src/providers/llm/index.js');
     const result = await getProvider('anthropic').estimate({
-      apiKey: 'k',
+      credential: { apiKey: 'k' },
       messages: [{ role: 'user', content: 'q' }],
       system: 'top-level system text',
     });
@@ -359,7 +359,7 @@ describe('AnthropicProvider (PROVIDER-02 + PROVIDER-05 + PROVIDER-07)', () => {
 
     const { getProvider } = await import('../src/providers/llm/index.js');
     const result = await getProvider('anthropic').runAudit({
-      apiKey: 'k',
+      credential: { apiKey: 'k' },
       messages: [{ role: 'user', content: 'find gaps' }],
       model: 'claude-haiku-4-5-20251001',
     });
@@ -384,7 +384,7 @@ describe('AnthropicProvider (PROVIDER-02 + PROVIDER-05 + PROVIDER-07)', () => {
 
     const { getProvider } = await import('../src/providers/llm/index.js');
     const result = await getProvider('anthropic').runAudit({
-      apiKey: 'k',
+      credential: { apiKey: 'k' },
       messages: [
         { role: 'system', content: 'SYSTEM_TEXT' },
         { role: 'user', content: 'q' },
@@ -410,7 +410,7 @@ describe('AnthropicProvider (PROVIDER-02 + PROVIDER-05 + PROVIDER-07)', () => {
 
     const { getProvider } = await import('../src/providers/llm/index.js');
     await getProvider('anthropic').runAudit({
-      apiKey: 'k',
+      credential: { apiKey: 'k' },
       messages: [
         { role: 'system', content: 'long system prompt content here ...' },
         { role: 'user', content: 'q' },
@@ -438,7 +438,7 @@ describe('AnthropicProvider (PROVIDER-02 + PROVIDER-05 + PROVIDER-07)', () => {
 
     const { getProvider } = await import('../src/providers/llm/index.js');
     const result = await getProvider('anthropic').runAudit({
-      apiKey: 'k',
+      credential: { apiKey: 'k' },
       messages: [
         { role: 'system', content: 'long system' },
         { role: 'user', content: 'q' },
@@ -468,7 +468,7 @@ describe('AnthropicProvider (PROVIDER-02 + PROVIDER-05 + PROVIDER-07)', () => {
 
     const { getProvider } = await import('../src/providers/llm/index.js');
     await getProvider('anthropic').runAudit({
-      apiKey: 'k',
+      credential: { apiKey: 'k' },
       messages: [
         { role: 'system', content: 'short system prompt' },
         { role: 'user', content: 'q' },
@@ -506,7 +506,7 @@ describe('AnthropicProvider (PROVIDER-02 + PROVIDER-05 + PROVIDER-07)', () => {
     );
     try {
       await getProvider('anthropic').runAudit({
-        apiKey: 'k',
+        credential: { apiKey: 'k' },
         messages: [{ role: 'user', content: 'q' }],
         model: 'claude-haiku-4-5-20251001',
       });
@@ -540,7 +540,7 @@ describe('AnthropicProvider (PROVIDER-02 + PROVIDER-05 + PROVIDER-07)', () => {
     );
     try {
       await getProvider('anthropic').runAudit({
-        apiKey: 'k',
+        credential: { apiKey: 'k' },
         messages: [{ role: 'user', content: 'q' }],
         model: 'claude-haiku-4-5-20251001',
       });
@@ -589,7 +589,7 @@ describe('AnthropicProvider (PROVIDER-02 + PROVIDER-05 + PROVIDER-07)', () => {
       },
     ];
     await getProvider('anthropic').runAudit({
-      apiKey: 'k',
+      credential: { apiKey: 'k' },
       messages: [{ role: 'user', content: 'find gaps' }],
       model: 'claude-haiku-4-5-20251001',
       tools: engineTools,
@@ -636,7 +636,7 @@ describe('AnthropicProvider (PROVIDER-02 + PROVIDER-05 + PROVIDER-07)', () => {
 
     const { getProvider } = await import('../src/providers/llm/index.js');
     const result = await getProvider('anthropic').runAudit({
-      apiKey: 'k',
+      credential: { apiKey: 'k' },
       messages: [{ role: 'user', content: 'q' }],
       model: 'claude-haiku-4-5-20251001',
     });

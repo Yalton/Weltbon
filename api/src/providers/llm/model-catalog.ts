@@ -60,6 +60,7 @@ import type {
   ListingsResult,
   ModelListing,
   ModelListingWithCoverage,
+  ProviderCredential,
 } from './interface.js';
 import { LLMError, LLMProviderError } from './interface.js';
 import { PRICING } from './pricing.js';
@@ -202,11 +203,19 @@ function pricingFallbackListing(provider: PricedProvider): ModelListingWithCover
  * The diagnostic stderr log on the error path is metadata-only (see T-24-04-09).
  * It uses the `LLMProviderError.variant` discriminant when the thrown error is
  * a typed provider error; otherwise reports 'unknown'.
+ *
+ * #48 Task 3: the third parameter is a `credential` object rather than a bare
+ * apiKey string — this function OWNS that signature (a later task's real
+ * Ollama branch will read `credential.baseUrl` here instead of an apiKey).
+ * Both SDK branches below still read `credential.apiKey`; the `provider ===
+ * 'ollama'` early-return a few lines into the body means neither branch ever
+ * executes with a credential that lacks one — see that guard's own comment
+ * for why the branch order matters.
  */
 export async function getModels(
   provider: LlmProvider,
   keyId: string,
-  apiKey: string,
+  credential: ProviderCredential,
 ): Promise<ListingsResult> {
   // Issue #48: this whole module is PRICING-reconciliation for the two BYOK
   // SDK providers (D-01..D-04 above) — `reconcileWithPricing` indexes
@@ -238,6 +247,15 @@ export async function getModels(
       fetchedAt: new Date().toISOString(),
     };
   }
+
+  // `resolveCredential` (the only production caller, via llm-models.ts) always
+  // hands anthropic/openai a `{ apiKey }` credential — but this function's own
+  // D-02 contract is "never throws", so an absent apiKey must degrade rather
+  // than assert. `?? ''` sends an SDK call the provider will reject with an
+  // auth error, which the existing try/catch below already routes to the
+  // stale-cache / PRICING-fallback path — the same resilience D-02 promises
+  // for every other SDK failure, with no separate branch to maintain.
+  const apiKey = credential.apiKey ?? '';
 
   const key = cacheKey(provider, keyId);
   const now = Date.now();
