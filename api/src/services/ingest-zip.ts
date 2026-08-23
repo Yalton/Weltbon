@@ -39,13 +39,12 @@ export type BatchLimit =
   | 'docx_count'
   | 'docx_entry_count'
   | 'docx_part_size'
-  | 'docx_total_uncompressed';
+  | 'docx_total_uncompressed'
+  | 'docx_batch_block_count';
 
 /**
- * Thrown when any cap in the `BatchLimit` union above is breached — the four
- * original D-15 batch caps plus #35's five .docx caps, nine in all. Read the
- * union, not this sentence: it is the authority, and a count written out in
- * prose here is a thing that goes stale the next time one is added.
+ * Thrown when any cap in the `BatchLimit` union above is breached. The union is
+ * the authority; keeping a numeric total in prose would go stale as caps evolve.
  *
  * The endpoint maps this to a 413 response with body
  *   `{ error: "Batch limit exceeded: <limit> (max <max>)" }`.

@@ -61,7 +61,10 @@ import {
   CommitSizeError,
 } from '../services/ingest-commit.js';
 import { convertDocx, DocxFormatError, type DocxConversion } from '../services/ingest-docx/index.js';
-import { DOCX_LIMITS } from '../services/ingest-docx/limits.js';
+import {
+  DOCX_LIMITS,
+  createDocxWorkBudget,
+} from '../services/ingest-docx/limits.js';
 import type { AuthVariables } from '../middleware/auth.js';
 
 type AppEnv = { Variables: AuthVariables };
@@ -93,17 +96,22 @@ export function docxToMarkdownPath(name: string): string {
   return name.replace(/\.docx$/i, '.md');
 }
 
+export interface MaterializedDocx {
+  uploadIndex: number;
+  path: string;
+  conversion: DocxConversion;
+}
+
 export interface MaterializeFilesResult {
   inputs: FileInput[];
-  docxConversions: Array<{ path: string; conversion: DocxConversion }>;
+  docxConversions: MaterializedDocx[];
 }
 
 /**
- * #35 (DOCX-10 fix round 1). Extracted out of the route handler so the
- * ordering fix below (index-assigned slots, compacted after `Promise.all`)
- * is directly unit-testable without a database: every DB read the route
- * makes (`requireUniverse`, existing entries/categories) happens before this
- * is ever called, so a caller here needs only a `File[]`.
+ * #35 (DOCX-10 fix round 1). Extracted out of the route handler so input and
+ * conversion ordering are directly unit-testable without a database: every DB
+ * read the route makes (`requireUniverse`, existing entries/categories) happens
+ * before this is ever called, so a caller here needs only a `File[]`.
  *
  * Throws `BatchLimitError` (→ 413) or `DocxFormatError` (→ 400); the route's
  * existing `catch` maps both — unchanged by this extraction.
@@ -126,77 +134,65 @@ export async function materializeFileParts(
     throw new BatchLimitError('docx_count', DOCX_LIMITS.docxCount);
   }
 
-  // #35 (DOCX-10, fix round 1): one slot per uploaded file part, index-
-  // matched to `filesArr`, so `docx.files`/warnings come back in UPLOAD
-  // order rather than in whichever order `Promise.all` below happens to
-  // finish converting — conversion completion order varies with file size
-  // (a small file can finish before a large one queued ahead of it) and is
-  // not something a caller can rely on. `push`ing inside the map would
-  // record completion order instead. Non-.docx parts and hidden .docx parts
-  // (skipped before conversion, see below) leave their slot `undefined`; the
-  // compaction after `Promise.all` recovers the in-order result once every
-  // part has settled.
-  const docxSlots: Array<{ path: string; conversion: DocxConversion } | undefined> =
-    new Array(filesArr.length).fill(undefined);
+  // #74: DOCX work is charged against one shared meter. Iterating in upload
+  // order makes both ownership of the final allowed unit and the file that
+  // reports exhaustion deterministic; it also stops reading later parts once
+  // the meter is exhausted.
+  const batchBudget = createDocxWorkBudget();
+  const inputs: FileInput[] = [];
+  const docxConversions: MaterializedDocx[] = [];
 
-  const inputs = await Promise.all(
-    filesArr.map(async (f, i) => {
-      if (isDocxFile(f.name)) {
-        // Skip-before-convert: a hidden .docx (dotfile or a path under a
-        // hidden directory) is always discarded by parseBatch's hidden-path
-        // filter (D-08a), which runs BEFORE its non-markdown filter — same
-        // as any hidden .md file. Converting it first would spend real
-        // XML-parsing CPU on attacker-supplied bytes that were never going
-        // to survive into the preview, and would leave
-        // summary.docx_files_converted counting a file that then
-        // contributes zero entries and zero warnings — a self-contradicting
-        // response. Left unrewritten (still .docx) and with no slot
-        // assigned, so it lands in hidden_paths_filtered, not
-        // non_markdown_files_skipped, which would misreport why it vanished.
-        if (isHiddenPath(f.name)) {
-          return { path: f.name, content: '' };
-        }
-        // T-11-09 shape: cap on File.size BEFORE arrayBuffer. A .docx has
-        // its own, larger cap because MAX_FILE_SIZE (1 MB) is sized for
-        // markdown, and a Word file is far heavier per word than the prose
-        // it holds.
-        if (f.size > DOCX_LIMITS.docxSize) {
-          throw new BatchLimitError('docx_size', DOCX_LIMITS.docxSize);
-        }
-        const conversion = await convertDocx(
-          Buffer.from(await f.arrayBuffer()),
-          { promoteHeadings: opts.promoteDocxHeadings },
-        );
-        // Index-assigned, not pushed — see the comment above `docxSlots`.
-        docxSlots[i] = { path: f.name, conversion };
-        // LOAD-BEARING, not cosmetic: isMarkdownFile() gates parseBatch, so
-        // a FileInput still named .docx here would be silently counted into
-        // non_markdown_files_skipped and the whole converted document would
-        // vanish from the preview with no error — the same failure mode as
-        // the .markdown bug fixed earlier on this branch (DOCX-13).
-        return { path: docxToMarkdownPath(f.name), content: conversion.markdown };
+  for (const [uploadIndex, file] of filesArr.entries()) {
+    if (isDocxFile(file.name)) {
+      // Skip-before-convert: a hidden .docx (dotfile or a path under a
+      // hidden directory) is always discarded by parseBatch's hidden-path
+      // filter (D-08a), which runs BEFORE its non-markdown filter — same
+      // as any hidden .md file. Converting it first would spend real
+      // XML-parsing CPU on attacker-supplied bytes that were never going
+      // to survive into the preview, and would leave
+      // summary.docx_files_converted counting a file that then
+      // contributes zero entries and zero warnings — a self-contradicting
+      // response. Left unrewritten (still .docx) and with no slot
+      // assigned, so it lands in hidden_paths_filtered, not
+      // non_markdown_files_skipped, which would misreport why it vanished.
+      if (isHiddenPath(file.name)) {
+        inputs.push({ path: file.name, content: '' });
+        continue;
       }
-      // T-11-02: per-file cap BEFORE arrayBuffer to keep peak memory bounded.
-      if (f.size > MAX_FILE_SIZE) {
-        throw new BatchLimitError('file_size', MAX_FILE_SIZE);
+      // T-11-09 shape: cap on File.size BEFORE arrayBuffer. A .docx has
+      // its own, larger cap because MAX_FILE_SIZE (1 MB) is sized for
+      // markdown, and a Word file is far heavier per word than the prose
+      // it holds.
+      if (file.size > DOCX_LIMITS.docxSize) {
+        throw new BatchLimitError('docx_size', DOCX_LIMITS.docxSize);
       }
-      const buf = Buffer.from(await f.arrayBuffer());
-      // The browser's <input type=file webkitdirectory> sets the relative
-      // path on `webkitRelativePath`; the standard File.name is the bare
-      // filename. Hono's parseBody hands us a File; we use .name and let
-      // operators upload via the JSON or multipart contract that suits them.
-      return { path: f.name, content: buf.toString('utf8') };
-    })
-  );
-
-  // Compact the index-matched slots into upload order. `docxSlots` is fully
-  // settled here — every branch above has either assigned its slot or left
-  // it `undefined` — so a plain `filter` recovers exactly the converted
-  // parts, in the order they were uploaded, regardless of which one
-  // finished converting first.
-  const docxConversions = docxSlots.filter(
-    (slot): slot is { path: string; conversion: DocxConversion } => slot !== undefined,
-  );
+      const conversion = await convertDocx(
+        Buffer.from(await file.arrayBuffer()),
+        { promoteHeadings: opts.promoteDocxHeadings, batchBudget },
+      );
+      docxConversions.push({ uploadIndex, path: file.name, conversion });
+      // LOAD-BEARING, not cosmetic: isMarkdownFile() gates parseBatch, so
+      // a FileInput still named .docx here would be silently counted into
+      // non_markdown_files_skipped and the whole converted document would
+      // vanish from the preview with no error — the same failure mode as
+      // the .markdown bug fixed earlier on this branch (DOCX-13).
+      inputs.push({
+        path: docxToMarkdownPath(file.name),
+        content: conversion.markdown,
+      });
+      continue;
+    }
+    // T-11-02: per-file cap BEFORE arrayBuffer to keep peak memory bounded.
+    if (file.size > MAX_FILE_SIZE) {
+      throw new BatchLimitError('file_size', MAX_FILE_SIZE);
+    }
+    const buf = Buffer.from(await file.arrayBuffer());
+    // The browser's <input type=file webkitdirectory> sets the relative
+    // path on `webkitRelativePath`; the standard File.name is the bare
+    // filename. Hono's parseBody hands us a File; we use .name and let
+    // operators upload via the JSON or multipart contract that suits them.
+    inputs.push({ path: file.name, content: buf.toString('utf8') });
+  }
 
   return { inputs, docxConversions };
 }
@@ -645,7 +641,7 @@ export const ingestRoutes = new OpenAPIHono<AppEnv>()
 
     // 4. Materialise FileInput[] for parseBatch, enforcing the D-15 caps.
     //    Each branch wraps in try/catch so BatchLimitError → 413.
-    let docxConversions: Array<{ path: string; conversion: DocxConversion }> = [];
+    let docxConversions: MaterializedDocx[] = [];
     let inputs: FileInput[];
     // #35 (DOCX-08 + 11). Counted, not converted: a .docx inside a .zip is
     // itself a zip, and opening one inside unpackZip would make it a

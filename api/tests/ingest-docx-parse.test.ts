@@ -10,7 +10,10 @@
 import { describe, it, expect } from 'vitest';
 import { parseDocumentXml } from '../src/services/ingest-docx/parse.js';
 import type { DocxRun } from '../src/services/ingest-docx/parse.js';
-import { DOCX_LIMITS } from '../src/services/ingest-docx/limits.js';
+import {
+  DOCX_LIMITS,
+  createDocxWorkBudget,
+} from '../src/services/ingest-docx/limits.js';
 import type { DocxLimits } from '../src/services/ingest-docx/limits.js';
 import { DocxFormatError } from '../src/services/ingest-docx/unpack.js';
 import { documentWith } from './helpers/docx-fixture.js';
@@ -18,6 +21,7 @@ import { documentWith } from './helpers/docx-fixture.js';
 const p = (xml: string, limits: DocxLimits = DOCX_LIMITS) => parseDocumentXml(documentWith(xml), limits);
 const blockCapMessage = (limit: number) =>
   `Not a valid .docx (docx_block_count max ${limit}; simplify or split the document)`;
+const docWithUnits = (units: number) => documentWith('<w:p/>'.repeat(units));
 
 describe('parseDocumentXml — entity expansion (T-35-02)', () => {
   it('rejects a DOCTYPE outright', () => {
@@ -72,6 +76,34 @@ describe('parseDocumentXml — resource caps (T-35-04)', () => {
 
   it('rejects malformed XML', () => {
     expect(() => parseDocumentXml('<w:document><w:body>', DOCX_LIMITS)).toThrow(DocxFormatError);
+  });
+
+  it('charges retained nodes cumulatively against one shared batch budget', () => {
+    const budget = createDocxWorkBudget(5);
+
+    parseDocumentXml(
+      docWithUnits(3),
+      { ...DOCX_LIMITS, docxBlockCount: 10 },
+      budget,
+    );
+
+    expect(budget.used).toBe(3);
+    expect(() => parseDocumentXml(
+      docWithUnits(3),
+      { ...DOCX_LIMITS, docxBlockCount: 10 },
+      budget,
+    )).toThrow('docx_batch_block_count (max 5)');
+  });
+
+  it('checks the per-file cap before charging the shared batch budget', () => {
+    const budget = createDocxWorkBudget(5);
+
+    expect(() => parseDocumentXml(
+      docWithUnits(3),
+      { ...DOCX_LIMITS, docxBlockCount: 2 },
+      budget,
+    )).toThrow(blockCapMessage(2));
+    expect(budget.used).toBe(2);
   });
 });
 

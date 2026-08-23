@@ -434,7 +434,9 @@ describe('POST /api/universes/:uid/ingest — .docx (#35)', () => {
     ]);
     expect(res.status).toBe(400);
     expect(res.status).not.toBe(500);
-    expect(await errorOf(res)).toBe('Not a valid .docx (too many blocks)');
+    expect(await errorOf(res)).toBe(
+      'Not a valid .docx (docx_block_count max 100000; simplify or split the document)',
+    );
   });
 
   it('CONTROL: a large-but-legal table still converts to a 200', async () => {
@@ -505,6 +507,40 @@ describe('POST /api/universes/:uid/ingest — .docx (#35)', () => {
     const res = await previewRes(parts);
     expect(res.status).toBe(400);
     expect(await errorOf(res)).toBe('Not a valid .docx (unreadable archive)');
+  });
+
+  it('returns 413 when individually legal DOCX files exhaust one aggregate work budget', async () => {
+    // Each fixture retains 60,000 empty paragraph blocks, below the 100,000
+    // per-file cap. Together they exceed the batch cap, so rejecting either
+    // file on its own would not satisfy this regression.
+    const units = '<w:p/>'.repeat(60_000);
+    const first = await docxFile('first.docx', units);
+    const second = await docxFile('second.docx', units);
+    const sentinel = invalidDocxFile('sentinel.docx');
+
+    const originalArrayBuffer = File.prototype.arrayBuffer;
+    let sentinelReads = 0;
+    const arrayBufferSpy = vi.spyOn(File.prototype, 'arrayBuffer').mockImplementation(
+      function (this: File): Promise<ArrayBuffer> {
+        if (this.name === sentinel.name) sentinelReads += 1;
+        return originalArrayBuffer.call(this);
+      },
+    );
+    try {
+      const res = await previewRes([
+        ['files', first],
+        ['files', second],
+        ['files', sentinel],
+      ]);
+
+      expect(res.status).toBe(413);
+      expect(await errorOf(res)).toContain(
+        'docx_batch_block_count (max 100000)',
+      );
+      expect(sentinelReads).toBe(0);
+    } finally {
+      arrayBufferSpy.mockRestore();
+    }
   });
 
   // ─── 10. Mixed batch (DOCX-01's central claim) ────────────────────────────

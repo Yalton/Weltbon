@@ -38,8 +38,9 @@
  * keeps one representation instead of two that must agree.
  */
 import { SaxesParser } from 'saxes';
+import { BatchLimitError } from '../ingest-zip.js';
 import { DocxFormatError } from './unpack.js';
-import type { DocxLimits } from './limits.js';
+import type { DocxLimits, DocxWorkBudget } from './limits.js';
 
 /**
  * A type alias, not an interface, and deliberately so: an interface gets no
@@ -213,7 +214,11 @@ function isOn(attrs: Record<string, string>): boolean {
  */
 const SUPPRESSORS = new Set(['w:del', 'w:moveFrom', 'w:txbxContent']);
 
-export function parseDocumentXml(xml: string, limits: DocxLimits): DocxDocument {
+export function parseDocumentXml(
+  xml: string,
+  limits: DocxLimits,
+  batchBudget?: DocxWorkBudget,
+): DocxDocument {
   rejectDoctype(xml);
 
   const blocks: DocxBlock[] = [];
@@ -296,6 +301,12 @@ export function parseDocumentXml(xml: string, limits: DocxLimits): DocxDocument 
         `Not a valid .docx (docx_block_count max ${limits.docxBlockCount}; `
         + 'simplify or split the document)',
       );
+    }
+    if (batchBudget !== undefined) {
+      batchBudget.used += 1;
+      if (batchBudget.used > batchBudget.max) {
+        throw new BatchLimitError('docx_batch_block_count', batchBudget.max);
+      }
     }
   }
 

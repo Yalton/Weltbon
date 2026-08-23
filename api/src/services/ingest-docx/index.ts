@@ -44,7 +44,7 @@ import type { HeadingLevel } from './headings.js';
 import { convertDocument } from './convert.js';
 import type { DocxMediaRef, DocxWarning } from './convert.js';
 import { DOCX_LIMITS } from './limits.js';
-import type { DocxLimits } from './limits.js';
+import type { DocxLimits, DocxWorkBudget } from './limits.js';
 
 export type { DocxWarning, DocxWarningCode, DocxMediaRef } from './convert.js';
 export { DocxFormatError } from './unpack.js';
@@ -64,8 +64,9 @@ export interface DocxConversion {
 }
 
 export interface ConvertDocxOptions {
-  promoteHeadings: boolean;
+  promoteHeadings?: boolean;
   limits?: DocxLimits;
+  batchBudget?: DocxWorkBudget;
 }
 
 function attr(attrs: Record<string, string>, name: string): string | null {
@@ -354,7 +355,7 @@ export async function convertDocx(
   const limits = opts.limits ?? DOCX_LIMITS;
   const parts = await unpackDocx(buffer, limits);
 
-  const doc = parseDocumentXml(parts.document, limits);
+  const doc = parseDocumentXml(parts.document, limits, opts.batchBudget);
   const styleIndex = buildStyleIndex(parts.styles);
 
   const rels = parts.rels === null ? new Map<string, string>() : parseRels(parts.rels);
@@ -403,7 +404,7 @@ export async function convertDocx(
   const candidates: Map<number, HeadingLevel> = styledCount === 0
     ? heuristic
     : new Map();
-  const promoted = opts.promoteHeadings && candidates.size > 0;
+  const promoted = opts.promoteHeadings === true && candidates.size > 0;
 
   const result = convertDocument(doc, {
     styleIndex,

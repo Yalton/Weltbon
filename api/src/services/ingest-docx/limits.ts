@@ -42,6 +42,19 @@ export interface DocxLimits {
   docxBlockCount: number;
 }
 
+export const DOCX_BATCH_BLOCK_COUNT = 100_000;
+
+export interface DocxWorkBudget {
+  used: number;
+  readonly max: number;
+}
+
+export function createDocxWorkBudget(
+  max = DOCX_BATCH_BLOCK_COUNT,
+): DocxWorkBudget {
+  return { used: 0, max };
+}
+
 export const DOCX_LIMITS: DocxLimits = {
   docxSize: 25 * 1024 * 1024,
   docxCount: 50,
