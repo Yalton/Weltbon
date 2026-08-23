@@ -20,6 +20,23 @@ import { getConnection } from './llm-connection.js';
 const ENDPOINT_PROVIDERS: ReadonlySet<LlmProvider> = new Set(['ollama']);
 
 /**
+ * Is this provider configured by endpoint (llm_connections) rather than by
+ * secret (llm_api_keys)?
+ *
+ * Exported because callers outside the credential resolution itself have to
+ * branch on it: a route that must produce a DIFFERENT error message, or skip a
+ * key lookup entirely, cannot get that from `resolveCredential`'s deliberately
+ * collapsed null. Fix round 2 (#48 whole-branch review, Critical 1) made this
+ * shared rather than re-derived: `routes/llm-models.ts` had its own copy and
+ * `routes/audits.ts` had none at all, which is exactly how the estimate route
+ * came to resolve an API key for a provider that can never have one — a
+ * permanent 400 that disabled the Run button for every Ollama universe.
+ */
+export function isEndpointProvider(provider: LlmProvider): boolean {
+  return ENDPOINT_PROVIDERS.has(provider);
+}
+
+/**
  * The single place the key table and the connection table meet.
  *
  * Returns null for "no usable credential", preserving getDecryptedKey's

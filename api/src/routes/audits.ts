@@ -23,7 +23,8 @@ import { db } from '../db/client.js';
 import { auditRuns, issues, entries, universes } from '../db/schema.js';
 import { requireUniverse } from '../utils/ownership.js';
 import { runAudit } from '../services/audit-engine.js';
-import { getDecryptedKey, PROVIDER_NAMES, type LlmProvider } from '../services/llm-key.js';
+import { PROVIDER_NAMES, type LlmProvider } from '../services/llm-key.js';
+import { resolveCredential, isEndpointProvider } from '../services/llm-credential.js';
 import { estimateAudit } from '../services/audit-estimator.js';
 import { env } from '../config.js';
 import type { AuthVariables } from '../middleware/auth.js';
@@ -427,15 +428,21 @@ export const auditRoutes = new OpenAPIHono<AppEnv>()
       const provider = universe.auditProvider as LlmProvider;
       const model = universe.auditModel!;
       const cfg = env();
-      const apiKey = await getDecryptedKey(userId, provider, cfg.llmKeyEncryptionKey);
-      if (apiKey) {
+      // resolveCredential, not getDecryptedKey: an Ollama universe has an
+      // llm_connections row and never an llm_api_keys one, so a key lookup
+      // here simply found nothing and left the recorded promptTokens at 0.
+      // Harmless (this estimate is best-effort — see the comment above), but
+      // it is the same seam that made the GET /estimate route 400 forever;
+      // both are resolved through one function now so they cannot drift.
+      const credential = await resolveCredential(userId, provider, cfg.llmKeyEncryptionKey);
+      if (credential) {
         const result = await estimateAudit({
           universeId: uid,
           scope: body.scope,
           entryId: body.entryId,
           provider,
           model,
-          apiKey,
+          credential,
           userId,
         });
         // Preserve wire compat: AuditEstimate.breakdown.basePromptTokens → promptTokens,
@@ -629,12 +636,33 @@ export const auditRoutes = new OpenAPIHono<AppEnv>()
       );
     }
 
-    // Resolve decrypted API key for the user+provider — required for the
-    // estimator's basePromptTokens call (provider local tokenizer).
+    // Resolve the user's credential for this provider — a decrypted API key
+    // for anthropic/openai, a base URL (+ optional proxy bearer) for an
+    // endpoint-based one.
+    //
+    // Fix round 2 (#48 whole-branch review, Critical 1): this used to call
+    // getDecryptedKey unconditionally, which can NEVER succeed for 'ollama' —
+    // KEY_PROVIDER_NAMES excludes it and llm-keys.ts is the only INSERT into
+    // llm_api_keys, so no row can exist. The 400 below therefore fired on
+    // every request for an Ollama universe, and that 400 is load-bearing on
+    // the client: AuditCostDialog gates its Run button on a present estimate,
+    // so a correctly configured user got a permanently disabled button while
+    // the backend would have run the audit fine. resolveCredential is the one
+    // place the key table and the connection table meet (spec D-3).
     const cfg = env();
-    const apiKey = await getDecryptedKey(userId, provider, cfg.llmKeyEncryptionKey);
-    if (!apiKey) {
-      return c.json({ error: `No API key configured for ${provider}` }, 400);
+    const credential = await resolveCredential(userId, provider, cfg.llmKeyEncryptionKey);
+    if (!credential) {
+      // The two providers fail for genuinely different reasons and the copy
+      // has to say which, or the user goes looking for the wrong settings
+      // screen: there is no API key field for Ollama to fill in.
+      return c.json(
+        {
+          error: isEndpointProvider(provider)
+            ? `No ${provider} connection configured — add a server address in Settings`
+            : `No API key configured for ${provider}`,
+        },
+        400,
+      );
     }
 
     // T-26-08-02: wrap the estimator in try/catch — provider failure surfaces
@@ -646,7 +674,7 @@ export const auditRoutes = new OpenAPIHono<AppEnv>()
         entryId: query.entryId,
         provider,
         model,
-        apiKey,
+        credential,
         userId,
       });
       return c.json(result, 200);

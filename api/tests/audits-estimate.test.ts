@@ -110,7 +110,7 @@ describe('GET /api/universes/:uid/audits/estimate (Phase 26 Plan 08 Task 1)', ()
   async function enableAudit(
     uid: string,
     hdrs: Record<string, string>,
-    provider: 'anthropic' | 'openai' = 'anthropic',
+    provider: 'anthropic' | 'openai' | 'ollama' = 'anthropic',
     model = 'claude-haiku-4-5-20251001',
   ) {
     const res = await req('PATCH', `/api/universes/${uid}`, {
@@ -227,6 +227,66 @@ describe('GET /api/universes/:uid/audits/estimate (Phase 26 Plan 08 Task 1)', ()
     const body = await json(res);
     expect(body.error).toMatch(/no api key configured/i);
     expect(body.error).toMatch(/anthropic/i);
+  });
+
+  // --- 200: endpoint-based provider (#48 Critical 1) ------------------------
+
+  it('returns a usable estimate for an Ollama universe instead of 400ing on a key that can never exist', async () => {
+    // The bug this pins: the route resolved an API *key* unconditionally, and
+    // no llm_api_keys row can ever exist for 'ollama' (KEY_PROVIDER_NAMES
+    // excludes it; llm-keys.ts is the only INSERT into that table). So this
+    // route 400'd for every Ollama universe, permanently — and the client
+    // gates its Run button on a present estimate (AuditCostDialog.tsx), so a
+    // fully, correctly configured user got a disabled button and no reason.
+    //
+    // `mockGetDecryptedKey` returns null here deliberately: that IS production
+    // for this provider, and it is what gives this test teeth. Against the
+    // pre-fix route the assertion below reads 400, not 200.
+    const { user, hdrs } = await userWithToken('estimate-ollama@test.com');
+    const universe = await createUniverse(hdrs, 'OllamaWorld');
+    await enableAudit(universe.id, hdrs, 'ollama', 'qwen3:32b');
+    mockGetDecryptedKey.mockResolvedValue(null);
+
+    // The credential an Ollama user actually has: an llm_connections row.
+    const { upsertConnection } = await import('../src/services/llm-connection.js');
+    await upsertConnection(user.id, 'ollama', 'http://box:11434', 'Home');
+
+    const res = await req(
+      'GET',
+      `/api/universes/${universe.id}/audits/estimate?scope=universe`,
+      { headers: hdrs },
+    );
+    expect(res.status).toBe(200);
+    const body = await json(res);
+    // Zero cost, not a missing estimate: Ollama has no PRICING entries, so the
+    // estimator takes its documented unknown-model path (Phase 27 D-05/D-06's
+    // cost_unknown shape). The dialog needs a *present* estimate object, which
+    // this is — the numbers being zero is the correct answer for a local model.
+    expect(body.model).toEqual({ provider: 'ollama', name: 'qwen3:32b' });
+    expect(body.lower).toBe(0);
+    expect(body.upper).toBe(0);
+    expect(body.breakdown.scopeEntryCount).toEqual(expect.any(Number));
+  });
+
+  it('still 400s for an Ollama universe with no connection row, naming the connection rather than an API key', async () => {
+    // The 400 must not simply disappear — a user who has selected Ollama but
+    // never saved a server address still has nothing to run against. What
+    // changes is the copy: telling them to add an API key would send them to a
+    // settings screen that has no field for this provider.
+    const { hdrs } = await userWithToken('estimate-ollama-noconn@test.com');
+    const universe = await createUniverse(hdrs, 'OllamaWorldNoConn');
+    await enableAudit(universe.id, hdrs, 'ollama', 'qwen3:32b');
+    mockGetDecryptedKey.mockResolvedValue(null);
+
+    const res = await req(
+      'GET',
+      `/api/universes/${universe.id}/audits/estimate?scope=universe`,
+      { headers: hdrs },
+    );
+    expect(res.status).toBe(400);
+    const body = await json(res);
+    expect(body.error).toMatch(/connection/i);
+    expect(body.error).not.toMatch(/api key/i);
   });
 
   // --- 403: cross-tenant (T-24-05-02) ---------------------------------------

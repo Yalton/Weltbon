@@ -74,7 +74,7 @@ import {
   PROVIDER_NAMES,
   type LlmProvider,
 } from '../services/llm-key.js';
-import { resolveCredential } from '../services/llm-credential.js';
+import { resolveCredential, isEndpointProvider } from '../services/llm-credential.js';
 import { getModels } from '../providers/llm/index.js';
 import { env } from '../config.js';
 
@@ -91,15 +91,6 @@ const errorSchema = z.object({
 // llm-keys.ts stays on KEY_PROVIDER_NAMES; that route is genuinely
 // key-providers-only (a stored API key row), unlike this one.
 const providerEnum = z.enum(PROVIDER_NAMES);
-
-// Mirrors model-catalog.ts's own `provider === 'ollama'` branch (which is the
-// authority — see that file) and llm-credential.ts's ENDPOINT_PROVIDERS Set.
-// Duplicated here (a single-member check) rather than importing a shared
-// constant because none of those modules currently export one; if a second
-// endpoint-based provider is ever added, update all three call sites together.
-function isEndpointBased(provider: LlmProvider): boolean {
-  return provider === 'ollama';
-}
 
 // Mirror of ListingsResult / ModelListingWithCoverage in
 // api/src/providers/llm/interface.ts. We re-declare the schema here so the
@@ -189,7 +180,7 @@ export const llmModelsRoutes = new OpenAPIHono<AppEnv>().openapi(
     const userId = c.var.userId;
     const { provider } = c.req.valid('query');
 
-    if (isEndpointBased(provider)) {
+    if (isEndpointProvider(provider)) {
       // Fix round 1 (#48 review, Finding 2): never 404, never 5xx. A user who
       // has not yet configured (or cannot currently reach) their Ollama
       // connection must see an EMPTY dropdown, not an error page — this is
@@ -260,7 +251,7 @@ export const llmModelsRoutes = new OpenAPIHono<AppEnv>().openapi(
     // local `const` and is never logged, never returned, never stored in any
     // cache state (T-27-03-02 mitigation). #48 Task 3: getModels now takes a
     // ProviderCredential — this branch only ever serves key-based providers
-    // (the isEndpointBased() check above already peeled 'ollama' off), so
+    // (the isEndpointProvider() check above already peeled 'ollama' off), so
     // `{ apiKey }` is always the right shape.
     const result = await getModels(provider as LlmProvider, keyId, { apiKey });
     return c.json(result, 200);
