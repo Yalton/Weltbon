@@ -443,11 +443,14 @@ function renderParagraph(
 function renderTable(block: DocxTable, ctx: RenderContext): Chunk | null {
   if (block.rows.length === 0) return null;
   if (block.hasMergedCells) ctx.bump('table-flattened');
-  // A reduce, NOT `Math.max(...rows.map(...))`. A spread past ~125 000
-  // arguments is a hard V8 RangeError ("Maximum call stack size exceeded"),
-  // and the route has no branch for that, so a 1 678-byte .docx holding
-  // 130 000 rows left as a 500 instead of DOCX-11's 400. parse.ts now charges
-  // rows and cells against docxBlockCount so such a table is refused upstream,
+  // A reduce, NOT `Math.max(...rows.map(...))`. A sufficiently wide spread can
+  // exhaust V8's stack, but the boundary depends on current stack depth:
+  // measured failures began at 125,284 arguments at top level, 121,684 at
+  // +200 frames, and 89,284 at +2,000. The 130,000-row regression is beyond
+  // every observation. The route has no branch for that RangeError, so a tiny
+  // compressed .docx could become a 500 instead of DOCX-11's 400. parse.ts
+  // now charges rows and cells against docxBlockCount, so such a table is
+  // refused upstream,
   // but this must not depend on that: convertDocument is exported and is
   // driven directly with hand-built models by most of its tests, and a width
   // computation that can throw on row count is a bug here whatever the parser

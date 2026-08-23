@@ -108,10 +108,12 @@ describe('convertDocument — blocks', () => {
   });
 
   /**
-   * A1. `Math.max(...block.rows.map(...))` is a spread, and a spread past
-   * ~125 000 arguments is a hard V8 RangeError ("Maximum call stack size
-   * exceeded"), not a slow path. The route has no branch for that, so it fell
-   * through to `Internal error` / 500 — for a 1 678-byte upload.
+   * A1. `Math.max(...block.rows.map(...))` is a spread whose V8 failure
+   * boundary depends on current stack depth. Measurements began failing at
+   * 125,284 arguments at top level, 121,684 at +200 frames, and 89,284 at
+   * +2,000. The 130,000-row fixture is beyond every observation. The route has
+   * no branch for that RangeError, so it fell through to `Internal error` /
+   * 500 — for a tiny compressed upload.
    *
    * parse.ts now refuses a table that large (see the block-cap tests in
    * ingest-docx-parse.test.ts), but this assertion is deliberately NOT allowed

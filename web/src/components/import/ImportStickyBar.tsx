@@ -7,6 +7,7 @@
  * Commit button is disabled when:
  *   - acceptedCount === 0 (D-29 empty-batch guard), OR
  *   - isCommitting (in-flight), OR
+ *   - isPreviewPending (a replacement preview is in flight), OR
  *   - metaInvalid (any entry has invalid metadata).
  *
  * Disabled-state hover hint per D-29 / UI-SPEC §5.6 (native title attr).
@@ -34,6 +35,8 @@ interface ImportStickyBarProps {
   /** P — live count of accept | rename dispositions. */
   acceptedCount: number;
   isCommitting: boolean;
+  /** A split/promotion replacement must settle before this preview can commit. */
+  isPreviewPending: boolean;
   /** Any entry's metaValid === false. */
   metaInvalid: boolean;
   onDiscard: () => void;
@@ -48,17 +51,21 @@ export function ImportStickyBar({
   conflictCount,
   acceptedCount,
   isCommitting,
+  isPreviewPending,
   metaInvalid,
   onDiscard,
   onCommit,
 }: ImportStickyBarProps) {
-  const isCommitDisabled = acceptedCount === 0 || isCommitting || metaInvalid;
+  const isCommitDisabled =
+    acceptedCount === 0 || isCommitting || isPreviewPending || metaInvalid;
   const disabledHint =
     acceptedCount === 0
       ? 'Accept at least one entry to commit.'
       : metaInvalid
-      ? 'One or more entries have invalid metadata. Fix before committing.'
-      : undefined;
+        ? 'One or more entries have invalid metadata. Fix before committing.'
+        : isPreviewPending
+          ? 'Wait for the preview update to finish.'
+          : undefined;
 
   return (
     <header

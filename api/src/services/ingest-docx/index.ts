@@ -136,9 +136,9 @@ function localName(name: string): string {
 /**
  * footnotes.xml / endnotes.xml → w:id (AS WRITTEN, a string) → note text.
  *
- * Keyed by the raw attribute string because that is what convert.ts looks up
- * with String(run.footnoteRef); a number key would miss every entry and drop
- * the note with no warning at all.
+ * Keyed by the raw attribute string because parse.ts preserves `footnoteRef`
+ * exactly and convert.ts uses that string directly. Numeric coercion would
+ * round large IDs and make matching definitions disappear without warning.
  *
  * w:type="separator" / "continuationSeparator" are skipped: they are Word's
  * horizontal rules, carry no author text, and occupy ids (-1, 0) that would

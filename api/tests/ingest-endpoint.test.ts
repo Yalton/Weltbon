@@ -505,6 +505,12 @@ describe('POST /api/universes/:uid/ingest (Phase 11-03 Task 2)', () => {
     expect(requestSchema.properties.docx_promote_index.items.type).toBe('string');
     expect(requestSchema.properties.docx_promote_index.items.pattern)
       .toBe('^(0|[1-9]\\d*)$');
+    expect(requestSchema.properties.docx_promote_index.description).toContain(
+      'Repeat once per .docx to promote',
+    );
+    expect(requestSchema.properties.docx_promote_index.description).toContain(
+      'zero-based position in the `files` parts',
+    );
 
     const okSchema = post.responses['200'].content['application/json'].schema;
     expect(Object.keys(okSchema.properties.summary.properties))
@@ -517,6 +523,17 @@ describe('POST /api/universes/:uid/ingest (Phase 11-03 Task 2)', () => {
     expect(docxFile.properties.uploadIndex.type).toBe('integer');
     expect(Object.keys(docxFile.properties.headings.properties).sort())
       .toEqual(['promoted', 'styled', 'unstyledCandidates']);
+    const candidateDescription =
+      docxFile.properties.headings.properties.unstyledCandidates.description;
+    expect(candidateDescription).toContain(
+      'after server-side eligibility checks',
+    );
+    expect(candidateDescription).toContain(
+      'may be positive in a mixed document',
+    );
+    expect(candidateDescription).toContain(
+      'existing styled headings are preserved',
+    );
     expect(post.responses['413'].description).toContain('docx_batch_block_count');
   });
 });

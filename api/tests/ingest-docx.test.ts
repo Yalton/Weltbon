@@ -387,6 +387,15 @@ describe('POST /api/universes/:uid/ingest — .docx (#35)', () => {
     expect(await errorOf(res)).toBe('Invalid docx_promote_index');
   });
 
+  it('rejects legacy docx_promote_headings without a promotion-index field', async () => {
+    const res = await previewRes([
+      ['files', await docxFile('v.docx', boldBig('The Vale') + bodyText('Cold.'))],
+      ['docx_promote_headings', 'true'],
+    ]);
+    expect(res.status).toBe(400);
+    expect(await errorOf(res)).toBe('Invalid docx_promote_index');
+  });
+
   // ─── 8. Error taxonomy at the wire (DOCX-11) ──────────────────────────────
 
   it('bytes that are not a zip are a 400 with actionable text', async () => {
@@ -433,10 +442,11 @@ describe('POST /api/universes/:uid/ingest — .docx (#35)', () => {
     // Asserted at the WIRE rather than only at parse.ts because the status
     // code is the contract: DOCX-11 says a document we will not parse is a
     // 400, and a 500 also tells the operator something is broken here.
-    // 130 000 rows, NOT a round 40 000: V8's spread limit sits between 125 000
-    // and 130 000 arguments, so a smaller table renders perfectly well and
-    // this test would pass against the unfixed code — measured, by running it
-    // that way first (it returned 200). The row count is load-bearing.
+    // 130 000 rows, NOT a round 40 000: the V8 spread failure boundary varies
+    // with stack depth (measured at 125,284 arguments at top level, 121,684 at
+    // +200 frames, and 89,284 at +2,000), and this fixture exceeds every
+    // observation. A smaller table can render successfully against the
+    // unfixed code, so the row count is load-bearing.
     const cell = '<w:tc><w:p><w:r><w:t>x</w:t></w:r></w:p></w:tc>';
     const rows = `<w:tr>${cell}</w:tr>`.repeat(130_000);
     const bytes = await makeDocx({ documentXml: documentWith(`<w:tbl>${rows}</w:tbl>`) });

@@ -1,5 +1,12 @@
 import { describe, it, expect, beforeEach, afterEach, vi } from 'vitest';
-import { render, screen, waitFor, fireEvent, within } from '@testing-library/react';
+import {
+  act,
+  render,
+  screen,
+  waitFor,
+  fireEvent,
+  within,
+} from '@testing-library/react';
 import userEvent from '@testing-library/user-event';
 import { MemoryRouter, Routes, Route } from 'react-router-dom';
 import { QueryClient, QueryClientProvider } from '@tanstack/react-query';
@@ -70,7 +77,7 @@ function mkCommitResult(): CommitResult {
 function setupBaseApi(
   opts: {
     commitImpl?: () => Promise<CommitResult> | CommitResult;
-    ingestImpl?: () => Promise<IngestPreview> | IngestPreview;
+    ingestImpl?: (init?: RequestInit) => Promise<IngestPreview> | IngestPreview;
   } = {},
 ) {
   vi.mocked(api).mockImplementation(async (path?: string, init?: RequestInit) => {
@@ -110,13 +117,23 @@ function setupBaseApi(
       return { categories: [], uncategorizedCount: 0 };
     }
     if (path === '/universes/U1/ingest' && init?.method === 'POST') {
-      return opts.ingestImpl ? opts.ingestImpl() : mkPreview();
+      return opts.ingestImpl ? opts.ingestImpl(init) : mkPreview();
     }
     if (path === '/universes/U1/ingest/commit' && init?.method === 'POST') {
       return opts.commitImpl ? opts.commitImpl() : mkCommitResult();
     }
     return undefined;
   });
+}
+
+function deferred<T>() {
+  let resolve!: (value: T) => void;
+  let reject!: (reason: unknown) => void;
+  const promise = new Promise<T>((resolvePromise, rejectPromise) => {
+    resolve = resolvePromise;
+    reject = rejectPromise;
+  });
+  return { promise, resolve, reject };
 }
 
 function renderImport(qc?: QueryClient) {
@@ -646,6 +663,188 @@ describe('IngestImport (Phase 12 E2E)', () => {
     const saved = JSON.parse(localStorage.getItem(STORAGE_KEY)!) as SavedDraft;
     expect(saved.preview.entries[0]?.title).toBe('Updated Alpha');
     expect(saved.decisions).toEqual({});
+  });
+
+  it('keeps every promoted DOCX index when changing the split level', async () => {
+    let ingestCalls = 0;
+    setupBaseApi({
+      ingestImpl: () => {
+        ingestCalls += 1;
+        return ingestCalls === 1
+          ? mkDocxPreview(new Set([0, 2]))
+          : mkDocxPreview(new Set([0, 2]), 'Split ');
+      },
+    });
+    renderImport();
+
+    expect(
+      await screen.findByRole('heading', { name: /^Import notes$/ }),
+    ).toBeInTheDocument();
+    await uploadDocxBatch();
+    await screen.findByRole('main', { name: /Import review/i });
+
+    await userEvent.click(
+      screen.getByRole('button', { name: /H3.*2 entries/i }),
+    );
+
+    expect(
+      await screen.findByRole('option', { name: /Split Alpha/ }),
+    ).toBeInTheDocument();
+    const ingestPosts = vi
+      .mocked(api)
+      .mock.calls.filter(
+        ([path, init]) =>
+          path === '/universes/U1/ingest' &&
+          (init as RequestInit | undefined)?.method === 'POST',
+      );
+    const body = (ingestPosts[1]![1] as RequestInit).body as FormData;
+    expect(body.get('split_level')).toBe('3');
+    expect(body.getAll('docx_promote_index')).toEqual(['0', '2']);
+  });
+
+  it('disables every re-preview control and commit while a replacement is pending', async () => {
+    const pending = deferred<IngestPreview>();
+    let ingestCalls = 0;
+    setupBaseApi({
+      ingestImpl: () => {
+        ingestCalls += 1;
+        return ingestCalls === 1
+          ? mkDocxPreview(new Set([0]))
+          : pending.promise;
+      },
+    });
+    renderImport();
+
+    expect(
+      await screen.findByRole('heading', { name: /^Import notes$/ }),
+    ).toBeInTheDocument();
+    await uploadDocxBatch();
+    await screen.findByRole('main', { name: /Import review/i });
+
+    await userEvent.click(
+      screen.getByRole('button', {
+        name: /Four\.docx.*Treat 3 bold paragraphs as headings/i,
+      }),
+    );
+
+    expect(
+      screen.getByRole('button', { name: /H3.*2 entries/i }),
+    ).toBeDisabled();
+    expect(
+      screen.getByRole('button', {
+        name: /Four\.docx.*Treat 3 bold paragraphs as headings/i,
+      }),
+    ).toBeDisabled();
+    expect(
+      screen.getByRole('button', { name: /Commit 2 entries/i }),
+    ).toBeDisabled();
+
+    await act(async () => {
+      pending.resolve(mkDocxPreview(new Set([0, 4]), 'Ready '));
+      await pending.promise;
+    });
+    expect(
+      await screen.findByRole('option', { name: /Ready Alpha/ }),
+    ).toBeInTheDocument();
+  });
+
+  it('ignores an older re-preview response that completes after the newer request', async () => {
+    const older = deferred<IngestPreview>();
+    const newer = deferred<IngestPreview>();
+    let ingestCalls = 0;
+    setupBaseApi({
+      ingestImpl: () => {
+        ingestCalls += 1;
+        if (ingestCalls === 1) return mkDocxPreview(new Set([0]));
+        return ingestCalls === 2 ? older.promise : newer.promise;
+      },
+    });
+    renderImport();
+
+    expect(
+      await screen.findByRole('heading', { name: /^Import notes$/ }),
+    ).toBeInTheDocument();
+    await uploadDocxBatch();
+    await screen.findByRole('main', { name: /Import review/i });
+    const splitButton = screen.getByRole('button', {
+      name: /H3.*2 entries/i,
+    });
+    const promoteButton = screen.getByRole('button', {
+      name: /Four\.docx.*Treat 3 bold paragraphs as headings/i,
+    });
+
+    act(() => {
+      splitButton.click();
+      promoteButton.click();
+    });
+    expect(ingestCalls).toBe(3);
+
+    await act(async () => {
+      newer.resolve(mkDocxPreview(new Set([0, 4]), 'Newest '));
+      await newer.promise;
+    });
+    expect(
+      await screen.findByRole('option', { name: /Newest Alpha/ }),
+    ).toBeInTheDocument();
+
+    await act(async () => {
+      older.resolve(mkDocxPreview(new Set([0]), 'Older '));
+      await older.promise;
+    });
+    expect(
+      screen.queryByRole('option', { name: /Older Alpha/ }),
+    ).not.toBeInTheDocument();
+    expect(
+      screen.getByRole('option', { name: /Newest Alpha/ }),
+    ).toBeInTheDocument();
+  });
+
+  it('keeps the old preview when the newest overlapping re-preview fails', async () => {
+    const older = deferred<IngestPreview>();
+    const newer = deferred<IngestPreview>();
+    let ingestCalls = 0;
+    setupBaseApi({
+      ingestImpl: () => {
+        ingestCalls += 1;
+        if (ingestCalls === 1) return mkDocxPreview(new Set([0]));
+        return ingestCalls === 2 ? older.promise : newer.promise;
+      },
+    });
+    renderImport();
+
+    expect(
+      await screen.findByRole('heading', { name: /^Import notes$/ }),
+    ).toBeInTheDocument();
+    await uploadDocxBatch();
+    await screen.findByRole('main', { name: /Import review/i });
+    const draftBefore = localStorage.getItem(STORAGE_KEY);
+
+    act(() => {
+      screen.getByRole('button', { name: /H3.*2 entries/i }).click();
+      screen
+        .getByRole('button', {
+          name: /Four\.docx.*Treat 3 bold paragraphs as headings/i,
+        })
+        .click();
+    });
+    expect(ingestCalls).toBe(3);
+
+    await act(async () => {
+      newer.reject(new ApiError(500, { error: 'failed' }, 'Internal error'));
+      await Promise.resolve();
+    });
+    expect(await screen.findByRole('alert')).toBeInTheDocument();
+    expect(screen.getByRole('option', { name: /Alpha/ })).toBeInTheDocument();
+
+    await act(async () => {
+      older.resolve(mkDocxPreview(new Set([0]), 'Older '));
+      await older.promise;
+    });
+    expect(
+      screen.queryByRole('option', { name: /Older Alpha/ }),
+    ).not.toBeInTheDocument();
+    expect(screen.getByRole('option', { name: /Alpha/ })).toBeInTheDocument();
+    expect(localStorage.getItem(STORAGE_KEY)).toBe(draftBefore);
   });
 
   it('keeps the old preview and draft when a per-file re-preview fails', async () => {

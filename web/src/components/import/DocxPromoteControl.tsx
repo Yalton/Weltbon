@@ -10,12 +10,10 @@ import type { DocxFileInfo } from '../../types/ingestReview';
  * unique and the server identifies uploads by their stable multipart index.
  *
  * The eligibility check is deliberately just `unstyledCandidates > 0`.
- * `unstyledCandidates` already arrives POST-GATE — the server reports 0
- * whenever styled headings exist, because promotion is refused in that case
- * (DOCX-09) and a control that promotes but no unstyled candidate documents
- * exist would provably do nothing. Re-deriving that gate here (e.g.
- * `styled === 0 && unstyledCandidates > 0`) would duplicate a rule that
- * lives on the server and can drift from it.
+ * That count already reflects the server's eligibility rule: it can be
+ * positive for either a zero-styled document or an eligible mixed document,
+ * and is zero below the mixed ratio-or-absolute threshold. Re-deriving the
+ * rule here would duplicate server policy and can drift from it.
  *
  * Presentational + prop-driven; the parent owns the re-request, exactly as
  * SplitLevelControl does for `split_level`.
