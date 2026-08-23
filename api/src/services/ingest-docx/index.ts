@@ -15,10 +15,12 @@
  *    author never wrote, and the user would have no way to tell which headings
  *    were theirs.
  *
- * 2. `unstyled-headings-detected` IS EMITTED HERE, and can only be emitted
- *    here. With promotion off, convertDocument receives an empty promoted map
- *    and has nothing to report; the count that drives the preview's "treat N
- *    bold paragraphs as headings" affordance exists only at this layer.
+ * 2. `unstyled-headings-detected` AND `mixed-headings-detected` ARE EMITTED
+ *    HERE, and can only be emitted here. With promotion off, convertDocument
+ *    receives an empty promoted map and has nothing to report; the counts that
+ *    drive the preview's "treat N bold paragraphs as headings" affordance, and
+ *    the mixed-document explanation that replaces it when the gate refuses,
+ *    exist only at this layer.
  *
  * 3. EVERY PART THAT IS PARSED GOES THROUGH rejectDoctype (T-35-02). The
  *    billion-laughs defense is not ambient — it applies to a part only where
@@ -371,17 +373,35 @@ export async function convertDocx(
   const mediaEntries = parts.otherEntries.filter((e) => e.name.startsWith('word/media/'));
 
   // DOCX-09's gate. The heuristic's result may only become headings when the
-  // deterministic pass found nothing, so it is not even run otherwise — the
-  // count would be discarded, and reporting it would be wrong (see below).
+  // deterministic pass found nothing.
   const styledCount = countStyledHeadings(doc.blocks, styleIndex);
+
+  // THE HEURISTIC NOW RUNS UNCONDITIONALLY, and its result is used for two
+  // different things that must not be conflated.
+  //
+  // It used to run only when styledCount === 0, on the reasoning that a
+  // discarded count should not be computed. That reasoning was wrong in a way
+  // that was invisible: ONE accidental styled heading — and styling a document
+  // TITLE as Heading 1 is Word's default — took the count to zero, which took
+  // away the promotion affordance AND every diagnostic at once. Measured on a
+  // document of 40 hand-formatted sections plus one styled title: warnings was
+  // the empty array. The same document without the title reported both
+  // `no-headings` and `unstyled-headings-detected`. The user got one entry and
+  // no explanation of why.
+  //
+  // The extra cost is one linear pass over the blocks, which is the same order
+  // as the conversion that follows it.
+  const heuristic = detectUnstyledHeadings(doc.blocks);
 
   // Reported as 0 when styled headings exist, because that is what the
   // heuristic WOULD promote here: nothing, the gate refuses. Reporting the raw
   // count instead would make the preview offer "treat N bold paragraphs as
   // headings", and accepting it would change nothing at all — a control that
-  // silently does not work is worse than one that is absent.
+  // silently does not work is worse than one that is absent. The client's
+  // eligibility test is `unstyledCandidates > 0` and nothing else, so this
+  // zeroing is load-bearing on both sides.
   const candidates: Map<number, HeadingLevel> = styledCount === 0
-    ? detectUnstyledHeadings(doc.blocks)
+    ? heuristic
     : new Map();
   const promoted = opts.promoteHeadings && candidates.size > 0;
 
@@ -408,6 +428,44 @@ export async function convertDocx(
         + `(bold, larger or capitalised) but carr${n === 1 ? 'ies' : 'y'} no Heading style. `
         + `Re-import with heading promotion on to treat ${n === 1 ? 'it' : 'them'} as headings.`,
       count: n,
+    });
+  }
+
+  // The mixed-document diagnostic. DELIBERATELY DIAGNOSTIC ONLY: whether
+  // promotion should be OFFERED for a mixed document is a product decision that
+  // has not been made, and DOCX-09 forbids it today. So the counts ride in the
+  // warning text and nowhere else — `headings.unstyledCandidates` stays 0, and
+  // the UI's affordance stays off.
+  //
+  // The trigger is "substantially more candidates than styled headings", not
+  // "any candidate at all": a properly styled document with a couple of bold
+  // asides must not be nagged at, or the warning becomes noise and stops being
+  // read. Three times as many, and at least three of them — chosen so the
+  // 1-styled/40-candidates case fires loudly and a 6-styled/1-candidate
+  // document stays silent. If the ratio is wrong the cost is a warning that is
+  // either slightly noisy or slightly quiet; it never changes what is imported.
+  //
+  // Guarded on styledCount > 0 because at zero the case is already reported by
+  // `unstyled-headings-detected` above, and two warnings for one situation is
+  // worse than one.
+  const MIXED_RATIO = 3;
+  const MIXED_FLOOR = 3;
+  if (
+    styledCount > 0
+    && heuristic.size >= MIXED_FLOOR
+    && heuristic.size >= styledCount * MIXED_RATIO
+  ) {
+    const one = styledCount === 1;
+    const styledWord = `${styledCount} styled heading${one ? '' : 's'}`;
+    const lookWord = `${heuristic.size} paragraphs that look like headings`;
+    warnings.push({
+      code: 'mixed-headings-detected',
+      message: `This document has ${styledWord} but ${lookWord} `
+        + `(bold, larger or capitalised). Only the styled heading${one ? '' : 's'} `
+        + `${one ? 'was' : 'were'} used; the rest were imported as ordinary `
+        + 'paragraphs. Add Heading styles in Word to the sections you want '
+        + 'split out.',
+      count: heuristic.size,
     });
   }
 

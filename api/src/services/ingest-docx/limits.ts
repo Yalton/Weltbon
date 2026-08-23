@@ -24,7 +24,21 @@ export interface DocxLimits {
   docxTotalUncompressed: number;
   /** XML element nesting depth. */
   docxXmlDepth: number;
-  /** Document-model blocks. Bounds CPU on valid-but-pathological input (T-35-04). */
+  /**
+   * Retained document-model nodes. Bounds CPU and memory on
+   * valid-but-pathological input (T-35-04).
+   *
+   * The unit is NOT "published top-level block", which is all it charged when
+   * this shipped and which left the two nesting structures uncounted: one
+   * `w:tbl` cost one unit however many `w:tr`/`w:tc` it held, and one `w:p`
+   * cost one however many runs. parse.ts now charges a published block, a
+   * table row, a table cell, and an emitted run — see charge() there for what
+   * a 1 678-byte .docx did with the old accounting.
+   *
+   * The name is kept as-is on purpose: `docx_block_count` is the wire name in
+   * the 413/400 error text and in the spec's caps table, and renaming it would
+   * break both for a comment's benefit.
+   */
   docxBlockCount: number;
 }
 

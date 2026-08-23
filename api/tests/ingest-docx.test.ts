@@ -405,6 +405,57 @@ describe('POST /api/universes/:uid/ingest — .docx (#35)', () => {
     expect(await errorOf(res)).toBe('Not a valid .docx (unsupported XML construct)');
   });
 
+  it('a table too large to render is a 400 at the wire, not a 500 (A1)', async () => {
+    // THE case this whole fix exists for. A 1 678-byte .docx carrying 130 000
+    // table rows used to parse in ~75 ms as ONE block — docx_block_count
+    // charged only top-level blocks — and then died inside renderTable's
+    // Math.max(...) spread with `RangeError: Maximum call stack size
+    // exceeded`, which this route has no branch for. The user got
+    // `Internal error` / 500 for an upload they could have been told about.
+    //
+    // Asserted at the WIRE rather than only at parse.ts because the status
+    // code is the contract: DOCX-11 says a document we will not parse is a
+    // 400, and a 500 also tells the operator something is broken here.
+    // 130 000 rows, NOT a round 40 000: V8's spread limit sits between 125 000
+    // and 130 000 arguments, so a smaller table renders perfectly well and
+    // this test would pass against the unfixed code — measured, by running it
+    // that way first (it returned 200). The row count is load-bearing.
+    const cell = '<w:tc><w:p><w:r><w:t>x</w:t></w:r></w:p></w:tc>';
+    const rows = `<w:tr>${cell}</w:tr>`.repeat(130_000);
+    const bytes = await makeDocx({ documentXml: documentWith(`<w:tbl>${rows}</w:tbl>`) });
+    // ~7.8 MB of document.xml compressing to ~23 KB (measured), which is the
+    // point: no size cap can see this coming — not docx_size, not
+    // docx_part_size, not docx_total_uncompressed — so the model-node cap is
+    // the only thing that can refuse it.
+    expect(bytes.length).toBeLessThan(64 * 1024);
+
+    const res = await previewRes([
+      ['files', new File([bytes], 'huge-table.docx', { type: DOCX_MIME })],
+    ]);
+    expect(res.status).toBe(400);
+    expect(res.status).not.toBe(500);
+    expect(await errorOf(res)).toBe('Not a valid .docx (too many blocks)');
+  });
+
+  it('CONTROL: a large-but-legal table still converts to a 200', async () => {
+    // Word's own hard limit is 32 767 rows. Without this half, the cap could
+    // be tightened to the point of refusing real documents and the test above
+    // would stay green.
+    const cell = (t: string) => `<w:tc><w:p><w:r><w:t>${t}</w:t></w:r></w:p></w:tc>`;
+    const rows = Array.from({ length: 1_000 }, (_, i) =>
+      `<w:tr>${cell(`Peak ${i}`)}${cell(`${i * 3} m`)}</w:tr>`).join('');
+    const bytes = await makeDocx({
+      documentXml: documentWith(heading('The Vale') + `<w:tbl>${rows}</w:tbl>`),
+    });
+
+    const body = await preview([
+      ['files', new File([bytes], 'atlas.docx', { type: DOCX_MIME })],
+    ]);
+    expect(body.summary.docx_files_converted).toBe(1);
+    expect(body.entries[0].body).toContain('| Peak 0 | 0 m |');
+    expect(body.entries[0].body).toContain('| Peak 999 | 2997 m |');
+  });
+
   it('an unexpected throw is a 500 whose body leaks nothing about it', async () => {
     const marker = 'INTERNAL-DETAIL-a1b2c3-should-not-reach-the-client';
     docxThrow.error = new TypeError(marker);

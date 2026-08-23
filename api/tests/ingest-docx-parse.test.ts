@@ -401,11 +401,21 @@ describe('parseDocumentXml — the caps fire for their own reason', () => {
       .toBe('Not a valid .docx (too many blocks)');
   });
 
-  it('applies the block cap exactly: 10 blocks pass at a cap of 10, 11 do not', () => {
-    const mk = (n: number) => '<w:p><w:r><w:t>x</w:t></w:r></w:p>'.repeat(n);
+  it('applies the block cap exactly: 10 units pass at a cap of 10, 11 do not', () => {
+    // Empty paragraphs, so one <w:p> is exactly one unit. The cap's unit is a
+    // RETAINED MODEL NODE — a published block, a table row, a table cell, or an
+    // emitted run (A1) — so this used to read `<w:p><w:r><w:t>x` and was
+    // measuring two things at once the moment runs started being charged.
+    const empty = (n: number) => '<w:p/>'.repeat(n);
     const lim = { ...DOCX_LIMITS, docxBlockCount: 10 };
-    expect(msg(() => p(mk(10), lim))).toBe('<<did not throw>>');
-    expect(msg(() => p(mk(11), lim))).toBe('Not a valid .docx (too many blocks)');
+    expect(msg(() => p(empty(10), lim))).toBe('<<did not throw>>');
+    expect(msg(() => p(empty(11), lim))).toBe('Not a valid .docx (too many blocks)');
+
+    // The other half of the same rule: a paragraph carrying one run costs two,
+    // so five pass at the same cap and six do not.
+    const withRun = (n: number) => '<w:p><w:r><w:t>x</w:t></w:r></w:p>'.repeat(n);
+    expect(msg(() => p(withRun(5), lim))).toBe('<<did not throw>>');
+    expect(msg(() => p(withRun(6), lim))).toBe('Not a valid .docx (too many blocks)');
   });
 
   it('gives each defense its own message', () => {
@@ -446,5 +456,69 @@ describe('parseDocumentXml — the suppression stack is live, not incidental', (
                   '<w:r><w:t>outside</w:t></w:r></w:p>');
     const para = doc.blocks.find((b) => b.kind === 'paragraph') as { runs: DocxRun[] };
     expect(para.runs.map((r) => r.text).join('')).toBe('outside');
+  });
+});
+
+/**
+ * A1 — the block cap must charge what a table actually costs.
+ *
+ * The bug these pin shipped: `docxBlockCount` charged only PUBLISHED TOP-LEVEL
+ * blocks, so a `w:tbl` cost exactly ONE unit no matter how many `w:tr`/`w:tc`
+ * it carried. A 1 678-byte .docx holding 130 000 rows therefore parsed in
+ * ~75 ms as a single block and sailed through every cap — and then died in the
+ * converter (see the renderTable test in ingest-docx-convert.test.ts), which
+ * the route maps to a 500. DOCX-11 says a document we will not parse is a 400.
+ *
+ * The unit of the cap is now a RETAINED MODEL NODE: a published block, a table
+ * row, a table cell, or an emitted run. Those are precisely the things that
+ * accumulate without bound under a single top-level block.
+ */
+describe('parseDocumentXml — the block cap charges rows, cells and runs (A1)', () => {
+  const tableOf = (rowCount: number, cellsPerRow = 1) => {
+    const cell = '<w:tc><w:p><w:r><w:t>x</w:t></w:r></w:p></w:tc>';
+    const row = `<w:tr>${cell.repeat(cellsPerRow)}</w:tr>`;
+    return `<w:tbl>${row.repeat(rowCount)}</w:tbl>`;
+  };
+
+  it('refuses an oversized table under the SHIPPED limits, naming the block cap', () => {
+    // Deliberately at DOCX_LIMITS, not a lowered cap: the shipped numbers are
+    // what the reproduction ran against, and a lowered-cap-only test would
+    // stay green if the shipped value were later raised past the point where
+    // renderTable can still be reached.
+    let err: unknown;
+    try { p(tableOf(40_000)); } catch (e) { err = e; }
+    expect(err).toBeInstanceOf(DocxFormatError);
+    expect((err as Error).message).toBe('Not a valid .docx (too many blocks)');
+  });
+
+  it('still parses a large-but-legal table: 1 000 rows x 3 cells', () => {
+    // Word's own hard limit is 32 767 rows, so the cap has to sit far above
+    // anything a writer emits. This is the half that fails if the charge is
+    // set too aggressively — an over-tight cap turns real documents into 400s.
+    const doc = p(tableOf(1_000, 3));
+    expect(doc.blocks).toHaveLength(1);
+    const table = doc.blocks[0] as { kind: string; rows: Array<Array<unknown>> };
+    expect(table.kind).toBe('table');
+    expect(table.rows).toHaveLength(1_000);
+    expect(table.rows[0]).toHaveLength(3);
+  });
+
+  it('charges a row and a cell each, not just the table', () => {
+    // One 4-row x 1-cell table = 1 table + 4 rows + 4 cells + 4 runs = 13.
+    // At a cap of 12 that must throw; at 13 it must not. Pinning both sides
+    // is what stops a charge of "1 per table, as before" passing the first.
+    const xml = tableOf(4);
+    expect(msg(() => p(xml, { ...DOCX_LIMITS, docxBlockCount: 13 })))
+      .toBe('<<did not throw>>');
+    expect(msg(() => p(xml, { ...DOCX_LIMITS, docxBlockCount: 12 })))
+      .toBe('Not a valid .docx (too many blocks)');
+  });
+
+  it('charges runs, so one paragraph of a million runs cannot slip the cap', () => {
+    // The hole that charging only rows and cells would leave open: a single
+    // <w:p> (or a single <w:tc>) holding unbounded runs is still one block.
+    const runs = '<w:r><w:t>x</w:t></w:r>'.repeat(20);
+    expect(msg(() => p(`<w:p>${runs}</w:p>`, { ...DOCX_LIMITS, docxBlockCount: 10 })))
+      .toBe('Not a valid .docx (too many blocks)');
   });
 });

@@ -107,6 +107,25 @@ describe('convertDocument — blocks', () => {
     expect(r.warnings.some((w) => w.code === 'table-flattened')).toBe(true);
   });
 
+  /**
+   * A1. `Math.max(...block.rows.map(...))` is a spread, and a spread past
+   * ~125 000 arguments is a hard V8 RangeError ("Maximum call stack size
+   * exceeded"), not a slow path. The route has no branch for that, so it fell
+   * through to `Internal error` / 500 — for a 1 678-byte upload.
+   *
+   * parse.ts now refuses a table that large (see the block-cap tests in
+   * ingest-docx-parse.test.ts), but this assertion is deliberately NOT allowed
+   * to lean on that: convertDocument is exported and is driven directly, with
+   * hand-built models, by most of this file. A width computation that can throw
+   * on row count is a bug in the converter whatever the parser does upstream.
+   */
+  it('computes table width without a spread, so 130 000 rows cannot RangeError', () => {
+    const rows = Array.from({ length: 130_000 }, () => [{ runs: [run('x')] }]);
+    const r = convert([{ kind: 'table', rows, hasMergedCells: false }]);
+    // header + separator + 129 999 remaining data rows, then the trailing \n.
+    expect(r.markdown.trimEnd().split('\n')).toHaveLength(130_001);
+  });
+
   it('pads a ragged row to the header width so the table stays valid GFM', () => {
     const r = convert([{
       kind: 'table',
@@ -674,6 +693,92 @@ describe('convertDocx — end to end', () => {
     // nothing — the gate would refuse the promotion the UI just promised.
     expect(out.headings.unstyledCandidates).toBe(0);
     expect(out.warnings.some((w) => w.code === 'unstyled-headings-detected')).toBe(false);
+  });
+
+  /**
+   * A2 — the DOCX-09 mixed-document blind spot, and its control.
+   *
+   * The gate ran the heuristic ONLY when styledCount === 0, so a single
+   * accidental Heading 1 — and styling the document TITLE as Heading 1 is
+   * Word's default — removed the promotion affordance AND every diagnostic at
+   * once. Executed before the fix:
+   *
+   *   MIXED   (1 styled + 8 hand-formatted sections):
+   *     headings = {"styled":1,"unstyledCandidates":0,"promoted":false}
+   *     warnings = []                        <- nothing at all
+   *   CONTROL (0 styled + the same 8 sections):
+   *     headings = {"styled":0,"unstyledCandidates":8,"promoted":false}
+   *     warnings = ["no-headings","unstyled-headings-detected"]
+   *
+   * Only the DIAGNOSTIC half is fixed. Whether promotion should be OFFERED for
+   * a mixed document is a product decision that has not been made; DOCX-09
+   * forbids it deliberately, so `unstyledCandidates` stays 0 post-gate and the
+   * client's `unstyledCandidates > 0` condition keeps meaning what it means.
+   * The new counts ride in the warning and nowhere else.
+   */
+  const mixedBody = (withStyledTitle: boolean) => {
+    const sections = Array.from({ length: 8 }, (_, i) =>
+      `<w:p><w:r><w:rPr><w:b/><w:sz w:val="32"/></w:rPr><w:t>Section ${i + 1}</w:t></w:r></w:p>` +
+      `<w:p><w:r><w:rPr><w:sz w:val="22"/></w:rPr><w:t>Body prose for ${i + 1}.</w:t></w:r></w:p>`,
+    ).join('');
+    const title = '<w:p><w:pPr><w:pStyle w:val="Heading1"/></w:pPr>' +
+      '<w:r><w:t>The Vale</w:t></w:r></w:p>';
+    return documentWith((withStyledTitle ? title : '') + sections);
+  };
+
+  it('says so when a mostly-unstyled document carries one styled heading', async () => {
+    const buf = await makeDocx({ documentXml: mixedBody(true) });
+    const out = await convertDocx(buf, { promoteHeadings: false });
+
+    expect(out.headings.styled).toBe(1);
+    // Unchanged, and deliberately: the gate still refuses, so the affordance
+    // must stay off. This is the assertion that fails if someone "fixes" the
+    // promotion half along with the diagnostic half.
+    expect(out.headings.unstyledCandidates).toBe(0);
+    expect(out.headings.promoted).toBe(false);
+
+    const warning = out.warnings.find((w) => w.code === 'mixed-headings-detected');
+    expect(warning).toBeDefined();
+    // Both counts must be IN the message: the user's whole problem is that one
+    // number is 1 and the other is 8, and a message naming neither explains
+    // nothing.
+    expect(warning?.message).toContain('1 styled heading');
+    expect(warning?.message).toContain('8 paragraphs');
+    expect(warning?.count).toBe(8);
+    // The promotion offer is NOT repeated here — it would be a lie, because
+    // accepting it would change nothing.
+    expect(out.warnings.some((w) => w.code === 'unstyled-headings-detected')).toBe(false);
+  });
+
+  it('control: the same document with no styled heading warns the OLD way', async () => {
+    // Without this the test above is satisfied by an implementation that emits
+    // `mixed-headings-detected` unconditionally, which would double-report
+    // every unstyled document and make the two codes indistinguishable.
+    const buf = await makeDocx({ documentXml: mixedBody(false) });
+    const out = await convertDocx(buf, { promoteHeadings: false });
+
+    expect(out.headings.styled).toBe(0);
+    expect(out.headings.unstyledCandidates).toBe(8);
+    expect(out.warnings.some((w) => w.code === 'unstyled-headings-detected')).toBe(true);
+    expect(out.warnings.some((w) => w.code === 'mixed-headings-detected')).toBe(false);
+  });
+
+  it('stays quiet when the styled headings already account for the document', async () => {
+    // A properly styled document with a couple of incidental bold lines must
+    // not be nagged at. The trigger is "substantially more candidates than
+    // styled headings", not "any candidate at all".
+    const styled = Array.from({ length: 6 }, (_, i) =>
+      `<w:p><w:pPr><w:pStyle w:val="Heading1"/></w:pPr><w:r><w:t>Chapter ${i + 1}</w:t></w:r></w:p>` +
+      `<w:p><w:r><w:rPr><w:sz w:val="22"/></w:rPr><w:t>Prose ${i + 1}.</w:t></w:r></w:p>`,
+    ).join('');
+    const incidental =
+      '<w:p><w:r><w:rPr><w:b/><w:sz w:val="32"/></w:rPr><w:t>A bold aside</w:t></w:r></w:p>' +
+      '<w:p><w:r><w:rPr><w:sz w:val="22"/></w:rPr><w:t>More prose.</w:t></w:r></w:p>';
+    const buf = await makeDocx({ documentXml: documentWith(styled + incidental) });
+    const out = await convertDocx(buf, { promoteHeadings: false });
+
+    expect(out.headings.styled).toBe(6);
+    expect(out.warnings.some((w) => w.code === 'mixed-headings-detected')).toBe(false);
   });
 
   // DOCX-07: the manifest names contentType, and [Content_Types].xml is the

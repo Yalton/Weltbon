@@ -31,7 +31,11 @@ export type DocxWarningCode =
   | 'image-dropped' | 'equation-dropped' | 'formatting-dropped'
   | 'tracked-changes-applied' | 'comments-dropped' | 'field-dropped'
   | 'table-flattened' | 'textbox-dropped' | 'symbol-dropped'
-  | 'no-headings' | 'unstyled-headings-detected';
+  | 'no-headings' | 'unstyled-headings-detected'
+  // Informational, emitted by index.ts only (like unstyled-headings-detected):
+  // the document HAS styled headings, but far more paragraphs look like
+  // headings than there are styled ones. See index.ts for why this exists.
+  | 'mixed-headings-detected';
 
 export interface DocxWarning { code: DocxWarningCode; message: string; count: number }
 
@@ -443,7 +447,16 @@ function renderParagraph(
 function renderTable(block: DocxTable, ctx: RenderContext): Chunk | null {
   if (block.rows.length === 0) return null;
   if (block.hasMergedCells) ctx.bump('table-flattened');
-  const width = Math.max(...block.rows.map((row) => row.length));
+  // A reduce, NOT `Math.max(...rows.map(...))`. A spread past ~125 000
+  // arguments is a hard V8 RangeError ("Maximum call stack size exceeded"),
+  // and the route has no branch for that, so a 1 678-byte .docx holding
+  // 130 000 rows left as a 500 instead of DOCX-11's 400. parse.ts now charges
+  // rows and cells against docxBlockCount so such a table is refused upstream,
+  // but this must not depend on that: convertDocument is exported and is
+  // driven directly with hand-built models by most of its tests, and a width
+  // computation that can throw on row count is a bug here whatever the parser
+  // does. Do not "simplify" this back into a spread.
+  const width = block.rows.reduce((max, row) => (row.length > max ? row.length : max), 0);
   if (width === 0) return null;
 
   const cell = (c: { runs: DocxRun[] } | undefined): string =>

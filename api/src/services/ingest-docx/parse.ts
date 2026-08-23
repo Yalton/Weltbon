@@ -223,7 +223,7 @@ export function parseDocumentXml(xml: string, limits: DocxLimits): DocxDocument 
   };
 
   let depth = 0;
-  let blockCount = 0;
+  let charged = 0;
 
   /**
    * THE suppression stack. Each entry is the depth of an open suppressing
@@ -262,17 +262,43 @@ export function parseDocumentXml(xml: string, limits: DocxLimits): DocxDocument 
   const top = <T>(stack: T[]): T | null => (stack.length === 0 ? null : stack[stack.length - 1]);
 
   /**
-   * Bounds CPU on valid-but-pathological input (T-35-04): a document with no
-   * anomalous byte count at all can still carry a million empty paragraphs.
+   * Bounds CPU and memory on valid-but-pathological input (T-35-04): a document
+   * with no anomalous byte count at all can still carry a million empty
+   * paragraphs.
+   *
+   * THE CAP'S UNIT IS A RETAINED MODEL NODE, NOT A TOP-LEVEL BLOCK. It charges
+   * a published block, a table row, a table cell, and an emitted run — which is
+   * exactly the set of things that accumulate without bound. Charging only
+   * top-level blocks (what shipped first) left the cap blind to the two
+   * structures that nest: a `w:tbl` cost ONE unit no matter how many
+   * `w:tr`/`w:tc` it held, and a single `w:p` cost one no matter how many runs.
+   * A 1 678-byte .docx carrying 130 000 rows therefore parsed in ~75 ms as a
+   * single block, and then blew up in the converter's width computation as a
+   * RangeError — which the route has no branch for, so it left as a 500. DOCX-11
+   * requires a document we will not parse to leave as a 400.
+   *
    * A suppressed block is built (its object is still needed as a container) but
-   * never published, and so never spends budget.
+   * never published, and so never spends budget. Rows and cells are charged
+   * unconditionally because they are appended to their table REGARDLESS of
+   * suppression — a table inside a text box still accumulates every row — while
+   * a suppressed run is never appended anywhere, which is why the run charge
+   * sits inside emitRun's target check rather than at the `w:r` tag.
+   *
+   * The cost if the sizing is wrong is a clear 400 naming the cap, never a
+   * corrupted import: at 100 000 units a 300-page manuscript (~10 000
+   * paragraphs, a few tens of thousands of runs) has room to spare, and Word's
+   * own hard limit of 32 767 table rows sits far below it.
    */
-  function pushBlock<T extends DocxBlock>(block: T): T {
-    if (suppressed()) return block;
-    blockCount += 1;
-    if (blockCount > limits.docxBlockCount) {
+  function charge(): void {
+    charged += 1;
+    if (charged > limits.docxBlockCount) {
       throw new DocxFormatError('Not a valid .docx (too many blocks)');
     }
+  }
+
+  function pushBlock<T extends DocxBlock>(block: T): T {
+    if (suppressed()) return block;
+    charge();
     blocks.push(block);
     return block;
   }
@@ -291,6 +317,9 @@ export function parseDocumentXml(xml: string, limits: DocxLimits): DocxDocument 
   function emitRun(text: string, extra: Partial<DocxRun>): void {
     const target = runTarget();
     if (target === null) return;
+    // Charged here, not at the `w:r` open tag: a run inside a w:del is never
+    // retained, so charging it would refuse documents for text we discard.
+    charge();
     const f = fmt ?? blankFormat();
     const link = top(links);
     target.push({
@@ -399,12 +428,16 @@ export function parseDocumentXml(xml: string, limits: DocxLimits): DocxDocument 
           depth,
         });
         break;
+      // Rows and cells are charged (see charge()): they are the two structures
+      // that nest inside a single top-level block, so without this a table is
+      // one unit however large it is.
       case 'w:tr': {
         const table = top(tables);
         if (table !== null) {
           const row: Array<{ runs: DocxRun[] }> = [];
           table.table.rows.push(row);
           rows.push({ row, depth });
+          charge();
         }
         break;
       }
@@ -414,6 +447,7 @@ export function parseDocumentXml(xml: string, limits: DocxLimits): DocxDocument 
           const cell = { runs: [] as DocxRun[] };
           row.row.push(cell);
           cells.push({ cell, depth });
+          charge();
         }
         break;
       }
