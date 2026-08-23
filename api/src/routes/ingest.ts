@@ -341,12 +341,20 @@ const multipartBodySchema = z.object({
   // never a JS boolean. Same reason split_level above is z.any(): the
   // pre-handler validator runs against the wire value, and a z.boolean() would
   // reject the string "true" before the handler ever saw it.
+  // The published type is `string` with a single-member enum, NOT `boolean`.
+  // The handler below accepts the literal string "true" and 400s on everything
+  // else INCLUDING "false", so a client generated from a boolean schema would
+  // send `false` to mean "do not promote" and get a 400 for it. There are two
+  // states here, not three (see the handler's comment), and `enum: ['true']`
+  // is the only shape that says so on the wire.
   docx_promote_headings: z.any().optional().openapi({
-    type: 'boolean',
+    type: 'string',
+    enum: ['true'],
     description:
       'Absent = only Word Heading styles and outline levels become headings. ' +
-      '"true" additionally promotes heading-shaped unstyled paragraphs, and ' +
-      'only when the document has no styled headings at all.',
+      'The literal string "true" additionally promotes heading-shaped unstyled ' +
+      'paragraphs, and only when the document has no styled headings at all. ' +
+      'Any other value, "false" included, is a 400 — omit the field instead.',
   }),
 });
 

@@ -136,13 +136,19 @@ export async function unpackDocx(buffer: Buffer, limits: DocxLimits): Promise<Do
       // — unlike yauzl's own decode path — never runs yauzl's path validation.
       const fileName = (entry.fileName as unknown as Buffer).toString('utf8');
 
-      if (/\/$/.test(fileName)) { zipfile.readEntry(); return; }
-
+      // CHARGED BEFORE the directory-entry check, not after. A directory entry
+      // is still a central-directory record we enumerate, and skipping the
+      // charge meant the 512 cap simply did not see them: 100 000 directory
+      // entries unpacked in 588 ms without tripping it. Not a hole — nothing
+      // is decompressed either way — but the cap is supposed to bound
+      // enumeration, and it was not doing that.
       entryCount += 1;
       if (entryCount > limits.docxEntryCount) {
         settle(() => reject(new BatchLimitError('docx_entry_count', limits.docxEntryCount)));
         return;
       }
+
+      if (/\/$/.test(fileName)) { zipfile.readEntry(); return; }
 
       const declared = typeof entry.uncompressedSize === 'number' ? entry.uncompressedSize : 0;
 

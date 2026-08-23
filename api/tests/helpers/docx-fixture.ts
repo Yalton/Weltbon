@@ -157,6 +157,17 @@ export function makeDocx(parts: DocxFixtureParts): Promise<Buffer> {
 
   const add = (name: string, content: string | Buffer | undefined) => {
     if (content === undefined) return;
+
+    // A name ending in "/" is a DIRECTORY entry. yazl's addBuffer() refuses
+    // one (validateMetadataPath rejects a trailing slash), so it has to go
+    // through addEmptyDirectory — and directory entries are needed as
+    // fixtures in their own right, because unpack.ts skips them and therefore
+    // has to be shown charging them against docx_entry_count first.
+    if (name.endsWith('/')) {
+      zip.addEmptyDirectory(name);
+      return;
+    }
+
     const buf = Buffer.isBuffer(content) ? content : Buffer.from(content, 'utf8');
 
     const segments = name.split('/');

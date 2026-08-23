@@ -110,11 +110,19 @@ describe('parseDocumentXml — paragraphs and runs', () => {
     expect(para.numbering).toEqual({ numId: '7', ilvl: 2 });
   });
 
-  it('preserves whitespace-only runs marked xml:space="preserve"', () => {
-    const doc = p('<w:p><w:r><w:t>a</w:t></w:r><w:r><w:t xml:space="preserve"> b</w:t></w:r></w:p>');
-    const runs = (doc.blocks[0] as { runs: Array<{ text: string }> }).runs;
-    expect(runs.map((r) => r.text).join('')).toBe('a b');
-  });
+  // Demoted to a todo rather than left green, because it asserted nothing.
+  // parse.ts has no xml:space handler at all — saxes hands us the text verbatim
+  // and every run is captured verbatim — so the attribute is inert. Measured:
+  //
+  //   with    xml:space="preserve" -> ["a"," b"]
+  //   without xml:space            -> ["a"," b"]   (identical)
+  //
+  // The test passed with the attribute deleted from its own fixture, which
+  // means it was reading as coverage for a rule that does not exist. Real
+  // coverage would need a case where the two DIFFER — i.e. an implementation
+  // that collapses whitespace unless the attribute is present, which is a
+  // behaviour change, not a test.
+  it.todo('collapses whitespace-only runs UNLESS marked xml:space="preserve"');
 
   it('records w:br and w:tab as run flags rather than text', () => {
     const doc = p('<w:p><w:r><w:br/><w:tab/><w:t>x</w:t></w:r></w:p>');

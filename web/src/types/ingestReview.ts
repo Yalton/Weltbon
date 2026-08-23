@@ -96,13 +96,27 @@ export type IngestPreview = {
     hidden_paths_filtered: number;
     duplicate_titles_in_batch: number;
     unresolved_wikilinks: number;
-    /** #35 DOCX-10. Optional: absent on a preview with no .docx parts. */
+    /**
+     * #35 DOCX-10.
+     *
+     * Optional HERE ONLY as tolerance for a response this client did not
+     * produce — an older API, a fixture, a hand-written stub. It is NOT
+     * absent on a preview with no .docx parts, which is what this comment
+     * used to claim: `ingestPreviewSchema` declares it required, the handler
+     * emits it unconditionally, and `docx_promote_headings=true with no .docx
+     * in the batch` asserts it comes back as 0. Do not write code that reads
+     * `undefined` as "there were no .docx files" — 0 is that signal.
+     */
     docx_files_converted?: number;
   };
   entries: PreviewEntry[];
   warnings: Array<{ file: string; message: string }>;
   split?: SplitInfo;
-  /** #35 DOCX-10. Optional: absent on a preview with no .docx parts. */
+  /**
+   * #35 DOCX-10. Optional on the same terms as `summary.docx_files_converted`
+   * above: required in the server's schema and emitted unconditionally, so a
+   * .docx-free preview arrives as `{ files: [] }` — never absent.
+   */
   docx?: DocxInfo;
 };
 

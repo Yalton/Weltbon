@@ -126,6 +126,35 @@ describe('unpackDocx — caps (T-35-01)', () => {
     expect(err.limit).toBe('docx_entry_count');
   });
 
+  it('charges DIRECTORY entries against the same cap', async () => {
+    // These were skipped before the count was taken, so the cap could not see
+    // them at all: 100 000 directory entries enumerated in 588 ms against a
+    // cap of 512. Nothing is decompressed either way, so this was never a
+    // hole — but docx_entry_count is supposed to bound how much central
+    // directory we walk, and it was not doing that.
+    const extras = Array.from({ length: 600 }, (_, i) => ({
+      name: `word/pad${i}/`,
+      content: '',
+    }));
+    const buf = await makeDocx({ documentXml: MINIMAL_DOCUMENT_XML, extraEntries: extras });
+
+    const err = await unpackDocx(buf, DOCX_LIMITS).catch((e) => e);
+    expect(err).toBeInstanceOf(BatchLimitError);
+    expect(err.limit).toBe('docx_entry_count');
+  });
+
+  it('still unpacks an archive whose directory entries fit under the cap', async () => {
+    // The control. Real writers do emit directory entries, and charging them
+    // must not turn an ordinary .docx into a 413.
+    const extras = Array.from({ length: 10 }, (_, i) => ({
+      name: `word/pad${i}/`,
+      content: '',
+    }));
+    const buf = await makeDocx({ documentXml: MINIMAL_DOCUMENT_XML, extraEntries: extras });
+    const parts = await unpackDocx(buf, DOCX_LIMITS);
+    expect(parts.document).toContain('<w:t>Hello</w:t>');
+  });
+
   it('aborts a bomb in an ALLOWLISTED part before it fully expands', async () => {
     // 70 MB of 'a' in document.xml compresses to a few KB. docxPartSize is
     // raised here to 128 MB so the cheap header early-reject (unpack.ts:151,

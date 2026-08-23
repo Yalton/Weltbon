@@ -500,7 +500,11 @@ describe('POST /api/universes/:uid/ingest (Phase 11-03 Task 2)', () => {
 
     const requestSchema = post.requestBody.content['multipart/form-data'].schema;
     expect(Object.keys(requestSchema.properties)).toContain('docx_promote_headings');
-    expect(requestSchema.properties.docx_promote_headings.type).toBe('boolean');
+    // NOT 'boolean'. The handler accepts only the literal string "true" and
+    // 400s on everything else, "false" included — a client generated from a
+    // boolean schema would send `false` for "do not promote" and get a 400.
+    expect(requestSchema.properties.docx_promote_headings.type).toBe('string');
+    expect(requestSchema.properties.docx_promote_headings.enum).toEqual(['true']);
 
     const okSchema = post.responses['200'].content['application/json'].schema;
     expect(Object.keys(okSchema.properties.summary.properties))
