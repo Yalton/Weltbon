@@ -43,14 +43,28 @@ import { Loading } from '../components/ui/Loading';
 /**
  * Issue #48 Task 7: this used to narrow `'ollama'` out of every provider
  * comparison here (`toDisplayableAuditProvider`, since deleted) on the theory
- * that the AI Gap Auditor tab had no Ollama picker yet — treating a saved
- * Ollama config as "not displayable" was the narrowest fix that avoided
- * apFinal/aiPatchEmpty silently clearing it on the next unrelated Save. That
- * picker is what this task adds, so the narrowing is gone: `auditProvider`
- * (local state), `Universe.auditProvider` (useUniverse.ts), and the PATCH
- * body's `auditProvider` field now all carry the same
- * `'anthropic' | 'openai' | 'ollama' | null` union straight through, with no
- * translation step to keep in sync.
+ * that the AI Gap Auditor tab had no Ollama picker yet.
+ *
+ * Fix round 1 (Task 7 review): a first pass at this comment claimed the shim
+ * risked *clobbering* a saved Ollama value on an unrelated Save. Traced —
+ * that was wrong. `apFinal` was derived from live local state and never
+ * passed through the shim at all, and the shim was applied to BOTH sides of
+ * the `apFinal !== toDisplayableAuditProvider(data.auditProvider)` diff
+ * check, so a stored `'ollama'` made both sides evaluate to `null`: the diff
+ * read as "unchanged", `auditProvider` was omitted from the PATCH body, and
+ * the stored value was never touched. The shim's only actual effect was
+ * cosmetic: it hid a saved Ollama value from the picker's *display* by
+ * hydrating local state to `''` instead of `'ollama'` on load — the field
+ * looked unset even when the server had it saved.
+ *
+ * The real reason it had to go is a type one, not a data-safety one: once
+ * `auditProvider` (local state) widened to include `'ollama'`, the shim's
+ * return type `'anthropic' | 'openai' | null` could no longer even hold the
+ * value passing through it — `auditProvider`, `Universe.auditProvider`
+ * (useUniverse.ts), and the PATCH body's `auditProvider` field now all carry
+ * the same `'anthropic' | 'openai' | 'ollama' | null` union straight
+ * through, with no translation step to keep in sync or narrow the value on
+ * the way in.
  */
 
 const TABS = [

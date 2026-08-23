@@ -156,9 +156,20 @@ describe('UniverseSettings AI-auditor — Ollama end-to-end (Issue #48 Task 7)',
       expect(patchCall).toBeDefined();
       const body = JSON.parse(patchCall![1]!.body as string);
       // The load-bearing assertion: 'ollama' survives, unmodified, all the
-      // way from the <select>'s onChange through to the PATCH body. Before
-      // this task, `toDisplayableAuditProvider` silently rewrote a saved
-      // 'ollama' to `null` here — this would have failed against that code.
+      // way from the <select>'s onChange through to the PATCH body.
+      //
+      // Fix round 1 (Task 7 review): a first pass at this comment claimed
+      // the deleted `toDisplayableAuditProvider` shim would have rewritten
+      // this value to `null` here. Traced — wrong on two counts: (1) that
+      // shim was never in this value's path at all, since `apFinal` is
+      // derived straight from live local state, never passed through it;
+      // (2) before this task the 'Ollama' <option> did not exist in the
+      // dropdown in the first place, so this flow would have failed much
+      // earlier, at the `findByRole('option', { name: 'Ollama' })` above —
+      // there would have been no selected 'ollama' value left to reach a
+      // Save at all. What this assertion actually pins is that, now that
+      // the option and the wider `auditProvider` type exist, nothing
+      // between the <select> and the PATCH body narrows or drops the value.
       expect(body.auditProvider).toBe('ollama');
       expect(body.auditModel).toBe('qwen3:32b');
     });
