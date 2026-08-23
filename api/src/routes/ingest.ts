@@ -639,6 +639,16 @@ export const ingestRoutes = new OpenAPIHono<AppEnv>()
     //    Each branch wraps in try/catch so BatchLimitError → 413.
     let docxConversions: Array<{ path: string; conversion: DocxConversion }> = [];
     let inputs: FileInput[];
+    // #35 (DOCX-08 + 11). Counted, not converted: a .docx inside a .zip is
+    // itself a zip, and opening one inside unpackZip would make it a
+    // nested-decompression amplification path the cumulative cap does not
+    // model — a real regression against T-11-01. That exclusion is silent to
+    // parseBatch (the entry just falls into non_markdown_files_skipped), so
+    // this count exists purely to let the response explain the skip instead
+    // of leaving it indistinguishable from a broken import. Hidden paths are
+    // excluded here too, matching parseBatch's own filter (D-08a) — an entry
+    // the user could never see in the preview must not be named in a warning.
+    let docxInZipCount = 0;
     try {
       if (zipFile) {
         // T-11-09: short-circuit on File.size BEFORE allocating arrayBuffer.
@@ -664,6 +674,9 @@ export const ingestRoutes = new OpenAPIHono<AppEnv>()
           maxFileSize: MAX_FILE_SIZE,
           maxTotalUncompressed: MAX_TOTAL_UNCOMPRESSED,
         });
+        docxInZipCount = inputs.filter(
+          (f) => isDocxFile(f.path) && !isHiddenPath(f.path),
+        ).length;
       } else {
         const result = await materializeFileParts(filesArr, { promoteDocxHeadings });
         inputs = result.inputs;
@@ -771,6 +784,22 @@ export const ingestRoutes = new OpenAPIHono<AppEnv>()
       conversion.warnings.map((w) => ({ file: path, message: w.message })),
     );
 
+    // #35 (DOCX-08 + T-11-04). ONE aggregated warning for the whole batch,
+    // never one per entry — a 40-file archive must not produce 40 warnings,
+    // matching how every other warning in this taxonomy aggregates. The
+    // message interpolates the COUNT only: entry names inside the zip are
+    // attacker-controlled central-directory strings (may carry U+FFFD or
+    // control characters) and must never reach response text.
+    const docxInZipWarnings =
+      docxInZipCount > 0
+        ? [
+            {
+              file: zipFile?.name ?? 'archive',
+              message: `${docxInZipCount} .docx file(s) inside the archive were skipped. Upload .docx files directly rather than in a ZIP.`,
+            },
+          ]
+        : [];
+
     // #35 (DOCX-10). `path` is the ORIGINAL .docx name — DOCX-01 rewrites it
     // to .md before parseBatch sees it, and reporting against a chapter.md
     // the user never uploaded would name a file that does not exist from
@@ -787,7 +816,7 @@ export const ingestRoutes = new OpenAPIHono<AppEnv>()
     return c.json(
       {
         ...preview,
-        warnings: [...preview.warnings, ...docxWarnings],
+        warnings: [...preview.warnings, ...docxWarnings, ...docxInZipWarnings],
         summary: {
           ...preview.summary,
           // #35 (DOCX-10).

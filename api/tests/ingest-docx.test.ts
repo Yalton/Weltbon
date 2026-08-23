@@ -597,6 +597,29 @@ describe('POST /api/universes/:uid/ingest — .docx (#35)', () => {
     expect(titles(body)).toEqual(['Notes']);
   });
 
+  it('explains why .docx entries inside a zip were skipped, as ONE aggregated warning', async () => {
+    // DOCX-08 excludes .docx from zips because a .docx is itself a zip, and
+    // opening one inside unpackZip would be a nested-decompression path its
+    // cumulative cap does not model. Silent skipping reads as a broken
+    // feature, so the preview has to say what happened and what to do
+    // instead — as one warning for the batch, not one per file, matching how
+    // every other warning in this taxonomy aggregates.
+    const zipBytes = await makeZip([
+      { name: 'chapter-one.docx', content: Buffer.from('not really a docx') },
+      { name: 'chapter-two.docx', content: Buffer.from('also not a docx') },
+      { name: 'notes.md', content: Buffer.from('# Notes') },
+    ]);
+
+    const body = await preview([['zip', new File([zipBytes], 'vault.zip', { type: 'application/zip' })]]);
+
+    const docxSkipWarnings = body.warnings.filter(
+      (w) => w.message.includes('.docx') && /upload/i.test(w.message),
+    );
+    expect(docxSkipWarnings).toHaveLength(1);
+    expect(docxSkipWarnings[0]?.message).toContain('2 .docx file(s)');
+    expect(body.summary.non_markdown_files_skipped).toBe(2);
+  });
+
   // ─── 13. Exactly-one-of is unchanged by .docx ─────────────────────────────
 
   it('files[] containing a .docx AND a zip together is still a 400', async () => {
