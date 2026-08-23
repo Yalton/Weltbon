@@ -30,8 +30,8 @@ function readAllEntries(buf: Buffer): Promise<Array<{ name: string; content: Buf
       if (err || !zipfile) { reject(err ?? new Error('no zipfile')); return; }
       zipfile.on('error', reject);
       zipfile.on('end', () => resolve(out));
-      zipfile.on('entry', (entry: yauzl.Entry) => {
-        const name = (entry.fileName as unknown as Buffer).toString('utf8');
+      zipfile.on('entry', (entry: yauzl.Entry<Buffer>) => {
+        const name = entry.fileName.toString('utf8');
         if (/\/$/.test(name)) { zipfile.readEntry(); return; }
         zipfile.openReadStream(entry, (streamErr, readStream) => {
           if (streamErr || !readStream) { reject(streamErr ?? new Error('no stream')); return; }
