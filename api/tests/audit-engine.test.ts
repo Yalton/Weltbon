@@ -849,6 +849,31 @@ describe('audit-engine runAudit (Phase 24-04)', () => {
     },
   );
 
+  it("provider LLMProviderError(ContextTruncated) → status=failed, error='context_truncated'", async () => {
+    mockRunAudit.mockRejectedValue(
+      new LLMProviderError(LLMError.ContextTruncated, 'raw token counts stay process-local'),
+    );
+
+    const updateCalls: DbUpdateCall[] = [];
+    const { dbStub } = makeDbStub({ updateCalls });
+
+    await runAudit(RUN_ID, {
+      db: dbStub as unknown as typeof import('../src/db/client.js').db,
+      resolveCredential: mockResolveCredential,
+      runCheapFinds: mockRunCheapFinds,
+      buildStructuralDigest: mockBuildStructuralDigest,
+      validateReferencedEntryIds: mockValidateReferencedEntryIds,
+      computeGapKey: mockComputeGapKey,
+      getEntryBody: mockGetEntryBody,
+    });
+
+    expect(updateCalls).toContainEqual(
+      expect.objectContaining({
+        set: expect.objectContaining({ status: 'failed', error: 'context_truncated' }),
+      }),
+    );
+  });
+
   // =========================================================================
   // Test 8: BYOK null → provider_error
   // =========================================================================

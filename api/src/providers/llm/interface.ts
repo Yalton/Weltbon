@@ -32,7 +32,7 @@
  *
  * Requirements:
  *   - PROVIDER-01: the five-method `LLMProvider` interface shape
- *   - PROVIDER-05: the seven-variant `LLMError` enum + typed `LLMProviderError`
+ *   - PROVIDER-05: normalized `LLMError` variants + typed `LLMProviderError`
  *
  * No runtime imports — pure type / value declarations.
  */
@@ -89,7 +89,7 @@ export const MIN_CACHEABLE_TOKENS = 4096;
 /**
  * Normalized provider-error variants exposed across the Phase 23 → Phase 24
  * boundary. The engine (Phase 24) and the UI banner-copy table (Phase 26) MUST
- * branch only on these seven variants — never on raw SDK error subclasses or
+ * branch only on these variants — never on raw SDK error subclasses or
  * provider-specific HTTP status codes.
  *
  * String-valued members so `JSON.stringify({ variant: err.variant })` produces
@@ -110,6 +110,7 @@ export enum LLMError {
   InvalidApiKey = 'InvalidApiKey',
   InsufficientCredits = 'InsufficientCredits',
   ModelNotAvailable = 'ModelNotAvailable',
+  ContextTruncated = 'ContextTruncated',
   ContentBlockedBySafetyFilter = 'ContentBlockedBySafetyFilter',
   NetworkError = 'NetworkError',
   UnknownProviderError = 'UnknownProviderError',
