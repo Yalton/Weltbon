@@ -17,7 +17,32 @@ RUN --mount=type=cache,id=pnpm,target=/pnpm/store \
 ###############################################################################
 FROM deps AS build
 COPY . .
-RUN pnpm --filter api build:docker && pnpm --filter web build
+
+# ── WHY THE HEAP BUMP AND THE ASSERTION ──────────────────────────────────────
+# `build:docker` is `tsc -p tsconfig.build.json || true`. The `|| true` is there
+# because this project has a documented non-zero type-error baseline and the
+# emitted JS is correct anyway — but it also swallows a *crash*, and tsc crashed.
+#
+# On the GitHub runner tsc exhausted Node's default ~2 GB heap:
+#
+#   FATAL ERROR: Ineffective mark-compacts near heap limit
+#   Allocation failed - JavaScript heap out of memory
+#
+# `|| true` turned that into a silent success. The stage reported DONE, `pnpm
+# deploy` cheerfully copied a package with no `dist/`, and the build died two
+# stages later as `"/out/api/dist": not found` — an error naming neither tsc nor
+# memory. desktop/scripts/stage-api.sh already carries a note about CI heap
+# exhaustion from typechecking; this is the same failure in the image build.
+#
+# The heap bump raises the ceiling. The assertion is the more important half:
+# it makes any future no-emit fail HERE, naming the stage that actually broke,
+# instead of surfacing as a missing path in an unrelated COPY.
+RUN NODE_OPTIONS=--max-old-space-size=4096 pnpm --filter api build:docker \
+    && pnpm --filter web build \
+    && { test -s api/dist/index.js || { \
+         echo "FATAL: tsc produced no api/dist/index.js. build:docker swallows tsc's exit code (|| true), so this is what a tsc CRASH looks like — check the output above for 'heap out of memory'." >&2; \
+         exit 1; \
+       }; }
 RUN --mount=type=cache,id=pnpm,target=/pnpm/store \
     pnpm deploy --filter @weltbon/api --prod /out/api
 
