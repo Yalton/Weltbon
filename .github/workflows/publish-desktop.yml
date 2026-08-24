@@ -54,7 +54,7 @@ on:
           - macos
 
 permissions:
-  contents: write   # required to upload assets onto the Release
+  contents: write   # required to upload assets onto the Release (both jobs)
 
 jobs:
   release:
@@ -108,17 +108,17 @@ jobs:
           cd desktop && ./node_modules/.bin/electron-builder --linux \
             --config electron-builder.yml --config.extraMetadata.version="$ver"
 
-      # Uploaded whether or not this is a tag: on a manual run it is the only
-      # output, and it is what makes a build debuggable without cutting a release.
-      - name: Upload build artifacts
-        uses: actions/upload-artifact@v4
-        with:
-          name: weltbon-desktop-linux
-          path: |
-            desktop/release/*.AppImage
-            desktop/release/*.deb
-          if-no-files-found: error
-          retention-days: 14
+      # ── ORDER MATTERS ────────────────────────────────────────────────────
+      # The Release attach runs BEFORE the artifact upload. It used to run after,
+      # and on the v0.2.0 build that cost us the release: the packages built
+      # fine, the artifact upload hit `Artifact storage quota has been hit`, the
+      # job failed, and "Attach to the GitHub Release" was SKIPPED. A finished
+      # AppImage and deb were thrown away because a convenience copy could not
+      # be stored.
+      #
+      # Release assets and Actions artifacts are separate quotas. On a tag the
+      # Release is the deliverable; the artifact is a nicety, so it must not be
+      # able to fail the job.
 
       # Uses the preinstalled `gh` rather than a third-party release action: this
       # needs `contents: write`, and every other workflow here sticks to
@@ -141,6 +141,43 @@ jobs:
           fi
           printf 'uploading: %s\n' "${files[@]}"
           gh release upload "$TAG" "${files[@]}" --clobber
+
+      # A manual dispatch has no tag and therefore no Release to attach to, so a
+      # draft prerelease is its delivery channel. Draft: no git tag is created
+      # and it stays invisible outside collaborators. Delete it once collected.
+      - name: Publish a draft prerelease (manual runs only)
+        if: ${{ !startsWith(github.ref, 'refs/tags/v') }}
+        env:
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+          TAG: desktop-dev-${{ github.run_id }}
+        run: |
+          set -euo pipefail
+          shopt -s nullglob
+          files=(desktop/release/*.AppImage desktop/release/*.deb)
+          if [ ${#files[@]} -eq 0 ]; then
+            echo "No packages found — the build step should have failed before here." >&2
+            exit 1
+          fi
+          gh release view "$TAG" >/dev/null 2>&1 \
+            || gh release create "$TAG" --draft --prerelease \
+                 --title "desktop dev build ${{ github.run_id }}" \
+                 --notes "Unverified linux desktop build from ${{ github.sha }}. Draft: delete after collection."
+          printf 'uploading: %s\n' "${files[@]}"
+          gh release upload "$TAG" "${files[@]}" --clobber
+
+      # Best-effort convenience copy, AFTER delivery has already happened. This
+      # repo's Actions artifact quota reports itself full even with 0 MB of live
+      # artifacts, so this step must never be able to fail the job.
+      - name: Upload build artifacts (best effort)
+        continue-on-error: true
+        uses: actions/upload-artifact@v4
+        with:
+          name: weltbon-desktop-linux
+          path: |
+            desktop/release/*.AppImage
+            desktop/release/*.deb
+          if-no-files-found: warn
+          retention-days: 14
 
   experimental:
     name: ${{ matrix.name }} (unverified)
@@ -206,10 +243,40 @@ jobs:
           cd desktop && ./node_modules/.bin/electron-builder ${{ matrix.builder_flag }} \
             --config electron-builder.yml --config.extraMetadata.version="$ver"
 
-      - name: Upload build artifacts
+      # Same reasoning as the linux job: Release assets are a separate quota from
+      # Actions artifacts, and the artifact upload has failed builds that were
+      # otherwise green (runs 32676922819 and 32677959012, both Windows).
+      - name: Publish the build to a release
+        env:
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+          IS_TAG: ${{ startsWith(github.ref, 'refs/tags/v') }}
+          TAG: ${{ startsWith(github.ref, 'refs/tags/v') && github.ref_name || format('desktop-dev-{0}', github.run_id) }}
+          GLOB: ${{ matrix.glob }}
+        shell: bash
+        run: |
+          set -euo pipefail
+          shopt -s nullglob
+          files=($GLOB)
+          if [ ${#files[@]} -eq 0 ]; then
+            echo "No packages matched $GLOB — the build step should have failed first." >&2
+            exit 1
+          fi
+          if [ "$IS_TAG" = "true" ]; then
+            gh release view "$TAG" >/dev/null 2>&1 || gh release create "$TAG" --generate-notes
+          else
+            gh release view "$TAG" >/dev/null 2>&1 \
+              || gh release create "$TAG" --draft --prerelease \
+                   --title "desktop dev build ${{ github.run_id }}" \
+                   --notes "Unverified ${{ matrix.name }} desktop build from ${{ github.sha }}. Draft: delete after collection."
+          fi
+          printf 'uploading: %s\n' "${files[@]}"
+          gh release upload "$TAG" "${files[@]}" --clobber
+
+      - name: Upload build artifacts (best effort)
+        continue-on-error: true
         uses: actions/upload-artifact@v4
         with:
           name: weltbon-desktop-${{ matrix.name }}
           path: ${{ matrix.glob }}
-          if-no-files-found: error
+          if-no-files-found: warn
           retention-days: 14
