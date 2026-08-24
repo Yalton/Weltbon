@@ -30,6 +30,14 @@ on:
 
 permissions:
   contents: write
+  # `actions: read` is REQUIRED by the verify step's `gh run list`. Without it
+  # the job token carries only Contents+Metadata, gh gets a 403, and under
+  # `set -euo pipefail` the step dies in under a second — with no output, since
+  # everything visible in the log is the script being echoed rather than run.
+  # That failure was misread twice as "the run was not indexed yet" and once as
+  # "RELEASE_TOKEN is unset", and produced a red X on two releases that had in
+  # fact shipped correctly.
+  actions: read
 
 # A second push while a release is being cut would compute the same version from
 # the same range and race to create the same tag. Serialise instead.
@@ -124,8 +132,23 @@ jobs:
           # that cries wolf is worse than no check — it trains you to ignore the
           # one time it is right.
           for attempt in $(seq 1 12); do
+            # `|| true` then an explicit emptiness check, NOT a bare command
+            # substitution. Under `set -e` a failing gh kills the step with no
+            # message, which is indistinguishable from a real "nothing shipped"
+            # and is exactly how the permission bug above hid for two releases.
+            # A query that CANNOT run must not look like a query that found
+            # nothing.
             runs=$(gh run list --workflow=publish-ghcr.yml --limit 20 \
-                     --json headBranch --jq '[.[] | select(.headBranch == "v'"$VERSION"'")] | length')
+                     --json headBranch --jq '[.[] | select(.headBranch == "v'"$VERSION"'")] | length' 2>&1) || {
+              echo "::error title=Cannot query workflow runs::\`gh run list\` failed, so whether v${VERSION} shipped is UNKNOWN — this is not a report that it did not. Output: ${runs}. The usual cause is a missing \`actions: read\` permission on this job."
+              exit 1
+            }
+            case "$runs" in
+              ''|*[!0-9]*)
+                echo "::error title=Unexpected query result::Expected a count from gh run list, got: ${runs}"
+                exit 1
+                ;;
+            esac
             if [ "$runs" -gt 0 ]; then
               echo "publish-ghcr picked up v${VERSION} after ${attempt} check(s)."
               exit 0
