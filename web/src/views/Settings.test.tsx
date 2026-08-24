@@ -25,6 +25,15 @@ vi.mock('../store/simSettings', () => ({
     }),
 }));
 
+/**
+ * BuildVersion fetches /api/version and needs a QueryClientProvider. Stubbing it
+ * keeps this file about the settings controls; BuildVersion's own behaviour is
+ * covered in src/components/BuildVersion.test.tsx.
+ */
+vi.mock('../components/BuildVersion', () => ({
+  default: () => <p>build-version-stub</p>,
+}));
+
 import Settings from './Settings';
 
 function renderSettings() {
@@ -90,5 +99,17 @@ describe('Settings view', () => {
     const checkbox = screen.getByRole('checkbox');
     fireEvent.click(checkbox);
     expect(mockSetShowEntriesAsBodies).toHaveBeenCalledWith(false);
+  });
+});
+
+describe('Settings build identity', () => {
+  /**
+   * The settings screen is where a user is told to look when asked "what version
+   * are you running?", so the line has to actually be mounted here — not merely
+   * exist as a component nobody renders.
+   */
+  it('renders the build version line', () => {
+    renderSettings();
+    expect(screen.getByText('build-version-stub')).toBeInTheDocument();
   });
 });

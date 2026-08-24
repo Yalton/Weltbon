@@ -104,6 +104,27 @@ cp -r "$REPO/api/assets/fonts" "$STAGE/assets/fonts" 2>/dev/null || echo "[stage
 test -f "$STAGE/drizzle/meta/_journal.json" || { echo "[stage] FATAL: staged migrations journal missing"; exit 1; }
 test -f "$STAGE/web-dist/index.html"        || { echo "[stage] FATAL: staged web-dist/index.html missing"; exit 1; }
 
+# Build identity for the packaged app. main.ts reads this file and exports the
+# values as env before importing the API (desktop/src/build-info.ts explains why
+# a file rather than an esbuild --define: api/src/version.ts reads process.env
+# through a variable, which --define cannot substitute).
+#
+# WELTBON_VERSION may be set by the caller — the release workflow passes the tag
+# being built. Falling back to desktop/package.json keeps a local `pnpm dist`
+# honest rather than stamping an empty version.
+STAGE_VERSION="${WELTBON_VERSION:-$(node -p "require('$REPO/package.json').version")}"
+STAGE_COMMIT="${WELTBON_COMMIT:-$(git -C "$REPO" rev-parse --short HEAD 2>/dev/null || echo '')}"
+STAGE_BUILT_AT="${WELTBON_BUILT_AT:-$(date -u +%Y-%m-%dT%H:%M:%SZ)}"
+node -e '
+  const [version, commit, builtAt, out] = process.argv.slice(1);
+  require("node:fs").writeFileSync(out, JSON.stringify({
+    version,
+    commit: commit || null,
+    builtAt: builtAt || null,
+  }, null, 2) + "\n");
+' "$STAGE_VERSION" "$STAGE_COMMIT" "$STAGE_BUILT_AT" "$STAGE/version.json"
+echo "[stage]     build identity: $STAGE_VERSION${STAGE_COMMIT:+ ($STAGE_COMMIT)}"
+
 echo "[stage] 5/6 rebuilding native modules for Electron's ABI, in the staged tree"
 # bcrypt and sharp are compiled against Node's ABI by default. They IMPORT fine
 # either way and fail at the first real call, so this step failing silently is

@@ -26,9 +26,23 @@ RUN --mount=type=cache,id=pnpm,target=/pnpm/store \
 ###############################################################################
 FROM node:22-bookworm-slim AS runtime
 
+# Build identity, surfaced by GET /api/version.
+#
+# ARGs rather than a file baked into the image: the values differ per build but
+# nothing else in the layer does, and declaring them here keeps the expensive
+# apt layer below cache-stable across releases. publish-ghcr.yml passes the
+# release tag and commit; a plain `docker compose build` leaves them empty and
+# the API falls back to api/package.json, which is correct for a local build.
+ARG WELTBON_VERSION=""
+ARG WELTBON_COMMIT=""
+ARG WELTBON_BUILT_AT=""
+
 ENV NODE_ENV=production \
     CHROMIUM_PATH=/usr/bin/chromium \
-    PORT=3000
+    PORT=3000 \
+    WELTBON_VERSION=$WELTBON_VERSION \
+    WELTBON_COMMIT=$WELTBON_COMMIT \
+    WELTBON_BUILT_AT=$WELTBON_BUILT_AT
 
 # System Chromium + Noto/Liberation fonts + dumb-init for PID 1 signal handling.
 # fc-cache refreshes the fontconfig cache so Chromium picks up the new fonts.

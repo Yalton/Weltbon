@@ -62,5 +62,12 @@ jobs:
           push: true
           tags: ${{ steps.meta.outputs.tags }}
           labels: ${{ steps.meta.outputs.labels }}
+          # Build identity for GET /api/version. `{{version}}` here is the same
+          # value metadata-action derived for the image tag, so the version the
+          # running app reports and the tag it was pulled as cannot disagree.
+          build-args: |
+            WELTBON_VERSION=${{ steps.meta.outputs.version }}
+            WELTBON_COMMIT=${{ github.sha }}
+            WELTBON_BUILT_AT=${{ github.event.repository.updated_at }}
           cache-from: type=gha
           cache-to: type=gha,mode=max

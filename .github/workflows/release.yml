@@ -1,0 +1,127 @@
+# Cut a release tag from conventional commits.
+#
+# On every push to master this computes the next version from the commits since
+# the last release tag (scripts/next-version.mjs — `feat:` minor, `fix:`/`perf:`/
+# `refactor:` patch, `!` or a BREAKING CHANGE footer major, everything else no
+# release). If there is one, it writes that version into all four package.json
+# files, commits, and pushes an annotated tag.
+#
+# The tag is what ships: publish-ghcr.yml and publish-desktop.yml both trigger on
+# `v[0-9]+.[0-9]+.[0-9]+`, and the version the app reports at /api/version is the
+# same string metadata-action puts on the image tag.
+#
+# ── REQUIRED SETUP: RELEASE_TOKEN ────────────────────────────────────────────
+# A push made with the default GITHUB_TOKEN deliberately does NOT trigger other
+# workflows — GitHub blocks that to stop workflows recursing. So a tag pushed
+# with GITHUB_TOKEN would sit there and build nothing, which is the one failure
+# mode this whole pipeline cannot tolerate: a version that exists but shipped no
+# artifact.
+#
+# Create a fine-grained PAT with `contents: write` on this repo and store it as
+# the `RELEASE_TOKEN` secret. Without it this workflow still tags, but the
+# "verify downstream" step below fails loudly rather than leaving you to discover
+# the missing build later.
+name: release
+
+on:
+  push:
+    branches:
+      - master
+
+permissions:
+  contents: write
+
+# A second push while a release is being cut would compute the same version from
+# the same range and race to create the same tag. Serialise instead.
+concurrency:
+  group: release
+  cancel-in-progress: false
+
+jobs:
+  release:
+    runs-on: ubuntu-latest
+    # The release commit is itself a push to master. Without this guard the
+    # workflow re-enters, finds `chore(release):` in range (no bump, since chore
+    # is not a releasing type) and does nothing — harmless but a wasted run every
+    # release. Skipping is cheaper and states the intent.
+    if: ${{ !startsWith(github.event.head_commit.message, 'chore(release):') }}
+
+    # The `secrets` context is NOT available in a step-level `if` (only github,
+    # needs, env, steps and friends are). Projecting presence into a job-level
+    # env var is the supported way to branch on whether a secret exists.
+    env:
+      HAS_RELEASE_TOKEN: ${{ secrets.RELEASE_TOKEN != '' }}
+
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+        with:
+          # next-version.mjs walks back to the last release tag; a shallow clone
+          # would hide it and recompute the whole history as one range.
+          fetch-depth: 0
+          token: ${{ secrets.RELEASE_TOKEN || secrets.GITHUB_TOKEN }}
+
+      - name: Warn when the release token is missing
+        if: env.HAS_RELEASE_TOKEN != 'true'
+        run: |
+          echo "::warning title=RELEASE_TOKEN not set::A tag pushed with GITHUB_TOKEN does not trigger publish-ghcr or publish-desktop. This release will produce NO artifacts until the tag is re-pushed by hand."
+
+      # No `pnpm install` — next-version.mjs is dependency-free precisely so this
+      # question can be answered before paying for an install.
+      - name: Compute the next version
+        id: next
+        run: node scripts/next-version.mjs >> "$GITHUB_OUTPUT"
+
+      - name: Report no release
+        if: steps.next.outputs.release != 'true'
+        run: echo "No releasing commits since the last tag — nothing to cut."
+
+      - name: Write the version into every package.json
+        if: steps.next.outputs.release == 'true'
+        env:
+          VERSION: ${{ steps.next.outputs.version }}
+        run: |
+          set -euo pipefail
+          for f in package.json api/package.json web/package.json desktop/package.json; do
+            node -e '
+              const fs = require("node:fs");
+              const [file, version] = process.argv.slice(1);
+              const pkg = JSON.parse(fs.readFileSync(file, "utf8"));
+              pkg.version = version;
+              fs.writeFileSync(file, JSON.stringify(pkg, null, 2) + "\n");
+            ' "$f" "$VERSION"
+            echo "  $f -> $VERSION"
+          done
+
+      - name: Commit and tag
+        if: steps.next.outputs.release == 'true'
+        env:
+          VERSION: ${{ steps.next.outputs.version }}
+        run: |
+          set -euo pipefail
+          git config user.name  "github-actions[bot]"
+          git config user.email "github-actions[bot]@users.noreply.github.com"
+          git add package.json api/package.json web/package.json desktop/package.json
+          git commit -m "chore(release): v${VERSION}" \
+                     -m "Automated by .github/workflows/release.yml from the conventional commits since the previous release tag."
+          # Annotated: publish-ghcr's metadata-action reads the tag, and an
+          # annotated tag carries the date and author a lightweight one does not.
+          git tag -a "v${VERSION}" -m "v${VERSION}"
+          git push origin HEAD:master
+          git push origin "v${VERSION}"
+
+      - name: Verify the tag triggered a build
+        if: steps.next.outputs.release == 'true'
+        env:
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+          VERSION: ${{ steps.next.outputs.version }}
+        run: |
+          set -euo pipefail
+          # Give the tag-triggered runs a moment to be created.
+          sleep 20
+          runs=$(gh run list --workflow=publish-ghcr.yml --limit 20 --json headBranch --jq '[.[] | select(.headBranch == "v'"$VERSION"'")] | length')
+          if [ "$runs" -eq 0 ]; then
+            echo "::error title=Tag shipped nothing::v${VERSION} was pushed but no publish-ghcr run exists for it. This is the RELEASE_TOKEN problem — a GITHUB_TOKEN push cannot trigger another workflow. Re-push the tag manually (git push --delete origin v${VERSION} && git push origin v${VERSION}) with a PAT, or set the RELEASE_TOKEN secret."
+            exit 1
+          fi
+          echo "publish-ghcr picked up v${VERSION} ($runs run(s))."

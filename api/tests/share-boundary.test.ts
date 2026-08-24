@@ -118,6 +118,21 @@ function buildRequestPath(openapiPath: string): string {
  * explicitly excludes the /api/share/* namespace — those routes ARE expected
  * to accept share-token. Returns one spec per HTTP method per path.
  */
+/**
+ * Routes that are deliberately public, and therefore cannot satisfy the
+ * share-token assertion below — a route with no auth gate answers 200 to any
+ * caller, share-token holder included.
+ *
+ * KEEP THIS SET AT ONE ENTRY. It is not a convenience hatch for a route that is
+ * awkward to authenticate; it is a record of a decision taken with the
+ * disclosure cost written down (see the module comment in src/routes/version.ts).
+ * `assertsPublicSetIsExact` below fails if this set changes at all, so growing
+ * it requires editing a security test on purpose, in a diff a reviewer sees.
+ *
+ * Paths are as the OpenAPI doc reports them — no `/api` prefix.
+ */
+const DELIBERATELY_PUBLIC_PATHS = new Set(['/version']);
+
 async function loadNonSharePathSpecs(): Promise<Array<{ path: string; method: string }>> {
   const res = await app.fetch(new Request('http://localhost/api/openapi.json'));
   if (res.status !== 200) {
@@ -132,6 +147,8 @@ async function loadNonSharePathSpecs(): Promise<Array<{ path: string; method: st
     // that accepts share-token. Filter it out — those routes are expected
     // to behave the OPPOSITE of the assertion in this test.
     if (openapiPath.startsWith('/share/')) continue;
+    // Public by design — asserted separately, and exhaustively, below.
+    if (DELIBERATELY_PUBLIC_PATHS.has(openapiPath)) continue;
     if (!methodsObj || typeof methodsObj !== 'object') continue;
     for (const method of Object.keys(methodsObj)) {
       // Skip OpenAPI extensions like 'parameters', 'summary' that may appear
@@ -317,5 +334,42 @@ describe('XREF-07 SC5: v5.2 mutation surface rejects share-token-only callers', 
         `prefix and bypasses the authenticated boundary. ` +
         `Mutation specs found: ${JSON.stringify(shareMutationSpecs)}`,
     ).toHaveLength(0);
+  });
+});
+
+/**
+ * The other half of the allowlist above. Skipping a path in the boundary sweep
+ * is only safe if the skip stays honest, so this block pins both directions:
+ * the set is exactly what was agreed, and every path in it really is public.
+ *
+ * Without the second assertion an entry could outlive the route it described —
+ * the sweep would keep skipping a path that had since grown an auth gate, or
+ * worse, a path that had been replaced by something sensitive at the same URL.
+ */
+describe('SHARE-03 allowlist: the deliberately-public surface stays exactly one route', () => {
+  it('lists exactly the routes that were agreed to be public', () => {
+    expect([...DELIBERATELY_PUBLIC_PATHS].sort()).toEqual(['/version']);
+  });
+
+  it('every allowlisted path really answers without a credential', async () => {
+    for (const openapiPath of DELIBERATELY_PUBLIC_PATHS) {
+      const res = await app.fetch(new Request(`http://localhost${buildRequestPath(openapiPath)}`));
+      expect(
+        res.status,
+        `${openapiPath} is allowlisted as public but returned ${res.status} to an unauthenticated GET. `
+          + 'Either the route gained an auth gate (drop it from the allowlist) or it broke.',
+      ).toBe(200);
+    }
+  });
+
+  it('an allowlisted path is still present in the OpenAPI doc', async () => {
+    const res = await app.fetch(new Request('http://localhost/api/openapi.json'));
+    const doc = (await res.json()) as { paths: Record<string, unknown> };
+    for (const openapiPath of DELIBERATELY_PUBLIC_PATHS) {
+      expect(
+        Object.keys(doc.paths),
+        `${openapiPath} is allowlisted but no longer exists — remove the stale entry.`,
+      ).toContain(openapiPath);
+    }
   });
 });

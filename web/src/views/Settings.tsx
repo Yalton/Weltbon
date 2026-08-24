@@ -9,6 +9,7 @@
  */
 
 import { useSimSettings } from '../store/simSettings';
+import BuildVersion from '../components/BuildVersion';
 
 export default function Settings() {
   const showEntriesAsBodies = useSimSettings((s) => s.showEntriesAsBodies);
@@ -41,6 +42,9 @@ export default function Settings() {
           <span className="text-sm">Entries appear as bodies in the background</span>
         </label>
       </section>
+
+      {/* Build identity — what a bug report needs to name the exact build. */}
+      <BuildVersion />
     </div>
   );
 }
