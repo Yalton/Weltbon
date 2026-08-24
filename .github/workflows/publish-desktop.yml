@@ -29,7 +29,11 @@ name: publish-desktop
 on:
   push:
     tags:
-      - 'v*'
+      # Three-part semver ONLY. `v*` also matched this repo's milestone-archive
+      # tags (v1.0 ... v5.3, `chore: archive v5.3 milestone files`), which are a
+      # different numbering scheme entirely — the next milestone tag would have
+      # fired a desktop release build. Release tags are cut by release.yml.
+      - 'v[0-9]+.[0-9]+.[0-9]+'
   workflow_dispatch:
     inputs:
       experimental:
@@ -75,11 +79,34 @@ jobs:
       # Builds web + api, runs `pnpm deploy --prod` into desktop/.stage/api, copies
       # the migrations and the built SPA, and rebuilds bcrypt/sharp for Electron's
       # ABI in that staged tree. electron-builder ships it as extraResources.
+      # WELTBON_VERSION comes from the tag on a release build. On a manual
+      # dispatch there is no tag, and stage-api.sh falls back to package.json —
+      # which is the RELEASED version, not this build. Stamping `-dev.<sha>`
+      # keeps a dispatch artifact from being mistaken for the release it follows.
       - name: Stage the API for packaging
-        run: cd desktop && pnpm run build && pnpm run stage
+        env:
+          WELTBON_VERSION: ${{ startsWith(github.ref, 'refs/tags/v') && github.ref_name || '' }}
+          WELTBON_COMMIT: ${{ github.sha }}
+        run: |
+          set -euo pipefail
+          if [ -n "${WELTBON_VERSION}" ]; then
+            export WELTBON_VERSION="${WELTBON_VERSION#v}"
+          else
+            base=$(node -p "require('./package.json').version")
+            export WELTBON_VERSION="${base}-dev.$(git rev-parse --short HEAD)"
+          fi
+          export WELTBON_COMMIT="$(git rev-parse --short HEAD)"
+          echo "staging version ${WELTBON_VERSION} (${WELTBON_COMMIT})"
+          cd desktop && pnpm run build && pnpm run stage
 
+      # extraMetadata.version overrides desktop/package.json for THIS build only,
+      # so the artifact filename matches what the app reports at runtime.
       - name: Build the desktop package
-        run: cd desktop && ./node_modules/.bin/electron-builder --linux --config electron-builder.yml
+        run: |
+          set -euo pipefail
+          ver=$(node -p "require('./desktop/.stage/api/version.json').version")
+          cd desktop && ./node_modules/.bin/electron-builder --linux \
+            --config electron-builder.yml --config.extraMetadata.version="$ver"
 
       # Uploaded whether or not this is a tag: on a manual run it is the only
       # output, and it is what makes a build debuggable without cutting a release.
@@ -157,11 +184,27 @@ jobs:
       # kind of thing to check in these logs for #8.
       - name: Stage the API for packaging
         shell: bash
-        run: cd desktop && pnpm run build && pnpm run stage
+        env:
+          WELTBON_VERSION: ${{ startsWith(github.ref, 'refs/tags/v') && github.ref_name || '' }}
+        run: |
+          set -euo pipefail
+          if [ -n "${WELTBON_VERSION}" ]; then
+            export WELTBON_VERSION="${WELTBON_VERSION#v}"
+          else
+            base=$(node -p "require('./package.json').version")
+            export WELTBON_VERSION="${base}-dev.$(git rev-parse --short HEAD)"
+          fi
+          export WELTBON_COMMIT="$(git rev-parse --short HEAD)"
+          echo "staging version ${WELTBON_VERSION} (${WELTBON_COMMIT})"
+          cd desktop && pnpm run build && pnpm run stage
 
       - name: Build the desktop package
         shell: bash
-        run: cd desktop && ./node_modules/.bin/electron-builder ${{ matrix.builder_flag }} --config electron-builder.yml
+        run: |
+          set -euo pipefail
+          ver=$(node -p "require('./desktop/.stage/api/version.json').version")
+          cd desktop && ./node_modules/.bin/electron-builder ${{ matrix.builder_flag }} \
+            --config electron-builder.yml --config.extraMetadata.version="$ver"
 
       - name: Upload build artifacts
         uses: actions/upload-artifact@v4

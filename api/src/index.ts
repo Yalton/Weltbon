@@ -18,6 +18,7 @@ import { llmKeyRoutes } from './routes/llm-keys.js';
 import { llmModelsRoutes } from './routes/llm-models.js';
 import { llmConnectionRoutes } from './routes/llm-connections.js';
 import { configRoutes } from './routes/config.js';
+import { versionRoutes } from './routes/version.js';
 import { universeRoutes } from './routes/universes.js';
 import { entryRoutes } from './routes/entries.js';
 import { linkRoutes, relationRoutes, linkTypeRoutes } from './routes/links.js';
@@ -113,6 +114,12 @@ export function createApp() {
   // (SHARE-03 / T-29-22). The frontend reads `localMode` from it after login,
   // to decide which settings sections exist at all.
   apiR.route('/config', configRoutes);
+  // Build identity. The ONLY unauthenticated non-/share/* route in the app:
+  // `curl <host>/api/version` is how a deploy is confirmed, and a deploy script
+  // has no user to authenticate as. routes/version.ts carries the disclosure
+  // trade-off in full, and tests/share-boundary.test.ts holds the matching
+  // allowlist entry — a second public route means editing a security test.
+  apiR.route('/version', versionRoutes);
   // Issue #48 Task 6: llm-connections (Ollama endpoint config) is DESKTOP-ONLY,
   // enforced first here by conditional REGISTRATION — mirrors the local-session
   // route's DV-11 / "Finding 2 review fix" pattern in routes/auth.ts. `env()`

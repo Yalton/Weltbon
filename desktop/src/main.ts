@@ -3,6 +3,7 @@ import { dirname, join } from 'node:path';
 import { pathToFileURL } from 'node:url';
 import { writeFile } from 'node:fs/promises';
 import { loadOrCreateSecrets, secretsPath } from './secrets.js';
+import { exportBuildInfoEnv } from './build-info.js';
 
 // DV-15: two processes over one PGlite directory is the corruption case.
 // Must run before anything touches the data dir.
@@ -109,6 +110,16 @@ if (!app.requestSingleInstanceLock()) {
     // by a user whose export silently lost its fonts.
     process.env.WELTBON_FONT_DIR = join(apiRoot, 'assets', 'fonts');
     delete process.env.DATABASE_URL;          // must never reach a real Postgres
+
+    // Build identity, published as env BEFORE the API is imported. Staging
+    // writes <apiRoot>/version.json; see build-info.ts for why this is a file
+    // read at boot rather than an esbuild --define at stage time. A dev run has
+    // no staged tree, so a null here is normal and the API falls back to
+    // api/package.json.
+    const buildInfo = exportBuildInfoEnv(apiRoot);
+    if (buildInfo) {
+      console.log(`[weltbon] build ${buildInfo.version}${buildInfo.commit ? ` (${buildInfo.commit})` : ''}`);
+    }
 
     const { startServer, closeDb } = await import(pathToFileURL(apiEntry).href);
     const { port } = await startServer();
