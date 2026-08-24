@@ -8,22 +8,24 @@
 # One-time repo setup (same as publish-ghcr.yml):
 #   Settings -> Actions -> General -> Workflow permissions -> "Read and write"
 #
-# WHY TWO JOBS RATHER THAN ONE MATRIX. This repo is private, so runner minutes
-# are billed at 1x for Linux, 2x for Windows and 10x for macOS. Linux is the
-# only platform that has been built AND run (issue #7); Windows (#8) and macOS
-# (#9) have never been built here at all. Putting all three on the tag trigger
-# would spend roughly 240 extra billed minutes per release producing artifacts
-# nobody has verified. So:
+# WHY THE SPLIT. This repo is private, so runner minutes are billed at 1x for
+# Linux, 2x for Windows and 10x for macOS.
 #
-#   release       — Linux only, on a v* tag. Cheap, and it is what ships.
-#   experimental  — Windows + macOS, MANUAL ONLY (workflow_dispatch). Run it
-#                   while working #8/#9 to get real build logs, without making
-#                   every release pay for them.
+#   release       — Linux AND Windows, on a v* tag. Both attach to the Release.
+#   experimental  — macOS only, MANUAL (workflow_dispatch). 10x billing for a
+#                   platform nobody has built here is not worth spending on
+#                   every tag.
 #
-# Promote a platform into `release` only once someone has installed and run the
-# artifact on that OS. A green build proves an artifact was produced, not that
-# it works — the whole point of #7 was discovering a crash that only appeared
-# when the packaged app was actually launched.
+# Windows was promoted into `release` after v0.2.1, whose .exe had to be
+# produced by a manual dispatch against the tag. That step is exactly the kind
+# of thing that gets forgotten, and forgetting it leaves Windows users on a
+# stale version with no signal that anything is missing.
+#
+# Windows is STILL UNVERIFIED in the sense that matters: a green build proves an
+# artifact was produced, not that it launches. The whole point of issue #7 was a
+# crash that only appeared when the packaged app was actually run. `fail-fast:
+# false` keeps a Windows failure from taking the Linux release down with it.
+#
 name: publish-desktop
 
 on:
@@ -36,30 +38,44 @@ on:
       - 'v[0-9]+.[0-9]+.[0-9]+'
   workflow_dispatch:
     inputs:
-      experimental:
-        description: 'Also build the unverified Windows/macOS targets (billed at 2x/10x)'
+      # Linux and Windows now build on every tag, and a dispatch builds both
+      # into a draft prerelease, so neither needs an opt-in any more. macOS is
+      # the only target still costing 10x for an artifact nobody has opened.
+      experimental_macos:
+        description: 'Also build the unverified macOS target (billed at 10x)'
         type: boolean
         default: false
-      # Windows is billed at 2x and macOS at 10x, so "I need a Windows build"
-      # should not have to buy a macOS one. The old boolean could only run the
-      # pair. `both` is the default so an existing dispatch that just ticks
-      # `experimental` behaves exactly as it did before.
-      experimental_targets:
-        description: 'Which experimental targets to build (only applies when experimental is checked)'
-        type: choice
-        default: both
-        options:
-          - both
-          - windows
-          - macos
 
 permissions:
   contents: write   # required to upload assets onto the Release (both jobs)
 
 jobs:
   release:
-    name: linux
-    runs-on: ubuntu-latest
+    name: ${{ matrix.name }}
+    runs-on: ${{ matrix.os }}
+    strategy:
+      # A Windows failure must NOT cancel the Linux build. Linux is the verified
+      # platform and the one that has to ship no matter what.
+      fail-fast: false
+      matrix:
+        include:
+          - name: linux
+            os: ubuntu-latest
+            builder_flag: '--linux'
+            # Space-separated globs, expanded by bash in the delivery steps.
+            globs: 'desktop/release/*.AppImage desktop/release/*.deb'
+            # Newline-separated, which is what upload-artifact's `path` wants.
+            artifact_path: |
+              desktop/release/*.AppImage
+              desktop/release/*.deb
+          # windows-2022 pinned deliberately: Electron's bundled node-gyp does
+          # not recognize the Visual Studio 2026 image behind windows-latest.
+          - name: windows
+            os: windows-2022
+            builder_flag: '--win'
+            globs: 'desktop/release/*.exe'
+            artifact_path: 'desktop/release/*.exe'
+
     steps:
       - name: Checkout
         uses: actions/checkout@v4
@@ -73,20 +89,25 @@ jobs:
           node-version: 22
           cache: pnpm
 
+      # `shell: bash` on EVERY run step from here down. The Windows runner
+      # defaults to PowerShell, where `set -euo pipefail`, `shopt` and the array
+      # syntax below are all syntax errors rather than no-ops.
       - name: Install dependencies
+        shell: bash
         run: pnpm install --frozen-lockfile
 
-      # Builds web + api, runs `pnpm deploy --prod` into desktop/.stage/api, copies
-      # the migrations and the built SPA, and rebuilds bcrypt/sharp for Electron's
+      # Builds web + api, bundles the API into desktop/.stage/api, copies the
+      # migrations and the built SPA, and rebuilds bcrypt/sharp for Electron's
       # ABI in that staged tree. electron-builder ships it as extraResources.
+      #
       # WELTBON_VERSION comes from the tag on a release build. On a manual
       # dispatch there is no tag, and stage-api.sh falls back to package.json —
       # which is the RELEASED version, not this build. Stamping `-dev.<sha>`
       # keeps a dispatch artifact from being mistaken for the release it follows.
       - name: Stage the API for packaging
+        shell: bash
         env:
           WELTBON_VERSION: ${{ startsWith(github.ref, 'refs/tags/v') && github.ref_name || '' }}
-          WELTBON_COMMIT: ${{ github.sha }}
         run: |
           set -euo pipefail
           if [ -n "${WELTBON_VERSION}" ]; then
@@ -100,45 +121,44 @@ jobs:
           cd desktop && pnpm run build && pnpm run stage
 
       # extraMetadata.version overrides desktop/package.json for THIS build only,
-      # so the artifact filename matches what the app reports at runtime.
+      # so the artifact filename matches what the app reports at runtime. Before
+      # this existed every artifact ever produced was named 0.1.0.
       - name: Build the desktop package
+        shell: bash
         run: |
           set -euo pipefail
           ver=$(node -p "require('./desktop/.stage/api/version.json').version")
-          cd desktop && ./node_modules/.bin/electron-builder --linux \
+          cd desktop && ./node_modules/.bin/electron-builder ${{ matrix.builder_flag }} \
             --config electron-builder.yml --config.extraMetadata.version="$ver"
 
-      # ── ORDER MATTERS ────────────────────────────────────────────────────
-      # The Release attach runs BEFORE the artifact upload. It used to run after,
-      # and on the v0.2.0 build that cost us the release: the packages built
-      # fine, the artifact upload hit `Artifact storage quota has been hit`, the
-      # job failed, and "Attach to the GitHub Release" was SKIPPED. A finished
-      # AppImage and deb were thrown away because a convenience copy could not
-      # be stored.
+      # ── ORDER MATTERS ────────────────────────────────────────────────────────
+      # Delivery runs BEFORE the artifact upload. It used to run after, and on
+      # the v0.2.0 build that cost the release outright: the packages built fine,
+      # the artifact upload hit `Artifact storage quota has been hit`, the job
+      # failed, and "Attach to the GitHub Release" was SKIPPED. A finished
+      # AppImage and deb were discarded because a convenience copy could not be
+      # stored. Release assets and Actions artifacts are separate quotas.
       #
-      # Release assets and Actions artifacts are separate quotas. On a tag the
-      # Release is the deliverable; the artifact is a nicety, so it must not be
-      # able to fail the job.
-
-      # Uses the preinstalled `gh` rather than a third-party release action: this
-      # needs `contents: write`, and every other workflow here sticks to
-      # first-party actions. Not worth granting write to another supply-chain
-      # dependency for an upload. `--clobber` makes a re-run of the same tag
-      # idempotent instead of failing on an asset that already exists.
+      # `gh` rather than a third-party release action: this needs
+      # `contents: write`, and the release path is where a supply-chain
+      # compromise would ship to every self-hoster. `--clobber` makes a re-run of
+      # the same tag idempotent instead of failing on an existing asset.
       - name: Attach to the GitHub Release
         if: startsWith(github.ref, 'refs/tags/v')
+        shell: bash
         env:
           GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
           TAG: ${{ github.ref_name }}
+          GLOBS: ${{ matrix.globs }}
         run: |
           set -euo pipefail
-          gh release view "$TAG" >/dev/null 2>&1 || gh release create "$TAG" --generate-notes
           shopt -s nullglob
-          files=(desktop/release/*.AppImage desktop/release/*.deb)
+          files=($GLOBS)
           if [ ${#files[@]} -eq 0 ]; then
-            echo "No artifacts found — the build step should have failed before here." >&2
+            echo "No packages matched $GLOBS — the build step should have failed first." >&2
             exit 1
           fi
+          gh release view "$TAG" >/dev/null 2>&1 || gh release create "$TAG" --generate-notes
           printf 'uploading: %s\n' "${files[@]}"
           gh release upload "$TAG" "${files[@]}" --clobber
 
@@ -147,56 +167,46 @@ jobs:
       # and it stays invisible outside collaborators. Delete it once collected.
       - name: Publish a draft prerelease (manual runs only)
         if: ${{ !startsWith(github.ref, 'refs/tags/v') }}
+        shell: bash
         env:
           GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
           TAG: desktop-dev-${{ github.run_id }}
+          GLOBS: ${{ matrix.globs }}
         run: |
           set -euo pipefail
           shopt -s nullglob
-          files=(desktop/release/*.AppImage desktop/release/*.deb)
+          files=($GLOBS)
           if [ ${#files[@]} -eq 0 ]; then
-            echo "No packages found — the build step should have failed before here." >&2
+            echo "No packages matched $GLOBS — the build step should have failed first." >&2
             exit 1
           fi
           gh release view "$TAG" >/dev/null 2>&1 \
             || gh release create "$TAG" --draft --prerelease \
                  --title "desktop dev build ${{ github.run_id }}" \
-                 --notes "Unverified linux desktop build from ${{ github.sha }}. Draft: delete after collection."
+                 --notes "Unverified desktop build from ${{ github.sha }}. Draft: delete after collection."
           printf 'uploading: %s\n' "${files[@]}"
           gh release upload "$TAG" "${files[@]}" --clobber
 
-      # Best-effort convenience copy, AFTER delivery has already happened. This
+      # Best-effort convenience copy, AFTER delivery already happened. This
       # repo's Actions artifact quota reports itself full even with 0 MB of live
       # artifacts, so this step must never be able to fail the job.
       - name: Upload build artifacts (best effort)
         continue-on-error: true
         uses: actions/upload-artifact@v4
         with:
-          name: weltbon-desktop-linux
-          path: |
-            desktop/release/*.AppImage
-            desktop/release/*.deb
+          name: weltbon-desktop-${{ matrix.name }}
+          path: ${{ matrix.artifact_path }}
           if-no-files-found: warn
           retention-days: 14
 
   experimental:
-    name: ${{ matrix.name }} (unverified)
-    # Manual only, and opt-in even then. Never runs on a tag.
-    if: github.event_name == 'workflow_dispatch' && inputs.experimental
-    runs-on: ${{ matrix.os }}
+    name: macos (unverified)
+    # Manual only, and opt-in even then. Never runs on a tag: macOS is billed at
+    # 10x and has never been built here, so every tag paying for it would buy an
+    # artifact nobody has opened.
+    if: github.event_name == 'workflow_dispatch' && inputs.experimental_macos
+    runs-on: macos-latest
     continue-on-error: true
-    strategy:
-      # One platform failing must not cancel the other — the point is logs.
-      fail-fast: false
-      # `include` has to be a literal or a fromJSON() of one — there is no way to
-      # drop a matrix entry from an input, and a step-level `if` would not help
-      # because the runner is already billed by the time a step is evaluated.
-      # Hence the inlined JSON. Windows pins VS 2022: Electron's bundled node-gyp
-      # does not yet recognize the Visual Studio 2026 image behind windows-latest.
-      # The `|| 'both'` fallback keeps this valid if the job is ever reached from
-      # a trigger that defines no inputs.
-      matrix:
-        include: ${{ fromJSON((inputs.experimental_targets || 'both') == 'windows' && '[{"name":"windows","os":"windows-2022","builder_flag":"--win","glob":"desktop/release/*.exe"}]' || (inputs.experimental_targets || 'both') == 'macos' && '[{"name":"macos","os":"macos-latest","builder_flag":"--mac","glob":"desktop/release/*.dmg"}]' || '[{"name":"windows","os":"windows-2022","builder_flag":"--win","glob":"desktop/release/*.exe"},{"name":"macos","os":"macos-latest","builder_flag":"--mac","glob":"desktop/release/*.dmg"}]') }}
 
     steps:
       - name: Checkout
@@ -212,25 +222,15 @@ jobs:
           cache: pnpm
 
       - name: Install dependencies
+        shell: bash
         run: pnpm install --frozen-lockfile
 
-      # `shell: bash` matters on the Windows runner — stage-api.sh is a bash
-      # script, and the default shell there is PowerShell. Note the staging
-      # script's `pnpm deploy` produces symlinks into a bundled .pnpm/ rather
-      # than a flat tree; that survived packaging on Linux but is exactly the
-      # kind of thing to check in these logs for #8.
       - name: Stage the API for packaging
         shell: bash
-        env:
-          WELTBON_VERSION: ${{ startsWith(github.ref, 'refs/tags/v') && github.ref_name || '' }}
         run: |
           set -euo pipefail
-          if [ -n "${WELTBON_VERSION}" ]; then
-            export WELTBON_VERSION="${WELTBON_VERSION#v}"
-          else
-            base=$(node -p "require('./package.json').version")
-            export WELTBON_VERSION="${base}-dev.$(git rev-parse --short HEAD)"
-          fi
+          base=$(node -p "require('./package.json').version")
+          export WELTBON_VERSION="${base}-dev.$(git rev-parse --short HEAD)"
           export WELTBON_COMMIT="$(git rev-parse --short HEAD)"
           echo "staging version ${WELTBON_VERSION} (${WELTBON_COMMIT})"
           cd desktop && pnpm run build && pnpm run stage
@@ -240,35 +240,26 @@ jobs:
         run: |
           set -euo pipefail
           ver=$(node -p "require('./desktop/.stage/api/version.json').version")
-          cd desktop && ./node_modules/.bin/electron-builder ${{ matrix.builder_flag }} \
+          cd desktop && ./node_modules/.bin/electron-builder --mac \
             --config electron-builder.yml --config.extraMetadata.version="$ver"
 
-      # Same reasoning as the linux job: Release assets are a separate quota from
-      # Actions artifacts, and the artifact upload has failed builds that were
-      # otherwise green (runs 32676922819 and 32677959012, both Windows).
-      - name: Publish the build to a release
+      - name: Publish to a draft prerelease
+        shell: bash
         env:
           GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
-          IS_TAG: ${{ startsWith(github.ref, 'refs/tags/v') }}
-          TAG: ${{ startsWith(github.ref, 'refs/tags/v') && github.ref_name || format('desktop-dev-{0}', github.run_id) }}
-          GLOB: ${{ matrix.glob }}
-        shell: bash
+          TAG: desktop-dev-${{ github.run_id }}
         run: |
           set -euo pipefail
           shopt -s nullglob
-          files=($GLOB)
+          files=(desktop/release/*.dmg)
           if [ ${#files[@]} -eq 0 ]; then
-            echo "No packages matched $GLOB — the build step should have failed first." >&2
+            echo "No .dmg produced — the build step should have failed first." >&2
             exit 1
           fi
-          if [ "$IS_TAG" = "true" ]; then
-            gh release view "$TAG" >/dev/null 2>&1 || gh release create "$TAG" --generate-notes
-          else
-            gh release view "$TAG" >/dev/null 2>&1 \
-              || gh release create "$TAG" --draft --prerelease \
-                   --title "desktop dev build ${{ github.run_id }}" \
-                   --notes "Unverified ${{ matrix.name }} desktop build from ${{ github.sha }}. Draft: delete after collection."
-          fi
+          gh release view "$TAG" >/dev/null 2>&1 \
+            || gh release create "$TAG" --draft --prerelease \
+                 --title "desktop dev build ${{ github.run_id }}" \
+                 --notes "Unverified macos desktop build from ${{ github.sha }}. Draft: delete after collection."
           printf 'uploading: %s\n' "${files[@]}"
           gh release upload "$TAG" "${files[@]}" --clobber
 
@@ -276,7 +267,7 @@ jobs:
         continue-on-error: true
         uses: actions/upload-artifact@v4
         with:
-          name: weltbon-desktop-${{ matrix.name }}
-          path: ${{ matrix.glob }}
+          name: weltbon-desktop-macos
+          path: desktop/release/*.dmg
           if-no-files-found: warn
           retention-days: 14

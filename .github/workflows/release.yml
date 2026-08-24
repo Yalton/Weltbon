@@ -117,11 +117,21 @@ jobs:
           VERSION: ${{ steps.next.outputs.version }}
         run: |
           set -euo pipefail
-          # Give the tag-triggered runs a moment to be created.
-          sleep 20
-          runs=$(gh run list --workflow=publish-ghcr.yml --limit 20 --json headBranch --jq '[.[] | select(.headBranch == "v'"$VERSION"'")] | length')
-          if [ "$runs" -eq 0 ]; then
-            echo "::error title=Tag shipped nothing::v${VERSION} was pushed but no publish-ghcr run exists for it. This is the RELEASE_TOKEN problem — a GITHUB_TOKEN push cannot trigger another workflow. Re-push the tag manually (git push --delete origin v${VERSION} && git push origin v${VERSION}) with a PAT, or set the RELEASE_TOKEN secret."
-            exit 1
-          fi
-          echo "publish-ghcr picked up v${VERSION} ($runs run(s))."
+          # POLL, do not sample once. The first version of this step slept 20s
+          # and checked a single time; on the v0.2.1 release publish-ghcr HAD
+          # been triggered but was not yet listed, so the step reported the
+          # RELEASE_TOKEN error on a release that was in fact shipping. A check
+          # that cries wolf is worse than no check — it trains you to ignore the
+          # one time it is right.
+          for attempt in $(seq 1 12); do
+            runs=$(gh run list --workflow=publish-ghcr.yml --limit 20 \
+                     --json headBranch --jq '[.[] | select(.headBranch == "v'"$VERSION"'")] | length')
+            if [ "$runs" -gt 0 ]; then
+              echo "publish-ghcr picked up v${VERSION} after ${attempt} check(s)."
+              exit 0
+            fi
+            echo "  attempt ${attempt}/12: no publish-ghcr run for v${VERSION} yet, waiting 10s"
+            sleep 10
+          done
+          echo "::error title=Tag shipped nothing::v${VERSION} was pushed but no publish-ghcr run appeared within 2 minutes. Most likely RELEASE_TOKEN is unset or expired — a GITHUB_TOKEN push cannot trigger another workflow. Re-push the tag with a PAT (git push --delete origin v${VERSION} && git push origin v${VERSION}), or set the secret."
+          exit 1
