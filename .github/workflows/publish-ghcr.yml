@@ -19,7 +19,18 @@ name: publish-ghcr
 on:
   push:
     tags:
-      - 'v*'
+      # Three-part semver ONLY, matching publish-desktop.yml.
+      #
+      # `v*` also matched this repo's milestone-archive tags — v1.0 through
+      # v5.3, cut by commits like `chore: archive v5.3 milestone files`. Those
+      # are project-phase markers from a numbering scheme unrelated to the app
+      # version, and this workflow has been building and pushing images for them
+      # all along: the runs for v5.0, v5.1 and v5.2 are milestone archives, not
+      # releases, and metadata-action tagged each one as `latest`.
+      #
+      # Release tags are cut by release.yml and are always three-part. A
+      # milestone tag must never move `latest` on a published image again.
+      - 'v[0-9]+.[0-9]+.[0-9]+'
 
 permissions:
   contents: read
