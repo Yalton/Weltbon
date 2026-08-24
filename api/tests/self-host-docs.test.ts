@@ -19,6 +19,73 @@ const readme = fs.readFileSync(path.join(repoRoot, 'README.md'), 'utf8');
 const workflowPath = path.join(repoRoot, '.github', 'workflows', 'publish-ghcr.yml');
 const workflowContent = fs.readFileSync(workflowPath, 'utf8');
 
+/**
+ * The tag patterns under `on: push: tags:`.
+ *
+ * A line scanner rather than one regex. The regex version of this was wrong in
+ * a way that mattered: it returned an empty list, and an empty list made the
+ * "does not fire on milestone tags" assertion pass VACUOUSLY — `[].some(...)`
+ * is false, so the test reported success while checking nothing at all. The
+ * scanner is longer and obviously correct instead of short and quietly wrong.
+ *
+ * Deliberately not a YAML parse: `yaml` is not a declared dependency of api/,
+ * and resolving it only works by walking up into the workspace root's store.
+ * That works today and would break silently under a different pnpm layout — a
+ * poor trade for reading four lines.
+ */
+function tagTriggerPatterns(yamlText: string): string[] {
+  const lines = yamlText.split('\n');
+  const patterns: string[] = [];
+
+  let inPush = false;
+  let inTags = false;
+
+  for (const line of lines) {
+    if (/^\s*#/.test(line) || line.trim() === '') continue;   // comments and blanks
+
+    const indent = line.length - line.trimStart().length;
+
+    if (/^\s*push:\s*$/.test(line)) { inPush = true; inTags = false; continue; }
+    if (inPush && /^\s*tags:\s*$/.test(line)) { inTags = true; continue; }
+
+    if (inTags) {
+      const item = /^\s*-\s*['"]?([^'"#]+?)['"]?\s*$/.exec(line);
+      if (item) { patterns.push(item[1]); continue; }
+      // Any non-list, non-comment line ends the tags block.
+      inTags = false;
+      if (indent === 0) inPush = false;
+    }
+  }
+
+  return patterns;
+}
+
+/**
+ * Approximates GitHub's tag filter syntax closely enough for these assertions:
+ * `*` is any run of non-`/` characters, `+` repeats the preceding element, a
+ * bracket class is a character class, `?` is one character, and `.` is literal.
+ *
+ * Re-implementing a matcher inside a test is normally a smell. It earns its
+ * place here because the alternative — asserting the pattern string verbatim —
+ * is the exact brittleness that made this test go stale and then get merged red.
+ */
+function matchesTagPattern(pattern: string, tag: string): boolean {
+  let re = '';
+  for (let i = 0; i < pattern.length; i++) {
+    const ch = pattern[i];
+    if (ch === '[') {
+      const close = pattern.indexOf(']', i);
+      if (close === -1) { re += '\\['; continue; }
+      re += pattern.slice(i, close + 1);
+      i = close;
+    } else if (ch === '*') re += '[^/]*';
+    else if (ch === '+') re += '+';
+    else if (ch === '?') re += '.';
+    else re += ch.replace(/[.\\^$|()]/g, '\\$&');
+  }
+  return new RegExp(`^${re}$`).test(tag);
+}
+
 // ─────────────────────────────────────────────────────────────────────────────
 // CONT-05: GHCR publish workflow file shape
 // ─────────────────────────────────────────────────────────────────────────────
@@ -28,8 +95,45 @@ describe('CONT-05 — GHCR publish workflow (.github/workflows/publish-ghcr.yml)
     expect(fs.existsSync(workflowPath)).toBe(true);
   });
 
-  it('contains a v* tag push trigger', () => {
-    expect(workflowContent).toMatch(/on:\s*\n\s+push:\s*\n\s+tags:\s*\n\s+- ['"]?v\*/m);
+  /**
+   * This used to assert the literal string `- 'v*'`. That broke the moment the
+   * trigger was legitimately narrowed to three-part semver, and it broke in the
+   * least useful way: the assertion said nothing about WHY a tag trigger has to
+   * exist, so a reader hitting the red could not tell whether the workflow had
+   * regressed or the test had simply gone stale.
+   *
+   * CONT-05 is about the workflow shipping an image when a release is cut. What
+   * matters is that a tag push trigger exists and covers release tags. What it
+   * must NOT be is the bare `v*` it started as: this repo also carries
+   * milestone-archive tags (v1.0 ... v5.3, `chore: archive v5.3 milestone
+   * files`), and `v*` matched those too — v5.0, v5.1 and v5.2 each built and
+   * pushed an image tagged `latest` from a project-phase marker.
+   */
+  it('triggers on a release tag push', () => {
+    // Pinned exactly. Every assertion below reads this list, and an empty list
+    // would make the negative assertions pass while checking nothing.
+    expect(tagTriggerPatterns(workflowContent)).toEqual(['v[0-9]+.[0-9]+.[0-9]+']);
+  });
+
+  it('covers three-part release tags', () => {
+    const patterns = tagTriggerPatterns(workflowContent);
+    expect(patterns.length).toBeGreaterThan(0);
+    expect(patterns.some((p) => matchesTagPattern(p, 'v1.2.3'))).toBe(true);
+    expect(patterns.some((p) => matchesTagPattern(p, 'v0.2.1'))).toBe(true);
+  });
+
+  it('does not fire on two-part milestone-archive tags', () => {
+    const patterns = tagTriggerPatterns(workflowContent);
+    expect(patterns.length).toBeGreaterThan(0);
+    for (const milestone of ['v5.3', 'v1.0', 'v4.0']) {
+      expect(
+        patterns.some((p) => matchesTagPattern(p, milestone)),
+        `A tag pattern in publish-ghcr.yml matches the milestone-archive tag ${milestone}. `
+          + `Milestone tags are project-phase markers, not releases — publishing an image for `
+          + `one moves \`latest\` to whatever the tree looked like at that moment. `
+          + `Patterns found: ${JSON.stringify(patterns)}`,
+      ).toBe(false);
+    }
   });
 
   it('grants packages:write permission (uses GITHUB_TOKEN, not a PAT)', () => {
