@@ -23,6 +23,31 @@ describe('markdown authoring dialect helpers', () => {
     );
   });
 
+  it('adds tags with a valid fence separator when frontmatter has no tags', () => {
+    expect(replaceSupportedFrontmatterTags('---\ntitle: A\n---\nBody', ['x'])).toBe(
+      '---\ntitle: A\ntags: [x]\n---\nBody',
+    );
+    expect(replaceSupportedFrontmatterTags('---\n---\nBody', ['x'])).toBe('---\ntags: [x]\n---\nBody');
+  });
+
+  it('keeps malformed, duplicate, and complex tag fields byte-for-byte', () => {
+    for (const markdown of [
+      '---\ntags: ["unterminated]\n---\nBody',
+      '---\ntags:\n  - "unterminated\n---\nBody',
+      '---\ntags: [one]\ntags: [two]\n---\nBody',
+      '---\ntags: [[nested]]\n---\nBody',
+    ]) {
+      expect(parseMarkdownFrontmatter(markdown).diagnostics).not.toEqual([]);
+      expect(replaceSupportedFrontmatterTags(markdown, ['new'])).toBe(markdown);
+    }
+  });
+
+  it('quotes inserted tag values that are not safe plain YAML scalars', () => {
+    expect(replaceSupportedFrontmatterTags('---\ntags: [one]\n---\nBody', ['a,b', 'x]y'])).toBe(
+      '---\ntags: ["a,b", "x]y"]\n---\nBody',
+    );
+  });
+
   it('preserves unknown frontmatter and all markdown syntax when changing tags', () => {
     const markdown =
       '---\ncustom: "x: y"\ntags: [one]\nunknown:\n  nested: true\n---\n> [!note]\n> [[Entry]] ![[asset]] ![alt](asset://abc)\n';

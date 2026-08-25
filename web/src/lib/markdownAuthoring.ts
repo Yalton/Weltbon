@@ -23,7 +23,7 @@ function frontmatterRegion(markdown: string): FrontmatterRegion | null {
   const openingEnd = markdown.indexOf('\n');
   if (openingEnd < 0 || !/^---\r?$/.test(markdown.slice(0, openingEnd))) return null;
   const close = /(?:^|\n)---\r?(?:\n|$)/g;
-  close.lastIndex = openingEnd + 1;
+  close.lastIndex = openingEnd;
   const match = close.exec(markdown);
   if (!match) return { start: 0, end: markdown.length, closeStart: -1, text: markdown };
   const closeStart = match[0].startsWith('\n') ? match.index + 1 : match.index;
@@ -38,8 +38,16 @@ function parseTagValue(value: string): string[] | null {
   const inner = trimmed.slice(1, -1).trim();
   if (!inner) return [];
   const values = inner.split(',').map((item) => item.trim());
-  if (values.some((item) => !item || (item.startsWith('"') && !item.endsWith('"')))) return null;
-  return values.map((item) => item.replace(/^("|')|("|')$/g, ''));
+  if (values.some((item) => !item || item.includes('[') || item.includes(']') || item.includes('{') || item.includes('}'))) return null;
+  return values.map((item) => {
+    if (item.startsWith('"') || item.startsWith("'")) {
+      const quote = item[0];
+      if (item.length < 2 || item[item.length - 1] !== quote) return null;
+      return item.slice(1, -1);
+    }
+    if (/["']/.test(item)) return null;
+    return item;
+  }).every((item): item is string => item !== null) ? values.map((item) => item.startsWith('"') || item.startsWith("'") ? item.slice(1, -1) : item) : null;
 }
 
 function tagsFromRegion(region: FrontmatterRegion): { tags: string[]; diagnostics: MarkdownDiagnostic[] } {
@@ -47,6 +55,10 @@ function tagsFromRegion(region: FrontmatterRegion): { tags: string[]; diagnostic
     return { tags: [], diagnostics: [{ severity: 'error', message: 'Frontmatter has no closing fence.' }] };
   }
   const lines = region.text.split(/\r?\n/).slice(1, -1);
+  const tagLines = lines.filter((line) => /^tags\s*:/.test(line));
+  if (tagLines.length > 1) {
+    return { tags: [], diagnostics: [{ severity: 'error', message: 'Frontmatter contains duplicate tags fields.' }] };
+  }
   for (let index = 0; index < lines.length; index += 1) {
     const line = lines[index];
     const match = /^tags\s*:\s*(.*)$/.exec(line);
@@ -56,7 +68,10 @@ function tagsFromRegion(region: FrontmatterRegion): { tags: string[]; diagnostic
       const list: string[] = [];
       let next = index + 1;
       while (next < lines.length && /^\s+-\s+/.test(lines[next])) {
-        list.push(lines[next].replace(/^\s+-\s+/, '').trim().replace(/^("|')|("|')$/g, ''));
+        const value = lines[next].replace(/^\s+-\s+/, '').trim();
+        const parsed = parseTagValue(`[${value}]`);
+        if (!parsed || parsed.length !== 1) return { tags: [], diagnostics: [{ severity: 'error', message: 'Frontmatter tags list contains an invalid scalar.' }] };
+        list.push(parsed[0]);
         next += 1;
       }
       if (next === index + 1) return { tags: [], diagnostics: [{ severity: 'error', message: 'Frontmatter tags must be a list.' }] };
@@ -100,10 +115,15 @@ export function replaceSupportedFrontmatterTags(markdown: string, tags: string[]
     }
     offset += line.length + (lines[index + 1]?.length ?? 0);
   }
-  const serialized = `tags: [${tags.join(', ')}]`;
+  if (tags.some((tag) => tag.includes('\n') || tag.includes('\r'))) return markdown;
+  const serializedTags = tags.map((tag) => /^[A-Za-z0-9_-]+$/.test(tag) ? tag : JSON.stringify(tag));
+  const serialized = `tags: [${serializedTags.join(', ')}]`;
   let updated: string;
   if (tagsStart >= 0) updated = region.text.slice(0, tagsStart) + serialized + region.text.slice(tagsEnd);
-  else updated = region.text.slice(0, region.closeStart) + serialized + (region.text[region.closeStart - 1] === '\n' ? '' : '\n') + region.text.slice(region.closeStart);
+  else {
+    const prefix = region.text.slice(0, region.closeStart);
+    updated = prefix + (prefix.endsWith('\n') ? '' : '\n') + serialized + '\n' + region.text.slice(region.closeStart);
+  }
   return updated + markdown.slice(region.end);
 }
 
