@@ -30,6 +30,8 @@ import LlmKeys from './views/LlmKeys';
 import Templates from './views/Templates';
 import Shares from './views/Shares';
 import SyncSettings from './views/SyncSettings';
+import AdminUsers from './views/AdminUsers';
+import { useAuthStore } from './store/auth';
 import { ShareLayout } from './components/ShareLayout';
 import { ErrorBoundary } from './components/ErrorBoundary';
 import { ShareFallback } from './views/ShareFallback';
@@ -37,6 +39,7 @@ import { useRuntime } from './runtime/RuntimeProvider';
 
 export default function App() {
   const { authMode } = useRuntime();
+  const isAdmin = useAuthStore((state) => state.user?.isAdmin === true);
 
   return (
     <Routes>
@@ -52,7 +55,8 @@ export default function App() {
           <Route path="/settings" element={<SettingsLayout />}>
             <Route index element={<Settings />} />
             <Route path="tokens" element={authMode === 'local' ? <Navigate to="/settings" replace /> : <Tokens />} />
-            <Route path="invites" element={authMode === 'local' ? <Navigate to="/settings" replace /> : <Invites />} />
+            <Route path="invites" element={authMode === 'local' || !isAdmin ? <Navigate to="/settings" replace /> : <Invites />} />
+            <Route path="users" element={authMode === 'local' || !isAdmin ? <Navigate to="/settings" replace /> : <AdminUsers />} />
             <Route path="templates" element={<Templates />} />
             {/* Phase 29 — global owner audit view for all share links. */}
             <Route path="shares" element={<Shares />} />

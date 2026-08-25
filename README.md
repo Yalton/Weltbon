@@ -355,7 +355,7 @@ This guard is covered by `api/tests/startup.test.ts`. See the "Verifying the Sta
 
 ## Admin / Operator Commands
 
-Two CLI commands for operators. Both run from the repo root.
+Three CLI commands for operators. All run from the repo root.
 
 ### Issue a New Invite Code
 
@@ -376,6 +376,14 @@ Hashes the new password (bcrypt cost 12), updates `users.password_hash`, and **r
 **Note on access token validity:** Stateless access tokens (JWT) remain valid for up to 1 hour after a password reset. Any refresh attempt after the reset will fail, forcing the user to log in with the new password. For a trusted-circle deployment this is acceptable and documented behavior.
 
 **No SMTP / no email-based reset:** There is no email verification and no email-based password reset flow. Password resets are operator-only via the CLI.
+
+### Grant the First Administrator
+
+```bash
+pnpm --filter api user:grant-admin <email>
+```
+
+Run this after the target user has registered. It grants access to the production **Admin** area and records the promotion in the operator audit log. The command is idempotent: an existing administrator is left unchanged.
 
 ## Architecture at a Glance
 

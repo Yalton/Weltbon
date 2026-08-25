@@ -178,6 +178,28 @@ describe('auth routes (AUTH-01..06)', () => {
     expect(res.status).toBe(401);
   });
 
+  it('login and refresh reject a disabled account while /me exposes administrator status', async () => {
+    const user = await createTestUser(handle, { email: 'disabled-admin@test.com', password: 'longenoughpw12', displayName: 'Disabled admin' });
+    await handle.db.update(users).set({ isAdmin: true }).where(eq(users.id, user.id));
+    const activeLogin = await appRequest('POST', '/api/auth/login', {
+      body: { email: 'disabled-admin@test.com', password: 'longenoughpw12' },
+    });
+    expect(activeLogin.status).toBe(200);
+    expect(activeLogin.body.user).toMatchObject({ isAdmin: true });
+    const refreshValue = extractRefreshCookie(activeLogin.setCookieHeader);
+
+    await handle.db.update(users).set({ disabledAt: new Date() }).where(eq(users.id, user.id));
+    expect((await appRequest('POST', '/api/auth/login', {
+      body: { email: 'disabled-admin@test.com', password: 'longenoughpw12' },
+    })).status).toBe(401);
+    expect((await appRequest('POST', '/api/auth/refresh', {
+      headers: { Cookie: `refresh=${refreshValue}` },
+    })).status).toBe(401);
+    expect((await appRequest('GET', '/api/auth/me', {
+      headers: { Authorization: `Bearer ${activeLogin.body.accessToken}` },
+    })).status).toBe(401);
+  });
+
   it('login returns 401 with same message for unknown email (no user enumeration)', async () => {
     const res = await appRequest('POST', '/api/auth/login', {
       body: { email: 'ghost@test.com', password: 'longenoughpw12' },
@@ -283,7 +305,7 @@ describe('auth routes (AUTH-01..06)', () => {
   });
 
   // GET /api/auth/me -- identity rehydration after cold-load silent refresh
-  it('GET /api/auth/me returns { id, email, displayName } for the authenticated user', async () => {
+  it('GET /api/auth/me returns the authenticated user and administrator status', async () => {
     const { issueAccessToken } = await import('../src/services/auth.js');
     const user = await createTestUser(handle, { email: 'me@test.com', password: 'longenoughpw12', displayName: 'Me' });
     const token = await issueAccessToken(user.id);
@@ -291,7 +313,7 @@ describe('auth routes (AUTH-01..06)', () => {
       headers: { Authorization: `Bearer ${token}` },
     });
     expect(res.status).toBe(200);
-    expect(res.body).toEqual({ id: user.id, email: 'me@test.com', displayName: 'Me' });
+    expect(res.body).toEqual({ id: user.id, email: 'me@test.com', displayName: 'Me', isAdmin: false });
   });
 
   it('GET /api/auth/me without Authorization returns 401', async () => {
@@ -322,7 +344,7 @@ describe('auth routes (AUTH-01..06)', () => {
       headers: { Authorization: `Bearer ${token}` },
     });
     expect(res.status).toBe(200);
-    expect(res.body).toEqual({ id: user.id, email: 'me-no-consent-jwt@test.com', displayName: 'NoConsentJwt' });
+    expect(res.body).toEqual({ id: user.id, email: 'me-no-consent-jwt@test.com', displayName: 'NoConsentJwt', isAdmin: false });
     expect('llmConsentedAt' in res.body).toBe(false);
   });
 
@@ -353,7 +375,7 @@ describe('auth routes (AUTH-01..06)', () => {
       headers: { Authorization: `Bearer ${pat}` },
     });
     expect(res.status).toBe(200);
-    expect(res.body).toEqual({ id: user.id, email: 'me-no-consent-pat@test.com', displayName: 'NoConsentPat' });
+    expect(res.body).toEqual({ id: user.id, email: 'me-no-consent-pat@test.com', displayName: 'NoConsentPat', isAdmin: false });
     expect('llmConsentedAt' in res.body).toBe(false);
     // Defensive: a stringified body must not contain the field name either.
     expect(JSON.stringify(res.body)).not.toContain('llmConsentedAt');

@@ -12,6 +12,7 @@ interface MeResponse {
   id: string;
   email: string;
   displayName: string;
+  isAdmin?: boolean;
 }
 
 export function ProtectedRoute() {
@@ -48,7 +49,7 @@ export function ProtectedRoute() {
         // api() will inject the Authorization header and /auth/me returns 200.
         const me = await api<MeResponse>('/auth/me');
         if (cancelled) return;
-        setSession({ id: me.id, email: me.email, displayName: me.displayName }, token);
+        setSession({ id: me.id, email: me.email, displayName: me.displayName, isAdmin: me.isAdmin ?? false }, token);
         setState('ok');
       } catch {
         if (cancelled) return;

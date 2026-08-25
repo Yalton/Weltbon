@@ -2,7 +2,7 @@ import { OpenAPIHono, createRoute, z } from '@hono/zod-openapi';
 import { and, desc, eq, isNull } from 'drizzle-orm';
 import { db as getDb } from '../db/client.js';
 import { inviteCodes } from '../db/schema.js';
-import { requireJwtAuth, type AuthVariables } from '../middleware/auth.js';
+import { requireAdmin, type AuthVariables } from '../middleware/auth.js';
 import { generateInviteToken } from '../services/invite.js';
 import { isUniqueViolation } from '../db/pg-error.js';
 
@@ -41,9 +41,9 @@ const postRoute = createRoute({
   path: '/',
   tags: ['Invite Codes'],
   summary: 'Mint a new invite code',
-  description: 'Creates a new invite code. JWT auth required (D-INV-01).',
+  description: 'Creates a new invite code. Administrator JWT required.',
   security: [{ bearerJwtAuth: [] }],
-  middleware: [requireJwtAuth] as const,
+  middleware: [requireAdmin] as const,
   request: {
     body: {
       content: { 'application/json': { schema: createSchema } },
@@ -82,7 +82,7 @@ const getRoute = createRoute({
   description:
     'Returns invite codes owned by calling user. owner_id = userId filter excludes bootstrap row (D-INV-12).',
   security: [{ bearerJwtAuth: [] }],
-  middleware: [requireJwtAuth] as const,
+  middleware: [requireAdmin] as const,
   responses: {
     200: {
       content: { 'application/json': { schema: z.array(inviteListItemSchema) } },
@@ -106,7 +106,7 @@ const deleteRoute = createRoute({
   summary: 'Revoke an invite code by ID',
   description: 'Soft-revoke (sets revokedAt) on the invite if active and owned by caller.',
   security: [{ bearerJwtAuth: [] }],
-  middleware: [requireJwtAuth] as const,
+  middleware: [requireAdmin] as const,
   request: {
     params: z.object({ id: z.string().uuid() }),
   },

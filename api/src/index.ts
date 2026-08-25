@@ -10,6 +10,7 @@ import { buildAuthRoutes } from './routes/auth.js';
 import { tokenRoutes } from './routes/tokens.js';
 import { templates } from './routes/templates.js';
 import { inviteRoutes } from './routes/invites.js';
+import { adminUserRoutes } from './routes/admin-users.js';
 // Phase 29 D-02 — share-CRUD owner-facing router (JWT-only via per-route requireJwtAuth)
 import { shareCrudRoutes } from './routes/shares.js';
 // Phase 29 SHARE-02/03 — visitor share-read router (share-token via per-route requireShareToken)
@@ -101,6 +102,7 @@ export function createApp() {
   app.use('*', forwarded);
   const apiR = createApiRouter();
   apiR.route('/auth/tokens', tokenRoutes);
+  apiR.route('/admin', adminUserRoutes);
   apiR.route('/templates', templates);
   apiR.route('/llm-keys', llmKeyRoutes);
   // Phase 27 Plan 03 Task 2 — GET /api/llm/models?provider= (model-catalog cache).

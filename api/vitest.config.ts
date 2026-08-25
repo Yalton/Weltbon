@@ -120,6 +120,8 @@ const DB_GATED_TESTS = [
   'tests/sync-materialize.test.ts',
   // Task 2 (OB-03, desktop one-button adoption) — POST /remotes idempotency.
   'tests/sync-client-connect.test.ts',
+  // Production admin account lifecycle requires a real transactional database.
+  'tests/admin-users.test.ts',
   'tests/sync-link-recovery.test.ts',
   // Plan D Task 5 — sync remotes/links CRUD.
   'tests/sync-client-crud.test.ts',

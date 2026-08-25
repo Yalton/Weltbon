@@ -60,6 +60,7 @@ const userSchema = z.object({
   id: z.string(),
   email: z.string(),
   displayName: z.string(),
+  isAdmin: z.boolean(),
 });
 
 // BL-02 fix: /auth/me MUST NOT expose llmConsentedAt under requireAuth (which
@@ -71,6 +72,7 @@ const meResponseSchema = z.object({
   id: z.string(),
   email: z.string(),
   displayName: z.string(),
+  isAdmin: z.boolean(),
 });
 
 const authResponseSchema = z.object({
@@ -335,7 +337,7 @@ export function buildAuthRoutes(): OpenAPIHono<AppEnv> {
           [newUser] = await tx
             .insert(users)
             .values({ email, displayName, passwordHash })
-            .returning({ id: users.id, email: users.email, displayName: users.displayName });
+            .returning({ id: users.id, email: users.email, displayName: users.displayName, isAdmin: users.isAdmin });
         } catch (err: unknown) {
           // Duplicate email: collapse to InvalidInvite so the consumption rolls
           // back and the response never confirms email existence (D-INV-11).
@@ -379,7 +381,7 @@ export function buildAuthRoutes(): OpenAPIHono<AppEnv> {
       await verifyPassword(password, '$2b$12$' + 'x'.repeat(53));
       return c.json({ error: 'Invalid credentials' }, 401);
     }
-    if (!(await verifyPassword(password, user.passwordHash))) {
+    if (!(await verifyPassword(password, user.passwordHash)) || user.disabledAt !== null) {
       return c.json({ error: 'Invalid credentials' }, 401);
     }
     const accessToken = await issueAccessToken(user.id);
@@ -387,7 +389,7 @@ export function buildAuthRoutes(): OpenAPIHono<AppEnv> {
     setRefreshCookie(c, refreshToken);
     return c.json({
       accessToken,
-      user: { id: user.id, email: user.email, displayName: user.displayName },
+      user: { id: user.id, email: user.email, displayName: user.displayName, isAdmin: user.isAdmin },
     }, 200);
   })
 
@@ -396,6 +398,14 @@ export function buildAuthRoutes(): OpenAPIHono<AppEnv> {
     if (!cookie) return c.json({ error: 'No refresh token' }, 401);
     const rotated = await rotateRefreshToken(cookie);
     if (!rotated) {
+      deleteCookie(c, REFRESH_COOKIE_NAME, { path: REFRESH_COOKIE_PATH });
+      return c.json({ error: 'Invalid refresh token' }, 401);
+    }
+    const user = await getDb().query.users.findFirst({
+      where: eq(users.id, rotated.userId),
+      columns: { id: true, disabledAt: true },
+    });
+    if (!user || user.disabledAt !== null) {
       deleteCookie(c, REFRESH_COOKIE_NAME, { path: REFRESH_COOKIE_PATH });
       return c.json({ error: 'Invalid refresh token' }, 401);
     }
@@ -426,7 +436,7 @@ export function buildAuthRoutes(): OpenAPIHono<AppEnv> {
     const userId = c.var.userId;
     const user = await getDb().query.users.findFirst({
       where: eq(users.id, userId),
-      columns: { id: true, email: true, displayName: true },
+      columns: { id: true, email: true, displayName: true, isAdmin: true },
     });
     if (!user) {
       return c.json({ error: 'User not found' }, 404);
@@ -436,6 +446,7 @@ export function buildAuthRoutes(): OpenAPIHono<AppEnv> {
         id: user.id,
         email: user.email,
         displayName: user.displayName,
+        isAdmin: user.isAdmin,
       },
       200,
     );

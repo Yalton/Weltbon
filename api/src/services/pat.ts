@@ -1,5 +1,5 @@
 import { randomBytes, createHash } from 'node:crypto';
-import { eq } from 'drizzle-orm';
+import { and, eq, isNull } from 'drizzle-orm';
 import { db as getDb } from '../db/client.js';
 import { personalAccessTokens } from '../db/schema.js';
 
@@ -39,7 +39,7 @@ export async function lookupPat(
   if (!plaintext.startsWith(PAT_PREFIX)) return null;
   const hash = hashPatToken(plaintext);
   const row = await getDb().query.personalAccessTokens.findFirst({
-    where: eq(personalAccessTokens.hash, hash),
+    where: and(eq(personalAccessTokens.hash, hash), isNull(personalAccessTokens.revokedAt)),
     columns: { id: true, userId: true },
   });
   if (!row) return null;

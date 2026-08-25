@@ -1,7 +1,7 @@
 import { describe, it, expect, beforeAll, afterAll, beforeEach } from 'vitest';
 import { eq } from 'drizzle-orm';
 import { createTestDb, cleanDb, createTestUser, type TestDbHandle } from './helpers.js';
-import { inviteCodes } from '../src/db/schema.js';
+import { inviteCodes, users } from '../src/db/schema.js';
 
 describe('invite routes (INV-03 + INV-04 + D-INV-01)', () => {
   let handle: TestDbHandle;
@@ -56,6 +56,7 @@ describe('invite routes (INV-03 + INV-04 + D-INV-01)', () => {
   async function createUserAndJwt(email = 'user@test.com') {
     const { issueAccessToken } = await import('../src/services/auth.js');
     const user = await createTestUser(handle, { email, password: 'longenoughpw12' });
+    await handle.db.update(users).set({ isAdmin: true }).where(eq(users.id, user.id));
     const jwt = await issueAccessToken(user.id);
     return { userId: user.id, jwt };
   }
@@ -76,6 +77,14 @@ describe('invite routes (INV-03 + INV-04 + D-INV-01)', () => {
   // ──────────────────────────────────────────────────────────────────────
 
   describe('POST /api/auth/invites', () => {
+    it('rejects a non-administrator JWT', async () => {
+      const { issueAccessToken } = await import('../src/services/auth.js');
+      const user = await createTestUser(handle, { email: 'member@test.com', password: 'longenoughpw12' });
+      const res = await appRequest('POST', '/api/auth/invites', {
+        body: { label: 'not allowed' }, headers: { Authorization: `Bearer ${await issueAccessToken(user.id)}` },
+      });
+      expect(res.status).toBe(403);
+    });
     it('Test 1: creates invite, returns plaintext starting wbn_inv_, DB hash matches sha256(plaintext)', async () => {
       const { hashInviteToken, INVITE_PREFIX } = await import('../src/services/invite.js');
       const { userId, jwt } = await createUserAndJwt('post1@test.com');
@@ -148,7 +157,7 @@ describe('invite routes (INV-03 + INV-04 + D-INV-01)', () => {
       expect(res.status).toBe(401);
     });
 
-    it('Test 5 (D-INV-01): PAT bearer auth returns 401 on POST /api/auth/invites', async () => {
+    it('Test 5 (D-INV-01): PAT bearer auth returns 403 on POST /api/auth/invites', async () => {
       const { jwt } = await createUserAndJwt('d-inv-01-post@test.com');
       const patRes = await appRequest('POST', '/api/auth/tokens', {
         body: { label: 'seed-pat' },
@@ -161,7 +170,7 @@ describe('invite routes (INV-03 + INV-04 + D-INV-01)', () => {
         body: { label: 'elevate' },
         headers: { Authorization: `Bearer ${plaintext}` },
       });
-      expect(res.status).toBe(401);
+      expect(res.status).toBe(403);
     });
   });
 
@@ -236,7 +245,7 @@ describe('invite routes (INV-03 + INV-04 + D-INV-01)', () => {
       expect(res.status).toBe(401);
     });
 
-    it('Test 8b (D-INV-01): PAT bearer returns 401 on GET /api/auth/invites', async () => {
+    it('Test 8b (D-INV-01): PAT bearer returns 403 on GET /api/auth/invites', async () => {
       const { jwt } = await createUserAndJwt('d-inv-01-get@test.com');
       const patRes = await appRequest('POST', '/api/auth/tokens', {
         body: { label: 'seed-pat' },
@@ -247,7 +256,7 @@ describe('invite routes (INV-03 + INV-04 + D-INV-01)', () => {
       const res = await appRequest('GET', '/api/auth/invites', {
         headers: { Authorization: `Bearer ${plaintext}` },
       });
-      expect(res.status).toBe(401);
+      expect(res.status).toBe(403);
     });
   });
 
@@ -349,7 +358,7 @@ describe('invite routes (INV-03 + INV-04 + D-INV-01)', () => {
       expect(res.status).toBe(401);
     });
 
-    it('Test 14b (D-INV-01): PAT bearer returns 401 on DELETE /api/auth/invites/:id', async () => {
+    it('Test 14b (D-INV-01): PAT bearer returns 403 on DELETE /api/auth/invites/:id', async () => {
       const { userId, jwt } = await createUserAndJwt('d-inv-01-del@test.com');
       const { id } = await createInviteForUser(userId, 'pat-target');
 
@@ -362,7 +371,7 @@ describe('invite routes (INV-03 + INV-04 + D-INV-01)', () => {
       const res = await appRequest('DELETE', `/api/auth/invites/${id}`, {
         headers: { Authorization: `Bearer ${plaintext}` },
       });
-      expect(res.status).toBe(401);
+      expect(res.status).toBe(403);
 
       // Row was NOT revoked
       const row = await handle.db.query.inviteCodes.findFirst({

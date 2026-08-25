@@ -15,7 +15,8 @@
     "db:generate": "drizzle-kit generate",
     "db:migrate": "drizzle-kit migrate",
     "invite:new": "tsx src/scripts/invite-new.ts",
-    "user:reset-password": "tsx src/scripts/reset-password.ts"
+    "user:reset-password": "tsx src/scripts/reset-password.ts",
+    "user:grant-admin": "tsx src/scripts/grant-admin.ts"
   },
   "dependencies": {
     "@anthropic-ai/sdk": "^0.97.0",
