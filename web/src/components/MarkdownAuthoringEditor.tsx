@@ -91,11 +91,12 @@ const editorPlugins = [
 ];
 function splitUnsupportedBlocks(markdown: string): MarkdownPart[] {
   const parts: MarkdownPart[] = [];
-  const block = /:::[^\n]*(?:\n[\s\S]*?\n:::(?=\n|$)|[\s\S]*$)/g;
+  const block = /:::[^\n]*(?:\n[\s\S]*?\n:::(?=\n|$)|[\s\S]*$)|^>\s*\[!([A-Za-z][A-Za-z0-9_-]*)\][^\n]*(?:\n>.*)*/gm;
   let cursor = 0;
   let match: RegExpExecArray | null;
 
   while ((match = block.exec(markdown))) {
+    if (match[1] && ['NOTE', 'TIP', 'WARNING'].includes(match[1].toUpperCase())) continue;
     if (match.index > cursor) parts.push({ kind: 'markdown', content: markdown.slice(cursor, match.index) });
     parts.push({ kind: 'raw', content: match[0] });
     cursor = match.index + match[0].length;
@@ -182,6 +183,116 @@ function transformMarkdownCommand(markdown: string, selection: Selection, comman
   return replaceMarkdownSelection(markdown, lineSelection, blockCommandMarkdown(command, markdown.slice(lineSelection.start, lineSelection.end)));
 }
 
+function markdownBlocks(markdown: string): Selection[] {
+  const blocks: Selection[] = [];
+  let start = 0;
+  const separator = /\n{2,}/g;
+  let match: RegExpExecArray | null;
+  while ((match = separator.exec(markdown))) {
+    if (match.index > start) blocks.push({ start, end: match.index });
+    start = match.index + match[0].length;
+  }
+  if (start < markdown.length) blocks.push({ start, end: markdown.length });
+  return blocks;
+}
+
+function selectionBlock(editable: HTMLElement, node: Node): HTMLElement | null {
+  let element = node.nodeType === Node.ELEMENT_NODE ? node as HTMLElement : node.parentElement;
+  while (element && element.parentElement !== editable) element = element.parentElement;
+  return element;
+}
+
+function domTextOffset(block: HTMLElement, node: Node, offset: number): number | null {
+  try {
+    const range = document.createRange();
+    range.selectNodeContents(block);
+    range.setEnd(node, offset);
+    return range.toString().length;
+  } catch {
+    return null;
+  }
+}
+
+function markdownVisiblePositions(block: string): number[] {
+  const positions: number[] = [];
+  const prefix = block.match(/^(?:#{1,6}\s+|>\s?|[-*+]\s+|\d+\.\s+|- \[[ xX]\]\s+)/)?.[0].length ?? 0;
+  for (let index = prefix; index < block.length; index += 1) {
+    const marker = block.slice(index, index + 2);
+    if (marker === '**' || marker === '__' || marker === '~~') {
+      index += 1;
+      continue;
+    }
+    if (block[index] === '`') continue;
+    positions.push(index);
+  }
+  return positions;
+}
+
+function markdownOffsetForVisibleText(block: string, visibleOffset: number): number {
+  const positions = markdownVisiblePositions(block);
+  if (visibleOffset < positions.length) return positions[visibleOffset];
+  return positions.at(-1) !== undefined ? positions.at(-1)! + 1 : block.length;
+}
+
+function visibleOffsetForMarkdown(block: string, markdownOffset: number): number {
+  const index = markdownVisiblePositions(block).findIndex((position) => position >= markdownOffset);
+  return index === -1 ? block.length : index;
+}
+
+function domTextPoint(block: HTMLElement, offset: number): { node: Text; offset: number } | null {
+  const walker = document.createTreeWalker(block, NodeFilter.SHOW_TEXT);
+  let node = walker.nextNode() as Text | null;
+  let remaining = offset;
+  let last: Text | null = null;
+  while (node) {
+    if (remaining <= node.data.length) return { node, offset: remaining };
+    remaining -= node.data.length;
+    last = node;
+    node = walker.nextNode() as Text | null;
+  }
+  return last ? { node: last, offset: last.data.length } : null;
+}
+
+function restoreLiveMarkdownSelection(editable: HTMLElement, markdown: string, selection: Selection): boolean {
+  const blocks = markdownBlocks(markdown);
+  const blockIndex = blocks.findIndex((block) => selection.start >= block.start && selection.end <= block.end);
+  const markdownBlock = blocks[blockIndex];
+  const domBlock = editable.children[blockIndex] as HTMLElement | undefined;
+  if (!markdownBlock || !domBlock) return false;
+  const source = markdown.slice(markdownBlock.start, markdownBlock.end);
+  const start = domTextPoint(domBlock, visibleOffsetForMarkdown(source, selection.start - markdownBlock.start));
+  const end = domTextPoint(domBlock, visibleOffsetForMarkdown(source, selection.end - markdownBlock.start));
+  if (!start || !end) return false;
+  const range = document.createRange();
+  range.setStart(start.node, start.offset);
+  range.setEnd(end.node, end.offset);
+  const domSelection = window.getSelection();
+  domSelection?.removeAllRanges();
+  domSelection?.addRange(range);
+  return true;
+}
+
+function liveMarkdownSelection(editable: HTMLElement, markdown: string): Selection | null {
+  const selection = window.getSelection();
+  if (!selection?.rangeCount) return null;
+  const range = selection.getRangeAt(0);
+  if (!editable.contains(range.startContainer) || !editable.contains(range.endContainer)) return null;
+  const startBlock = selectionBlock(editable, range.startContainer);
+  const endBlock = selectionBlock(editable, range.endContainer);
+  if (!startBlock || startBlock !== endBlock) return null;
+  const domBlocks = Array.from(editable.children);
+  const blockIndex = domBlocks.indexOf(startBlock);
+  const markdownBlock = markdownBlocks(markdown)[blockIndex];
+  const start = domTextOffset(startBlock, range.startContainer, range.startOffset);
+  const end = domTextOffset(endBlock, range.endContainer, range.endOffset);
+  if (!markdownBlock || start === null || end === null) return null;
+  const source = markdown.slice(markdownBlock.start, markdownBlock.end);
+  return {
+    start: markdownBlock.start + markdownOffsetForVisibleText(source, start),
+    end: markdownBlock.start + markdownOffsetForVisibleText(source, end),
+  };
+}
+
 export const MarkdownAuthoringEditor = forwardRef<
   MarkdownAuthoringEditorHandle,
   MarkdownAuthoringEditorProps
@@ -197,6 +308,11 @@ export const MarkdownAuthoringEditor = forwardRef<
   const liveEditorContainerRef = useRef<HTMLDivElement>(null);
   const sourceRef = useRef<HTMLTextAreaElement>(null);
   const paletteReturnFocusRef = useRef<HTMLElement | null>(null);
+  const paletteOriginRef = useRef<{
+    mode: 'live' | 'source'; element: HTMLElement; range: Range | null;
+    markdown?: string; selection?: Selection;
+  } | null>(null);
+  const activeRawBlockIndex = useRef<number | null>(null);
   const latestMarkdown = useRef(value);
   const sourceSelection = useRef<Selection>({ start: 0, end: 0 });
   const parts = splitUnsupportedBlocks(value);
@@ -272,6 +388,50 @@ export const MarkdownAuthoringEditor = forwardRef<
     setMode(nextMode);
   };
 
+  const capturePaletteOrigin = (trigger?: HTMLElement) => {
+    if (mode === 'source') {
+      const source = sourceRef.current;
+      if (source) {
+        sourceSelection.current = { start: source.selectionStart, end: source.selectionEnd };
+        paletteOriginRef.current = { mode: 'source', element: source, range: null };
+        paletteReturnFocusRef.current = source;
+        return;
+      }
+    }
+    const editable = liveEditorWrappers.current[activeLiveEditorIndex.current]
+      ?.querySelector<HTMLElement>('[contenteditable="true"]');
+    const selection = window.getSelection();
+    const range = selection?.rangeCount && editable?.contains(selection.getRangeAt(0).commonAncestorContainer)
+      ? selection.getRangeAt(0).cloneRange()
+      : null;
+    if (editable) {
+      paletteOriginRef.current = { mode: 'live', element: editable, range };
+      paletteReturnFocusRef.current = editable;
+      return;
+    }
+    paletteReturnFocusRef.current = trigger ?? null;
+  };
+
+  const restorePaletteOrigin = () => {
+    const origin = paletteOriginRef.current;
+    if (!origin?.element.isConnected) {
+      paletteReturnFocusRef.current?.focus();
+      return;
+    }
+    origin.element.focus();
+    if (origin.mode === 'source') {
+      const source = origin.element as HTMLTextAreaElement;
+      source.setSelectionRange(sourceSelection.current.start, sourceSelection.current.end);
+      return;
+    }
+    if (origin.markdown && origin.selection && restoreLiveMarkdownSelection(origin.element, origin.markdown, origin.selection)) return;
+    if (origin.range?.commonAncestorContainer.isConnected) {
+      const selection = window.getSelection();
+      selection?.removeAllRanges();
+      selection?.addRange(origin.range);
+    }
+  };
+
   const insertMarkdown = (markdown: string) => {
     if (disabled) return;
     if (mode === 'source') {
@@ -306,25 +466,29 @@ export const MarkdownAuthoringEditor = forwardRef<
       return;
     }
 
+    if (rawFallback || activeRawBlockIndex.current !== null) return;
     const index = activeLiveEditorIndex.current;
     const editor = mdxEditorRefs.current[index];
-    if (editor && !rawFallback) {
+    const editable = liveEditorWrappers.current[index]?.querySelector<HTMLElement>('[contenteditable="true"]');
+    if (editor && editable) {
       const markdown = editor.getMarkdown();
-      const selected = editor.getSelectionMarkdown() || window.getSelection()?.toString() || '';
-      const start = selected ? markdown.indexOf(selected) : 0;
-      const transformed = transformMarkdownCommand(markdown, {
-        start: start < 0 ? 0 : start,
-        end: start < 0 ? 0 : start + selected.length,
-      }, command);
+      const selection = liveMarkdownSelection(editable, markdown);
+      if (!selection) return;
+      const transformed = transformMarkdownCommand(markdown, selection, command);
+      const paletteOrigin = paletteOriginRef.current;
+      if (paletteOrigin?.mode === 'live' && paletteOrigin.element === editable) {
+        paletteOrigin.markdown = transformed.markdown;
+        paletteOrigin.selection = transformed.selection;
+        paletteOrigin.range = null;
+      }
       window.getSelection()?.removeAllRanges();
       editor.setMarkdown(transformed.markdown);
       changeLivePart(index, transformed.markdown);
       return;
     }
-    insertMarkdown(command.markdown);
   };
 
-  useImperativeHandle(ref, () => ({ insertMarkdown, executeCommand }), [mode, onChange, rawFallback]);
+  useImperativeHandle(ref, () => ({ insertMarkdown, executeCommand }), [insertMarkdown, executeCommand]);
 
   let partOffset = 0;
 
@@ -339,7 +503,7 @@ export const MarkdownAuthoringEditor = forwardRef<
         const key = event.key.toLowerCase();
         if (key === 'p' && event.shiftKey) {
           event.preventDefault();
-          paletteReturnFocusRef.current = document.activeElement instanceof HTMLElement ? document.activeElement : null;
+          capturePaletteOrigin(document.activeElement instanceof HTMLElement ? document.activeElement : undefined);
           setPaletteOpen(true);
           return;
         }
@@ -359,7 +523,7 @@ export const MarkdownAuthoringEditor = forwardRef<
         onCommand={executeCommand}
         onOpenPalette={(trigger) => {
           if (disabled) return;
-          if (trigger) paletteReturnFocusRef.current = trigger;
+          capturePaletteOrigin(trigger);
           setPaletteOpen(true);
         }}
       />
@@ -388,8 +552,8 @@ export const MarkdownAuthoringEditor = forwardRef<
         {rawFallback ? (
           <pre
             tabIndex={0}
-            onFocus={() => { sourceSelection.current = { start: value.length, end: value.length }; }}
-            onClick={() => { sourceSelection.current = { start: value.length, end: value.length }; }}
+            onFocus={() => { activeRawBlockIndex.current = 0; sourceSelection.current = { start: value.length, end: value.length }; }}
+            onClick={() => { activeRawBlockIndex.current = 0; sourceSelection.current = { start: value.length, end: value.length }; }}
             className="m-3 overflow-x-auto rounded bg-neutral-100 p-3 text-sm dark:bg-neutral-900"
             aria-label="Raw Markdown block"
           >
@@ -404,8 +568,8 @@ export const MarkdownAuthoringEditor = forwardRef<
                 <pre
                   key={`${index}-${part.content}`}
                   tabIndex={0}
-                  onFocus={() => { sourceSelection.current = { start: start + part.content.length, end: start + part.content.length }; }}
-                  onClick={() => { sourceSelection.current = { start: start + part.content.length, end: start + part.content.length }; }}
+                  onFocus={() => { activeRawBlockIndex.current = index; sourceSelection.current = { start: start + part.content.length, end: start + part.content.length }; }}
+                  onClick={() => { activeRawBlockIndex.current = index; sourceSelection.current = { start: start + part.content.length, end: start + part.content.length }; }}
                   className="m-3 overflow-x-auto rounded bg-neutral-100 p-3 text-sm dark:bg-neutral-900"
                   aria-label="Raw Markdown block"
                 >
@@ -415,7 +579,7 @@ export const MarkdownAuthoringEditor = forwardRef<
                 <div
                   key={index}
                   ref={(element) => { liveEditorWrappers.current[index] = element; }}
-                  onFocusCapture={() => { activeLiveEditorIndex.current = index; }}
+                  onFocusCapture={() => { activeRawBlockIndex.current = null; activeLiveEditorIndex.current = index; }}
                   onClick={() => mdxEditorRefs.current[index]?.focus()}
                 >
                   <MDXEditor
@@ -470,6 +634,7 @@ export const MarkdownAuthoringEditor = forwardRef<
         disabled={disabled}
         onCommand={executeCommand}
         returnFocusRef={paletteReturnFocusRef}
+        onRestoreFocus={restorePaletteOrigin}
       />
     </section>
   );

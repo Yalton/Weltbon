@@ -27,8 +27,8 @@ export function MarkdownAuthoringToolbar({ commands, onCommand, onOpenPalette, d
           </button>
         ))}
       </div>
-      <button type="button" disabled={disabled} aria-label="More formatting commands" onClick={(event) => onOpenPalette(event.currentTarget)} className="rounded px-2 py-1 text-xs hover:bg-neutral-100 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-sky-600 disabled:cursor-not-allowed disabled:opacity-50 dark:hover:bg-neutral-800 sm:hidden">More</button>
-      <button type="button" disabled={disabled} aria-label="Open formatting command palette" onClick={(event) => onOpenPalette(event.currentTarget)} className="hidden rounded px-2 py-1 text-xs hover:bg-neutral-100 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-sky-600 disabled:cursor-not-allowed disabled:opacity-50 dark:hover:bg-neutral-800 sm:inline-flex">Commands</button>
+      <button type="button" disabled={disabled} aria-label="More formatting commands" onMouseDown={(event) => event.preventDefault()} onClick={(event) => onOpenPalette(event.currentTarget)} className="rounded px-2 py-1 text-xs hover:bg-neutral-100 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-sky-600 disabled:cursor-not-allowed disabled:opacity-50 dark:hover:bg-neutral-800 sm:hidden">More</button>
+      <button type="button" disabled={disabled} aria-label="Open formatting command palette" onMouseDown={(event) => event.preventDefault()} onClick={(event) => onOpenPalette(event.currentTarget)} className="hidden rounded px-2 py-1 text-xs hover:bg-neutral-100 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-sky-600 disabled:cursor-not-allowed disabled:opacity-50 dark:hover:bg-neutral-800 sm:inline-flex">Commands</button>
     </div>
   );
 }

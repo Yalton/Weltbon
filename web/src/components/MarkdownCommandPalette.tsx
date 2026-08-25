@@ -7,10 +7,11 @@ type MarkdownCommandPaletteProps = {
   commands: readonly MarkdownAuthoringCommand[];
   onCommand: (command: MarkdownAuthoringCommandId) => void;
   returnFocusRef: RefObject<HTMLElement | null>;
+  onRestoreFocus?: () => void;
   disabled?: boolean;
 };
 
-export function MarkdownCommandPalette({ open, onOpenChange, commands, onCommand, returnFocusRef, disabled = false }: MarkdownCommandPaletteProps) {
+export function MarkdownCommandPalette({ open, onOpenChange, commands, onCommand, returnFocusRef, onRestoreFocus, disabled = false }: MarkdownCommandPaletteProps) {
   const [activeIndex, setActiveIndex] = useState(0);
   const optionRefs = useRef<Array<HTMLButtonElement | null>>([]);
 
@@ -25,7 +26,10 @@ export function MarkdownCommandPalette({ open, onOpenChange, commands, onCommand
 
   const close = () => {
     onOpenChange(false);
-    queueMicrotask(() => returnFocusRef.current?.focus());
+    queueMicrotask(() => {
+      if (onRestoreFocus) onRestoreFocus();
+      else returnFocusRef.current?.focus();
+    });
   };
   const move = (direction: 1 | -1) => {
     const next = (activeIndex + direction + commands.length) % commands.length;

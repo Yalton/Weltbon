@@ -58,6 +58,18 @@ function selectLiveText(selector: string) {
   });
 }
 
+function selectLiveTextOccurrence(textValue: string, occurrence: number, start = 0, end?: number) {
+  const text = screen.getAllByText(textValue)[occurrence]?.firstChild as Text;
+  const range = document.createRange();
+  range.setStart(text, start);
+  range.setEnd(text, end ?? text.textContent?.length ?? 0);
+  const selection = window.getSelection();
+  act(() => {
+    selection?.removeAllRanges();
+    selection?.addRange(range);
+  });
+}
+
 function clearLiveSelection() {
   act(() => window.getSelection()?.removeAllRanges());
 }
@@ -120,6 +132,19 @@ describe('MarkdownAuthoringEditor', () => {
 
     expect(screen.getByRole('heading', { name: 'Heading' })).toBeInTheDocument();
     expect(screen.getByLabelText('Raw Markdown block').textContent).toBe(malformedBlock);
+  });
+
+  it('isolates unsupported callouts as lossless raw Markdown blocks', () => {
+    const unsupportedCallout = '> [!DANGER]\n> Keep every byte.';
+    render(<ControlledEditor value={`# Heading\n\n${unsupportedCallout}\n\nTail`} />);
+
+    expect(screen.getByRole('heading', { name: 'Heading' })).toBeInTheDocument();
+    expect(screen.getByLabelText('Raw Markdown block').textContent).toBe(unsupportedCallout);
+
+    fireEvent.click(screen.getByRole('button', { name: 'Source' }));
+    expect(screen.getByRole('textbox', { name: 'Entry body' })).toHaveValue(
+      `# Heading\n\n${unsupportedCallout}\n\nTail`,
+    );
   });
 
   it('keeps content and the current source selection when switching modes', () => {
@@ -201,6 +226,18 @@ describe('MarkdownAuthoringEditor', () => {
     expect(screen.getByTestId('markdown-value').textContent).toBe(
       `${UNSUPPORTED_BLOCK}\n\n![image](asset://asset-1)\n\nafter`,
     );
+  });
+
+  it('does not run formatting commands from a raw recovery block', () => {
+    const editorRef = createRef<MarkdownAuthoringEditorHandle>();
+    const onChange = vi.fn();
+    render(<MarkdownAuthoringEditor ref={editorRef} value={UNSUPPORTED_BLOCK} onChange={onChange} universeId="U1" />);
+
+    fireEvent.click(screen.getByLabelText('Raw Markdown block'));
+    editorRef.current?.executeCommand('heading-1');
+
+    expect(onChange).not.toHaveBeenCalled();
+    expect(screen.getByLabelText('Raw Markdown block').textContent).toBe(UNSUPPORTED_BLOCK);
   });
 
   it('restores focus to the later live editor after a Source-mode round trip', () => {
@@ -306,6 +343,26 @@ describe('MarkdownAuthoringEditor', () => {
     await waitFor(() => expect(screen.getByTestId('markdown-value')).toHaveTextContent('# Paragraph'));
   });
 
+  it('converts the Live Preview block containing a collapsed caret, not the first block', async () => {
+    render(<ControlledEditor value={'First\n\nSecond'} />);
+    selectLiveTextOccurrence('Second', 0, 3, 3);
+
+    fireEvent.click(screen.getByRole('button', { name: 'Heading 1' }));
+    clearLiveSelection();
+
+    await waitFor(() => expect(screen.getByTestId('markdown-value')).toHaveTextContent('First # Second'));
+  });
+
+  it('formats duplicate Live Preview text at the selected occurrence', async () => {
+    render(<ControlledEditor value={'duplicate\n\nduplicate'} />);
+    selectLiveTextOccurrence('duplicate', 1);
+
+    fireEvent.click(screen.getByRole('button', { name: 'Bold' }));
+    clearLiveSelection();
+
+    await waitFor(() => expect(screen.getByTestId('markdown-value')).toHaveTextContent('duplicate **duplicate**'));
+  });
+
   it('clears selected Live Preview formatting through the native editor command', async () => {
     render(<ControlledEditor value="**selected**" />);
     selectLiveText('strong');
@@ -328,6 +385,17 @@ describe('MarkdownAuthoringEditor', () => {
 
     expect(onChange).not.toHaveBeenCalled();
     expect(screen.queryByRole('dialog', { name: 'Formatting commands' })).not.toBeInTheDocument();
+  });
+
+  it('blocks an existing imperative handle after the editor becomes disabled', () => {
+    const editorRef = createRef<MarkdownAuthoringEditorHandle>();
+    const onChange = vi.fn();
+    const { rerender } = render(<MarkdownAuthoringEditor ref={editorRef} value="text" onChange={onChange} universeId="U1" />);
+
+    rerender(<MarkdownAuthoringEditor ref={editorRef} value="text" onChange={onChange} universeId="U1" disabled />);
+    editorRef.current?.executeCommand('bold');
+
+    expect(onChange).not.toHaveBeenCalled();
   });
 
   it('configures native Markdown shortcuts for the Live Preview contenteditable', () => {
