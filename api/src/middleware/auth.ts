@@ -1,10 +1,21 @@
 import { createMiddleware } from 'hono/factory';
 import { HTTPException } from 'hono/http-exception';
+import { eq } from 'drizzle-orm';
+import { db as getDb } from '../db/client.js';
+import { users } from '../db/schema.js';
 import { verifyAccessToken } from '../services/auth.js';
 import { lookupPat, PAT_PREFIX } from '../services/pat.js';
 import { verifyAssetSig } from '../services/asset-signing.js';
 
 export type AuthVariables = { userId: string };
+
+async function isActiveUser(userId: string): Promise<boolean> {
+  const user = await getDb().query.users.findFirst({
+    where: eq(users.id, userId),
+    columns: { id: true, disabledAt: true },
+  });
+  return Boolean(user && user.disabledAt === null);
+}
 
 function extractBearer(c: { req: { header: (name: string) => string | undefined } }): string {
   const header = c.req.header('Authorization');
@@ -58,6 +69,9 @@ export const requireAuth = createMiddleware<{ Variables: AuthVariables }>(
     // 1. JWT path (existing fast in-memory path)
     try {
       const userId = await verifyAccessToken(token);
+      if (!(await isActiveUser(userId))) {
+        throw new Error('inactive user');
+      }
       c.set('userId', userId);
       await next();
       return;
@@ -68,6 +82,9 @@ export const requireAuth = createMiddleware<{ Variables: AuthVariables }>(
     if (token.startsWith(PAT_PREFIX)) {
       const pat = await lookupPat(token);
       if (pat) {
+        if (!(await isActiveUser(pat.userId))) {
+          throw new HTTPException(401, { message: 'Invalid token' });
+        }
         c.set('userId', pat.userId);
         // lookupPat fires-and-forgets last_used_at update internally (D-09)
         await next();
@@ -89,7 +106,38 @@ export const requireJwtAuth = createMiddleware<{ Variables: AuthVariables }>(
     } catch {
       throw new HTTPException(401, { message: 'Invalid token' });
     }
+    if (!(await isActiveUser(userId))) {
+      throw new HTTPException(401, { message: 'Invalid token' });
+    }
     c.set('userId', userId);
     await next();
   }
+);
+
+/** JWT-only administrator boundary for production operator routes. */
+export const requireAdmin = createMiddleware<{ Variables: AuthVariables }>(
+  async (c, next) => {
+    const token = extractBearer(c);
+    if (token.startsWith(PAT_PREFIX)) {
+      throw new HTTPException(403, { message: 'Administrator JWT required' });
+    }
+    let userId: string;
+    try {
+      userId = await verifyAccessToken(token);
+    } catch {
+      throw new HTTPException(401, { message: 'Invalid token' });
+    }
+    const user = await getDb().query.users.findFirst({
+      where: eq(users.id, userId),
+      columns: { id: true, isAdmin: true, disabledAt: true },
+    });
+    if (!user || user.disabledAt !== null) {
+      throw new HTTPException(401, { message: 'Invalid token' });
+    }
+    if (!user.isAdmin) {
+      throw new HTTPException(403, { message: 'Administrator required' });
+    }
+    c.set('userId', userId);
+    await next();
+  },
 );
