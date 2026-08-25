@@ -19,9 +19,11 @@ describe('production admin user-management persistence', () => {
     app = createApp();
   });
 
-  async function request(path: string, token: string) {
+  async function request(path: string, token: string, method = 'GET', body?: unknown) {
     return app.fetch(new Request(`http://localhost${path}`, {
+      method,
       headers: { Authorization: `Bearer ${token}` },
+      body: body === undefined ? undefined : JSON.stringify(body),
     }));
   }
 
@@ -124,5 +126,65 @@ describe('production admin user-management persistence', () => {
     expect((await protectedApp.request('/admin', { headers: { Authorization: `Bearer ${await issueAccessToken(member.id)}` } })).status).toBe(403);
     expect((await protectedApp.request('/admin', { headers: { Authorization: `Bearer ${pat}` } })).status).toBe(403);
     expect((await protectedApp.request('/admin', { headers: { Authorization: `Bearer ${await issueAccessToken(admin.id)}` } })).status).toBe(200);
+  });
+
+  it('disables a member transactionally, revoking credentials and recording the action', async () => {
+    const admin = await createTestUser(handle, { email: 'operator@test.dev', password: 'longenoughpw12' });
+    const target = await createTestUser(handle, { email: 'member@test.dev', password: 'longenoughpw12' });
+    await handle.db.update(users).set({ isAdmin: true }).where(eq(users.id, admin.id));
+    await handle.db.insert(personalAccessTokens).values({
+      userId: target.id, label: 'automation', hash: hashPatToken('wbn_pat_member_token'), bodySuffix: 'ken',
+    });
+
+    const result = await request(
+      `/api/admin/users/${target.id}/disable`,
+      await issueAccessToken(admin.id),
+      'POST',
+      { reason: 'Offboarding' },
+    );
+    expect(result.status).toBe(200);
+
+    const stored = await handle.db.query.users.findFirst({ where: eq(users.id, target.id) });
+    expect(stored?.disabledReason).toBe('Offboarding');
+    expect(stored?.disabledAt).toBeInstanceOf(Date);
+    const pats = await handle.db.query.personalAccessTokens.findMany({ where: eq(personalAccessTokens.userId, target.id) });
+    expect(pats).toHaveLength(1);
+    expect(pats[0].revokedAt).toBeInstanceOf(Date);
+    const event = await handle.db.query.adminAuditLog.findFirst({ where: eq(adminAuditLog.targetUserId, target.id) });
+    expect(event).toMatchObject({ actorEmail: 'operator@test.dev', targetEmail: 'member@test.dev', action: 'disabled' });
+  });
+
+  it('lists safe account fields and refuses demoting the final active administrator', async () => {
+    const admin = await createTestUser(handle, { email: 'sole-admin@test.dev', password: 'longenoughpw12' });
+    const member = await createTestUser(handle, { email: 'listed-member@test.dev', password: 'longenoughpw12' });
+    await handle.db.update(users).set({ isAdmin: true }).where(eq(users.id, admin.id));
+    const token = await issueAccessToken(admin.id);
+
+    const list = await request('/api/admin/users', token);
+    expect(list.status).toBe(200);
+    const body = await list.json() as Array<{ email: string; passwordHash?: string }>;
+    expect(body.map((user) => user.email)).toEqual(expect.arrayContaining(['sole-admin@test.dev', 'listed-member@test.dev']));
+    expect(body.every((user) => user.passwordHash === undefined)).toBe(true);
+
+    const demote = await request(`/api/admin/users/${admin.id}/admin`, token, 'PATCH', { isAdmin: false });
+    expect(demote.status).toBe(409);
+    expect((await handle.db.query.users.findFirst({ where: eq(users.id, admin.id) }))?.isAdmin).toBe(true);
+  });
+
+  it('re-enables a user and purges only after exact email confirmation', async () => {
+    const admin = await createTestUser(handle, { email: 'purge-admin@test.dev', password: 'longenoughpw12' });
+    const target = await createTestUser(handle, { email: 'purge-target@test.dev', password: 'longenoughpw12' });
+    await handle.db.update(users).set({ isAdmin: true }).where(eq(users.id, admin.id));
+    await handle.db.update(users).set({ disabledAt: new Date(), disabledReason: 'Offboarding' }).where(eq(users.id, target.id));
+    const token = await issueAccessToken(admin.id);
+    expect((await request(`/api/admin/users/${target.id}/enable`, token, 'POST')).status).toBe(200);
+    expect((await handle.db.query.users.findFirst({ where: eq(users.id, target.id) }))?.disabledAt).toBeNull();
+    expect((await request(`/api/admin/users/${target.id}`, token, 'DELETE', { confirmEmail: 'wrong@test.dev' })).status).toBe(400);
+    expect(await handle.db.query.users.findFirst({ where: eq(users.id, target.id) })).toBeTruthy();
+    expect((await request(`/api/admin/users/${target.id}`, token, 'DELETE', { confirmEmail: 'purge-target@test.dev' })).status).toBe(200);
+    expect(await handle.db.query.users.findFirst({ where: eq(users.id, target.id) })).toBeUndefined();
+    const audit = await request('/api/admin/audit-log', token);
+    expect(audit.status).toBe(200);
+    expect((await audit.json() as Array<{ action: string }>).map((event) => event.action)).toEqual(expect.arrayContaining(['enabled', 'purged']));
   });
 });
