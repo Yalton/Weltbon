@@ -1697,20 +1697,20 @@ describe('two-instance acceptance for the sync drive loop (Plan D Task 8)', () =
 
   // ── Scenario 11: POST /remotes/{id}/test ─────────────────────────────────
 
-  it('testRemote returns the peer identity on a healthy probe; the HTTP route 404s for another user\'s remote id', async () => {
+  it('testRemote returns the peer identity on a healthy probe; another instance\'s JWT is rejected before a remote lookup', async () => {
     await use('A');
     const identity = await testRemote(remoteId, ownerA.id, makeFetch());
     expect(identity.weltbonVersion).toBe('2.2.0');
     expect(identity.migrationHead).toBeTruthy();
 
     // Nothing else exercises testRemote() — this is the one place it runs.
-    // The 404-for-a-foreign-id case is checked through the REAL HTTP route:
-    // ownership is checked before any network call, so it needs no fetchImpl.
+    // tokenB belongs to the other instance. A valid signature alone is not a
+    // session: active-account enforcement requires a user row on this instance.
     const res = await app.request(`/api/sync/remotes/${remoteId}/test`, {
       method: 'POST',
       headers: authHeader(tokenB), // B does not own A's remote row
     });
-    expect(res.status).toBe(404);
+    expect(res.status).toBe(401);
   });
 
   // ── Scenario 12: a local SyncApplyError during /run (C-21) ───────────────

@@ -914,21 +914,18 @@ describe('llm-key routes (Phase 22-04: LLMKEY-01/03/04/05/06)', () => {
       expect(res.status).toBe(401);
     });
 
-    // BL-01 regression: POST /consent must NOT fabricate a 200 with a synthetic
-    // timestamp when the UPDATE affects zero rows (user deleted between token
-    // issuance and the consent POST). Previously the handler returned 200 with
-    // a `now` timestamp that was never persisted; the next GET would report
-    // consentedAt: null, contradicting the prior 200 response.
-    it('POST /api/llm-keys/consent returns 404 (not a fabricated 200) when the user row was deleted after token issuance', async () => {
+    // A deleted account is rejected by auth before the handler runs. This also
+    // prevents a synthetic timestamp from being returned for an absent row.
+    it('POST /api/llm-keys/consent returns 401 when the user row was deleted after token issuance', async () => {
       const { userId, jwt } = await createUserAndJwt('consent-deleted-user@test.com');
       // Delete the user row AFTER the JWT was issued; the JWT is still valid
-      // (the auth middleware only checks signature + expiry, not row existence).
+      // The JWT signature remains valid, but active-account enforcement rejects it.
       await handle.db.delete(users).where(eq(users.id, userId));
       const res = await appRequest('POST', '/api/llm-keys/consent', {
         headers: { Authorization: `Bearer ${jwt}` },
       });
-      expect(res.status).toBe(404);
-      expect(res.body.error).toContain('User not found');
+      expect(res.status).toBe(401);
+      expect(res.body.error).toContain('Invalid token');
       // Verify nothing was persisted under that userId either.
       const after = await handle.db
         .select({ llmConsentedAt: users.llmConsentedAt })
