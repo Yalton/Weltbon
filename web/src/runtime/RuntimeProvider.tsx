@@ -17,6 +17,7 @@ interface MeResponse {
   id: string;
   email: string;
   displayName: string;
+  isAdmin?: boolean;
 }
 
 interface RuntimeState {
@@ -75,7 +76,7 @@ export function RuntimeProvider({ children }: PropsWithChildren) {
         setAccessToken(accessToken);
         const me = await api<MeResponse>('/auth/me');
         if (!isCurrent()) return;
-        useAuthStore.getState().setSession(me, accessToken);
+        useAuthStore.getState().setSession({ ...me, isAdmin: me.isAdmin ?? false }, accessToken);
       }
 
       if (isCurrent()) setState({ authMode, status: 'ready' });

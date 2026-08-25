@@ -56,7 +56,7 @@ export default function App() {
             <Route index element={<Settings />} />
             <Route path="tokens" element={authMode === 'local' ? <Navigate to="/settings" replace /> : <Tokens />} />
             <Route path="invites" element={authMode === 'local' || !isAdmin ? <Navigate to="/settings" replace /> : <Invites />} />
-            <Route path="admin/users" element={authMode === 'local' || !isAdmin ? <Navigate to="/settings" replace /> : <AdminUsers />} />
+            <Route path="users" element={authMode === 'local' || !isAdmin ? <Navigate to="/settings" replace /> : <AdminUsers />} />
             <Route path="templates" element={<Templates />} />
             {/* Phase 29 — global owner audit view for all share links. */}
             <Route path="shares" element={<Shares />} />
