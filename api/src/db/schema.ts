@@ -104,6 +104,9 @@ export const users = pgTable('users', {
   displayName:      text('display_name').notNull(),
   passwordHash:     text('password_hash').notNull(),
   createdAt:        timestamp('created_at').defaultNow().notNull(),
+  isAdmin:          boolean('is_admin').default(false).notNull(),
+  disabledAt:       timestamp('disabled_at', { withTimezone: true }),
+  disabledReason:   text('disabled_reason'),
   // Phase 22 D-07: nullable timestamptz; set to NOW() on first "I accept" click
   // in /settings/llm consent block. Persists forever (revoking keys does NOT clear).
   llmConsentedAt:   timestamp('llm_consented_at', { withTimezone: true }),
@@ -164,7 +167,28 @@ export const personalAccessTokens = pgTable('personal_access_tokens', {
   bodySuffix: text('body_suffix').notNull(),
   createdAt:  timestamp('created_at', { withTimezone: true }).defaultNow().notNull(),
   lastUsedAt: timestamp('last_used_at', { withTimezone: true }),
+  revokedAt:  timestamp('revoked_at', { withTimezone: true }),
 });
+
+export type AdminAuditAction = 'promoted' | 'demoted' | 'disabled' | 'enabled' | 'purged';
+
+/**
+ * Append-only operator record. User IDs deliberately become null when either
+ * account is purged; the email snapshots retain a useful, non-secret history.
+ */
+export const adminAuditLog = pgTable('admin_audit_log', {
+  id:          uuid('id').primaryKey().defaultRandom(),
+  actorUserId: uuid('actor_user_id').references(() => users.id, { onDelete: 'set null' }),
+  actorEmail:  text('actor_email').notNull(),
+  targetUserId: uuid('target_user_id').references(() => users.id, { onDelete: 'set null' }),
+  targetEmail: text('target_email').notNull(),
+  action:      text('action').$type<AdminAuditAction>().notNull(),
+  details:     jsonb('details').default({}).notNull(),
+  createdAt:   timestamp('created_at', { withTimezone: true }).defaultNow().notNull(),
+}, (t) => ({
+  targetCreatedIdx: index('admin_audit_log_target_created_idx').on(t.targetUserId, t.createdAt),
+  createdIdx: index('admin_audit_log_created_idx').on(t.createdAt),
+}));
 
 /**
  * Phase 22 BYOK: per-user, per-provider LLM API key storage with AES-256-GCM at-rest.
