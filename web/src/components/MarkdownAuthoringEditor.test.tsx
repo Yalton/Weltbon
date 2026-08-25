@@ -406,6 +406,16 @@ describe('MarkdownAuthoringEditor', () => {
     ));
   });
 
+  it('does not mutate canonical Markdown when a selected Live Preview character is escaped', () => {
+    const onChange = vi.fn();
+    render(<MarkdownAuthoringEditor value={'\\*'} onChange={onChange} universeId="U1" />);
+    selectLiveSubstring('*');
+
+    fireEvent.click(screen.getByRole('button', { name: 'Bold' }));
+
+    expect(onChange).not.toHaveBeenCalled();
+  });
+
   it('converts the linked Live Preview block containing a collapsed caret', async () => {
     render(<ControlledEditor value={'First block\n\n[second](https://second.test)'} />);
     selectLiveSubstring('second', 0, true);

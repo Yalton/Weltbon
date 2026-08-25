@@ -213,11 +213,12 @@ function domTextOffset(block: HTMLElement, node: Node, offset: number): number |
   }
 }
 
-type MarkdownTextMap = { text: string; positions: number[] };
+type MarkdownTextMap = { text: string; positions: number[]; hasExactSourceBoundaries: boolean };
 
 function markdownTextMap(markdown: string): MarkdownTextMap {
   const positions: number[] = [];
   const text: string[] = [];
+  let hasExactSourceBoundaries = true;
 
   const findToken = (start: number, end: number, token: string): number => {
     for (let index = start; index <= end - token.length; index += 1) {
@@ -273,6 +274,7 @@ function markdownTextMap(markdown: string): MarkdownTextMap {
       }
       lineStart = false;
       if (markdown[index] === '\\' && index + 1 < end) {
+        hasExactSourceBoundaries = false;
         append(index + 1);
         index += 2;
         continue;
@@ -313,7 +315,7 @@ function markdownTextMap(markdown: string): MarkdownTextMap {
   };
 
   visit(0, markdown.length);
-  return { text: text.join(''), positions };
+  return { text: text.join(''), positions, hasExactSourceBoundaries };
 }
 
 function markdownOffsetForVisibleText(block: string, visibleOffset: number): number {
@@ -388,7 +390,8 @@ function liveMarkdownSelection(editable: HTMLElement, markdown: string): Selecti
   const end = domTextOffset(endBlock, range.endContainer, range.endOffset);
   if (!markdownBlock || start === null || end === null) return null;
   const source = markdown.slice(markdownBlock.start, markdownBlock.end);
-  if (markdownTextMap(source).text !== renderedBlockText(startBlock)) return null;
+  const textMap = markdownTextMap(source);
+  if (!textMap.hasExactSourceBoundaries || textMap.text !== renderedBlockText(startBlock)) return null;
   const startOffset = markdownOffsetForVisibleText(source, start);
   return {
     start: markdownBlock.start + startOffset,
