@@ -1,7 +1,13 @@
 import { createRef, useState } from 'react';
 import { describe, expect, it, vi } from 'vitest';
 import { act, fireEvent, render, screen, waitFor } from '@testing-library/react';
+import { markdownShortcutPlugin } from '@mdxeditor/editor';
 import { MarkdownAuthoringEditor, type MarkdownAuthoringEditorHandle } from './MarkdownAuthoringEditor';
+
+vi.mock('@mdxeditor/editor', async (importOriginal) => {
+  const actual = await importOriginal<typeof import('@mdxeditor/editor')>();
+  return { ...actual, markdownShortcutPlugin: vi.fn(actual.markdownShortcutPlugin) };
+});
 
 const UNSUPPORTED_BLOCK = ':::mermaid\ngraph TD\n  A --> B\n:::';
 const DOCUMENT = `# Title\n\nA paragraph with [[Weltbon]].\n\n${UNSUPPORTED_BLOCK}`;
@@ -322,5 +328,23 @@ describe('MarkdownAuthoringEditor', () => {
 
     expect(onChange).not.toHaveBeenCalled();
     expect(screen.queryByRole('dialog', { name: 'Formatting commands' })).not.toBeInTheDocument();
+  });
+
+  it('configures native Markdown shortcuts for the Live Preview contenteditable', () => {
+    render(<ControlledEditor value="" />);
+
+    expect(screen.getByRole('textbox')).toHaveAttribute('contenteditable', 'true');
+    expect(vi.mocked(markdownShortcutPlugin)).toHaveBeenCalled();
+  });
+
+  it('scopes a readable MDXEditor surface inside the app dark theme', () => {
+    render(<div className="dark"><ControlledEditor value="Text" /></div>);
+
+    expect(screen.getByRole('region', { name: 'Markdown authoring editor' })).toHaveClass(
+      'markdown-authoring-surface',
+      'dark:bg-neutral-950',
+      'dark:text-neutral-100',
+    );
+    expect(screen.getByRole('textbox').closest('.markdown-authoring-editor-theme')).not.toBeNull();
   });
 });

@@ -5,6 +5,7 @@ import {
   imagePlugin,
   linkPlugin,
   listsPlugin,
+  markdownShortcutPlugin,
   MDXEditor,
   type MDXEditorMethods,
   quotePlugin,
@@ -12,6 +13,7 @@ import {
   thematicBreakPlugin,
 } from '@mdxeditor/editor';
 import '@mdxeditor/editor/style.css';
+import './MarkdownAuthoringEditor.css';
 import { MarkdownAuthoringToolbar } from './MarkdownAuthoringToolbar';
 import { MarkdownCommandPalette } from './MarkdownCommandPalette';
 import {
@@ -75,6 +77,7 @@ type MarkdownPart = { kind: 'markdown' | 'raw'; content: string };
 
 const editorPlugins = [
   headingsPlugin(),
+  markdownShortcutPlugin(),
   listsPlugin(),
   quotePlugin(),
   codeBlockPlugin(),
@@ -327,7 +330,7 @@ export const MarkdownAuthoringEditor = forwardRef<
 
   return (
     <section
-      className="rounded-md border border-neutral-300 dark:border-neutral-700"
+      className="markdown-authoring-surface rounded-md border border-neutral-300 bg-white text-neutral-900 dark:border-neutral-700 dark:bg-neutral-950 dark:text-neutral-100"
       role="region"
       aria-label="Markdown authoring editor"
       onKeyDown={(event) => {
@@ -419,6 +422,7 @@ export const MarkdownAuthoringEditor = forwardRef<
                     ref={(editor) => { mdxEditorRefs.current[index] = editor; }}
                     markdown={part.content}
                     plugins={editorPlugins}
+                    className="markdown-authoring-editor-theme"
                     readOnly={disabled}
                     placeholder="Write in Markdown..."
                     contentEditableClassName="prose prose-neutral dark:prose-invert max-w-none min-h-48 px-3 py-2 focus:outline-none"

@@ -1,0 +1,13 @@
+.markdown-authoring-editor-theme {
+  background-color: var(--basePageBg);
+  color: var(--baseText);
+}
+
+.markdown-authoring-editor-theme [contenteditable='true'] {
+  color: var(--baseText);
+}
+
+/* MDXEditor's default surface is white even when Weltbon's `.dark` theme is active. */
+.dark .markdown-authoring-editor-theme {
+  --basePageBg: var(--slate-1);
+}
