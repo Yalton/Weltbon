@@ -84,6 +84,7 @@ export const MarkdownAuthoringEditor = forwardRef<
   const [mode, setMode] = useState<'live' | 'source'>('live');
   const [liveParserError, setLiveParserError] = useState<string | null>(null);
   const mdxEditorRefs = useRef<Array<MDXEditorMethods | null>>([]);
+  const liveEditorWrappers = useRef<Array<HTMLDivElement | null>>([]);
   const activeLiveEditorIndex = useRef(0);
   const restoreLiveFocus = useRef(false);
   const liveSelectionRange = useRef<Range | null>(null);
@@ -113,7 +114,7 @@ export const MarkdownAuthoringEditor = forwardRef<
     }
     if (restoreLiveFocus.current) {
       mdxEditorRefs.current[activeLiveEditorIndex.current]?.focus();
-      liveEditorContainerRef.current
+      liveEditorWrappers.current[activeLiveEditorIndex.current]
         ?.querySelector<HTMLElement>('[contenteditable="true"]')
         ?.focus();
       const range = liveSelectionRange.current;
@@ -150,7 +151,8 @@ export const MarkdownAuthoringEditor = forwardRef<
 
   const switchMode = (nextMode: 'live' | 'source') => {
     if (nextMode === 'source') {
-      const activeElement = liveEditorContainerRef.current?.querySelector<HTMLElement>('[contenteditable="true"]');
+      const activeElement = liveEditorWrappers.current[activeLiveEditorIndex.current]
+        ?.querySelector<HTMLElement>('[contenteditable="true"]');
       restoreLiveFocus.current = activeElement === document.activeElement;
       const selection = window.getSelection();
       const range = selection?.rangeCount ? selection.getRangeAt(0) : null;
@@ -186,6 +188,8 @@ export const MarkdownAuthoringEditor = forwardRef<
     },
   }), [mode, onChange, rawFallback]);
 
+  let partOffset = 0;
+
   return (
     <section className="rounded-md border border-neutral-300 dark:border-neutral-700">
       <div className="flex items-center justify-end gap-1 border-b border-neutral-200 px-2 py-1 dark:border-neutral-800" role="group" aria-label="Editor mode">
@@ -211,35 +215,53 @@ export const MarkdownAuthoringEditor = forwardRef<
 
       <div hidden={mode !== 'live'} aria-hidden={mode !== 'live'}>
         {rawFallback ? (
-          <pre className="m-3 overflow-x-auto rounded bg-neutral-100 p-3 text-sm dark:bg-neutral-900" aria-label="Raw Markdown block">
+          <pre
+            tabIndex={0}
+            onFocus={() => { sourceSelection.current = { start: value.length, end: value.length }; }}
+            onClick={() => { sourceSelection.current = { start: value.length, end: value.length }; }}
+            className="m-3 overflow-x-auto rounded bg-neutral-100 p-3 text-sm dark:bg-neutral-900"
+            aria-label="Raw Markdown block"
+          >
             <code>{value}</code>
           </pre>
         ) : (
           <div ref={liveEditorContainerRef}>
-            {parts.map((part, index) => part.kind === 'raw' ? (
-              <pre key={`${index}-${part.content}`} className="m-3 overflow-x-auto rounded bg-neutral-100 p-3 text-sm dark:bg-neutral-900" aria-label="Raw Markdown block">
-                <code>{part.content}</code>
-              </pre>
-            ) : (
-              <div
-                key={index}
-                onFocusCapture={() => { activeLiveEditorIndex.current = index; }}
-                onClick={() => mdxEditorRefs.current[index]?.focus()}
-              >
-                <MDXEditor
-                  ref={(editor) => { mdxEditorRefs.current[index] = editor; }}
-                  markdown={part.content}
-                  plugins={editorPlugins}
-                  readOnly={disabled}
-                  placeholder="Write in Markdown..."
-                  contentEditableClassName="prose prose-neutral dark:prose-invert max-w-none min-h-48 px-3 py-2 focus:outline-none"
-                  onChange={(markdown, initialMarkdownNormalize) => {
-                    if (!initialMarkdownNormalize) changeLivePart(index, markdown);
-                  }}
-                  onError={({ error }) => setLiveParserError(error)}
-                />
-              </div>
-            ))}
+            {parts.map((part, index) => {
+              const start = partOffset;
+              partOffset += part.content.length;
+              return part.kind === 'raw' ? (
+                <pre
+                  key={`${index}-${part.content}`}
+                  tabIndex={0}
+                  onFocus={() => { sourceSelection.current = { start: start + part.content.length, end: start + part.content.length }; }}
+                  onClick={() => { sourceSelection.current = { start: start + part.content.length, end: start + part.content.length }; }}
+                  className="m-3 overflow-x-auto rounded bg-neutral-100 p-3 text-sm dark:bg-neutral-900"
+                  aria-label="Raw Markdown block"
+                >
+                  <code>{part.content}</code>
+                </pre>
+              ) : (
+                <div
+                  key={index}
+                  ref={(element) => { liveEditorWrappers.current[index] = element; }}
+                  onFocusCapture={() => { activeLiveEditorIndex.current = index; }}
+                  onClick={() => mdxEditorRefs.current[index]?.focus()}
+                >
+                  <MDXEditor
+                    ref={(editor) => { mdxEditorRefs.current[index] = editor; }}
+                    markdown={part.content}
+                    plugins={editorPlugins}
+                    readOnly={disabled}
+                    placeholder="Write in Markdown..."
+                    contentEditableClassName="prose prose-neutral dark:prose-invert max-w-none min-h-48 px-3 py-2 focus:outline-none"
+                    onChange={(markdown, initialMarkdownNormalize) => {
+                      if (!initialMarkdownNormalize) changeLivePart(index, markdown);
+                    }}
+                    onError={({ error }) => setLiveParserError(error)}
+                  />
+                </div>
+              );
+            })}
           </div>
         )}
       </div>

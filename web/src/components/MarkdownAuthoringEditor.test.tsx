@@ -162,4 +162,26 @@ describe('MarkdownAuthoringEditor', () => {
       'before\n\n![image](asset://asset-1)\n\nafter',
     );
   });
+
+  it('inserts after the focused raw fallback block with Markdown block separators', () => {
+    render(<AssetInsertionEditor value={`${UNSUPPORTED_BLOCK}\n\nafter`} />);
+
+    fireEvent.click(screen.getByLabelText('Raw Markdown block'));
+    fireEvent.click(screen.getByRole('button', { name: 'Insert asset' }));
+
+    expect(screen.getByTestId('markdown-value').textContent).toBe(
+      `${UNSUPPORTED_BLOCK}\n\n![image](asset://asset-1)\n\nafter`,
+    );
+  });
+
+  it('restores focus to the later live editor after a Source-mode round trip', () => {
+    render(<ControlledEditor value={`# First\n\n${UNSUPPORTED_BLOCK}\n\n# Second`} />);
+    const liveEditors = screen.getAllByRole('textbox');
+    liveEditors[1].focus();
+
+    fireEvent.click(screen.getByRole('button', { name: 'Source' }));
+    fireEvent.click(screen.getByRole('button', { name: 'Live Preview' }));
+
+    expect(screen.getAllByRole('textbox')[1]).toHaveFocus();
+  });
 });
