@@ -161,7 +161,7 @@ describe('EntryEditor template prefill (POL-04)', () => {
     });
 
     await userEvent.click(await screen.findByRole('button', { name: 'Source' }));
-    const bodySource = (await screen.findByLabelText('Entry body')) as HTMLTextAreaElement;
+    const bodySource = (await screen.findByRole('textbox', { name: 'Entry body' })) as HTMLTextAreaElement;
     expect(bodySource.value).toContain('## Geography');
 
     // Meta keys 'region' and 'climate' both render as Key inputs
@@ -208,6 +208,33 @@ describe('EntryEditor template prefill (POL-04)', () => {
     // Save should now be disabled due to dup
     await waitFor(() => {
       expect(submitBtn.disabled).toBe(true);
+    });
+  });
+
+  it('submits the exact Markdown changed through the authoring editor', async () => {
+    setupApi({
+      universe: { entryTypes: ['character'] },
+      categories: [],
+      createResponse: { id: 'new-id' },
+    });
+    renderEditor();
+
+    await userEvent.type(await screen.findByLabelText(/title/i), 'Frodo');
+    await userEvent.selectOptions(screen.getByLabelText(/type/i), 'character');
+    await userEvent.click(screen.getByRole('button', { name: 'Source' }));
+    fireEvent.change(screen.getByRole('textbox', { name: 'Entry body' }), {
+      target: { value: '## Quest\n\n[[Mordor]]\n\n![map](asset://asset-1)' },
+    });
+    await userEvent.click(screen.getByRole('button', { name: /create entry/i }));
+
+    await waitFor(() => {
+      const createCall = vi.mocked(api).mock.calls.find(([path, init]) =>
+        path === '/universes/U1/entries' && (init as RequestInit)?.method === 'POST',
+      );
+      expect(createCall).toBeDefined();
+      expect(JSON.parse((createCall![1] as RequestInit).body as string).body).toBe(
+        '## Quest\n\n[[Mordor]]\n\n![map](asset://asset-1)',
+      );
     });
   });
 });

@@ -33,6 +33,7 @@ export type MarkdownAuthoringEditorHandle = {
 };
 
 type Selection = { start: number; end: number };
+type MarkdownPart = { kind: 'markdown' | 'raw'; content: string };
 
 const editorPlugins = [
   headingsPlugin(),
@@ -48,12 +49,32 @@ const editorPlugins = [
   diffSourcePlugin({ viewMode: 'rich-text' }),
 ];
 
-function usesUnsupportedSyntax(markdown: string): boolean {
-  return (
-    /(^|\n)\s*:::[^\n]*/.test(markdown) ||
-    /!?\[\[[\s\S]*?(?:\]\]|$)/.test(markdown) ||
-    /asset:\/\//.test(markdown)
-  );
+function splitUnsupportedBlocks(markdown: string): MarkdownPart[] {
+  const parts: MarkdownPart[] = [];
+  const block = /:::[^\n]*(?:\n[\s\S]*?\n:::)(?=\n|$)/g;
+  let cursor = 0;
+  let match: RegExpExecArray | null;
+
+  while ((match = block.exec(markdown))) {
+    if (match.index > cursor) parts.push({ kind: 'markdown', content: markdown.slice(cursor, match.index) });
+    parts.push({ kind: 'raw', content: match[0] });
+    cursor = match.index + match[0].length;
+  }
+  if (cursor < markdown.length || parts.length === 0) parts.push({ kind: 'markdown', content: markdown.slice(cursor) });
+  return parts;
+}
+
+function insertBlockMarkdown(markdown: string, selection: Selection, block: string): { markdown: string; selection: Selection } {
+  const before = markdown.slice(0, selection.start);
+  const after = markdown.slice(selection.end);
+  const prefix = before.length > 0 && !before.endsWith('\n\n') ? '\n\n' : '';
+  const suffix = after.length > 0 && !after.startsWith('\n\n') ? '\n\n' : '';
+  const inserted = `${prefix}${block}${suffix}`;
+  const cursor = before.length + prefix.length + block.length;
+  return {
+    markdown: `${before}${inserted}${after}`,
+    selection: { start: cursor, end: cursor },
+  };
 }
 
 export const MarkdownAuthoringEditor = forwardRef<
@@ -62,26 +83,47 @@ export const MarkdownAuthoringEditor = forwardRef<
 >(function MarkdownAuthoringEditor({ value, onChange, disabled = false }, ref) {
   const [mode, setMode] = useState<'live' | 'source'>('live');
   const [liveParserError, setLiveParserError] = useState<string | null>(null);
-  const mdxEditorRef = useRef<MDXEditorMethods>(null);
+  const mdxEditorRefs = useRef<Array<MDXEditorMethods | null>>([]);
+  const activeLiveEditorIndex = useRef(0);
+  const restoreLiveFocus = useRef(false);
+  const liveSelectionRange = useRef<Range | null>(null);
   const liveEditorContainerRef = useRef<HTMLDivElement>(null);
   const sourceRef = useRef<HTMLTextAreaElement>(null);
   const latestMarkdown = useRef(value);
   const sourceSelection = useRef<Selection>({ start: 0, end: 0 });
-  const rawFallback = usesUnsupportedSyntax(value) || liveParserError !== null;
+  const parts = splitUnsupportedBlocks(value);
+  const rawFallback = liveParserError !== null;
 
   useEffect(() => {
     if (value === latestMarkdown.current) return;
     latestMarkdown.current = value;
     setLiveParserError(null);
-    mdxEditorRef.current?.setMarkdown(value);
-  }, [value]);
+    parts.forEach((part, index) => {
+      if (part.kind === 'markdown') mdxEditorRefs.current[index]?.setMarkdown(part.content);
+    });
+  }, [value, parts]);
 
   useEffect(() => {
-    if (mode !== 'source') return;
-    const source = sourceRef.current;
-    if (!source) return;
-    source.focus();
-    source.setSelectionRange(sourceSelection.current.start, sourceSelection.current.end);
+    if (mode === 'source') {
+      const source = sourceRef.current;
+      if (!source) return;
+      source.focus();
+      source.setSelectionRange(sourceSelection.current.start, sourceSelection.current.end);
+      return;
+    }
+    if (restoreLiveFocus.current) {
+      mdxEditorRefs.current[activeLiveEditorIndex.current]?.focus();
+      liveEditorContainerRef.current
+        ?.querySelector<HTMLElement>('[contenteditable="true"]')
+        ?.focus();
+      const range = liveSelectionRange.current;
+      if (range?.commonAncestorContainer.isConnected) {
+        const selection = window.getSelection();
+        selection?.removeAllRanges();
+        selection?.addRange(range);
+      }
+      restoreLiveFocus.current = false;
+    }
   }, [mode]);
 
   useEffect(() => {
@@ -98,31 +140,51 @@ export const MarkdownAuthoringEditor = forwardRef<
     return () => observer.disconnect();
   }, [mode, rawFallback, value]);
 
+  const changeLivePart = (index: number, markdown: string) => {
+    const next = parts.map((part, partIndex) => partIndex === index ? { ...part, content: markdown } : part)
+      .map((part) => part.content)
+      .join('');
+    latestMarkdown.current = next;
+    onChange(next);
+  };
+
+  const switchMode = (nextMode: 'live' | 'source') => {
+    if (nextMode === 'source') {
+      const activeElement = liveEditorContainerRef.current?.querySelector<HTMLElement>('[contenteditable="true"]');
+      restoreLiveFocus.current = activeElement === document.activeElement;
+      const selection = window.getSelection();
+      const range = selection?.rangeCount ? selection.getRangeAt(0) : null;
+      liveSelectionRange.current = range && liveEditorContainerRef.current?.contains(range.commonAncestorContainer)
+        ? range.cloneRange()
+        : null;
+    } else {
+      restoreLiveFocus.current = true;
+    }
+    setMode(nextMode);
+  };
+
   useImperativeHandle(ref, () => ({
     insertMarkdown(markdown: string) {
       if (mode === 'source') {
-        const { start, end } = sourceSelection.current;
-        const next =
-          latestMarkdown.current.slice(0, start) +
-          markdown +
-          latestMarkdown.current.slice(end);
-        const cursor = start + markdown.length;
-        sourceSelection.current = { start: cursor, end: cursor };
-        latestMarkdown.current = next;
-        onChange(next);
+        const inserted = insertBlockMarkdown(latestMarkdown.current, sourceSelection.current, markdown);
+        sourceSelection.current = inserted.selection;
+        latestMarkdown.current = inserted.markdown;
+        onChange(inserted.markdown);
         return;
       }
 
-      if (mdxEditorRef.current && !usesUnsupportedSyntax(latestMarkdown.current)) {
-        mdxEditorRef.current.insertMarkdown(markdown);
+      const editor = mdxEditorRefs.current[activeLiveEditorIndex.current];
+      if (editor && !rawFallback) {
+        editor.insertMarkdown(`\n\n${markdown}\n\n`);
         return;
       }
 
-      const next = `${latestMarkdown.current}${markdown}`;
-      latestMarkdown.current = next;
-      onChange(next);
+      const inserted = insertBlockMarkdown(latestMarkdown.current, sourceSelection.current, markdown);
+      sourceSelection.current = inserted.selection;
+      latestMarkdown.current = inserted.markdown;
+      onChange(inserted.markdown);
     },
-  }), [mode, onChange]);
+  }), [mode, onChange, rawFallback]);
 
   return (
     <section className="rounded-md border border-neutral-300 dark:border-neutral-700">
@@ -130,7 +192,7 @@ export const MarkdownAuthoringEditor = forwardRef<
         <button
           type="button"
           aria-pressed={mode === 'live'}
-          onClick={() => setMode('live')}
+          onClick={() => switchMode('live')}
           className="rounded px-2 py-1 text-xs data-[state=active]:bg-neutral-100 dark:data-[state=active]:bg-neutral-800"
           data-state={mode === 'live' ? 'active' : 'inactive'}
         >
@@ -139,7 +201,7 @@ export const MarkdownAuthoringEditor = forwardRef<
         <button
           type="button"
           aria-pressed={mode === 'source'}
-          onClick={() => setMode('source')}
+          onClick={() => switchMode('source')}
           className="rounded px-2 py-1 text-xs data-[state=active]:bg-neutral-100 dark:data-[state=active]:bg-neutral-800"
           data-state={mode === 'source' ? 'active' : 'inactive'}
         >
@@ -147,7 +209,42 @@ export const MarkdownAuthoringEditor = forwardRef<
         </button>
       </div>
 
-      {mode === 'source' ? (
+      <div hidden={mode !== 'live'} aria-hidden={mode !== 'live'}>
+        {rawFallback ? (
+          <pre className="m-3 overflow-x-auto rounded bg-neutral-100 p-3 text-sm dark:bg-neutral-900" aria-label="Raw Markdown block">
+            <code>{value}</code>
+          </pre>
+        ) : (
+          <div ref={liveEditorContainerRef}>
+            {parts.map((part, index) => part.kind === 'raw' ? (
+              <pre key={`${index}-${part.content}`} className="m-3 overflow-x-auto rounded bg-neutral-100 p-3 text-sm dark:bg-neutral-900" aria-label="Raw Markdown block">
+                <code>{part.content}</code>
+              </pre>
+            ) : (
+              <div
+                key={index}
+                onFocusCapture={() => { activeLiveEditorIndex.current = index; }}
+                onClick={() => mdxEditorRefs.current[index]?.focus()}
+              >
+                <MDXEditor
+                  ref={(editor) => { mdxEditorRefs.current[index] = editor; }}
+                  markdown={part.content}
+                  plugins={editorPlugins}
+                  readOnly={disabled}
+                  placeholder="Write in Markdown..."
+                  contentEditableClassName="prose prose-neutral dark:prose-invert max-w-none min-h-48 px-3 py-2 focus:outline-none"
+                  onChange={(markdown, initialMarkdownNormalize) => {
+                    if (!initialMarkdownNormalize) changeLivePart(index, markdown);
+                  }}
+                  onError={({ error }) => setLiveParserError(error)}
+                />
+              </div>
+            ))}
+          </div>
+        )}
+      </div>
+
+      {mode === 'source' && (
         <textarea
           ref={sourceRef}
           aria-label="Entry body"
@@ -171,27 +268,6 @@ export const MarkdownAuthoringEditor = forwardRef<
           }}
           className="w-full resize-y bg-transparent px-3 py-2 font-mono text-sm focus:outline-none"
         />
-      ) : rawFallback ? (
-        <pre className="m-3 overflow-x-auto rounded bg-neutral-100 p-3 text-sm dark:bg-neutral-900" aria-label="Raw Markdown block">
-          <code>{value}</code>
-        </pre>
-      ) : (
-        <div ref={liveEditorContainerRef} onClick={() => mdxEditorRef.current?.focus()}>
-          <MDXEditor
-            ref={mdxEditorRef}
-            markdown={value}
-            plugins={editorPlugins}
-            readOnly={disabled}
-            placeholder="Write in Markdown..."
-            contentEditableClassName="prose prose-neutral dark:prose-invert max-w-none min-h-48 px-3 py-2 focus:outline-none"
-            onChange={(markdown, initialMarkdownNormalize) => {
-              if (initialMarkdownNormalize) return;
-              latestMarkdown.current = markdown;
-              onChange(markdown);
-            }}
-            onError={({ error }) => setLiveParserError(error)}
-          />
-        </div>
       )}
     </section>
   );
