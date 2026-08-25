@@ -70,6 +70,27 @@ function selectLiveTextOccurrence(textValue: string, occurrence: number, start =
   });
 }
 
+function selectLiveSubstring(textValue: string, occurrence = 0, collapsed = false) {
+  const editor = screen.getByRole('textbox');
+  const walker = document.createTreeWalker(editor, NodeFilter.SHOW_TEXT);
+  const matches: Array<{ node: Text; offset: number }> = [];
+  let node = walker.nextNode() as Text | null;
+  while (node) {
+    const offset = node.data.indexOf(textValue);
+    if (offset !== -1) matches.push({ node, offset });
+    node = walker.nextNode() as Text | null;
+  }
+  const match = matches[occurrence];
+  Object.assign(match.node, { getBoundingClientRect: () => editor.getBoundingClientRect() });
+  const range = document.createRange();
+  range.setStart(match.node, match.offset);
+  range.setEnd(match.node, collapsed ? match.offset : match.offset + textValue.length);
+  act(() => {
+    window.getSelection()?.removeAllRanges();
+    window.getSelection()?.addRange(range);
+  });
+}
+
 function clearLiveSelection() {
   act(() => window.getSelection()?.removeAllRanges());
 }
@@ -361,6 +382,40 @@ describe('MarkdownAuthoringEditor', () => {
     clearLiveSelection();
 
     await waitFor(() => expect(screen.getByTestId('markdown-value')).toHaveTextContent('duplicate **duplicate**'));
+  });
+
+  it('formats selected text on the second line of a multiline Live Preview blockquote', async () => {
+    render(<ControlledEditor value={'> First line\n> Second line'} />);
+    selectLiveSubstring('Second line');
+
+    fireEvent.click(screen.getByRole('button', { name: 'Bold' }));
+    clearLiveSelection();
+
+    await waitFor(() => expect(screen.getByTestId('markdown-value')).toHaveTextContent('> First line > **Second line**'));
+  });
+
+  it('formats only the selected Live Preview link label', async () => {
+    render(<ControlledEditor value={'Keep [first](https://first.test) and [second](https://second.test).'} />);
+    selectLiveSubstring('second');
+
+    fireEvent.click(screen.getByRole('button', { name: 'Bold' }));
+    clearLiveSelection();
+
+    await waitFor(() => expect(screen.getByTestId('markdown-value')).toHaveTextContent(
+      'Keep [first](https://first.test) and [**second**](https://second.test).',
+    ));
+  });
+
+  it('converts the linked Live Preview block containing a collapsed caret', async () => {
+    render(<ControlledEditor value={'First block\n\n[second](https://second.test)'} />);
+    selectLiveSubstring('second', 0, true);
+
+    fireEvent.click(screen.getByRole('button', { name: 'Heading 1' }));
+    clearLiveSelection();
+
+    await waitFor(() => expect(screen.getByTestId('markdown-value')).toHaveTextContent(
+      'First block # [second](https://second.test)',
+    ));
   });
 
   it('clears selected Live Preview formatting through the native editor command', async () => {

@@ -213,30 +213,131 @@ function domTextOffset(block: HTMLElement, node: Node, offset: number): number |
   }
 }
 
-function markdownVisiblePositions(block: string): number[] {
+type MarkdownTextMap = { text: string; positions: number[] };
+
+function markdownTextMap(markdown: string): MarkdownTextMap {
   const positions: number[] = [];
-  const prefix = block.match(/^(?:#{1,6}\s+|>\s?|[-*+]\s+|\d+\.\s+|- \[[ xX]\]\s+)/)?.[0].length ?? 0;
-  for (let index = prefix; index < block.length; index += 1) {
-    const marker = block.slice(index, index + 2);
-    if (marker === '**' || marker === '__' || marker === '~~') {
-      index += 1;
-      continue;
+  const text: string[] = [];
+
+  const findToken = (start: number, end: number, token: string): number => {
+    for (let index = start; index <= end - token.length; index += 1) {
+      if (markdown[index] !== '\\' && markdown.slice(index, index + token.length) === token) return index;
     }
-    if (block[index] === '`') continue;
+    return -1;
+  };
+  const findClosingBracket = (start: number, end: number): number => {
+    let depth = 0;
+    for (let index = start; index < end; index += 1) {
+      if (markdown[index] === '\\') { index += 1; continue; }
+      if (markdown[index] === '[') depth += 1;
+      if (markdown[index] === ']') {
+        depth -= 1;
+        if (depth === 0) return index;
+      }
+    }
+    return -1;
+  };
+  const findClosingParen = (start: number, end: number): number => {
+    let depth = 0;
+    for (let index = start; index < end; index += 1) {
+      if (markdown[index] === '\\') { index += 1; continue; }
+      if (markdown[index] === '(') depth += 1;
+      if (markdown[index] === ')') {
+        depth -= 1;
+        if (depth === 0) return index;
+      }
+    }
+    return -1;
+  };
+  const append = (index: number) => {
     positions.push(index);
-  }
-  return positions;
+    text.push(markdown[index]);
+  };
+  const visit = (start: number, end: number) => {
+    let index = start;
+    let lineStart = true;
+    while (index < end) {
+      if (lineStart) {
+        const prefix = markdown.slice(index, end).match(/^(?: {0,3}>\s?| {0,3}#{1,6}\s+| {0,3}- \[[ xX]\]\s+| {0,3}(?:[-*+]\s+|\d+\.\s+))/)?.[0];
+        if (prefix) {
+          index += prefix.length;
+          lineStart = false;
+          continue;
+        }
+      }
+      if (markdown[index] === '\n') {
+        append(index);
+        lineStart = true;
+        index += 1;
+        continue;
+      }
+      lineStart = false;
+      if (markdown[index] === '\\' && index + 1 < end) {
+        append(index + 1);
+        index += 2;
+        continue;
+      }
+      if (markdown[index] === '!' && markdown[index + 1] === '[') {
+        const labelEnd = findClosingBracket(index + 1, end);
+        const destinationEnd = labelEnd !== -1 && markdown[labelEnd + 1] === '('
+          ? findClosingParen(labelEnd + 1, end)
+          : -1;
+        if (destinationEnd !== -1) {
+          index = destinationEnd + 1;
+          continue;
+        }
+      }
+      if (markdown[index] === '[') {
+        const labelEnd = findClosingBracket(index, end);
+        const destinationEnd = labelEnd !== -1 && markdown[labelEnd + 1] === '('
+          ? findClosingParen(labelEnd + 1, end)
+          : -1;
+        if (destinationEnd !== -1) {
+          visit(index + 1, labelEnd);
+          index = destinationEnd + 1;
+          continue;
+        }
+      }
+      const marker = ['**', '__', '~~', '`', '*', '_'].find((candidate) => markdown.startsWith(candidate, index));
+      if (marker) {
+        const closing = findToken(index + marker.length, end, marker);
+        if (closing !== -1) {
+          visit(index + marker.length, closing);
+          index = closing + marker.length;
+          continue;
+        }
+      }
+      append(index);
+      index += 1;
+    }
+  };
+
+  visit(0, markdown.length);
+  return { text: text.join(''), positions };
 }
 
 function markdownOffsetForVisibleText(block: string, visibleOffset: number): number {
-  const positions = markdownVisiblePositions(block);
+  const positions = markdownTextMap(block).positions;
   if (visibleOffset < positions.length) return positions[visibleOffset];
   return positions.at(-1) !== undefined ? positions.at(-1)! + 1 : block.length;
 }
 
+function markdownOffsetAfterVisibleText(block: string, visibleOffset: number): number {
+  const positions = markdownTextMap(block).positions;
+  if (visibleOffset === 0) return positions[0] ?? 0;
+  return positions[visibleOffset - 1] !== undefined ? positions[visibleOffset - 1] + 1 : block.length;
+}
+
 function visibleOffsetForMarkdown(block: string, markdownOffset: number): number {
-  const index = markdownVisiblePositions(block).findIndex((position) => position >= markdownOffset);
-  return index === -1 ? block.length : index;
+  const positions = markdownTextMap(block).positions;
+  const index = positions.findIndex((position) => position >= markdownOffset);
+  return index === -1 ? positions.length : index;
+}
+
+function renderedBlockText(block: HTMLElement): string {
+  const range = document.createRange();
+  range.selectNodeContents(block);
+  return range.toString();
 }
 
 function domTextPoint(block: HTMLElement, offset: number): { node: Text; offset: number } | null {
@@ -287,9 +388,11 @@ function liveMarkdownSelection(editable: HTMLElement, markdown: string): Selecti
   const end = domTextOffset(endBlock, range.endContainer, range.endOffset);
   if (!markdownBlock || start === null || end === null) return null;
   const source = markdown.slice(markdownBlock.start, markdownBlock.end);
+  if (markdownTextMap(source).text !== renderedBlockText(startBlock)) return null;
+  const startOffset = markdownOffsetForVisibleText(source, start);
   return {
-    start: markdownBlock.start + markdownOffsetForVisibleText(source, start),
-    end: markdownBlock.start + markdownOffsetForVisibleText(source, end),
+    start: markdownBlock.start + startOffset,
+    end: markdownBlock.start + (range.collapsed ? startOffset : markdownOffsetAfterVisibleText(source, end)),
   };
 }
 
