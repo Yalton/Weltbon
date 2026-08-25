@@ -10,9 +10,11 @@
 
 import { NavLink, Outlet } from 'react-router-dom';
 import { useRuntime } from '../runtime/RuntimeProvider';
+import { useAuthStore } from '../store/auth';
 
 export function SettingsLayout() {
   const { authMode } = useRuntime();
+  const isAdmin = useAuthStore((state) => state.user?.isAdmin === true);
 
   return (
     <div className="max-w-5xl mx-auto p-6 flex flex-col md:flex-row gap-4 md:gap-8">
@@ -34,7 +36,7 @@ export function SettingsLayout() {
               Visual
             </NavLink>
           </li>
-          {authMode === 'server' && (
+          {authMode === 'server' && isAdmin && (
             <>
               <li>
                 <NavLink
@@ -50,6 +52,17 @@ export function SettingsLayout() {
                   }
                 >
                   API tokens
+                </NavLink>
+              </li>
+              <li>
+                <NavLink
+                  to="/settings/admin/users"
+                  className={({ isActive }) => [
+                    'block rounded px-2 py-1.5 text-sm',
+                    isActive ? 'bg-[color:var(--color-accent)]/10 text-[color:var(--color-accent)] font-medium' : 'text-neutral-700 dark:text-neutral-200 hover:bg-neutral-100 dark:hover:bg-neutral-900',
+                  ].join(' ')}
+                >
+                  Administration
                 </NavLink>
               </li>
               <li>

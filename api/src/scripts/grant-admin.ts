@@ -16,8 +16,12 @@ async function main() {
     console.error(`No user with email: ${email}`);
     process.exit(1);
   }
+  if (user.disabledAt !== null) {
+    console.error(`Cannot grant administrator access to disabled user: ${email}`);
+    process.exit(1);
+  }
   if (user.isAdmin) {
-    console.log(`${email} is already an administrator.`);
+    console.log(`${email} (${user.id}) is already an administrator.`);
     await closeDb();
     return;
   }
@@ -32,7 +36,7 @@ async function main() {
       details: { source: 'user:grant-admin' },
     });
   });
-  console.log(`Granted administrator access to ${email}.`);
+  console.log(`Granted administrator access to ${email} (${user.id}).`);
   await closeDb();
 }
 
