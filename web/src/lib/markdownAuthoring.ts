@@ -43,7 +43,14 @@ function parseTagValue(value: string): string[] | null {
     if (item.startsWith('"') || item.startsWith("'")) {
       const quote = item[0];
       if (item.length < 2 || item[item.length - 1] !== quote) return null;
-      return item.slice(1, -1);
+      const inner = item.slice(1, -1);
+      for (let index = 0; index < inner.length; index += 1) {
+        if (inner[index] !== quote) continue;
+        let slashes = 0;
+        for (let prior = index - 1; prior >= 0 && inner[prior] === '\\'; prior -= 1) slashes += 1;
+        if (slashes % 2 === 0) return null;
+      }
+      return inner.replace(new RegExp(`\\\\${quote}`, 'g'), quote);
     }
     if (/["']/.test(item)) return null;
     return item;

@@ -33,7 +33,9 @@ describe('markdown authoring dialect helpers', () => {
   it('keeps malformed, duplicate, and complex tag fields byte-for-byte', () => {
     for (const markdown of [
       '---\ntags: ["unterminated]\n---\nBody',
+      '---\ntags: ["a"b"]\n---\nBody',
       '---\ntags:\n  - "unterminated\n---\nBody',
+      '---\ntags:\n  - "a"b"\n---\nBody',
       '---\ntags: [one]\ntags: [two]\n---\nBody',
       '---\ntags: [[nested]]\n---\nBody',
     ]) {
