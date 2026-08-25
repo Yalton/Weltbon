@@ -12,10 +12,11 @@
  * No QueryClient needed: SettingsLayout has no queries.
  */
 
-import { describe, it, expect, vi } from 'vitest';
+import { beforeEach, describe, it, expect, vi } from 'vitest';
 import { render, screen } from '@testing-library/react';
 import { MemoryRouter, Routes, Route } from 'react-router-dom';
 import { SettingsLayout } from './SettingsLayout';
+import { useAuthStore } from '../store/auth';
 
 vi.mock('../runtime/RuntimeProvider', () => ({
   useRuntime: () => ({ authMode: 'server' }),
@@ -40,6 +41,12 @@ function renderAt(path: string) {
 }
 
 describe('SettingsLayout', () => {
+  beforeEach(() => {
+    useAuthStore.setState({
+      user: { id: 'admin-1', email: 'admin@test.dev', displayName: 'Admin', isAdmin: true },
+    });
+  });
+
   it('renders <nav> with aria-label "Settings sections"', () => {
     renderAt('/settings');
     const nav = screen.getByRole('navigation', { name: 'Settings sections' });
@@ -47,11 +54,12 @@ describe('SettingsLayout', () => {
     expect(nav.tagName).toBe('NAV');
   });
 
-  it('renders seven NavLinks: "Visual", "API tokens", "Invite codes", "Templates", "Shares", "LLM keys", "Sync"', () => {
+  it('renders administrator NavLinks, including Users and invite management', () => {
     renderAt('/settings');
     const visual = screen.getByRole('link', { name: 'Visual' });
     const apiTokens = screen.getByRole('link', { name: 'API tokens' });
     const inviteCodes = screen.getByRole('link', { name: 'Invite codes' });
+    const users = screen.getByRole('link', { name: 'Users' });
     const templates = screen.getByRole('link', { name: 'Templates' });
     const shares = screen.getByRole('link', { name: 'Shares' });
     const llmKeys = screen.getByRole('link', { name: 'LLM keys' });
@@ -61,13 +69,22 @@ describe('SettingsLayout', () => {
     expect(visual.getAttribute('href')).toBe('/settings');
     expect(apiTokens.getAttribute('href')).toBe('/settings/tokens');
     expect(inviteCodes.getAttribute('href')).toBe('/settings/invites');
+    expect(users.getAttribute('href')).toBe('/settings/users');
     expect(templates.getAttribute('href')).toBe('/settings/templates');
     expect(shares.getAttribute('href')).toBe('/settings/shares');
     expect(llmKeys.getAttribute('href')).toBe('/settings/llm');
     expect(sync.getAttribute('href')).toBe('/settings/sync');
 
     const nav = screen.getByRole('navigation', { name: 'Settings sections' });
-    expect(nav.querySelectorAll('a').length).toBe(7);
+    expect(nav.querySelectorAll('a').length).toBe(8);
+  });
+
+  it('hides administrator-only settings links for a non-administrator', () => {
+    useAuthStore.setState({ user: { id: 'member-1', email: 'member@test.dev', displayName: 'Member', isAdmin: false } });
+    renderAt('/settings');
+    expect(screen.queryByRole('link', { name: 'API tokens' })).not.toBeInTheDocument();
+    expect(screen.queryByRole('link', { name: 'Invite codes' })).not.toBeInTheDocument();
+    expect(screen.queryByRole('link', { name: 'Users' })).not.toBeInTheDocument();
   });
 
   it('applies active classes to the "Visual" link when route is /settings', () => {
