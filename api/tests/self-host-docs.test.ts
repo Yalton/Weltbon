@@ -18,6 +18,9 @@ const repoRoot = path.resolve(__dirname, '../..');
 const readme = fs.readFileSync(path.join(repoRoot, 'README.md'), 'utf8');
 const workflowPath = path.join(repoRoot, '.github', 'workflows', 'publish-ghcr.yml');
 const workflowContent = fs.readFileSync(workflowPath, 'utf8');
+const composePath = path.join(repoRoot, 'docker-compose.yml');
+const composeContent = fs.readFileSync(composePath, 'utf8');
+const deployScriptPath = path.join(repoRoot, 'scripts', 'deploy.sh');
 
 /**
  * The tag patterns under `on: push: tags:`.
@@ -272,5 +275,63 @@ describe('OPS-08 — README Self-Host (Bare Node) Chromium documentation', () =>
 
   it('contains a ### Troubleshooting subsection (PDF-export troubleshooting checklist)', () => {
     expect(readme).toMatch(/^### Troubleshooting$/m);
+  });
+});
+
+// ─────────────────────────────────────────────────────────────────────────────
+// Build identity reaches a locally-built image
+// ─────────────────────────────────────────────────────────────────────────────
+
+/**
+ * A self-hosted deploy compiles from a clone — `docker compose build app` — so
+ * the version and commit that GET /api/version reports have to come in as build
+ * args. Nothing in the container can derive them: the git history is not copied
+ * into the runtime stage, and the Dockerfile's ARGs default to empty.
+ *
+ * When this was missing, prod ran for a full release cycle reporting
+ * `"commit": null`, which is precisely the "which build is this?" question the
+ * endpoint exists to answer.
+ */
+describe('local builds stamp the build identity', () => {
+  it('docker-compose.yml passes the three build args through to the Dockerfile', () => {
+    for (const arg of ['WELTBON_VERSION', 'WELTBON_COMMIT', 'WELTBON_BUILT_AT']) {
+      expect(
+        composeContent,
+        `docker-compose.yml does not pass ${arg} as a build arg, so a locally built `
+          + `image cannot report it at GET /api/version.`,
+      ).toMatch(new RegExp(`${arg}:\\s*\\$\\{${arg}`));
+    }
+  });
+
+  it('ships a deploy script that derives those values', () => {
+    expect(
+      fs.existsSync(deployScriptPath),
+      'scripts/deploy.sh is the documented way to compute the build identity; '
+        + 'compose cannot shell out to git on its own.',
+    ).toBe(true);
+  });
+
+  /**
+   * `node` is not on PATH over a non-interactive ssh session on the deploy box
+   * (nvm-style install). A deploy script reaching for `node -p` to read the
+   * version fails with `command not found`, and because it sits in an `&&`
+   * chain the whole deploy short-circuits while still looking like it ran.
+   * That cost one silent no-op deploy.
+   */
+  it('the deploy script does not depend on node being on PATH', () => {
+    // Comments stripped first: the script explains at length WHY it avoids
+    // node, and a naive scan for the word flags that explanation as the very
+    // thing it warns against.
+    const executable = fs
+      .readFileSync(deployScriptPath, 'utf8')
+      .split('\n')
+      .filter((line) => !/^\s*#/.test(line))
+      .join('\n');
+
+    expect(
+      /(^|[|&;(`$\s])node\s/.test(executable),
+      'scripts/deploy.sh invokes node. It runs over non-interactive ssh where node '
+        + 'is not on PATH; derive the version with sed instead.',
+    ).toBe(false);
   });
 });
