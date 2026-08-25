@@ -1,10 +1,14 @@
 import { createRef, useState } from 'react';
 import { describe, expect, it, vi } from 'vitest';
-import { act, fireEvent, render, screen } from '@testing-library/react';
+import { act, fireEvent, render, screen, waitFor } from '@testing-library/react';
 import { MarkdownAuthoringEditor, type MarkdownAuthoringEditorHandle } from './MarkdownAuthoringEditor';
 
 const UNSUPPORTED_BLOCK = ':::mermaid\ngraph TD\n  A --> B\n:::';
 const DOCUMENT = `# Title\n\nA paragraph with [[Weltbon]].\n\n${UNSUPPORTED_BLOCK}`;
+
+Object.assign(Range.prototype, {
+  getBoundingClientRect: () => new DOMRect(),
+});
 
 function ControlledEditor({ value = DOCUMENT }: { value?: string }) {
   const [markdown, setMarkdown] = useState(value);
@@ -31,6 +35,25 @@ function AssetInsertionEditor({ value }: { value: string }) {
       <output data-testid="markdown-value">{markdown}</output>
     </>
   );
+}
+
+function selectLiveText(selector: string) {
+  const editor = screen.getByRole('textbox');
+  editor.focus();
+  fireEvent.focus(editor);
+  const text = editor.querySelector(selector)?.firstChild as Text;
+  Object.assign(text, { getBoundingClientRect: () => editor.getBoundingClientRect() });
+  const range = document.createRange();
+  range.selectNodeContents(text);
+  const selection = window.getSelection();
+  act(() => {
+    selection?.removeAllRanges();
+    selection?.addRange(range);
+  });
+}
+
+function clearLiveSelection() {
+  act(() => window.getSelection()?.removeAllRanges());
 }
 
 describe('MarkdownAuthoringEditor', () => {
@@ -225,6 +248,20 @@ describe('MarkdownAuthoringEditor', () => {
     expect(onChange).toHaveBeenLastCalledWith('**selected**');
   });
 
+  it('converts the current Source block instead of appending a template', () => {
+    const editorRef = createRef<MarkdownAuthoringEditorHandle>();
+    const onChange = vi.fn();
+    render(<MarkdownAuthoringEditor ref={editorRef} value="Paragraph" onChange={onChange} universeId="U1" />);
+    fireEvent.click(screen.getByRole('button', { name: 'Source' }));
+    const source = screen.getByRole('textbox', { name: 'Entry body' }) as HTMLTextAreaElement;
+    source.setSelectionRange(0, 9);
+    fireEvent.select(source);
+
+    editorRef.current?.executeCommand('heading-1');
+
+    expect(onChange).toHaveBeenLastCalledWith('# Paragraph');
+  });
+
   it('routes standard formatting and palette shortcuts to the same command registry', () => {
     const editorRef = createRef<MarkdownAuthoringEditorHandle>();
     const onChange = vi.fn();
@@ -241,5 +278,49 @@ describe('MarkdownAuthoringEditor', () => {
     expect(onChange.mock.calls[1][0]).toContain('*italic*');
     expect(onChange.mock.calls[2][0]).toContain('[link text](https://)');
     expect(screen.getByRole('dialog', { name: 'Formatting commands' })).toBeInTheDocument();
+  });
+
+  it('formats the selected Live Preview text through the native editor command', async () => {
+    render(<ControlledEditor value="selected" />);
+    selectLiveText('p');
+
+    fireEvent.click(screen.getByRole('button', { name: 'Bold' }));
+    clearLiveSelection();
+
+    await waitFor(() => expect(screen.getByTestId('markdown-value')).toHaveTextContent('**selected**'));
+  });
+
+  it('converts the current Live Preview block instead of appending a template', async () => {
+    render(<ControlledEditor value="Paragraph" />);
+    selectLiveText('p');
+
+    fireEvent.click(screen.getByRole('button', { name: 'Heading 1' }));
+    clearLiveSelection();
+
+    await waitFor(() => expect(screen.getByTestId('markdown-value')).toHaveTextContent('# Paragraph'));
+  });
+
+  it('clears selected Live Preview formatting through the native editor command', async () => {
+    render(<ControlledEditor value="**selected**" />);
+    selectLiveText('strong');
+
+    fireEvent.click(screen.getByRole('button', { name: 'Clear formatting' }));
+    clearLiveSelection();
+
+    await waitFor(() => expect(screen.getByTestId('markdown-value')).toHaveTextContent(/^selected$/));
+  });
+
+  it('blocks toolbar, hotkey, palette, and imperative commands when disabled', () => {
+    const editorRef = createRef<MarkdownAuthoringEditorHandle>();
+    const onChange = vi.fn();
+    render(<MarkdownAuthoringEditor ref={editorRef} value="text" onChange={onChange} universeId="U1" disabled />);
+
+    fireEvent.click(screen.getByRole('button', { name: 'Bold' }));
+    fireEvent.keyDown(screen.getByRole('region', { name: 'Markdown authoring editor' }), { key: 'b', ctrlKey: true });
+    fireEvent.keyDown(screen.getByRole('region', { name: 'Markdown authoring editor' }), { key: 'p', ctrlKey: true, shiftKey: true });
+    editorRef.current?.executeCommand('bold');
+
+    expect(onChange).not.toHaveBeenCalled();
+    expect(screen.queryByRole('dialog', { name: 'Formatting commands' })).not.toBeInTheDocument();
   });
 });

@@ -86,7 +86,6 @@ const editorPlugins = [
   // toggle so it can preserve an exact raw document when the live parser cannot.
   diffSourcePlugin({ viewMode: 'rich-text' }),
 ];
-
 function splitUnsupportedBlocks(markdown: string): MarkdownPart[] {
   const parts: MarkdownPart[] = [];
   const block = /:::[^\n]*(?:\n[\s\S]*?\n:::(?=\n|$)|[\s\S]*$)/g;
@@ -133,6 +132,51 @@ function inlineCommandMarkdown(command: MarkdownAuthoringCommand, selected: stri
     case 'clear-formatting': return selected.replace(/^(\*\*|__|~~|`|\*|_)([\s\S]*?)\1$/, '$2') || command.markdown;
     default: return null;
   }
+}
+
+function currentLineSelection(markdown: string, selection: Selection): Selection {
+  const start = markdown.lastIndexOf('\n', Math.max(0, selection.start - 1)) + 1;
+  const newline = markdown.indexOf('\n', selection.end);
+  return { start, end: newline === -1 ? markdown.length : newline };
+}
+
+function plainBlockText(line: string): string {
+  return line
+    .replace(/^#{1,6}\s+/, '')
+    .replace(/^>\s?/, '')
+    .replace(/^- \[[ xX]\]\s+/, '')
+    .replace(/^(?:[-*+]\s+|\d+\.\s+)/, '')
+    .replace(/^(\*\*|__|~~|`)([\s\S]*?)\1$/, '$2');
+}
+
+function blockCommandMarkdown(command: MarkdownAuthoringCommand, line: string): string {
+  const text = plainBlockText(line) || command.markdown;
+  switch (command.id) {
+    case 'paragraph': return plainBlockText(line) || command.markdown;
+    case 'heading-1': return `# ${plainBlockText(line) || 'Heading'}`;
+    case 'quote': return `> ${plainBlockText(line) || 'Quote'}`;
+    case 'callout-note': return `> [!NOTE]\n> ${plainBlockText(line) || 'Callout'}`;
+    case 'callout-tip': return `> [!TIP]\n> ${plainBlockText(line) || 'Callout'}`;
+    case 'callout-warning': return `> [!WARNING]\n> ${plainBlockText(line) || 'Callout'}`;
+    case 'bullet-list': return `- ${plainBlockText(line) || 'Item'}`;
+    case 'ordered-list': return `1. ${plainBlockText(line) || 'Item'}`;
+    case 'task-list': return `- [ ] ${plainBlockText(line) || 'Task'}`;
+    case 'code-block': return `\`\`\`\n${plainBlockText(line) || 'code'}\n\`\`\``;
+    case 'horizontal-rule': return '---';
+    default: return text;
+  }
+}
+
+function transformMarkdownCommand(markdown: string, selection: Selection, command: MarkdownAuthoringCommand): { markdown: string; selection: Selection } {
+  const selected = markdown.slice(selection.start, selection.end);
+  if (command.id === 'clear-formatting') {
+    const lineSelection = currentLineSelection(markdown, selection);
+    return replaceMarkdownSelection(markdown, lineSelection, plainBlockText(markdown.slice(lineSelection.start, lineSelection.end)) || command.markdown);
+  }
+  const inline = inlineCommandMarkdown(command, selected);
+  if (inline !== null) return replaceMarkdownSelection(markdown, selection, inline);
+  const lineSelection = currentLineSelection(markdown, selection);
+  return replaceMarkdownSelection(markdown, lineSelection, blockCommandMarkdown(command, markdown.slice(lineSelection.start, lineSelection.end)));
 }
 
 export const MarkdownAuthoringEditor = forwardRef<
@@ -226,6 +270,7 @@ export const MarkdownAuthoringEditor = forwardRef<
   };
 
   const insertMarkdown = (markdown: string) => {
+    if (disabled) return;
     if (mode === 'source') {
       const inserted = insertBlockMarkdown(latestMarkdown.current, sourceSelection.current, markdown);
       sourceSelection.current = inserted.selection;
@@ -247,18 +292,31 @@ export const MarkdownAuthoringEditor = forwardRef<
   };
 
   const executeCommand = (commandId: MarkdownAuthoringCommandId) => {
+    if (disabled) return;
     const command = markdownAuthoringCommands.find(({ id }) => id === commandId);
     if (!command) return;
     if (mode === 'source') {
-      const selection = sourceSelection.current;
-      const replacement = inlineCommandMarkdown(command, latestMarkdown.current.slice(selection.start, selection.end));
-      if (replacement !== null) {
-        const inserted = replaceMarkdownSelection(latestMarkdown.current, selection, replacement);
-        sourceSelection.current = inserted.selection;
-        latestMarkdown.current = inserted.markdown;
-        onChange(inserted.markdown);
-        return;
-      }
+      const transformed = transformMarkdownCommand(latestMarkdown.current, sourceSelection.current, command);
+      sourceSelection.current = transformed.selection;
+      latestMarkdown.current = transformed.markdown;
+      onChange(transformed.markdown);
+      return;
+    }
+
+    const index = activeLiveEditorIndex.current;
+    const editor = mdxEditorRefs.current[index];
+    if (editor && !rawFallback) {
+      const markdown = editor.getMarkdown();
+      const selected = editor.getSelectionMarkdown() || window.getSelection()?.toString() || '';
+      const start = selected ? markdown.indexOf(selected) : 0;
+      const transformed = transformMarkdownCommand(markdown, {
+        start: start < 0 ? 0 : start,
+        end: start < 0 ? 0 : start + selected.length,
+      }, command);
+      window.getSelection()?.removeAllRanges();
+      editor.setMarkdown(transformed.markdown);
+      changeLivePart(index, transformed.markdown);
+      return;
     }
     insertMarkdown(command.markdown);
   };
@@ -273,6 +331,7 @@ export const MarkdownAuthoringEditor = forwardRef<
       role="region"
       aria-label="Markdown authoring editor"
       onKeyDown={(event) => {
+        if (disabled) return;
         if (!(event.ctrlKey || event.metaKey)) return;
         const key = event.key.toLowerCase();
         if (key === 'p' && event.shiftKey) {
@@ -293,8 +352,10 @@ export const MarkdownAuthoringEditor = forwardRef<
     >
       <MarkdownAuthoringToolbar
         commands={markdownAuthoringCommands}
+        disabled={disabled}
         onCommand={executeCommand}
         onOpenPalette={(trigger) => {
+          if (disabled) return;
           if (trigger) paletteReturnFocusRef.current = trigger;
           setPaletteOpen(true);
         }}
@@ -402,6 +463,7 @@ export const MarkdownAuthoringEditor = forwardRef<
         open={paletteOpen}
         onOpenChange={setPaletteOpen}
         commands={markdownAuthoringCommands}
+        disabled={disabled}
         onCommand={executeCommand}
         returnFocusRef={paletteReturnFocusRef}
       />

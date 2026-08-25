@@ -7,9 +7,10 @@ type MarkdownCommandPaletteProps = {
   commands: readonly MarkdownAuthoringCommand[];
   onCommand: (command: MarkdownAuthoringCommandId) => void;
   returnFocusRef: RefObject<HTMLElement | null>;
+  disabled?: boolean;
 };
 
-export function MarkdownCommandPalette({ open, onOpenChange, commands, onCommand, returnFocusRef }: MarkdownCommandPaletteProps) {
+export function MarkdownCommandPalette({ open, onOpenChange, commands, onCommand, returnFocusRef, disabled = false }: MarkdownCommandPaletteProps) {
   const [activeIndex, setActiveIndex] = useState(0);
   const optionRefs = useRef<Array<HTMLButtonElement | null>>([]);
 
@@ -20,7 +21,7 @@ export function MarkdownCommandPalette({ open, onOpenChange, commands, onCommand
     }
   }, [open]);
 
-  if (!open) return null;
+  if (!open || disabled) return null;
 
   const close = () => {
     onOpenChange(false);
@@ -39,7 +40,7 @@ export function MarkdownCommandPalette({ open, onOpenChange, commands, onCommand
       <p className="mb-2 text-sm font-medium">Formatting commands</p>
       <div role="listbox" aria-label="Formatting commands">
         {commands.map((command, index) => (
-          <button key={command.id} ref={(element) => { optionRefs.current[index] = element; }} type="button" role="option" aria-selected={activeIndex === index} tabIndex={activeIndex === index ? 0 : -1} onFocus={() => setActiveIndex(index)} onKeyDown={(event) => {
+          <button key={command.id} ref={(element) => { optionRefs.current[index] = element; }} type="button" disabled={disabled} role="option" aria-selected={activeIndex === index} tabIndex={activeIndex === index ? 0 : -1} onFocus={() => setActiveIndex(index)} onKeyDown={(event) => {
             if (event.key === 'ArrowDown') { event.preventDefault(); move(1); }
             else if (event.key === 'ArrowUp') { event.preventDefault(); move(-1); }
             else if (event.key === 'Enter' || event.key === ' ') { event.preventDefault(); onCommand(command.id); close(); }
