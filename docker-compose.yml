@@ -4,7 +4,24 @@ services:
     #   1. Uncomment the `image:` line below
     #   2. Comment out (or delete) the `build: .` line
     # image: ghcr.io/<owner>/weltbon:latest
-    build: .
+    build:
+      context: .
+      # Build identity for GET /api/version.
+      #
+      # A self-hosted deploy compiles from a clone, so nothing inside the
+      # container can derive these: the git history is not copied into the
+      # runtime stage, and the Dockerfile's ARGs default to empty. Compose
+      # cannot shell out either, so the values arrive through the environment —
+      # scripts/deploy.sh computes and exports them.
+      #
+      # The `:-` defaults keep a bare `docker compose build` working rather than
+      # erroring on an unset variable. The cost of building that way is an image
+      # that reports the package.json version and a null commit, which is what
+      # prod ran for a full release cycle before this existed.
+      args:
+        WELTBON_VERSION: ${WELTBON_VERSION:-}
+        WELTBON_COMMIT: ${WELTBON_COMMIT:-}
+        WELTBON_BUILT_AT: ${WELTBON_BUILT_AT:-}
     restart: unless-stopped
     env_file: .env
     environment:
