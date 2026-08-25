@@ -12,6 +12,8 @@ import {
   thematicBreakPlugin,
 } from '@mdxeditor/editor';
 import '@mdxeditor/editor/style.css';
+import { MarkdownAuthoringToolbar } from './MarkdownAuthoringToolbar';
+import { MarkdownCommandPalette } from './MarkdownCommandPalette';
 import {
   forwardRef,
   useEffect,
@@ -30,7 +32,43 @@ export type MarkdownAuthoringEditorProps = {
 
 export type MarkdownAuthoringEditorHandle = {
   insertMarkdown: (markdown: string) => void;
+  executeCommand: (command: MarkdownAuthoringCommandId) => void;
 };
+
+export type MarkdownAuthoringCommandId =
+  | 'paragraph' | 'heading-1' | 'quote' | 'callout-note' | 'callout-tip' | 'callout-warning'
+  | 'bullet-list' | 'ordered-list' | 'task-list' | 'code-block' | 'horizontal-rule'
+  | 'bold' | 'italic' | 'strikethrough' | 'inline-code' | 'clear-formatting' | 'link';
+
+export type MarkdownAuthoringCommand = {
+  id: MarkdownAuthoringCommandId;
+  label: string;
+  shortLabel: string;
+  markdown: string;
+  shortcut?: string;
+};
+
+// The toolbar, palette, and keyboard shortcuts share this one registry.
+// Callouts emit the documented `> [!TYPE]` syntax. Unlisted types remain raw.
+export const markdownAuthoringCommands: readonly MarkdownAuthoringCommand[] = [
+  { id: 'paragraph', label: 'Paragraph', shortLabel: '¶', markdown: 'Paragraph' },
+  { id: 'heading-1', label: 'Heading 1', shortLabel: 'H1', markdown: '# Heading' },
+  { id: 'quote', label: 'Quote', shortLabel: '❝', markdown: '> Quote' },
+  { id: 'callout-note', label: 'Note callout', shortLabel: 'Note', markdown: '> [!NOTE]\n> Callout' },
+  { id: 'callout-tip', label: 'Tip callout', shortLabel: 'Tip', markdown: '> [!TIP]\n> Callout' },
+  { id: 'callout-warning', label: 'Warning callout', shortLabel: 'Warn', markdown: '> [!WARNING]\n> Callout' },
+  { id: 'bullet-list', label: 'Bullet list', shortLabel: '•', markdown: '- Item' },
+  { id: 'ordered-list', label: 'Ordered list', shortLabel: '1.', markdown: '1. Item' },
+  { id: 'task-list', label: 'Task list', shortLabel: '☐', markdown: '- [ ] Task' },
+  { id: 'code-block', label: 'Code block', shortLabel: '</>', markdown: '```\ncode\n```' },
+  { id: 'horizontal-rule', label: 'Horizontal rule', shortLabel: '—', markdown: '---' },
+  { id: 'bold', label: 'Bold', shortLabel: 'B', markdown: '**bold**', shortcut: 'Ctrl/Cmd-B' },
+  { id: 'italic', label: 'Italic', shortLabel: 'I', markdown: '*italic*', shortcut: 'Ctrl/Cmd-I' },
+  { id: 'strikethrough', label: 'Strikethrough', shortLabel: 'S', markdown: '~~strikethrough~~' },
+  { id: 'inline-code', label: 'Inline code', shortLabel: '`', markdown: '`code`' },
+  { id: 'clear-formatting', label: 'Clear formatting', shortLabel: 'Clear', markdown: 'Plain text' },
+  { id: 'link', label: 'Link', shortLabel: 'Link', markdown: '[link text](https://)', shortcut: 'Ctrl/Cmd-K' },
+];
 
 type Selection = { start: number; end: number };
 type MarkdownPart = { kind: 'markdown' | 'raw'; content: string };
@@ -77,12 +115,33 @@ function insertBlockMarkdown(markdown: string, selection: Selection, block: stri
   };
 }
 
+function replaceMarkdownSelection(markdown: string, selection: Selection, replacement: string): { markdown: string; selection: Selection } {
+  const before = markdown.slice(0, selection.start);
+  const after = markdown.slice(selection.end);
+  const cursor = before.length + replacement.length;
+  return { markdown: `${before}${replacement}${after}`, selection: { start: cursor, end: cursor } };
+}
+
+function inlineCommandMarkdown(command: MarkdownAuthoringCommand, selected: string): string | null {
+  const text = selected || command.markdown.replace(/^([*_~`]+)|([*_~`]+)$/g, '');
+  switch (command.id) {
+    case 'bold': return `**${text}**`;
+    case 'italic': return `*${text}*`;
+    case 'strikethrough': return `~~${text}~~`;
+    case 'inline-code': return `\`${text}\``;
+    case 'link': return `[${selected || 'link text'}](https://)`;
+    case 'clear-formatting': return selected.replace(/^(\*\*|__|~~|`|\*|_)([\s\S]*?)\1$/, '$2') || command.markdown;
+    default: return null;
+  }
+}
+
 export const MarkdownAuthoringEditor = forwardRef<
   MarkdownAuthoringEditorHandle,
   MarkdownAuthoringEditorProps
 >(function MarkdownAuthoringEditor({ value, onChange, disabled = false }, ref) {
   const [mode, setMode] = useState<'live' | 'source'>('live');
   const [liveParserError, setLiveParserError] = useState<string | null>(null);
+  const [paletteOpen, setPaletteOpen] = useState(false);
   const mdxEditorRefs = useRef<Array<MDXEditorMethods | null>>([]);
   const liveEditorWrappers = useRef<Array<HTMLDivElement | null>>([]);
   const activeLiveEditorIndex = useRef(0);
@@ -90,6 +149,7 @@ export const MarkdownAuthoringEditor = forwardRef<
   const liveSelectionRange = useRef<Range | null>(null);
   const liveEditorContainerRef = useRef<HTMLDivElement>(null);
   const sourceRef = useRef<HTMLTextAreaElement>(null);
+  const paletteReturnFocusRef = useRef<HTMLElement | null>(null);
   const latestMarkdown = useRef(value);
   const sourceSelection = useRef<Selection>({ start: 0, end: 0 });
   const parts = splitUnsupportedBlocks(value);
@@ -165,33 +225,80 @@ export const MarkdownAuthoringEditor = forwardRef<
     setMode(nextMode);
   };
 
-  useImperativeHandle(ref, () => ({
-    insertMarkdown(markdown: string) {
-      if (mode === 'source') {
-        const inserted = insertBlockMarkdown(latestMarkdown.current, sourceSelection.current, markdown);
+  const insertMarkdown = (markdown: string) => {
+    if (mode === 'source') {
+      const inserted = insertBlockMarkdown(latestMarkdown.current, sourceSelection.current, markdown);
+      sourceSelection.current = inserted.selection;
+      latestMarkdown.current = inserted.markdown;
+      onChange(inserted.markdown);
+      return;
+    }
+
+    const editor = mdxEditorRefs.current[activeLiveEditorIndex.current];
+    if (editor && !rawFallback) {
+      editor.insertMarkdown(`\n\n${markdown}\n\n`);
+      return;
+    }
+
+    const inserted = insertBlockMarkdown(latestMarkdown.current, sourceSelection.current, markdown);
+    sourceSelection.current = inserted.selection;
+    latestMarkdown.current = inserted.markdown;
+    onChange(inserted.markdown);
+  };
+
+  const executeCommand = (commandId: MarkdownAuthoringCommandId) => {
+    const command = markdownAuthoringCommands.find(({ id }) => id === commandId);
+    if (!command) return;
+    if (mode === 'source') {
+      const selection = sourceSelection.current;
+      const replacement = inlineCommandMarkdown(command, latestMarkdown.current.slice(selection.start, selection.end));
+      if (replacement !== null) {
+        const inserted = replaceMarkdownSelection(latestMarkdown.current, selection, replacement);
         sourceSelection.current = inserted.selection;
         latestMarkdown.current = inserted.markdown;
         onChange(inserted.markdown);
         return;
       }
+    }
+    insertMarkdown(command.markdown);
+  };
 
-      const editor = mdxEditorRefs.current[activeLiveEditorIndex.current];
-      if (editor && !rawFallback) {
-        editor.insertMarkdown(`\n\n${markdown}\n\n`);
-        return;
-      }
-
-      const inserted = insertBlockMarkdown(latestMarkdown.current, sourceSelection.current, markdown);
-      sourceSelection.current = inserted.selection;
-      latestMarkdown.current = inserted.markdown;
-      onChange(inserted.markdown);
-    },
-  }), [mode, onChange, rawFallback]);
+  useImperativeHandle(ref, () => ({ insertMarkdown, executeCommand }), [mode, onChange, rawFallback]);
 
   let partOffset = 0;
 
   return (
-    <section className="rounded-md border border-neutral-300 dark:border-neutral-700">
+    <section
+      className="rounded-md border border-neutral-300 dark:border-neutral-700"
+      role="region"
+      aria-label="Markdown authoring editor"
+      onKeyDown={(event) => {
+        if (!(event.ctrlKey || event.metaKey)) return;
+        const key = event.key.toLowerCase();
+        if (key === 'p' && event.shiftKey) {
+          event.preventDefault();
+          paletteReturnFocusRef.current = document.activeElement instanceof HTMLElement ? document.activeElement : null;
+          setPaletteOpen(true);
+          return;
+        }
+        const command = key === 'b' ? 'bold'
+          : key === 'i' ? 'italic'
+            : key === 'k' ? 'link'
+              : undefined;
+        if (command) {
+          event.preventDefault();
+          executeCommand(command);
+        }
+      }}
+    >
+      <MarkdownAuthoringToolbar
+        commands={markdownAuthoringCommands}
+        onCommand={executeCommand}
+        onOpenPalette={(trigger) => {
+          if (trigger) paletteReturnFocusRef.current = trigger;
+          setPaletteOpen(true);
+        }}
+      />
       <div className="flex items-center justify-end gap-1 border-b border-neutral-200 px-2 py-1 dark:border-neutral-800" role="group" aria-label="Editor mode">
         <button
           type="button"
@@ -291,6 +398,13 @@ export const MarkdownAuthoringEditor = forwardRef<
           className="w-full resize-y bg-transparent px-3 py-2 font-mono text-sm focus:outline-none"
         />
       )}
+      <MarkdownCommandPalette
+        open={paletteOpen}
+        onOpenChange={setPaletteOpen}
+        commands={markdownAuthoringCommands}
+        onCommand={executeCommand}
+        returnFocusRef={paletteReturnFocusRef}
+      />
     </section>
   );
 });

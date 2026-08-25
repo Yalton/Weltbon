@@ -184,4 +184,62 @@ describe('MarkdownAuthoringEditor', () => {
 
     expect(screen.getAllByRole('textbox')[1]).toHaveFocus();
   });
+
+  it.each([
+    ['heading-1', '# Heading'],
+    ['paragraph', 'Paragraph'],
+    ['quote', '> Quote'],
+    ['callout-note', '> [!NOTE]\n> Callout'],
+    ['bullet-list', '- Item'],
+    ['ordered-list', '1. Item'],
+    ['task-list', '- [ ] Task'],
+    ['code-block', '```\ncode\n```'],
+    ['horizontal-rule', '---'],
+    ['bold', '**bold**'],
+    ['italic', '*italic*'],
+    ['strikethrough', '~~strikethrough~~'],
+    ['inline-code', '`code`'],
+    ['clear-formatting', 'Plain text'],
+  ])('runs the %s registry command through the editor insertion path', (command, expected) => {
+    const editorRef = createRef<MarkdownAuthoringEditorHandle>();
+    const onChange = vi.fn();
+    render(<MarkdownAuthoringEditor ref={editorRef} value="" onChange={onChange} universeId="U1" />);
+    fireEvent.click(screen.getByRole('button', { name: 'Source' }));
+
+    editorRef.current?.executeCommand(command as never);
+
+    expect(onChange).toHaveBeenLastCalledWith(expected);
+  });
+
+  it('wraps and clears the selected Source text through the command registry', () => {
+    const editorRef = createRef<MarkdownAuthoringEditorHandle>();
+    const onChange = vi.fn();
+    render(<MarkdownAuthoringEditor ref={editorRef} value="selected" onChange={onChange} universeId="U1" />);
+    fireEvent.click(screen.getByRole('button', { name: 'Source' }));
+    const source = screen.getByRole('textbox', { name: 'Entry body' }) as HTMLTextAreaElement;
+    source.setSelectionRange(0, 8);
+    fireEvent.select(source);
+
+    editorRef.current?.executeCommand('bold');
+
+    expect(onChange).toHaveBeenLastCalledWith('**selected**');
+  });
+
+  it('routes standard formatting and palette shortcuts to the same command registry', () => {
+    const editorRef = createRef<MarkdownAuthoringEditorHandle>();
+    const onChange = vi.fn();
+    render(<MarkdownAuthoringEditor ref={editorRef} value="" onChange={onChange} universeId="U1" />);
+    fireEvent.click(screen.getByRole('button', { name: 'Source' }));
+
+    fireEvent.keyDown(screen.getByRole('region', { name: 'Markdown authoring editor' }), { key: 'b', ctrlKey: true });
+    fireEvent.keyDown(screen.getByRole('region', { name: 'Markdown authoring editor' }), { key: 'i', metaKey: true });
+    fireEvent.keyDown(screen.getByRole('region', { name: 'Markdown authoring editor' }), { key: 'k', ctrlKey: true });
+    fireEvent.keyDown(screen.getByRole('region', { name: 'Markdown authoring editor' }), { key: 'p', ctrlKey: true, shiftKey: true });
+
+    expect(onChange).toHaveBeenCalledTimes(3);
+    expect(onChange.mock.calls[0][0]).toBe('**bold**');
+    expect(onChange.mock.calls[1][0]).toContain('*italic*');
+    expect(onChange.mock.calls[2][0]).toContain('[link text](https://)');
+    expect(screen.getByRole('dialog', { name: 'Formatting commands' })).toBeInTheDocument();
+  });
 });
