@@ -85,6 +85,14 @@ describe('MarkdownAuthoringEditor', () => {
     expect(screen.getByLabelText('Raw Markdown block').textContent).toBe(UNSUPPORTED_BLOCK);
   });
 
+  it('keeps an unclosed unsupported block recoverable without hiding preceding live content', () => {
+    const malformedBlock = ':::mermaid\ngraph TD\n  A --> B';
+    render(<ControlledEditor value={`# Heading\n\n${malformedBlock}`} />);
+
+    expect(screen.getByRole('heading', { name: 'Heading' })).toBeInTheDocument();
+    expect(screen.getByLabelText('Raw Markdown block').textContent).toBe(malformedBlock);
+  });
+
   it('keeps content and the current source selection when switching modes', () => {
     render(<ControlledEditor />);
 

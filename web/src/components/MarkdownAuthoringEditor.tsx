@@ -51,7 +51,7 @@ const editorPlugins = [
 
 function splitUnsupportedBlocks(markdown: string): MarkdownPart[] {
   const parts: MarkdownPart[] = [];
-  const block = /:::[^\n]*(?:\n[\s\S]*?\n:::)(?=\n|$)/g;
+  const block = /:::[^\n]*(?:\n[\s\S]*?\n:::(?=\n|$)|[\s\S]*$)/g;
   let cursor = 0;
   let match: RegExpExecArray | null;
 
