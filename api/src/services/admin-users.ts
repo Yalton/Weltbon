@@ -1,6 +1,6 @@
 import { and, desc, eq, isNull, sql } from 'drizzle-orm';
 import { db as getDb, type DrizzleDb } from '../db/client.js';
-import { adminAuditLog, personalAccessTokens, users } from '../db/schema.js';
+import { adminAuditLog, personalAccessTokens, refreshTokens, universes, users } from '../db/schema.js';
 import { revokeAllForUser } from './auth.js';
 
 async function lockActiveAdmins(tx: DrizzleDb) {
@@ -40,6 +40,24 @@ export async function listAdminUsers() {
     columns: { id: true, email: true, displayName: true, createdAt: true, isAdmin: true, disabledAt: true, disabledReason: true },
     orderBy: [desc(users.createdAt)],
   });
+}
+
+async function getUserImpact(userId: string, dbHandle: DrizzleDb = getDb()) {
+  // A transaction uses one postgres client; queries must be sequential rather
+  // than Promise.all or node-postgres rejects the concurrent client use.
+  const universesOwned = await dbHandle.$count(universes, eq(universes.userId, userId));
+  const refreshTokensActive = await dbHandle.$count(refreshTokens, and(eq(refreshTokens.userId, userId), isNull(refreshTokens.revokedAt)));
+  const patsActive = await dbHandle.$count(personalAccessTokens, and(eq(personalAccessTokens.userId, userId), isNull(personalAccessTokens.revokedAt)));
+  return { universesOwned, refreshTokensActive, patsActive };
+}
+
+export async function getAdminUserDetail(targetUserId: string) {
+  const user = await getDb().query.users.findFirst({
+    where: eq(users.id, targetUserId),
+    columns: { id: true, email: true, displayName: true, createdAt: true, isAdmin: true, disabledAt: true, disabledReason: true },
+  });
+  if (!user) return null;
+  return { ...user, impact: await getUserImpact(user.id) };
 }
 
 export async function setAdminStatus(actorUserId: string, targetUserId: string, isAdmin: boolean) {
@@ -92,12 +110,13 @@ export async function purgeUser(actorUserId: string, targetUserId: string, confi
       const activeAdmins = await tx.$count(users, and(eq(users.isAdmin, true), isNull(users.disabledAt)));
       if (activeAdmins <= 1) throw new LastAdminError();
     }
+    const impact = await getUserImpact(target.id, tx as DrizzleDb);
     await tx.insert(adminAuditLog).values({
       actorUserId: actor.id, actorEmail: actor.email, targetUserId: target.id, targetEmail: target.email,
-      action: 'purged', details: {},
+      action: 'purged', details: impact,
     });
     await tx.delete(users).where(eq(users.id, target.id));
-    return { id: target.id };
+    return { id: target.id, impact };
   });
 }
 

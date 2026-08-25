@@ -9,6 +9,7 @@ export interface AdminUser {
   isAdmin: boolean;
   disabledAt: string | null;
   disabledReason: string | null;
+  impact?: { universesOwned: number; refreshTokensActive: number; patsActive: number };
 }
 
 export interface AdminAuditEvent {
@@ -22,6 +23,10 @@ export interface AdminAuditEvent {
 
 export function useAdminUsers() {
   return useQuery({ queryKey: ['admin-users'], queryFn: () => api<AdminUser[]>('/admin/users') });
+}
+
+export function getAdminUser(id: string) {
+  return api<AdminUser>(`/admin/users/${id}`);
 }
 
 export function useAdminAuditLog() {
