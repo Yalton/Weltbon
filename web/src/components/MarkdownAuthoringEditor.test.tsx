@@ -348,6 +348,16 @@ describe('MarkdownAuthoringEditor', () => {
     expect(screen.getByRole('textbox', { name: 'Entry body' })).toHaveValue(markdownDocument);
   });
 
+  it('isolates a table when a later contiguous row has an incompatible width', () => {
+    const malformedTable = '| Name | Value |\n| --- | --- |\n| One | 1 |\n| Broken | 2 | extra |';
+    const markdownDocument = `Before\n\n${malformedTable}\n\nAfter`;
+    render(<ControlledEditor value={markdownDocument} />);
+
+    expect(screen.getByLabelText('Raw Markdown block').textContent).toBe(malformedTable);
+    fireEvent.click(screen.getByRole('button', { name: 'Source' }));
+    expect(screen.getByRole('textbox', { name: 'Entry body' })).toHaveValue(markdownDocument);
+  });
+
   it.each([
     '| Name | Value |\n| --- | --- |\n| One | 1 |',
     '| Name | Value |\n| --- | --- |',

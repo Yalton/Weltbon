@@ -131,8 +131,12 @@ function findTables(markdown: string): TableLocation[] {
     for (let rowIndex = index + 2; rowIndex < lines.length; rowIndex += 1) {
       if (protectedLines[rowIndex]) break;
       const row = splitTableRow(lines[rowIndex]);
-      if (!row || row.length !== header.length) break;
+      if (!row) break;
       if (!isTopLevelTableLine(lines[rowIndex])) {
+        invalid = true;
+        break;
+      }
+      if (row.length !== header.length) {
         invalid = true;
         break;
       }
@@ -198,15 +202,29 @@ export function findMalformedMarkdownTableRanges(markdown: string): MarkdownTabl
       index += 1;
       continue;
     }
-    if (validDelimiter && firstRow.length === header.length) continue;
+    let endIndex = index + 2;
+    let incompatibleRow = false;
+    for (let rowIndex = index + 2; rowIndex < lines.length; rowIndex += 1) {
+      if (protectedLines[rowIndex] || !isTopLevelTableLine(lines[rowIndex])) break;
+      const row = splitTableRow(lines[rowIndex]);
+      if (!row) break;
+      endIndex = rowIndex;
+      if (row.length !== header.length) incompatibleRow = true;
+    }
+    if (validDelimiter && !incompatibleRow && firstRow.length === header.length) {
+      index = endIndex;
+      continue;
+    }
+    if (validDelimiter && incompatibleRow) {
+      ranges.push({
+        start: lineStart(markdown, index),
+        end: lineStart(markdown, endIndex) + lines[endIndex].length,
+      });
+      index = endIndex;
+      continue;
+    }
     if (header.length < 2 || !delimiter.some(looksLikeDelimiterCell)) continue;
     if (!lines[index].trimStart().startsWith('|') && !lines[index + 1].trimStart().startsWith('|')) continue;
-
-    let endIndex = index + 2;
-    for (let rowIndex = index + 3; rowIndex < lines.length; rowIndex += 1) {
-      if (protectedLines[rowIndex] || !isTopLevelTableLine(lines[rowIndex]) || !splitTableRow(lines[rowIndex])) break;
-      endIndex = rowIndex;
-    }
     ranges.push({
       start: lineStart(markdown, index),
       end: lineStart(markdown, endIndex) + lines[endIndex].length,
