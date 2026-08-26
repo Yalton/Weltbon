@@ -188,6 +188,16 @@ describe('markdown authoring dialect helpers', () => {
     }
   });
 
+  it('fails closed when the tags key has comments or blank metadata before it', () => {
+    for (const markdown of [
+      '---\n# note\ntags: [one]\n---\nBody',
+      '---\ntitle: x\n\ntags: [one]\n---\nBody',
+    ]) {
+      expect(parseMarkdownFrontmatter(markdown).diagnostics).not.toEqual([]);
+      expect(replaceSupportedFrontmatterTags(markdown, ['two'])).toBe(markdown);
+    }
+  });
+
   it('fails closed when a block tags list contains a blank line', () => {
     const markdown = '---\ntags:\n  - one\n\n  - two\n---\nBody';
 

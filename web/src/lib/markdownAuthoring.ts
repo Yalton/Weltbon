@@ -127,7 +127,12 @@ function tagsFromYamlMap(root: YAMLMap, source: string): TagsNodeResult {
   const pairs = root.items.filter((pair) => isScalar(pair.key) && pair.key.value === 'tags');
   if (pairs.length === 0) return { tags: [], diagnostic: null };
   if (pairs.length > 1) return { tags: [], diagnostic: { severity: 'error', message: 'Frontmatter contains duplicate tags fields.' } };
-  const keyLine = canonicalTagsKeyLine(pairs[0].key, source);
+  const tagsKey = pairs[0].key;
+  if (!isScalar(tagsKey)) return { tags: [], diagnostic: { severity: 'error', message: 'Frontmatter tags key is not a scalar field.' } };
+  if (hasComment(tagsKey) || tagsKey.spaceBefore) {
+    return { tags: [], diagnostic: { severity: 'error', message: 'Frontmatter tags key cannot have comments or blank lines before it.' } };
+  }
+  const keyLine = canonicalTagsKeyLine(tagsKey, source);
   if (keyLine === null) {
     return { tags: [], diagnostic: { severity: 'error', message: 'Frontmatter tags key must be an unquoted, column-zero field.' } };
   }

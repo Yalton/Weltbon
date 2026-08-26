@@ -103,6 +103,25 @@ describe('MarkdownFrontmatterPanel', () => {
     }
   });
 
+  it('disables chip controls when the tags key has source metadata before it', () => {
+    for (const markdown of [
+      '---\n# note\ntags: [one]\n---\nBody',
+      '---\ntitle: x\n\ntags: [one]\n---\nBody',
+    ]) {
+      const { unmount } = render(
+        <MarkdownFrontmatterPanel
+          markdown={markdown}
+          onChange={vi.fn()}
+          onEditInSource={vi.fn()}
+        />,
+      );
+
+      expect(screen.getByPlaceholderText('Add a tag...')).toBeDisabled();
+      expect(screen.getByRole('alert')).toBeInTheDocument();
+      unmount();
+    }
+  });
+
   it('disables chip controls when the panel is disabled', () => {
     render(
       <MarkdownFrontmatterPanel
