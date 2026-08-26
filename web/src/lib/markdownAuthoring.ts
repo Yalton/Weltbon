@@ -164,9 +164,10 @@ function tagsFromYamlMap(root: YAMLMap, source: string): TagsNodeResult {
     if (item.type === 'BLOCK_LITERAL' || item.type === 'BLOCK_FOLDED' || (typeof item.value === 'string' && /[\r\n]/.test(item.value))) {
       return { tags: [], diagnostic: { severity: 'error', message: 'Frontmatter tags cannot contain multiline scalar values.' } };
     }
-    if (typeof item.source === 'string') tags.push(item.value === null ? item.source : typeof item.value === 'string' ? item.value : item.source);
-    else if (typeof item.value === 'string') tags.push(item.value);
-    else return { tags: [], diagnostic: { severity: 'error', message: 'Frontmatter tags must contain scalar string values.' } };
+    if (typeof item.value !== 'string') {
+      return { tags: [], diagnostic: { severity: 'error', message: 'Frontmatter tags must contain scalar string values.' } };
+    }
+    tags.push(item.value);
   }
   return { tags, diagnostic: null };
 }

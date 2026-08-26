@@ -89,6 +89,13 @@ describe('markdown authoring dialect helpers', () => {
     expect(replaceSupportedFrontmatterTags(markdown, ['two'])).toBe(markdown);
   });
 
+  it('fails closed when tags contain non-string YAML scalars', () => {
+    const markdown = '---\ntags: [123, true, null]\n---\nBody';
+
+    expect(parseMarkdownFrontmatter(markdown).diagnostics).not.toEqual([]);
+    expect(replaceSupportedFrontmatterTags(markdown, ['two'])).toBe(markdown);
+  });
+
   it('fails closed when a tag item is an alias, even when the alias resolves', () => {
     const markdown = '---\nsource: &tag one\ntags: [*tag]\n---\nBody';
 

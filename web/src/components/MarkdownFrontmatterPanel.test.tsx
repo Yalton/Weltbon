@@ -74,6 +74,19 @@ describe('MarkdownFrontmatterPanel', () => {
     expect(screen.getByPlaceholderText('Add a tag...')).toBeDisabled();
   });
 
+  it('disables chip controls for non-string frontmatter tag scalars', () => {
+    render(
+      <MarkdownFrontmatterPanel
+        markdown={'---\ntags: [123, true, null]\n---\nBody'}
+        onChange={vi.fn()}
+        onEditInSource={vi.fn()}
+      />,
+    );
+
+    expect(screen.getByPlaceholderText('Add a tag...')).toBeDisabled();
+    expect(screen.getByRole('alert')).toHaveTextContent('scalar string');
+  });
+
   it('disables chip controls when frontmatter cannot be safely prepended', () => {
     for (const markdown of ['\nBody', '--- heading\nBody']) {
       const { unmount } = render(
