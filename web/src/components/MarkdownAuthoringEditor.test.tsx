@@ -673,18 +673,41 @@ describe('MarkdownAuthoringEditor', () => {
     expect(screen.getByRole('dialog', { name: 'Formatting commands' })).toBeInTheDocument();
   });
 
-  it('keeps narrow-viewport formatting commands reachable through the More palette path', async () => {
+  it('keeps narrow-viewport formatting commands reachable without hover through the keyboard-only More palette path', async () => {
     const user = userEvent.setup();
-    render(<ControlledEditor value="" />);
-    fireEvent.click(screen.getByRole('button', { name: 'Source' }));
+    const originalInnerWidth = window.innerWidth;
+    Object.defineProperty(window, 'innerWidth', { configurable: true, value: 375 });
+    window.dispatchEvent(new Event('resize'));
 
-    await user.click(screen.getByRole('button', { name: 'More formatting commands' }));
-    expect(screen.getByRole('dialog', { name: 'Formatting commands' })).toBeInTheDocument();
+    try {
+      render(<ControlledEditor value="" />);
 
-    await user.keyboard('{ArrowDown}{Enter}');
+      const sourceToggle = screen.getByRole('button', { name: 'Source' });
+      sourceToggle.focus();
+      await user.keyboard('{Enter}');
 
-    expect(screen.getByTestId('markdown-value')).toHaveAttribute('data-markdown', '# Heading');
-    expect(screen.getByRole('textbox', { name: 'Entry body' })).toHaveValue('# Heading');
+      const more = screen.getByRole('button', { name: 'More formatting commands' });
+      expect(window.innerWidth).toBeLessThan(640);
+      expect(more).toHaveClass('sm:hidden');
+      expect(more).not.toHaveClass('hidden');
+
+      // Narrow/touch path: keyboard activation must work without hover or pointer input.
+      more.focus();
+      expect(more).toHaveFocus();
+      await user.keyboard('{Enter}');
+      expect(screen.getByRole('dialog', { name: 'Formatting commands' })).toBeInTheDocument();
+
+      await waitFor(() => expect(screen.getByRole('option', { name: 'Paragraph' })).toHaveFocus());
+      await user.keyboard('{ArrowDown}');
+      expect(screen.getByRole('option', { name: 'Heading 1' })).toHaveFocus();
+      await user.keyboard('{Enter}');
+
+      expect(screen.getByTestId('markdown-value')).toHaveAttribute('data-markdown', '# Heading');
+      expect(screen.getByRole('textbox', { name: 'Entry body' })).toHaveValue('# Heading');
+    } finally {
+      Object.defineProperty(window, 'innerWidth', { configurable: true, value: originalInnerWidth });
+      window.dispatchEvent(new Event('resize'));
+    }
   });
 
   it('formats the selected Live Preview text through the native editor command', async () => {

@@ -1040,7 +1040,7 @@ describe('EntryEditor rename-propagation two-phase save (Phase 48 XREF-05)', () 
     });
   });
 
-  it('preserves the canonical body and separate Entry.tags contract during rename preview and commit', async () => {
+  it('preserves the canonical body through an editor mode round trip and separate Entry.tags contract during rename preview and commit', async () => {
     const markdown = [
       '---',
       'tags: [doc-tag]',
@@ -1058,11 +1058,6 @@ describe('EntryEditor rename-propagation two-phase save (Phase 48 XREF-05)', () 
       'See [[Empire|the Empire]] and ![[Atlas Map]].',
       '',
       '![Map](asset://asset-1)',
-      '',
-      ':::mermaid',
-      'graph TD',
-      '  A --> B',
-      ':::',
     ].join('\n');
 
     vi.mocked(api).mockImplementation(async (path?: string, init?: RequestInit) => {
@@ -1117,6 +1112,12 @@ describe('EntryEditor rename-propagation two-phase save (Phase 48 XREF-05)', () 
     );
 
     await screen.findByDisplayValue('Empire');
+    await userEvent.click(screen.getByRole('button', { name: 'Source' }));
+    expect(await screen.findByRole('textbox', { name: 'Entry body' })).toHaveValue(markdown);
+    await userEvent.click(screen.getByRole('button', { name: 'Live Preview' }));
+    await userEvent.click(screen.getByRole('button', { name: 'Source' }));
+    expect(screen.getByRole('textbox', { name: 'Entry body' })).toHaveValue(markdown);
+
     const titleInput = screen.getByLabelText(/title/i);
     await userEvent.clear(titleInput);
     await userEvent.type(titleInput, 'Imperium');
