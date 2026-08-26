@@ -457,6 +457,15 @@ describe('MarkdownAuthoringEditor', () => {
     ]);
   });
 
+  it('keeps the separator newline with frontmatter when splitting Live Preview parts', () => {
+    const frontmatter = '---\ntitle: Story\n---\n';
+
+    expect(splitUnsupportedBlocks(`${frontmatter}# Body`)).toEqual([
+      { kind: 'raw', content: frontmatter },
+      { kind: 'markdown', content: '# Body' },
+    ]);
+  });
+
   it('keeps content and the current source selection when switching modes', () => {
     render(<ControlledEditor />);
 

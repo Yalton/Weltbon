@@ -143,8 +143,11 @@ function tagsFromYamlMap(root: YAMLMap, source: string): TagsNodeResult {
   if (node.flow && hasMultilineSource(node, source)) {
     return { tags: [], diagnostic: { severity: 'error', message: 'Frontmatter tags flow sequence must remain on one line.' } };
   }
-  if (!node.flow && hasComment(node)) {
-    return { tags: [], diagnostic: { severity: 'error', message: 'Frontmatter block tags cannot contain comments.' } };
+  if (hasComment(node)) {
+    return { tags: [], diagnostic: { severity: 'error', message: 'Frontmatter tags cannot contain comments.' } };
+  }
+  if (!node.flow && node.spaceBefore) {
+    return { tags: [], diagnostic: { severity: 'error', message: 'Frontmatter block tags cannot contain blank lines.' } };
   }
   const tags: string[] = [];
   for (const item of node.items) {
@@ -152,8 +155,8 @@ function tagsFromYamlMap(root: YAMLMap, source: string): TagsNodeResult {
     if (!isScalar(item) || item.anchor || item.tag) {
       return { tags: [], diagnostic: { severity: 'error', message: 'Frontmatter tags must contain only unaliased scalar values.' } };
     }
-    if (!node.flow && hasComment(item)) {
-      return { tags: [], diagnostic: { severity: 'error', message: 'Frontmatter block tags cannot contain comments.' } };
+    if (!node.flow && (hasComment(item) || item.spaceBefore)) {
+      return { tags: [], diagnostic: { severity: 'error', message: 'Frontmatter block tags cannot contain comments or blank lines.' } };
     }
     if (hasMultilineSource(item, source)) {
       return { tags: [], diagnostic: { severity: 'error', message: 'Frontmatter tags must contain single-line scalar values.' } };

@@ -420,7 +420,8 @@ export function splitUnsupportedBlocks(markdown: string): MarkdownPart[] {
   const ranges: Array<{ start: number; end: number }> = unsupportedDirectiveRanges(markdown);
   const frontmatter = parseMarkdownFrontmatter(markdown);
   if (frontmatter.raw !== null && frontmatter.diagnostics.length === 0) {
-    ranges.push({ start: 0, end: frontmatter.raw.length });
+    const separator = markdown.slice(frontmatter.raw.length).match(/^\r?\n/)?.[0] ?? '';
+    ranges.push({ start: 0, end: frontmatter.raw.length + separator.length });
   }
   const protectedLines = markdownFenceProtectedLines(markdown);
   const lines = markdown.split('\n');

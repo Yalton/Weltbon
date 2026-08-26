@@ -181,6 +181,20 @@ describe('markdown authoring dialect helpers', () => {
     }
   });
 
+  it('fails closed when a block tags list contains a blank line', () => {
+    const markdown = '---\ntags:\n  - one\n\n  - two\n---\nBody';
+
+    expect(parseMarkdownFrontmatter(markdown).diagnostics).not.toEqual([]);
+    expect(replaceSupportedFrontmatterTags(markdown, ['three'])).toBe(markdown);
+  });
+
+  it('fails closed when a flow tags sequence has a trailing comment', () => {
+    const markdown = '---\ntags: [one] # note\n---\nBody';
+
+    expect(parseMarkdownFrontmatter(markdown).diagnostics).not.toEqual([]);
+    expect(replaceSupportedFrontmatterTags(markdown, ['two'])).toBe(markdown);
+  });
+
   it('does not create tags in a non-mapping frontmatter root', () => {
     const markdown = '---\n- retained\n---\nBody';
 
