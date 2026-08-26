@@ -3,7 +3,8 @@ import { render, screen, waitFor, fireEvent, within } from '@testing-library/rea
 import userEvent from '@testing-library/user-event';
 import { MemoryRouter, Routes, Route } from 'react-router-dom';
 import { QueryClient, QueryClientProvider } from '@tanstack/react-query';
-import type { Entry } from '../hooks/useEntries';
+import type { AssetSummary } from '../hooks/useAssets';
+import type { Backlink, Entry } from '../hooks/useEntries';
 
 vi.mock('../api/client', () => ({
   getShareToken: () => null,
@@ -30,6 +31,12 @@ function setupApi({
     }
     if (path === '/universes/U1') {
       return universe;
+    }
+    if (path === '/universes/U1/entries' && !init?.method) {
+      return [];
+    }
+    if (path === '/universes/U1/assets' && !init?.method) {
+      return [];
     }
     if (path === '/universes/U1/entries' && init?.method === 'POST') {
       return createResponse;
@@ -263,7 +270,7 @@ describe('EntryEditor kebab + SaveAsTemplateDialog (28-06)', () => {
   });
 
   it('renders the kebab "Entry actions" button in edit mode', async () => {
-    vi.mocked(api).mockImplementation(async (path?: string) => {
+    vi.mocked(api).mockImplementation(async (path?: string, init?: RequestInit) => {
       if (!path) return undefined;
       if (path === '/universes/U1') return { entryTypes: ['entity'] };
       if (path.startsWith('/universes/U1/categories')) return { categories: [], uncategorizedCount: 0 };
@@ -279,6 +286,8 @@ describe('EntryEditor kebab + SaveAsTemplateDialog (28-06)', () => {
           meta: {},
           categoryId: null,
         };
+      if (path === '/universes/U1/entries' && !init?.method) return [];
+      if (path === '/universes/U1/assets' && !init?.method) return [];
       return undefined;
     });
 
@@ -477,6 +486,9 @@ function renderEditModeForRename({
     ) {
       return commitResponse;
     }
+    if (path === '/universes/U1/assets' && !init?.method) {
+      return [];
+    }
     return undefined;
   });
 
@@ -527,6 +539,9 @@ function renderEditorForExistingEntry(overrides: Partial<Entry> = {}) {
     if (path === '/universes/U1/entries/HERO-ID' && !init?.method) {
       return { ...fixtureEntry, outboundLinks: [], backlinks: [], issues: [] };
     }
+    if (path === '/universes/U1/assets' && !init?.method) {
+      return [];
+    }
     return undefined;
   });
 
@@ -537,6 +552,72 @@ function renderEditorForExistingEntry(overrides: Partial<Entry> = {}) {
   return render(
     <QueryClientProvider client={qc}>
       <MemoryRouter initialEntries={['/universes/U1/entries/HERO-ID/edit']}>
+        <Routes>
+          <Route path="/universes/:uid/entries/:entryId/edit" element={<EntryEditor />} />
+          <Route path="/universes/:uid/entries/:entryId" element={<div>Entry detail</div>} />
+        </Routes>
+      </MemoryRouter>
+    </QueryClientProvider>,
+  );
+}
+
+function renderEditorForAuthoringPanels({
+  entryOverrides = {},
+  detailOverrides = {},
+  entries = [],
+  assets = [],
+}: {
+  entryOverrides?: Partial<Entry>;
+  detailOverrides?: {
+    body?: string;
+    backlinks?: Backlink[];
+    assetUrls?: Record<string, string>;
+  };
+  entries?: Entry[];
+  assets?: AssetSummary[];
+} = {}) {
+  const fixtureEntry: Entry = {
+    ...BASE_ENTRY_FIXTURE,
+    id: 'AUTHOR-ID',
+    title: 'Draft Entry',
+    aliases: [],
+    updatedAt: '2026-01-01T00:00:00Z',
+    ...entryOverrides,
+  };
+  const entryList = entries.length > 0 ? entries : [fixtureEntry];
+
+  vi.mocked(api).mockImplementation(async (path?: string, init?: RequestInit) => {
+    if (!path) return undefined;
+    if (path === '/universes/U1') return { entryTypes: ['character', 'place'] };
+    if (path.startsWith('/universes/U1/categories')) {
+      return { categories: [], uncategorizedCount: 0 };
+    }
+    if (path === '/universes/U1/entries' && !init?.method) {
+      return entryList;
+    }
+    if (path === '/universes/U1/entries/AUTHOR-ID' && !init?.method) {
+      return {
+        ...fixtureEntry,
+        body: detailOverrides.body ?? '',
+        outboundLinks: [],
+        backlinks: detailOverrides.backlinks ?? [],
+        issues: [],
+        assetUrls: detailOverrides.assetUrls ?? {},
+      };
+    }
+    if (path === '/universes/U1/assets' && !init?.method) {
+      return assets;
+    }
+    return undefined;
+  });
+
+  const qc = new QueryClient({
+    defaultOptions: { queries: { retry: false }, mutations: { retry: false } },
+  });
+
+  return render(
+    <QueryClientProvider client={qc}>
+      <MemoryRouter initialEntries={['/universes/U1/entries/AUTHOR-ID/edit']}>
         <Routes>
           <Route path="/universes/:uid/entries/:entryId/edit" element={<EntryEditor />} />
           <Route path="/universes/:uid/entries/:entryId" element={<div>Entry detail</div>} />
@@ -632,6 +713,91 @@ describe('Content-Forward Views §5 — editor hero', () => {
     const hero = await screen.findByTestId('editor-hero');
     // Matches EntryDetail: the contract resolves cover → icon → monogram.
     expect(within(hero).getByTestId('hero-monogram')).toHaveTextContent('🜂');
+  });
+});
+
+describe('EntryEditor authoring navigation and recovery (Task 6)', () => {
+  beforeEach(() => {
+    vi.mocked(api).mockReset();
+    document.body.style.removeProperty('pointer-events');
+    document.body.removeAttribute('data-scroll-locked');
+  });
+
+  it('shows outline, canonical backlinks, and recovery actions wired to source/picker flow', async () => {
+    const user = userEvent.setup();
+    const markdown = '# Intro\n\n## Details\n\n[[Glossary]]\n\n![Map](asset://lost-asset)';
+    renderEditorForAuthoringPanels({
+      detailOverrides: {
+        body: markdown,
+        backlinks: [
+          {
+            id: 'backlink-1',
+            sourceEntryId: 'atlas-id',
+            sourceTitle: 'Atlas',
+            sourceIcon: '',
+            label: 'mentions',
+            linkType: null,
+            direction: 'inbound',
+          },
+        ],
+        assetUrls: {},
+      },
+      entries: [
+        {
+          ...BASE_ENTRY_FIXTURE,
+          id: 'AUTHOR-ID',
+          title: 'Draft Entry',
+          aliases: [],
+          updatedAt: '2026-01-01T00:00:00Z',
+        },
+        {
+          ...BASE_ENTRY_FIXTURE,
+          id: 'atlas-id',
+          title: 'Atlas',
+          aliases: [],
+          updatedAt: '2026-01-01T00:00:00Z',
+        },
+      ],
+      assets: [
+        {
+          id: 'asset-2',
+          universeId: 'U1',
+          filename: 'new-map.png',
+          mimeType: 'image/png',
+          extension: 'png',
+          sizeBytes: 12,
+          thumbSizeBytes: 8,
+          altText: 'New map',
+          rawUrl: 'https://example.com/raw.png',
+          thumbUrl: 'https://example.com/thumb.png',
+          createdAt: '2026-01-01T00:00:00Z',
+          updatedAt: '2026-01-01T00:00:00Z',
+        },
+      ],
+    });
+
+    expect(await screen.findByRole('heading', { name: /outline/i })).toBeInTheDocument();
+    expect(screen.getByRole('link', { name: 'Atlas' })).toBeInTheDocument();
+    expect(screen.getAllByText('[[Glossary]]').length).toBeGreaterThanOrEqual(2);
+    expect(screen.getByRole('button', { name: /open in source/i })).toBeInTheDocument();
+
+    await user.click(screen.getByRole('button', { name: 'Details' }));
+    const source = await screen.findByRole('textbox', { name: 'Entry body' }) as HTMLTextAreaElement;
+    expect(source.selectionStart).toBe(markdown.indexOf('## Details'));
+
+    await user.click(screen.getByRole('button', { name: /open in source/i }));
+    expect(source.selectionStart).toBe(markdown.indexOf('[[Glossary]]'));
+    expect(source.selectionEnd).toBe(markdown.indexOf('[[Glossary]]') + '[[Glossary]]'.length);
+
+    await user.click(screen.getByRole('button', { name: /replace image/i }));
+    expect(await screen.findByRole('dialog')).toBeInTheDocument();
+    await user.click(screen.getByRole('button', { name: /select new-map\.png/i }));
+    await user.click(screen.getByRole('button', { name: /^insert$/i }));
+
+    await waitFor(() => {
+      expect(source.value).toContain('![Map](asset://asset-2)');
+      expect(source.value).not.toContain('asset://lost-asset');
+    });
   });
 });
 
@@ -787,6 +953,84 @@ describe('EntryEditor rename-propagation two-phase save (Phase 48 XREF-05)', () 
     // After commit, the after-summary "3 links rewritten" should appear (D-10)
     await waitFor(() => {
       expect(screen.getByText(/3 links rewritten/i)).toBeInTheDocument();
+    });
+  });
+
+  it('keeps preview and commit payload bodies as ordinary Markdown during a title rename', async () => {
+    const markdown = '# Quest\n\n[[Mordor]]\n\n![map](asset://asset-1)';
+
+    vi.mocked(api).mockImplementation(async (path?: string, init?: RequestInit) => {
+      if (!path) return undefined;
+      if (path === '/universes/U1') return { entryTypes: ['place', 'character'] };
+      if (path.startsWith('/universes/U1/categories')) {
+        return { categories: [], uncategorizedCount: 0 };
+      }
+      if (path === '/universes/U1/entries' && !init?.method) {
+        return [RENAME_ENTRY];
+      }
+      if (path === '/universes/U1/entries/RENAME-ID' && !init?.method) {
+        return {
+          ...RENAME_ENTRY,
+          body: markdown,
+          outboundLinks: [],
+          backlinks: [],
+          issues: [],
+          assetUrls: { 'asset-1': 'https://example.com/asset-1.png' },
+        };
+      }
+      if (path === '/universes/U1/assets' && !init?.method) {
+        return [];
+      }
+      if (
+        path.startsWith('/universes/U1/entries/RENAME-ID') &&
+        path.includes('preview=true') &&
+        init?.method === 'PATCH'
+      ) {
+        return { affectedLinks: 1, affectedEntries: 1 };
+      }
+      if (path === '/universes/U1/entries/RENAME-ID' && init?.method === 'PATCH') {
+        return { ...RENAME_ENTRY, title: 'Imperium', rewriteCount: 1 };
+      }
+      return undefined;
+    });
+
+    const qc = new QueryClient({
+      defaultOptions: { queries: { retry: false }, mutations: { retry: false } },
+    });
+
+    render(
+      <QueryClientProvider client={qc}>
+        <MemoryRouter initialEntries={['/universes/U1/entries/RENAME-ID/edit']}>
+          <Routes>
+            <Route path="/universes/:uid/entries/:entryId/edit" element={<EntryEditor />} />
+            <Route path="/universes/:uid/entries/:entryId" element={<div>Entry detail</div>} />
+          </Routes>
+        </MemoryRouter>
+      </QueryClientProvider>,
+    );
+
+    await screen.findByDisplayValue('Empire');
+    const titleInput = screen.getByLabelText(/title/i);
+    await userEvent.clear(titleInput);
+    await userEvent.type(titleInput, 'Imperium');
+    await userEvent.click(screen.getByRole('button', { name: /save changes/i }));
+    await screen.findByRole('dialog');
+    await userEvent.click(screen.getByRole('button', { name: /proceed/i }));
+
+    await waitFor(() => {
+      const previewCall = vi.mocked(api).mock.calls.find(([path, init]) =>
+        typeof path === 'string' &&
+        path.includes('/universes/U1/entries/RENAME-ID?preview=true') &&
+        (init as RequestInit)?.method === 'PATCH',
+      );
+      const commitCall = vi.mocked(api).mock.calls.find(([path, init]) =>
+        path === '/universes/U1/entries/RENAME-ID' &&
+        (init as RequestInit)?.method === 'PATCH',
+      );
+      expect(previewCall).toBeDefined();
+      expect(commitCall).toBeDefined();
+      expect(JSON.parse((previewCall![1] as RequestInit).body as string).body).toBe(markdown);
+      expect(JSON.parse((commitCall![1] as RequestInit).body as string).body).toBe(markdown);
     });
   });
 });

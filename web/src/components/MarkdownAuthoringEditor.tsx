@@ -40,9 +40,13 @@ export type MarkdownAuthoringEditorProps = {
   disabled?: boolean;
 };
 
+export type MarkdownAuthoringSelection = { start: number; end: number };
+
 export type MarkdownAuthoringEditorHandle = {
   insertMarkdown: (markdown: string) => void;
   executeCommand: (command: MarkdownAuthoringCommandId) => void;
+  revealSelection: (selection: MarkdownAuthoringSelection) => void;
+  replaceSelection: (selection: MarkdownAuthoringSelection, markdown: string) => void;
 };
 
 export type MarkdownAuthoringCommandId =
@@ -80,7 +84,7 @@ export const markdownAuthoringCommands: readonly MarkdownAuthoringCommand[] = [
   { id: 'link', label: 'Link', shortLabel: 'Link', markdown: '[link text](https://)', shortcut: 'Ctrl/Cmd-K' },
 ];
 
-type Selection = { start: number; end: number };
+type Selection = MarkdownAuthoringSelection;
 type MarkdownPart = { kind: 'markdown' | 'raw'; content: string };
 
 function sameSelection(left: Selection | null, right: Selection | null): boolean {
@@ -962,6 +966,38 @@ export const MarkdownAuthoringEditor = forwardRef<
     onChange(inserted.markdown);
   };
 
+  const revealSelection = (selection: Selection) => {
+    if (disabled) return;
+    sourceSelection.current = selection;
+    setTableSelection(selection);
+    if (mode !== 'source') {
+      switchMode('source');
+      return;
+    }
+    const source = sourceRef.current;
+    if (!source) return;
+    source.focus();
+    source.setSelectionRange(selection.start, selection.end);
+  };
+
+  const replaceSelection = (selection: Selection, markdown: string) => {
+    if (disabled) return;
+    const replaced = replaceMarkdownSelection(latestMarkdown.current, selection, markdown);
+    latestMarkdown.current = replaced.markdown;
+    sourceSelection.current = replaced.selection;
+    setLiveParserError(null);
+    setTableSelection(replaced.selection);
+    onChange(replaced.markdown);
+    if (mode !== 'source') {
+      switchMode('source');
+      return;
+    }
+    const source = sourceRef.current;
+    if (!source) return;
+    source.focus();
+    source.setSelectionRange(replaced.selection.start, replaced.selection.end);
+  };
+
   const openLinkDialog = () => {
     if (disabled) return;
     if (mode === 'source') {
@@ -1077,7 +1113,11 @@ export const MarkdownAuthoringEditor = forwardRef<
     }
   };
 
-  useImperativeHandle(ref, () => ({ insertMarkdown, executeCommand }), [insertMarkdown, executeCommand]);
+  useImperativeHandle(
+    ref,
+    () => ({ insertMarkdown, executeCommand, revealSelection, replaceSelection }),
+    [insertMarkdown, executeCommand, revealSelection, replaceSelection],
+  );
 
   const getTableSelection = (liveIndex = activeLiveEditorIndex.current) => {
     if (mode === 'source') {

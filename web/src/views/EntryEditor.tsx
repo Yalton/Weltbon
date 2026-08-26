@@ -14,8 +14,18 @@ import { Toast } from '../components/Toast';
 import { Toggle } from '../components/Toggle';
 import { WipPill } from '../components/WipPill';
 import { AssetPickerModal } from '../components/AssetPickerModal';
-import { MarkdownAuthoringEditor, type MarkdownAuthoringEditorHandle } from '../components/MarkdownAuthoringEditor';
+import {
+  MarkdownAuthoringEditor,
+  type MarkdownAuthoringEditorHandle,
+  type MarkdownAuthoringSelection,
+} from '../components/MarkdownAuthoringEditor';
 import { ConfirmDialog } from '../components/ConfirmDialog';
+import { MarkdownOutline, type MarkdownHeading } from '../components/MarkdownOutline';
+import {
+  MarkdownBacklinks,
+  type MarkdownAssetRecoverySelection,
+  type MarkdownRecoverySelection,
+} from '../components/MarkdownBacklinks';
 import { metaArrayToRecord } from '../lib/entryTemplates';
 import { resolveMedallion } from '../lib/medallion';
 import { EntryHero } from '../components/EntryHero';
@@ -47,7 +57,7 @@ export function EntryEditor() {
   // instant `[[` is typed, closing the async-empty window CR-01 flagged. The picker
   // owns its own useEntries subscription AND the active selection (CR-01); this call
   // is prefetch only — its result is intentionally not bound or used for ranking.
-  useEntries(uid ?? '');
+  const { data: allEntries = [] } = useEntries(uid ?? '');
 
   const [tags, setTags] = useState<string[]>([]);
   // Phase 45 XREF-04 (D-09) — alias chips placed immediately after Tags field.
@@ -80,6 +90,7 @@ export function EntryEditor() {
   const [pickerOpen, setPickerOpen] = useState(false);
   const [pickerMode, setPickerMode] = useState<'insert-embed' | 'set-cover'>('insert-embed');
   const markdownEditorRef = useRef<MarkdownAuthoringEditorHandle>(null);
+  const [assetReplacementSelection, setAssetReplacementSelection] = useState<MarkdownAssetRecoverySelection | null>(null);
   // CR-03: gate the create-mode template prefill so it runs at most once per
   // navigation. Without this, every refetch of `universe` (window focus,
   // stale-time expiry) re-runs the prefill effect and silently wipes any
@@ -112,6 +123,7 @@ export function EntryEditor() {
   const watchedTitle = watch('title');
   const watchedEntryType = watch('entryType');
   const watchedIcon = watch('icon');
+  const watchedBody = watch('body');
   const heroMedallion = resolveMedallion({
     title: watchedTitle,
     entryType: watchedEntryType,
@@ -270,13 +282,39 @@ export function EntryEditor() {
   // Asset selection remains in the existing modal. The authoring editor owns
   // insertion so the form continues to receive one canonical Markdown string.
   const handlePickerSelect = (assetId: string) => {
-    if (pickerMode === 'insert-embed') {
+    if (assetReplacementSelection) {
+      markdownEditorRef.current?.replaceSelection(
+        assetReplacementSelection,
+        `![${assetReplacementSelection.altText}](asset://${assetId})`,
+      );
+      setAssetReplacementSelection(null);
+    } else if (pickerMode === 'insert-embed') {
       markdownEditorRef.current?.insertMarkdown(`![image](asset://${assetId})`);
     } else {
       // set-cover mode
       setCoverImageId(assetId);
     }
     setPickerOpen(false);
+  };
+
+  const handlePickerOpenChange = (open: boolean) => {
+    if (!open) setAssetReplacementSelection(null);
+    setPickerOpen(open);
+  };
+
+  const revealMarkdownSelection = (selection: MarkdownAuthoringSelection | MarkdownRecoverySelection) => {
+    markdownEditorRef.current?.revealSelection(selection);
+  };
+
+  const handleOutlineNavigate = (heading: MarkdownHeading) => {
+    revealMarkdownSelection({ start: heading.start, end: heading.end });
+  };
+
+  const handleReplaceAsset = (selection: MarkdownAssetRecoverySelection) => {
+    markdownEditorRef.current?.revealSelection(selection);
+    setAssetReplacementSelection(selection);
+    setPickerMode('insert-embed');
+    setPickerOpen(true);
   };
 
   return (
@@ -371,6 +409,7 @@ export function EntryEditor() {
             <button
               type="button"
               onClick={() => {
+                setAssetReplacementSelection(null);
                 setPickerMode('insert-embed');
                 setPickerOpen(true);
               }}
@@ -379,14 +418,43 @@ export function EntryEditor() {
               Insert image
             </button>
           </div>
-          <MarkdownAuthoringEditor
-            ref={markdownEditorRef}
-            value={watch('body')}
-            onChange={(markdown) => setValue('body', markdown, { shouldDirty: true, shouldValidate: true })}
-            universeId={uid ?? ''}
-            entryId={entryId}
-            disabled={isPending}
-          />
+          <div className="grid gap-4 xl:grid-cols-[minmax(0,1fr)_18rem]">
+            <MarkdownAuthoringEditor
+              ref={markdownEditorRef}
+              value={watchedBody}
+              onChange={(markdown) => setValue('body', markdown, { shouldDirty: true, shouldValidate: true })}
+              universeId={uid ?? ''}
+              entryId={entryId}
+              disabled={isPending}
+            />
+            <aside className="space-y-3">
+              <details open className="rounded-md border border-neutral-200 bg-white p-3 dark:border-neutral-800 dark:bg-neutral-900">
+                <summary className="cursor-pointer text-sm font-medium text-neutral-900 dark:text-neutral-100">
+                  Outline
+                </summary>
+                <div className="mt-3">
+                  <MarkdownOutline markdown={watchedBody} onNavigate={handleOutlineNavigate} />
+                </div>
+              </details>
+              <details open className="rounded-md border border-neutral-200 bg-white p-3 dark:border-neutral-800 dark:bg-neutral-900">
+                <summary className="cursor-pointer text-sm font-medium text-neutral-900 dark:text-neutral-100">
+                  Backlinks &amp; Recovery
+                </summary>
+                <div className="mt-3">
+                  <MarkdownBacklinks
+                    universeId={uid ?? ''}
+                    backlinks={existingEntry?.backlinks ?? []}
+                    draftMarkdown={watchedBody}
+                    savedMarkdown={existingEntry?.body ?? ''}
+                    savedAssetUrls={existingEntry?.assetUrls ?? {}}
+                    entries={allEntries}
+                    onRevealSelection={revealMarkdownSelection}
+                    onReplaceAsset={handleReplaceAsset}
+                  />
+                </div>
+              </details>
+            </aside>
+          </div>
         </div>
 
         {/* Hero (Content-Forward Views §5, Task 10) — the editor previews exactly what
@@ -597,7 +665,7 @@ export function EntryEditor() {
       {uid && (
         <AssetPickerModal
           open={pickerOpen}
-          onOpenChange={setPickerOpen}
+          onOpenChange={handlePickerOpenChange}
           universeId={uid}
           mode={pickerMode}
           onSelect={handlePickerSelect}
