@@ -1,5 +1,7 @@
 import { Link } from 'react-router-dom';
+import type { AssetSummary } from '../hooks/useAssets';
 import type { Backlink, Entry } from '../hooks/useEntries';
+import { splitUnsupportedBlocks } from './MarkdownAuthoringEditor';
 
 export type MarkdownRecoverySelection = {
   start: number;
@@ -16,11 +18,134 @@ type MarkdownBacklinksProps = {
   backlinks: Backlink[];
   draftMarkdown: string;
   savedMarkdown: string;
+  /** Retained for the renderer's signed-URL data; existence comes from assets. */
   savedAssetUrls?: Record<string, string>;
+  /** The existing asset query is the authority for whether an asset still exists. */
+  assets?: AssetSummary[];
   entries: Entry[];
   onRevealSelection: (selection: MarkdownRecoverySelection) => void;
   onReplaceAsset: (selection: MarkdownAssetRecoverySelection) => void;
 };
+
+type MarkdownRange = { start: number; end: number };
+
+function normalizedLine(rawLine: string): string {
+  return rawLine.endsWith('\r') ? rawLine.slice(0, -1) : rawLine;
+}
+
+function fencedCodeRanges(markdown: string): MarkdownRange[] {
+  const lines = markdown.split('\n');
+  const ranges: MarkdownRange[] = [];
+  let cursor = 0;
+  let fence: { marker: string; length: number } | null = null;
+  let fenceStart: number | null = null;
+
+  lines.forEach((rawLine) => {
+    const line = normalizedLine(rawLine);
+    if (fence) {
+      if (new RegExp(`^ {0,3}${fence.marker}{${fence.length},}[ \\t]*$`).test(line)) {
+        ranges.push({ start: fenceStart ?? cursor, end: cursor + rawLine.length });
+        fence = null;
+        fenceStart = null;
+      }
+    } else {
+      const opening = line.match(/^ {0,3}(`{3,}|~{3,})(.*)$/);
+      if (opening && !(opening[1][0] === '`' && opening[2].includes('`'))) {
+        fence = { marker: opening[1][0], length: opening[1].length };
+        fenceStart = cursor;
+      }
+    }
+    cursor += rawLine.length + 1;
+  });
+
+  if (fenceStart !== null) ranges.push({ start: fenceStart, end: markdown.length });
+  return ranges;
+}
+
+function indentedCodeRanges(markdown: string): MarkdownRange[] {
+  const lines = markdown.split('\n');
+  const ranges: MarkdownRange[] = [];
+  let cursor = 0;
+  let start: number | null = null;
+
+  lines.forEach((rawLine) => {
+    const line = normalizedLine(rawLine);
+    const isIndentedCode = /^(?: {4,}|\t)/.test(line);
+    if (isIndentedCode && start === null) start = cursor;
+    if (!isIndentedCode && start !== null) {
+      ranges.push({ start, end: cursor });
+      start = null;
+    }
+    cursor += rawLine.length + 1;
+  });
+
+  if (start !== null) ranges.push({ start, end: markdown.length });
+  return ranges;
+}
+
+function inlineCodeRanges(markdown: string): MarkdownRange[] {
+  const ranges: MarkdownRange[] = [];
+  let index = 0;
+  while (index < markdown.length) {
+    if (markdown[index] !== '`' || (index > 0 && markdown[index - 1] === '\\')) {
+      index += 1;
+      continue;
+    }
+    let runLength = 1;
+    while (markdown[index + runLength] === '`') runLength += 1;
+    const run = '`'.repeat(runLength);
+    let close = markdown.indexOf(run, index + runLength);
+    while (close !== -1 && (markdown[close - 1] === '`' || markdown[close + runLength] === '`')) {
+      close = markdown.indexOf(run, close + 1);
+    }
+    if (close === -1) {
+      index += runLength;
+      continue;
+    }
+    ranges.push({ start: index, end: close + runLength });
+    index = close + runLength;
+  }
+  return ranges;
+}
+
+function supportedRangesForPart(markdown: string, offset: number): MarkdownRange[] {
+  const excluded = [
+    ...fencedCodeRanges(markdown),
+    ...indentedCodeRanges(markdown),
+    ...inlineCodeRanges(markdown),
+  ].sort((left, right) => left.start - right.start || left.end - right.end);
+  const ranges: MarkdownRange[] = [];
+  let cursor = 0;
+  excluded.forEach((range) => {
+    if (range.start > cursor) ranges.push({ start: offset + cursor, end: offset + range.start });
+    cursor = Math.max(cursor, range.end);
+  });
+  if (cursor < markdown.length) ranges.push({ start: offset + cursor, end: offset + markdown.length });
+  return ranges;
+}
+
+function supportedMarkdownRanges(markdown: string): MarkdownRange[] {
+  const ranges: MarkdownRange[] = [];
+  let offset = 0;
+  splitUnsupportedBlocks(markdown).forEach((part) => {
+    if (part.kind === 'markdown') ranges.push(...supportedRangesForPart(part.content, offset));
+    offset += part.content.length;
+  });
+  return ranges;
+}
+
+function supportedMatches(markdown: string, pattern: RegExp): Array<{ match: RegExpExecArray; index: number }> {
+  const matches: Array<{ match: RegExpExecArray; index: number }> = [];
+  supportedMarkdownRanges(markdown).forEach(({ start, end }) => {
+    const source = markdown.slice(start, end);
+    pattern.lastIndex = 0;
+    let match: RegExpExecArray | null;
+    while ((match = pattern.exec(source)) !== null) {
+      matches.push({ match, index: start + match.index });
+    }
+  });
+  return matches;
+}
 
 function normalizedWikilinkTarget(raw: string): string {
   const pipeIndex = raw.indexOf('|');
@@ -35,48 +160,56 @@ function unresolvedDraftReferences(markdown: string, entries: Entry[]): Markdown
   );
   const matches: MarkdownRecoverySelection[] = [];
   const pattern = /\[\[([^\]\n]+?)\]\]/g;
-  let match: RegExpExecArray | null;
 
-  while ((match = pattern.exec(markdown)) !== null) {
+  supportedMatches(markdown, pattern).forEach(({ match, index }) => {
     const target = normalizedWikilinkTarget(match[1]);
     if (target.length === 0 || !knownTargets.has(target)) {
       matches.push({
-        start: match.index,
-        end: match.index + match[0].length,
+        start: index,
+        end: index + match[0].length,
         raw: match[0],
       });
     }
-  }
+  });
 
   return matches;
+}
+
+type AssetReference = MarkdownAssetRecoverySelection & { assetId: string };
+
+function assetReferences(markdown: string): AssetReference[] {
+  const references: AssetReference[] = [];
+  const pattern = /!\[([^\]]*)\]\(asset:\/\/([^)]+)\)/g;
+  supportedMatches(markdown, pattern).forEach(({ match, index }) => {
+    references.push({
+      assetId: match[2],
+      altText: match[1] || 'image',
+      start: index,
+      end: index + match[0].length,
+      raw: match[0],
+    });
+  });
+  return references;
 }
 
 function missingSavedAssets(
   draftMarkdown: string,
   savedMarkdown: string,
   savedAssetUrls: Record<string, string>,
+  assets: AssetSummary[] | undefined,
 ): MarkdownAssetRecoverySelection[] {
-  const missingSavedIds = new Set<string>();
-  const savedPattern = /!\[([^\]]*)\]\(asset:\/\/([^)]+)\)/g;
-  let savedMatch: RegExpExecArray | null;
-  while ((savedMatch = savedPattern.exec(savedMarkdown)) !== null) {
-    if (!savedAssetUrls[savedMatch[2]]) missingSavedIds.add(savedMatch[2]);
-  }
-
-  const draftMatches: MarkdownAssetRecoverySelection[] = [];
-  const draftPattern = /!\[([^\]]*)\]\(asset:\/\/([^)]+)\)/g;
-  let draftMatch: RegExpExecArray | null;
-  while ((draftMatch = draftPattern.exec(draftMarkdown)) !== null) {
-    if (!missingSavedIds.has(draftMatch[2])) continue;
-    draftMatches.push({
-      altText: draftMatch[1] || 'image',
-      start: draftMatch.index,
-      end: draftMatch.index + draftMatch[0].length,
-      raw: draftMatch[0],
-    });
-  }
-
-  return draftMatches;
+  // Until the existing asset query resolves, there is no authoritative answer.
+  if (!assets) return [];
+  void savedAssetUrls;
+  const existingAssetIds = new Set(assets.map((asset) => asset.id));
+  const missingSavedIds = new Set(
+    assetReferences(savedMarkdown)
+      .filter((reference) => !existingAssetIds.has(reference.assetId))
+      .map((reference) => reference.assetId),
+  );
+  return assetReferences(draftMarkdown)
+    .filter((reference) => missingSavedIds.has(reference.assetId))
+    .map(({ assetId: _assetId, ...selection }) => selection);
 }
 
 export function MarkdownBacklinks({
@@ -85,12 +218,13 @@ export function MarkdownBacklinks({
   draftMarkdown,
   savedMarkdown,
   savedAssetUrls = {},
+  assets,
   entries,
   onRevealSelection,
   onReplaceAsset,
 }: MarkdownBacklinksProps) {
   const rawReferences = unresolvedDraftReferences(draftMarkdown, entries);
-  const assetRecoveries = missingSavedAssets(draftMarkdown, savedMarkdown, savedAssetUrls);
+  const assetRecoveries = missingSavedAssets(draftMarkdown, savedMarkdown, savedAssetUrls, assets);
 
   return (
     <section aria-label="Markdown backlinks and recovery">

@@ -42,9 +42,18 @@ export type MarkdownAuthoringEditorProps = {
 
 export type MarkdownAuthoringSelection = { start: number; end: number };
 
+export type MarkdownHeading = {
+  anchor: string;
+  depth: number;
+  start: number;
+  end: number;
+  text: string;
+};
+
 export type MarkdownAuthoringEditorHandle = {
   insertMarkdown: (markdown: string) => void;
   executeCommand: (command: MarkdownAuthoringCommandId) => void;
+  navigateToHeading: (anchor: string) => void;
   revealSelection: (selection: MarkdownAuthoringSelection) => void;
   replaceSelection: (selection: MarkdownAuthoringSelection, markdown: string) => void;
 };
@@ -187,7 +196,8 @@ function openingFenceMarker(line: string): string | null {
 }
 
 function isClosingFence(line: string, fence: MarkdownFence): boolean {
-  const fenceLine = fenceContentLine(line, fence.container);
+  const normalizedLine = line.endsWith('\r') ? line.slice(0, -1) : line;
+  const fenceLine = fenceContentLine(normalizedLine, fence.container);
   return fenceLine !== null && new RegExp(`^ {0,3}${fence.marker}{${fence.length},}[ \\t]*$`).test(fenceLine);
 }
 
@@ -458,6 +468,106 @@ export function splitUnsupportedBlocks(markdown: string): MarkdownPart[] {
   }
   if (cursor < markdown.length || parts.length === 0) parts.push({ kind: 'markdown', content: markdown.slice(cursor) });
   return parts;
+}
+
+function slugifyMarkdownHeading(text: string): string {
+  const slug = text
+    .trim()
+    .toLowerCase()
+    .normalize('NFKD')
+    .replace(/[\u0300-\u036f]/g, '')
+    .replace(/[^\w\s-]/g, '')
+    .trim()
+    .replace(/[\s_-]+/g, '-')
+    .replace(/^-+|-+$/g, '');
+  return slug || 'section';
+}
+
+function markdownHeadingText(raw: string): string {
+  return raw.trim().replace(/[ \t]+#+[ \t]*$/, '').trim();
+}
+
+function collectMarkdownPartHeadings(markdown: string, offset: number): Omit<MarkdownHeading, 'anchor'>[] {
+  const rawLines = markdown.split('\n');
+  const lines = rawLines.map((line) => line.endsWith('\r') ? line.slice(0, -1) : line);
+  const headings: Omit<MarkdownHeading, 'anchor'>[] = [];
+  const starts: number[] = [];
+  let cursor = 0;
+  let fence: { marker: string; length: number } | null = null;
+
+  rawLines.forEach((line) => {
+    starts.push(cursor);
+    cursor += line.length + 1;
+  });
+
+  for (let index = 0; index < lines.length; index += 1) {
+    const line = lines[index];
+
+    if (fence) {
+      if (new RegExp(`^ {0,3}${fence.marker}{${fence.length},}[ \\t]*$`).test(line)) fence = null;
+      continue;
+    }
+
+    const openingFence = line.match(/^ {0,3}(`{3,}|~{3,})(.*)$/);
+    if (openingFence && !(openingFence[1][0] === '`' && openingFence[2].includes('`'))) {
+      fence = { marker: openingFence[1][0], length: openingFence[1].length };
+      continue;
+    }
+
+    const atxMatch = line.match(/^ {0,3}(#{1,6})[ \t]+(.+?)$/);
+    if (atxMatch) {
+      const text = markdownHeadingText(atxMatch[2]);
+      if (text.length > 0) {
+        headings.push({
+          depth: atxMatch[1].length,
+          start: offset + starts[index],
+          end: offset + starts[index] + line.length,
+          text,
+        });
+      }
+      continue;
+    }
+
+    const underline = lines[index + 1]?.trim();
+    if (
+      line.trim().length > 0 &&
+      !/^ {4,}/.test(line) &&
+      !/^ {0,3}(?:>|[-*+][ \t]|\d+[.)][ \t])/.test(line) &&
+      underline &&
+      /^ {0,3}(=+|-+)[ \t]*$/.test(lines[index + 1])
+    ) {
+      headings.push({
+        depth: underline.startsWith('=') ? 1 : 2,
+        start: offset + starts[index],
+        end: offset + starts[index + 1] + lines[index + 1].length,
+        text: line.trim(),
+      });
+      index += 1;
+    }
+  }
+
+  return headings;
+}
+
+export function extractMarkdownHeadings(markdown: string): MarkdownHeading[] {
+  const headings: Omit<MarkdownHeading, 'anchor'>[] = [];
+  let offset = 0;
+
+  splitUnsupportedBlocks(markdown).forEach((part) => {
+    if (part.kind === 'markdown') headings.push(...collectMarkdownPartHeadings(part.content, offset));
+    offset += part.content.length;
+  });
+
+  const collisions = new Map<string, number>();
+  return headings.map((heading) => {
+    const base = slugifyMarkdownHeading(heading.text);
+    const count = (collisions.get(base) ?? 0) + 1;
+    collisions.set(base, count);
+    return {
+      ...heading,
+      anchor: count === 1 ? base : `${base}-${count}`,
+    };
+  });
 }
 
 function insertBlockMarkdown(markdown: string, selection: Selection, block: string): { markdown: string; selection: Selection } {
@@ -809,9 +919,42 @@ export const MarkdownAuthoringEditor = forwardRef<
     range: Range | null;
     markdown?: string;
   } | null>(null);
+  const pendingHeadingAnchor = useRef<string | null>(null);
   const parts = splitUnsupportedBlocks(value);
   const frontmatter = parseMarkdownFrontmatter(value);
   const rawFallback = liveParserError !== null || frontmatter.diagnostics.length > 0;
+
+  const applyLiveHeadingAnchors = () => {
+    const container = liveEditorContainerRef.current;
+    if (!container || rawFallback) {
+      pendingHeadingAnchor.current = null;
+      return;
+    }
+
+    const headings = extractMarkdownHeadings(value);
+    const renderedHeadings = Array.from(
+      container.querySelectorAll<HTMLElement>('h1, h2, h3, h4, h5, h6'),
+    );
+    renderedHeadings.forEach((heading, index) => {
+      const anchor = headings[index]?.anchor;
+      if (!anchor) {
+        if (heading.dataset.markdownAnchor) {
+          heading.removeAttribute('id');
+          delete heading.dataset.markdownAnchor;
+        }
+        return;
+      }
+      if (heading.id !== anchor) heading.id = anchor;
+      heading.dataset.markdownAnchor = 'true';
+    });
+
+    const pending = pendingHeadingAnchor.current;
+    if (!pending) return;
+    const target = renderedHeadings.find((heading) => heading.id === pending);
+    if (!target) return;
+    pendingHeadingAnchor.current = null;
+    target.scrollIntoView({ block: 'nearest' });
+  };
 
   useEffect(() => {
     if (value === latestMarkdown.current) return;
@@ -849,13 +992,14 @@ export const MarkdownAuthoringEditor = forwardRef<
 
   useEffect(() => {
     if (mode !== 'live' || rawFallback) return;
-    const labelEditable = () => {
+    const updateLiveSurface = () => {
       liveEditorContainerRef.current
         ?.querySelector<HTMLElement>('[contenteditable="true"]')
         ?.setAttribute('aria-label', 'Entry body');
+      applyLiveHeadingAnchors();
     };
-    labelEditable();
-    const observer = new MutationObserver(labelEditable);
+    updateLiveSurface();
+    const observer = new MutationObserver(updateLiveSurface);
     const container = liveEditorContainerRef.current;
     if (container) observer.observe(container, { childList: true, subtree: true });
     return () => observer.disconnect();
@@ -964,6 +1108,16 @@ export const MarkdownAuthoringEditor = forwardRef<
     sourceSelection.current = inserted.selection;
     latestMarkdown.current = inserted.markdown;
     onChange(inserted.markdown);
+  };
+
+  const navigateToHeading = (anchor: string) => {
+    if (disabled) return;
+    pendingHeadingAnchor.current = anchor;
+    if (mode !== 'live') {
+      switchMode('live');
+      return;
+    }
+    applyLiveHeadingAnchors();
   };
 
   const revealSelection = (selection: Selection) => {
@@ -1115,8 +1269,8 @@ export const MarkdownAuthoringEditor = forwardRef<
 
   useImperativeHandle(
     ref,
-    () => ({ insertMarkdown, executeCommand, revealSelection, replaceSelection }),
-    [insertMarkdown, executeCommand, revealSelection, replaceSelection],
+    () => ({ insertMarkdown, executeCommand, navigateToHeading, revealSelection, replaceSelection }),
+    [insertMarkdown, executeCommand, navigateToHeading, revealSelection, replaceSelection],
   );
 
   const getTableSelection = (liveIndex = activeLiveEditorIndex.current) => {

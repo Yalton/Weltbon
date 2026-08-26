@@ -53,6 +53,7 @@ describe('MarkdownBacklinks', () => {
           draftMarkdown={DRAFT_MARKDOWN}
           savedMarkdown={DRAFT_MARKDOWN}
           savedAssetUrls={{}}
+          assets={[]}
           entries={[makeEntry('atlas-id', 'Atlas'), makeEntry('empire-id', 'Empire', ['Imperium'])]}
           onRevealSelection={onRevealSelection}
           onReplaceAsset={onReplaceAsset}
@@ -89,6 +90,7 @@ describe('MarkdownBacklinks', () => {
           draftMarkdown=""
           savedMarkdown=""
           savedAssetUrls={{}}
+          assets={[]}
           entries={[]}
           onRevealSelection={vi.fn()}
           onReplaceAsset={vi.fn()}
@@ -98,5 +100,69 @@ describe('MarkdownBacklinks', () => {
 
     expect(screen.getByText(/backlinks appear after you save/i)).toBeInTheDocument();
     expect(screen.getByText(/no raw references or missing images need recovery/i)).toBeInTheDocument();
+  });
+
+  it('uses the canonical asset list to recover a deleted UUID-shaped reference', () => {
+    const deletedAssetId = '123e4567-e89b-12d3-a456-426614174000';
+    const markdown = `![Deleted map](asset://${deletedAssetId})`;
+
+    render(
+      <MemoryRouter>
+        <MarkdownBacklinks
+          universeId="U1"
+          backlinks={[]}
+          draftMarkdown={markdown}
+          savedMarkdown={markdown}
+          savedAssetUrls={{ [deletedAssetId]: '/api/universes/U1/assets/fallback/raw' }}
+          assets={[]}
+          entries={[]}
+          onRevealSelection={vi.fn()}
+          onReplaceAsset={vi.fn()}
+        />
+      </MemoryRouter>,
+    );
+
+    expect(screen.getByRole('button', { name: /replace image/i })).toBeInTheDocument();
+  });
+
+  it('only offers recovery for supported Markdown, excluding fences, raw blocks, and inline code', () => {
+    const markdown = [
+      '```md',
+      '[[fenced-link]]',
+      '![Fenced image](asset://fenced-asset)',
+      '```',
+      '',
+      '`[[inline-link]]` `![Inline image](asset://inline-asset)`',
+      '',
+      ':::mermaid',
+      '[[raw-link]]',
+      '![Raw image](asset://raw-asset)',
+      ':::',
+      '',
+      '[[supported-link]]',
+      '![Supported image](asset://supported-asset)',
+    ].join('\n');
+
+    render(
+      <MemoryRouter>
+        <MarkdownBacklinks
+          universeId="U1"
+          backlinks={[]}
+          draftMarkdown={markdown}
+          savedMarkdown={markdown}
+          savedAssetUrls={{}}
+          assets={[]}
+          entries={[]}
+          onRevealSelection={vi.fn()}
+          onReplaceAsset={vi.fn()}
+        />
+      </MemoryRouter>,
+    );
+
+    expect(screen.getByText('[[supported-link]]')).toBeInTheDocument();
+    expect(screen.queryByText('[[fenced-link]]')).not.toBeInTheDocument();
+    expect(screen.queryByText('[[raw-link]]')).not.toBeInTheDocument();
+    expect(screen.queryByText('[[inline-link]]')).not.toBeInTheDocument();
+    expect(screen.getAllByRole('button', { name: /replace image/i })).toHaveLength(1);
   });
 });

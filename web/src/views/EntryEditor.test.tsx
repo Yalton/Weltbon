@@ -725,7 +725,7 @@ describe('EntryEditor authoring navigation and recovery (Task 6)', () => {
 
   it('shows outline, canonical backlinks, and recovery actions wired to source/picker flow', async () => {
     const user = userEvent.setup();
-    const markdown = '# Intro\n\n## Details\n\n[[Glossary]]\n\n![Map](asset://lost-asset)';
+    const markdown = '# Intro\n\n## Details\n\n## Details\n\n[[Glossary]]\n\n![Map](asset://lost-asset)';
     renderEditorForAuthoringPanels({
       detailOverrides: {
         body: markdown,
@@ -781,11 +781,17 @@ describe('EntryEditor authoring navigation and recovery (Task 6)', () => {
     expect(screen.getAllByText('[[Glossary]]').length).toBeGreaterThanOrEqual(2);
     expect(screen.getByRole('button', { name: /open in source/i })).toBeInTheDocument();
 
-    await user.click(screen.getByRole('button', { name: 'Details' }));
-    const source = await screen.findByRole('textbox', { name: 'Entry body' }) as HTMLTextAreaElement;
-    expect(source.selectionStart).toBe(markdown.indexOf('## Details'));
+    const liveHeadings = await screen.findAllByRole('heading', { name: 'Details' });
+    expect(liveHeadings[0]).toHaveAttribute('id', 'details');
+    expect(liveHeadings[1]).toHaveAttribute('id', 'details-2');
+    const scrollIntoView = vi.fn();
+    liveHeadings[1].scrollIntoView = scrollIntoView;
+    await user.click(screen.getAllByRole('button', { name: 'Details' })[1]);
+    expect(scrollIntoView).toHaveBeenCalled();
+    expect(document.querySelector('textarea[aria-label="Entry body"]')).not.toBeInTheDocument();
 
     await user.click(screen.getByRole('button', { name: /open in source/i }));
+    const source = await screen.findByRole('textbox', { name: 'Entry body' }) as HTMLTextAreaElement;
     expect(source.selectionStart).toBe(markdown.indexOf('[[Glossary]]'));
     expect(source.selectionEnd).toBe(markdown.indexOf('[[Glossary]]') + '[[Glossary]]'.length);
 

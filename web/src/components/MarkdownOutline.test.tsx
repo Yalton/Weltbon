@@ -82,4 +82,32 @@ describe('MarkdownOutline', () => {
 
     expect(screen.getByText(/add a heading to build the outline/i)).toBeInTheDocument();
   });
+
+  it('does not treat a four-space-indented code line as an ATX heading', () => {
+    const markdown = '    # Hidden in an indented code block\n# Visible';
+
+    expect(extractMarkdownHeadings(markdown)).toEqual([
+      {
+        anchor: 'visible',
+        depth: 1,
+        end: markdown.indexOf('# Visible') + '# Visible'.length,
+        start: markdown.indexOf('# Visible'),
+        text: 'Visible',
+      },
+    ]);
+  });
+
+  it('resumes after a CRLF fenced block closes', () => {
+    const markdown = ['```md', '# Hidden in a fence', '```', '# Visible'].join('\r\n');
+
+    expect(extractMarkdownHeadings(markdown)).toEqual([
+      {
+        anchor: 'visible',
+        depth: 1,
+        end: markdown.indexOf('# Visible') + '# Visible'.length,
+        start: markdown.indexOf('# Visible'),
+        text: 'Visible',
+      },
+    ]);
+  });
 });

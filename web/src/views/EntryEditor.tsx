@@ -5,6 +5,7 @@ import { zodResolver } from '@hookform/resolvers/zod';
 import { z } from 'zod';
 import * as DropdownMenu from '@radix-ui/react-dropdown-menu';
 import { useEntry, useCreateEntry, useUpdateEntry, useEntries, previewEntryUpdate } from '../hooks/useEntries';
+import { useAssets } from '../hooks/useAssets';
 import { useUniverse } from '../hooks/useUniverse';
 import { TagInput } from '../components/TagInput';
 import { MetaEditor } from '../components/MetaEditor';
@@ -58,6 +59,7 @@ export function EntryEditor() {
   // owns its own useEntries subscription AND the active selection (CR-01); this call
   // is prefetch only — its result is intentionally not bound or used for ranking.
   const { data: allEntries = [] } = useEntries(uid ?? '');
+  const { data: assets } = useAssets(uid ?? '');
 
   const [tags, setTags] = useState<string[]>([]);
   // Phase 45 XREF-04 (D-09) — alias chips placed immediately after Tags field.
@@ -307,7 +309,7 @@ export function EntryEditor() {
   };
 
   const handleOutlineNavigate = (heading: MarkdownHeading) => {
-    revealMarkdownSelection({ start: heading.start, end: heading.end });
+    markdownEditorRef.current?.navigateToHeading(heading.anchor);
   };
 
   const handleReplaceAsset = (selection: MarkdownAssetRecoverySelection) => {
@@ -447,6 +449,7 @@ export function EntryEditor() {
                     draftMarkdown={watchedBody}
                     savedMarkdown={existingEntry?.body ?? ''}
                     savedAssetUrls={existingEntry?.assetUrls ?? {}}
+                    assets={assets}
                     entries={allEntries}
                     onRevealSelection={revealMarkdownSelection}
                     onReplaceAsset={handleReplaceAsset}
