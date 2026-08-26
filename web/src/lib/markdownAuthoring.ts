@@ -61,6 +61,12 @@ function tagsFromRegion(region: FrontmatterRegion): { tags: string[]; diagnostic
   if (analysis.diagnostic) {
     return { tags: isolatedTagsFromLines(lines), diagnostics: [analysis.diagnostic] };
   }
+  if (astTags.keyRange === undefined && ((isMap(root) && root.flow) || hasExplicitDocumentEnd(yaml))) {
+    return {
+      tags: [],
+      diagnostics: [{ severity: 'error', message: 'Frontmatter tags require an unterminated block mapping when adding the first tag.' }],
+    };
+  }
   return { tags: astTags.tags, diagnostics: [] };
 }
 
@@ -104,6 +110,10 @@ type TagsNodeResult = {
 function frontmatterYaml(region: FrontmatterRegion): string {
   const openingEnd = region.text.indexOf('\n');
   return region.text.slice(openingEnd + 1, region.closeStart);
+}
+
+function hasExplicitDocumentEnd(source: string): boolean {
+  return /(?:^|\r?\n)\.\.\.(?:\r?\n|$)/.test(source);
 }
 
 function canonicalTagsKeyLine(key: unknown, source: string): string | null {
@@ -242,6 +252,7 @@ export function replaceSupportedFrontmatterTags(markdown: string, tags: string[]
   if (analysis.diagnostic || (root !== null && root !== undefined && !isMap(root))) return markdown;
   const astTags = isMap(root) ? tagsFromYamlMap(root, yaml) : { tags: [], diagnostic: null };
   if (astTags.diagnostic) return markdown;
+  if (astTags.keyRange === undefined && ((isMap(root) && root.flow) || hasExplicitDocumentEnd(yaml))) return markdown;
   const serializedTags = tags.map(serializeTag);
   if (serializedTags.some((tag) => tag === null)) return markdown;
   const serialized = `tags: [${serializedTags.join(', ')}]`;

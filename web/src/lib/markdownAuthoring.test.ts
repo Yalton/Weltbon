@@ -30,6 +30,16 @@ describe('markdown authoring dialect helpers', () => {
     expect(replaceSupportedFrontmatterTags('---\n---\nBody', ['x'])).toBe('---\ntags: [x]\n---\nBody');
   });
 
+  it('fails closed when adding tags to flow-style or explicitly terminated roots', () => {
+    for (const markdown of [
+      '---\n{ title: Story }\n---\nBody',
+      '---\ntitle: Story\n...\n---\nBody',
+    ]) {
+      expect(parseMarkdownFrontmatter(markdown).diagnostics).not.toEqual([]);
+      expect(replaceSupportedFrontmatterTags(markdown, ['x'])).toBe(markdown);
+    }
+  });
+
   it('keeps malformed, duplicate, and complex tag fields byte-for-byte', () => {
     for (const markdown of [
       '---\ntags: ["unterminated]\n---\nBody',
