@@ -338,6 +338,16 @@ describe('MarkdownAuthoringEditor', () => {
     expect(screen.getByRole('textbox', { name: 'Entry body' })).toHaveValue(malformedTable);
   });
 
+  it('isolates an incomplete table pair before a prose boundary', () => {
+    const malformedTable = '| Name | Value |\n| --- |';
+    const markdownDocument = `${malformedTable}\n\nAfter`;
+    render(<ControlledEditor value={markdownDocument} />);
+
+    expect(screen.getByLabelText('Raw Markdown block').textContent).toBe(malformedTable);
+    fireEvent.click(screen.getByRole('button', { name: 'Source' }));
+    expect(screen.getByRole('textbox', { name: 'Entry body' })).toHaveValue(markdownDocument);
+  });
+
   it.each([
     '| Name | Value |\n| --- | --- |\n| One | 1 |',
     '| Name | Value |\n| --- | --- |',

@@ -187,7 +187,9 @@ export function findMalformedMarkdownTableRanges(markdown: string): MarkdownTabl
       : null;
     if (!firstRow) {
       if (validDelimiter) continue;
-      if (index + 1 !== lines.length - 1 || header.length < 2 || !delimiter.some(looksLikeDelimiterCell)) continue;
+      const nextLine = index + 2 < lines.length ? lines[index + 2] : null;
+      const boundary = nextLine === null || nextLine.trim() === '' || !splitTableRow(nextLine);
+      if (!boundary || header.length < 2 || !delimiter.some(looksLikeDelimiterCell)) continue;
       if (!lines[index].trimStart().startsWith('|') && !lines[index + 1].trimStart().startsWith('|')) continue;
       ranges.push({
         start: lineStart(markdown, index),
