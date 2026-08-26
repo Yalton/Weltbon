@@ -50,6 +50,27 @@ describe('markdown authoring dialect helpers', () => {
     );
   });
 
+  it('parses serializer-emitted quoted commas, quotes, and Unicode tags', () => {
+    const markdown = '---\ntags: ["a, b", "say \\\"hi\\\"", "café"]\n---\nBody';
+
+    expect(parseMarkdownFrontmatter(markdown)).toMatchObject({
+      tags: ['a, b', 'say "hi"', 'café'],
+      diagnostics: [],
+    });
+  });
+
+  it('creates a leading frontmatter block while preserving an existing body and line endings', () => {
+    expect(replaceSupportedFrontmatterTags('Body\r\n', ['café'])).toBe(
+      '---\r\ntags: ["café"]\r\n---\r\nBody\r\n',
+    );
+  });
+
+  it('keeps an explicit empty tags field after removing the final chip', () => {
+    expect(replaceSupportedFrontmatterTags('---\r\ntitle: Story\r\ntags:\r\n  - one\r\ncustom: keep\r\n---\r\nBody', [])).toBe(
+      '---\r\ntitle: Story\r\ntags: []\r\ncustom: keep\r\n---\r\nBody',
+    );
+  });
+
   it('preserves unknown frontmatter and all markdown syntax when changing tags', () => {
     const markdown =
       '---\ncustom: "x: y"\ntags: [one]\nunknown:\n  nested: true\n---\n> [!note]\n> [[Entry]] ![[asset]] ![alt](asset://abc)\n';

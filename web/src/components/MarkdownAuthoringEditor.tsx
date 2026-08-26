@@ -16,6 +16,7 @@ import '@mdxeditor/editor/style.css';
 import './MarkdownAuthoringEditor.css';
 import { MarkdownAuthoringToolbar } from './MarkdownAuthoringToolbar';
 import { MarkdownCommandPalette } from './MarkdownCommandPalette';
+import { MarkdownFrontmatterPanel } from './MarkdownFrontmatterPanel';
 import { MarkdownLinkDialog, parseMarkdownLink, type MarkdownLinkKind } from './MarkdownLinkDialog';
 import {
   findMalformedMarkdownTableRanges,
@@ -29,6 +30,7 @@ import {
   useRef,
   useState,
 } from 'react';
+import { parseMarkdownFrontmatter } from '../lib/markdownAuthoring';
 
 export type MarkdownAuthoringEditorProps = {
   value: string;
@@ -416,6 +418,10 @@ function unsupportedDirectiveRanges(markdown: string): Array<{ start: number; en
 
 export function splitUnsupportedBlocks(markdown: string): MarkdownPart[] {
   const ranges: Array<{ start: number; end: number }> = unsupportedDirectiveRanges(markdown);
+  const frontmatter = parseMarkdownFrontmatter(markdown);
+  if (frontmatter.raw !== null && frontmatter.diagnostics.length === 0) {
+    ranges.push({ start: 0, end: frontmatter.raw.length });
+  }
   const protectedLines = markdownFenceProtectedLines(markdown);
   const lines = markdown.split('\n');
   const lineStarts: number[] = [];
@@ -799,7 +805,8 @@ export const MarkdownAuthoringEditor = forwardRef<
     markdown?: string;
   } | null>(null);
   const parts = splitUnsupportedBlocks(value);
-  const rawFallback = liveParserError !== null;
+  const frontmatter = parseMarkdownFrontmatter(value);
+  const rawFallback = liveParserError !== null || frontmatter.diagnostics.length > 0;
 
   useEffect(() => {
     if (value === latestMarkdown.current) return;
@@ -1161,6 +1168,15 @@ export const MarkdownAuthoringEditor = forwardRef<
           Source
         </button>
       </div>
+      <MarkdownFrontmatterPanel
+        markdown={value}
+        disabled={disabled}
+        onChange={(markdown) => {
+          latestMarkdown.current = markdown;
+          onChange(markdown);
+        }}
+        onEditInSource={() => switchMode('source')}
+      />
 
       <div hidden={mode !== 'live'} aria-hidden={mode !== 'live'}>
         {rawFallback ? (

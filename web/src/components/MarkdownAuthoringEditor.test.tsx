@@ -776,4 +776,30 @@ describe('MarkdownAuthoringEditor', () => {
     expect(markdownAuthoringEditorCss).toContain('.markdown-authoring-editor-theme .prose.prose pre');
     expect(markdownAuthoringEditorCss).toContain('.markdown-authoring-editor-theme .prose.prose blockquote');
   });
+
+  it('publishes document tag edits through the canonical Markdown value', () => {
+    render(<ControlledEditor value={'---\ntitle: Story\ncustom: keep\n---\nBody'} />);
+
+    const input = screen.getByPlaceholderText('Add a tag...');
+    fireEvent.change(input, { target: { value: 'document-tag' } });
+    fireEvent.keyDown(input, { key: 'Enter' });
+
+    expect(screen.getByTestId('markdown-value').textContent).toBe(
+      '---\ntitle: Story\ncustom: keep\ntags: [document-tag]\n---\nBody',
+    );
+    fireEvent.click(screen.getByRole('button', { name: 'Source' }));
+    expect(screen.getByRole('textbox', { name: 'Entry body' })).toHaveValue(
+      '---\ntitle: Story\ncustom: keep\ntags: [document-tag]\n---\nBody',
+    );
+  });
+
+  it('falls back to a raw live document and recovers malformed frontmatter in Source', () => {
+    const malformed = '---\ntags: ["unterminated]\n---\nBody';
+    render(<ControlledEditor value={malformed} />);
+
+    expect(screen.getByLabelText('Raw Markdown block').textContent).toBe(malformed);
+    fireEvent.click(screen.getByRole('button', { name: 'Edit in Source' }));
+
+    expect(screen.getByRole('textbox', { name: 'Entry body' })).toHaveValue(malformed);
+  });
 });
