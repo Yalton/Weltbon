@@ -60,6 +60,13 @@ describe('Markdown table transforms', () => {
     expect(addMarkdownTableRow(markdown)).toBe(`${directive}\n\n${TABLE}\n|  |  |`);
   });
 
+  it('releases later tables after a blockquote-nested list-directive closer', () => {
+    const directive = '> - :::mermaid\n>   graph TD\n>   :::';
+    const markdown = `${directive}\n\n${TABLE}`;
+
+    expect(addMarkdownTableRow(markdown)).toBe(`${directive}\n\n${TABLE}\n|  |  |`);
+  });
+
   it('does not rewrite pipe-shaped tables inside list or blockquote fences', () => {
     const nestedListFence = '- ~~~md\n  | Name | Value |\n  | --- | --- |\n  | Example | 1 |\n  ~~~';
     const nestedBlockquoteFence = '> ~~~md\n  | Name | Value |\n  | --- | --- |\n  | Example | 1 |\n> ~~~';

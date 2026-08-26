@@ -158,17 +158,20 @@ function sameMarkdownContainer(
   if (left.prefixes.length === right.prefixes.length && left.prefixes.every(
     (prefix, index) => prefix.kind === right.prefixes[index].kind,
   )) return true;
-  let droppedLists = 0;
-  while (droppedLists < left.prefixes.length && left.prefixes[droppedLists].kind === 'list') droppedLists += 1;
-  if (droppedLists === 0) return false;
-  const remaining = left.prefixes.slice(droppedLists);
-  if (remaining.length !== right.prefixes.length || !remaining.every(
-    (prefix, index) => prefix.kind === right.prefixes[index].kind,
-  )) return false;
-  const requiredIndentation = left.prefixes
-    .slice(0, droppedLists)
-    .reduce((total, prefix) => total + prefix.length, 0);
-  return right.indentation >= requiredIndentation;
+  for (let start = 0; start <= left.prefixes.length; start += 1) {
+    if (!left.prefixes.slice(0, start).every((prefix) => prefix.kind === 'list')) continue;
+    for (let end = start; end <= left.prefixes.length; end += 1) {
+      if (!left.prefixes.slice(end).every((prefix) => prefix.kind === 'list')) continue;
+      const matched = left.prefixes.slice(start, end);
+      if (matched.length !== right.prefixes.length || !matched.every(
+        (prefix, index) => prefix.kind === right.prefixes[index].kind,
+      )) continue;
+      const requiredIndentation = [...left.prefixes.slice(0, start), ...left.prefixes.slice(end)]
+        .reduce((total, prefix) => total + prefix.length, 0);
+      if (right.indentation >= requiredIndentation) return true;
+    }
+  }
+  return false;
 }
 
 function openingFenceMarker(line: string): string | null {
@@ -383,9 +386,10 @@ function unsupportedDirectiveRanges(markdown: string): Array<{ start: number; en
   for (let index = 0; index < lines.length; index += 1) {
     if (directiveStart !== -1) {
       const body = lines[index].slice(markdownBlockPrefixEnd(lines[index]));
+      const prefixEnd = markdownBlockPrefixEnd(lines[index]);
       const currentContainer = {
-        ...fenceContainer(lines[index].slice(0, markdownBlockPrefixEnd(lines[index]))),
-        indentation: lines[index].match(/^[ \t]*/)?.[0].length ?? 0,
+        ...fenceContainer(lines[index].slice(0, prefixEnd)),
+        indentation: lines[index].slice(prefixEnd).match(/^[ \t]*/)?.[0].length ?? 0,
       };
       if (
         !protectedLines[index] &&

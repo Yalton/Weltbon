@@ -50,27 +50,25 @@ type FenceLine = { marker: '`' | '~'; length: number; suffix: string };
 type ParsedFenceLine = FenceLine & { containers: MarkdownContainer[]; indentation: number };
 
 function parseMarkdownContainers(line: string): { rest: string; containers: MarkdownContainer[]; indentation: number } {
-  const indentation = line.match(/^[ \t]*/)?.[0].length ?? 0;
-  let rest = line.trimStart();
+  let rest = line;
   const containers: MarkdownContainer[] = [];
-  let stripped = true;
-  while (stripped) {
-    stripped = false;
-    const blockquote = rest.match(/^>\s?/);
+  while (true) {
+    const leading = rest.match(/^[ \t]*/)?.[0].length ?? 0;
+    const content = rest.slice(leading);
+    const blockquote = content.match(/^>\s?/);
     if (blockquote) {
-      containers.push({ kind: 'blockquote', length: blockquote[0].length });
-      rest = rest.slice(blockquote[0].length).trimStart();
-      stripped = true;
+      containers.push({ kind: 'blockquote', length: leading + blockquote[0].length });
+      rest = content.slice(blockquote[0].length);
       continue;
     }
-    const list = rest.match(/^(?:[-+*]|\d+[.)])\s+/);
+    const list = content.match(/^(?:[-+*]|\d+[.)])\s+/);
     if (list) {
-      containers.push({ kind: 'list', length: list[0].length });
-      rest = rest.slice(list[0].length).trimStart();
-      stripped = true;
+      containers.push({ kind: 'list', length: leading + list[0].length });
+      rest = content.slice(list[0].length);
+      continue;
     }
+    return { rest: rest.trimStart(), containers, indentation: leading };
   }
-  return { rest, containers, indentation };
 }
 
 function parseFenceLine(line: string): ParsedFenceLine | null {
@@ -92,15 +90,17 @@ function sameContainerKinds(left: MarkdownContainer[], right: MarkdownContainer[
 
 function containerMatches(opening: MarkdownContainer[], line: { containers: MarkdownContainer[]; indentation: number }): boolean {
   if (sameContainerKinds(opening, line.containers)) return true;
-  let droppedLists = 0;
-  while (droppedLists < opening.length && opening[droppedLists].kind === 'list') droppedLists += 1;
-  if (droppedLists === 0) return false;
-  const remaining = opening.slice(droppedLists);
-  if (!sameContainerKinds(remaining, line.containers)) return false;
-  const requiredIndentation = opening
-    .slice(0, droppedLists)
-    .reduce((total, container) => total + container.length, 0);
-  return line.indentation >= requiredIndentation;
+  for (let start = 0; start <= opening.length; start += 1) {
+    if (!opening.slice(0, start).every((container) => container.kind === 'list')) continue;
+    for (let end = start; end <= opening.length; end += 1) {
+      if (!opening.slice(end).every((container) => container.kind === 'list')) continue;
+      if (!sameContainerKinds(opening.slice(start, end), line.containers)) continue;
+      const requiredIndentation = [...opening.slice(0, start), ...opening.slice(end)]
+        .reduce((total, container) => total + container.length, 0);
+      if (line.indentation >= requiredIndentation) return true;
+    }
+  }
+  return false;
 }
 
 function fenceContainerMatches(fence: FenceState, line: ParsedFenceLine): boolean {
