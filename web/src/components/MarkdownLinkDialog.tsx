@@ -1,5 +1,6 @@
-import { useEffect, useMemo, useState } from 'react';
+import { useContext, useEffect, useMemo, useRef, useState } from 'react';
 import * as Dialog from '@radix-ui/react-dialog';
+import { QueryClientContext } from '@tanstack/react-query';
 import { useEntries, type Entry } from '../hooks/useEntries';
 import { buildInsertString, rankEntries } from './WikilinkAutocomplete';
 import { AssetPickerModal } from './AssetPickerModal';
@@ -38,6 +39,22 @@ export function buildMarkdownLink({ kind, target, label }: MarkdownLinkValue): s
     case 'image':
       return `![${label}](asset://${cleanTarget})`;
   }
+}
+
+export function parseMarkdownLink(value: string): MarkdownLinkValue | null {
+  const wikilink = value.match(/^(!?)\[\[([^\]|\n]+?)(?:\|([^\]\n]*))?\]\]$/);
+  if (wikilink) {
+    return {
+      kind: wikilink[1] ? 'embed' : 'wikilink',
+      target: wikilink[2],
+      label: wikilink[3] ?? '',
+    };
+  }
+  const image = value.match(/^!\[([^\]]*)\]\(asset:\/\/([^\)]+)\)$/);
+  if (image) return { kind: 'image', target: image[2], label: image[1] };
+  const external = value.match(/^\[([^\]]+)\]\(([^\)]+)\)$/);
+  if (external) return { kind: 'external', target: external[2], label: external[1] };
+  return null;
 }
 
 function EntrySuggestions({
@@ -86,10 +103,12 @@ export function MarkdownLinkDialog({
   initialLabel,
   entries,
 }: MarkdownLinkDialogProps) {
+  const queryClient = useContext(QueryClientContext);
   const [kind, setKind] = useState<MarkdownLinkKind>(initialKind);
   const [target, setTarget] = useState(initialTarget);
   const [label, setLabel] = useState(initialLabel ?? (initialKind === 'external' ? 'Link' : ''));
   const [assetPickerOpen, setAssetPickerOpen] = useState(false);
+  const targetRef = useRef<HTMLInputElement>(null);
 
   useEffect(() => {
     if (!open) return;
@@ -119,7 +138,10 @@ export function MarkdownLinkDialog({
           <Dialog.Content
             aria-describedby={undefined}
             className="fixed left-1/2 top-1/2 z-50 w-[min(32rem,calc(100vw-2rem))] -translate-x-1/2 -translate-y-1/2 rounded-md border border-neutral-200 bg-white p-5 shadow-lg dark:border-neutral-800 dark:bg-neutral-900"
-            onOpenAutoFocus={(event) => event.preventDefault()}
+            onOpenAutoFocus={(event) => {
+              event.preventDefault();
+              targetRef.current?.focus();
+            }}
           >
             <Dialog.Title className="text-lg font-semibold">Insert Markdown link</Dialog.Title>
             <div className="mt-4 flex flex-wrap gap-1" role="group" aria-label="Link type">
@@ -141,6 +163,7 @@ export function MarkdownLinkDialog({
 
             <label className="mt-4 block text-sm" htmlFor="markdown-link-target">{kind === 'external' ? 'URL' : kind === 'image' ? 'Asset ID' : 'Link target'}</label>
             <input
+              ref={targetRef}
               id="markdown-link-target"
               aria-label="Link target"
               value={target}
@@ -174,7 +197,7 @@ export function MarkdownLinkDialog({
                   </li>
                 ))}
               </ul>
-            ) : (kind === 'wikilink' || kind === 'embed') ? (
+            ) : (kind === 'wikilink' || kind === 'embed') && queryClient ? (
               <EntrySuggestions universeId={universeId} currentEntryId={currentEntryId} query={target} onSelect={(entry) => setTarget(entry.title)} />
             ) : null}
 

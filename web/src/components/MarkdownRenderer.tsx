@@ -68,6 +68,52 @@ function supportedCalloutType(children: React.ReactNode): string | null {
   return match?.[1].toUpperCase() ?? null;
 }
 
+function sourceBlockquoteCallouts(markdown: string): Array<string | null> {
+  const callouts: Array<string | null> = [];
+  let fence: { marker: '`' | '~'; length: number } | null = null;
+  let rawDirective = false;
+  let inBlockquote = false;
+  let blockquoteIndex = -1;
+  for (const line of markdown.split('\n')) {
+    const fenceLine = line.match(/^ {0,3}(`{3,}|~{3,})/);
+    if (fence) {
+      if (fenceLine && fenceLine[1][0] === fence.marker && fenceLine[1].length >= fence.length && line.slice(fenceLine[0].length).trim() === '') fence = null;
+      inBlockquote = false;
+      continue;
+    }
+    if (rawDirective) {
+      if (/^ {0,3}:::\s*$/.test(line)) rawDirective = false;
+      inBlockquote = false;
+      continue;
+    }
+    if (fenceLine) {
+      fence = { marker: fenceLine[1][0] as '`' | '~', length: fenceLine[1].length };
+      inBlockquote = false;
+      continue;
+    }
+    if (/^ {0,3}:::\s*\S+/.test(line)) {
+      rawDirective = true;
+      inBlockquote = false;
+      continue;
+    }
+    const quote = line.match(/^ {0,3}>[ \t]?(.*)$/);
+    if (!quote) {
+      inBlockquote = false;
+      continue;
+    }
+    if (!inBlockquote) {
+      callouts.push(null);
+      blockquoteIndex += 1;
+      inBlockquote = true;
+    }
+    if (callouts[blockquoteIndex] === null) {
+      const match = quote[1].match(/^\[!(NOTE|TIP|WARNING|[A-Za-z][A-Za-z0-9_-]*)\]/i);
+      if (match) callouts[blockquoteIndex] = match[1].toUpperCase();
+    }
+  }
+  return callouts;
+}
+
 // Re-export so callers can import the type from the MarkdownRenderer module.
 export type { WikilinkResolutionData };
 
@@ -159,29 +205,25 @@ export function MarkdownRenderer({
       }
     : undefined;
 
+  const sourceCallouts = sourceBlockquoteCallouts(content);
+  let blockquoteIndex = 0;
   const components = {
     // ReactMarkdown keeps the callout marker inside the first paragraph. Keep a
     // source-level fallback as well so this display annotation remains stable
     // across ReactMarkdown child-shape changes.
-    ...(() => {
-      const sourceCallouts = [...content.matchAll(/^ {0,3}>\s*\[!([A-Za-z][A-Za-z0-9_-]*)\]/gm)].map((match) => match[1].toUpperCase());
-      let blockquoteIndex = 0;
-      return {
-        blockquote: ({ children }: { children?: React.ReactNode }) => {
-          const sourceType = sourceCallouts[blockquoteIndex++] ?? null;
-          const calloutType = supportedCalloutType(children)
-            ?? (sourceType && ['NOTE', 'TIP', 'WARNING'].includes(sourceType) ? sourceType : null);
-          return (
-            <blockquote
-              data-callout-type={calloutType ?? undefined}
-              className={calloutType ? 'markdown-callout' : undefined}
-            >
-              {children}
-            </blockquote>
-          );
-        },
-      };
-    })(),
+    blockquote: ({ children }: { children?: React.ReactNode }) => {
+      const sourceType = sourceCallouts[blockquoteIndex++] ?? null;
+      const calloutType = supportedCalloutType(children)
+        ?? (sourceType && ['NOTE', 'TIP', 'WARNING'].includes(sourceType) ? sourceType : null);
+      return (
+        <blockquote
+          data-callout-type={calloutType ?? undefined}
+          className={calloutType ? 'markdown-callout' : undefined}
+        >
+          {children}
+        </blockquote>
+      );
+    },
     ...(wikis
       ? {
           // Wrap p and li children in WikilinkText so [[word]] tokens are

@@ -28,6 +28,13 @@ describe('Markdown table transforms', () => {
     expect(addMarkdownTableRow(malformed)).toBe(malformed);
     expect(addMarkdownTableColumn(malformed)).toBe(malformed);
   });
+
+  it('does not rewrite pipe-shaped tables inside fenced code', () => {
+    const codeSample = '| Name | Value |\n| --- | --- |\n| Example | 1 |';
+    const markdown = `\`\`\`md\n${codeSample}\n\`\`\`\n\n${TABLE}`;
+
+    expect(addMarkdownTableRow(markdown)).toBe(`\`\`\`md\n${codeSample}\n\`\`\`\n\n${TABLE}\n|  |  |`);
+  });
 });
 
 describe('MarkdownTableControls', () => {

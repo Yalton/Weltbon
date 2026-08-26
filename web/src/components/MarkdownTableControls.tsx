@@ -39,15 +39,52 @@ function lineStart(markdown: string, lineIndex: number): number {
   return offset;
 }
 
+type FenceState = { marker: '`' | '~'; length: number };
+
+function protectedMarkdownLines(lines: string[]): boolean[] {
+  const protectedLines = lines.map(() => false);
+  let fence: FenceState | null = null;
+  let rawDirective = false;
+
+  lines.forEach((line, index) => {
+    const fenceLine = line.match(/^ {0,3}(`{3,}|~{3,})/);
+    if (fence) {
+      protectedLines[index] = true;
+      if (fenceLine && fenceLine[1][0] === fence.marker && fenceLine[1].length >= fence.length && line.slice(fenceLine[0].length).trim() === '') {
+        fence = null;
+      }
+      return;
+    }
+    if (rawDirective) {
+      protectedLines[index] = true;
+      if (/^ {0,3}:::\s*$/.test(line)) rawDirective = false;
+      return;
+    }
+    if (fenceLine) {
+      protectedLines[index] = true;
+      fence = { marker: fenceLine[1][0] as '`' | '~', length: fenceLine[1].length };
+      return;
+    }
+    if (/^ {0,3}:::\s*\S+/.test(line)) {
+      protectedLines[index] = true;
+      rawDirective = true;
+    }
+  });
+  return protectedLines;
+}
+
 function findTable(markdown: string): TableLocation | null {
   const lines = markdown.split('\n');
+  const protectedLines = protectedMarkdownLines(lines);
   for (let index = 0; index < lines.length - 1; index += 1) {
+    if (protectedLines[index] || protectedLines[index + 1]) continue;
     const header = splitTableRow(lines[index]);
     const delimiter = splitTableRow(lines[index + 1]);
     if (!header || !delimiter || header.length < 1 || header.length !== delimiter.length || !isDelimiterRow(delimiter)) continue;
     const rows = [header];
     let endIndex = index + 1;
     for (let rowIndex = index + 2; rowIndex < lines.length; rowIndex += 1) {
+      if (protectedLines[rowIndex]) break;
       const row = splitTableRow(lines[rowIndex]);
       if (!row || row.length !== header.length) break;
       rows.push(row);

@@ -16,7 +16,7 @@ import '@mdxeditor/editor/style.css';
 import './MarkdownAuthoringEditor.css';
 import { MarkdownAuthoringToolbar } from './MarkdownAuthoringToolbar';
 import { MarkdownCommandPalette } from './MarkdownCommandPalette';
-import { MarkdownLinkDialog, type MarkdownLinkKind } from './MarkdownLinkDialog';
+import { MarkdownLinkDialog, parseMarkdownLink, type MarkdownLinkKind } from './MarkdownLinkDialog';
 import { MarkdownTableControls } from './MarkdownTableControls';
 import {
   forwardRef,
@@ -651,6 +651,9 @@ export const MarkdownAuthoringEditor = forwardRef<
     mode: 'source' | 'live';
     index: number;
     selection: Selection;
+    element: HTMLElement;
+    range: Range | null;
+    markdown?: string;
   } | null>(null);
   const parts = splitUnsupportedBlocks(value);
   const rawFallback = liveParserError !== null;
@@ -795,13 +798,16 @@ export const MarkdownAuthoringEditor = forwardRef<
   const openLinkDialog = () => {
     if (disabled) return;
     if (mode === 'source') {
-      const selection = sourceSelection.current;
-      linkOrigin.current = { mode: 'source', index: 0, selection };
-      setLinkDialogInitial({
-        kind: 'external',
-        target: '',
-        label: latestMarkdown.current.slice(selection.start, selection.end) || 'Link',
-      });
+      const source = sourceRef.current;
+      const selection = source
+        ? { start: source.selectionStart, end: source.selectionEnd }
+        : sourceSelection.current;
+      sourceSelection.current = selection;
+      const selected = latestMarkdown.current.slice(selection.start, selection.end);
+      const parsed = parseMarkdownLink(selected);
+      if (!source) return;
+      linkOrigin.current = { mode: 'source', index: 0, selection, element: source, range: null, markdown: latestMarkdown.current };
+      setLinkDialogInitial(parsed ?? { kind: 'external', target: '', label: selected || 'Link' });
       setLinkDialogOpen(true);
       return;
     }
@@ -812,13 +818,33 @@ export const MarkdownAuthoringEditor = forwardRef<
     const markdown = editor?.getMarkdown() ?? parts[index]?.content ?? '';
     const selection = editable ? liveMarkdownSelection(editable, markdown) : null;
     if (!editor || !editable || !selection) return;
-    linkOrigin.current = { mode: 'live', index, selection };
-    setLinkDialogInitial({
-      kind: 'external',
-      target: '',
-      label: markdown.slice(selection.start, selection.end) || 'Link',
-    });
+    const selected = markdown.slice(selection.start, selection.end);
+    const parsed = parseMarkdownLink(selected);
+    const domSelection = window.getSelection();
+    const range = domSelection?.rangeCount && editable.contains(domSelection.getRangeAt(0).commonAncestorContainer)
+      ? domSelection.getRangeAt(0).cloneRange()
+      : null;
+    linkOrigin.current = { mode: 'live', index, selection, element: editable, range, markdown };
+    setLinkDialogInitial(parsed ?? { kind: 'external', target: '', label: selected || 'Link' });
     setLinkDialogOpen(true);
+  };
+
+  const restoreLinkOrigin = () => {
+    const origin = linkOrigin.current;
+    if (!origin?.element.isConnected) return;
+    origin.element.focus();
+    if (origin.mode === 'source') {
+      const source = origin.element as HTMLTextAreaElement;
+      source.setSelectionRange(origin.selection.start, origin.selection.end);
+      sourceSelection.current = origin.selection;
+      return;
+    }
+    if (origin.markdown && restoreLiveMarkdownSelection(origin.element, origin.markdown, origin.selection)) return;
+    if (origin.range?.commonAncestorContainer.isConnected) {
+      const selection = window.getSelection();
+      selection?.removeAllRanges();
+      selection?.addRange(origin.range);
+    }
   };
 
   const replaceLinkSelection = (markdown: string) => {
@@ -831,18 +857,27 @@ export const MarkdownAuthoringEditor = forwardRef<
       const replaced = replaceMarkdownSelection(latestMarkdown.current, origin.selection, markdown);
       sourceSelection.current = replaced.selection;
       latestMarkdown.current = replaced.markdown;
+      origin.selection = replaced.selection;
+      origin.markdown = replaced.markdown;
       onChange(replaced.markdown);
       return;
     }
     const editor = mdxEditorRefs.current[origin.index];
     const current = editor?.getMarkdown() ?? parts[origin.index]?.content ?? '';
     const replaced = replaceMarkdownSelection(current, origin.selection, markdown);
-    editor?.setMarkdown(replaced.markdown);
-    changeLivePart(origin.index, replaced.markdown);
+    const canonical = canonicalizeLiveMarkdown(replaced.markdown, parts[origin.index]?.content);
+    origin.selection = replaced.selection;
+    origin.markdown = canonical;
+    editor?.setMarkdown(canonical);
+    changeLivePart(origin.index, canonical);
   };
 
   const executeCommand = (commandId: MarkdownAuthoringCommandId) => {
     if (disabled) return;
+    if (commandId === 'link') {
+      openLinkDialog();
+      return;
+    }
     const command = markdownAuthoringCommands.find(({ id }) => id === commandId);
     if (!command) return;
     if (mode === 'source') {
@@ -1029,7 +1064,7 @@ export const MarkdownAuthoringEditor = forwardRef<
         onOpenChange={setPaletteOpen}
         commands={markdownAuthoringCommands}
         disabled={disabled}
-        onCommand={executeCommand}
+        onCommand={(command) => command === 'link' ? openLinkDialog() : executeCommand(command)}
         returnFocusRef={paletteReturnFocusRef}
         onRestoreFocus={restorePaletteOrigin}
       />
@@ -1037,7 +1072,12 @@ export const MarkdownAuthoringEditor = forwardRef<
         open={linkDialogOpen}
         onOpenChange={(open) => {
           setLinkDialogOpen(open);
-          if (!open) linkOrigin.current = null;
+          if (!open) {
+            queueMicrotask(() => {
+              restoreLinkOrigin();
+              linkOrigin.current = null;
+            });
+          }
         }}
         onInsert={replaceLinkSelection}
         universeId={universeId}

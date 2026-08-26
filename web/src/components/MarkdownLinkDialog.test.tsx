@@ -23,6 +23,8 @@ describe('MarkdownLinkDialog', () => {
     const onInsert = vi.fn();
     render(<MarkdownLinkDialog open onOpenChange={vi.fn()} onInsert={onInsert} universeId="u1" entries={[]} />);
 
+    expect(screen.getByLabelText('Link target')).toHaveFocus();
+
     fireEvent.change(screen.getByLabelText('Link target'), { target: { value: 'Missing entry' } });
     fireEvent.click(screen.getByRole('button', { name: 'Insert link' }));
 

@@ -200,6 +200,14 @@ describe('authoring callouts', () => {
     expect(container.querySelector('[data-callout-type]')).toBeNull();
     expect(container.querySelector('blockquote')).toHaveTextContent('[!DANGER]');
   });
+
+  it('does not classify a real blockquote from a callout marker inside a fenced code block', () => {
+    const content = '```md\n> [!NOTE]\n> This is code.\n```\n\n> [!DANGER]\n> Keep this unsupported.';
+    const { container } = render(<MarkdownRenderer content={content} />);
+
+    expect(container.querySelector('[data-callout-type]')).toBeNull();
+    expect(container.querySelector('blockquote')).toHaveTextContent('[!DANGER]');
+  });
 });
 
 // ---------------------------------------------------------------------------

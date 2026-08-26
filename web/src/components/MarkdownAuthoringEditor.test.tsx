@@ -181,6 +181,69 @@ describe('MarkdownAuthoringEditor', () => {
     expect(onChange).toHaveBeenLastCalledWith('[Example](https://example.com)');
   });
 
+  it.each([
+    ['[[Title]]', 'Wikilink', 'Title', '', '[[Renamed]]'],
+    ['[[Title|alias]]', 'Wikilink', 'Title', 'alias', '[[Renamed|alias]]'],
+    ['![[Title]]', 'Embed', 'Title', '', '![[Renamed]]'],
+  ])('initializes %s as its canonical dialog kind and preserves its alias', (selected, kind, target, alias, expected) => {
+    const onChange = vi.fn();
+    render(<MarkdownAuthoringEditor value={selected} onChange={onChange} universeId="U1" />);
+
+    fireEvent.click(screen.getByRole('button', { name: 'Source' }));
+    const source = screen.getByRole('textbox', { name: 'Entry body' }) as HTMLTextAreaElement;
+    source.setSelectionRange(0, selected.length);
+    fireEvent.select(source);
+    fireEvent.click(screen.getByRole('button', { name: 'Link' }));
+
+    expect(screen.getByRole('button', { name: kind })).toHaveAttribute('aria-pressed', 'true');
+    expect(screen.getByLabelText('Link target')).toHaveValue(target);
+    expect(screen.getByLabelText('Display text / alt text')).toHaveValue(alias);
+
+    fireEvent.change(screen.getByLabelText('Link target'), { target: { value: 'Renamed' } });
+    fireEvent.click(screen.getByRole('button', { name: 'Insert link' }));
+    expect(onChange).toHaveBeenLastCalledWith(expected);
+  });
+
+  it('routes Ctrl/Cmd-K to the link dialog instead of inserting a placeholder', () => {
+    const onChange = vi.fn();
+    render(<MarkdownAuthoringEditor value="selected" onChange={onChange} universeId="U1" />);
+    fireEvent.click(screen.getByRole('button', { name: 'Source' }));
+
+    fireEvent.keyDown(screen.getByRole('region', { name: 'Markdown authoring editor' }), { key: 'k', ctrlKey: true });
+
+    expect(screen.getByRole('dialog', { name: 'Insert Markdown link' })).toBeInTheDocument();
+    expect(onChange).not.toHaveBeenCalled();
+  });
+
+  it('routes the Link command from the command palette to the link dialog', () => {
+    const onChange = vi.fn();
+    render(<MarkdownAuthoringEditor value="selected" onChange={onChange} universeId="U1" />);
+    fireEvent.click(screen.getByRole('button', { name: 'Source' }));
+    fireEvent.keyDown(screen.getByRole('region', { name: 'Markdown authoring editor' }), { key: 'p', ctrlKey: true, shiftKey: true });
+    fireEvent.click(screen.getByRole('option', { name: /^Link/ }));
+
+    expect(screen.getByRole('dialog', { name: 'Insert Markdown link' })).toBeInTheDocument();
+    expect(onChange).not.toHaveBeenCalled();
+  });
+
+  it('restores Source focus and selection when the link dialog is cancelled', async () => {
+    render(<MarkdownAuthoringEditor value="selected" onChange={vi.fn()} universeId="U1" />);
+    fireEvent.click(screen.getByRole('button', { name: 'Source' }));
+    const source = screen.getByRole('textbox', { name: 'Entry body' }) as HTMLTextAreaElement;
+    source.setSelectionRange(1, 5);
+    fireEvent.select(source);
+    fireEvent.click(screen.getByRole('button', { name: 'Link' }));
+    expect(screen.getByLabelText('Link target')).toHaveFocus();
+
+    fireEvent.click(screen.getByRole('button', { name: 'Cancel' }));
+
+    await waitFor(() => {
+      expect(source).toHaveFocus();
+      expect(source.selectionStart).toBe(1);
+      expect(source.selectionEnd).toBe(5);
+    });
+  });
+
   it('replaces selected Live Preview text through the link dialog', async () => {
     const onChange = vi.fn();
     render(<MarkdownAuthoringEditor value="selected" onChange={onChange} universeId="U1" />);
@@ -192,6 +255,7 @@ describe('MarkdownAuthoringEditor', () => {
     fireEvent.click(screen.getByRole('button', { name: 'Insert link' }));
 
     await waitFor(() => expect(onChange).toHaveBeenLastCalledWith('[Example](https://example.com)'));
+    expect(screen.getByRole('textbox')).toHaveFocus();
   });
 
   it('adds a row through the safe table controls in Source mode', () => {
@@ -417,13 +481,11 @@ describe('MarkdownAuthoringEditor', () => {
 
     fireEvent.keyDown(screen.getByRole('region', { name: 'Markdown authoring editor' }), { key: 'b', ctrlKey: true });
     fireEvent.keyDown(screen.getByRole('region', { name: 'Markdown authoring editor' }), { key: 'i', metaKey: true });
-    fireEvent.keyDown(screen.getByRole('region', { name: 'Markdown authoring editor' }), { key: 'k', ctrlKey: true });
     fireEvent.keyDown(screen.getByRole('region', { name: 'Markdown authoring editor' }), { key: 'p', ctrlKey: true, shiftKey: true });
 
-    expect(onChange).toHaveBeenCalledTimes(3);
+    expect(onChange).toHaveBeenCalledTimes(2);
     expect(onChange.mock.calls[0][0]).toBe('**bold**');
     expect(onChange.mock.calls[1][0]).toContain('*italic*');
-    expect(onChange.mock.calls[2][0]).toContain('[link text](https://)');
     expect(screen.getByRole('dialog', { name: 'Formatting commands' })).toBeInTheDocument();
   });
 
