@@ -1,8 +1,15 @@
+import { readFileSync } from 'node:fs';
 import { createRef, useState } from 'react';
 import { describe, expect, it, vi } from 'vitest';
 import { act, fireEvent, render, screen, waitFor } from '@testing-library/react';
 import { markdownShortcutPlugin } from '@mdxeditor/editor';
-import { MarkdownAuthoringEditor, type MarkdownAuthoringEditorHandle } from './MarkdownAuthoringEditor';
+import {
+  canonicalizeLiveMarkdown,
+  MarkdownAuthoringEditor,
+  type MarkdownAuthoringEditorHandle,
+} from './MarkdownAuthoringEditor';
+
+const markdownAuthoringEditorCss = readFileSync('src/components/MarkdownAuthoringEditor.css', 'utf8');
 
 vi.mock('@mdxeditor/editor', async (importOriginal) => {
   const actual = await importOriginal<typeof import('@mdxeditor/editor')>();
@@ -96,6 +103,42 @@ function clearLiveSelection() {
 }
 
 describe('MarkdownAuthoringEditor', () => {
+  it('removes MDXEditor trailing-space entities from ATX headings', () => {
+    expect(canonicalizeLiveMarkdown('# Tst&#x20;')).toBe('# Tst');
+    expect(canonicalizeLiveMarkdown('# Tst&#32;\n\nParagraph')).toBe('# Tst\n\nParagraph');
+    expect(canonicalizeLiveMarkdown('> # Tst&#x20;\n- # List&#32;')).toBe('> # Tst\n- # List');
+    expect(canonicalizeLiveMarkdown('**Tst&#x20;**')).toBe('**Tst&#x20;**');
+    expect(canonicalizeLiveMarkdown('```md\n# literal&#x20;\n```')).toBe('```md\n# literal&#x20;\n```');
+    expect(canonicalizeLiveMarkdown('```md\n- ```\n# literal&#x20;\n```')).toBe('```md\n- ```\n# literal&#x20;\n```');
+    expect(canonicalizeLiveMarkdown('> ```md\n> # literal&#x20;\n> ```')).toBe('> ```md\n> # literal&#x20;\n> ```');
+    expect(canonicalizeLiveMarkdown('- ```md\n  # literal&#x20;\n  ```')).toBe('- ```md\n  # literal&#x20;\n  ```');
+    expect(canonicalizeLiveMarkdown('- > ```md\n  > # literal&#x20;\n  > ```\n\n# after&#x20;')).toBe(
+      '- > ```md\n  > # literal&#x20;\n  > ```\n\n# after',
+    );
+    expect(canonicalizeLiveMarkdown('> - ```md\n>   # literal&#x20;\n>   ```\n\n# after&#x20;')).toBe(
+      '> - ```md\n>   # literal&#x20;\n>   ```\n\n# after',
+    );
+    expect(canonicalizeLiveMarkdown('10. ```md\n    # literal&#x20;\n    ```\n\n# after&#x20;')).toBe(
+      '10. ```md\n    # literal&#x20;\n    ```\n\n# after',
+    );
+    expect(canonicalizeLiveMarkdown('10. ```md\n    literal\n# after&#x20;')).toBe(
+      '10. ```md\n    literal\n# after',
+    );
+    expect(canonicalizeLiveMarkdown('- > ```md\n  > literal\n- > # after&#x20;')).toBe(
+      '- > ```md\n  > literal\n- > # after',
+    );
+    expect(canonicalizeLiveMarkdown('```js`\n# literal&#x20;\n```')).toBe(
+      '```js`\n# literal\n```',
+    );
+    expect(canonicalizeLiveMarkdown('# H&#x20;', '# H&#x20;')).toBe('# H&#x20;');
+    expect(canonicalizeLiveMarkdown('# Hello&#x20;', '# H&#x20;')).toBe('# Hello&#x20;');
+    expect(canonicalizeLiveMarkdown('# B\n# A&#x20;', '# A&#x20;')).toBe('# B\n# A&#x20;');
+    expect(canonicalizeLiveMarkdown('# New&#x20;\n# Saved&#x20;', '# Saved&#x20;')).toBe(
+      '# New\n# Saved&#x20;',
+    );
+    expect(canonicalizeLiveMarkdown('# New&#x20;')).toBe('# New');
+  });
+
   it('passes Markdown through unchanged when the document changes', () => {
     render(<ControlledEditor value="initial" />);
 
@@ -470,14 +513,23 @@ describe('MarkdownAuthoringEditor', () => {
     expect(vi.mocked(markdownShortcutPlugin)).toHaveBeenCalled();
   });
 
-  it('scopes a readable MDXEditor surface inside the app dark theme', () => {
-    render(<div className="dark"><ControlledEditor value="Text" /></div>);
+  it('scopes a readable MDXEditor surface without relying on a parent dark class', () => {
+    render(<ControlledEditor value="Text" />);
 
     expect(screen.getByRole('region', { name: 'Markdown authoring editor' })).toHaveClass(
       'markdown-authoring-surface',
+      'bg-neutral-950',
+      'text-neutral-100',
       'dark:bg-neutral-950',
       'dark:text-neutral-100',
     );
-    expect(screen.getByRole('textbox').closest('.markdown-authoring-editor-theme')).not.toBeNull();
+    const editorTheme = screen.getByRole('textbox').closest('.markdown-authoring-editor-theme');
+    expect(editorTheme).not.toBeNull();
+  });
+
+  it('keeps code and quote surfaces dark without a parent theme class', () => {
+    expect(markdownAuthoringEditorCss).toContain('.markdown-authoring-editor-theme .prose.prose code');
+    expect(markdownAuthoringEditorCss).toContain('.markdown-authoring-editor-theme .prose.prose pre');
+    expect(markdownAuthoringEditorCss).toContain('.markdown-authoring-editor-theme .prose.prose blockquote');
   });
 });

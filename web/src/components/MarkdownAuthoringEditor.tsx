@@ -75,6 +75,224 @@ export const markdownAuthoringCommands: readonly MarkdownAuthoringCommand[] = [
 type Selection = { start: number; end: number };
 type MarkdownPart = { kind: 'markdown' | 'raw'; content: string };
 
+const generatedHeadingWhitespace = /(?:[ \t]*(?:&#x20;|&#32;))+[ \t]*$/i;
+const markdownFence = /^ {0,3}(`{3,}|~{3,})(.*)$/;
+const markdownBlockquotePrefix = /^ {0,3}>[ \t]?/;
+const markdownListPrefix = /^ {0,3}(?:[-+*]|\d+[.)])[ \t]+(?:\[[ xX]\][ \t]+)?/;
+
+type MarkdownBlockPrefix = { kind: 'blockquote' | 'list'; length: number };
+type MarkdownFence = { marker: string; length: number; container: { prefixes: MarkdownBlockPrefix[] } };
+type HeadingWhitespaceCandidate = {
+  lineIndex: number;
+  key: string;
+  prefix: string;
+  body: string;
+};
+
+function markdownBlockPrefixes(prefix: string): MarkdownBlockPrefix[] {
+  const prefixes: MarkdownBlockPrefix[] = [];
+  let remainder = prefix;
+  let match: RegExpExecArray | null;
+  while (remainder.length > 0) {
+    match = markdownBlockquotePrefix.exec(remainder);
+    if (match) {
+      prefixes.push({ kind: 'blockquote', length: match[0].length });
+      remainder = remainder.slice(match[0].length);
+      continue;
+    }
+    match = markdownListPrefix.exec(remainder);
+    if (match) {
+      prefixes.push({ kind: 'list', length: match[0].length });
+      remainder = remainder.slice(match[0].length);
+      continue;
+    }
+    break;
+  }
+  return prefixes;
+}
+
+function markdownBlockPrefixEnd(line: string): number {
+  return markdownBlockPrefixes(line).reduce((length, prefix) => length + prefix.length, 0);
+}
+
+function headingPrefixEnd(line: string): number | null {
+  const index = markdownBlockPrefixEnd(line);
+  return /^ {0,3}#{1,6}(?:[ \t]+|$)/.test(line.slice(index)) ? index : null;
+}
+
+function fenceContainer(prefix: string): { prefixes: MarkdownBlockPrefix[] } {
+  return { prefixes: markdownBlockPrefixes(prefix) };
+}
+
+function fenceContentLine(line: string, container: { prefixes: MarkdownBlockPrefix[] }): string | null {
+  if (line.trim() === '') return '';
+  let remainder = line;
+  for (const prefix of container.prefixes) {
+    if (prefix.kind === 'blockquote') {
+      const match = markdownBlockquotePrefix.exec(remainder);
+      if (!match) return null;
+      remainder = remainder.slice(match[0].length);
+      continue;
+    }
+    const indentation = remainder.match(/^ */)?.[0].length ?? 0;
+    if (indentation < prefix.length) return null;
+    remainder = remainder.slice(prefix.length);
+  }
+  return remainder;
+}
+
+function openingFenceMarker(line: string): string | null {
+  const match = line.match(markdownFence);
+  if (!match || (match[1][0] === '`' && match[2].includes('`'))) return null;
+  return match[1];
+}
+
+function isClosingFence(line: string, fence: MarkdownFence): boolean {
+  const fenceLine = fenceContentLine(line, fence.container);
+  return fenceLine !== null && new RegExp(`^ {0,3}${fence.marker}{${fence.length},}[ \\t]*$`).test(fenceLine);
+}
+
+function headingWhitespaceCandidates(markdown: string): HeadingWhitespaceCandidate[] {
+  const candidates: HeadingWhitespaceCandidate[] = [];
+  let fence: MarkdownFence | null = null;
+  markdown.split('\n').forEach((line, lineIndex) => {
+    const prefixEnd = markdownBlockPrefixEnd(line);
+    if (fence) {
+      const fenceLine = fenceContentLine(line, fence.container);
+      if (fenceLine !== null) {
+        if (isClosingFence(line, fence)) fence = null;
+        return;
+      }
+      fence = null;
+    }
+    const openingFence = openingFenceMarker(line.slice(prefixEnd));
+    if (openingFence) {
+      fence = {
+        marker: openingFence[0],
+        length: openingFence.length,
+        container: fenceContainer(line.slice(0, prefixEnd)),
+      };
+      return;
+    }
+    const headingEnd = headingPrefixEnd(line);
+    if (headingEnd === null) return;
+    const content = line.slice(headingEnd);
+    if (!generatedHeadingWhitespace.test(content)) return;
+    const body = content.replace(generatedHeadingWhitespace, '');
+    candidates.push({
+      lineIndex,
+      key: `${line.slice(0, headingEnd)}${body}`,
+      prefix: line.slice(0, headingEnd),
+      body,
+    });
+  });
+  return candidates;
+}
+
+function headingCandidateScore(previous: HeadingWhitespaceCandidate, current: HeadingWhitespaceCandidate): number {
+  const commonPrefix = (() => {
+    let length = 0;
+    while (length < previous.body.length && length < current.body.length && previous.body[length] === current.body[length]) length += 1;
+    return length;
+  })();
+  const commonSuffix = (() => {
+    let length = 0;
+    while (
+      length < previous.body.length
+      && length < current.body.length
+      && previous.body[previous.body.length - length - 1] === current.body[current.body.length - length - 1]
+    ) length += 1;
+    return length;
+  })();
+  return (previous.prefix === current.prefix ? 100 : 0)
+    + Math.min(commonPrefix, 12) * 2
+    + Math.min(commonSuffix, 12)
+    - Math.abs(previous.lineIndex - current.lineIndex) * 0.01;
+}
+
+function preservedHeadingLines(markdown: string, previousMarkdown: string | undefined): Set<number> {
+  if (!previousMarkdown) return new Set();
+  const previous = headingWhitespaceCandidates(previousMarkdown);
+  const current = headingWhitespaceCandidates(markdown);
+  const preserved = new Set<number>();
+  const unmatchedPrevious = new Set(previous.map((_, index) => index));
+  const unmatchedCurrent = new Set(current.map((_, index) => index));
+  const previousByKey = new Map<string, number[]>();
+  previous.forEach((candidate, index) => {
+    const matches = previousByKey.get(candidate.key) ?? [];
+    matches.push(index);
+    previousByKey.set(candidate.key, matches);
+  });
+
+  current.forEach((candidate, currentIndex) => {
+    const matches = previousByKey.get(candidate.key);
+    const previousIndex = matches?.find((index) => unmatchedPrevious.has(index));
+    if (previousIndex === undefined) return;
+    unmatchedPrevious.delete(previousIndex);
+    unmatchedCurrent.delete(currentIndex);
+    preserved.add(candidate.lineIndex);
+  });
+
+  while (unmatchedPrevious.size > 0 && unmatchedCurrent.size > 0) {
+    let bestPrevious = -1;
+    let bestCurrent = -1;
+    let bestScore = Number.NEGATIVE_INFINITY;
+    unmatchedPrevious.forEach((previousIndex) => {
+      unmatchedCurrent.forEach((currentIndex) => {
+        const score = headingCandidateScore(previous[previousIndex], current[currentIndex]);
+        if (score > bestScore) {
+          bestPrevious = previousIndex;
+          bestCurrent = currentIndex;
+          bestScore = score;
+        }
+      });
+    });
+    if (bestPrevious === -1 || bestCurrent === -1) break;
+    unmatchedPrevious.delete(bestPrevious);
+    unmatchedCurrent.delete(bestCurrent);
+    preserved.add(current[bestCurrent].lineIndex);
+  }
+  return preserved;
+}
+
+/**
+ * Lexical preserves a trailing space in a formatted heading as an HTML entity.
+ * That entity is semantically inert in an ATX heading and makes the canonical
+ * Source document look like an HTML-escaped implementation detail. Keep the
+ * normalization limited to newly introduced rich-editor heading output; Source mode
+ * remains the lossless escape hatch for literal entities and other whitespace-sensitive text.
+ */
+export function canonicalizeLiveMarkdown(markdown: string, previousMarkdown?: string): string {
+  let fence: MarkdownFence | null = null;
+  const preservedLines = preservedHeadingLines(markdown, previousMarkdown);
+  return markdown.split('\n').map((line, lineIndex) => {
+    const prefixEnd = markdownBlockPrefixEnd(line);
+    if (fence) {
+      const fenceLine = fenceContentLine(line, fence.container);
+      if (fenceLine !== null) {
+        if (isClosingFence(line, fence)) fence = null;
+        return line;
+      }
+      fence = null;
+    }
+    const openingFence = openingFenceMarker(line.slice(prefixEnd));
+    if (openingFence) {
+      fence = {
+        marker: openingFence[0],
+        length: openingFence.length,
+        container: fenceContainer(line.slice(0, prefixEnd)),
+      };
+      return line;
+    }
+    const headingEnd = headingPrefixEnd(line);
+    if (headingEnd === null) return line;
+    if (preservedLines.has(lineIndex)) {
+      return line;
+    }
+    return `${line.slice(0, headingEnd)}${line.slice(headingEnd).replace(generatedHeadingWhitespace, '')}`;
+  }).join('\n');
+}
+
 const editorPlugins = [
   headingsPlugin(),
   markdownShortcutPlugin(),
@@ -471,7 +689,8 @@ export const MarkdownAuthoringEditor = forwardRef<
   }, [mode, rawFallback, value]);
 
   const changeLivePart = (index: number, markdown: string) => {
-    const next = parts.map((part, partIndex) => partIndex === index ? { ...part, content: markdown } : part)
+    const canonicalMarkdown = canonicalizeLiveMarkdown(markdown, parts[index]?.content);
+    const next = parts.map((part, partIndex) => partIndex === index ? { ...part, content: canonicalMarkdown } : part)
       .map((part) => part.content)
       .join('');
     latestMarkdown.current = next;
@@ -600,7 +819,7 @@ export const MarkdownAuthoringEditor = forwardRef<
 
   return (
     <section
-      className="markdown-authoring-surface rounded-md border border-neutral-300 bg-white text-neutral-900 dark:border-neutral-700 dark:bg-neutral-950 dark:text-neutral-100"
+      className="markdown-authoring-surface rounded-md border border-neutral-700 bg-neutral-950 text-neutral-100 dark:border-neutral-700 dark:bg-neutral-950 dark:text-neutral-100"
       role="region"
       aria-label="Markdown authoring editor"
       onKeyDown={(event) => {
@@ -633,12 +852,12 @@ export const MarkdownAuthoringEditor = forwardRef<
           setPaletteOpen(true);
         }}
       />
-      <div className="flex items-center justify-end gap-1 border-b border-neutral-200 px-2 py-1 dark:border-neutral-800" role="group" aria-label="Editor mode">
+      <div className="flex items-center justify-end gap-1 border-b border-neutral-800 px-2 py-1 dark:border-neutral-800" role="group" aria-label="Editor mode">
         <button
           type="button"
           aria-pressed={mode === 'live'}
           onClick={() => switchMode('live')}
-          className="rounded px-2 py-1 text-xs data-[state=active]:bg-neutral-100 dark:data-[state=active]:bg-neutral-800"
+          className="rounded px-2 py-1 text-xs data-[state=active]:bg-neutral-800 dark:data-[state=active]:bg-neutral-800"
           data-state={mode === 'live' ? 'active' : 'inactive'}
         >
           Live Preview
@@ -647,7 +866,7 @@ export const MarkdownAuthoringEditor = forwardRef<
           type="button"
           aria-pressed={mode === 'source'}
           onClick={() => switchMode('source')}
-          className="rounded px-2 py-1 text-xs data-[state=active]:bg-neutral-100 dark:data-[state=active]:bg-neutral-800"
+          className="rounded px-2 py-1 text-xs data-[state=active]:bg-neutral-800 dark:data-[state=active]:bg-neutral-800"
           data-state={mode === 'source' ? 'active' : 'inactive'}
         >
           Source
@@ -660,7 +879,7 @@ export const MarkdownAuthoringEditor = forwardRef<
             tabIndex={0}
             onFocus={() => { activeRawBlockIndex.current = 0; sourceSelection.current = { start: value.length, end: value.length }; }}
             onClick={() => { activeRawBlockIndex.current = 0; sourceSelection.current = { start: value.length, end: value.length }; }}
-            className="m-3 overflow-x-auto rounded bg-neutral-100 p-3 text-sm dark:bg-neutral-900"
+            className="m-3 overflow-x-auto rounded bg-neutral-900 p-3 text-sm text-neutral-100 dark:bg-neutral-900 dark:text-neutral-100"
             aria-label="Raw Markdown block"
           >
             <code>{value}</code>
@@ -676,7 +895,7 @@ export const MarkdownAuthoringEditor = forwardRef<
                   tabIndex={0}
                   onFocus={() => { activeRawBlockIndex.current = index; sourceSelection.current = { start: start + part.content.length, end: start + part.content.length }; }}
                   onClick={() => { activeRawBlockIndex.current = index; sourceSelection.current = { start: start + part.content.length, end: start + part.content.length }; }}
-                  className="m-3 overflow-x-auto rounded bg-neutral-100 p-3 text-sm dark:bg-neutral-900"
+                  className="m-3 overflow-x-auto rounded bg-neutral-900 p-3 text-sm text-neutral-100 dark:bg-neutral-900 dark:text-neutral-100"
                   aria-label="Raw Markdown block"
                 >
                   <code>{part.content}</code>
@@ -695,7 +914,7 @@ export const MarkdownAuthoringEditor = forwardRef<
                     className="markdown-authoring-editor-theme"
                     readOnly={disabled}
                     placeholder="Write in Markdown..."
-                    contentEditableClassName="prose prose-neutral dark:prose-invert max-w-none min-h-48 px-3 py-2 focus:outline-none"
+                    contentEditableClassName="prose prose-neutral prose-invert max-w-none min-h-48 px-3 py-2 focus:outline-none"
                     onChange={(markdown, initialMarkdownNormalize) => {
                       if (!initialMarkdownNormalize) changeLivePart(index, markdown);
                     }}
