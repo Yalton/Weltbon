@@ -46,6 +46,13 @@ describe('Markdown table transforms', () => {
     expect(addMarkdownTableRow(markdown)).toBe(markdown);
   });
 
+  it('keeps tables protected after a nested closer inside an unsupported directive', () => {
+    const markdown = `:::mermaid\n> :::\n${TABLE}\n:::`;
+
+    expect(findMalformedMarkdownTableRanges(markdown)).toEqual([]);
+    expect(addMarkdownTableRow(markdown)).toBe(markdown);
+  });
+
   it('does not rewrite pipe-shaped tables inside list or blockquote fences', () => {
     const nestedListFence = '- ~~~md\n  | Name | Value |\n  | --- | --- |\n  | Example | 1 |\n  ~~~';
     const nestedBlockquoteFence = '> ~~~md\n  | Name | Value |\n  | --- | --- |\n  | Example | 1 |\n> ~~~';

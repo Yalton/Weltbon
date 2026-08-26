@@ -45,26 +45,6 @@ function lineStart(markdown: string, lineIndex: number): number {
 type MarkdownContainer = { kind: 'blockquote' | 'list'; length: number };
 type FenceState = { marker: '`' | '~'; length: number; containers: MarkdownContainer[] };
 
-function stripMarkdownContainers(line: string): string {
-  let rest = line.trimStart();
-  let stripped = true;
-  while (stripped) {
-    stripped = false;
-    const blockquote = rest.match(/^>\s?/);
-    if (blockquote) {
-      rest = rest.slice(blockquote[0].length).trimStart();
-      stripped = true;
-      continue;
-    }
-    const list = rest.match(/^(?:[-+*]|\d+[.)])\s+/);
-    if (list) {
-      rest = rest.slice(list[0].length).trimStart();
-      stripped = true;
-    }
-  }
-  return rest;
-}
-
 type FenceLine = { marker: '`' | '~'; length: number; suffix: string };
 
 type ParsedFenceLine = FenceLine & { containers: MarkdownContainer[]; indentation: number };
@@ -132,7 +112,7 @@ function isTopLevelTableLine(line: string): boolean {
 function protectedMarkdownLines(lines: string[]): boolean[] {
   const protectedLines = lines.map(() => false);
   let fence: FenceState | null = null;
-  let rawDirective = false;
+  let rawDirective: MarkdownContainer[] | null = null;
 
   lines.forEach((line, index) => {
     const fenceLine = parseFenceLine(line);
@@ -151,7 +131,8 @@ function protectedMarkdownLines(lines: string[]): boolean[] {
     }
     if (rawDirective) {
       protectedLines[index] = true;
-      if (/^:::\s*$/.test(stripMarkdownContainers(line))) rawDirective = false;
+      const parsed = parseMarkdownContainers(line);
+      if (/^:::\s*$/.test(parsed.rest) && sameContainerKinds(rawDirective, parsed.containers)) rawDirective = null;
       return;
     }
     if (fenceLine) {
@@ -159,9 +140,10 @@ function protectedMarkdownLines(lines: string[]): boolean[] {
       fence = { marker: fenceLine.marker, length: fenceLine.length, containers: fenceLine.containers };
       return;
     }
-    if (/^:::\s*\S+/.test(stripMarkdownContainers(line))) {
+    const parsed = parseMarkdownContainers(line);
+    if (/^:::\s*\S+/.test(parsed.rest)) {
       protectedLines[index] = true;
-      rawDirective = true;
+      rawDirective = parsed.containers;
     }
   });
   return protectedLines;
