@@ -218,6 +218,14 @@ describe('authoring callouts', () => {
     expect(container.querySelector('[data-callout-type]')).toBeNull();
     expect(container).toHaveTextContent('[!DANGER]');
   });
+
+  it('does not promote a later paragraph marker in an ordinary blockquote', () => {
+    const content = '> prose\n>\n> [!NOTE]\n> This remains ordinary text.';
+    const { container } = render(<MarkdownRenderer content={content} />);
+
+    expect(container.querySelector('[data-callout-type]')).toBeNull();
+    expect(container.querySelector('blockquote')).toHaveTextContent('[!NOTE]');
+  });
 });
 
 // ---------------------------------------------------------------------------

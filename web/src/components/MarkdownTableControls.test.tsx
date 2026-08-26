@@ -9,6 +9,7 @@ import {
 } from './MarkdownTableControls';
 
 const TABLE = '| Name | Value |\n| --- | --- |\n| One | 1 |';
+const TABLE_SELECTION = { start: 0, end: TABLE.length };
 
 describe('Markdown table transforms', () => {
   it('adds and removes rows without changing the surrounding Markdown', () => {
@@ -45,16 +46,60 @@ describe('Markdown table transforms', () => {
     expect(addMarkdownTableRow(nestedBlockquoteFence)).toBe(nestedBlockquoteFence);
     expect(addMarkdownTableColumn(nestedBlockquoteFence)).toBe(nestedBlockquoteFence);
   });
+
+  it('does not rewrite nested-list tables or four-space indented code samples', () => {
+    const nestedListTable = '- Item\n\n  | Name | Value |\n  | --- | --- |\n  | Example | 1 |';
+    const indentedCodeSample = '    | Name | Value |\n    | --- | --- |\n    | Example | 1 |';
+
+    expect(addMarkdownTableRow(nestedListTable)).toBe(nestedListTable);
+    expect(addMarkdownTableColumn(nestedListTable)).toBe(nestedListTable);
+    expect(addMarkdownTableRow(indentedCodeSample)).toBe(indentedCodeSample);
+    expect(addMarkdownTableColumn(indentedCodeSample)).toBe(indentedCodeSample);
+  });
+
+  it('does not choose the first table when a document has multiple tables', () => {
+    const markdown = `${TABLE}\n\n${TABLE}`;
+
+    expect(addMarkdownTableRow(markdown)).toBe(markdown);
+    expect(addMarkdownTableColumn(markdown)).toBe(markdown);
+  });
 });
 
 describe('MarkdownTableControls', () => {
   it('emits exact Markdown when a row is inserted', () => {
     const onChange = vi.fn();
-    render(<MarkdownTableControls markdown={TABLE} onChange={onChange} />);
+    render(<MarkdownTableControls markdown={TABLE} onChange={onChange} getSelection={() => TABLE_SELECTION} />);
 
     fireEvent.click(screen.getByRole('button', { name: 'Add table row' }));
 
     expect(onChange).toHaveBeenCalledWith(`${TABLE}\n|  |  |`);
+  });
+
+  it('disables row and column mutations without an active table selection', () => {
+    const onChange = vi.fn();
+    render(<MarkdownTableControls markdown={TABLE} onChange={onChange} />);
+
+    expect(screen.getByRole('button', { name: 'Add table row' })).toBeDisabled();
+    expect(screen.getByRole('button', { name: 'Add table column' })).toBeDisabled();
+    fireEvent.click(screen.getByRole('button', { name: 'Add table row' }));
+    expect(onChange).not.toHaveBeenCalled();
+  });
+
+  it('mutates the selected table instead of the document first table', () => {
+    const onChange = vi.fn();
+    const markdown = `${TABLE}\n\n${TABLE}`;
+    const secondTableStart = TABLE.length + 2;
+    render(
+      <MarkdownTableControls
+        markdown={markdown}
+        onChange={onChange}
+        getSelection={() => ({ start: secondTableStart, end: secondTableStart + TABLE.length })}
+      />,
+    );
+
+    fireEvent.click(screen.getByRole('button', { name: 'Add table row' }));
+
+    expect(onChange).toHaveBeenCalledWith(`${TABLE}\n\n${TABLE}\n|  |  |`);
   });
 
   it('keeps unsupported table blocks untouched and disables mutations', () => {

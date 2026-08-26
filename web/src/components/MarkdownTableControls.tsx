@@ -7,6 +7,8 @@ type TableLocation = {
   delimiter: string[];
 };
 
+export type MarkdownTableSelection = { start: number; end: number };
+
 function splitTableRow(line: string): string[] | null {
   const trimmed = line.trim();
   if (!trimmed.includes('|')) return null;
@@ -74,6 +76,12 @@ function parseFenceLine(line: string): FenceLine | null {
   };
 }
 
+function isTopLevelTableLine(line: string): boolean {
+  if (line !== line.trimStart()) return false;
+  if (line.startsWith('>')) return false;
+  return !/^(?:[-+*]|\d+[.)])[ \t]/.test(line);
+}
+
 function protectedMarkdownLines(lines: string[]): boolean[] {
   const protectedLines = lines.map(() => false);
   let fence: FenceState | null = null;
@@ -106,31 +114,51 @@ function protectedMarkdownLines(lines: string[]): boolean[] {
   return protectedLines;
 }
 
-function findTable(markdown: string): TableLocation | null {
+function findTables(markdown: string): TableLocation[] {
   const lines = markdown.split('\n');
   const protectedLines = protectedMarkdownLines(lines);
+  const tables: TableLocation[] = [];
   for (let index = 0; index < lines.length - 1; index += 1) {
     if (protectedLines[index] || protectedLines[index + 1]) continue;
+    if (!isTopLevelTableLine(lines[index]) || !isTopLevelTableLine(lines[index + 1])) continue;
     const header = splitTableRow(lines[index]);
     const delimiter = splitTableRow(lines[index + 1]);
     if (!header || !delimiter || header.length < 1 || header.length !== delimiter.length || !isDelimiterRow(delimiter)) continue;
     const rows = [header];
     let endIndex = index + 1;
+    let invalid = false;
     for (let rowIndex = index + 2; rowIndex < lines.length; rowIndex += 1) {
       if (protectedLines[rowIndex]) break;
       const row = splitTableRow(lines[rowIndex]);
       if (!row || row.length !== header.length) break;
+      if (!isTopLevelTableLine(lines[rowIndex])) {
+        invalid = true;
+        break;
+      }
       rows.push(row);
       endIndex = rowIndex;
     }
-    return {
+    if (invalid) continue;
+    tables.push({
       start: lineStart(markdown, index),
       end: lineStart(markdown, endIndex) + lines[endIndex].length,
       rows,
       delimiter,
-    };
+    });
+    index = endIndex;
   }
-  return null;
+  return tables;
+}
+
+function findTable(markdown: string, selection?: MarkdownTableSelection | null): TableLocation | null {
+  const tables = findTables(markdown);
+  if (selection === null) return null;
+  if (selection) {
+    const start = Math.min(selection.start, selection.end);
+    const end = Math.max(selection.start, selection.end);
+    return tables.find((table) => start >= table.start && end <= table.end) ?? null;
+  }
+  return tables.length === 1 ? tables[0] : null;
 }
 
 function renderTable(location: TableLocation, rows: string[][], delimiter = location.delimiter): string {
@@ -138,34 +166,38 @@ function renderTable(location: TableLocation, rows: string[][], delimiter = loca
   return lines.map((row) => `| ${row.join(' | ')} |`).join('\n');
 }
 
-function replaceTable(markdown: string, transform: (location: TableLocation) => string): string {
-  const location = findTable(markdown);
+function replaceTable(
+  markdown: string,
+  transform: (location: TableLocation) => string,
+  selection?: MarkdownTableSelection | null,
+): string {
+  const location = findTable(markdown, selection);
   if (!location) return markdown;
   return `${markdown.slice(0, location.start)}${transform(location)}${markdown.slice(location.end)}`;
 }
 
-export function addMarkdownTableRow(markdown: string): string {
-  return replaceTable(markdown, (location) => renderTable(location, [...location.rows, Array(location.rows[0].length).fill('')]));
+export function addMarkdownTableRow(markdown: string, selection?: MarkdownTableSelection | null): string {
+  return replaceTable(markdown, (location) => renderTable(location, [...location.rows, Array(location.rows[0].length).fill('')]), selection);
 }
 
-export function removeMarkdownTableRow(markdown: string): string {
+export function removeMarkdownTableRow(markdown: string, selection?: MarkdownTableSelection | null): string {
   return replaceTable(markdown, (location) => location.rows.length > 1
     ? renderTable(location, location.rows.slice(0, -1))
-    : renderTable(location, location.rows));
+    : renderTable(location, location.rows), selection);
 }
 
-export function addMarkdownTableColumn(markdown: string): string {
+export function addMarkdownTableColumn(markdown: string, selection?: MarkdownTableSelection | null): string {
   return replaceTable(markdown, (location) => renderTable(
     location,
     location.rows.map((row) => [...row, '']),
     [...location.delimiter, '---'],
-  ));
+  ), selection);
 }
 
-export function removeMarkdownTableColumn(markdown: string): string {
+export function removeMarkdownTableColumn(markdown: string, selection?: MarkdownTableSelection | null): string {
   return replaceTable(markdown, (location) => location.rows[0].length > 1
     ? renderTable(location, location.rows.map((row) => row.slice(0, -1)), location.delimiter.slice(0, -1))
-    : renderTable(location, location.rows));
+    : renderTable(location, location.rows), selection);
 }
 
 export function insertMarkdownTable(markdown: string): string {
@@ -179,16 +211,20 @@ export type MarkdownTableControlsProps = {
   markdown: string;
   onChange: (markdown: string) => void;
   disabled?: boolean;
+  getSelection?: () => MarkdownTableSelection | null;
   children?: ReactNode;
 };
 
-export function MarkdownTableControls({ markdown, onChange, disabled = false, children }: MarkdownTableControlsProps) {
-  const table = findTable(markdown);
+export function MarkdownTableControls({ markdown, onChange, disabled = false, getSelection, children }: MarkdownTableControlsProps) {
+  const selectionAtRender = getSelection ? getSelection() : null;
+  const table = findTable(markdown, selectionAtRender);
   const canRemoveRow = !!table && table.rows.length > 1;
   const canRemoveColumn = !!table && table.rows[0].length > 1;
-  const action = (transform: (value: string) => string) => {
-    if (disabled || !table) return;
-    onChange(transform(markdown));
+  const action = (transform: (value: string, selection: MarkdownTableSelection) => string) => {
+    if (disabled) return;
+    const selection = getSelection?.() ?? selectionAtRender;
+    if (!selection || !findTable(markdown, selection)) return;
+    onChange(transform(markdown, selection));
   };
 
   return (

@@ -115,6 +115,7 @@ function sourceBlockquoteCallouts(markdown: string): Array<string | null> {
   let fence: { marker: '`' | '~'; length: number } | null = null;
   let rawDirective = false;
   let inBlockquote = false;
+  let inspectFirstBlockquoteLine = false;
   let blockquoteIndex = -1;
   for (const line of markdown.split('\n')) {
     const quote = line.match(/^ {0,3}>[ \t]?(.*)$/);
@@ -123,6 +124,7 @@ function sourceBlockquoteCallouts(markdown: string): Array<string | null> {
       if (fenceLine && fenceLine.marker === fence.marker && fenceLine.length >= fence.length && fenceLine.suffix.trim() === '') {
         fence = null;
         inBlockquote = false;
+        inspectFirstBlockquoteLine = false;
       }
       continue;
     }
@@ -130,6 +132,7 @@ function sourceBlockquoteCallouts(markdown: string): Array<string | null> {
       if (/^:::\s*$/.test(stripMarkdownContainers(line))) {
         rawDirective = false;
         inBlockquote = false;
+        inspectFirstBlockquoteLine = false;
       }
       continue;
     }
@@ -138,8 +141,10 @@ function sourceBlockquoteCallouts(markdown: string): Array<string | null> {
         callouts.push(null);
         blockquoteIndex += 1;
         inBlockquote = true;
+        inspectFirstBlockquoteLine = false;
       } else if (!quote) {
         inBlockquote = false;
+        inspectFirstBlockquoteLine = false;
       }
       fence = { marker: fenceLine.marker, length: fenceLine.length };
       continue;
@@ -149,24 +154,29 @@ function sourceBlockquoteCallouts(markdown: string): Array<string | null> {
         callouts.push(null);
         blockquoteIndex += 1;
         inBlockquote = true;
+        inspectFirstBlockquoteLine = false;
       } else if (!quote) {
         inBlockquote = false;
+        inspectFirstBlockquoteLine = false;
       }
       rawDirective = true;
       continue;
     }
     if (!quote) {
       inBlockquote = false;
+      inspectFirstBlockquoteLine = false;
       continue;
     }
     if (!inBlockquote) {
       callouts.push(null);
       blockquoteIndex += 1;
       inBlockquote = true;
+      inspectFirstBlockquoteLine = true;
     }
-    if (callouts[blockquoteIndex] === null) {
+    if (inspectFirstBlockquoteLine) {
       const match = quote[1].match(/^\[!(NOTE|TIP|WARNING|[A-Za-z][A-Za-z0-9_-]*)\]/i);
       if (match) callouts[blockquoteIndex] = match[1].toUpperCase();
+      inspectFirstBlockquoteLine = false;
     }
   }
   return callouts;

@@ -912,6 +912,24 @@ export const MarkdownAuthoringEditor = forwardRef<
 
   useImperativeHandle(ref, () => ({ insertMarkdown, executeCommand }), [insertMarkdown, executeCommand]);
 
+  const getTableSelection = () => {
+    if (mode === 'source') {
+      const source = sourceRef.current;
+      return source
+        ? { start: source.selectionStart, end: source.selectionEnd }
+        : sourceSelection.current;
+    }
+    if (rawFallback || activeRawBlockIndex.current !== null) return null;
+    const index = activeLiveEditorIndex.current;
+    const editor = mdxEditorRefs.current[index];
+    const editable = liveEditorWrappers.current[index]?.querySelector<HTMLElement>('[contenteditable="true"]');
+    const markdown = editor?.getMarkdown() ?? parts[index]?.content ?? '';
+    const selection = editable ? liveMarkdownSelection(editable, markdown) : null;
+    if (!selection) return null;
+    const offset = parts.slice(0, index).reduce((total, part) => total + part.content.length, 0);
+    return { start: selection.start + offset, end: selection.end + offset };
+  };
+
   let partOffset = 0;
 
   return (
@@ -1028,6 +1046,7 @@ export const MarkdownAuthoringEditor = forwardRef<
       <MarkdownTableControls
         markdown={value}
         disabled={disabled}
+        getSelection={getTableSelection}
         onChange={(markdown) => {
           latestMarkdown.current = markdown;
           onChange(markdown);
