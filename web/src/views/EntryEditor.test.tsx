@@ -1039,4 +1039,111 @@ describe('EntryEditor rename-propagation two-phase save (Phase 48 XREF-05)', () 
       expect(JSON.parse((commitCall![1] as RequestInit).body as string).body).toBe(markdown);
     });
   });
+
+  it('preserves the canonical body and separate Entry.tags contract during rename preview and commit', async () => {
+    const markdown = [
+      '---',
+      'tags: [doc-tag]',
+      'custom: keep',
+      '---',
+      '# Atlas',
+      '',
+      '> [!NOTE]',
+      '> Keep this supported callout.',
+      '',
+      '| Name | Value |',
+      '| --- | --- |',
+      '| Link | [Guide](https://example.com/guide) |',
+      '',
+      'See [[Empire|the Empire]] and ![[Atlas Map]].',
+      '',
+      '![Map](asset://asset-1)',
+      '',
+      ':::mermaid',
+      'graph TD',
+      '  A --> B',
+      ':::',
+    ].join('\n');
+
+    vi.mocked(api).mockImplementation(async (path?: string, init?: RequestInit) => {
+      if (!path) return undefined;
+      if (path === '/universes/U1') return { entryTypes: ['place', 'character'] };
+      if (path.startsWith('/universes/U1/categories')) {
+        return { categories: [], uncategorizedCount: 0 };
+      }
+      if (path === '/universes/U1/entries' && !init?.method) {
+        return [{ ...RENAME_ENTRY, tags: ['entry-tag'] }];
+      }
+      if (path === '/universes/U1/entries/RENAME-ID' && !init?.method) {
+        return {
+          ...RENAME_ENTRY,
+          tags: ['entry-tag'],
+          body: markdown,
+          outboundLinks: [],
+          backlinks: [],
+          issues: [],
+          assetUrls: { 'asset-1': 'https://example.com/asset-1.png' },
+        };
+      }
+      if (path === '/universes/U1/assets' && !init?.method) {
+        return [];
+      }
+      if (
+        path.startsWith('/universes/U1/entries/RENAME-ID') &&
+        path.includes('preview=true') &&
+        init?.method === 'PATCH'
+      ) {
+        return { affectedLinks: 1, affectedEntries: 1 };
+      }
+      if (path === '/universes/U1/entries/RENAME-ID' && init?.method === 'PATCH') {
+        return { ...RENAME_ENTRY, title: 'Imperium', rewriteCount: 1, tags: ['entry-tag'] };
+      }
+      return undefined;
+    });
+
+    const qc = new QueryClient({
+      defaultOptions: { queries: { retry: false }, mutations: { retry: false } },
+    });
+
+    render(
+      <QueryClientProvider client={qc}>
+        <MemoryRouter initialEntries={['/universes/U1/entries/RENAME-ID/edit']}>
+          <Routes>
+            <Route path="/universes/:uid/entries/:entryId/edit" element={<EntryEditor />} />
+            <Route path="/universes/:uid/entries/:entryId" element={<div>Entry detail</div>} />
+          </Routes>
+        </MemoryRouter>
+      </QueryClientProvider>,
+    );
+
+    await screen.findByDisplayValue('Empire');
+    const titleInput = screen.getByLabelText(/title/i);
+    await userEvent.clear(titleInput);
+    await userEvent.type(titleInput, 'Imperium');
+    await userEvent.click(screen.getByRole('button', { name: /save changes/i }));
+    await screen.findByRole('dialog');
+    await userEvent.click(screen.getByRole('button', { name: /proceed/i }));
+
+    await waitFor(() => {
+      const previewCall = vi.mocked(api).mock.calls.find(([path, init]) =>
+        typeof path === 'string' &&
+        path.includes('/universes/U1/entries/RENAME-ID?preview=true') &&
+        (init as RequestInit)?.method === 'PATCH',
+      );
+      const commitCall = vi.mocked(api).mock.calls.find(([path, init]) =>
+        path === '/universes/U1/entries/RENAME-ID' &&
+        (init as RequestInit)?.method === 'PATCH',
+      );
+      expect(previewCall).toBeDefined();
+      expect(commitCall).toBeDefined();
+      expect(JSON.parse((previewCall![1] as RequestInit).body as string)).toMatchObject({
+        body: markdown,
+        tags: ['entry-tag'],
+      });
+      expect(JSON.parse((commitCall![1] as RequestInit).body as string)).toMatchObject({
+        body: markdown,
+        tags: ['entry-tag'],
+      });
+    });
+  });
 });

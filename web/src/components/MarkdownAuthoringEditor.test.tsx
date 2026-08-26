@@ -2,6 +2,7 @@ import { readFileSync } from 'node:fs';
 import { createRef, useState } from 'react';
 import { describe, expect, it, vi } from 'vitest';
 import { act, fireEvent, render, screen, waitFor } from '@testing-library/react';
+import userEvent from '@testing-library/user-event';
 import { markdownShortcutPlugin } from '@mdxeditor/editor';
 import {
   canonicalizeLiveMarkdown,
@@ -19,6 +20,38 @@ vi.mock('@mdxeditor/editor', async (importOriginal) => {
 
 const UNSUPPORTED_BLOCK = ':::mermaid\ngraph TD\n  A --> B\n:::';
 const DOCUMENT = `# Title\n\nA paragraph with [[Weltbon]].\n\n${UNSUPPORTED_BLOCK}`;
+const COMPATIBILITY_FIXTURE = [
+  '---',
+  'tags: [doc-tag]',
+  'custom: keep',
+  '---',
+  '# Atlas',
+  '',
+  '> [!NOTE]',
+  '> Keep this supported callout.',
+  '',
+  '| Name | Value |',
+  '| --- | --- |',
+  '| Link | [Guide](https://example.com/guide) |',
+  '',
+  'See [[Empire|the Empire]] and ![[Atlas Map]].',
+  '',
+  '![Map](asset://asset-1)',
+].join('\n');
+const RAW_FALLBACK_FIXTURE = [
+  '---',
+  'tags: ["unterminated]',
+  '---',
+  '# Atlas',
+  '',
+  '> [!DANGER]',
+  '> Raw only.',
+  '',
+  ':::mermaid',
+  'graph TD',
+  '  A --> B',
+  ':::',
+].join('\n');
 
 Object.assign(Range.prototype, {
   getBoundingClientRect: () => new DOMRect(),
@@ -34,7 +67,7 @@ function ControlledEditor({ value = DOCUMENT }: { value?: string }) {
         universeId="U1"
         entryId="E1"
       />
-      <output data-testid="markdown-value">{markdown}</output>
+      <output data-testid="markdown-value" data-markdown={markdown}>{markdown}</output>
     </>
   );
 }
@@ -640,6 +673,20 @@ describe('MarkdownAuthoringEditor', () => {
     expect(screen.getByRole('dialog', { name: 'Formatting commands' })).toBeInTheDocument();
   });
 
+  it('keeps narrow-viewport formatting commands reachable through the More palette path', async () => {
+    const user = userEvent.setup();
+    render(<ControlledEditor value="" />);
+    fireEvent.click(screen.getByRole('button', { name: 'Source' }));
+
+    await user.click(screen.getByRole('button', { name: 'More formatting commands' }));
+    expect(screen.getByRole('dialog', { name: 'Formatting commands' })).toBeInTheDocument();
+
+    await user.keyboard('{ArrowDown}{Enter}');
+
+    expect(screen.getByTestId('markdown-value')).toHaveAttribute('data-markdown', '# Heading');
+    expect(screen.getByRole('textbox', { name: 'Entry body' })).toHaveValue('# Heading');
+  });
+
   it('formats the selected Live Preview text through the native editor command', async () => {
     render(<ControlledEditor value="selected" />);
     selectLiveText('p');
@@ -800,6 +847,26 @@ describe('MarkdownAuthoringEditor', () => {
     expect(screen.getByRole('textbox', { name: 'Entry body' })).toHaveValue(
       '---\ntitle: Story\ncustom: keep\ntags: [document-tag]\n---\nBody',
     );
+  });
+
+  it('keeps a mixed supported Markdown fixture exact through Live Preview and Source round trips', () => {
+    render(<ControlledEditor value={COMPATIBILITY_FIXTURE} />);
+
+    expect(screen.getByTestId('markdown-value')).toHaveAttribute('data-markdown', COMPATIBILITY_FIXTURE);
+    fireEvent.click(screen.getByRole('button', { name: 'Source' }));
+    expect(screen.getByRole('textbox', { name: 'Entry body' })).toHaveValue(COMPATIBILITY_FIXTURE);
+    fireEvent.click(screen.getByRole('button', { name: 'Live Preview' }));
+    fireEvent.click(screen.getByRole('button', { name: 'Source' }));
+    expect(screen.getByRole('textbox', { name: 'Entry body' })).toHaveValue(COMPATIBILITY_FIXTURE);
+  });
+
+  it('keeps malformed frontmatter and unsupported blocks lossless through the Source fallback path', () => {
+    render(<ControlledEditor value={RAW_FALLBACK_FIXTURE} />);
+
+    expect(screen.getByLabelText('Raw Markdown block').textContent).toBe(RAW_FALLBACK_FIXTURE);
+    expect(screen.getByTestId('markdown-value')).toHaveAttribute('data-markdown', RAW_FALLBACK_FIXTURE);
+    fireEvent.click(screen.getByRole('button', { name: 'Edit in Source' }));
+    expect(screen.getByRole('textbox', { name: 'Entry body' })).toHaveValue(RAW_FALLBACK_FIXTURE);
   });
 
   it('falls back to a raw live document and recovers malformed frontmatter in Source', () => {
