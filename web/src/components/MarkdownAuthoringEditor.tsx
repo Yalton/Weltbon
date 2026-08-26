@@ -16,6 +16,8 @@ import '@mdxeditor/editor/style.css';
 import './MarkdownAuthoringEditor.css';
 import { MarkdownAuthoringToolbar } from './MarkdownAuthoringToolbar';
 import { MarkdownCommandPalette } from './MarkdownCommandPalette';
+import { MarkdownLinkDialog, type MarkdownLinkKind } from './MarkdownLinkDialog';
+import { MarkdownTableControls } from './MarkdownTableControls';
 import {
   forwardRef,
   useEffect,
@@ -620,10 +622,16 @@ function liveMarkdownSelection(editable: HTMLElement, markdown: string): Selecti
 export const MarkdownAuthoringEditor = forwardRef<
   MarkdownAuthoringEditorHandle,
   MarkdownAuthoringEditorProps
->(function MarkdownAuthoringEditor({ value, onChange, disabled = false }, ref) {
+>(function MarkdownAuthoringEditor({ value, onChange, universeId, entryId, disabled = false }, ref) {
   const [mode, setMode] = useState<'live' | 'source'>('live');
   const [liveParserError, setLiveParserError] = useState<string | null>(null);
   const [paletteOpen, setPaletteOpen] = useState(false);
+  const [linkDialogOpen, setLinkDialogOpen] = useState(false);
+  const [linkDialogInitial, setLinkDialogInitial] = useState<{
+    kind: MarkdownLinkKind;
+    target: string;
+    label: string;
+  }>({ kind: 'external', target: '', label: 'Link' });
   const mdxEditorRefs = useRef<Array<MDXEditorMethods | null>>([]);
   const liveEditorWrappers = useRef<Array<HTMLDivElement | null>>([]);
   const activeLiveEditorIndex = useRef(0);
@@ -639,6 +647,11 @@ export const MarkdownAuthoringEditor = forwardRef<
   const activeRawBlockIndex = useRef<number | null>(null);
   const latestMarkdown = useRef(value);
   const sourceSelection = useRef<Selection>({ start: 0, end: 0 });
+  const linkOrigin = useRef<{
+    mode: 'source' | 'live';
+    index: number;
+    selection: Selection;
+  } | null>(null);
   const parts = splitUnsupportedBlocks(value);
   const rawFallback = liveParserError !== null;
 
@@ -779,6 +792,55 @@ export const MarkdownAuthoringEditor = forwardRef<
     onChange(inserted.markdown);
   };
 
+  const openLinkDialog = () => {
+    if (disabled) return;
+    if (mode === 'source') {
+      const selection = sourceSelection.current;
+      linkOrigin.current = { mode: 'source', index: 0, selection };
+      setLinkDialogInitial({
+        kind: 'external',
+        target: '',
+        label: latestMarkdown.current.slice(selection.start, selection.end) || 'Link',
+      });
+      setLinkDialogOpen(true);
+      return;
+    }
+
+    const index = activeLiveEditorIndex.current;
+    const editor = mdxEditorRefs.current[index];
+    const editable = liveEditorWrappers.current[index]?.querySelector<HTMLElement>('[contenteditable="true"]');
+    const markdown = editor?.getMarkdown() ?? parts[index]?.content ?? '';
+    const selection = editable ? liveMarkdownSelection(editable, markdown) : null;
+    if (!editor || !editable || !selection) return;
+    linkOrigin.current = { mode: 'live', index, selection };
+    setLinkDialogInitial({
+      kind: 'external',
+      target: '',
+      label: markdown.slice(selection.start, selection.end) || 'Link',
+    });
+    setLinkDialogOpen(true);
+  };
+
+  const replaceLinkSelection = (markdown: string) => {
+    const origin = linkOrigin.current;
+    if (!origin) {
+      insertMarkdown(markdown);
+      return;
+    }
+    if (origin.mode === 'source') {
+      const replaced = replaceMarkdownSelection(latestMarkdown.current, origin.selection, markdown);
+      sourceSelection.current = replaced.selection;
+      latestMarkdown.current = replaced.markdown;
+      onChange(replaced.markdown);
+      return;
+    }
+    const editor = mdxEditorRefs.current[origin.index];
+    const current = editor?.getMarkdown() ?? parts[origin.index]?.content ?? '';
+    const replaced = replaceMarkdownSelection(current, origin.selection, markdown);
+    editor?.setMarkdown(replaced.markdown);
+    changeLivePart(origin.index, replaced.markdown);
+  };
+
   const executeCommand = (commandId: MarkdownAuthoringCommandId) => {
     if (disabled) return;
     const command = markdownAuthoringCommands.find(({ id }) => id === commandId);
@@ -846,6 +908,7 @@ export const MarkdownAuthoringEditor = forwardRef<
         commands={markdownAuthoringCommands}
         disabled={disabled}
         onCommand={executeCommand}
+        onLink={openLinkDialog}
         onOpenPalette={(trigger) => {
           if (disabled) return;
           capturePaletteOrigin(trigger);
@@ -927,6 +990,15 @@ export const MarkdownAuthoringEditor = forwardRef<
         )}
       </div>
 
+      <MarkdownTableControls
+        markdown={value}
+        disabled={disabled}
+        onChange={(markdown) => {
+          latestMarkdown.current = markdown;
+          onChange(markdown);
+        }}
+      />
+
       {mode === 'source' && (
         <textarea
           ref={sourceRef}
@@ -960,6 +1032,19 @@ export const MarkdownAuthoringEditor = forwardRef<
         onCommand={executeCommand}
         returnFocusRef={paletteReturnFocusRef}
         onRestoreFocus={restorePaletteOrigin}
+      />
+      <MarkdownLinkDialog
+        open={linkDialogOpen}
+        onOpenChange={(open) => {
+          setLinkDialogOpen(open);
+          if (!open) linkOrigin.current = null;
+        }}
+        onInsert={replaceLinkSelection}
+        universeId={universeId}
+        currentEntryId={entryId ?? null}
+        initialKind={linkDialogInitial.kind}
+        initialTarget={linkDialogInitial.target}
+        initialLabel={linkDialogInitial.label}
       />
     </section>
   );

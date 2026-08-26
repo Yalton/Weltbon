@@ -184,6 +184,24 @@ describe('T5: no wikis prop → [[x]] renders as literal text', () => {
   });
 });
 
+describe('authoring callouts', () => {
+  it('marks supported NOTE callouts for the reading surface without changing their body', () => {
+    render(<MarkdownRenderer content={'> [!NOTE]\n> Keep this detail.'} />);
+
+    const callout = document.querySelector('[data-callout-type="NOTE"]');
+    expect(callout).toBeInTheDocument();
+    expect(callout).toHaveTextContent('[!NOTE]');
+    expect(callout).toHaveTextContent('Keep this detail.');
+  });
+
+  it('leaves unsupported callout types as ordinary blockquotes', () => {
+    const { container } = render(<MarkdownRenderer content={'> [!DANGER]\n> Keep this raw.'} />);
+
+    expect(container.querySelector('[data-callout-type]')).toBeNull();
+    expect(container.querySelector('blockquote')).toHaveTextContent('[!DANGER]');
+  });
+});
+
 // ---------------------------------------------------------------------------
 // T6 — Share/read-only path: "+" add button ABSENT when onAddWord is absent
 // ---------------------------------------------------------------------------

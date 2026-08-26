@@ -1,5 +1,6 @@
 import ReactMarkdown, { defaultUrlTransform } from 'react-markdown';
 import remarkGfm from 'remark-gfm';
+import React from 'react';
 import { WikilinkText, tokenize } from './WikilinkText';
 import type { WikilinkResolutionData } from './WikilinkText';
 
@@ -51,6 +52,20 @@ function paragraphHasBlockEmbed(
     return false;
   };
   return scan(children);
+}
+
+function supportedCalloutType(children: React.ReactNode): string | null {
+  const textOf = (node: React.ReactNode): string => {
+    if (typeof node === 'string') return node;
+    if (Array.isArray(node)) return node.map(textOf).join('');
+    if (node && typeof node === 'object' && 'props' in node) {
+      return textOf((node as { props?: { children?: React.ReactNode } }).props?.children);
+    }
+    return '';
+  };
+  const text = textOf(children);
+  const match = text.match(/^\[!(NOTE|TIP|WARNING)\](?:\s|$)/i);
+  return match?.[1].toUpperCase() ?? null;
 }
 
 // Re-export so callers can import the type from the MarkdownRenderer module.
@@ -145,6 +160,28 @@ export function MarkdownRenderer({
     : undefined;
 
   const components = {
+    // ReactMarkdown keeps the callout marker inside the first paragraph. Keep a
+    // source-level fallback as well so this display annotation remains stable
+    // across ReactMarkdown child-shape changes.
+    ...(() => {
+      const sourceCallouts = [...content.matchAll(/^ {0,3}>\s*\[!([A-Za-z][A-Za-z0-9_-]*)\]/gm)].map((match) => match[1].toUpperCase());
+      let blockquoteIndex = 0;
+      return {
+        blockquote: ({ children }: { children?: React.ReactNode }) => {
+          const sourceType = sourceCallouts[blockquoteIndex++] ?? null;
+          const calloutType = supportedCalloutType(children)
+            ?? (sourceType && ['NOTE', 'TIP', 'WARNING'].includes(sourceType) ? sourceType : null);
+          return (
+            <blockquote
+              data-callout-type={calloutType ?? undefined}
+              className={calloutType ? 'markdown-callout' : undefined}
+            >
+              {children}
+            </blockquote>
+          );
+        },
+      };
+    })(),
     ...(wikis
       ? {
           // Wrap p and li children in WikilinkText so [[word]] tokens are

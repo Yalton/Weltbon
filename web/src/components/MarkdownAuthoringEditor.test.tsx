@@ -164,6 +164,46 @@ describe('MarkdownAuthoringEditor', () => {
     expect(onChange).toHaveBeenLastCalledWith('[[Weltbon|the world]]\n\n![map](asset://asset-1)');
   });
 
+  it('replaces a selected Source range through the link dialog with canonical Markdown', () => {
+    const onChange = vi.fn();
+    render(<MarkdownAuthoringEditor value="selected" onChange={onChange} universeId="U1" />);
+
+    fireEvent.click(screen.getByRole('button', { name: 'Source' }));
+    const source = screen.getByRole('textbox', { name: 'Entry body' }) as HTMLTextAreaElement;
+    source.setSelectionRange(0, 8);
+    fireEvent.select(source);
+    fireEvent.click(screen.getByRole('button', { name: 'Link' }));
+
+    fireEvent.change(screen.getByLabelText('Link target'), { target: { value: 'https://example.com' } });
+    fireEvent.change(screen.getByLabelText('Accessible text'), { target: { value: 'Example' } });
+    fireEvent.click(screen.getByRole('button', { name: 'Insert link' }));
+
+    expect(onChange).toHaveBeenLastCalledWith('[Example](https://example.com)');
+  });
+
+  it('replaces selected Live Preview text through the link dialog', async () => {
+    const onChange = vi.fn();
+    render(<MarkdownAuthoringEditor value="selected" onChange={onChange} universeId="U1" />);
+    selectLiveText('p');
+    fireEvent.click(screen.getByRole('button', { name: 'Link' }));
+
+    fireEvent.change(screen.getByLabelText('Link target'), { target: { value: 'https://example.com' } });
+    fireEvent.change(screen.getByLabelText('Accessible text'), { target: { value: 'Example' } });
+    fireEvent.click(screen.getByRole('button', { name: 'Insert link' }));
+
+    await waitFor(() => expect(onChange).toHaveBeenLastCalledWith('[Example](https://example.com)'));
+  });
+
+  it('adds a row through the safe table controls in Source mode', () => {
+    const onChange = vi.fn();
+    const table = '| Name | Value |\n| --- | --- |\n| One | 1 |';
+    render(<MarkdownAuthoringEditor value={table} onChange={onChange} universeId="U1" />);
+    fireEvent.click(screen.getByRole('button', { name: 'Source' }));
+    fireEvent.click(screen.getByRole('button', { name: 'Add table row' }));
+
+    expect(onChange).toHaveBeenLastCalledWith(`${table}\n|  |  |`);
+  });
+
   it('starts in Live Preview and presents completed headings as blocks', () => {
     render(<ControlledEditor value="# Title" />);
 
