@@ -77,6 +77,10 @@ export const markdownAuthoringCommands: readonly MarkdownAuthoringCommand[] = [
 type Selection = { start: number; end: number };
 type MarkdownPart = { kind: 'markdown' | 'raw'; content: string };
 
+function sameSelection(left: Selection | null, right: Selection | null): boolean {
+  return left?.start === right?.start && left?.end === right?.end;
+}
+
 const generatedHeadingWhitespace = /(?:[ \t]*(?:&#x20;|&#32;))+[ \t]*$/i;
 const markdownFence = /^ {0,3}(`{3,}|~{3,})(.*)$/;
 const markdownBlockquotePrefix = /^ {0,3}>[ \t]?/;
@@ -625,6 +629,7 @@ export const MarkdownAuthoringEditor = forwardRef<
 >(function MarkdownAuthoringEditor({ value, onChange, universeId, entryId, disabled = false }, ref) {
   const [mode, setMode] = useState<'live' | 'source'>('live');
   const [liveParserError, setLiveParserError] = useState<string | null>(null);
+  const [tableSelection, setTableSelection] = useState<Selection | null>(null);
   const [paletteOpen, setPaletteOpen] = useState(false);
   const [linkDialogOpen, setLinkDialogOpen] = useState(false);
   const [linkDialogInitial, setLinkDialogInitial] = useState<{
@@ -672,7 +677,9 @@ export const MarkdownAuthoringEditor = forwardRef<
       const source = sourceRef.current;
       if (!source) return;
       source.focus();
-      source.setSelectionRange(sourceSelection.current.start, sourceSelection.current.end);
+      const selection = sourceSelection.current;
+      source.setSelectionRange(selection.start, selection.end);
+      setTableSelection(selection);
       return;
     }
     if (restoreLiveFocus.current) {
@@ -912,7 +919,7 @@ export const MarkdownAuthoringEditor = forwardRef<
 
   useImperativeHandle(ref, () => ({ insertMarkdown, executeCommand }), [insertMarkdown, executeCommand]);
 
-  const getTableSelection = () => {
+  const getTableSelection = (liveIndex = activeLiveEditorIndex.current) => {
     if (mode === 'source') {
       const source = sourceRef.current;
       return source
@@ -920,15 +927,27 @@ export const MarkdownAuthoringEditor = forwardRef<
         : sourceSelection.current;
     }
     if (rawFallback || activeRawBlockIndex.current !== null) return null;
-    const index = activeLiveEditorIndex.current;
-    const editor = mdxEditorRefs.current[index];
-    const editable = liveEditorWrappers.current[index]?.querySelector<HTMLElement>('[contenteditable="true"]');
-    const markdown = editor?.getMarkdown() ?? parts[index]?.content ?? '';
+    const editor = mdxEditorRefs.current[liveIndex];
+    const editable = liveEditorWrappers.current[liveIndex]?.querySelector<HTMLElement>('[contenteditable="true"]');
+    const markdown = editor?.getMarkdown() ?? parts[liveIndex]?.content ?? '';
     const selection = editable ? liveMarkdownSelection(editable, markdown) : null;
     if (!selection) return null;
-    const offset = parts.slice(0, index).reduce((total, part) => total + part.content.length, 0);
+    const offset = parts.slice(0, liveIndex).reduce((total, part) => total + part.content.length, 0);
     return { start: selection.start + offset, end: selection.end + offset };
   };
+
+  const updateTableSelection = (liveIndex = activeLiveEditorIndex.current) => {
+    const next = getTableSelection(liveIndex);
+    setTableSelection((current) => sameSelection(current, next) ? current : next);
+  };
+
+  useEffect(() => {
+    if (mode !== 'live') return;
+    const handleSelectionChange = () => updateTableSelection();
+    document.addEventListener('selectionchange', handleSelectionChange);
+    updateTableSelection();
+    return () => document.removeEventListener('selectionchange', handleSelectionChange);
+  }, [mode, rawFallback, value]);
 
   let partOffset = 0;
 
@@ -993,8 +1012,8 @@ export const MarkdownAuthoringEditor = forwardRef<
         {rawFallback ? (
           <pre
             tabIndex={0}
-            onFocus={() => { activeRawBlockIndex.current = 0; sourceSelection.current = { start: value.length, end: value.length }; }}
-            onClick={() => { activeRawBlockIndex.current = 0; sourceSelection.current = { start: value.length, end: value.length }; }}
+            onFocus={() => { activeRawBlockIndex.current = 0; sourceSelection.current = { start: value.length, end: value.length }; setTableSelection(null); }}
+            onClick={() => { activeRawBlockIndex.current = 0; sourceSelection.current = { start: value.length, end: value.length }; setTableSelection(null); }}
             className="m-3 overflow-x-auto rounded bg-neutral-900 p-3 text-sm text-neutral-100 dark:bg-neutral-900 dark:text-neutral-100"
             aria-label="Raw Markdown block"
           >
@@ -1009,8 +1028,8 @@ export const MarkdownAuthoringEditor = forwardRef<
                 <pre
                   key={`${index}-${part.content}`}
                   tabIndex={0}
-                  onFocus={() => { activeRawBlockIndex.current = index; sourceSelection.current = { start: start + part.content.length, end: start + part.content.length }; }}
-                  onClick={() => { activeRawBlockIndex.current = index; sourceSelection.current = { start: start + part.content.length, end: start + part.content.length }; }}
+                  onFocus={() => { activeRawBlockIndex.current = index; sourceSelection.current = { start: start + part.content.length, end: start + part.content.length }; setTableSelection(null); }}
+                  onClick={() => { activeRawBlockIndex.current = index; sourceSelection.current = { start: start + part.content.length, end: start + part.content.length }; setTableSelection(null); }}
                   className="m-3 overflow-x-auto rounded bg-neutral-900 p-3 text-sm text-neutral-100 dark:bg-neutral-900 dark:text-neutral-100"
                   aria-label="Raw Markdown block"
                 >
@@ -1020,8 +1039,8 @@ export const MarkdownAuthoringEditor = forwardRef<
                 <div
                   key={index}
                   ref={(element) => { liveEditorWrappers.current[index] = element; }}
-                  onFocusCapture={() => { activeRawBlockIndex.current = null; activeLiveEditorIndex.current = index; }}
-                  onClick={() => mdxEditorRefs.current[index]?.focus()}
+                  onFocusCapture={() => { activeRawBlockIndex.current = null; activeLiveEditorIndex.current = index; updateTableSelection(index); }}
+                  onClick={() => { mdxEditorRefs.current[index]?.focus(); updateTableSelection(index); }}
                 >
                   <MDXEditor
                     ref={(editor) => { mdxEditorRefs.current[index] = editor; }}
@@ -1046,6 +1065,7 @@ export const MarkdownAuthoringEditor = forwardRef<
       <MarkdownTableControls
         markdown={value}
         disabled={disabled}
+        selection={tableSelection}
         getSelection={getTableSelection}
         onChange={(markdown) => {
           latestMarkdown.current = markdown;
@@ -1061,18 +1081,22 @@ export const MarkdownAuthoringEditor = forwardRef<
           value={value}
           disabled={disabled}
           onSelect={(event) => {
-            sourceSelection.current = {
+            const selection = {
               start: event.currentTarget.selectionStart,
               end: event.currentTarget.selectionEnd,
             };
+            sourceSelection.current = selection;
+            setTableSelection(selection);
           }}
           onChange={(event) => {
             latestMarkdown.current = event.target.value;
             setLiveParserError(null);
-            sourceSelection.current = {
+            const selection = {
               start: event.target.selectionStart,
               end: event.target.selectionEnd,
             };
+            sourceSelection.current = selection;
+            setTableSelection(selection);
             onChange(event.target.value);
           }}
           className="w-full resize-y bg-transparent px-3 py-2 font-mono text-sm focus:outline-none"

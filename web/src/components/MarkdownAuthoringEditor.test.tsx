@@ -268,6 +268,26 @@ describe('MarkdownAuthoringEditor', () => {
     expect(onChange).toHaveBeenLastCalledWith(`${table}\n|  |  |`);
   });
 
+  it('updates table controls when Source selection moves to a later table', () => {
+    const firstTable = '| First |\n| --- |';
+    const secondTable = '| Name | Value |\n| --- | --- |\n| One | 1 |\n| Two | 2 |';
+    const document = `${firstTable}\n\n${secondTable}`;
+    render(<ControlledEditor value={document} />);
+
+    fireEvent.click(screen.getByRole('button', { name: 'Source' }));
+    const source = screen.getByRole('textbox', { name: 'Entry body' }) as HTMLTextAreaElement;
+    const secondTableStart = firstTable.length + 2;
+    source.setSelectionRange(secondTableStart, secondTableStart + secondTable.length);
+    fireEvent.select(source);
+
+    expect(screen.getByRole('button', { name: 'Remove table row' })).not.toBeDisabled();
+    fireEvent.click(screen.getByRole('button', { name: 'Remove table row' }));
+
+    expect(screen.getByTestId('markdown-value').textContent).toBe(
+      `${firstTable}\n\n${secondTable.replace(/\n\| Two \| 2 \|$/, '')}`,
+    );
+  });
+
   it('starts in Live Preview and presents completed headings as blocks', () => {
     render(<ControlledEditor value="# Title" />);
 

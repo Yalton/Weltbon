@@ -226,6 +226,16 @@ describe('authoring callouts', () => {
     expect(container.querySelector('[data-callout-type]')).toBeNull();
     expect(container.querySelector('blockquote')).toHaveTextContent('[!NOTE]');
   });
+
+  it.each([
+    ['formatted', '> **[!NOTE]**\n> This is ordinary text.'],
+    ['escaped', '> \\[!NOTE]\n> This is ordinary text.'],
+  ])('does not promote a %s marker into a callout', (_description, content) => {
+    const { container } = render(<MarkdownRenderer content={content} />);
+
+    expect(container.querySelector('[data-callout-type]')).toBeNull();
+    expect(container.querySelector('blockquote')).toHaveTextContent('[!NOTE]');
+  });
 });
 
 // ---------------------------------------------------------------------------

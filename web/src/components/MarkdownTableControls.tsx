@@ -211,12 +211,13 @@ export type MarkdownTableControlsProps = {
   markdown: string;
   onChange: (markdown: string) => void;
   disabled?: boolean;
+  selection?: MarkdownTableSelection | null;
   getSelection?: () => MarkdownTableSelection | null;
   children?: ReactNode;
 };
 
-export function MarkdownTableControls({ markdown, onChange, disabled = false, getSelection, children }: MarkdownTableControlsProps) {
-  const selectionAtRender = getSelection ? getSelection() : null;
+export function MarkdownTableControls({ markdown, onChange, disabled = false, selection, getSelection, children }: MarkdownTableControlsProps) {
+  const selectionAtRender = selection === undefined ? (getSelection ? getSelection() : null) : selection;
   const table = findTable(markdown, selectionAtRender);
   const canRemoveRow = !!table && table.rows.length > 1;
   const canRemoveColumn = !!table && table.rows[0].length > 1;

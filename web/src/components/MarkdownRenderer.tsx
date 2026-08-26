@@ -54,29 +54,6 @@ function paragraphHasBlockEmbed(
   return scan(children);
 }
 
-function supportedCalloutType(children: React.ReactNode): string | null {
-  const firstChild = React.Children.toArray(children)[0];
-  if (!React.isValidElement(firstChild)) return null;
-  const childType = firstChild.type;
-  const isParagraph = childType === 'p'
-    || (typeof childType === 'function' && (childType as { name?: string }).name === 'p');
-  if (!isParagraph) return null;
-
-  const textOfParagraph = (node: React.ReactNode): string => {
-    if (typeof node === 'string') return node;
-    if (Array.isArray(node)) return node.map(textOfParagraph).join('');
-    if (React.isValidElement(node)) {
-      const elementType = node.type;
-      if (elementType === 'code' || elementType === 'pre') return '\u0000';
-      return textOfParagraph((node as React.ReactElement<{ children?: React.ReactNode }>).props.children);
-    }
-    return '';
-  };
-  const text = textOfParagraph((firstChild as React.ReactElement<{ children?: React.ReactNode }>).props.children);
-  const match = text.match(/^\[!(NOTE|TIP|WARNING)\](?:\s|$)/i);
-  return match?.[1].toUpperCase() ?? null;
-}
-
 function stripMarkdownContainers(line: string): string {
   let rest = line.trimStart();
   let stripped = true;
@@ -281,8 +258,7 @@ export function MarkdownRenderer({
     // across ReactMarkdown child-shape changes.
     blockquote: ({ children }: { children?: React.ReactNode }) => {
       const sourceType = sourceCallouts[blockquoteIndex++] ?? null;
-      const calloutType = supportedCalloutType(children)
-        ?? (sourceType && ['NOTE', 'TIP', 'WARNING'].includes(sourceType) ? sourceType : null);
+      const calloutType = sourceType && ['NOTE', 'TIP', 'WARNING'].includes(sourceType) ? sourceType : null;
       return (
         <blockquote
           data-callout-type={calloutType ?? undefined}
