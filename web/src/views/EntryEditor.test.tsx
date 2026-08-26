@@ -3,7 +3,8 @@ import { render, screen, waitFor, fireEvent, within } from '@testing-library/rea
 import userEvent from '@testing-library/user-event';
 import { MemoryRouter, Routes, Route } from 'react-router-dom';
 import { QueryClient, QueryClientProvider } from '@tanstack/react-query';
-import type { Entry } from '../hooks/useEntries';
+import type { AssetSummary } from '../hooks/useAssets';
+import type { Backlink, Entry } from '../hooks/useEntries';
 
 vi.mock('../api/client', () => ({
   getShareToken: () => null,
@@ -30,6 +31,12 @@ function setupApi({
     }
     if (path === '/universes/U1') {
       return universe;
+    }
+    if (path === '/universes/U1/entries' && !init?.method) {
+      return [];
+    }
+    if (path === '/universes/U1/assets' && !init?.method) {
+      return [];
     }
     if (path === '/universes/U1/entries' && init?.method === 'POST') {
       return createResponse;
@@ -160,8 +167,9 @@ describe('EntryEditor template prefill (POL-04)', () => {
       expect(typeSelect.value).toBe('location');
     });
 
-    const bodyTextarea = (await screen.findByLabelText(/body/i)) as HTMLTextAreaElement;
-    expect(bodyTextarea.value).toContain('## Geography');
+    await userEvent.click(await screen.findByRole('button', { name: 'Source' }));
+    const bodySource = (await screen.findByRole('textbox', { name: 'Entry body' })) as HTMLTextAreaElement;
+    expect(bodySource.value).toContain('## Geography');
 
     // Meta keys 'region' and 'climate' both render as Key inputs
     const keyInputs = screen.getAllByPlaceholderText('Key') as HTMLInputElement[];
@@ -209,6 +217,33 @@ describe('EntryEditor template prefill (POL-04)', () => {
       expect(submitBtn.disabled).toBe(true);
     });
   });
+
+  it('submits the exact Markdown changed through the authoring editor', async () => {
+    setupApi({
+      universe: { entryTypes: ['character'] },
+      categories: [],
+      createResponse: { id: 'new-id' },
+    });
+    renderEditor();
+
+    await userEvent.type(await screen.findByLabelText(/title/i), 'Frodo');
+    await userEvent.selectOptions(screen.getByLabelText(/type/i), 'character');
+    await userEvent.click(screen.getByRole('button', { name: 'Source' }));
+    fireEvent.change(screen.getByRole('textbox', { name: 'Entry body' }), {
+      target: { value: '## Quest\n\n[[Mordor]]\n\n![map](asset://asset-1)' },
+    });
+    await userEvent.click(screen.getByRole('button', { name: /create entry/i }));
+
+    await waitFor(() => {
+      const createCall = vi.mocked(api).mock.calls.find(([path, init]) =>
+        path === '/universes/U1/entries' && (init as RequestInit)?.method === 'POST',
+      );
+      expect(createCall).toBeDefined();
+      expect(JSON.parse((createCall![1] as RequestInit).body as string).body).toBe(
+        '## Quest\n\n[[Mordor]]\n\n![map](asset://asset-1)',
+      );
+    });
+  });
 });
 
 describe('EntryEditor kebab + SaveAsTemplateDialog (28-06)', () => {
@@ -235,7 +270,7 @@ describe('EntryEditor kebab + SaveAsTemplateDialog (28-06)', () => {
   });
 
   it('renders the kebab "Entry actions" button in edit mode', async () => {
-    vi.mocked(api).mockImplementation(async (path?: string) => {
+    vi.mocked(api).mockImplementation(async (path?: string, init?: RequestInit) => {
       if (!path) return undefined;
       if (path === '/universes/U1') return { entryTypes: ['entity'] };
       if (path.startsWith('/universes/U1/categories')) return { categories: [], uncategorizedCount: 0 };
@@ -251,6 +286,8 @@ describe('EntryEditor kebab + SaveAsTemplateDialog (28-06)', () => {
           meta: {},
           categoryId: null,
         };
+      if (path === '/universes/U1/entries' && !init?.method) return [];
+      if (path === '/universes/U1/assets' && !init?.method) return [];
       return undefined;
     });
 
@@ -397,262 +434,6 @@ function makeTestEntry(
   return { ...BASE_ENTRY_FIXTURE, id, title, aliases, updatedAt };
 }
 
-const EMPIRE_ENTRY = makeTestEntry('e1', 'Empire', ['The Imperium'], '2026-06-20T00:00:00Z');
-const EMPYREAN_ENTRY = makeTestEntry('e2', 'Empyrean', [], '2026-06-18T00:00:00Z');
-const SELF_ENTRY = makeTestEntry('SELF-ID', 'Self Entry', [], '2026-06-23T00:00:00Z');
-
-const WIKILINK_TEST_ENTRIES = [EMPIRE_ENTRY, EMPYREAN_ENTRY, SELF_ENTRY];
-
-// Render EntryEditor in edit mode with the SELF_ENTRY loaded (so entryId = 'SELF-ID')
-function renderEditModeWithEntries(extraEntries: Entry[] = []) {
-  const allEntries = [...WIKILINK_TEST_ENTRIES, ...extraEntries];
-
-  vi.mocked(api).mockImplementation(async (path?: string, init?: RequestInit) => {
-    if (!path) return undefined;
-    // Universe info
-    if (path === '/universes/U1') return { entryTypes: ['place', 'character'] };
-    // Categories
-    if (path.startsWith('/universes/U1/categories')) {
-      return { categories: [], uncategorizedCount: 0 };
-    }
-    // Entry list (for useEntries / WikilinkAutocomplete)
-    if (path === '/universes/U1/entries' && !init?.method) {
-      return allEntries;
-    }
-    // Single entry for edit mode
-    if (path === '/universes/U1/entries/SELF-ID' && !init?.method) {
-      return {
-        ...SELF_ENTRY,
-        body: '',
-        outboundLinks: [],
-        backlinks: [],
-        issues: [],
-      };
-    }
-    // Entry list with method=GET (shouldn't happen but guard)
-    if (path === '/universes/U1/entries' && init?.method === 'GET') return allEntries;
-    return undefined;
-  });
-
-  const qc = new QueryClient({
-    defaultOptions: { queries: { retry: false }, mutations: { retry: false } },
-  });
-
-  return render(
-    <QueryClientProvider client={qc}>
-      <MemoryRouter initialEntries={['/universes/U1/entries/SELF-ID/edit']}>
-        <Routes>
-          <Route path="/universes/:uid/entries/:entryId/edit" element={<EntryEditor />} />
-          <Route path="/universes/:uid/entries/:entryId" element={<div>Entry detail</div>} />
-        </Routes>
-      </MemoryRouter>
-    </QueryClientProvider>,
-  );
-}
-
-// Helper: get the body textarea (after editor loads)
-async function getBodyTextarea(): Promise<HTMLTextAreaElement> {
-  return screen.findByLabelText(/body/i) as Promise<HTMLTextAreaElement>;
-}
-
-// Helper: type text into the body textarea and correctly set selectionStart.
-// jsdom's HTMLTextAreaElement.selectionStart is an accessor (getter/setter) on the
-// prototype, but it typically returns 0 in jsdom because there's no layout engine.
-// We set it via the native setter before firing the change event so our
-// detectWikilinkTrigger can locate the `[[` token.
-function typeIntoBody(textarea: HTMLTextAreaElement, text: string): void {
-  const newValue = textarea.value + text;
-  // Use nativeInputValueSetter to set the value on the textarea element
-  // (the same approach the production code uses to bypass react-hook-form).
-  const nativeInputValueSetter = Object.getOwnPropertyDescriptor(
-    window.HTMLTextAreaElement.prototype,
-    'value',
-  )?.set;
-  if (nativeInputValueSetter) {
-    nativeInputValueSetter.call(textarea, newValue);
-  }
-  // Set selectionStart via the prototype setter (jsdom exposes it but returns 0;
-  // calling the setter sets the internal value so reads return correct results).
-  const selectionStartDesc = Object.getOwnPropertyDescriptor(
-    HTMLTextAreaElement.prototype,
-    'selectionStart',
-  );
-  if (selectionStartDesc?.set) {
-    selectionStartDesc.set.call(textarea, newValue.length);
-  }
-  // Fire the change event so react-hook-form and our handlers both run.
-  // RTL's fireEvent.change merges target properties, but e.target is the real DOM
-  // element, so e.target.selectionStart reads from the element we just set.
-  fireEvent.change(textarea, { target: { value: newValue } });
-}
-
-describe('EntryEditor wikilink autocomplete (Phase 47 XREF-01)', () => {
-  beforeEach(() => {
-    vi.mocked(api).mockReset();
-    // Reset any Radix body style side effects
-    document.body.style.removeProperty('pointer-events');
-    document.body.removeAttribute('data-scroll-locked');
-  });
-
-  it('SC1: typing [[ into the body textarea opens a role="listbox"', async () => {
-    renderEditModeWithEntries();
-
-    // Wait for editor to load (and entries to load in the mock)
-    const bodyTA = await getBodyTextarea();
-    // Wait for entries to be loaded into the cache (api /universes/U1/entries)
-    await waitFor(() => {
-      expect(vi.mocked(api).mock.calls.some(([p]) => p === '/universes/U1/entries')).toBe(true);
-    });
-
-    // Type [[ to trigger the picker
-    typeIntoBody(bodyTA, '[[');
-
-    // The listbox should appear
-    await waitFor(() => {
-      expect(screen.getByRole('listbox')).toBeInTheDocument();
-    });
-  });
-
-  it('SC1/filter: typing [[emp shows Empire as first option', async () => {
-    renderEditModeWithEntries();
-
-    const bodyTA = await getBodyTextarea();
-    await waitFor(() => {
-      expect(vi.mocked(api).mock.calls.some(([p]) => p === '/universes/U1/entries')).toBe(true);
-    });
-
-    typeIntoBody(bodyTA, '[[emp');
-
-    await waitFor(() => {
-      const listbox = screen.getByRole('listbox');
-      expect(listbox).toBeInTheDocument();
-      const options = screen.getAllByRole('option');
-      // Empire starts with "emp" (title-prefix) — should appear before Empyrean
-      const titles = options.map((o) => o.textContent ?? '');
-      expect(titles.some((t) => t.includes('Empire'))).toBe(true);
-    });
-  });
-
-  it('SC2/SC3: pressing Enter after [[emp inserts [[Empire]] into the body', async () => {
-    renderEditModeWithEntries();
-
-    const bodyTA = await getBodyTextarea();
-    // Wait for the entries list to be fetched AND rendered so rankEntries has data
-    await waitFor(() => {
-      expect(vi.mocked(api).mock.calls.some(([p]) => p === '/universes/U1/entries')).toBe(true);
-    });
-
-    typeIntoBody(bodyTA, '[[emp');
-
-    // Wait for listbox + options to appear (options confirm entries are in cache)
-    await waitFor(() => {
-      expect(screen.getByRole('listbox')).toBeInTheDocument();
-      expect(screen.getAllByRole('option').length).toBeGreaterThan(0);
-    });
-
-    // Press Enter to select the active (first) result
-    fireEvent.keyDown(bodyTA, { key: 'Enter', code: 'Enter' });
-
-    // The listbox should close and the body value should contain [[Empire]]
-    await waitFor(() => {
-      expect(screen.queryByRole('listbox')).not.toBeInTheDocument();
-      expect((bodyTA as HTMLTextAreaElement).value).toContain('[[Empire]]');
-    });
-  });
-
-  it('D-12/SC1: pressing Escape closes the picker without inserting', async () => {
-    renderEditModeWithEntries();
-
-    const bodyTA = await getBodyTextarea();
-    await waitFor(() => {
-      expect(vi.mocked(api).mock.calls.some(([p]) => p === '/universes/U1/entries')).toBe(true);
-    });
-
-    typeIntoBody(bodyTA, '[[emp');
-
-    await waitFor(() => {
-      expect(screen.getByRole('listbox')).toBeInTheDocument();
-    });
-
-    fireEvent.keyDown(bodyTA, { key: 'Escape', code: 'Escape' });
-
-    await waitFor(() => {
-      expect(screen.queryByRole('listbox')).not.toBeInTheDocument();
-    });
-
-    // Body should NOT contain [[Empire]]
-    expect((bodyTA as HTMLTextAreaElement).value).not.toContain('[[Empire]]');
-    // Body should still have the typed text
-    expect((bodyTA as HTMLTextAreaElement).value).toBe('[[emp');
-  });
-
-  it('D-11: typing [[ inside a backtick code span does NOT open the listbox', async () => {
-    renderEditModeWithEntries();
-
-    const bodyTA = await getBodyTextarea();
-    await waitFor(() => {
-      expect(vi.mocked(api).mock.calls.some(([p]) => p === '/universes/U1/entries')).toBe(true);
-    });
-
-    // Type a backtick-delimited inline code span — `[[emp — cursor inside code span
-    typeIntoBody(bodyTA, '`[[emp');
-
-    // The picker should NOT open (odd backtick count = inside code span)
-    await waitFor(
-      () => {
-        expect(screen.queryByRole('listbox')).not.toBeInTheDocument();
-      },
-      { timeout: 500 },
-    );
-  });
-
-  it('D-13: the entry being edited is excluded from picker results', async () => {
-    renderEditModeWithEntries();
-
-    const bodyTA = await getBodyTextarea();
-    await waitFor(() => {
-      expect(vi.mocked(api).mock.calls.some(([p]) => p === '/universes/U1/entries')).toBe(true);
-    });
-
-    // Type [[self to search for entries matching "self"
-    typeIntoBody(bodyTA, '[[self');
-
-    // If picker opens, "Self Entry" (which is the edited entry, currentEntryId=SELF-ID) should NOT appear
-    await waitFor(
-      () => {
-        const options = screen.queryAllByRole('option');
-        const optionTexts = options.map((o) => o.textContent ?? '');
-        expect(optionTexts.every((t) => !t.includes('Self Entry'))).toBe(true);
-      },
-      { timeout: 1000 },
-    );
-  });
-
-  it('D-05/SC3: typing [[emp|nick and pressing Enter inserts [[Empire|nick]]', async () => {
-    renderEditModeWithEntries();
-
-    const bodyTA = await getBodyTextarea();
-    await waitFor(() => {
-      expect(vi.mocked(api).mock.calls.some(([p]) => p === '/universes/U1/entries')).toBe(true);
-    });
-
-    typeIntoBody(bodyTA, '[[emp|nick');
-
-    // Wait for listbox + options (the query part before | is "emp", so Empire appears)
-    await waitFor(() => {
-      expect(screen.getByRole('listbox')).toBeInTheDocument();
-      expect(screen.getAllByRole('option').length).toBeGreaterThan(0);
-    });
-
-    fireEvent.keyDown(bodyTA, { key: 'Enter', code: 'Enter' });
-
-    await waitFor(() => {
-      expect(screen.queryByRole('listbox')).not.toBeInTheDocument();
-      expect((bodyTA as HTMLTextAreaElement).value).toContain('[[Empire|nick]]');
-    });
-  });
-});
-
 // ---------------------------------------------------------------------------
 // Phase 48 XREF-05 — Two-phase rename-propagation save (D-08/D-09/D-10)
 // ---------------------------------------------------------------------------
@@ -705,6 +486,9 @@ function renderEditModeForRename({
     ) {
       return commitResponse;
     }
+    if (path === '/universes/U1/assets' && !init?.method) {
+      return [];
+    }
     return undefined;
   });
 
@@ -755,6 +539,9 @@ function renderEditorForExistingEntry(overrides: Partial<Entry> = {}) {
     if (path === '/universes/U1/entries/HERO-ID' && !init?.method) {
       return { ...fixtureEntry, outboundLinks: [], backlinks: [], issues: [] };
     }
+    if (path === '/universes/U1/assets' && !init?.method) {
+      return [];
+    }
     return undefined;
   });
 
@@ -765,6 +552,72 @@ function renderEditorForExistingEntry(overrides: Partial<Entry> = {}) {
   return render(
     <QueryClientProvider client={qc}>
       <MemoryRouter initialEntries={['/universes/U1/entries/HERO-ID/edit']}>
+        <Routes>
+          <Route path="/universes/:uid/entries/:entryId/edit" element={<EntryEditor />} />
+          <Route path="/universes/:uid/entries/:entryId" element={<div>Entry detail</div>} />
+        </Routes>
+      </MemoryRouter>
+    </QueryClientProvider>,
+  );
+}
+
+function renderEditorForAuthoringPanels({
+  entryOverrides = {},
+  detailOverrides = {},
+  entries = [],
+  assets = [],
+}: {
+  entryOverrides?: Partial<Entry>;
+  detailOverrides?: {
+    body?: string;
+    backlinks?: Backlink[];
+    assetUrls?: Record<string, string>;
+  };
+  entries?: Entry[];
+  assets?: AssetSummary[];
+} = {}) {
+  const fixtureEntry: Entry = {
+    ...BASE_ENTRY_FIXTURE,
+    id: 'AUTHOR-ID',
+    title: 'Draft Entry',
+    aliases: [],
+    updatedAt: '2026-01-01T00:00:00Z',
+    ...entryOverrides,
+  };
+  const entryList = entries.length > 0 ? entries : [fixtureEntry];
+
+  vi.mocked(api).mockImplementation(async (path?: string, init?: RequestInit) => {
+    if (!path) return undefined;
+    if (path === '/universes/U1') return { entryTypes: ['character', 'place'] };
+    if (path.startsWith('/universes/U1/categories')) {
+      return { categories: [], uncategorizedCount: 0 };
+    }
+    if (path === '/universes/U1/entries' && !init?.method) {
+      return entryList;
+    }
+    if (path === '/universes/U1/entries/AUTHOR-ID' && !init?.method) {
+      return {
+        ...fixtureEntry,
+        body: detailOverrides.body ?? '',
+        outboundLinks: [],
+        backlinks: detailOverrides.backlinks ?? [],
+        issues: [],
+        assetUrls: detailOverrides.assetUrls ?? {},
+      };
+    }
+    if (path === '/universes/U1/assets' && !init?.method) {
+      return assets;
+    }
+    return undefined;
+  });
+
+  const qc = new QueryClient({
+    defaultOptions: { queries: { retry: false }, mutations: { retry: false } },
+  });
+
+  return render(
+    <QueryClientProvider client={qc}>
+      <MemoryRouter initialEntries={['/universes/U1/entries/AUTHOR-ID/edit']}>
         <Routes>
           <Route path="/universes/:uid/entries/:entryId/edit" element={<EntryEditor />} />
           <Route path="/universes/:uid/entries/:entryId" element={<div>Entry detail</div>} />
@@ -860,6 +713,97 @@ describe('Content-Forward Views §5 — editor hero', () => {
     const hero = await screen.findByTestId('editor-hero');
     // Matches EntryDetail: the contract resolves cover → icon → monogram.
     expect(within(hero).getByTestId('hero-monogram')).toHaveTextContent('🜂');
+  });
+});
+
+describe('EntryEditor authoring navigation and recovery (Task 6)', () => {
+  beforeEach(() => {
+    vi.mocked(api).mockReset();
+    document.body.style.removeProperty('pointer-events');
+    document.body.removeAttribute('data-scroll-locked');
+  });
+
+  it('shows outline, canonical backlinks, and recovery actions wired to source/picker flow', async () => {
+    const user = userEvent.setup();
+    const markdown = '# Intro\n\n## Details\n\n## Details\n\n[[Glossary]]\n\n![Map](asset://lost-asset)';
+    renderEditorForAuthoringPanels({
+      detailOverrides: {
+        body: markdown,
+        backlinks: [
+          {
+            id: 'backlink-1',
+            sourceEntryId: 'atlas-id',
+            sourceTitle: 'Atlas',
+            sourceIcon: '',
+            label: 'mentions',
+            linkType: null,
+            direction: 'inbound',
+          },
+        ],
+        assetUrls: {},
+      },
+      entries: [
+        {
+          ...BASE_ENTRY_FIXTURE,
+          id: 'AUTHOR-ID',
+          title: 'Draft Entry',
+          aliases: [],
+          updatedAt: '2026-01-01T00:00:00Z',
+        },
+        {
+          ...BASE_ENTRY_FIXTURE,
+          id: 'atlas-id',
+          title: 'Atlas',
+          aliases: [],
+          updatedAt: '2026-01-01T00:00:00Z',
+        },
+      ],
+      assets: [
+        {
+          id: 'asset-2',
+          universeId: 'U1',
+          filename: 'new-map.png',
+          mimeType: 'image/png',
+          extension: 'png',
+          sizeBytes: 12,
+          thumbSizeBytes: 8,
+          altText: 'New map',
+          rawUrl: 'https://example.com/raw.png',
+          thumbUrl: 'https://example.com/thumb.png',
+          createdAt: '2026-01-01T00:00:00Z',
+          updatedAt: '2026-01-01T00:00:00Z',
+        },
+      ],
+    });
+
+    expect(await screen.findByRole('heading', { name: /outline/i })).toBeInTheDocument();
+    expect(screen.getByRole('link', { name: 'Atlas' })).toBeInTheDocument();
+    expect(screen.getAllByText('[[Glossary]]').length).toBeGreaterThanOrEqual(2);
+    expect(screen.getByRole('button', { name: /open in source/i })).toBeInTheDocument();
+
+    const liveHeadings = await screen.findAllByRole('heading', { name: 'Details' });
+    expect(liveHeadings[0]).toHaveAttribute('id', 'details');
+    expect(liveHeadings[1]).toHaveAttribute('id', 'details-2');
+    const scrollIntoView = vi.fn();
+    liveHeadings[1].scrollIntoView = scrollIntoView;
+    await user.click(screen.getAllByRole('button', { name: 'Details' })[1]);
+    expect(scrollIntoView).toHaveBeenCalled();
+    expect(document.querySelector('textarea[aria-label="Entry body"]')).not.toBeInTheDocument();
+
+    await user.click(screen.getByRole('button', { name: /open in source/i }));
+    const source = await screen.findByRole('textbox', { name: 'Entry body' }) as HTMLTextAreaElement;
+    expect(source.selectionStart).toBe(markdown.indexOf('[[Glossary]]'));
+    expect(source.selectionEnd).toBe(markdown.indexOf('[[Glossary]]') + '[[Glossary]]'.length);
+
+    await user.click(screen.getByRole('button', { name: /replace image/i }));
+    expect(await screen.findByRole('dialog')).toBeInTheDocument();
+    await user.click(screen.getByRole('button', { name: /select new-map\.png/i }));
+    await user.click(screen.getByRole('button', { name: /^insert$/i }));
+
+    await waitFor(() => {
+      expect(source.value).toContain('![Map](asset://asset-2)');
+      expect(source.value).not.toContain('asset://lost-asset');
+    });
   });
 });
 
@@ -1015,6 +959,192 @@ describe('EntryEditor rename-propagation two-phase save (Phase 48 XREF-05)', () 
     // After commit, the after-summary "3 links rewritten" should appear (D-10)
     await waitFor(() => {
       expect(screen.getByText(/3 links rewritten/i)).toBeInTheDocument();
+    });
+  });
+
+  it('keeps preview and commit payload bodies as ordinary Markdown during a title rename', async () => {
+    const markdown = '# Quest\n\n[[Mordor]]\n\n![map](asset://asset-1)';
+
+    vi.mocked(api).mockImplementation(async (path?: string, init?: RequestInit) => {
+      if (!path) return undefined;
+      if (path === '/universes/U1') return { entryTypes: ['place', 'character'] };
+      if (path.startsWith('/universes/U1/categories')) {
+        return { categories: [], uncategorizedCount: 0 };
+      }
+      if (path === '/universes/U1/entries' && !init?.method) {
+        return [RENAME_ENTRY];
+      }
+      if (path === '/universes/U1/entries/RENAME-ID' && !init?.method) {
+        return {
+          ...RENAME_ENTRY,
+          body: markdown,
+          outboundLinks: [],
+          backlinks: [],
+          issues: [],
+          assetUrls: { 'asset-1': 'https://example.com/asset-1.png' },
+        };
+      }
+      if (path === '/universes/U1/assets' && !init?.method) {
+        return [];
+      }
+      if (
+        path.startsWith('/universes/U1/entries/RENAME-ID') &&
+        path.includes('preview=true') &&
+        init?.method === 'PATCH'
+      ) {
+        return { affectedLinks: 1, affectedEntries: 1 };
+      }
+      if (path === '/universes/U1/entries/RENAME-ID' && init?.method === 'PATCH') {
+        return { ...RENAME_ENTRY, title: 'Imperium', rewriteCount: 1 };
+      }
+      return undefined;
+    });
+
+    const qc = new QueryClient({
+      defaultOptions: { queries: { retry: false }, mutations: { retry: false } },
+    });
+
+    render(
+      <QueryClientProvider client={qc}>
+        <MemoryRouter initialEntries={['/universes/U1/entries/RENAME-ID/edit']}>
+          <Routes>
+            <Route path="/universes/:uid/entries/:entryId/edit" element={<EntryEditor />} />
+            <Route path="/universes/:uid/entries/:entryId" element={<div>Entry detail</div>} />
+          </Routes>
+        </MemoryRouter>
+      </QueryClientProvider>,
+    );
+
+    await screen.findByDisplayValue('Empire');
+    const titleInput = screen.getByLabelText(/title/i);
+    await userEvent.clear(titleInput);
+    await userEvent.type(titleInput, 'Imperium');
+    await userEvent.click(screen.getByRole('button', { name: /save changes/i }));
+    await screen.findByRole('dialog');
+    await userEvent.click(screen.getByRole('button', { name: /proceed/i }));
+
+    await waitFor(() => {
+      const previewCall = vi.mocked(api).mock.calls.find(([path, init]) =>
+        typeof path === 'string' &&
+        path.includes('/universes/U1/entries/RENAME-ID?preview=true') &&
+        (init as RequestInit)?.method === 'PATCH',
+      );
+      const commitCall = vi.mocked(api).mock.calls.find(([path, init]) =>
+        path === '/universes/U1/entries/RENAME-ID' &&
+        (init as RequestInit)?.method === 'PATCH',
+      );
+      expect(previewCall).toBeDefined();
+      expect(commitCall).toBeDefined();
+      expect(JSON.parse((previewCall![1] as RequestInit).body as string).body).toBe(markdown);
+      expect(JSON.parse((commitCall![1] as RequestInit).body as string).body).toBe(markdown);
+    });
+  });
+
+  it('preserves the canonical body through an editor mode round trip and separate Entry.tags contract during rename preview and commit', async () => {
+    const markdown = [
+      '---',
+      'tags: [doc-tag]',
+      'custom: keep',
+      '---',
+      '# Atlas',
+      '',
+      '> [!NOTE]',
+      '> Keep this supported callout.',
+      '',
+      '| Name | Value |',
+      '| --- | --- |',
+      '| Link | [Guide](https://example.com/guide) |',
+      '',
+      'See [[Empire|the Empire]] and ![[Atlas Map]].',
+      '',
+      '![Map](asset://asset-1)',
+    ].join('\n');
+
+    vi.mocked(api).mockImplementation(async (path?: string, init?: RequestInit) => {
+      if (!path) return undefined;
+      if (path === '/universes/U1') return { entryTypes: ['place', 'character'] };
+      if (path.startsWith('/universes/U1/categories')) {
+        return { categories: [], uncategorizedCount: 0 };
+      }
+      if (path === '/universes/U1/entries' && !init?.method) {
+        return [{ ...RENAME_ENTRY, tags: ['entry-tag'] }];
+      }
+      if (path === '/universes/U1/entries/RENAME-ID' && !init?.method) {
+        return {
+          ...RENAME_ENTRY,
+          tags: ['entry-tag'],
+          body: markdown,
+          outboundLinks: [],
+          backlinks: [],
+          issues: [],
+          assetUrls: { 'asset-1': 'https://example.com/asset-1.png' },
+        };
+      }
+      if (path === '/universes/U1/assets' && !init?.method) {
+        return [];
+      }
+      if (
+        path.startsWith('/universes/U1/entries/RENAME-ID') &&
+        path.includes('preview=true') &&
+        init?.method === 'PATCH'
+      ) {
+        return { affectedLinks: 1, affectedEntries: 1 };
+      }
+      if (path === '/universes/U1/entries/RENAME-ID' && init?.method === 'PATCH') {
+        return { ...RENAME_ENTRY, title: 'Imperium', rewriteCount: 1, tags: ['entry-tag'] };
+      }
+      return undefined;
+    });
+
+    const qc = new QueryClient({
+      defaultOptions: { queries: { retry: false }, mutations: { retry: false } },
+    });
+
+    render(
+      <QueryClientProvider client={qc}>
+        <MemoryRouter initialEntries={['/universes/U1/entries/RENAME-ID/edit']}>
+          <Routes>
+            <Route path="/universes/:uid/entries/:entryId/edit" element={<EntryEditor />} />
+            <Route path="/universes/:uid/entries/:entryId" element={<div>Entry detail</div>} />
+          </Routes>
+        </MemoryRouter>
+      </QueryClientProvider>,
+    );
+
+    await screen.findByDisplayValue('Empire');
+    await userEvent.click(screen.getByRole('button', { name: 'Source' }));
+    expect(await screen.findByRole('textbox', { name: 'Entry body' })).toHaveValue(markdown);
+    await userEvent.click(screen.getByRole('button', { name: 'Live Preview' }));
+    await userEvent.click(screen.getByRole('button', { name: 'Source' }));
+    expect(screen.getByRole('textbox', { name: 'Entry body' })).toHaveValue(markdown);
+
+    const titleInput = screen.getByLabelText(/title/i);
+    await userEvent.clear(titleInput);
+    await userEvent.type(titleInput, 'Imperium');
+    await userEvent.click(screen.getByRole('button', { name: /save changes/i }));
+    await screen.findByRole('dialog');
+    await userEvent.click(screen.getByRole('button', { name: /proceed/i }));
+
+    await waitFor(() => {
+      const previewCall = vi.mocked(api).mock.calls.find(([path, init]) =>
+        typeof path === 'string' &&
+        path.includes('/universes/U1/entries/RENAME-ID?preview=true') &&
+        (init as RequestInit)?.method === 'PATCH',
+      );
+      const commitCall = vi.mocked(api).mock.calls.find(([path, init]) =>
+        path === '/universes/U1/entries/RENAME-ID' &&
+        (init as RequestInit)?.method === 'PATCH',
+      );
+      expect(previewCall).toBeDefined();
+      expect(commitCall).toBeDefined();
+      expect(JSON.parse((previewCall![1] as RequestInit).body as string)).toMatchObject({
+        body: markdown,
+        tags: ['entry-tag'],
+      });
+      expect(JSON.parse((commitCall![1] as RequestInit).body as string)).toMatchObject({
+        body: markdown,
+        tags: ['entry-tag'],
+      });
     });
   });
 });

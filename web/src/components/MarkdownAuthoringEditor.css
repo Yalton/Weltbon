@@ -1,0 +1,51 @@
+.markdown-authoring-editor-theme {
+  /* MDXEditor's light defaults are global and win when its packaged theme
+     variables are resolved from :root. Scope the surface to Weltbon's dark
+     canvas instead of relying on an ancestor `.dark` selector. */
+  --basePageBg: var(--color-canvas-lo, #070912);
+  --baseBase: var(--color-canvas-lo, #070912);
+  --baseBgSubtle: var(--color-glass, rgb(255 255 255 / 0.04));
+  --baseBg: var(--color-chrome, rgb(12 16 31 / 0.85));
+  --baseBgHover: rgb(255 255 255 / 0.08);
+  --baseBgActive: rgb(255 255 255 / 0.12);
+  --baseLine: var(--color-glass-border, rgb(255 255 255 / 0.08));
+  --baseBorder: var(--color-glass-border, rgb(255 255 255 / 0.08));
+  --baseBorderHover: rgb(255 255 255 / 0.16);
+  --baseSolid: var(--color-accent-strong, #818cf8);
+  --baseSolidHover: var(--color-accent, #6366f1);
+  --baseText: var(--color-ink-secondary, #94a3c8);
+  --baseTextContrast: var(--color-ink, #eef2ff);
+  background-color: var(--basePageBg);
+  color: var(--baseText);
+}
+
+.markdown-authoring-editor-theme [contenteditable='true'] {
+  color: var(--baseTextContrast);
+}
+
+.markdown-authoring-editor-theme .prose {
+  --tw-prose-body: var(--color-ink, #eef2ff);
+  --tw-prose-headings: var(--color-ink, #eef2ff);
+}
+
+/* Weltbon's global prose contract is light-first; keep these surfaces dark
+   even when the editor is mounted without a page-level `.dark` ancestor. */
+.markdown-authoring-editor-theme .prose.prose code {
+  background: var(--color-glass, rgb(255 255 255 / 0.04));
+  color: var(--baseTextContrast);
+}
+
+.markdown-authoring-editor-theme .prose.prose pre {
+  background: var(--color-canvas-lo, #070912);
+  border: 1px solid var(--baseBorder);
+  color: var(--baseTextContrast);
+}
+
+.markdown-authoring-editor-theme .prose.prose pre code {
+  background: transparent;
+}
+
+.markdown-authoring-editor-theme .prose.prose blockquote {
+  color: var(--baseText);
+  border-left-color: var(--color-accent-strong, #818cf8);
+}

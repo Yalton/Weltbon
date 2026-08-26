@@ -184,6 +184,71 @@ describe('T5: no wikis prop → [[x]] renders as literal text', () => {
   });
 });
 
+describe('authoring callouts', () => {
+  it('marks supported NOTE callouts for the reading surface without changing their body', () => {
+    render(<MarkdownRenderer content={'> [!NOTE]\n> Keep this detail.'} />);
+
+    const callout = document.querySelector('[data-callout-type="NOTE"]');
+    expect(callout).toBeInTheDocument();
+    expect(callout).toHaveTextContent('[!NOTE]');
+    expect(callout).toHaveTextContent('Keep this detail.');
+  });
+
+  it('leaves unsupported callout types as ordinary blockquotes', () => {
+    const { container } = render(<MarkdownRenderer content={'> [!DANGER]\n> Keep this raw.'} />);
+
+    expect(container.querySelector('[data-callout-type]')).toBeNull();
+    expect(container.querySelector('blockquote')).toHaveTextContent('[!DANGER]');
+  });
+
+  it('does not classify a real blockquote from a callout marker inside a fenced code block', () => {
+    const content = '```md\n> [!NOTE]\n> This is code.\n```\n\n> [!DANGER]\n> Keep this unsupported.';
+    const { container } = render(<MarkdownRenderer content={content} />);
+
+    expect(container.querySelector('[data-callout-type]')).toBeNull();
+    expect(container.querySelector('blockquote')).toHaveTextContent('[!DANGER]');
+  });
+
+  it.each([
+    ['a list fence', '- ~~~md\n  > [!NOTE]\n  > This is code.\n  ~~~\n\n> [!DANGER]\n> Keep this unsupported.'],
+    ['a blockquote fence', '> ~~~md\n> [!NOTE]\n> This is code.\n> ~~~\n\n> [!DANGER]\n> Keep this unsupported.'],
+  ])('does not classify the following unsupported callout after %s', (_description, content) => {
+    const { container } = render(<MarkdownRenderer content={content} />);
+
+    expect(container.querySelector('[data-callout-type]')).toBeNull();
+    expect(container).toHaveTextContent('[!DANGER]');
+  });
+
+  it('does not promote a later paragraph marker in an ordinary blockquote', () => {
+    const content = '> prose\n>\n> [!NOTE]\n> This remains ordinary text.';
+    const { container } = render(<MarkdownRenderer content={content} />);
+
+    expect(container.querySelector('[data-callout-type]')).toBeNull();
+    expect(container.querySelector('blockquote')).toHaveTextContent('[!NOTE]');
+  });
+
+  it.each([
+    ['formatted', '> **[!NOTE]**\n> This is ordinary text.'],
+    ['escaped', '> \\[!NOTE]\n> This is ordinary text.'],
+  ])('does not promote a %s marker into a callout', (_description, content) => {
+    const { container } = render(<MarkdownRenderer content={content} />);
+
+    expect(container.querySelector('[data-callout-type]')).toBeNull();
+    expect(container.querySelector('blockquote')).toHaveTextContent('[!NOTE]');
+  });
+
+  it('binds a nested blockquote and a following real callout to their source positions', () => {
+    const content = '> outer\n> > nested\n\n> [!WARNING]\n> Keep this warning.';
+    const { container } = render(<MarkdownRenderer content={content} />);
+    const blockquotes = Array.from(container.querySelectorAll('blockquote'));
+
+    expect(blockquotes).toHaveLength(3);
+    expect(blockquotes[0]).not.toHaveAttribute('data-callout-type');
+    expect(blockquotes[1]).not.toHaveAttribute('data-callout-type');
+    expect(blockquotes[2]).toHaveAttribute('data-callout-type', 'WARNING');
+  });
+});
+
 // ---------------------------------------------------------------------------
 // T6 — Share/read-only path: "+" add button ABSENT when onAddWord is absent
 // ---------------------------------------------------------------------------

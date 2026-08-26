@@ -1,5 +1,6 @@
-import ReactMarkdown, { defaultUrlTransform } from 'react-markdown';
+import ReactMarkdown, { defaultUrlTransform, type ExtraProps } from 'react-markdown';
 import remarkGfm from 'remark-gfm';
+import React from 'react';
 import { WikilinkText, tokenize } from './WikilinkText';
 import type { WikilinkResolutionData } from './WikilinkText';
 
@@ -51,6 +52,16 @@ function paragraphHasBlockEmbed(
     return false;
   };
   return scan(children);
+}
+
+function sourceCalloutTypeAt(markdown: string, offset?: number): string | null {
+  if (offset === undefined) return null;
+  const lineEnd = markdown.indexOf('\n', offset);
+  const sourceLine = markdown.slice(offset, lineEnd === -1 ? markdown.length : lineEnd);
+  const quote = sourceLine.match(/^ {0,3}>[ \t]?(.*)$/);
+  if (!quote) return null;
+  const match = quote[1].match(/^\[!(NOTE|TIP|WARNING|[A-Za-z][A-Za-z0-9_-]*)\]/i);
+  return match?.[1].toUpperCase() ?? null;
 }
 
 // Re-export so callers can import the type from the MarkdownRenderer module.
@@ -145,6 +156,21 @@ export function MarkdownRenderer({
     : undefined;
 
   const components = {
+    // ReactMarkdown keeps the callout marker inside the first paragraph. Keep a
+    // source-level fallback as well so this display annotation remains stable
+    // across ReactMarkdown child-shape changes.
+    blockquote: ({ children, node }: { children?: React.ReactNode } & ExtraProps) => {
+      const sourceType = sourceCalloutTypeAt(content, node?.position?.start.offset);
+      const calloutType = sourceType && ['NOTE', 'TIP', 'WARNING'].includes(sourceType) ? sourceType : null;
+      return (
+        <blockquote
+          data-callout-type={calloutType ?? undefined}
+          className={calloutType ? 'markdown-callout' : undefined}
+        >
+          {children}
+        </blockquote>
+      );
+    },
     ...(wikis
       ? {
           // Wrap p and li children in WikilinkText so [[word]] tokens are
