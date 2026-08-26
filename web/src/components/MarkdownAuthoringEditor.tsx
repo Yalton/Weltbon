@@ -317,14 +317,84 @@ const editorPlugins = [
   // toggle so it can preserve an exact raw document when the live parser cannot.
   diffSourcePlugin({ viewMode: 'rich-text' }),
 ];
-function splitUnsupportedBlocks(markdown: string): MarkdownPart[] {
+
+function markdownFenceProtectedLines(markdown: string): boolean[] {
+  const lines = markdown.split('\n');
+  const protectedLines = lines.map(() => false);
+  let fence: MarkdownFence | null = null;
+
+  lines.forEach((line, index) => {
+    const prefixEnd = markdownBlockPrefixEnd(line);
+    if (fence) {
+      const fenceLine = fenceContentLine(line, fence.container);
+      if (fenceLine !== null) {
+        protectedLines[index] = true;
+        if (isClosingFence(line, fence)) fence = null;
+        return;
+      }
+      fence = null;
+    }
+    const openingFence = openingFenceMarker(line.slice(prefixEnd));
+    if (!openingFence) return;
+    protectedLines[index] = true;
+    fence = {
+      marker: openingFence[0],
+      length: openingFence.length,
+      container: fenceContainer(line.slice(0, prefixEnd)),
+    };
+  });
+
+  return protectedLines;
+}
+
+function unsupportedDirectiveRanges(markdown: string): Array<{ start: number; end: number }> {
+  const lines = markdown.split('\n');
+  const protectedLines = markdownFenceProtectedLines(markdown);
+  const starts: number[] = [];
+  let offset = 0;
+  lines.forEach((line) => {
+    starts.push(offset);
+    offset += line.length + 1;
+  });
+
   const ranges: Array<{ start: number; end: number }> = [];
-  const block = /:::[^\n]*(?:\n[\s\S]*?\n:::(?=\n|$)|[\s\S]*$)|^>\s*\[!([A-Za-z][A-Za-z0-9_-]*)\][^\n]*(?:\n>.*)*/gm;
+  let directiveStart = -1;
+  for (let index = 0; index < lines.length; index += 1) {
+    if (directiveStart !== -1) {
+      const body = lines[index].slice(markdownBlockPrefixEnd(lines[index]));
+      if (!protectedLines[index] && /^ {0,3}:::\s*$/.test(body)) {
+        ranges.push({ start: starts[directiveStart], end: starts[index] + lines[index].length });
+        directiveStart = -1;
+      }
+      continue;
+    }
+    if (protectedLines[index]) continue;
+    const body = lines[index].slice(markdownBlockPrefixEnd(lines[index]));
+    if (/^ {0,3}:::\s*\S/.test(body)) directiveStart = index;
+  }
+  if (directiveStart !== -1) ranges.push({ start: starts[directiveStart], end: markdown.length });
+  return ranges;
+}
+
+export function splitUnsupportedBlocks(markdown: string): MarkdownPart[] {
+  const ranges: Array<{ start: number; end: number }> = unsupportedDirectiveRanges(markdown);
+  const protectedLines = markdownFenceProtectedLines(markdown);
+  const lines = markdown.split('\n');
+  const lineStarts: number[] = [];
+  let lineOffset = 0;
+  lines.forEach((line) => {
+    lineStarts.push(lineOffset);
+    lineOffset += line.length + 1;
+  });
+  const block = /^ {0,3}>\s*\[!([A-Za-z][A-Za-z0-9_-]*)\][^\n]*(?:\n>.*)*/gm;
   let cursor = 0;
   let match: RegExpExecArray | null;
 
   while ((match = block.exec(markdown))) {
     if (match[1] && ['NOTE', 'TIP', 'WARNING'].includes(match[1].toUpperCase())) continue;
+    let lineIndex = 0;
+    for (let index = 1; index < lineStarts.length && lineStarts[index] <= match.index; index += 1) lineIndex = index;
+    if (protectedLines[lineIndex]) continue;
     ranges.push({ start: match.index, end: match.index + match[0].length });
   }
   ranges.push(...findMalformedMarkdownTableRanges(markdown));

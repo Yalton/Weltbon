@@ -6,6 +6,7 @@ import { markdownShortcutPlugin } from '@mdxeditor/editor';
 import {
   canonicalizeLiveMarkdown,
   MarkdownAuthoringEditor,
+  splitUnsupportedBlocks,
   type MarkdownAuthoringEditorHandle,
 } from './MarkdownAuthoringEditor';
 
@@ -328,8 +329,18 @@ describe('MarkdownAuthoringEditor', () => {
     expect(screen.getByRole('textbox', { name: 'Entry body' })).toHaveValue(markdownDocument);
   });
 
+  it('isolates an incomplete table header and delimiter pair at EOF', () => {
+    const malformedTable = '| Name | Value |\n| --- |';
+    render(<ControlledEditor value={malformedTable} />);
+
+    expect(screen.getByLabelText('Raw Markdown block').textContent).toBe(malformedTable);
+    fireEvent.click(screen.getByRole('button', { name: 'Source' }));
+    expect(screen.getByRole('textbox', { name: 'Entry body' })).toHaveValue(malformedTable);
+  });
+
   it.each([
     '| Name | Value |\n| --- | --- |\n| One | 1 |',
+    '| Name | Value |\n| --- | --- |',
     'A | B\n\nC | D',
   ])('does not isolate valid tables or ordinary pipe prose as raw Markdown: %s', (document) => {
     render(<ControlledEditor value={document} />);
@@ -382,6 +393,21 @@ describe('MarkdownAuthoringEditor', () => {
     expect(screen.getByRole('textbox', { name: 'Entry body' })).toHaveValue(
       `# Heading\n\n${unsupportedCallout}\n\nTail`,
     );
+  });
+
+  it.each([
+    'Prose containing ::: should remain an editable paragraph.',
+  ])('does not isolate ::: inside prose or fenced code: %s', (markdownDocument) => {
+    render(<ControlledEditor value={markdownDocument} />);
+
+    expect(screen.queryByLabelText('Raw Markdown block')).not.toBeInTheDocument();
+    expect(screen.getByRole('textbox')).toHaveAttribute('contenteditable', 'true');
+  });
+
+  it('keeps directive-like text inside fenced code in the editable Markdown part', () => {
+    const fencedCode = '```\n::: is code content, not a directive\n```';
+
+    expect(splitUnsupportedBlocks(fencedCode)).toEqual([{ kind: 'markdown', content: fencedCode }]);
   });
 
   it('keeps content and the current source selection when switching modes', () => {

@@ -175,14 +175,29 @@ export function findMalformedMarkdownTableRanges(markdown: string): MarkdownTabl
   const protectedLines = protectedMarkdownLines(lines);
   const ranges: MarkdownTableRange[] = [];
 
-  for (let index = 0; index < lines.length - 2; index += 1) {
-    if (protectedLines[index] || protectedLines[index + 1] || protectedLines[index + 2]) continue;
-    if (!isTopLevelTableLine(lines[index]) || !isTopLevelTableLine(lines[index + 1]) || !isTopLevelTableLine(lines[index + 2])) continue;
+  for (let index = 0; index < lines.length - 1; index += 1) {
+    if (protectedLines[index] || protectedLines[index + 1]) continue;
+    if (!isTopLevelTableLine(lines[index]) || !isTopLevelTableLine(lines[index + 1])) continue;
     const header = splitTableRow(lines[index]);
     const delimiter = splitTableRow(lines[index + 1]);
-    const firstRow = splitTableRow(lines[index + 2]);
-    if (!header || !delimiter || !firstRow || header.length < 2 || !delimiter.some(looksLikeDelimiterCell)) continue;
-    if (header.length === delimiter.length && isDelimiterRow(delimiter) && firstRow.length === header.length) continue;
+    if (!header || !delimiter) continue;
+    const validDelimiter = header.length === delimiter.length && isDelimiterRow(delimiter);
+    const firstRow = index + 2 < lines.length && !protectedLines[index + 2] && isTopLevelTableLine(lines[index + 2])
+      ? splitTableRow(lines[index + 2])
+      : null;
+    if (!firstRow) {
+      if (validDelimiter) continue;
+      if (index + 1 !== lines.length - 1 || header.length < 2 || !delimiter.some(looksLikeDelimiterCell)) continue;
+      if (!lines[index].trimStart().startsWith('|') && !lines[index + 1].trimStart().startsWith('|')) continue;
+      ranges.push({
+        start: lineStart(markdown, index),
+        end: lineStart(markdown, index + 1) + lines[index + 1].length,
+      });
+      index += 1;
+      continue;
+    }
+    if (validDelimiter && firstRow.length === header.length) continue;
+    if (header.length < 2 || !delimiter.some(looksLikeDelimiterCell)) continue;
     if (!lines[index].trimStart().startsWith('|') && !lines[index + 1].trimStart().startsWith('|')) continue;
 
     let endIndex = index + 2;
