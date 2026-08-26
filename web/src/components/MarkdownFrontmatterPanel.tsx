@@ -56,7 +56,9 @@ export function MarkdownFrontmatterPanel({
           )}
         </div>
       )}
-      <TagInput value={parsed.tags} onChange={updateTags} />
+      <fieldset disabled={!editable} className="min-w-0 border-0 p-0">
+        <TagInput value={parsed.tags} onChange={updateTags} />
+      </fieldset>
     </section>
   );
 }

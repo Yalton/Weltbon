@@ -59,6 +59,35 @@ describe('markdown authoring dialect helpers', () => {
     });
   });
 
+  it('fails closed when an unknown frontmatter value has an unterminated quote', () => {
+    const markdown = '---\ntitle: "unterminated\ntags: [one]\n---\nBody';
+
+    expect(parseMarkdownFrontmatter(markdown).diagnostics).not.toEqual([]);
+    expect(replaceSupportedFrontmatterTags(markdown, ['two'])).toBe(markdown);
+  });
+
+  it('parses single-quoted tags containing commas and double quotes', () => {
+    const markdown = '---\ntags: [\'say "hi, friend"\', \'plain\']\n---\nBody';
+
+    expect(parseMarkdownFrontmatter(markdown)).toMatchObject({
+      tags: ['say "hi, friend"', 'plain'],
+      diagnostics: [],
+    });
+  });
+
+  it('quotes YAML-implicit tag scalars and keeps them strings after serialization', () => {
+    const updated = replaceSupportedFrontmatterTags('---\ntitle: Story\n---\nBody', [
+      'true', 'null', '123', '2024-01-01', 'safe-tag',
+    ]);
+
+    expect(updated).toBe(
+      '---\ntitle: Story\ntags: ["true", "null", "123", "2024-01-01", safe-tag]\n---\nBody',
+    );
+    expect(parseMarkdownFrontmatter(updated).tags).toEqual([
+      'true', 'null', '123', '2024-01-01', 'safe-tag',
+    ]);
+  });
+
   it('creates a leading frontmatter block while preserving an existing body and line endings', () => {
     expect(replaceSupportedFrontmatterTags('Body\r\n', ['café'])).toBe(
       '---\r\ntags: ["café"]\r\n---\r\nBody\r\n',

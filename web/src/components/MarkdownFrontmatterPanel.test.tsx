@@ -49,6 +49,32 @@ describe('MarkdownFrontmatterPanel', () => {
     expect(onEditInSource).toHaveBeenCalledTimes(1);
   });
 
+  it('disables chip controls when frontmatter is malformed', () => {
+    render(
+      <MarkdownFrontmatterPanel
+        markdown={'---\ntitle: "unterminated\ntags: [one]\n---\nBody'}
+        onChange={vi.fn()}
+        onEditInSource={vi.fn()}
+      />,
+    );
+
+    expect(screen.getByPlaceholderText('Add a tag...')).toBeDisabled();
+    expect(screen.getByRole('button', { name: 'Remove tag one' })).toBeDisabled();
+  });
+
+  it('disables chip controls when the panel is disabled', () => {
+    render(
+      <MarkdownFrontmatterPanel
+        markdown={'---\ntags: [one]\n---\nBody'}
+        onChange={vi.fn()}
+        disabled
+      />,
+    );
+
+    expect(screen.getByPlaceholderText('Add a tag...')).toBeDisabled();
+    expect(screen.getByRole('button', { name: 'Remove tag one' })).toBeDisabled();
+  });
+
   it('does not mutate a separate entry metadata value', () => {
     const onChange = vi.fn();
     const entryTags = ['application-tag'];
