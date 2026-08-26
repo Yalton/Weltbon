@@ -55,17 +55,59 @@ function paragraphHasBlockEmbed(
 }
 
 function supportedCalloutType(children: React.ReactNode): string | null {
-  const textOf = (node: React.ReactNode): string => {
+  const firstChild = React.Children.toArray(children)[0];
+  if (!React.isValidElement(firstChild)) return null;
+  const childType = firstChild.type;
+  const isParagraph = childType === 'p'
+    || (typeof childType === 'function' && (childType as { name?: string }).name === 'p');
+  if (!isParagraph) return null;
+
+  const textOfParagraph = (node: React.ReactNode): string => {
     if (typeof node === 'string') return node;
-    if (Array.isArray(node)) return node.map(textOf).join('');
-    if (node && typeof node === 'object' && 'props' in node) {
-      return textOf((node as { props?: { children?: React.ReactNode } }).props?.children);
+    if (Array.isArray(node)) return node.map(textOfParagraph).join('');
+    if (React.isValidElement(node)) {
+      const elementType = node.type;
+      if (elementType === 'code' || elementType === 'pre') return '\u0000';
+      return textOfParagraph((node as React.ReactElement<{ children?: React.ReactNode }>).props.children);
     }
     return '';
   };
-  const text = textOf(children);
+  const text = textOfParagraph((firstChild as React.ReactElement<{ children?: React.ReactNode }>).props.children);
   const match = text.match(/^\[!(NOTE|TIP|WARNING)\](?:\s|$)/i);
   return match?.[1].toUpperCase() ?? null;
+}
+
+function stripMarkdownContainers(line: string): string {
+  let rest = line.trimStart();
+  let stripped = true;
+  while (stripped) {
+    stripped = false;
+    const blockquote = rest.match(/^>\s?/);
+    if (blockquote) {
+      rest = rest.slice(blockquote[0].length).trimStart();
+      stripped = true;
+      continue;
+    }
+    const list = rest.match(/^(?:[-+*]|\d+[.)])\s+/);
+    if (list) {
+      rest = rest.slice(list[0].length).trimStart();
+      stripped = true;
+    }
+  }
+  return rest;
+}
+
+type FenceLine = { marker: '`' | '~'; length: number; suffix: string };
+
+function parseFenceLine(line: string): FenceLine | null {
+  const rest = stripMarkdownContainers(line);
+  const match = rest.match(/^(`{3,}|~{3,})(.*)$/);
+  if (!match) return null;
+  return {
+    marker: match[1][0] as '`' | '~',
+    length: match[1].length,
+    suffix: match[2],
+  };
 }
 
 function sourceBlockquoteCallouts(markdown: string): Array<string | null> {
@@ -75,28 +117,44 @@ function sourceBlockquoteCallouts(markdown: string): Array<string | null> {
   let inBlockquote = false;
   let blockquoteIndex = -1;
   for (const line of markdown.split('\n')) {
-    const fenceLine = line.match(/^ {0,3}(`{3,}|~{3,})/);
+    const quote = line.match(/^ {0,3}>[ \t]?(.*)$/);
+    const fenceLine = parseFenceLine(line);
     if (fence) {
-      if (fenceLine && fenceLine[1][0] === fence.marker && fenceLine[1].length >= fence.length && line.slice(fenceLine[0].length).trim() === '') fence = null;
-      inBlockquote = false;
+      if (fenceLine && fenceLine.marker === fence.marker && fenceLine.length >= fence.length && fenceLine.suffix.trim() === '') {
+        fence = null;
+        inBlockquote = false;
+      }
       continue;
     }
     if (rawDirective) {
-      if (/^ {0,3}:::\s*$/.test(line)) rawDirective = false;
-      inBlockquote = false;
+      if (/^:::\s*$/.test(stripMarkdownContainers(line))) {
+        rawDirective = false;
+        inBlockquote = false;
+      }
       continue;
     }
     if (fenceLine) {
-      fence = { marker: fenceLine[1][0] as '`' | '~', length: fenceLine[1].length };
-      inBlockquote = false;
+      if (quote && !inBlockquote) {
+        callouts.push(null);
+        blockquoteIndex += 1;
+        inBlockquote = true;
+      } else if (!quote) {
+        inBlockquote = false;
+      }
+      fence = { marker: fenceLine.marker, length: fenceLine.length };
       continue;
     }
-    if (/^ {0,3}:::\s*\S+/.test(line)) {
+    if (/^:::\s*\S+/.test(stripMarkdownContainers(line))) {
+      if (quote && !inBlockquote) {
+        callouts.push(null);
+        blockquoteIndex += 1;
+        inBlockquote = true;
+      } else if (!quote) {
+        inBlockquote = false;
+      }
       rawDirective = true;
-      inBlockquote = false;
       continue;
     }
-    const quote = line.match(/^ {0,3}>[ \t]?(.*)$/);
     if (!quote) {
       inBlockquote = false;
       continue;

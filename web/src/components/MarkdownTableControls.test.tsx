@@ -35,6 +35,16 @@ describe('Markdown table transforms', () => {
 
     expect(addMarkdownTableRow(markdown)).toBe(`\`\`\`md\n${codeSample}\n\`\`\`\n\n${TABLE}\n|  |  |`);
   });
+
+  it('does not rewrite pipe-shaped tables inside list or blockquote fences', () => {
+    const nestedListFence = '- ~~~md\n  | Name | Value |\n  | --- | --- |\n  | Example | 1 |\n  ~~~';
+    const nestedBlockquoteFence = '> ~~~md\n  | Name | Value |\n  | --- | --- |\n  | Example | 1 |\n> ~~~';
+
+    expect(addMarkdownTableRow(nestedListFence)).toBe(nestedListFence);
+    expect(addMarkdownTableColumn(nestedListFence)).toBe(nestedListFence);
+    expect(addMarkdownTableRow(nestedBlockquoteFence)).toBe(nestedBlockquoteFence);
+    expect(addMarkdownTableColumn(nestedBlockquoteFence)).toBe(nestedBlockquoteFence);
+  });
 });
 
 describe('MarkdownTableControls', () => {

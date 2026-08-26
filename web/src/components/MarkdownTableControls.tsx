@@ -41,31 +41,64 @@ function lineStart(markdown: string, lineIndex: number): number {
 
 type FenceState = { marker: '`' | '~'; length: number };
 
+function stripMarkdownContainers(line: string): string {
+  let rest = line.trimStart();
+  let stripped = true;
+  while (stripped) {
+    stripped = false;
+    const blockquote = rest.match(/^>\s?/);
+    if (blockquote) {
+      rest = rest.slice(blockquote[0].length).trimStart();
+      stripped = true;
+      continue;
+    }
+    const list = rest.match(/^(?:[-+*]|\d+[.)])\s+/);
+    if (list) {
+      rest = rest.slice(list[0].length).trimStart();
+      stripped = true;
+    }
+  }
+  return rest;
+}
+
+type FenceLine = { marker: '`' | '~'; length: number; suffix: string };
+
+function parseFenceLine(line: string): FenceLine | null {
+  const rest = stripMarkdownContainers(line);
+  const match = rest.match(/^(`{3,}|~{3,})(.*)$/);
+  if (!match) return null;
+  return {
+    marker: match[1][0] as '`' | '~',
+    length: match[1].length,
+    suffix: match[2],
+  };
+}
+
 function protectedMarkdownLines(lines: string[]): boolean[] {
   const protectedLines = lines.map(() => false);
   let fence: FenceState | null = null;
   let rawDirective = false;
 
   lines.forEach((line, index) => {
-    const fenceLine = line.match(/^ {0,3}(`{3,}|~{3,})/);
+    const fenceLine = parseFenceLine(line);
     if (fence) {
       protectedLines[index] = true;
-      if (fenceLine && fenceLine[1][0] === fence.marker && fenceLine[1].length >= fence.length && line.slice(fenceLine[0].length).trim() === '') {
+      if (fenceLine && fenceLine.marker === fence.marker && fenceLine.length >= fence.length && fenceLine.suffix.trim() === '') {
         fence = null;
       }
       return;
     }
     if (rawDirective) {
       protectedLines[index] = true;
-      if (/^ {0,3}:::\s*$/.test(line)) rawDirective = false;
+      if (/^:::\s*$/.test(stripMarkdownContainers(line))) rawDirective = false;
       return;
     }
     if (fenceLine) {
       protectedLines[index] = true;
-      fence = { marker: fenceLine[1][0] as '`' | '~', length: fenceLine[1].length };
+      fence = { marker: fenceLine.marker, length: fenceLine.length };
       return;
     }
-    if (/^ {0,3}:::\s*\S+/.test(line)) {
+    if (/^:::\s*\S+/.test(stripMarkdownContainers(line))) {
       protectedLines[index] = true;
       rawDirective = true;
     }

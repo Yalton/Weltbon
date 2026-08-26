@@ -208,6 +208,16 @@ describe('authoring callouts', () => {
     expect(container.querySelector('[data-callout-type]')).toBeNull();
     expect(container.querySelector('blockquote')).toHaveTextContent('[!DANGER]');
   });
+
+  it.each([
+    ['a list fence', '- ~~~md\n  > [!NOTE]\n  > This is code.\n  ~~~\n\n> [!DANGER]\n> Keep this unsupported.'],
+    ['a blockquote fence', '> ~~~md\n> [!NOTE]\n> This is code.\n> ~~~\n\n> [!DANGER]\n> Keep this unsupported.'],
+  ])('does not classify the following unsupported callout after %s', (_description, content) => {
+    const { container } = render(<MarkdownRenderer content={content} />);
+
+    expect(container.querySelector('[data-callout-type]')).toBeNull();
+    expect(container).toHaveTextContent('[!DANGER]');
+  });
 });
 
 // ---------------------------------------------------------------------------
