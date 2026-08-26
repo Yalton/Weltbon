@@ -151,6 +151,15 @@ function fenceContentLine(line: string, container: { prefixes: MarkdownBlockPref
   return remainder;
 }
 
+function sameMarkdownContainer(
+  left: { prefixes: MarkdownBlockPrefix[] },
+  right: { prefixes: MarkdownBlockPrefix[] },
+): boolean {
+  return left.prefixes.length === right.prefixes.length && left.prefixes.every(
+    (prefix, index) => prefix.kind === right.prefixes[index].kind,
+  );
+}
+
 function openingFenceMarker(line: string): string | null {
   const match = line.match(markdownFence);
   if (!match || (match[1][0] === '`' && match[2].includes('`'))) return null;
@@ -359,18 +368,29 @@ function unsupportedDirectiveRanges(markdown: string): Array<{ start: number; en
 
   const ranges: Array<{ start: number; end: number }> = [];
   let directiveStart = -1;
+  let directiveContainer: { prefixes: MarkdownBlockPrefix[] } | null = null;
   for (let index = 0; index < lines.length; index += 1) {
     if (directiveStart !== -1) {
       const body = lines[index].slice(markdownBlockPrefixEnd(lines[index]));
-      if (!protectedLines[index] && /^ {0,3}:::\s*$/.test(body)) {
+      const currentContainer = fenceContainer(lines[index].slice(0, markdownBlockPrefixEnd(lines[index])));
+      if (
+        !protectedLines[index] &&
+        directiveContainer &&
+        sameMarkdownContainer(directiveContainer, currentContainer) &&
+        /^ {0,3}:::\s*$/.test(body)
+      ) {
         ranges.push({ start: starts[directiveStart], end: starts[index] + lines[index].length });
         directiveStart = -1;
+        directiveContainer = null;
       }
       continue;
     }
     if (protectedLines[index]) continue;
     const body = lines[index].slice(markdownBlockPrefixEnd(lines[index]));
-    if (/^ {0,3}:::\s*\S/.test(body)) directiveStart = index;
+    if (/^ {0,3}:::\s*\S/.test(body)) {
+      directiveStart = index;
+      directiveContainer = fenceContainer(lines[index].slice(0, markdownBlockPrefixEnd(lines[index])));
+    }
   }
   if (directiveStart !== -1) ranges.push({ start: starts[directiveStart], end: markdown.length });
   return ranges;

@@ -42,7 +42,8 @@ function lineStart(markdown: string, lineIndex: number): number {
   return offset;
 }
 
-type FenceState = { marker: '`' | '~'; length: number };
+type MarkdownContainer = { kind: 'blockquote' | 'list'; length: number };
+type FenceState = { marker: '`' | '~'; length: number; containers: MarkdownContainer[] };
 
 function stripMarkdownContainers(line: string): string {
   let rest = line.trimStart();
@@ -66,15 +67,60 @@ function stripMarkdownContainers(line: string): string {
 
 type FenceLine = { marker: '`' | '~'; length: number; suffix: string };
 
-function parseFenceLine(line: string): FenceLine | null {
-  const rest = stripMarkdownContainers(line);
-  const match = rest.match(/^(`{3,}|~{3,})(.*)$/);
+type ParsedFenceLine = FenceLine & { containers: MarkdownContainer[]; indentation: number };
+
+function parseMarkdownContainers(line: string): { rest: string; containers: MarkdownContainer[]; indentation: number } {
+  const indentation = line.match(/^[ \t]*/)?.[0].length ?? 0;
+  let rest = line.trimStart();
+  const containers: MarkdownContainer[] = [];
+  let stripped = true;
+  while (stripped) {
+    stripped = false;
+    const blockquote = rest.match(/^>\s?/);
+    if (blockquote) {
+      containers.push({ kind: 'blockquote', length: blockquote[0].length });
+      rest = rest.slice(blockquote[0].length).trimStart();
+      stripped = true;
+      continue;
+    }
+    const list = rest.match(/^(?:[-+*]|\d+[.)])\s+/);
+    if (list) {
+      containers.push({ kind: 'list', length: list[0].length });
+      rest = rest.slice(list[0].length).trimStart();
+      stripped = true;
+    }
+  }
+  return { rest, containers, indentation };
+}
+
+function parseFenceLine(line: string): ParsedFenceLine | null {
+  const parsed = parseMarkdownContainers(line);
+  const match = parsed.rest.match(/^(`{3,}|~{3,})(.*)$/);
   if (!match) return null;
   return {
     marker: match[1][0] as '`' | '~',
     length: match[1].length,
     suffix: match[2],
+    containers: parsed.containers,
+    indentation: parsed.indentation,
   };
+}
+
+function sameContainerKinds(left: MarkdownContainer[], right: MarkdownContainer[]): boolean {
+  return left.length === right.length && left.every((container, index) => container.kind === right[index].kind);
+}
+
+function fenceContainerMatches(fence: FenceState, line: ParsedFenceLine): boolean {
+  if (sameContainerKinds(fence.containers, line.containers)) return true;
+  let droppedLists = 0;
+  while (droppedLists < fence.containers.length && fence.containers[droppedLists].kind === 'list') droppedLists += 1;
+  if (droppedLists === 0) return false;
+  const remaining = fence.containers.slice(droppedLists);
+  if (!sameContainerKinds(remaining, line.containers)) return false;
+  const requiredIndentation = fence.containers
+    .slice(0, droppedLists)
+    .reduce((total, container) => total + container.length, 0);
+  return line.indentation >= requiredIndentation;
 }
 
 function isTopLevelTableLine(line: string): boolean {
@@ -92,7 +138,13 @@ function protectedMarkdownLines(lines: string[]): boolean[] {
     const fenceLine = parseFenceLine(line);
     if (fence) {
       protectedLines[index] = true;
-      if (fenceLine && fenceLine.marker === fence.marker && fenceLine.length >= fence.length && fenceLine.suffix.trim() === '') {
+      if (
+        fenceLine &&
+        fenceLine.marker === fence.marker &&
+        fenceLine.length >= fence.length &&
+        fenceLine.suffix.trim() === '' &&
+        fenceContainerMatches(fence, fenceLine)
+      ) {
         fence = null;
       }
       return;
@@ -104,7 +156,7 @@ function protectedMarkdownLines(lines: string[]): boolean[] {
     }
     if (fenceLine) {
       protectedLines[index] = true;
-      fence = { marker: fenceLine.marker, length: fenceLine.length };
+      fence = { marker: fenceLine.marker, length: fenceLine.length, containers: fenceLine.containers };
       return;
     }
     if (/^:::\s*\S+/.test(stripMarkdownContainers(line))) {

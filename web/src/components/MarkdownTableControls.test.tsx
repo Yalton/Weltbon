@@ -4,6 +4,7 @@ import {
   MarkdownTableControls,
   addMarkdownTableColumn,
   addMarkdownTableRow,
+  findMalformedMarkdownTableRanges,
   removeMarkdownTableColumn,
   removeMarkdownTableRow,
 } from './MarkdownTableControls';
@@ -35,6 +36,14 @@ describe('Markdown table transforms', () => {
     const markdown = `\`\`\`md\n${codeSample}\n\`\`\`\n\n${TABLE}`;
 
     expect(addMarkdownTableRow(markdown)).toBe(`\`\`\`md\n${codeSample}\n\`\`\`\n\n${TABLE}\n|  |  |`);
+  });
+
+  it('keeps pipe-shaped content protected after a mismatched top-level fence closer', () => {
+    const malformedCodeSample = '| Name | Value |\n| --- |\n| Example | 1 |';
+    const markdown = `\`\`\`md\n> \`\`\`\n${malformedCodeSample}`;
+
+    expect(findMalformedMarkdownTableRanges(markdown)).toEqual([]);
+    expect(addMarkdownTableRow(markdown)).toBe(markdown);
   });
 
   it('does not rewrite pipe-shaped tables inside list or blockquote fences', () => {
