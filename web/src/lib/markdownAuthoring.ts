@@ -113,7 +113,7 @@ function frontmatterYaml(region: FrontmatterRegion): string {
 }
 
 function hasExplicitDocumentEnd(source: string): boolean {
-  return /(?:^|\r?\n)\.\.\.(?:\r?\n|$)/.test(source);
+  return /(?:^|\r?\n)\.\.\.[ \t]*(?:#.*)?(?:\r?\n|$)/.test(source);
 }
 
 function canonicalTagsKeyLine(key: unknown, source: string): string | null {

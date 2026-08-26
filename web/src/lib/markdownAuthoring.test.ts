@@ -40,6 +40,16 @@ describe('markdown authoring dialect helpers', () => {
     }
   });
 
+  it('fails closed when an explicit document end has whitespace or a comment', () => {
+    for (const markdown of [
+      '---\ntitle: Story\n...   \n---\nBody',
+      '---\ntitle: Story\n... # end\n---\nBody',
+    ]) {
+      expect(parseMarkdownFrontmatter(markdown).diagnostics).not.toEqual([]);
+      expect(replaceSupportedFrontmatterTags(markdown, ['x'])).toBe(markdown);
+    }
+  });
+
   it('keeps malformed, duplicate, and complex tag fields byte-for-byte', () => {
     for (const markdown of [
       '---\ntags: ["unterminated]\n---\nBody',

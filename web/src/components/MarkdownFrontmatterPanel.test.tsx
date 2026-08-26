@@ -48,6 +48,25 @@ describe('MarkdownFrontmatterPanel', () => {
     }
   });
 
+  it('disables chip controls when an explicit document end has suffix metadata', () => {
+    for (const markdown of [
+      '---\ntitle: Story\n...   \n---\nBody',
+      '---\ntitle: Story\n... # end\n---\nBody',
+    ]) {
+      const { unmount } = render(
+        <MarkdownFrontmatterPanel
+          markdown={markdown}
+          onChange={vi.fn()}
+          onEditInSource={vi.fn()}
+        />,
+      );
+
+      expect(screen.getByPlaceholderText('Add a tag...')).toBeDisabled();
+      expect(screen.getByRole('alert')).toBeInTheDocument();
+      unmount();
+    }
+  });
+
   it('shows a non-modal diagnostic and offers Source recovery for malformed frontmatter', () => {
     const onChange = vi.fn();
     const onEditInSource = vi.fn();
