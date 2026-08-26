@@ -95,7 +95,11 @@ function parseFrontmatterYaml(region: FrontmatterRegion): FrontmatterYamlAnalysi
   }
 }
 
-type TagsNodeResult = { tags: string[]; diagnostic: MarkdownDiagnostic | null };
+type TagsNodeResult = {
+  tags: string[];
+  diagnostic: MarkdownDiagnostic | null;
+  keyRange?: [number, number, number];
+};
 
 function frontmatterYaml(region: FrontmatterRegion): string {
   const openingEnd = region.text.indexOf('\n');
@@ -132,8 +136,9 @@ function tagsFromYamlMap(root: YAMLMap, source: string): TagsNodeResult {
   if (hasComment(tagsKey) || tagsKey.spaceBefore) {
     return { tags: [], diagnostic: { severity: 'error', message: 'Frontmatter tags key cannot have comments or blank lines before it.' } };
   }
+  const keyRange = tagsKey.range;
   const keyLine = canonicalTagsKeyLine(tagsKey, source);
-  if (keyLine === null) {
+  if (keyLine === null || !keyRange) {
     return { tags: [], diagnostic: { severity: 'error', message: 'Frontmatter tags key must be an unquoted, column-zero field.' } };
   }
 
@@ -174,7 +179,7 @@ function tagsFromYamlMap(root: YAMLMap, source: string): TagsNodeResult {
     }
     tags.push(item.value);
   }
-  return { tags, diagnostic: null };
+  return { tags, diagnostic: null, keyRange };
 }
 
 function isolatedTagsFromLines(lines: string[]): string[] {
@@ -231,11 +236,25 @@ export function replaceSupportedFrontmatterTags(markdown: string, tags: string[]
   }
   if (region.closeStart < 0) return markdown;
   if (tagsFromRegion(region).diagnostics.length > 0) return markdown;
+  const yaml = frontmatterYaml(region);
+  const analysis = parseFrontmatterYaml(region);
+  const root = analysis.document?.contents;
+  if (analysis.diagnostic || (root !== null && root !== undefined && !isMap(root))) return markdown;
+  const astTags = isMap(root) ? tagsFromYamlMap(root, yaml) : { tags: [], diagnostic: null };
+  if (astTags.diagnostic) return markdown;
   const serializedTags = tags.map(serializeTag);
   if (serializedTags.some((tag) => tag === null)) return markdown;
   const serialized = `tags: [${serializedTags.join(', ')}]`;
   const records = lineRecords(region.text);
-  const tagIndex = records.findIndex(({ content }) => /^tags:/.test(content));
+  let tagIndex = -1;
+  if (astTags.keyRange) {
+    const yamlStart = region.text.indexOf('\n') + 1;
+    const keyStart = yamlStart + astTags.keyRange[0];
+    const keyEnd = yamlStart + astTags.keyRange[1];
+    if (region.text.slice(keyStart, keyEnd) !== 'tags') return markdown;
+    tagIndex = records.findIndex(({ start, end }) => start === keyStart && keyEnd <= end);
+    if (tagIndex < 0) return markdown;
+  }
   let tagsStart = -1;
   let tagsEnd = -1;
   if (tagIndex >= 0) {

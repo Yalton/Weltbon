@@ -75,6 +75,18 @@ describe('markdown authoring dialect helpers', () => {
     );
   });
 
+  it('replaces the root tags field when unknown multiline flow metadata contains a tags line', () => {
+    const markdown = '---\n{\nunknown: {\ntags: one,\nother: two\n},\ntags: [one]\n}\n---\nBody';
+
+    expect(parseMarkdownFrontmatter(markdown)).toMatchObject({
+      tags: ['one'],
+      diagnostics: [],
+    });
+    expect(replaceSupportedFrontmatterTags(markdown, ['two'])).toBe(
+      '---\n{\nunknown: {\ntags: one,\nother: two\n},\ntags: [two]\n}\n---\nBody',
+    );
+  });
+
   it('fails closed for unresolved unknown YAML aliases', () => {
     const markdown = '---\nunknown: *missing\ntags: [one]\n---\nBody';
 
