@@ -4,6 +4,7 @@ import { describe, expect, it, vi } from 'vitest';
 import { act, fireEvent, render, screen, waitFor } from '@testing-library/react';
 import userEvent from '@testing-library/user-event';
 import { markdownShortcutPlugin } from '@mdxeditor/editor';
+import { fromMarkdown } from 'mdast-util-from-markdown';
 import {
   canonicalizeLiveMarkdown,
   MarkdownAuthoringEditor,
@@ -17,6 +18,13 @@ vi.mock('@mdxeditor/editor', async (importOriginal) => {
   const actual = await importOriginal<typeof import('@mdxeditor/editor')>();
   return { ...actual, markdownShortcutPlugin: vi.fn(actual.markdownShortcutPlugin) };
 });
+
+vi.mock('mdast-util-from-markdown', async (importOriginal) => {
+  const actual = await importOriginal<typeof import('mdast-util-from-markdown')>();
+  return { ...actual, fromMarkdown: vi.fn(actual.fromMarkdown) };
+});
+
+const fromMarkdownMock = vi.mocked(fromMarkdown);
 
 const UNSUPPORTED_BLOCK = ':::mermaid\ngraph TD\n  A --> B\n:::';
 const DOCUMENT = `# Title\n\nA paragraph with [[Weltbon]].\n\n${UNSUPPORTED_BLOCK}`;
@@ -477,8 +485,8 @@ describe('MarkdownAuthoringEditor', () => {
   });
 
   it('ends an unsupported callout before a same-level sibling list item', () => {
-    const unsupportedCallout = '-\t> [!DANGER]';
-    const supportedSibling = '   > [!NOTE]';
+    const unsupportedCallout = '- > [!DANGER]';
+    const supportedSibling = '- > [!NOTE]';
     const markdown = `${unsupportedCallout}\n${supportedSibling}`;
 
     expect(splitUnsupportedBlocks(markdown)).toEqual([
@@ -488,6 +496,25 @@ describe('MarkdownAuthoringEditor', () => {
 
     render(<ControlledEditor value={markdown} />);
     expect(screen.getByLabelText('Raw Markdown block').textContent).toBe(unsupportedCallout);
+  });
+
+  it('fails closed when the Markdown parser throws', () => {
+    const markdown = '> [!DANGER]\r\n> Keep every byte.';
+    fromMarkdownMock.mockImplementationOnce(() => {
+      throw new Error('parser failure');
+    });
+
+    expect(splitUnsupportedBlocks(markdown)).toEqual([{ kind: 'raw', content: markdown }]);
+  });
+
+  it('fails closed when a blockquote has no source position', () => {
+    const markdown = 'Before\r\n> [!DANGER]\r\n> Keep every byte.';
+    fromMarkdownMock.mockReturnValueOnce({
+      type: 'root',
+      children: [{ type: 'blockquote', position: null, children: [] }],
+    } as never);
+
+    expect(splitUnsupportedBlocks(markdown)).toEqual([{ kind: 'raw', content: markdown }]);
   });
 
   it('keeps a mixed-indentation list callout continuation in one exact raw part', () => {
