@@ -66,6 +66,22 @@ describe('markdown authoring dialect helpers', () => {
     expect(replaceSupportedFrontmatterTags(markdown, ['two'])).toBe(markdown);
   });
 
+  it('accepts quoted text inside an unknown literal block scalar and still patches tags', () => {
+    const markdown = '---\ndescription: |\n  The author\'s "quoted" text.\ntags: [one]\n---\nBody';
+
+    expect(parseMarkdownFrontmatter(markdown).diagnostics).toEqual([]);
+    expect(replaceSupportedFrontmatterTags(markdown, ['two'])).toBe(
+      '---\ndescription: |\n  The author\'s "quoted" text.\ntags: [two]\n---\nBody',
+    );
+  });
+
+  it('fails closed for unresolved unknown YAML aliases', () => {
+    const markdown = '---\nunknown: *missing\ntags: [one]\n---\nBody';
+
+    expect(parseMarkdownFrontmatter(markdown).diagnostics).not.toEqual([]);
+    expect(replaceSupportedFrontmatterTags(markdown, ['two'])).toBe(markdown);
+  });
+
   it('parses single-quoted tags containing commas and double quotes', () => {
     const markdown = '---\ntags: [\'say "hi, friend"\', \'plain\']\n---\nBody';
 

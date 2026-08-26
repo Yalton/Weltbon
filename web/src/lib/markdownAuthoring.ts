@@ -1,3 +1,5 @@
+import { parseDocument } from 'yaml';
+
 export type MarkdownDiagnostic = {
   message: string;
   severity: 'warning' | 'error';
@@ -110,7 +112,7 @@ function tagsFromRegion(region: FrontmatterRegion): { tags: string[]; diagnostic
     return { tags: [], diagnostics: [{ severity: 'error', message: 'Frontmatter has no closing fence.' }] };
   }
   const lines = region.text.split(/\r?\n/).slice(1, -1);
-  const syntaxDiagnostic = validateConstrainedFrontmatter(lines);
+  const syntaxDiagnostic = validateFrontmatterYaml(region);
   const tagLines = lines.filter((line) => /^tags\s*:/.test(line));
   if (tagLines.length > 1) {
     return {
@@ -158,46 +160,27 @@ function tagsFromRegion(region: FrontmatterRegion): { tags: string[]; diagnostic
   return { tags: [], diagnostics: syntaxDiagnostic ? [syntaxDiagnostic] : [] };
 }
 
-function validateConstrainedFrontmatter(lines: string[]): MarkdownDiagnostic | null {
-  const stack: string[] = [];
-  const closingFor: Record<string, string> = { ']': '[', '}': '{' };
-
-  for (const line of lines) {
-    let quote: '"' | "'" | null = null;
-    for (let index = 0; index < line.length; index += 1) {
-      const character = line[index];
-      if (quote === '"' && character === '\\') {
-        index += 1;
-        continue;
-      }
-      if (quote === "'" && character === "'" && line[index + 1] === "'") {
-        index += 1;
-        continue;
-      }
-      if (quote !== null) {
-        if (character === quote) quote = null;
-        continue;
-      }
-      if (character === '#') break;
-      if (character === '"' || character === "'") {
-        quote = character;
-        continue;
-      }
-      if (character === '[' || character === '{') {
-        stack.push(character);
-        continue;
-      }
-      if (character === ']' || character === '}') {
-        if (stack.pop() !== closingFor[character]) {
-          return { severity: 'error', message: 'Frontmatter contains an unbalanced flow value.' };
-        }
-      }
+function validateFrontmatterYaml(region: FrontmatterRegion): MarkdownDiagnostic | null {
+  const openingEnd = region.text.indexOf('\n');
+  const yaml = region.text.slice(openingEnd + 1, region.closeStart);
+  try {
+    const document = parseDocument(yaml, { strict: true });
+    const parserIssue = document.errors[0] ?? document.warnings[0];
+    if (parserIssue) {
+      return { severity: 'error', message: `Frontmatter YAML: ${parserIssue.message.trim()}` };
     }
-    if (quote !== null) {
-      return { severity: 'error', message: 'Frontmatter contains an unterminated quoted value.' };
+    try {
+      // Parsing is used only to force validation of aliases and other deferred errors.
+      // The returned JS value is deliberately discarded so raw YAML stays lossless.
+      document.toJS();
+    } catch (error) {
+      const message = error instanceof Error ? error.message : 'The YAML value could not be resolved.';
+      return { severity: 'error', message: `Frontmatter YAML: ${message}` };
     }
+  } catch (error) {
+    const message = error instanceof Error ? error.message : 'The YAML document could not be parsed.';
+    return { severity: 'error', message: `Frontmatter YAML: ${message}` };
   }
-  if (stack.length > 0) return { severity: 'error', message: 'Frontmatter contains an unbalanced flow value.' };
   return null;
 }
 
@@ -266,9 +249,10 @@ function lineRecords(text: string): FrontmatterLine[] {
 function serializeTag(tag: string): string | null {
   if (tag.includes('\n') || tag.includes('\r')) return null;
   const lower = tag.toLowerCase();
+  const normalizedNumeric = tag.replaceAll('_', '');
   const implicit = lower === 'true' || lower === 'false' || lower === 'null'
     || lower === 'yes' || lower === 'no' || lower === 'on' || lower === 'off'
-    || /^[+-]?(?:(?:0|[1-9]\d*)(?:\.\d+)?|\.\d+)(?:[eE][+-]?\d+)?$/.test(tag)
+    || (/^[+\-0-9.eE_]+$/.test(tag) && /^[+-]?(?:(?:\d+)(?:\.\d+)?|\.\d+)(?:[eE][+-]?\d+)?$/.test(normalizedNumeric))
     || /^0[xob][0-9a-f]+$/i.test(tag)
     || /^[-+]?\.(?:inf|nan)$/i.test(tag)
     || /^\d{4}-\d{1,2}-\d{1,2}(?:[Tt ]\d{1,2}:\d{2}(?::\d{2}(?:\.\d+)?)?(?:[Zz]|[+-]\d{1,2}(?::?\d{2})?)?)?$/.test(tag);
