@@ -102,18 +102,23 @@ function frontmatterYaml(region: FrontmatterRegion): string {
   return region.text.slice(openingEnd + 1, region.closeStart);
 }
 
-function isCanonicalTagsKey(key: unknown, source: string): boolean {
-  if (!isScalar(key) || key.source !== 'tags' || !key.range) return false;
+function canonicalTagsKeyLine(key: unknown, source: string): string | null {
+  if (!isScalar(key) || key.source !== 'tags' || !key.range) return null;
   const [start, end] = key.range;
   const lineStart = source.lastIndexOf('\n', start - 1) + 1;
-  return start === lineStart && source.slice(start, end) === 'tags';
+  if (start !== lineStart || source.slice(start, end) !== 'tags') return null;
+  const lineEnd = source.indexOf('\n', start);
+  const contentEnd = lineEnd < 0 ? source.length : lineEnd;
+  const line = source.slice(lineStart, contentEnd).replace(/\r$/, '');
+  return /^tags\s*:/.test(line) ? line : null;
 }
 
 function tagsFromYamlMap(root: YAMLMap, source: string): TagsNodeResult {
   const pairs = root.items.filter((pair) => isScalar(pair.key) && pair.key.value === 'tags');
   if (pairs.length === 0) return { tags: [], diagnostic: null };
   if (pairs.length > 1) return { tags: [], diagnostic: { severity: 'error', message: 'Frontmatter contains duplicate tags fields.' } };
-  if (!isCanonicalTagsKey(pairs[0].key, source)) {
+  const keyLine = canonicalTagsKeyLine(pairs[0].key, source);
+  if (keyLine === null) {
     return { tags: [], diagnostic: { severity: 'error', message: 'Frontmatter tags key must be an unquoted, column-zero field.' } };
   }
 
@@ -121,6 +126,9 @@ function tagsFromYamlMap(root: YAMLMap, source: string): TagsNodeResult {
   if (!isSeq(node)) return { tags: [], diagnostic: { severity: 'error', message: 'Frontmatter tags must be a YAML sequence.' } };
   if (node.anchor || node.tag) {
     return { tags: [], diagnostic: { severity: 'error', message: 'Frontmatter tags sequence cannot be anchored or tagged.' } };
+  }
+  if (!node.flow && !/^tags\s*:\s*$/.test(keyLine)) {
+    return { tags: [], diagnostic: { severity: 'error', message: 'Frontmatter block tags must use a comment-free tags header.' } };
   }
   const tags: string[] = [];
   for (const item of node.items) {

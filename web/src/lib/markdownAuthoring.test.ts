@@ -126,6 +126,20 @@ describe('markdown authoring dialect helpers', () => {
     }
   });
 
+  it('fails closed when a block tags header has an inline comment', () => {
+    const markdown = '---\ntags: # note\n  - one\n---\nBody';
+
+    expect(parseMarkdownFrontmatter(markdown).diagnostics).not.toEqual([]);
+    expect(replaceSupportedFrontmatterTags(markdown, ['two'])).toBe(markdown);
+  });
+
+  it('fails closed for explicit tags keys without canonical same-line syntax', () => {
+    const markdown = '---\n? tags\n: [one]\n---\nBody';
+
+    expect(parseMarkdownFrontmatter(markdown).diagnostics).not.toEqual([]);
+    expect(replaceSupportedFrontmatterTags(markdown, ['two'])).toBe(markdown);
+  });
+
   it('does not create tags in a non-mapping frontmatter root', () => {
     const markdown = '---\n- retained\n---\nBody';
 
