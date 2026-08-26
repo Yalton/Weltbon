@@ -165,4 +165,39 @@ describe('MarkdownBacklinks', () => {
     expect(screen.queryByText('[[inline-link]]')).not.toBeInTheDocument();
     expect(screen.getAllByRole('button', { name: /replace image/i })).toHaveLength(1);
   });
+
+  it('excludes fenced code nested in blockquotes and list items from recovery', () => {
+    const markdown = [
+      '> ```md',
+      '> ![Quoted code](asset://quoted-code)',
+      '> ```',
+      '',
+      '- ```md',
+      '  ![Listed code](asset://listed-code)',
+      '  ```',
+      '',
+      '![Supported image](asset://supported-image)',
+    ].join('\n');
+
+    render(
+      <MemoryRouter>
+        <MarkdownBacklinks
+          universeId="U1"
+          backlinks={[]}
+          draftMarkdown={markdown}
+          savedMarkdown={markdown}
+          savedAssetUrls={{}}
+          assets={[]}
+          entries={[]}
+          onRevealSelection={vi.fn()}
+          onReplaceAsset={vi.fn()}
+        />
+      </MemoryRouter>,
+    );
+
+    expect(screen.getByText('![Supported image](asset://supported-image)')).toBeInTheDocument();
+    expect(screen.queryByText('![Quoted code](asset://quoted-code)')).not.toBeInTheDocument();
+    expect(screen.queryByText('![Listed code](asset://listed-code)')).not.toBeInTheDocument();
+    expect(screen.getAllByRole('button', { name: /replace image/i })).toHaveLength(1);
+  });
 });

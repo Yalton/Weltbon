@@ -1,4 +1,5 @@
 import { Link } from 'react-router-dom';
+import { fromMarkdown } from 'mdast-util-from-markdown';
 import type { AssetSummary } from '../hooks/useAssets';
 import type { Backlink, Entry } from '../hooks/useEntries';
 import { splitUnsupportedBlocks } from './MarkdownAuthoringEditor';
@@ -29,58 +30,41 @@ type MarkdownBacklinksProps = {
 
 type MarkdownRange = { start: number; end: number };
 
-function normalizedLine(rawLine: string): string {
-  return rawLine.endsWith('\r') ? rawLine.slice(0, -1) : rawLine;
-}
-
-function fencedCodeRanges(markdown: string): MarkdownRange[] {
-  const lines = markdown.split('\n');
+function markdownCodeRanges(markdown: string): MarkdownRange[] {
   const ranges: MarkdownRange[] = [];
-  let cursor = 0;
-  let fence: { marker: string; length: number } | null = null;
-  let fenceStart: number | null = null;
-
-  lines.forEach((rawLine) => {
-    const line = normalizedLine(rawLine);
-    if (fence) {
-      if (new RegExp(`^ {0,3}${fence.marker}{${fence.length},}[ \\t]*$`).test(line)) {
-        ranges.push({ start: fenceStart ?? cursor, end: cursor + rawLine.length });
-        fence = null;
-        fenceStart = null;
+  try {
+    const visit = (node: unknown): void => {
+      if (typeof node !== 'object' || node === null) return;
+      const candidate = node as { type?: unknown; position?: unknown; children?: unknown };
+      if (candidate.type === 'code') {
+        const position = candidate.position as {
+          start?: { offset?: unknown };
+          end?: { offset?: unknown };
+        } | undefined;
+        const start = position?.start?.offset;
+        const end = position?.end?.offset;
+        if (
+          typeof start !== 'number'
+          || !Number.isInteger(start)
+          || start < 0
+          || start > markdown.length
+          || typeof end !== 'number'
+          || !Number.isInteger(end)
+          || end < start
+          || end > markdown.length
+        ) {
+          throw new Error('Invalid code source position');
+        }
+        ranges.push({ start, end });
       }
-    } else {
-      const opening = line.match(/^ {0,3}(`{3,}|~{3,})(.*)$/);
-      if (opening && !(opening[1][0] === '`' && opening[2].includes('`'))) {
-        fence = { marker: opening[1][0], length: opening[1].length };
-        fenceStart = cursor;
-      }
-    }
-    cursor += rawLine.length + 1;
-  });
-
-  if (fenceStart !== null) ranges.push({ start: fenceStart, end: markdown.length });
-  return ranges;
-}
-
-function indentedCodeRanges(markdown: string): MarkdownRange[] {
-  const lines = markdown.split('\n');
-  const ranges: MarkdownRange[] = [];
-  let cursor = 0;
-  let start: number | null = null;
-
-  lines.forEach((rawLine) => {
-    const line = normalizedLine(rawLine);
-    const isIndentedCode = /^(?: {4,}|\t)/.test(line);
-    if (isIndentedCode && start === null) start = cursor;
-    if (!isIndentedCode && start !== null) {
-      ranges.push({ start, end: cursor });
-      start = null;
-    }
-    cursor += rawLine.length + 1;
-  });
-
-  if (start !== null) ranges.push({ start, end: markdown.length });
-  return ranges;
+      if (Array.isArray(candidate.children)) candidate.children.forEach(visit);
+    };
+    visit(fromMarkdown(markdown));
+    return ranges;
+  } catch {
+    // Recovery must fail closed when parsing or source positions are unavailable.
+    return [{ start: 0, end: markdown.length }];
+  }
 }
 
 function inlineCodeRanges(markdown: string): MarkdownRange[] {
@@ -110,8 +94,7 @@ function inlineCodeRanges(markdown: string): MarkdownRange[] {
 
 function supportedRangesForPart(markdown: string, offset: number): MarkdownRange[] {
   const excluded = [
-    ...fencedCodeRanges(markdown),
-    ...indentedCodeRanges(markdown),
+    ...markdownCodeRanges(markdown),
     ...inlineCodeRanges(markdown),
   ].sort((left, right) => left.start - right.start || left.end - right.end);
   const ranges: MarkdownRange[] = [];
