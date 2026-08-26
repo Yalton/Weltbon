@@ -236,6 +236,17 @@ describe('authoring callouts', () => {
     expect(container.querySelector('[data-callout-type]')).toBeNull();
     expect(container.querySelector('blockquote')).toHaveTextContent('[!NOTE]');
   });
+
+  it('binds a nested blockquote and a following real callout to their source positions', () => {
+    const content = '> outer\n> > nested\n\n> [!WARNING]\n> Keep this warning.';
+    const { container } = render(<MarkdownRenderer content={content} />);
+    const blockquotes = Array.from(container.querySelectorAll('blockquote'));
+
+    expect(blockquotes).toHaveLength(3);
+    expect(blockquotes[0]).not.toHaveAttribute('data-callout-type');
+    expect(blockquotes[1]).not.toHaveAttribute('data-callout-type');
+    expect(blockquotes[2]).toHaveAttribute('data-callout-type', 'WARNING');
+  });
 });
 
 // ---------------------------------------------------------------------------

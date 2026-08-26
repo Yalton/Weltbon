@@ -1,4 +1,4 @@
-import ReactMarkdown, { defaultUrlTransform } from 'react-markdown';
+import ReactMarkdown, { defaultUrlTransform, type ExtraProps } from 'react-markdown';
 import remarkGfm from 'remark-gfm';
 import React from 'react';
 import { WikilinkText, tokenize } from './WikilinkText';
@@ -54,109 +54,14 @@ function paragraphHasBlockEmbed(
   return scan(children);
 }
 
-function stripMarkdownContainers(line: string): string {
-  let rest = line.trimStart();
-  let stripped = true;
-  while (stripped) {
-    stripped = false;
-    const blockquote = rest.match(/^>\s?/);
-    if (blockquote) {
-      rest = rest.slice(blockquote[0].length).trimStart();
-      stripped = true;
-      continue;
-    }
-    const list = rest.match(/^(?:[-+*]|\d+[.)])\s+/);
-    if (list) {
-      rest = rest.slice(list[0].length).trimStart();
-      stripped = true;
-    }
-  }
-  return rest;
-}
-
-type FenceLine = { marker: '`' | '~'; length: number; suffix: string };
-
-function parseFenceLine(line: string): FenceLine | null {
-  const rest = stripMarkdownContainers(line);
-  const match = rest.match(/^(`{3,}|~{3,})(.*)$/);
-  if (!match) return null;
-  return {
-    marker: match[1][0] as '`' | '~',
-    length: match[1].length,
-    suffix: match[2],
-  };
-}
-
-function sourceBlockquoteCallouts(markdown: string): Array<string | null> {
-  const callouts: Array<string | null> = [];
-  let fence: { marker: '`' | '~'; length: number } | null = null;
-  let rawDirective = false;
-  let inBlockquote = false;
-  let inspectFirstBlockquoteLine = false;
-  let blockquoteIndex = -1;
-  for (const line of markdown.split('\n')) {
-    const quote = line.match(/^ {0,3}>[ \t]?(.*)$/);
-    const fenceLine = parseFenceLine(line);
-    if (fence) {
-      if (fenceLine && fenceLine.marker === fence.marker && fenceLine.length >= fence.length && fenceLine.suffix.trim() === '') {
-        fence = null;
-        inBlockquote = false;
-        inspectFirstBlockquoteLine = false;
-      }
-      continue;
-    }
-    if (rawDirective) {
-      if (/^:::\s*$/.test(stripMarkdownContainers(line))) {
-        rawDirective = false;
-        inBlockquote = false;
-        inspectFirstBlockquoteLine = false;
-      }
-      continue;
-    }
-    if (fenceLine) {
-      if (quote && !inBlockquote) {
-        callouts.push(null);
-        blockquoteIndex += 1;
-        inBlockquote = true;
-        inspectFirstBlockquoteLine = false;
-      } else if (!quote) {
-        inBlockquote = false;
-        inspectFirstBlockquoteLine = false;
-      }
-      fence = { marker: fenceLine.marker, length: fenceLine.length };
-      continue;
-    }
-    if (/^:::\s*\S+/.test(stripMarkdownContainers(line))) {
-      if (quote && !inBlockquote) {
-        callouts.push(null);
-        blockquoteIndex += 1;
-        inBlockquote = true;
-        inspectFirstBlockquoteLine = false;
-      } else if (!quote) {
-        inBlockquote = false;
-        inspectFirstBlockquoteLine = false;
-      }
-      rawDirective = true;
-      continue;
-    }
-    if (!quote) {
-      inBlockquote = false;
-      inspectFirstBlockquoteLine = false;
-      continue;
-    }
-    if (!inBlockquote) {
-      callouts.push(null);
-      blockquoteIndex += 1;
-      inBlockquote = true;
-      inspectFirstBlockquoteLine = true;
-    }
-    if (inspectFirstBlockquoteLine) {
-      const match = quote[1].match(/^\[!(NOTE|TIP|WARNING|[A-Za-z][A-Za-z0-9_-]*)\]/i);
-      if (match) callouts[blockquoteIndex] = match[1].toUpperCase();
-      inspectFirstBlockquoteLine = false;
-    }
-  }
-  return callouts;
+function sourceCalloutTypeAt(markdown: string, offset?: number): string | null {
+  if (offset === undefined) return null;
+  const lineEnd = markdown.indexOf('\n', offset);
+  const sourceLine = markdown.slice(offset, lineEnd === -1 ? markdown.length : lineEnd);
+  const quote = sourceLine.match(/^ {0,3}>[ \t]?(.*)$/);
+  if (!quote) return null;
+  const match = quote[1].match(/^\[!(NOTE|TIP|WARNING|[A-Za-z][A-Za-z0-9_-]*)\]/i);
+  return match?.[1].toUpperCase() ?? null;
 }
 
 // Re-export so callers can import the type from the MarkdownRenderer module.
@@ -250,14 +155,12 @@ export function MarkdownRenderer({
       }
     : undefined;
 
-  const sourceCallouts = sourceBlockquoteCallouts(content);
-  let blockquoteIndex = 0;
   const components = {
     // ReactMarkdown keeps the callout marker inside the first paragraph. Keep a
     // source-level fallback as well so this display annotation remains stable
     // across ReactMarkdown child-shape changes.
-    blockquote: ({ children }: { children?: React.ReactNode }) => {
-      const sourceType = sourceCallouts[blockquoteIndex++] ?? null;
+    blockquote: ({ children, node }: { children?: React.ReactNode } & ExtraProps) => {
+      const sourceType = sourceCalloutTypeAt(content, node?.position?.start.offset);
       const calloutType = sourceType && ['NOTE', 'TIP', 'WARNING'].includes(sourceType) ? sourceType : null;
       return (
         <blockquote
