@@ -17,7 +17,11 @@ import './MarkdownAuthoringEditor.css';
 import { MarkdownAuthoringToolbar } from './MarkdownAuthoringToolbar';
 import { MarkdownCommandPalette } from './MarkdownCommandPalette';
 import { MarkdownLinkDialog, parseMarkdownLink, type MarkdownLinkKind } from './MarkdownLinkDialog';
-import { MarkdownTableControls } from './MarkdownTableControls';
+import {
+  findMalformedMarkdownTableRanges,
+  findMarkdownTableRanges,
+  MarkdownTableControls,
+} from './MarkdownTableControls';
 import {
   forwardRef,
   useEffect,
@@ -314,16 +318,24 @@ const editorPlugins = [
   diffSourcePlugin({ viewMode: 'rich-text' }),
 ];
 function splitUnsupportedBlocks(markdown: string): MarkdownPart[] {
-  const parts: MarkdownPart[] = [];
+  const ranges: Array<{ start: number; end: number }> = [];
   const block = /:::[^\n]*(?:\n[\s\S]*?\n:::(?=\n|$)|[\s\S]*$)|^>\s*\[!([A-Za-z][A-Za-z0-9_-]*)\][^\n]*(?:\n>.*)*/gm;
   let cursor = 0;
   let match: RegExpExecArray | null;
 
   while ((match = block.exec(markdown))) {
     if (match[1] && ['NOTE', 'TIP', 'WARNING'].includes(match[1].toUpperCase())) continue;
-    if (match.index > cursor) parts.push({ kind: 'markdown', content: markdown.slice(cursor, match.index) });
-    parts.push({ kind: 'raw', content: match[0] });
-    cursor = match.index + match[0].length;
+    ranges.push({ start: match.index, end: match.index + match[0].length });
+  }
+  ranges.push(...findMalformedMarkdownTableRanges(markdown));
+  ranges.sort((left, right) => left.start - right.start || left.end - right.end);
+
+  const parts: MarkdownPart[] = [];
+  for (const range of ranges) {
+    if (range.start < cursor) continue;
+    if (range.start > cursor) parts.push({ kind: 'markdown', content: markdown.slice(cursor, range.start) });
+    parts.push({ kind: 'raw', content: markdown.slice(range.start, range.end) });
+    cursor = range.end;
   }
   if (cursor < markdown.length || parts.length === 0) parts.push({ kind: 'markdown', content: markdown.slice(cursor) });
   return parts;
@@ -623,6 +635,24 @@ function liveMarkdownSelection(editable: HTMLElement, markdown: string): Selecti
   };
 }
 
+function tableFromNode(node: Node | null): HTMLTableElement | null {
+  const element = node instanceof Element ? node : node?.parentElement;
+  return element?.closest('table') as HTMLTableElement | null;
+}
+
+function liveTableSelection(editable: HTMLElement, container: HTMLElement, markdown: string): Selection | null {
+  const domSelection = window.getSelection();
+  const table = tableFromNode(domSelection?.anchorNode ?? document.activeElement);
+  if (!table || !container.contains(table)) return null;
+  const tableIndex = Array.from(container.querySelectorAll('table')).indexOf(table);
+  const range = findMarkdownTableRanges(markdown)[tableIndex];
+  return range ? { start: range.start, end: range.end } : null;
+}
+
+function liveSelectionForMarkdown(editable: HTMLElement, markdown: string, container = editable): Selection | null {
+  return liveTableSelection(editable, container, markdown) ?? liveMarkdownSelection(editable, markdown);
+}
+
 export const MarkdownAuthoringEditor = forwardRef<
   MarkdownAuthoringEditorHandle,
   MarkdownAuthoringEditorProps
@@ -722,7 +752,8 @@ export const MarkdownAuthoringEditor = forwardRef<
 
   const switchMode = (nextMode: 'live' | 'source') => {
     if (nextMode === 'source') {
-      const activeElement = liveEditorWrappers.current[activeLiveEditorIndex.current]
+      const liveIndex = activeLiveEditorIndex.current;
+      const activeElement = liveEditorWrappers.current[liveIndex]
         ?.querySelector<HTMLElement>('[contenteditable="true"]');
       restoreLiveFocus.current = activeElement === document.activeElement;
       const selection = window.getSelection();
@@ -730,6 +761,19 @@ export const MarkdownAuthoringEditor = forwardRef<
       liveSelectionRange.current = range && liveEditorContainerRef.current?.contains(range.commonAncestorContainer)
         ? range.cloneRange()
         : null;
+      const editor = mdxEditorRefs.current[liveIndex];
+      const markdown = parts[liveIndex]?.content ?? editor?.getMarkdown() ?? '';
+      const liveSelection = activeElement
+        ? liveSelectionForMarkdown(activeElement, markdown, liveEditorWrappers.current[liveIndex] ?? activeElement)
+        : null;
+      if (liveSelection) {
+        const offset = parts.slice(0, liveIndex).reduce((total, part) => total + part.content.length, 0);
+        sourceSelection.current = {
+          start: liveSelection.start + offset,
+          end: liveSelection.end + offset,
+        };
+        setTableSelection(sourceSelection.current);
+      }
     } else {
       restoreLiveFocus.current = true;
     }
@@ -929,8 +973,10 @@ export const MarkdownAuthoringEditor = forwardRef<
     if (rawFallback || activeRawBlockIndex.current !== null) return null;
     const editor = mdxEditorRefs.current[liveIndex];
     const editable = liveEditorWrappers.current[liveIndex]?.querySelector<HTMLElement>('[contenteditable="true"]');
-    const markdown = editor?.getMarkdown() ?? parts[liveIndex]?.content ?? '';
-    const selection = editable ? liveMarkdownSelection(editable, markdown) : null;
+    const markdown = parts[liveIndex]?.content ?? editor?.getMarkdown() ?? '';
+    const selection = editable
+      ? liveSelectionForMarkdown(editable, markdown, liveEditorWrappers.current[liveIndex] ?? editable)
+      : null;
     if (!selection) return null;
     const offset = parts.slice(0, liveIndex).reduce((total, part) => total + part.content.length, 0);
     return { start: selection.start + offset, end: selection.end + offset };

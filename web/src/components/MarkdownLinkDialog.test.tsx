@@ -41,4 +41,17 @@ describe('MarkdownLinkDialog', () => {
 
     expect(onInsert).toHaveBeenCalledWith('[Example](https://example.com)');
   });
+
+  it('does not insert an external link with whitespace-only accessible text', () => {
+    const onInsert = vi.fn();
+    render(<MarkdownLinkDialog open onOpenChange={vi.fn()} onInsert={onInsert} universeId="u1" initialKind="external" entries={[]} />);
+
+    fireEvent.change(screen.getByLabelText('Link target'), { target: { value: 'https://example.com' } });
+    fireEvent.change(screen.getByLabelText('Accessible text'), { target: { value: '   ' } });
+
+    expect(screen.getByRole('button', { name: 'Insert link' })).toBeDisabled();
+    fireEvent.click(screen.getByRole('button', { name: 'Insert link' }));
+
+    expect(onInsert).not.toHaveBeenCalled();
+  });
 });

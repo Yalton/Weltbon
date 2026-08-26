@@ -8,6 +8,7 @@ type TableLocation = {
 };
 
 export type MarkdownTableSelection = { start: number; end: number };
+export type MarkdownTableRange = MarkdownTableSelection;
 
 function splitTableRow(line: string): string[] | null {
   const trimmed = line.trim();
@@ -159,6 +160,44 @@ function findTable(markdown: string, selection?: MarkdownTableSelection | null):
     return tables.find((table) => start >= table.start && end <= table.end) ?? null;
   }
   return tables.length === 1 ? tables[0] : null;
+}
+
+export function findMarkdownTableRanges(markdown: string): MarkdownTableRange[] {
+  return findTables(markdown).map(({ start, end }) => ({ start, end }));
+}
+
+function looksLikeDelimiterCell(cell: string): boolean {
+  return /^:?-{1,}:?$/.test(cell) && cell.includes('-');
+}
+
+export function findMalformedMarkdownTableRanges(markdown: string): MarkdownTableRange[] {
+  const lines = markdown.split('\n');
+  const protectedLines = protectedMarkdownLines(lines);
+  const ranges: MarkdownTableRange[] = [];
+
+  for (let index = 0; index < lines.length - 2; index += 1) {
+    if (protectedLines[index] || protectedLines[index + 1] || protectedLines[index + 2]) continue;
+    if (!isTopLevelTableLine(lines[index]) || !isTopLevelTableLine(lines[index + 1]) || !isTopLevelTableLine(lines[index + 2])) continue;
+    const header = splitTableRow(lines[index]);
+    const delimiter = splitTableRow(lines[index + 1]);
+    const firstRow = splitTableRow(lines[index + 2]);
+    if (!header || !delimiter || !firstRow || header.length < 2 || !delimiter.some(looksLikeDelimiterCell)) continue;
+    if (header.length === delimiter.length && isDelimiterRow(delimiter) && firstRow.length === header.length) continue;
+    if (!lines[index].trimStart().startsWith('|') && !lines[index + 1].trimStart().startsWith('|')) continue;
+
+    let endIndex = index + 2;
+    for (let rowIndex = index + 3; rowIndex < lines.length; rowIndex += 1) {
+      if (protectedLines[rowIndex] || !isTopLevelTableLine(lines[rowIndex]) || !splitTableRow(lines[rowIndex])) break;
+      endIndex = rowIndex;
+    }
+    ranges.push({
+      start: lineStart(markdown, index),
+      end: lineStart(markdown, endIndex) + lines[endIndex].length,
+    });
+    index = endIndex;
+  }
+
+  return ranges;
 }
 
 function renderTable(location: TableLocation, rows: string[][], delimiter = location.delimiter): string {

@@ -117,7 +117,7 @@ export function MarkdownLinkDialog({
     setLabel(initialLabel ?? (initialKind === 'external' ? 'Link' : ''));
   }, [open, initialKind, initialTarget, initialLabel]);
 
-  const canInsert = target.trim().length > 0 && (kind !== 'external' || label.length > 0);
+  const canInsert = target.trim().length > 0 && (kind !== 'external' || label.trim().length > 0);
   const insert = () => {
     if (!canInsert) return;
     onInsert(buildMarkdownLink({ kind, target, label }));

@@ -288,6 +288,55 @@ describe('MarkdownAuthoringEditor', () => {
     );
   });
 
+  it('updates Live Preview table controls for a selected non-first table', () => {
+    const firstTable = '| First |\n| --- |\n| A |';
+    const secondTable = '| Name | Value |\n| --- | --- |\n| One | 1 |\n| Two | 2 |';
+    const markdownDocument = `${firstTable}\n\n${secondTable}`;
+    render(<ControlledEditor value={markdownDocument} />);
+
+    selectLiveTextOccurrence('Two', 0);
+    act(() => globalThis.document.dispatchEvent(new Event('selectionchange')));
+
+    expect(screen.getByRole('button', { name: 'Remove table row' })).not.toBeDisabled();
+    fireEvent.click(screen.getByRole('button', { name: 'Remove table row' }));
+
+    expect(screen.getByTestId('markdown-value').textContent).toBe(
+      `${firstTable}\n\n${secondTable.replace(/\n\| Two \| 2 \|$/, '')}`,
+    );
+  });
+
+  it('maps the active Live Preview selection when switching to Source', () => {
+    const markdownDocument = 'First paragraph.\n\nSecond paragraph.';
+    render(<ControlledEditor value={markdownDocument} />);
+
+    selectLiveTextOccurrence('Second paragraph.', 0);
+    fireEvent.click(screen.getByRole('button', { name: 'Source' }));
+
+    const source = screen.getByRole('textbox', { name: 'Entry body' }) as HTMLTextAreaElement;
+    const start = markdownDocument.indexOf('Second paragraph.');
+    expect(source.selectionStart).toBe(start);
+    expect(source.selectionEnd).toBe(start + 'Second paragraph.'.length);
+  });
+
+  it('isolates malformed table-shaped blocks without changing Source round trips', () => {
+    const malformedTable = '| Name | Value |\n| --- |\n| One | 1 |';
+    const markdownDocument = `Before\n\n${malformedTable}\n\nAfter`;
+    render(<ControlledEditor value={markdownDocument} />);
+
+    expect(screen.getByLabelText('Raw Markdown block').textContent).toBe(malformedTable);
+    fireEvent.click(screen.getByRole('button', { name: 'Source' }));
+    expect(screen.getByRole('textbox', { name: 'Entry body' })).toHaveValue(markdownDocument);
+  });
+
+  it.each([
+    '| Name | Value |\n| --- | --- |\n| One | 1 |',
+    'A | B\n\nC | D',
+  ])('does not isolate valid tables or ordinary pipe prose as raw Markdown: %s', (document) => {
+    render(<ControlledEditor value={document} />);
+
+    expect(screen.queryByLabelText('Raw Markdown block')).not.toBeInTheDocument();
+  });
+
   it('starts in Live Preview and presents completed headings as blocks', () => {
     render(<ControlledEditor value="# Title" />);
 
