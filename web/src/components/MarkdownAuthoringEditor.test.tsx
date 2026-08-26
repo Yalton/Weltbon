@@ -490,14 +490,28 @@ describe('MarkdownAuthoringEditor', () => {
     expect(screen.getByLabelText('Raw Markdown block').textContent).toBe(unsupportedCallout);
   });
 
-  it('keeps a tab-indented list callout continuation in one exact raw part', () => {
-    const unsupportedCallout = '- > [!CAUTION]\n\t> Keep every byte.';
+  it('keeps a mixed-indentation list callout continuation in one exact raw part', () => {
+    const unsupportedCallout = '- > [!DANGER]\n   \t> Keep every byte.';
 
     expect(splitUnsupportedBlocks(unsupportedCallout)).toEqual([
       { kind: 'raw', content: unsupportedCallout },
     ]);
 
     render(<ControlledEditor value={unsupportedCallout} />);
+    expect(screen.getByLabelText('Raw Markdown block').textContent).toBe(unsupportedCallout);
+  });
+
+  it('leaves a multi-tab over-indented line outside the raw callout range', () => {
+    const unsupportedCallout = '- > [!DANGER]';
+    const overIndentedLine = '\t\t> code';
+    const markdown = `${unsupportedCallout}\n${overIndentedLine}`;
+
+    expect(splitUnsupportedBlocks(markdown)).toEqual([
+      { kind: 'raw', content: unsupportedCallout },
+      { kind: 'markdown', content: `\n${overIndentedLine}` },
+    ]);
+
+    render(<ControlledEditor value={markdown} />);
     expect(screen.getByLabelText('Raw Markdown block').textContent).toBe(unsupportedCallout);
   });
 

@@ -203,10 +203,6 @@ function markdownIndentationColumns(value: string): number {
   return columns;
 }
 
-function markdownPrefixLineWithTabIndent(line: string): string {
-  return line.replace(/^[ \t]*/, (indentation) => indentation.replace(/\t/g, ' '));
-}
-
 function isSameLevelMarkdownListItem(
   leftLine: string,
   leftPrefixes: MarkdownBlockPrefix[],
@@ -217,13 +213,11 @@ function isSameLevelMarkdownListItem(
   const rightListIndex = rightPrefixes.findIndex((prefix) => prefix.kind === 'list');
   if (leftListIndex === -1 || rightListIndex === -1) return false;
 
-  const leftPrefix = markdownPrefixLineWithTabIndent(leftLine);
-  const rightPrefix = markdownPrefixLineWithTabIndent(rightLine);
   const leftListOffset = leftPrefixes.slice(0, leftListIndex)
     .reduce((offset, prefix) => offset + prefix.length, 0);
   const rightListOffset = rightPrefixes.slice(0, rightListIndex)
     .reduce((offset, prefix) => offset + prefix.length, 0);
-  return leftPrefix.slice(0, leftListOffset) === rightPrefix.slice(0, rightListOffset);
+  return leftLine.slice(0, leftListOffset) === rightLine.slice(0, rightListOffset);
 }
 
 function openingFenceMarker(line: string): string | null {
@@ -467,6 +461,32 @@ function unsupportedDirectiveRanges(markdown: string): Array<{ start: number; en
   return ranges;
 }
 
+function markdownTabIndentedCalloutPrefix(
+  line: string,
+  calloutContainer: { prefixes: MarkdownBlockPrefix[] },
+): { prefixes: MarkdownBlockPrefix[]; prefixEnd: number } | null {
+  const listIndentation = calloutContainer.prefixes
+    .filter((prefix) => prefix.kind === 'list')
+    .reduce((total, prefix) => total + prefix.length, 0);
+  if (listIndentation === 0) return null;
+
+  let leadingEnd = 0;
+  while (leadingEnd < line.length && (line[leadingEnd] === ' ' || line[leadingEnd] === '\t')) {
+    leadingEnd += 1;
+  }
+  if (line[leadingEnd] !== '>') return null;
+
+  const leadingIndentation = markdownIndentationColumns(line.slice(0, leadingEnd));
+  if (leadingIndentation < listIndentation || leadingIndentation - listIndentation > 3) return null;
+
+  let prefixEnd = leadingEnd + 1;
+  if (line[prefixEnd] === ' ' || line[prefixEnd] === '\t') prefixEnd += 1;
+  const prefixes: MarkdownBlockPrefix[] = [{ kind: 'blockquote', length: prefixEnd }];
+  const remainder = line.slice(prefixEnd);
+  prefixes.push(...markdownBlockPrefixes(remainder));
+  return { prefixes, prefixEnd: prefixEnd + markdownBlockPrefixEnd(remainder) };
+}
+
 function unsupportedCalloutRanges(
   lines: string[],
   lineStarts: number[],
@@ -488,12 +508,11 @@ function unsupportedCalloutRanges(
       const nextIndex = endIndex + 1;
       if (protectedLines[nextIndex]) break;
       const nextLine = lines[nextIndex];
-      const nextPrefixLine = calloutContainer.prefixes.some((prefix) => prefix.kind === 'list')
-        ? markdownPrefixLineWithTabIndent(nextLine)
-        : nextLine;
-      const nextPrefixEnd = markdownBlockPrefixEnd(nextPrefixLine);
+      const tabIndentedPrefix = markdownTabIndentedCalloutPrefix(nextLine, calloutContainer);
+      const nextPrefixEnd = tabIndentedPrefix?.prefixEnd ?? markdownBlockPrefixEnd(nextLine);
       const nextContainer = {
-        ...fenceContainer(nextPrefixLine.slice(0, nextPrefixEnd)),
+        prefixes: tabIndentedPrefix?.prefixes
+          ?? fenceContainer(nextLine.slice(0, nextPrefixEnd)).prefixes,
         // A continuation blockquote may consume the list indentation before its marker.
         indentation:
           markdownIndentationColumns(nextLine)
