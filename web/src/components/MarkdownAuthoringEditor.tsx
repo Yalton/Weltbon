@@ -12,6 +12,7 @@ import {
   tablePlugin,
   thematicBreakPlugin,
 } from '@mdxeditor/editor';
+import { fromMarkdown } from 'mdast-util-from-markdown';
 import '@mdxeditor/editor/style.css';
 import './MarkdownAuthoringEditor.css';
 import { MarkdownAuthoringToolbar } from './MarkdownAuthoringToolbar';
@@ -187,37 +188,6 @@ function sameMarkdownContainer(
     }
   }
   return false;
-}
-
-function markdownIndentationColumns(value: string): number {
-  let columns = 0;
-  for (const character of value) {
-    if (character === ' ') {
-      columns += 1;
-    } else if (character === '\t') {
-      columns += 4 - (columns % 4);
-    } else {
-      break;
-    }
-  }
-  return columns;
-}
-
-function isSameLevelMarkdownListItem(
-  leftLine: string,
-  leftPrefixes: MarkdownBlockPrefix[],
-  rightLine: string,
-  rightPrefixes: MarkdownBlockPrefix[],
-): boolean {
-  const leftListIndex = leftPrefixes.findIndex((prefix) => prefix.kind === 'list');
-  const rightListIndex = rightPrefixes.findIndex((prefix) => prefix.kind === 'list');
-  if (leftListIndex === -1 || rightListIndex === -1) return false;
-
-  const leftListOffset = leftPrefixes.slice(0, leftListIndex)
-    .reduce((offset, prefix) => offset + prefix.length, 0);
-  const rightListOffset = rightPrefixes.slice(0, rightListIndex)
-    .reduce((offset, prefix) => offset + prefix.length, 0);
-  return leftLine.slice(0, leftListOffset) === rightLine.slice(0, rightListOffset);
 }
 
 function openingFenceMarker(line: string): string | null {
@@ -461,85 +431,99 @@ function unsupportedDirectiveRanges(markdown: string): Array<{ start: number; en
   return ranges;
 }
 
-function markdownTabIndentedCalloutPrefix(
-  line: string,
-  calloutContainer: { prefixes: MarkdownBlockPrefix[] },
-): { prefixes: MarkdownBlockPrefix[]; prefixEnd: number } | null {
-  const listIndentation = calloutContainer.prefixes
-    .filter((prefix) => prefix.kind === 'list')
-    .reduce((total, prefix) => total + prefix.length, 0);
-  if (listIndentation === 0) return null;
+type MarkdownSourcePoint = { line: number; offset: number };
+type MarkdownSourcePosition = { start: MarkdownSourcePoint; end: MarkdownSourcePoint };
+type MarkdownBlockquote = {
+  children: Array<{ type: string; position?: unknown }>;
+  position?: unknown;
+};
 
-  let leadingEnd = 0;
-  while (leadingEnd < line.length && (line[leadingEnd] === ' ' || line[leadingEnd] === '\t')) {
-    leadingEnd += 1;
+function isMarkdownSourcePosition(position: unknown, markdownLength: number): position is MarkdownSourcePosition {
+  if (typeof position !== 'object' || position === null) return false;
+  const candidate = position as { start?: unknown; end?: unknown };
+  const isPoint = (point: unknown): point is MarkdownSourcePoint => {
+    if (typeof point !== 'object' || point === null) return false;
+    const sourcePoint = point as { line?: unknown; offset?: unknown };
+    return typeof sourcePoint.line === 'number'
+      && Number.isInteger(sourcePoint.line)
+      && sourcePoint.line >= 1
+      && typeof sourcePoint.offset === 'number'
+      && Number.isInteger(sourcePoint.offset)
+      && sourcePoint.offset >= 0
+      && sourcePoint.offset <= markdownLength;
+  };
+  if (!isPoint(candidate.start) || !isPoint(candidate.end)) return false;
+  return candidate.start.offset <= candidate.end.offset && candidate.start.line <= candidate.end.line;
+}
+
+function visitMarkdownBlockquotes(node: unknown, visit: (blockquote: MarkdownBlockquote) => void): void {
+  if (typeof node !== 'object' || node === null || !('children' in node) || !Array.isArray(node.children)) return;
+  node.children.forEach((child) => {
+    if (typeof child === 'object' && child !== null && 'type' in child && child.type === 'blockquote') {
+      visit(child as MarkdownBlockquote);
+    }
+    visitMarkdownBlockquotes(child, visit);
+  });
+}
+
+function markdownLineStarts(markdown: string): number[] {
+  const starts = [0];
+  for (let index = 0; index < markdown.length; index += 1) {
+    if (markdown[index] === '\r') {
+      if (markdown[index + 1] === '\n') index += 1;
+      starts.push(index + 1);
+    } else if (markdown[index] === '\n') {
+      starts.push(index + 1);
+    }
   }
-  if (line[leadingEnd] !== '>') return null;
-
-  const leadingIndentation = markdownIndentationColumns(line.slice(0, leadingEnd));
-  if (leadingIndentation < listIndentation || leadingIndentation - listIndentation > 3) return null;
-
-  let prefixEnd = leadingEnd + 1;
-  if (line[prefixEnd] === ' ' || line[prefixEnd] === '\t') prefixEnd += 1;
-  const prefixes: MarkdownBlockPrefix[] = [{ kind: 'blockquote', length: prefixEnd }];
-  const remainder = line.slice(prefixEnd);
-  prefixes.push(...markdownBlockPrefixes(remainder));
-  return { prefixes, prefixEnd: prefixEnd + markdownBlockPrefixEnd(remainder) };
+  return starts;
 }
 
 function unsupportedCalloutRanges(
-  lines: string[],
+  markdown: string,
   lineStarts: number[],
-  protectedLines: boolean[],
-): Array<{ start: number; end: number }> {
+): Array<{ start: number; end: number }> | null {
   const ranges: Array<{ start: number; end: number }> = [];
-  const supportedCallouts = ['NOTE', 'TIP', 'WARNING'];
+  const supportedCallouts = new Set(['NOTE', 'TIP', 'WARNING']);
 
-  for (let index = 0; index < lines.length; index += 1) {
-    if (protectedLines[index]) continue;
-    const prefixEnd = markdownBlockPrefixEnd(lines[index]);
-    const match = lines[index].slice(prefixEnd).match(/^[ \t]*\[!([A-Za-z][A-Za-z0-9_-]*)\]/);
-    if (!match) continue;
-
-    const calloutContainer = fenceContainer(lines[index].slice(0, prefixEnd));
-    if (!calloutContainer.prefixes.some((prefix) => prefix.kind === 'blockquote')) continue;
-    let endIndex = index;
-    while (endIndex + 1 < lines.length) {
-      const nextIndex = endIndex + 1;
-      if (protectedLines[nextIndex]) break;
-      const nextLine = lines[nextIndex];
-      const tabIndentedPrefix = markdownTabIndentedCalloutPrefix(nextLine, calloutContainer);
-      const nextPrefixEnd = tabIndentedPrefix?.prefixEnd ?? markdownBlockPrefixEnd(nextLine);
-      const nextContainer = {
-        prefixes: tabIndentedPrefix?.prefixes
-          ?? fenceContainer(nextLine.slice(0, nextPrefixEnd)).prefixes,
-        // A continuation blockquote may consume the list indentation before its marker.
-        indentation:
-          markdownIndentationColumns(nextLine)
-          + markdownIndentationColumns(nextLine.slice(nextPrefixEnd)),
-      };
+  try {
+    const tree = fromMarkdown(markdown);
+    visitMarkdownBlockquotes(tree, (blockquote) => {
+      if (!isMarkdownSourcePosition(blockquote.position, markdown.length)) {
+        throw new Error('Invalid blockquote source position');
+      }
+      const blockquotePosition = blockquote.position;
+      const lineStart = lineStarts[blockquotePosition.start.line - 1];
       if (
-        isSameLevelMarkdownListItem(
-          lines[index],
-          calloutContainer.prefixes,
-          nextLine,
-          nextContainer.prefixes,
-        )
-        || !sameMarkdownContainer(calloutContainer, nextContainer)
-      ) break;
-      endIndex = nextIndex;
-    }
+        lineStart === undefined
+        || lineStart > blockquotePosition.start.offset
+        || markdown.slice(lineStart, blockquotePosition.start.offset).match(/[\r\n]/)
+        || markdown.lastIndexOf('\n', blockquotePosition.start.offset - 1) + 1 !== lineStart
+      ) {
+        throw new Error('Invalid blockquote line start');
+      }
 
-    if (!supportedCallouts.includes(match[1].toUpperCase())) {
-      ranges.push({
-        start: lineStarts[index],
-        end: lineStarts[endIndex] + lines[endIndex].length,
-      });
-    }
-    index = endIndex;
+      const firstChild = blockquote.children[0];
+      if (!firstChild || firstChild.type !== 'paragraph') return;
+      if (!isMarkdownSourcePosition(firstChild.position, markdown.length)) {
+        throw new Error('Invalid paragraph source position');
+      }
+      if (
+        firstChild.position.start.offset < blockquotePosition.start.offset
+        || firstChild.position.end.offset > blockquotePosition.end.offset
+      ) {
+        throw new Error('Invalid paragraph range');
+      }
+
+      const marker = markdown.slice(firstChild.position.start.offset).match(/^\[!([A-Za-z][A-Za-z0-9_-]*)\]/);
+      if (!marker || supportedCallouts.has(marker[1].toUpperCase())) return;
+      if (lineStart > blockquotePosition.end.offset) throw new Error('Invalid callout range');
+      ranges.push({ start: lineStart, end: blockquotePosition.end.offset });
+    });
+    return ranges;
+  } catch {
+    return null;
   }
-
-  return ranges;
 }
 
 export function splitUnsupportedBlocks(markdown: string): MarkdownPart[] {
@@ -549,15 +533,9 @@ export function splitUnsupportedBlocks(markdown: string): MarkdownPart[] {
     const separator = markdown.slice(frontmatter.raw.length).match(/^\r?\n/)?.[0] ?? '';
     ranges.push({ start: 0, end: frontmatter.raw.length + separator.length });
   }
-  const protectedLines = markdownFenceProtectedLines(markdown);
-  const lines = markdown.split('\n');
-  const lineStarts: number[] = [];
-  let lineOffset = 0;
-  lines.forEach((line) => {
-    lineStarts.push(lineOffset);
-    lineOffset += line.length + 1;
-  });
-  ranges.push(...unsupportedCalloutRanges(lines, lineStarts, protectedLines));
+  const calloutRanges = unsupportedCalloutRanges(markdown, markdownLineStarts(markdown));
+  if (calloutRanges === null) return [{ kind: 'raw', content: markdown }];
+  ranges.push(...calloutRanges);
   ranges.push(...findMalformedMarkdownTableRanges(markdown));
   ranges.sort((left, right) => left.start - right.start || left.end - right.end);
 

@@ -477,8 +477,8 @@ describe('MarkdownAuthoringEditor', () => {
   });
 
   it('ends an unsupported callout before a same-level sibling list item', () => {
-    const unsupportedCallout = '- > [!DANGER]';
-    const supportedSibling = '- > [!NOTE]';
+    const unsupportedCallout = '-\t> [!DANGER]';
+    const supportedSibling = '   > [!NOTE]';
     const markdown = `${unsupportedCallout}\n${supportedSibling}`;
 
     expect(splitUnsupportedBlocks(markdown)).toEqual([
@@ -501,18 +501,35 @@ describe('MarkdownAuthoringEditor', () => {
     expect(screen.getByLabelText('Raw Markdown block').textContent).toBe(unsupportedCallout);
   });
 
-  it('leaves a multi-tab over-indented line outside the raw callout range', () => {
-    const unsupportedCallout = '- > [!DANGER]';
-    const overIndentedLine = '\t\t> code';
-    const markdown = `${unsupportedCallout}\n${overIndentedLine}`;
+  it('keeps a multi-tab lazy continuation in one exact raw part', () => {
+    const unsupportedCallout = '- > [!DANGER]\n\t\t> code';
+
+    expect(splitUnsupportedBlocks(unsupportedCallout)).toEqual([{ kind: 'raw', content: unsupportedCallout }]);
+
+    render(<ControlledEditor value={unsupportedCallout} />);
+    expect(screen.getByLabelText('Raw Markdown block').textContent).toBe(unsupportedCallout);
+  });
+
+  it('preserves CRLF around an AST-derived unsupported callout range', () => {
+    const unsupportedCallout = '- > [!CAUTION]\r\n  > Keep every byte.';
+    const markdown = `${unsupportedCallout}\r\n\r\nAfter`;
 
     expect(splitUnsupportedBlocks(markdown)).toEqual([
       { kind: 'raw', content: unsupportedCallout },
-      { kind: 'markdown', content: `\n${overIndentedLine}` },
+      { kind: 'markdown', content: '\r\n\r\nAfter' },
     ]);
+  });
 
-    render(<ControlledEditor value={markdown} />);
-    expect(screen.getByLabelText('Raw Markdown block').textContent).toBe(unsupportedCallout);
+  it('does not isolate escaped or formatted callout markers', () => {
+    const markdown = '> \\[!DANGER]\n> **[!DANGER]**';
+
+    expect(splitUnsupportedBlocks(markdown)).toEqual([{ kind: 'markdown', content: markdown }]);
+  });
+
+  it('keeps callout-looking fenced code in the editable Markdown part', () => {
+    const fencedCode = '```\n> [!DANGER]\n> code\n```';
+
+    expect(splitUnsupportedBlocks(fencedCode)).toEqual([{ kind: 'markdown', content: fencedCode }]);
   });
 
   it.each([
