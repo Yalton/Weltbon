@@ -110,7 +110,17 @@ function canonicalTagsKeyLine(key: unknown, source: string): string | null {
   const lineEnd = source.indexOf('\n', start);
   const contentEnd = lineEnd < 0 ? source.length : lineEnd;
   const line = source.slice(lineStart, contentEnd).replace(/\r$/, '');
-  return /^tags\s*:/.test(line) ? line : null;
+  return /^tags:/.test(line) ? line : null;
+}
+
+function hasMultilineSource(node: { range?: [number, number, number] | null }, source: string): boolean {
+  const range = node.range;
+  return !range || /[\r\n]/.test(source.slice(range[0], range[1]));
+}
+
+function hasComment(node: { comment?: string | null; commentBefore?: string | null }): boolean {
+  return node.comment !== undefined && node.comment !== null
+    || node.commentBefore !== undefined && node.commentBefore !== null;
 }
 
 function tagsFromYamlMap(root: YAMLMap, source: string): TagsNodeResult {
@@ -127,14 +137,26 @@ function tagsFromYamlMap(root: YAMLMap, source: string): TagsNodeResult {
   if (node.anchor || node.tag) {
     return { tags: [], diagnostic: { severity: 'error', message: 'Frontmatter tags sequence cannot be anchored or tagged.' } };
   }
-  if (!node.flow && !/^tags\s*:\s*$/.test(keyLine)) {
+  if (!node.flow && !/^tags:\s*$/.test(keyLine)) {
     return { tags: [], diagnostic: { severity: 'error', message: 'Frontmatter block tags must use a comment-free tags header.' } };
+  }
+  if (node.flow && hasMultilineSource(node, source)) {
+    return { tags: [], diagnostic: { severity: 'error', message: 'Frontmatter tags flow sequence must remain on one line.' } };
+  }
+  if (!node.flow && hasComment(node)) {
+    return { tags: [], diagnostic: { severity: 'error', message: 'Frontmatter block tags cannot contain comments.' } };
   }
   const tags: string[] = [];
   for (const item of node.items) {
     if (isAlias(item)) return { tags: [], diagnostic: { severity: 'error', message: 'Frontmatter tags cannot contain aliases.' } };
     if (!isScalar(item) || item.anchor || item.tag) {
       return { tags: [], diagnostic: { severity: 'error', message: 'Frontmatter tags must contain only unaliased scalar values.' } };
+    }
+    if (!node.flow && hasComment(item)) {
+      return { tags: [], diagnostic: { severity: 'error', message: 'Frontmatter block tags cannot contain comments.' } };
+    }
+    if (hasMultilineSource(item, source)) {
+      return { tags: [], diagnostic: { severity: 'error', message: 'Frontmatter tags must contain single-line scalar values.' } };
     }
     if (item.type === 'BLOCK_LITERAL' || item.type === 'BLOCK_FOLDED' || (typeof item.value === 'string' && /[\r\n]/.test(item.value))) {
       return { tags: [], diagnostic: { severity: 'error', message: 'Frontmatter tags cannot contain multiline scalar values.' } };
@@ -148,7 +170,7 @@ function tagsFromYamlMap(root: YAMLMap, source: string): TagsNodeResult {
 
 function isolatedTagsFromLines(lines: string[]): string[] {
   for (let index = 0; index < lines.length; index += 1) {
-    const match = /^tags\s*:\s*(.*)$/.exec(lines[index]);
+    const match = /^tags:\s*(.*)$/.exec(lines[index]);
     if (!match) continue;
     const isolated = [lines[index]];
     if (!match[1].trim()) {
@@ -175,7 +197,16 @@ function isolatedTagsFromLines(lines: string[]): string[] {
 
 export function parseMarkdownFrontmatter(markdown: string): ParsedFrontmatter {
   const region = frontmatterRegion(markdown);
-  if (!region) return { raw: null, tags: [], diagnostics: [] };
+  if (!region) {
+    const cannotPrepend = markdown.startsWith('\n') || markdown.startsWith('\r') || markdown.startsWith('---');
+    return {
+      raw: null,
+      tags: [],
+      diagnostics: cannotPrepend
+        ? [{ severity: 'error', message: 'Document cannot safely receive frontmatter from its current prefix.' }]
+        : [],
+    };
+  }
   const parsed = tagsFromRegion(region);
   return { raw: parsed.diagnostics.length > 0 ? markdown : region.text, ...parsed };
 }
@@ -195,13 +226,13 @@ export function replaceSupportedFrontmatterTags(markdown: string, tags: string[]
   if (serializedTags.some((tag) => tag === null)) return markdown;
   const serialized = `tags: [${serializedTags.join(', ')}]`;
   const records = lineRecords(region.text);
-  const tagIndex = records.findIndex(({ content }) => /^tags\s*:/.test(content));
+  const tagIndex = records.findIndex(({ content }) => /^tags:/.test(content));
   let tagsStart = -1;
   let tagsEnd = -1;
   if (tagIndex >= 0) {
     tagsStart = records[tagIndex].start;
     tagsEnd = records[tagIndex].end;
-    if (/^tags\s*:\s*$/.test(records[tagIndex].content)) {
+    if (/^tags:\s*$/.test(records[tagIndex].content)) {
       let next = tagIndex + 1;
       while (next < records.length - 1 && /^\s+-\s+/.test(records[next].content)) {
         tagsEnd = records[next].end;

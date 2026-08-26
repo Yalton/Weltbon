@@ -140,6 +140,47 @@ describe('markdown authoring dialect helpers', () => {
     expect(replaceSupportedFrontmatterTags(markdown, ['two'])).toBe(markdown);
   });
 
+  it('fails closed when comments occur inside a block tags list', () => {
+    for (const markdown of [
+      '---\ntags:\n  - one # note\n---\nBody',
+      '---\ntags:\n  # note\n  - one\n---\nBody',
+    ]) {
+      expect(parseMarkdownFrontmatter(markdown).diagnostics).not.toEqual([]);
+      expect(replaceSupportedFrontmatterTags(markdown, ['two'])).toBe(markdown);
+    }
+  });
+
+  it('fails closed for wrapped flow tag sequences', () => {
+    const markdown = '---\ntags: [one,\n  two]\n---\nBody';
+
+    expect(parseMarkdownFrontmatter(markdown).diagnostics).not.toEqual([]);
+    expect(replaceSupportedFrontmatterTags(markdown, ['three'])).toBe(markdown);
+  });
+
+  it('fails closed for plain multiline tag scalars', () => {
+    const markdown = '---\ntags:\n  - one\n    continuation\n---\nBody';
+
+    expect(parseMarkdownFrontmatter(markdown).diagnostics).not.toEqual([]);
+    expect(replaceSupportedFrontmatterTags(markdown, ['two'])).toBe(markdown);
+  });
+
+  it('diagnoses prefixes where frontmatter cannot be safely prepended', () => {
+    for (const markdown of ['\nBody', '\r\nBody', '--- heading\nBody']) {
+      expect(parseMarkdownFrontmatter(markdown).diagnostics).not.toEqual([]);
+      expect(replaceSupportedFrontmatterTags(markdown, ['one'])).toBe(markdown);
+    }
+  });
+
+  it('requires the exact canonical tags: key syntax', () => {
+    for (const markdown of [
+      '---\ntags : [one]\n---\nBody',
+      '---\ntags\t: [one]\n---\nBody',
+    ]) {
+      expect(parseMarkdownFrontmatter(markdown).diagnostics).not.toEqual([]);
+      expect(replaceSupportedFrontmatterTags(markdown, ['two'])).toBe(markdown);
+    }
+  });
+
   it('does not create tags in a non-mapping frontmatter root', () => {
     const markdown = '---\n- retained\n---\nBody';
 

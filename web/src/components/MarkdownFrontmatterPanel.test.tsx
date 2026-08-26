@@ -74,6 +74,22 @@ describe('MarkdownFrontmatterPanel', () => {
     expect(screen.getByPlaceholderText('Add a tag...')).toBeDisabled();
   });
 
+  it('disables chip controls when frontmatter cannot be safely prepended', () => {
+    for (const markdown of ['\nBody', '--- heading\nBody']) {
+      const { unmount } = render(
+        <MarkdownFrontmatterPanel
+          markdown={markdown}
+          onChange={vi.fn()}
+          onEditInSource={vi.fn()}
+        />,
+      );
+
+      expect(screen.getByPlaceholderText('Add a tag...')).toBeDisabled();
+      expect(screen.getByRole('alert')).toBeInTheDocument();
+      unmount();
+    }
+  });
+
   it('disables chip controls when the panel is disabled', () => {
     render(
       <MarkdownFrontmatterPanel
