@@ -476,6 +476,31 @@ describe('MarkdownAuthoringEditor', () => {
     expect(screen.getByLabelText('Raw Markdown block').textContent).toBe(unsupportedCallout);
   });
 
+  it('ends an unsupported callout before a same-level sibling list item', () => {
+    const unsupportedCallout = '- > [!DANGER]';
+    const supportedSibling = '- > [!NOTE]';
+    const markdown = `${unsupportedCallout}\n${supportedSibling}`;
+
+    expect(splitUnsupportedBlocks(markdown)).toEqual([
+      { kind: 'raw', content: unsupportedCallout },
+      { kind: 'markdown', content: `\n${supportedSibling}` },
+    ]);
+
+    render(<ControlledEditor value={markdown} />);
+    expect(screen.getByLabelText('Raw Markdown block').textContent).toBe(unsupportedCallout);
+  });
+
+  it('keeps a tab-indented list callout continuation in one exact raw part', () => {
+    const unsupportedCallout = '- > [!CAUTION]\n\t> Keep every byte.';
+
+    expect(splitUnsupportedBlocks(unsupportedCallout)).toEqual([
+      { kind: 'raw', content: unsupportedCallout },
+    ]);
+
+    render(<ControlledEditor value={unsupportedCallout} />);
+    expect(screen.getByLabelText('Raw Markdown block').textContent).toBe(unsupportedCallout);
+  });
+
   it.each([
     'Prose containing ::: should remain an editable paragraph.',
     '[!DANGER] in prose should remain an editable paragraph.',

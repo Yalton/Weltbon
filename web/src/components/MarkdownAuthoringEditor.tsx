@@ -189,6 +189,43 @@ function sameMarkdownContainer(
   return false;
 }
 
+function markdownIndentationColumns(value: string): number {
+  let columns = 0;
+  for (const character of value) {
+    if (character === ' ') {
+      columns += 1;
+    } else if (character === '\t') {
+      columns += 4 - (columns % 4);
+    } else {
+      break;
+    }
+  }
+  return columns;
+}
+
+function markdownPrefixLineWithTabIndent(line: string): string {
+  return line.replace(/^[ \t]*/, (indentation) => indentation.replace(/\t/g, ' '));
+}
+
+function isSameLevelMarkdownListItem(
+  leftLine: string,
+  leftPrefixes: MarkdownBlockPrefix[],
+  rightLine: string,
+  rightPrefixes: MarkdownBlockPrefix[],
+): boolean {
+  const leftListIndex = leftPrefixes.findIndex((prefix) => prefix.kind === 'list');
+  const rightListIndex = rightPrefixes.findIndex((prefix) => prefix.kind === 'list');
+  if (leftListIndex === -1 || rightListIndex === -1) return false;
+
+  const leftPrefix = markdownPrefixLineWithTabIndent(leftLine);
+  const rightPrefix = markdownPrefixLineWithTabIndent(rightLine);
+  const leftListOffset = leftPrefixes.slice(0, leftListIndex)
+    .reduce((offset, prefix) => offset + prefix.length, 0);
+  const rightListOffset = rightPrefixes.slice(0, rightListIndex)
+    .reduce((offset, prefix) => offset + prefix.length, 0);
+  return leftPrefix.slice(0, leftListOffset) === rightPrefix.slice(0, rightListOffset);
+}
+
 function openingFenceMarker(line: string): string | null {
   const match = line.match(markdownFence);
   if (!match || (match[1][0] === '`' && match[2].includes('`'))) return null;
@@ -451,15 +488,26 @@ function unsupportedCalloutRanges(
       const nextIndex = endIndex + 1;
       if (protectedLines[nextIndex]) break;
       const nextLine = lines[nextIndex];
-      const nextPrefixEnd = markdownBlockPrefixEnd(nextLine);
+      const nextPrefixLine = calloutContainer.prefixes.some((prefix) => prefix.kind === 'list')
+        ? markdownPrefixLineWithTabIndent(nextLine)
+        : nextLine;
+      const nextPrefixEnd = markdownBlockPrefixEnd(nextPrefixLine);
       const nextContainer = {
-        ...fenceContainer(nextLine.slice(0, nextPrefixEnd)),
+        ...fenceContainer(nextPrefixLine.slice(0, nextPrefixEnd)),
         // A continuation blockquote may consume the list indentation before its marker.
         indentation:
-          (nextLine.match(/^ */)?.[0].length ?? 0)
-          + (nextLine.slice(nextPrefixEnd).match(/^[ \t]*/)?.[0].length ?? 0),
+          markdownIndentationColumns(nextLine)
+          + markdownIndentationColumns(nextLine.slice(nextPrefixEnd)),
       };
-      if (!sameMarkdownContainer(calloutContainer, nextContainer)) break;
+      if (
+        isSameLevelMarkdownListItem(
+          lines[index],
+          calloutContainer.prefixes,
+          nextLine,
+          nextContainer.prefixes,
+        )
+        || !sameMarkdownContainer(calloutContainer, nextContainer)
+      ) break;
       endIndex = nextIndex;
     }
 
