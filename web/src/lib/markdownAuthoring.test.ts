@@ -82,6 +82,34 @@ describe('markdown authoring dialect helpers', () => {
     expect(replaceSupportedFrontmatterTags(markdown, ['two'])).toBe(markdown);
   });
 
+  it('fails closed when a tag item is a flow mapping', () => {
+    const markdown = '---\ntags: [a: b]\n---\nBody';
+
+    expect(parseMarkdownFrontmatter(markdown).diagnostics).not.toEqual([]);
+    expect(replaceSupportedFrontmatterTags(markdown, ['two'])).toBe(markdown);
+  });
+
+  it('fails closed when a tag item is an alias, even when the alias resolves', () => {
+    const markdown = '---\nsource: &tag one\ntags: [*tag]\n---\nBody';
+
+    expect(parseMarkdownFrontmatter(markdown).diagnostics).not.toEqual([]);
+    expect(replaceSupportedFrontmatterTags(markdown, ['two'])).toBe(markdown);
+  });
+
+  it('does not create tags in a non-mapping frontmatter root', () => {
+    const markdown = '---\n- retained\n---\nBody';
+
+    expect(parseMarkdownFrontmatter(markdown).diagnostics).not.toEqual([]);
+    expect(replaceSupportedFrontmatterTags(markdown, ['two'])).toBe(markdown);
+  });
+
+  it('quotes a hyphen-only tag so YAML keeps it a string', () => {
+    const updated = replaceSupportedFrontmatterTags('---\ntitle: Story\n---\nBody', ['-']);
+
+    expect(updated).toBe('---\ntitle: Story\ntags: ["-"]\n---\nBody');
+    expect(parseMarkdownFrontmatter(updated).tags).toEqual(['-']);
+  });
+
   it('parses single-quoted tags containing commas and double quotes', () => {
     const markdown = '---\ntags: [\'say "hi, friend"\', \'plain\']\n---\nBody';
 

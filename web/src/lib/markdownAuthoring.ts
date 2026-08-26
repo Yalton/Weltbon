@@ -1,4 +1,4 @@
-import { parseDocument } from 'yaml';
+import { isAlias, isMap, isScalar, isSeq, parseDocument, type YAMLMap } from 'yaml';
 
 export type MarkdownDiagnostic = {
   message: string;
@@ -39,135 +39,46 @@ function frontmatterRegion(markdown: string): FrontmatterRegion | null {
   return { start: 0, end: markdown.length, closeStart: -1, text: markdown, eol };
 }
 
-function splitFlowItems(value: string): string[] | null {
-  const items: string[] = [];
-  let start = 0;
-  let quote: '"' | "'" | null = null;
-  for (let index = 0; index < value.length; index += 1) {
-    const character = value[index];
-    if (quote === '"' && character === '\\') {
-      index += 1;
-      continue;
-    }
-    if (quote === "'" && character === "'" && value[index + 1] === "'") {
-      index += 1;
-      continue;
-    }
-    if ((character === '"' || character === "'") && (quote === null || quote === character)) {
-      quote = quote === null ? character : null;
-      continue;
-    }
-    if (character === ',' && quote === null) {
-      items.push(value.slice(start, index).trim());
-      start = index + 1;
-    }
-  }
-  if (quote !== null) return null;
-  items.push(value.slice(start).trim());
-  return items;
-}
-
-function parseScalar(value: string, allowComma = false): string | null {
-  const trimmed = value.trim();
-  if (!trimmed) return null;
-  if (trimmed.startsWith('"')) {
-    if (!trimmed.endsWith('"')) return null;
-    try {
-      const parsed: unknown = JSON.parse(trimmed);
-      return typeof parsed === 'string' ? parsed : null;
-    } catch {
-      return null;
-    }
-  }
-  if (trimmed.startsWith("'")) {
-    if (!trimmed.endsWith("'")) return null;
-    const inner = trimmed.slice(1, -1);
-    for (let index = 0; index < inner.length; index += 1) {
-      if (inner[index] !== "'") continue;
-      if (inner[index + 1] === "'") {
-        index += 1;
-        continue;
-      }
-      return null;
-    }
-    return inner.replace(/''/g, "'");
-  }
-  if (/["'\[\]{}]/.test(trimmed) || (!allowComma && trimmed.includes(','))) return null;
-  return trimmed;
-}
-
-function parseTagValue(value: string): string[] | null {
-  const trimmed = value.trim();
-  if (!trimmed.startsWith('[') || !trimmed.endsWith(']')) return null;
-  const inner = trimmed.slice(1, -1).trim();
-  if (!inner) return [];
-  const values = splitFlowItems(inner);
-  if (!values || values.some((item) => !item)) return null;
-  const parsed = values.map((item) => parseScalar(item));
-  return parsed.every((item): item is string => item !== null) ? parsed : null;
-}
-
 function tagsFromRegion(region: FrontmatterRegion): { tags: string[]; diagnostics: MarkdownDiagnostic[] } {
   if (region.closeStart < 0) {
     return { tags: [], diagnostics: [{ severity: 'error', message: 'Frontmatter has no closing fence.' }] };
   }
   const lines = region.text.split(/\r?\n/).slice(1, -1);
-  const syntaxDiagnostic = validateFrontmatterYaml(region);
-  const tagLines = lines.filter((line) => /^tags\s*:/.test(line));
-  if (tagLines.length > 1) {
+  const analysis = parseFrontmatterYaml(region);
+  const root = analysis.document?.contents;
+  if (root !== null && root !== undefined && !isMap(root)) {
     return {
       tags: [],
-      diagnostics: syntaxDiagnostic ? [syntaxDiagnostic] : [{ severity: 'error', message: 'Frontmatter contains duplicate tags fields.' }],
+      diagnostics: [analysis.diagnostic ?? { severity: 'error', message: 'Frontmatter root must be a mapping.' }],
     };
   }
-  for (let index = 0; index < lines.length; index += 1) {
-    const line = lines[index];
-    const match = /^tags\s*:\s*(.*)$/.exec(line);
-    if (!match) continue;
-    const value = match[1].trim();
-    if (!value) {
-      const list: string[] = [];
-      let next = index + 1;
-      while (next < lines.length && /^\s+-\s+/.test(lines[next])) {
-        const value = lines[next].replace(/^\s+-\s+/, '').trim();
-        const parsed = parseScalar(value, true);
-        if (parsed === null) {
-          return {
-            tags: list,
-            diagnostics: syntaxDiagnostic ? [syntaxDiagnostic] : [{ severity: 'error', message: 'Frontmatter tags list contains an invalid scalar.' }],
-          };
-        }
-        list.push(parsed);
-        next += 1;
-      }
-      if (next === index + 1) {
-        return {
-          tags: list,
-          diagnostics: syntaxDiagnostic ? [syntaxDiagnostic] : [{ severity: 'error', message: 'Frontmatter tags must be a list.' }],
-        };
-      }
-      return { tags: list, diagnostics: syntaxDiagnostic ? [syntaxDiagnostic] : [] };
-    }
-    const tags = parseTagValue(value);
-    if (!tags) {
-      return {
-        tags: [],
-        diagnostics: syntaxDiagnostic ? [syntaxDiagnostic] : [{ severity: 'error', message: 'Frontmatter tags must use [tag, ...] syntax.' }],
-      };
-    }
-    return { tags, diagnostics: syntaxDiagnostic ? [syntaxDiagnostic] : [] };
+
+  const astTags = isMap(root) ? tagsFromYamlMap(root) : { tags: [], diagnostic: null };
+  if (astTags.diagnostic) {
+    return { tags: [], diagnostics: [analysis.diagnostic ?? astTags.diagnostic] };
   }
-  return { tags: [], diagnostics: syntaxDiagnostic ? [syntaxDiagnostic] : [] };
+  if (analysis.diagnostic) {
+    return { tags: isolatedTagsFromLines(lines), diagnostics: [analysis.diagnostic] };
+  }
+  return { tags: astTags.tags, diagnostics: [] };
 }
 
-function validateFrontmatterYaml(region: FrontmatterRegion): MarkdownDiagnostic | null {
+type FrontmatterYamlAnalysis = {
+  document: ReturnType<typeof parseDocument> | null;
+  diagnostic: MarkdownDiagnostic | null;
+};
+
+function parseFrontmatterYaml(region: FrontmatterRegion): FrontmatterYamlAnalysis {
   const openingEnd = region.text.indexOf('\n');
   const yaml = region.text.slice(openingEnd + 1, region.closeStart);
   try {
     const document = parseDocument(yaml, { strict: true });
     const parserIssue = document.errors[0] ?? document.warnings[0];
     if (parserIssue) {
-      return { severity: 'error', message: `Frontmatter YAML: ${parserIssue.message.trim()}` };
+      return {
+        document,
+        diagnostic: { severity: 'error', message: `Frontmatter YAML: ${parserIssue.message.trim()}` },
+      };
     }
     try {
       // Parsing is used only to force validation of aliases and other deferred errors.
@@ -175,13 +86,62 @@ function validateFrontmatterYaml(region: FrontmatterRegion): MarkdownDiagnostic 
       document.toJS();
     } catch (error) {
       const message = error instanceof Error ? error.message : 'The YAML value could not be resolved.';
-      return { severity: 'error', message: `Frontmatter YAML: ${message}` };
+      return { document, diagnostic: { severity: 'error', message: `Frontmatter YAML: ${message}` } };
     }
+    return { document, diagnostic: null };
   } catch (error) {
     const message = error instanceof Error ? error.message : 'The YAML document could not be parsed.';
-    return { severity: 'error', message: `Frontmatter YAML: ${message}` };
+    return { document: null, diagnostic: { severity: 'error', message: `Frontmatter YAML: ${message}` } };
   }
-  return null;
+}
+
+type TagsNodeResult = { tags: string[]; diagnostic: MarkdownDiagnostic | null };
+
+function tagsFromYamlMap(root: YAMLMap): TagsNodeResult {
+  const pairs = root.items.filter((pair) => isScalar(pair.key) && pair.key.value === 'tags');
+  if (pairs.length === 0) return { tags: [], diagnostic: null };
+  if (pairs.length > 1) return { tags: [], diagnostic: { severity: 'error', message: 'Frontmatter contains duplicate tags fields.' } };
+
+  const node = pairs[0].value;
+  if (!isSeq(node)) return { tags: [], diagnostic: { severity: 'error', message: 'Frontmatter tags must be a YAML sequence.' } };
+  const tags: string[] = [];
+  for (const item of node.items) {
+    if (isAlias(item)) return { tags: [], diagnostic: { severity: 'error', message: 'Frontmatter tags cannot contain aliases.' } };
+    if (!isScalar(item) || item.anchor || item.tag) {
+      return { tags: [], diagnostic: { severity: 'error', message: 'Frontmatter tags must contain only unaliased scalar values.' } };
+    }
+    if (typeof item.source === 'string') tags.push(item.value === null ? item.source : typeof item.value === 'string' ? item.value : item.source);
+    else if (typeof item.value === 'string') tags.push(item.value);
+    else return { tags: [], diagnostic: { severity: 'error', message: 'Frontmatter tags must contain scalar string values.' } };
+  }
+  return { tags, diagnostic: null };
+}
+
+function isolatedTagsFromLines(lines: string[]): string[] {
+  for (let index = 0; index < lines.length; index += 1) {
+    const match = /^tags\s*:\s*(.*)$/.exec(lines[index]);
+    if (!match) continue;
+    const isolated = [lines[index]];
+    if (!match[1].trim()) {
+      let next = index + 1;
+      while (next < lines.length && /^\s+-\s+/.test(lines[next])) {
+        isolated.push(lines[next]);
+        next += 1;
+      }
+    }
+    try {
+      const document = parseDocument(isolated.join('\n'), { strict: true });
+      if (document.errors.length > 0 || document.warnings.length > 0) return [];
+      document.toJS();
+      const root = document.contents;
+      if (!isMap(root)) return [];
+      const tags = tagsFromYamlMap(root);
+      return tags.diagnostic ? [] : tags.tags;
+    } catch {
+      return [];
+    }
+  }
+  return [];
 }
 
 export function parseMarkdownFrontmatter(markdown: string): ParsedFrontmatter {
@@ -252,6 +212,7 @@ function serializeTag(tag: string): string | null {
   const normalizedNumeric = tag.replaceAll('_', '');
   const implicit = lower === 'true' || lower === 'false' || lower === 'null'
     || lower === 'yes' || lower === 'no' || lower === 'on' || lower === 'off'
+    || tag === '-'
     || (/^[+\-0-9.eE_]+$/.test(tag) && /^[+-]?(?:(?:\d+)(?:\.\d+)?|\.\d+)(?:[eE][+-]?\d+)?$/.test(normalizedNumeric))
     || /^0[xob][0-9a-f]+$/i.test(tag)
     || /^[-+]?\.(?:inf|nan)$/i.test(tag)
