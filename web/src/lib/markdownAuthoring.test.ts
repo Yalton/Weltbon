@@ -96,6 +96,36 @@ describe('markdown authoring dialect helpers', () => {
     expect(replaceSupportedFrontmatterTags(markdown, ['two'])).toBe(markdown);
   });
 
+  it('fails closed when the tags sequence is anchored or explicitly tagged', () => {
+    for (const markdown of [
+      '---\ntags: &t [one]\nunknown: *t\n---\nBody',
+      '---\ntags: !!seq [one]\n---\nBody',
+    ]) {
+      expect(parseMarkdownFrontmatter(markdown).diagnostics).not.toEqual([]);
+      expect(replaceSupportedFrontmatterTags(markdown, ['two'])).toBe(markdown);
+    }
+  });
+
+  it('fails closed when the tags key is quoted or indented', () => {
+    for (const markdown of [
+      '---\n"tags": [one]\n---\nBody',
+      '---\n  tags: [one]\n---\nBody',
+    ]) {
+      expect(parseMarkdownFrontmatter(markdown).diagnostics).not.toEqual([]);
+      expect(replaceSupportedFrontmatterTags(markdown, ['two'])).toBe(markdown);
+    }
+  });
+
+  it('fails closed when a tag item is a literal or folded multiline scalar', () => {
+    for (const markdown of [
+      '---\ntags:\n  - |\n    literal\n    value\n---\nBody',
+      '---\ntags:\n  - >\n    folded\n    value\n---\nBody',
+    ]) {
+      expect(parseMarkdownFrontmatter(markdown).diagnostics).not.toEqual([]);
+      expect(replaceSupportedFrontmatterTags(markdown, ['two'])).toBe(markdown);
+    }
+  });
+
   it('does not create tags in a non-mapping frontmatter root', () => {
     const markdown = '---\n- retained\n---\nBody';
 

@@ -62,6 +62,18 @@ describe('MarkdownFrontmatterPanel', () => {
     expect(screen.getByRole('button', { name: 'Remove tag one' })).toBeDisabled();
   });
 
+  it('disables chip controls for multiline frontmatter tag values', () => {
+    render(
+      <MarkdownFrontmatterPanel
+        markdown={'---\ntags:\n  - |\n    multi\n    line\n---\nBody'}
+        onChange={vi.fn()}
+        onEditInSource={vi.fn()}
+      />,
+    );
+
+    expect(screen.getByPlaceholderText('Add a tag...')).toBeDisabled();
+  });
+
   it('disables chip controls when the panel is disabled', () => {
     render(
       <MarkdownFrontmatterPanel

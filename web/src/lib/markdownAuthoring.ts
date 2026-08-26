@@ -45,6 +45,7 @@ function tagsFromRegion(region: FrontmatterRegion): { tags: string[]; diagnostic
   }
   const lines = region.text.split(/\r?\n/).slice(1, -1);
   const analysis = parseFrontmatterYaml(region);
+  const yaml = frontmatterYaml(region);
   const root = analysis.document?.contents;
   if (root !== null && root !== undefined && !isMap(root)) {
     return {
@@ -53,7 +54,7 @@ function tagsFromRegion(region: FrontmatterRegion): { tags: string[]; diagnostic
     };
   }
 
-  const astTags = isMap(root) ? tagsFromYamlMap(root) : { tags: [], diagnostic: null };
+  const astTags = isMap(root) ? tagsFromYamlMap(root, yaml) : { tags: [], diagnostic: null };
   if (astTags.diagnostic) {
     return { tags: [], diagnostics: [analysis.diagnostic ?? astTags.diagnostic] };
   }
@@ -69,8 +70,7 @@ type FrontmatterYamlAnalysis = {
 };
 
 function parseFrontmatterYaml(region: FrontmatterRegion): FrontmatterYamlAnalysis {
-  const openingEnd = region.text.indexOf('\n');
-  const yaml = region.text.slice(openingEnd + 1, region.closeStart);
+  const yaml = frontmatterYaml(region);
   try {
     const document = parseDocument(yaml, { strict: true });
     const parserIssue = document.errors[0] ?? document.warnings[0];
@@ -97,18 +97,39 @@ function parseFrontmatterYaml(region: FrontmatterRegion): FrontmatterYamlAnalysi
 
 type TagsNodeResult = { tags: string[]; diagnostic: MarkdownDiagnostic | null };
 
-function tagsFromYamlMap(root: YAMLMap): TagsNodeResult {
+function frontmatterYaml(region: FrontmatterRegion): string {
+  const openingEnd = region.text.indexOf('\n');
+  return region.text.slice(openingEnd + 1, region.closeStart);
+}
+
+function isCanonicalTagsKey(key: unknown, source: string): boolean {
+  if (!isScalar(key) || key.source !== 'tags' || !key.range) return false;
+  const [start, end] = key.range;
+  const lineStart = source.lastIndexOf('\n', start - 1) + 1;
+  return start === lineStart && source.slice(start, end) === 'tags';
+}
+
+function tagsFromYamlMap(root: YAMLMap, source: string): TagsNodeResult {
   const pairs = root.items.filter((pair) => isScalar(pair.key) && pair.key.value === 'tags');
   if (pairs.length === 0) return { tags: [], diagnostic: null };
   if (pairs.length > 1) return { tags: [], diagnostic: { severity: 'error', message: 'Frontmatter contains duplicate tags fields.' } };
+  if (!isCanonicalTagsKey(pairs[0].key, source)) {
+    return { tags: [], diagnostic: { severity: 'error', message: 'Frontmatter tags key must be an unquoted, column-zero field.' } };
+  }
 
   const node = pairs[0].value;
   if (!isSeq(node)) return { tags: [], diagnostic: { severity: 'error', message: 'Frontmatter tags must be a YAML sequence.' } };
+  if (node.anchor || node.tag) {
+    return { tags: [], diagnostic: { severity: 'error', message: 'Frontmatter tags sequence cannot be anchored or tagged.' } };
+  }
   const tags: string[] = [];
   for (const item of node.items) {
     if (isAlias(item)) return { tags: [], diagnostic: { severity: 'error', message: 'Frontmatter tags cannot contain aliases.' } };
     if (!isScalar(item) || item.anchor || item.tag) {
       return { tags: [], diagnostic: { severity: 'error', message: 'Frontmatter tags must contain only unaliased scalar values.' } };
+    }
+    if (item.type === 'BLOCK_LITERAL' || item.type === 'BLOCK_FOLDED' || (typeof item.value === 'string' && /[\r\n]/.test(item.value))) {
+      return { tags: [], diagnostic: { severity: 'error', message: 'Frontmatter tags cannot contain multiline scalar values.' } };
     }
     if (typeof item.source === 'string') tags.push(item.value === null ? item.source : typeof item.value === 'string' ? item.value : item.source);
     else if (typeof item.value === 'string') tags.push(item.value);
@@ -135,7 +156,7 @@ function isolatedTagsFromLines(lines: string[]): string[] {
       document.toJS();
       const root = document.contents;
       if (!isMap(root)) return [];
-      const tags = tagsFromYamlMap(root);
+      const tags = tagsFromYamlMap(root, isolated.join('\n'));
       return tags.diagnostic ? [] : tags.tags;
     } catch {
       return [];
