@@ -430,6 +430,51 @@ function unsupportedDirectiveRanges(markdown: string): Array<{ start: number; en
   return ranges;
 }
 
+function unsupportedCalloutRanges(
+  lines: string[],
+  lineStarts: number[],
+  protectedLines: boolean[],
+): Array<{ start: number; end: number }> {
+  const ranges: Array<{ start: number; end: number }> = [];
+  const supportedCallouts = ['NOTE', 'TIP', 'WARNING'];
+
+  for (let index = 0; index < lines.length; index += 1) {
+    if (protectedLines[index]) continue;
+    const prefixEnd = markdownBlockPrefixEnd(lines[index]);
+    const match = lines[index].slice(prefixEnd).match(/^[ \t]*\[!([A-Za-z][A-Za-z0-9_-]*)\]/);
+    if (!match) continue;
+
+    const calloutContainer = fenceContainer(lines[index].slice(0, prefixEnd));
+    if (!calloutContainer.prefixes.some((prefix) => prefix.kind === 'blockquote')) continue;
+    let endIndex = index;
+    while (endIndex + 1 < lines.length) {
+      const nextIndex = endIndex + 1;
+      if (protectedLines[nextIndex]) break;
+      const nextLine = lines[nextIndex];
+      const nextPrefixEnd = markdownBlockPrefixEnd(nextLine);
+      const nextContainer = {
+        ...fenceContainer(nextLine.slice(0, nextPrefixEnd)),
+        // A continuation blockquote may consume the list indentation before its marker.
+        indentation:
+          (nextLine.match(/^ */)?.[0].length ?? 0)
+          + (nextLine.slice(nextPrefixEnd).match(/^[ \t]*/)?.[0].length ?? 0),
+      };
+      if (!sameMarkdownContainer(calloutContainer, nextContainer)) break;
+      endIndex = nextIndex;
+    }
+
+    if (!supportedCallouts.includes(match[1].toUpperCase())) {
+      ranges.push({
+        start: lineStarts[index],
+        end: lineStarts[endIndex] + lines[endIndex].length,
+      });
+    }
+    index = endIndex;
+  }
+
+  return ranges;
+}
+
 export function splitUnsupportedBlocks(markdown: string): MarkdownPart[] {
   const ranges: Array<{ start: number; end: number }> = unsupportedDirectiveRanges(markdown);
   const frontmatter = parseMarkdownFrontmatter(markdown);
@@ -445,21 +490,12 @@ export function splitUnsupportedBlocks(markdown: string): MarkdownPart[] {
     lineStarts.push(lineOffset);
     lineOffset += line.length + 1;
   });
-  const block = /^ {0,3}>\s*\[!([A-Za-z][A-Za-z0-9_-]*)\][^\n]*(?:\n>.*)*/gm;
-  let cursor = 0;
-  let match: RegExpExecArray | null;
-
-  while ((match = block.exec(markdown))) {
-    if (match[1] && ['NOTE', 'TIP', 'WARNING'].includes(match[1].toUpperCase())) continue;
-    let lineIndex = 0;
-    for (let index = 1; index < lineStarts.length && lineStarts[index] <= match.index; index += 1) lineIndex = index;
-    if (protectedLines[lineIndex]) continue;
-    ranges.push({ start: match.index, end: match.index + match[0].length });
-  }
+  ranges.push(...unsupportedCalloutRanges(lines, lineStarts, protectedLines));
   ranges.push(...findMalformedMarkdownTableRanges(markdown));
   ranges.sort((left, right) => left.start - right.start || left.end - right.end);
 
   const parts: MarkdownPart[] = [];
+  let cursor = 0;
   for (const range of ranges) {
     if (range.start < cursor) continue;
     if (range.start > cursor) parts.push({ kind: 'markdown', content: markdown.slice(cursor, range.start) });

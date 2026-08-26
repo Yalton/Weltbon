@@ -448,9 +448,38 @@ describe('MarkdownAuthoringEditor', () => {
     );
   });
 
+  it('isolates unsupported callouts nested in blockquotes without absorbing surrounding content', () => {
+    const unsupportedCallout = '> > [!DANGER]\n> > Keep every byte.';
+    const markdown = `Before\n\n${unsupportedCallout}\n\nAfter`;
+
+    expect(splitUnsupportedBlocks(markdown)).toEqual([
+      { kind: 'markdown', content: 'Before\n\n' },
+      { kind: 'raw', content: unsupportedCallout },
+      { kind: 'markdown', content: '\n\nAfter' },
+    ]);
+
+    render(<ControlledEditor value={markdown} />);
+    expect(screen.getByLabelText('Raw Markdown block').textContent).toBe(unsupportedCallout);
+  });
+
+  it('isolates unsupported callouts nested in list blockquotes with their indented continuation', () => {
+    const unsupportedCallout = '- > [!CAUTION]\n  > Keep every byte.';
+    const markdown = `Before\n\n${unsupportedCallout}\n\nAfter`;
+
+    expect(splitUnsupportedBlocks(markdown)).toEqual([
+      { kind: 'markdown', content: 'Before\n\n' },
+      { kind: 'raw', content: unsupportedCallout },
+      { kind: 'markdown', content: '\n\nAfter' },
+    ]);
+
+    render(<ControlledEditor value={markdown} />);
+    expect(screen.getByLabelText('Raw Markdown block').textContent).toBe(unsupportedCallout);
+  });
+
   it.each([
     'Prose containing ::: should remain an editable paragraph.',
-  ])('does not isolate ::: inside prose or fenced code: %s', (markdownDocument) => {
+    '[!DANGER] in prose should remain an editable paragraph.',
+  ])('does not isolate prose markers or directive-like text: %s', (markdownDocument) => {
     render(<ControlledEditor value={markdownDocument} />);
 
     expect(screen.queryByLabelText('Raw Markdown block')).not.toBeInTheDocument();
