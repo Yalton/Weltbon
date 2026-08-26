@@ -90,17 +90,21 @@ function sameContainerKinds(left: MarkdownContainer[], right: MarkdownContainer[
   return left.length === right.length && left.every((container, index) => container.kind === right[index].kind);
 }
 
-function fenceContainerMatches(fence: FenceState, line: ParsedFenceLine): boolean {
-  if (sameContainerKinds(fence.containers, line.containers)) return true;
+function containerMatches(opening: MarkdownContainer[], line: { containers: MarkdownContainer[]; indentation: number }): boolean {
+  if (sameContainerKinds(opening, line.containers)) return true;
   let droppedLists = 0;
-  while (droppedLists < fence.containers.length && fence.containers[droppedLists].kind === 'list') droppedLists += 1;
+  while (droppedLists < opening.length && opening[droppedLists].kind === 'list') droppedLists += 1;
   if (droppedLists === 0) return false;
-  const remaining = fence.containers.slice(droppedLists);
+  const remaining = opening.slice(droppedLists);
   if (!sameContainerKinds(remaining, line.containers)) return false;
-  const requiredIndentation = fence.containers
+  const requiredIndentation = opening
     .slice(0, droppedLists)
     .reduce((total, container) => total + container.length, 0);
   return line.indentation >= requiredIndentation;
+}
+
+function fenceContainerMatches(fence: FenceState, line: ParsedFenceLine): boolean {
+  return containerMatches(fence.containers, line);
 }
 
 function isTopLevelTableLine(line: string): boolean {
@@ -132,7 +136,7 @@ function protectedMarkdownLines(lines: string[]): boolean[] {
     if (rawDirective) {
       protectedLines[index] = true;
       const parsed = parseMarkdownContainers(line);
-      if (/^:::\s*$/.test(parsed.rest) && sameContainerKinds(rawDirective, parsed.containers)) rawDirective = null;
+      if (/^:::\s*$/.test(parsed.rest) && containerMatches(rawDirective, parsed)) rawDirective = null;
       return;
     }
     if (fenceLine) {

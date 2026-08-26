@@ -439,6 +439,15 @@ describe('MarkdownAuthoringEditor', () => {
     ]);
   });
 
+  it('closes a list directive with its indented continuation marker', () => {
+    const directive = '- :::mermaid\n  graph TD\n  :::';
+
+    expect(splitUnsupportedBlocks(`${directive}\n\nAfter`)).toEqual([
+      { kind: 'raw', content: directive },
+      { kind: 'markdown', content: '\n\nAfter' },
+    ]);
+  });
+
   it('keeps content and the current source selection when switching modes', () => {
     render(<ControlledEditor />);
 
