@@ -270,11 +270,17 @@ export const llmSharedGrants = pgTable('llm_shared_grants', {
   revokedReason: text('revoked_reason'),
 }, (t) => ({
   providerCheck: check('llm_shared_grants_provider_check', sql`${t.provider} IN ('anthropic', 'openai')`),
+  activeOwnerKeyCheck: check('llm_shared_grants_active_owner_key_check', sql`${t.ownerKeyId} IS NOT NULL OR ${t.revokedAt} IS NOT NULL`),
+  ownerKeyFk: foreignKey({
+    columns: [t.ownerKeyId],
+    foreignColumns: [llmApiKeys.id],
+    name: 'llm_shared_grants_owner_key_fk',
+  }).onDelete('set null'),
   ownerKeyMatch: foreignKey({
     columns: [t.ownerKeyId, t.ownerUserId, t.provider],
     foreignColumns: [llmApiKeys.id, llmApiKeys.userId, llmApiKeys.provider],
-    name: 'llm_shared_grants_owner_key_fk',
-  }).onDelete('set null'),
+    name: 'llm_shared_grants_owner_key_owner_provider_fk',
+  }),
   ownerProviderIdx: index('llm_shared_grants_owner_provider_idx').on(t.ownerUserId, t.provider, t.revokedAt),
   recipientIdx: index('llm_shared_grants_recipient_idx').on(t.recipientUserId, t.revokedAt),
   idRecipientUnique: unique('llm_shared_grants_id_recipient_unique').on(t.id, t.recipientUserId),
@@ -560,7 +566,7 @@ export const auditRuns = pgTable('audit_runs', {
     .on(t.userId, t.startedAt)
     .where(sql`credential_source = 'shared'`),
   credentialSourceCheck: check('audit_runs_credential_source_check', sql`${t.credentialSource} IN ('own', 'shared')`),
-  sharedProvenanceCheck: check('audit_runs_shared_provenance_check', sql`${t.credentialSource} = 'own' OR (${t.credentialOwnerId} IS NOT NULL AND ${t.sharedGrantId} IS NOT NULL)`),
+  sharedProvenanceCheck: check('audit_runs_shared_provenance_check', sql`${t.credentialSource} = 'own' OR ((${t.credentialOwnerId} IS NOT NULL AND ${t.sharedGrantId} IS NOT NULL) OR (${t.credentialOwnerId} IS NULL AND ${t.sharedGrantId} IS NULL))`),
 }));
 
 export const llmSharedAuditReservations = pgTable('llm_shared_audit_reservations', {
@@ -578,7 +584,7 @@ export const llmSharedAuditReservations = pgTable('llm_shared_audit_reservations
   auditRunUnique: unique('llm_shared_reservations_audit_run_unique').on(t.auditRunId),
   stateCheck: check('llm_shared_reservations_state_check', sql`${t.state} IN ('reserved', 'settled', 'released')`),
   recipientMonthIdx: index('llm_shared_reservations_recipient_month_idx').on(t.recipientUserId, t.monthStart, t.state),
-  reservedNonnegative: check('llm_shared_reservations_reserved_nonnegative', sql`${t.reservedCostUsd} >= 0`),
+  reservedNonnegative: check('llm_shared_reservations_reserved_nonnegative', sql`${t.reservedCostUsd} > 0`),
   settledNonnegative: check('llm_shared_reservations_settled_nonnegative', sql`${t.settledCostUsd} >= 0`),
   monthStartFirstDay: check('llm_shared_reservations_month_start_first_day', sql`${t.monthStart} = date_trunc('month', ${t.monthStart}::timestamp)::date`),
 }));
