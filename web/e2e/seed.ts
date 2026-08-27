@@ -12,7 +12,9 @@ export const API = 'http://localhost:3000/api';
 const PG_PASSWORD = 'weltbon';
 const PG_USER = 'weltbon';
 const PG_DB = 'weltbon';
-const DB_CONTAINER = 'weltbon-db-1';
+const DB_SERVICE = 'db';
+const REPO_ROOT = resolve(dirname(fileURLToPath(import.meta.url)), '../..');
+const COMPOSE_FILE = resolve(REPO_ROOT, 'docker-compose.yml');
 
 export interface Seed {
   uid: string;
@@ -34,26 +36,59 @@ function sh(cmd: string): string {
 }
 
 /**
- * weltbon-db-1 publishes no host port, so reach it on the docker bridge IP
- * (see the weltbon-test-commands project note). Overridable via WELTBON_DB_HOST.
+ * The database publishes no host port, so resolve the active Compose `db`
+ * service to its bridge IP (see the weltbon-test-commands project note).
+ * Overridable via WELTBON_DB_HOST.
  */
 export function resolveDbHost(): string {
   if (process.env.WELTBON_DB_HOST) return process.env.WELTBON_DB_HOST;
+  const dbContainer = resolveDbContainer();
   const ip = sh(
-    `docker inspect ${DB_CONTAINER} --format '{{range .NetworkSettings.Networks}}{{.IPAddress}}{{end}}'`,
+    `docker inspect ${dbContainer} --format '{{range .NetworkSettings.Networks}}{{.IPAddress}}{{end}}'`,
   );
   if (!ip) {
     throw new Error(
-      `Could not resolve ${DB_CONTAINER} bridge IP. Is the stack up? Run: docker compose up -d --build`,
+      `Could not resolve the ${DB_SERVICE} service bridge IP. Is the stack up? Run: docker compose up -d --build`,
     );
   }
   return ip;
 }
 
+function resolveDbContainer(): string {
+  const dbContainer = sh(`docker compose -f ${JSON.stringify(COMPOSE_FILE)} ps -q ${DB_SERVICE}`);
+  if (!dbContainer) {
+    throw new Error(
+      `Could not resolve the ${DB_SERVICE} service container. Is the stack up? Run: docker compose up -d --build`,
+    );
+  }
+  return dbContainer;
+}
+
+function hostPsqlAvailable(): boolean {
+  try {
+    execSync('command -v psql', { stdio: 'ignore' });
+    return true;
+  } catch {
+    return false;
+  }
+}
+
 export function psql(dbHost: string, query: string, opts: { quiet?: boolean } = {}) {
+  const stdio = opts.quiet ? 'ignore' : 'pipe';
+  if (process.env.WELTBON_DB_HOST || hostPsqlAvailable()) {
+    return execSync(
+      `PGPASSWORD=${PG_PASSWORD} psql -h ${dbHost} -U ${PG_USER} -d ${PG_DB} -tAc ${JSON.stringify(query)}`,
+      { encoding: 'utf8', stdio },
+    );
+  }
+
+  // The standard Postgres image includes psql, while the Node host image does
+  // not. Use the active Compose service as the fallback so isolated worktrees
+  // do not depend on a hard-coded project/container name or host packages.
+  const dbContainer = resolveDbContainer();
   return execSync(
-    `PGPASSWORD=${PG_PASSWORD} psql -h ${dbHost} -U ${PG_USER} -d ${PG_DB} -tAc ${JSON.stringify(query)}`,
-    { encoding: 'utf8', stdio: opts.quiet ? 'ignore' : 'pipe' },
+    `docker exec ${dbContainer} psql -U ${PG_USER} -d ${PG_DB} -tAc ${JSON.stringify(query)}`,
+    { encoding: 'utf8', stdio },
   );
 }
 

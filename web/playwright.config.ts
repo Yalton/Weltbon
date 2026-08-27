@@ -1,4 +1,5 @@
 import { defineConfig } from '@playwright/test';
+import { existsSync } from 'node:fs';
 import { fileURLToPath } from 'node:url';
 import { dirname, resolve } from 'node:path';
 
@@ -15,17 +16,20 @@ const repoRoot = resolve(here, '..');
  * unit suite — only a real browser surfaced them. Playwright drives a real
  * browser so they can't regress silently again.
  *
- * Browser: uses the system Chromium (the same /usr/bin/chromium the app already
- * bundles for PDF export) via `executablePath`, so no ~150 MB Playwright browser
- * download is needed. Override with PLAYWRIGHT_CHROMIUM_PATH if yours lives
- * elsewhere.
+ * Browser: uses system Chromium via `executablePath`, so no ~150 MB Playwright
+ * browser download is needed. Debian-family hosts may expose it as either
+ * `chromium` or `chromium-browser`; override with PLAYWRIGHT_CHROMIUM_PATH if
+ * yours lives elsewhere.
  *
  * The stack must be running and rebuilt with the code under test:
  *   docker compose up -d --build
  * (the webServer block below will `up -d` an already-built image if it's down,
  *  but it will NOT rebuild — rebuild yourself after changing app source.)
  */
-const CHROMIUM = process.env.PLAYWRIGHT_CHROMIUM_PATH || '/usr/bin/chromium';
+const CHROMIUM =
+  process.env.PLAYWRIGHT_CHROMIUM_PATH ||
+  ['/usr/bin/chromium', '/usr/bin/chromium-browser'].find(existsSync) ||
+  '/usr/bin/chromium';
 
 export default defineConfig({
   testDir: './e2e',
