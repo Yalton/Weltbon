@@ -320,7 +320,7 @@ export function EntryEditor() {
   };
 
   return (
-    <div className="max-w-3xl mx-auto">
+    <div className="max-w-6xl mx-auto">
       <h1 className="text-2xl font-semibold mb-6">
         {isEditMode ? 'Edit entry' : 'New entry'}
       </h1>
@@ -420,7 +420,7 @@ export function EntryEditor() {
               Insert image
             </button>
           </div>
-          <div className="grid gap-4 xl:grid-cols-[minmax(0,1fr)_18rem]">
+          <div className="grid gap-4 xl:grid-cols-[minmax(0,1fr)_16rem]">
             <MarkdownAuthoringEditor
               ref={markdownEditorRef}
               value={watchedBody}
@@ -430,7 +430,7 @@ export function EntryEditor() {
               disabled={isPending}
             />
             <aside className="space-y-3">
-              <details open className="rounded-md border border-neutral-200 bg-white p-3 dark:border-neutral-800 dark:bg-neutral-900">
+              <details className="rounded-md border border-neutral-200 bg-white p-3 dark:border-neutral-800 dark:bg-neutral-900">
                 <summary className="cursor-pointer text-sm font-medium text-neutral-900 dark:text-neutral-100">
                   Outline
                 </summary>
@@ -438,7 +438,7 @@ export function EntryEditor() {
                   <MarkdownOutline markdown={watchedBody} onNavigate={handleOutlineNavigate} />
                 </div>
               </details>
-              <details open className="rounded-md border border-neutral-200 bg-white p-3 dark:border-neutral-800 dark:bg-neutral-900">
+              <details className="rounded-md border border-neutral-200 bg-white p-3 dark:border-neutral-800 dark:bg-neutral-900">
                 <summary className="cursor-pointer text-sm font-medium text-neutral-900 dark:text-neutral-100">
                   Backlinks &amp; Recovery
                 </summary>

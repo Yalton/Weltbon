@@ -5,6 +5,36 @@ import { SEED_FILE, type Seed } from './seed';
 const seed: Seed = JSON.parse(readFileSync(SEED_FILE, 'utf8'));
 const PASSWORD = 'longenoughpw12';
 
+test('gives the Markdown editor the primary width on desktop', async ({ page }) => {
+  await page.setViewportSize({ width: 1440, height: 900 });
+
+  await page.goto('/login');
+  await page.getByLabel('Email').fill(seed.email);
+  await page.getByLabel('Password').fill(PASSWORD);
+  await page.getByRole('button', { name: 'Log in' }).click();
+  await expect(page).not.toHaveURL(/\/login$/, { timeout: 15_000 });
+
+  await page.goto(`/universes/${seed.uid}/entries/new`);
+  await expect(page.getByRole('heading', { name: 'New entry' })).toBeVisible();
+
+  const editor = page.getByRole('region', { name: 'Markdown authoring editor' });
+  const utilityRail = page.locator('form aside');
+  await expect(editor).toBeVisible();
+  await expect(utilityRail).toBeVisible();
+
+  const editorBox = await editor.boundingBox();
+  const utilityRailBox = await utilityRail.boundingBox();
+  expect(editorBox).not.toBeNull();
+  expect(utilityRailBox).not.toBeNull();
+  expect(editorBox!.width).toBeGreaterThan(utilityRailBox!.width * 2);
+  expect(editorBox!.width).toBeGreaterThan(700);
+
+  const utilitySections = page.locator('form aside details');
+  await expect(utilitySections).toHaveCount(2);
+  await expect(utilitySections.nth(0)).not.toHaveAttribute('open');
+  await expect(utilitySections.nth(1)).not.toHaveAttribute('open');
+});
+
 test('keeps the narrow Markdown toolbar keyboard reachable in a real browser', async ({ page }) => {
   await page.setViewportSize({ width: 375, height: 800 });
 
