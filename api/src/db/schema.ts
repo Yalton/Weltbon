@@ -1,4 +1,4 @@
-import { pgTable, uuid, text, timestamp, jsonb, boolean, integer, doublePrecision, primaryKey, unique, numeric, uniqueIndex, index, check, date, type AnyPgColumn } from 'drizzle-orm/pg-core';
+import { pgTable, uuid, text, timestamp, jsonb, boolean, integer, doublePrecision, primaryKey, unique, numeric, uniqueIndex, index, check, date, foreignKey, type AnyPgColumn } from 'drizzle-orm/pg-core';
 import { relations, sql } from 'drizzle-orm';
 import type { EncryptedSecret } from '../services/crypto.js';
 
@@ -217,6 +217,7 @@ export const llmApiKeys = pgTable('llm_api_keys', {
   lastValidatedAt:      timestamp('last_validated_at', { withTimezone: true }),
 }, (t) => ({
   userProviderUnique: unique('llm_api_keys_user_id_provider_unique').on(t.userId, t.provider),
+  idUserProviderUnique: unique('llm_api_keys_id_user_id_provider_unique').on(t.id, t.userId, t.provider),
 }));
 
 /**
@@ -261,7 +262,7 @@ export const llmSharedGrants = pgTable('llm_shared_grants', {
   id: uuid('id').primaryKey().defaultRandom(),
   ownerUserId: uuid('owner_user_id').references(() => users.id, { onDelete: 'cascade' }).notNull(),
   recipientUserId: uuid('recipient_user_id').references(() => users.id, { onDelete: 'cascade' }).notNull(),
-  ownerKeyId: uuid('owner_key_id').references(() => llmApiKeys.id, { onDelete: 'set null' }),
+  ownerKeyId: uuid('owner_key_id'),
   provider: text('provider').notNull().$type<'anthropic' | 'openai'>(),
   createdAt: timestamp('created_at', { withTimezone: true }).defaultNow().notNull(),
   revokedAt: timestamp('revoked_at', { withTimezone: true }),
@@ -269,17 +270,29 @@ export const llmSharedGrants = pgTable('llm_shared_grants', {
   revokedReason: text('revoked_reason'),
 }, (t) => ({
   providerCheck: check('llm_shared_grants_provider_check', sql`${t.provider} IN ('anthropic', 'openai')`),
+  ownerKeyMatch: foreignKey({
+    columns: [t.ownerKeyId, t.ownerUserId, t.provider],
+    foreignColumns: [llmApiKeys.id, llmApiKeys.userId, llmApiKeys.provider],
+    name: 'llm_shared_grants_owner_key_fk',
+  }).onDelete('set null'),
   ownerProviderIdx: index('llm_shared_grants_owner_provider_idx').on(t.ownerUserId, t.provider, t.revokedAt),
   recipientIdx: index('llm_shared_grants_recipient_idx').on(t.recipientUserId, t.revokedAt),
+  idRecipientUnique: unique('llm_shared_grants_id_recipient_unique').on(t.id, t.recipientUserId),
   activeUnique: uniqueIndex('llm_shared_grants_recipient_provider_active_unique').on(t.recipientUserId, t.provider).where(sql`revoked_at IS NULL`),
 }));
 
 export const llmSharedConsents = pgTable('llm_shared_consents', {
-  grantId: uuid('grant_id').references(() => llmSharedGrants.id, { onDelete: 'cascade' }).primaryKey(),
+  grantId: uuid('grant_id').primaryKey(),
   recipientUserId: uuid('recipient_user_id').references(() => users.id, { onDelete: 'cascade' }).notNull(),
   policyVersion: text('policy_version').notNull(),
   consentedAt: timestamp('consented_at', { withTimezone: true }).defaultNow().notNull(),
-});
+}, (t) => ({
+  grantRecipientMatch: foreignKey({
+    columns: [t.grantId, t.recipientUserId],
+    foreignColumns: [llmSharedGrants.id, llmSharedGrants.recipientUserId],
+    name: 'llm_shared_consents_grant_fk',
+  }).onDelete('cascade'),
+}));
 
 export const llmSharedUsage = pgTable('llm_shared_usage', {
   recipientUserId: uuid('recipient_user_id').references(() => users.id, { onDelete: 'cascade' }).notNull(),
@@ -298,6 +311,7 @@ export const llmSharedUsage = pgTable('llm_shared_usage', {
   activeNonnegative: check('llm_shared_usage_active_nonnegative', sql`${t.activeAuditCount} >= 0`),
   completedNonnegative: check('llm_shared_usage_completed_nonnegative', sql`${t.completedAuditCount} >= 0`),
   failedNonnegative: check('llm_shared_usage_failed_nonnegative', sql`${t.failedAuditCount} >= 0`),
+  monthStartFirstDay: check('llm_shared_usage_month_start_first_day', sql`${t.monthStart} = date_trunc('month', ${t.monthStart}::timestamp)::date`),
 }));
 
 export const inviteCodesRelations = relations(inviteCodes, ({ one }) => ({
@@ -546,6 +560,7 @@ export const auditRuns = pgTable('audit_runs', {
     .on(t.userId, t.startedAt)
     .where(sql`credential_source = 'shared'`),
   credentialSourceCheck: check('audit_runs_credential_source_check', sql`${t.credentialSource} IN ('own', 'shared')`),
+  sharedProvenanceCheck: check('audit_runs_shared_provenance_check', sql`${t.credentialSource} = 'own' OR (${t.credentialOwnerId} IS NOT NULL AND ${t.sharedGrantId} IS NOT NULL)`),
 }));
 
 export const llmSharedAuditReservations = pgTable('llm_shared_audit_reservations', {
@@ -565,6 +580,7 @@ export const llmSharedAuditReservations = pgTable('llm_shared_audit_reservations
   recipientMonthIdx: index('llm_shared_reservations_recipient_month_idx').on(t.recipientUserId, t.monthStart, t.state),
   reservedNonnegative: check('llm_shared_reservations_reserved_nonnegative', sql`${t.reservedCostUsd} >= 0`),
   settledNonnegative: check('llm_shared_reservations_settled_nonnegative', sql`${t.settledCostUsd} >= 0`),
+  monthStartFirstDay: check('llm_shared_reservations_month_start_first_day', sql`${t.monthStart} = date_trunc('month', ${t.monthStart}::timestamp)::date`),
 }));
 
 export const issues = pgTable('issues', {
