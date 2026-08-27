@@ -95,7 +95,7 @@ export async function createTestDb(): Promise<TestDbHandle> {
 
 export async function cleanDb(handle: TestDbHandle): Promise<void> {
   await handle.db.execute(sql`
-    TRUNCATE TABLE dictionary_words, entry_templates, invite_codes, llm_api_keys, personal_access_tokens, refresh_tokens, graph_positions, diagram_nodes, diagrams, issue_entries, issues, links, map_pins, map_regions, maps, terrain_types, map_layers, entries, assets, categories, universes, users RESTART IDENTITY CASCADE
+    TRUNCATE TABLE llm_shared_audit_reservations, llm_shared_consents, llm_shared_usage, llm_shared_grants, dictionary_words, entry_templates, invite_codes, llm_api_keys, personal_access_tokens, refresh_tokens, graph_positions, diagram_nodes, diagrams, issue_entries, issues, links, map_pins, map_regions, maps, terrain_types, map_layers, entries, assets, categories, universes, users RESTART IDENTITY CASCADE
   `);
 }
 

@@ -1,4 +1,4 @@
-import { pgTable, uuid, text, timestamp, jsonb, boolean, integer, doublePrecision, primaryKey, unique, numeric, uniqueIndex, index, check } from 'drizzle-orm/pg-core';
+import { pgTable, uuid, text, timestamp, jsonb, boolean, integer, doublePrecision, primaryKey, unique, numeric, uniqueIndex, index, check, date, type AnyPgColumn } from 'drizzle-orm/pg-core';
 import { relations, sql } from 'drizzle-orm';
 import type { EncryptedSecret } from '../services/crypto.js';
 
@@ -170,7 +170,7 @@ export const personalAccessTokens = pgTable('personal_access_tokens', {
   revokedAt:  timestamp('revoked_at', { withTimezone: true }),
 });
 
-export type AdminAuditAction = 'promoted' | 'demoted' | 'disabled' | 'enabled' | 'purged';
+export type AdminAuditAction = 'promoted' | 'demoted' | 'disabled' | 'enabled' | 'purged' | 'llm_shared_granted' | 'llm_shared_revoked';
 
 /**
  * Append-only operator record. User IDs deliberately become null when either
@@ -256,6 +256,49 @@ export const inviteCodes = pgTable('invite_codes', {
   revokedAt:         timestamp('revoked_at', { withTimezone: true }),
   consumedByUserId:  uuid('consumed_by_user_id').references(() => users.id, { onDelete: 'set null' }),
 });
+
+export const llmSharedGrants = pgTable('llm_shared_grants', {
+  id: uuid('id').primaryKey().defaultRandom(),
+  ownerUserId: uuid('owner_user_id').references(() => users.id, { onDelete: 'cascade' }).notNull(),
+  recipientUserId: uuid('recipient_user_id').references(() => users.id, { onDelete: 'cascade' }).notNull(),
+  ownerKeyId: uuid('owner_key_id').references(() => llmApiKeys.id, { onDelete: 'set null' }),
+  provider: text('provider').notNull().$type<'anthropic' | 'openai'>(),
+  createdAt: timestamp('created_at', { withTimezone: true }).defaultNow().notNull(),
+  revokedAt: timestamp('revoked_at', { withTimezone: true }),
+  revokedByUserId: uuid('revoked_by_user_id').references(() => users.id, { onDelete: 'set null' }),
+  revokedReason: text('revoked_reason'),
+}, (t) => ({
+  providerCheck: check('llm_shared_grants_provider_check', sql`${t.provider} IN ('anthropic', 'openai')`),
+  ownerProviderIdx: index('llm_shared_grants_owner_provider_idx').on(t.ownerUserId, t.provider, t.revokedAt),
+  recipientIdx: index('llm_shared_grants_recipient_idx').on(t.recipientUserId, t.revokedAt),
+  activeUnique: uniqueIndex('llm_shared_grants_recipient_provider_active_unique').on(t.recipientUserId, t.provider).where(sql`revoked_at IS NULL`),
+}));
+
+export const llmSharedConsents = pgTable('llm_shared_consents', {
+  grantId: uuid('grant_id').references(() => llmSharedGrants.id, { onDelete: 'cascade' }).primaryKey(),
+  recipientUserId: uuid('recipient_user_id').references(() => users.id, { onDelete: 'cascade' }).notNull(),
+  policyVersion: text('policy_version').notNull(),
+  consentedAt: timestamp('consented_at', { withTimezone: true }).defaultNow().notNull(),
+});
+
+export const llmSharedUsage = pgTable('llm_shared_usage', {
+  recipientUserId: uuid('recipient_user_id').references(() => users.id, { onDelete: 'cascade' }).notNull(),
+  monthStart: date('month_start').notNull(),
+  reservedCostUsd: numeric('reserved_cost_usd', { precision: 12, scale: 6 }).default('0').notNull(),
+  settledCostUsd: numeric('settled_cost_usd', { precision: 12, scale: 6 }).default('0').notNull(),
+  activeAuditCount: integer('active_audit_count').default(0).notNull(),
+  completedAuditCount: integer('completed_audit_count').default(0).notNull(),
+  failedAuditCount: integer('failed_audit_count').default(0).notNull(),
+  createdAt: timestamp('created_at', { withTimezone: true }).defaultNow().notNull(),
+  updatedAt: timestamp('updated_at', { withTimezone: true }).defaultNow().notNull(),
+}, (t) => ({
+  primary: primaryKey({ columns: [t.recipientUserId, t.monthStart] }),
+  reservedNonnegative: check('llm_shared_usage_reserved_nonnegative', sql`${t.reservedCostUsd} >= 0`),
+  settledNonnegative: check('llm_shared_usage_settled_nonnegative', sql`${t.settledCostUsd} >= 0`),
+  activeNonnegative: check('llm_shared_usage_active_nonnegative', sql`${t.activeAuditCount} >= 0`),
+  completedNonnegative: check('llm_shared_usage_completed_nonnegative', sql`${t.completedAuditCount} >= 0`),
+  failedNonnegative: check('llm_shared_usage_failed_nonnegative', sql`${t.failedAuditCount} >= 0`),
+}));
 
 export const inviteCodesRelations = relations(inviteCodes, ({ one }) => ({
   owner:       one(users, { fields: [inviteCodes.ownerId], references: [users.id], relationName: 'invite_owner' }),
@@ -484,6 +527,9 @@ export const auditRuns = pgTable('audit_runs', {
   // excluded from llm-keys totalSpent SUM (with parallel COUNT footnote). DEFAULT false
   // backfills every pre-Phase-27 row at metadata-only ALTER speed (PostgreSQL 11+).
   costUnknown: boolean('cost_unknown').default(false).notNull(),
+  credentialSource: text('credential_source').default('own').notNull().$type<'own' | 'shared'>(),
+  credentialOwnerId: uuid('credential_owner_id').references(() => users.id, { onDelete: 'set null' }),
+  sharedGrantId: uuid('shared_grant_id').references(() => llmSharedGrants.id, { onDelete: 'set null' }),
 }, (t) => ({
   // BL-01: partial unique index closing the TOCTOU race window in routes/audits.ts
   // between the pre-check SELECT and INSERT. Without this index, two concurrent POSTs
@@ -493,6 +539,32 @@ export const auditRuns = pgTable('audit_runs', {
   universeActiveUnique: uniqueIndex('audit_runs_universe_active_unique')
     .on(t.universeId)
     .where(sql`status IN ('pending', 'running')`),
+  sharedRecipientActiveUnique: uniqueIndex('audit_runs_shared_recipient_active_unique')
+    .on(t.userId)
+    .where(sql`credential_source = 'shared' AND status IN ('pending', 'running')`),
+  sharedUserStartedIdx: index('audit_runs_shared_user_started_idx')
+    .on(t.userId, t.startedAt)
+    .where(sql`credential_source = 'shared'`),
+  credentialSourceCheck: check('audit_runs_credential_source_check', sql`${t.credentialSource} IN ('own', 'shared')`),
+}));
+
+export const llmSharedAuditReservations = pgTable('llm_shared_audit_reservations', {
+  id: uuid('id').primaryKey().defaultRandom(),
+  auditRunId: uuid('audit_run_id').references(() => auditRuns.id, { onDelete: 'cascade' }).notNull(),
+  grantId: uuid('grant_id').references(() => llmSharedGrants.id, { onDelete: 'set null' }),
+  recipientUserId: uuid('recipient_user_id').references(() => users.id, { onDelete: 'cascade' }).notNull(),
+  monthStart: date('month_start').notNull(),
+  reservedCostUsd: numeric('reserved_cost_usd', { precision: 12, scale: 6 }).notNull(),
+  settledCostUsd: numeric('settled_cost_usd', { precision: 12, scale: 6 }).default('0').notNull(),
+  state: text('state').notNull().$type<'reserved' | 'settled' | 'released'>(),
+  createdAt: timestamp('created_at', { withTimezone: true }).defaultNow().notNull(),
+  settledAt: timestamp('settled_at', { withTimezone: true }),
+}, (t) => ({
+  auditRunUnique: unique('llm_shared_reservations_audit_run_unique').on(t.auditRunId),
+  stateCheck: check('llm_shared_reservations_state_check', sql`${t.state} IN ('reserved', 'settled', 'released')`),
+  recipientMonthIdx: index('llm_shared_reservations_recipient_month_idx').on(t.recipientUserId, t.monthStart, t.state),
+  reservedNonnegative: check('llm_shared_reservations_reserved_nonnegative', sql`${t.reservedCostUsd} >= 0`),
+  settledNonnegative: check('llm_shared_reservations_settled_nonnegative', sql`${t.settledCostUsd} >= 0`),
 }));
 
 export const issues = pgTable('issues', {
@@ -521,7 +593,7 @@ export const issues = pgTable('issues', {
   dismissalReason: text('dismissal_reason'),        // 'intentional'|'inaccurate'|'not_now'|'duplicate_of_human_issue'
   dismissalNotes: text('dismissal_notes'),
   dismissalSnoozeRemaining: integer('dismissal_snooze_remaining'),
-  linkedIssueId: uuid('linked_issue_id').references(() => issues.id, { onDelete: 'set null' }),
+  linkedIssueId: uuid('linked_issue_id').references((): AnyPgColumn => issues.id, { onDelete: 'set null' }),
   category: text('category'),                        // AuditCategory value; null for human issues
 }, (t) => ({
   // #44: universeFingerprint() aggregates this table filtered by universe_id
