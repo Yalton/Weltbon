@@ -235,6 +235,32 @@ export function parseMarkdownFrontmatter(markdown: string): ParsedFrontmatter {
   return { raw: parsed.diagnostics.length > 0 ? markdown : region.text, ...parsed };
 }
 
+/**
+ * Return the body of a valid document-start YAML frontmatter block.
+ *
+ * The authoring parser has stricter rules for the supported `tags` field than
+ * the Markdown reading surface needs. Reading only needs to know whether the
+ * complete YAML document is parseable, so valid metadata with unknown fields
+ * is hidden while malformed metadata remains visible for recovery.
+ */
+export function stripMarkdownFrontmatter(markdown: string): string {
+  const region = frontmatterRegion(markdown);
+  if (!region || region.closeStart < 0) return markdown;
+
+  const analysis = parseFrontmatterYaml(region);
+  const root = analysis.document?.contents;
+  if (analysis.diagnostic || (root !== null && root !== undefined && !isMap(root))) {
+    return markdown;
+  }
+
+  const eolLength = markdown.startsWith('\r\n', region.end)
+    ? 2
+    : markdown[region.end] === '\n'
+      ? 1
+      : 0;
+  return markdown.slice(region.end + eolLength);
+}
+
 export function replaceSupportedFrontmatterTags(markdown: string, tags: string[]): string {
   const region = frontmatterRegion(markdown);
   if (!region) {

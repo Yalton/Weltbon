@@ -185,14 +185,30 @@ describe('T5: no wikis prop → [[x]] renders as literal text', () => {
 });
 
 describe('authoring callouts', () => {
-  it('marks supported NOTE callouts for the reading surface without changing their body', () => {
+  it('renders supported NOTE callouts without exposing the marker', () => {
     render(<MarkdownRenderer content={'> [!NOTE]\n> Keep this detail.'} />);
 
     const callout = document.querySelector('[data-callout-type="NOTE"]');
     expect(callout).toBeInTheDocument();
-    expect(callout).toHaveTextContent('[!NOTE]');
+    expect(callout).not.toHaveTextContent('[!NOTE]');
     expect(callout).toHaveTextContent('Keep this detail.');
   });
+
+  it.each(['TIP', 'WARNING', 'IMPORTANT'])(
+    'renders %s callouts with the marker removed',
+    (type) => {
+      render(
+        <MarkdownRenderer
+          content={`> [!${type}]\n> Keep this ${type.toLowerCase()} detail.`}
+        />,
+      );
+
+      const callout = document.querySelector(`[data-callout-type="${type}"]`);
+      expect(callout).toBeInTheDocument();
+      expect(callout).not.toHaveTextContent(`[!${type}]`);
+      expect(callout).toHaveTextContent(`Keep this ${type.toLowerCase()} detail.`);
+    },
+  );
 
   it('leaves unsupported callout types as ordinary blockquotes', () => {
     const { container } = render(<MarkdownRenderer content={'> [!DANGER]\n> Keep this raw.'} />);
@@ -246,6 +262,47 @@ describe('authoring callouts', () => {
     expect(blockquotes[0]).not.toHaveAttribute('data-callout-type');
     expect(blockquotes[1]).not.toHaveAttribute('data-callout-type');
     expect(blockquotes[2]).toHaveAttribute('data-callout-type', 'WARNING');
+  });
+});
+
+describe('reading-surface frontmatter', () => {
+  it('hides valid document-start YAML while retaining the markdown body', () => {
+    const content = [
+      '---',
+      'tags: [history, diplomacy]',
+      'unknown_field: preserved-for-round-trip',
+      '---',
+      '# The Ember Accord',
+      '',
+      'The body remains visible.',
+    ].join('\n');
+    const { container } = render(<MarkdownRenderer content={content} />);
+
+    expect(container).not.toHaveTextContent('tags: [history, diplomacy]');
+    expect(container).not.toHaveTextContent('unknown_field');
+    expect(screen.getByRole('heading', { name: 'The Ember Accord' })).toBeInTheDocument();
+    expect(container).toHaveTextContent('The body remains visible.');
+  });
+
+  it('keeps malformed document-start frontmatter visible for recovery', () => {
+    const content = [
+      '---',
+      'status: "unterminated',
+      '---',
+      '# Recovery body',
+    ].join('\n');
+    const { container } = render(<MarkdownRenderer content={content} />);
+
+    expect(container).toHaveTextContent('status: "unterminated');
+    expect(container).toHaveTextContent('Recovery body');
+  });
+
+  it('does not treat a horizontal rule in the body as frontmatter', () => {
+    const content = '# Heading\n\n---\n\nBody after the rule.';
+    const { container } = render(<MarkdownRenderer content={content} />);
+
+    expect(container).toHaveTextContent('Heading');
+    expect(container).toHaveTextContent('Body after the rule.');
   });
 });
 

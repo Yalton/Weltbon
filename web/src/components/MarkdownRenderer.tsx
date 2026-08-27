@@ -3,6 +3,7 @@ import remarkGfm from 'remark-gfm';
 import React from 'react';
 import { WikilinkText, tokenize } from './WikilinkText';
 import type { WikilinkResolutionData } from './WikilinkText';
+import { stripMarkdownFrontmatter } from '../lib/markdownAuthoring';
 
 /**
  * URL transform that passes asset:// URLs through to the components.img
@@ -64,6 +65,39 @@ function sourceCalloutTypeAt(markdown: string, offset?: number): string | null {
   return match?.[1].toUpperCase() ?? null;
 }
 
+/**
+ * ReactMarkdown keeps the callout marker in the first paragraph's children.
+ * Remove only that leading marker after source-position detection has proved
+ * that this is a supported callout. Walking the existing React tree preserves
+ * inline Markdown and WikilinkText behavior without injecting HTML.
+ */
+function stripCalloutMarker(
+  children: React.ReactNode,
+  calloutType: string,
+): React.ReactNode {
+  const marker = new RegExp(`^\\[!${calloutType}\\]`, 'i');
+  let removed = false;
+
+  const visit = (node: React.ReactNode): React.ReactNode => {
+    if (removed) return node;
+    if (typeof node === 'string') {
+      const match = marker.exec(node);
+      if (!match) return node;
+      removed = true;
+      return node.slice(match[0].length).replace(/^[ \t]+/, '');
+    }
+    if (Array.isArray(node)) return node.map(visit);
+    if (React.isValidElement(node)) {
+      const props = node.props as { children?: React.ReactNode };
+      if (!('children' in props)) return node;
+      return React.cloneElement(node, undefined, visit(props.children));
+    }
+    return node;
+  };
+
+  return visit(children);
+}
+
 // Re-export so callers can import the type from the MarkdownRenderer module.
 export type { WikilinkResolutionData };
 
@@ -117,6 +151,8 @@ export function MarkdownRenderer({
     assetUrls?: Record<string, string>;
   };
 }) {
+  const renderedContent = stripMarkdownFrontmatter(content);
+
   // Build the img component override only when `assets` prop is provided.
   const imgComponent = assets
     ? ({ src, alt }: { src?: string; alt?: string }) => {
@@ -160,14 +196,16 @@ export function MarkdownRenderer({
     // source-level fallback as well so this display annotation remains stable
     // across ReactMarkdown child-shape changes.
     blockquote: ({ children, node }: { children?: React.ReactNode } & ExtraProps) => {
-      const sourceType = sourceCalloutTypeAt(content, node?.position?.start.offset);
-      const calloutType = sourceType && ['NOTE', 'TIP', 'WARNING'].includes(sourceType) ? sourceType : null;
+      const sourceType = sourceCalloutTypeAt(renderedContent, node?.position?.start.offset);
+      const calloutType = sourceType && ['NOTE', 'TIP', 'WARNING', 'IMPORTANT'].includes(sourceType)
+        ? sourceType
+        : null;
       return (
         <blockquote
           data-callout-type={calloutType ?? undefined}
           className={calloutType ? 'markdown-callout' : undefined}
         >
-          {children}
+          {calloutType ? stripCalloutMarker(children, calloutType) : children}
         </blockquote>
       );
     },
@@ -222,7 +260,7 @@ export function MarkdownRenderer({
         // URL transform (security-preserving; blocks javascript: etc.).
         urlTransform={assets ? urlTransformWithAssets : defaultUrlTransform}
       >
-        {content}
+        {renderedContent}
       </ReactMarkdown>
     </div>
   );
