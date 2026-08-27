@@ -12,6 +12,7 @@ CREATE TABLE "llm_shared_grants" (
   CONSTRAINT "llm_shared_grants_active_owner_key_check" CHECK ("owner_key_id" IS NOT NULL OR "revoked_at" IS NOT NULL)
 );--> statement-breakpoint
 CREATE UNIQUE INDEX "llm_api_keys_id_user_id_provider_unique" ON "llm_api_keys" ("id", "user_id", "provider");--> statement-breakpoint
+CREATE UNIQUE INDEX "llm_shared_grants_id_owner_unique" ON "llm_shared_grants" ("id", "owner_user_id");--> statement-breakpoint
 ALTER TABLE "llm_shared_grants" ADD CONSTRAINT "llm_shared_grants_owner_fk" FOREIGN KEY ("owner_user_id") REFERENCES "users"("id") ON DELETE cascade ON UPDATE no action;--> statement-breakpoint
 ALTER TABLE "llm_shared_grants" ADD CONSTRAINT "llm_shared_grants_recipient_fk" FOREIGN KEY ("recipient_user_id") REFERENCES "users"("id") ON DELETE cascade ON UPDATE no action;--> statement-breakpoint
 ALTER TABLE "llm_shared_grants" ADD CONSTRAINT "llm_shared_grants_owner_key_fk" FOREIGN KEY ("owner_key_id") REFERENCES "llm_api_keys"("id") ON DELETE set null ON UPDATE no action;--> statement-breakpoint
@@ -56,8 +57,7 @@ ALTER TABLE "audit_runs" ADD COLUMN "credential_owner_id" uuid;--> statement-bre
 ALTER TABLE "audit_runs" ADD COLUMN "shared_grant_id" uuid;--> statement-breakpoint
 ALTER TABLE "audit_runs" ADD CONSTRAINT "audit_runs_credential_source_check" CHECK ("credential_source" IN ('own', 'shared'));--> statement-breakpoint
 ALTER TABLE "audit_runs" ADD CONSTRAINT "audit_runs_shared_provenance_check" CHECK ("credential_source" = 'own' OR (("credential_owner_id" IS NOT NULL AND "shared_grant_id" IS NOT NULL) OR ("credential_owner_id" IS NULL AND "shared_grant_id" IS NULL)));--> statement-breakpoint
-ALTER TABLE "audit_runs" ADD CONSTRAINT "audit_runs_credential_owner_fk" FOREIGN KEY ("credential_owner_id") REFERENCES "users"("id") ON DELETE set null ON UPDATE no action;--> statement-breakpoint
-ALTER TABLE "audit_runs" ADD CONSTRAINT "audit_runs_shared_grant_fk" FOREIGN KEY ("shared_grant_id") REFERENCES "llm_shared_grants"("id") ON DELETE set null ON UPDATE no action;--> statement-breakpoint
+ALTER TABLE "audit_runs" ADD CONSTRAINT "audit_runs_shared_provenance_fk" FOREIGN KEY ("shared_grant_id", "credential_owner_id") REFERENCES "llm_shared_grants"("id", "owner_user_id") ON DELETE set null ON UPDATE no action;--> statement-breakpoint
 CREATE UNIQUE INDEX "audit_runs_shared_recipient_active_unique" ON "audit_runs" ("user_id") WHERE "credential_source" = 'shared' AND "status" IN ('pending', 'running');--> statement-breakpoint
 CREATE INDEX "audit_runs_shared_user_started_idx" ON "audit_runs" ("user_id", "started_at") WHERE "credential_source" = 'shared';--> statement-breakpoint
 

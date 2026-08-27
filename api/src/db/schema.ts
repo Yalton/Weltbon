@@ -283,6 +283,7 @@ export const llmSharedGrants = pgTable('llm_shared_grants', {
   }),
   ownerProviderIdx: index('llm_shared_grants_owner_provider_idx').on(t.ownerUserId, t.provider, t.revokedAt),
   recipientIdx: index('llm_shared_grants_recipient_idx').on(t.recipientUserId, t.revokedAt),
+  idOwnerUnique: unique('llm_shared_grants_id_owner_unique').on(t.id, t.ownerUserId),
   idRecipientUnique: unique('llm_shared_grants_id_recipient_unique').on(t.id, t.recipientUserId),
   activeUnique: uniqueIndex('llm_shared_grants_recipient_provider_active_unique').on(t.recipientUserId, t.provider).where(sql`revoked_at IS NULL`),
 }));
@@ -548,8 +549,8 @@ export const auditRuns = pgTable('audit_runs', {
   // backfills every pre-Phase-27 row at metadata-only ALTER speed (PostgreSQL 11+).
   costUnknown: boolean('cost_unknown').default(false).notNull(),
   credentialSource: text('credential_source').default('own').notNull().$type<'own' | 'shared'>(),
-  credentialOwnerId: uuid('credential_owner_id').references(() => users.id, { onDelete: 'set null' }),
-  sharedGrantId: uuid('shared_grant_id').references(() => llmSharedGrants.id, { onDelete: 'set null' }),
+  credentialOwnerId: uuid('credential_owner_id'),
+  sharedGrantId: uuid('shared_grant_id'),
 }, (t) => ({
   // BL-01: partial unique index closing the TOCTOU race window in routes/audits.ts
   // between the pre-check SELECT and INSERT. Without this index, two concurrent POSTs
@@ -565,6 +566,11 @@ export const auditRuns = pgTable('audit_runs', {
   sharedUserStartedIdx: index('audit_runs_shared_user_started_idx')
     .on(t.userId, t.startedAt)
     .where(sql`credential_source = 'shared'`),
+  sharedProvenanceFk: foreignKey({
+    columns: [t.sharedGrantId, t.credentialOwnerId],
+    foreignColumns: [llmSharedGrants.id, llmSharedGrants.ownerUserId],
+    name: 'audit_runs_shared_provenance_fk',
+  }).onDelete('set null'),
   credentialSourceCheck: check('audit_runs_credential_source_check', sql`${t.credentialSource} IN ('own', 'shared')`),
   sharedProvenanceCheck: check('audit_runs_shared_provenance_check', sql`${t.credentialSource} = 'own' OR ((${t.credentialOwnerId} IS NOT NULL AND ${t.sharedGrantId} IS NOT NULL) OR (${t.credentialOwnerId} IS NULL AND ${t.sharedGrantId} IS NULL))`),
 }));

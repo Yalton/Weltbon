@@ -84,6 +84,9 @@ describe('shared LLM connection persistence', () => {
     await handle.db.delete(llmApiKeys).where(eq(llmApiKeys.id, key.id));
     const afterKeyDeletion = await handle.db.query.llmSharedGrants.findFirst({ where: eq(llmSharedGrants.id, grant.id) });
     expect(afterKeyDeletion?.ownerKeyId).toBeNull();
+    await handle.db.delete(llmSharedGrants).where(eq(llmSharedGrants.id, grant.id));
+    const afterGrantDeletion = await handle.db.query.auditRuns.findFirst({ where: eq(auditRuns.id, run.id) });
+    expect(afterGrantDeletion).toMatchObject({ credentialSource: 'shared', credentialOwnerId: null, sharedGrantId: null });
   });
 
   it('allows one active grant per recipient/provider and allows a replacement after revocation', async () => {
@@ -163,6 +166,17 @@ describe('shared LLM connection persistence', () => {
     expect(compositeOwnerKeyFk?.onDelete ?? 'no action').toBe('no action');
     expect(migration).toContain('FOREIGN KEY ("owner_key_id") REFERENCES "llm_api_keys"("id") ON DELETE set null ON UPDATE no action;--> statement-breakpoint');
     expect(migration).toContain('FOREIGN KEY ("owner_key_id", "owner_user_id", "provider") REFERENCES "llm_api_keys"("id", "user_id", "provider") ON DELETE no action ON UPDATE no action;--> statement-breakpoint');
+    expect(grantConfig.uniqueConstraints.map((constraint) => constraint.name)).toContain('llm_shared_grants_id_owner_unique');
+    expect(migration).toContain('CREATE UNIQUE INDEX "llm_shared_grants_id_owner_unique" ON "llm_shared_grants" ("id", "owner_user_id");--> statement-breakpoint');
+
+    const auditConfig = getTableConfig(auditRuns);
+    const provenanceFks = auditConfig.foreignKeys.filter((fk) => fk.reference().columns.some((column) => column.name === 'shared_grant_id' || column.name === 'credential_owner_id'));
+    const compositeProvenanceFk = provenanceFks.find((fk) => fk.reference().columns.length === 2);
+    expect(compositeProvenanceFk?.onDelete).toBe('set null');
+    expect(provenanceFks.filter((fk) => fk.reference().columns.length === 1)).toHaveLength(0);
+    expect(migration).toContain('FOREIGN KEY ("shared_grant_id", "credential_owner_id") REFERENCES "llm_shared_grants"("id", "owner_user_id") ON DELETE set null ON UPDATE no action;--> statement-breakpoint');
+    expect(migration).not.toContain('CONSTRAINT "audit_runs_credential_owner_fk"');
+    expect(migration).not.toContain('CONSTRAINT "audit_runs_shared_grant_fk"');
 
     const reservationCheck = getTableConfig(llmSharedAuditReservations).checks.find((check) => check.name === 'llm_shared_reservations_reserved_nonnegative');
     expect(new PgDialect().sqlToQuery(reservationCheck!.value).sql).toContain('> 0');
