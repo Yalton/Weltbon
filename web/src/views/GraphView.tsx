@@ -155,26 +155,37 @@ export function GraphView() {
   useEffect(() => {
     if (!containerRef.current) return;
     const el = containerRef.current;
-    // jsdom doesn't implement ResizeObserver; fall back gracefully so tests
-    // don't explode (they assert DOM structure, not pixel dimensions).
-    if (typeof ResizeObserver === 'undefined') {
+    const readSize = (observed?: { width: number; height: number }) => {
       const rect = el.getBoundingClientRect();
-      setSize({
-        width: Math.max(200, rect.width || 800),
-        height: Math.max(200, rect.height || 600),
-      });
-      return;
-    }
-    const ro = new ResizeObserver(([entry]) => {
-      const r = entry.contentRect;
-      setSize({
-        width: Math.max(200, r.width || 800),
-        height: Math.max(200, r.height || 600),
-      });
-    });
-    ro.observe(el);
-    return () => ro.disconnect();
-  }, []);
+      const width = Math.max(200, Math.round(observed?.width || rect.width || el.clientWidth || 800));
+      const height = Math.max(200, Math.round(observed?.height || rect.height || el.clientHeight || 600));
+      setSize((previous) =>
+        previous.width === width && previous.height === height
+          ? previous
+          : { width, height },
+      );
+    };
+
+    // Measure immediately as well as observing. The initial 800×600 fallback
+    // otherwise remains in effect in browsers/environments where the first
+    // ResizeObserver notification is delayed, stretching a corner-clustered
+    // simulation across a much larger SVG.
+    readSize();
+    const frameId = typeof window.requestAnimationFrame === 'function'
+      ? window.requestAnimationFrame(() => readSize())
+      : null;
+    const ro = typeof ResizeObserver === 'undefined'
+      ? null
+      : new ResizeObserver(([entry]) => readSize(entry.contentRect));
+    const handleWindowResize = () => readSize();
+    ro?.observe(el);
+    window.addEventListener('resize', handleWindowResize);
+    return () => {
+      if (frameId !== null) window.cancelAnimationFrame(frameId);
+      ro?.disconnect();
+      window.removeEventListener('resize', handleWindowResize);
+    };
+  }, [isLoading, data, focus]);
 
   // Canvas-level Esc handler — exits edit mode when no popover is open and
   // no drag is in flight (UI-SPEC §G item 4). The `dragSourceId !== null`

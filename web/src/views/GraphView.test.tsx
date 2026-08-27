@@ -34,6 +34,8 @@ type CapturedProps = {
   onDragSourceChange: ((id: string | null) => void) | null;
   nodes: Array<{ id: string }>;
   medallions: Map<string, unknown> | null;
+  width: number | null;
+  height: number | null;
 };
 const captured: CapturedProps = {
   editMode: null,
@@ -41,6 +43,8 @@ const captured: CapturedProps = {
   onDragSourceChange: null,
   nodes: [],
   medallions: null,
+  width: null,
+  height: null,
 };
 
 // Content-Forward Views §4 — GraphView resolves node cover art from the entries LIST
@@ -68,6 +72,8 @@ vi.mock('../components/GraphCanvas', () => ({
     onDragSourceChange?: (sourceId: string | null) => void;
     nodes: Array<{ id: string }>;
     medallions?: Map<string, unknown>;
+    width: number;
+    height: number;
   }) => {
     captured.editMode = props.editMode;
     captured.onLinkDragEnd =
@@ -76,6 +82,8 @@ vi.mock('../components/GraphCanvas', () => ({
       props.onDragSourceChange ?? null;
     captured.nodes = props.nodes;
     captured.medallions = props.medallions ?? null;
+    captured.width = props.width;
+    captured.height = props.height;
     return (
       <div
         data-testid="graph-canvas-stub"
@@ -144,6 +152,8 @@ function resetCaptured() {
   captured.onDragSourceChange = null;
   captured.nodes = [];
   captured.medallions = null;
+  captured.width = null;
+  captured.height = null;
 }
 
 describe('GraphView', () => {
@@ -176,6 +186,28 @@ describe('GraphView', () => {
 
     await screen.findByTestId('graph-canvas-stub');
     expect(captured.nodes).toHaveLength(3);
+  });
+
+  it('measures the graph canvas before handing dimensions to the force layout', async () => {
+    const rectSpy = vi
+      .spyOn(HTMLElement.prototype, 'getBoundingClientRect')
+      .mockReturnValue({ width: 1234, height: 700 } as DOMRect);
+    vi.mocked(api).mockResolvedValue({
+      nodes: [makeNode('A'), makeNode('B')],
+      edges: [makeEdge('e1', 'A', 'B')],
+      positions: [],
+    });
+
+    try {
+      renderGraphView();
+      await screen.findByTestId('graph-canvas-stub');
+      await waitFor(() => {
+        expect(captured.width).toBe(1234);
+        expect(captured.height).toBe(700);
+      });
+    } finally {
+      rectSpy.mockRestore();
+    }
   });
 
   // Content-Forward Views §4 — /graph-data carries no cover field, so the canvas gets its

@@ -13,6 +13,7 @@ import { select } from 'd3-selection';
 import { zoom, zoomTransform, type ZoomBehavior } from 'd3-zoom';
 import type { GraphEdge, GraphNode, GraphPosition } from '../hooks/useGraphData';
 import { getLinkTypeColor, type LinkTypeRegistry } from '../lib/linkTypeColor';
+import { edgeLabelPosition, seededGraphPosition } from '../lib/graphLayout';
 import { appendMedallionNode } from './MedallionSVG';
 import type { MedallionSource } from '../lib/medallion';
 
@@ -161,12 +162,18 @@ export function GraphCanvas({
     // Build mutable copies — d3 mutates node.x/y. Mutating the original props
     // would break React's contract.
     const posMap = new Map(positions.map((p) => [p.entryId, p]));
-    const simNodes: SimNode[] = nodes.map((n) => {
+    const simNodes: SimNode[] = nodes.map((n, index) => {
       const p = posMap.get(n.id);
       const copy: SimNode = { ...n };
       if (p) {
+        copy.x = p.x;
+        copy.y = p.y;
         copy.fx = p.x;
         copy.fy = p.y;
+      } else {
+        const seed = seededGraphPosition(index, nodes.length, width, height);
+        copy.x = seed.x;
+        copy.y = seed.y;
       }
       return copy;
     });
@@ -179,6 +186,15 @@ export function GraphCanvas({
       degree.set(e.target, (degree.get(e.target) ?? 0) + 1);
     }
     const radiusOf = (id: string) => radiusForDegree(degree.get(id) ?? 0);
+    const nodeById = new Map(nodes.map((node) => [node.id, node]));
+    const collisionRadiusOf = (id: string) => {
+      const titleLength = nodeById.get(id)?.title.length ?? 0;
+      // Approximate the horizontal title footprint so the force layout leaves
+      // room for labels as well as medallion discs. Cap the estimate so a long
+      // title cannot push every other node off the canvas.
+      const labelRadius = Math.min(96, 18 + titleLength * 2.8);
+      return Math.max(radiusOf(id) + HALO_GAP, labelRadius);
+    };
 
     const simEdges: SimEdge[] = edges.map((e) => ({
       id: e.id,
@@ -227,6 +243,10 @@ export function GraphCanvas({
             .attr('class', 'edge-label')
             .attr('font-size', 10)
             .attr('fill', '#9ca3af')
+            .attr('paint-order', 'stroke')
+            .attr('stroke', 'var(--color-canvas-lo)')
+            .attr('stroke-width', 5)
+            .attr('stroke-linejoin', 'round')
             .attr('text-anchor', 'middle')
             .attr('pointer-events', 'none')
             .text((d) => d.label),
@@ -356,16 +376,20 @@ export function GraphCanvas({
       });
 
     // Simulation. alphaMin default (0.001) — d3 auto-stops.
+    const linkDistance = Math.min(
+      220,
+      Math.max(120, Math.sqrt((width * height) / Math.max(nodes.length, 1)) * 0.55),
+    );
     const sim: Simulation<SimNode, SimEdge> = forceSimulation<SimNode>(simNodes)
       .force(
         'link',
         forceLink<SimNode, SimEdge>(simEdges)
           .id((d) => d.id)
-          .distance(90),
+          .distance(linkDistance),
       )
-      .force('charge', forceManyBody<SimNode>().strength(-220))
+      .force('charge', forceManyBody<SimNode>().strength(-Math.min(650, linkDistance * 2.5)))
       .force('center', forceCenter(width / 2, height / 2))
-      .force('collide', forceCollide<SimNode>((d) => radiusOf(d.id) + HALO_GAP));
+      .force('collide', forceCollide<SimNode>((d) => collisionRadiusOf(d.id)));
 
     // Drag — dual intent gated by editModeRef.current per the mirrored-ref
     // pattern. View-mode keeps the existing pin-and-position behavior; edit-
@@ -442,7 +466,7 @@ export function GraphCanvas({
       .on('zoom', (evt) => {
         g.attr('transform', evt.transform.toString());
         // Spec §4: fade labels below ~0.5 zoom so a large graph doesn't become label soup.
-        // No collision layout in v1 — overlaps at high density are accepted.
+        // Keep panning and zooming independent from the force layout.
         g.select('g.nodes')
           .selectAll<SVGTextElement, unknown>('text.node-label')
           .attr('opacity', evt.transform.k < LABEL_FADE_ZOOM ? 0 : 1);
@@ -462,15 +486,21 @@ export function GraphCanvas({
         .attr('x2', (d) => (d.target as SimNode).x ?? 0)
         .attr('y2', (d) => (d.target as SimNode).y ?? 0);
       labelSel
-        .attr('x', (d) => {
+        .attr('x', (d, index) => {
           const sx = (d.source as SimNode).x ?? 0;
           const tx = (d.target as SimNode).x ?? 0;
-          return (sx + tx) / 2;
-        })
-        .attr('y', (d) => {
           const sy = (d.source as SimNode).y ?? 0;
           const ty = (d.target as SimNode).y ?? 0;
-          return (sy + ty) / 2;
+          const offset = 18 + (index % 4) * 8;
+          return edgeLabelPosition({ x: sx, y: sy }, { x: tx, y: ty }, offset).x;
+        })
+        .attr('y', (d, index) => {
+          const sy = (d.source as SimNode).y ?? 0;
+          const ty = (d.target as SimNode).y ?? 0;
+          const sx = (d.source as SimNode).x ?? 0;
+          const tx = (d.target as SimNode).x ?? 0;
+          const offset = 18 + (index % 4) * 8;
+          return edgeLabelPosition({ x: sx, y: sy }, { x: tx, y: ty }, offset).y;
         });
       // One transform per node moves the disc, the art AND the label together.
       nodeSel.attr('transform', (d) => `translate(${d.x ?? 0}, ${d.y ?? 0})`);
