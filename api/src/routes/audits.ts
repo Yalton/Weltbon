@@ -24,8 +24,22 @@ import { auditRuns, issues, entries, universes } from '../db/schema.js';
 import { requireUniverse } from '../utils/ownership.js';
 import { runAudit } from '../services/audit-engine.js';
 import { PROVIDER_NAMES, type LlmProvider } from '../services/llm-key.js';
-import { resolveCredential, isEndpointProvider } from '../services/llm-credential.js';
+import {
+  resolveCredential,
+  resolveEffectiveCredential,
+  isEndpointProvider,
+  type EffectiveLlmCredential,
+} from '../services/llm-credential.js';
+import {
+  getSharedQuotaSnapshot,
+  reserveSharedAudit,
+  roundUpToSixDecimals,
+  SharedLlmError,
+  type SharedProvider,
+} from '../services/llm-sharing.js';
 import { estimateAudit } from '../services/audit-estimator.js';
+import type { ProviderCredential } from '../providers/llm/interface.js';
+import type { AuditEstimate } from '../types/audit-suggestion.js';
 import { env } from '../config.js';
 import type { AuthVariables } from '../middleware/auth.js';
 
@@ -130,9 +144,21 @@ const auditRunStateSchema = z.object({
   gapKeyCollisionCount: z.number().int(),
   hallucinatedEntryReferenceCount: z.number().int(),
   suggestionCount: z.number().int(),
+  // #50 Task 6 — which credential paid for this run. This is the ONLY piece of
+  // the shared-provenance triple that crosses the wire: `credential_owner_id`
+  // and `shared_grant_id` identify another user and a specific grant row, and
+  // a recipient has no use for either. The literal union (not the raw column)
+  // also means a future third source cannot leak out of the API until someone
+  // widens this deliberately.
+  credentialSource: z.enum(['own', 'shared']),
 });
 
-const errorSchema = z.object({ error: z.string() });
+// #50 Task 6: every pre-#50 body was `{ error }` and still is. `code` is
+// optional so the shared-credential failures (which the recipient UI has to
+// branch on — consent vs. quota vs. owner-side outage all need different
+// copy and different affordances) can travel in the same envelope instead of
+// forcing callers to string-match on prose that is free to be reworded.
+const errorSchema = z.object({ error: z.string(), code: z.string().optional() });
 
 // ─── Phase 26 Plan 03 — D-09 audit-history schemas ──────────────────────────
 
@@ -161,6 +187,13 @@ const auditHistoryRowSchema = z.object({
   analyzedEntries: z.number().int(),
   // null for entry-scoped runs (per AuditHistoryRow JSDoc)
   totalEntries: z.number().int().nullable(),
+  // #50 Task 6 — which credential paid for this run. This is the ONLY piece of
+  // the shared-provenance triple that crosses the wire: `credential_owner_id`
+  // and `shared_grant_id` identify another user and a specific grant row, and
+  // a recipient has no use for either. The literal union (not the raw column)
+  // also means a future third source cannot leak out of the API until someone
+  // widens this deliberately.
+  credentialSource: z.enum(['own', 'shared']),
 });
 
 const auditHistoryResponseSchema = z.object({
@@ -174,6 +207,150 @@ const auditHistoryQuerySchema = z.object({
   limit: z.coerce.number().int().min(1).max(200).default(100),
   offset: z.coerce.number().int().min(0).default(0),
 });
+
+// ─── #50 Task 6 — shared-credential admission helpers ────────────────────────
+//
+// Both audit-trigger surfaces (POST /audit and GET /audits/estimate) have to
+// answer the same question — "which credential may this caller run on, and if
+// none, why not?" — and give the same answer for the same account state. They
+// live here rather than in each handler so the two cannot drift into telling a
+// recipient different stories about one grant.
+
+type SharedFailure = {
+  status: 403 | 409 | 422 | 429 | 503;
+  body: { error: string; code: string };
+};
+
+const SHARED_CONSENT_REQUIRED: SharedFailure = {
+  status: 403,
+  body: {
+    error: 'Shared connection requires consent before use',
+    code: 'shared_llm_consent_required',
+  },
+};
+
+// Owner-side state (administrator disabled or demoted, key deleted or
+// rotated, ciphertext undecryptable) collapses to one opaque code on purpose:
+// each of those describes ANOTHER user's account, and telling a recipient
+// which one it is turns an audit button into an oracle for the administrator
+// roster. The operator still has the audit log.
+const SHARED_CREDENTIAL_UNAVAILABLE: SharedFailure = {
+  status: 503,
+  body: {
+    error: 'Shared connection is temporarily unavailable',
+    code: 'shared_credential_unavailable',
+  },
+};
+
+const SHARED_COST_UNAVAILABLE: SharedFailure = {
+  status: 422,
+  body: {
+    error: 'This model has no published price, so a shared run cannot be capped',
+    code: 'shared_cost_unavailable',
+  },
+};
+
+const SHARED_LIMIT_EXCEEDED: SharedFailure = {
+  status: 429,
+  body: {
+    error: 'Shared monthly allowance is exhausted',
+    code: 'shared_monthly_limit_exceeded',
+  },
+};
+
+/**
+ * Maps a `SharedLlmError` thrown by `reserveSharedAudit` onto the wire.
+ *
+ * `reserveSharedAudit` is the authoritative admission check — it takes the
+ * account, grant, usage and key locks and re-reads consent inside the same
+ * transaction, so anything it rejects was rejected against committed state.
+ * The route deliberately does NOT pre-check the same predicates before
+ * calling it: a second copy would be racy (it reads outside the lock) and
+ * would eventually disagree with the transaction it is supposed to preview.
+ *
+ * Returns null for anything that is not a SharedLlmError so the caller
+ * rethrows: an unexpected driver error must still reach the 500 handler
+ * rather than being flattened into a 503 that reads like a quota problem.
+ */
+function sharedAdmissionFailure(error: unknown): SharedFailure | null {
+  if (!(error instanceof SharedLlmError)) return null;
+  switch (error.code) {
+    case 'shared_audit_in_progress':
+      // Recipient-scoped, not universe-scoped: the cap is one concurrent
+      // shared run per recipient across every universe they own.
+      return {
+        status: 409,
+        body: {
+          error: 'A shared audit is already running for your account',
+          code: 'shared_audit_in_progress',
+        },
+      };
+    case 'shared_monthly_limit_exceeded':
+      return SHARED_LIMIT_EXCEEDED;
+    case 'shared_cost_invalid':
+      return SHARED_COST_UNAVAILABLE;
+    case 'shared_llm_consent_required':
+      return SHARED_CONSENT_REQUIRED;
+    case 'shared_access_revoked':
+      // The grant was revoked (or its key swapped) between resolution and
+      // the reservation lock. 403 rather than 503: nothing is going to fix
+      // itself here, and a retry would be pointless.
+      return {
+        status: 403,
+        body: { error: 'Shared access is no longer available', code: 'shared_access_revoked' },
+      };
+    default:
+      return SHARED_CREDENTIAL_UNAVAILABLE;
+  }
+}
+
+type RunCredential =
+  | { kind: 'ready'; credential: ProviderCredential; effective: EffectiveLlmCredential | null }
+  | { kind: 'none' }
+  | { kind: 'failure'; failure: SharedFailure };
+
+/**
+ * Resolves the credential an audit on `provider` would actually run on.
+ *
+ * `effective` is null for endpoint providers (ollama), which have no shared
+ * surface at all and keep the pre-#50 `resolveCredential` path verbatim.
+ *
+ * Two pre-#50 behaviors are preserved deliberately rather than upgraded to a
+ * shared-style error:
+ *   - no own key and no grant → 'none', because both callers already have a
+ *     considered answer for "nothing to run on" (trigger: create the row
+ *     anyway and let the engine record the real failure; estimate: 400 with
+ *     provider-specific copy pointing at the right settings screen).
+ *   - own row present but undecryptable → also 'none'. It must NOT fall
+ *     through to a grant: silently moving a run onto an administrator's
+ *     credential because the user's own key broke changes who pays without
+ *     anyone asking. `resolveEffectiveCredential` already fails closed here;
+ *     this keeps the route's observable behavior identical to before #50.
+ */
+async function resolveRunCredential(
+  userId: string,
+  provider: LlmProvider,
+  encryptionKeyHex: string | undefined,
+): Promise<RunCredential> {
+  if (isEndpointProvider(provider)) {
+    const credential = await resolveCredential(userId, provider, encryptionKeyHex);
+    return credential ? { kind: 'ready', credential, effective: null } : { kind: 'none' };
+  }
+
+  const resolved = await resolveEffectiveCredential(userId, provider, encryptionKeyHex);
+  switch (resolved.kind) {
+    case 'ready':
+      return { kind: 'ready', credential: resolved.value.credential, effective: resolved.value };
+    case 'consent_required':
+      return { kind: 'failure', failure: SHARED_CONSENT_REQUIRED };
+    case 'unavailable':
+      return resolved.source === 'shared'
+        ? { kind: 'failure', failure: SHARED_CREDENTIAL_UNAVAILABLE }
+        : { kind: 'none' };
+    case 'missing':
+      return { kind: 'none' };
+  }
+}
 
 // ─── Route definitions ───────────────────────────────────────────────────────
 
@@ -221,11 +398,37 @@ const triggerAuditRoute = createRoute({
     },
     409: {
       content: { 'application/json': { schema: errorSchema } },
-      description: 'An audit is already in progress for this universe',
+      description:
+        'An audit is already in progress for this universe, or (shared credential) ' +
+        'for this recipient across all universes (shared_audit_in_progress).',
+    },
+    422: {
+      content: { 'application/json': { schema: errorSchema } },
+      description:
+        'Shared credential only: the configured model has no published price, so the run ' +
+        'cannot be bounded against the monthly cap (shared_cost_unavailable).',
+    },
+    429: {
+      content: { 'application/json': { schema: errorSchema } },
+      description:
+        'Shared credential only: the reservation does not fit the remaining monthly ' +
+        'allowance (shared_monthly_limit_exceeded).',
     },
     500: {
       content: { 'application/json': { schema: errorSchema } },
       description: 'Internal error',
+    },
+    502: {
+      content: { 'application/json': { schema: errorSchema } },
+      description:
+        'Shared credential only: the pre-run estimate failed, so no reservation amount ' +
+        'could be computed (estimate_unavailable).',
+    },
+    503: {
+      content: { 'application/json': { schema: errorSchema } },
+      description:
+        'Shared credential only: the owner credential is currently unusable ' +
+        '(shared_credential_unavailable).',
     },
   },
 });
@@ -320,6 +523,19 @@ const getAuditEstimateRoute = createRoute({
       content: { 'application/json': { schema: errorSchema } },
       description: 'Universe not found',
     },
+    422: {
+      content: { 'application/json': { schema: errorSchema } },
+      description:
+        'Shared credential only: the requested model has no published price, so a shared ' +
+        'run cannot be bounded against the monthly cap (shared_cost_unavailable).',
+    },
+    429: {
+      content: { 'application/json': { schema: errorSchema } },
+      description:
+        'Shared credential only: the bounded reservation exceeds the remaining monthly ' +
+        'allowance (shared_monthly_limit_exceeded). Returned by the estimate so the ' +
+        'dialog can say so before the user commits to a run.',
+    },
     500: {
       content: { 'application/json': { schema: errorSchema } },
       description: 'Internal error',
@@ -327,6 +543,12 @@ const getAuditEstimateRoute = createRoute({
     502: {
       content: { 'application/json': { schema: errorSchema } },
       description: 'Estimator failed to compute cost (provider outage / token-count failure)',
+    },
+    503: {
+      content: { 'application/json': { schema: errorSchema } },
+      description:
+        'Shared credential only: the owner credential is currently unusable ' +
+        '(shared_credential_unavailable).',
     },
   },
 });
@@ -412,31 +634,50 @@ export const auditRoutes = new OpenAPIHono<AppEnv>()
       return c.json({ error: 'An audit is already in progress for this universe' }, 409);
     }
 
-    // Pre-run cost estimate — best-effort; catch failure and return placeholder.
-    // Phase 26 Plan 08 Task 1: inline single-point math REPLACED with a call
-    // to estimateAudit() (services/audit-estimator.ts) — DRY single source of
-    // truth shared with the GET /audits/estimate dialog route. Maps the
-    // AuditEstimate to the existing wire shape (promptTokens, estCostUsd) so
-    // callers see no contract change.
+    // Not one of the brief's enumerated touchpoints, but caught by the
+    // union test (llm-provider-union.test.ts) anyway — same file, same
+    // stale two-provider literal. universe.auditProvider is DB free text
+    // (not Zod-validated at read time), so this cast is the only place the
+    // widened type actually applies here.
+    const provider = universe.auditProvider as LlmProvider;
+    const model = universe.auditModel!;
+    const cfg = env();
+
+    // #50 Task 6: resolveRunCredential, not resolveCredential. For an Ollama
+    // universe it IS resolveCredential (see the helper) — that seam, which
+    // made the GET /estimate route 400 forever for endpoint providers, is
+    // unchanged. For anthropic/openai it additionally admits a recipient who
+    // has no own key but does hold a consented administrator grant.
+    //
+    // A shared caller is refused HERE, before any provider call and before
+    // any row exists: an unconsented or unusable grant must not produce an
+    // audit_runs row that the engine would then have to fail, because a
+    // recipient reading their history cannot tell that kind of failed run
+    // from one that actually consumed the owner's quota.
+    const resolved = await resolveRunCredential(userId, provider, cfg.llmKeyEncryptionKey);
+    if (resolved.kind === 'failure') {
+      return c.json(resolved.failure.body, resolved.failure.status) as never;
+    }
+    const credential = resolved.kind === 'ready' ? resolved.credential : null;
+    const effective = resolved.kind === 'ready' ? resolved.effective : null;
+
+    // Pre-run cost estimate. Phase 26 Plan 08 Task 1: inline single-point math
+    // REPLACED with a call to estimateAudit() (services/audit-estimator.ts) —
+    // DRY single source of truth shared with the GET /audits/estimate dialog
+    // route. Maps the AuditEstimate to the existing wire shape (promptTokens,
+    // estCostUsd) so callers see no contract change.
+    //
+    // For an own-credential run this stays best-effort: failure must NOT block
+    // the run, and the engine surfaces real telemetry either way. For a SHARED
+    // run it is load-bearing — the estimate's upper bound is the reservation
+    // amount, so there is no honest way to admit the run without one. Hence
+    // the two outcomes are kept apart (`estimateResult` vs. the wire
+    // `estimate`) instead of both collapsing into the {0,0} placeholder.
     let estimate: { promptTokens: number; estCostUsd: number } = { promptTokens: 0, estCostUsd: 0 };
-    try {
-      // Not one of the brief's enumerated touchpoints, but caught by the
-      // union test (llm-provider-union.test.ts) anyway — same file, same
-      // stale two-provider literal. universe.auditProvider is DB free text
-      // (not Zod-validated at read time), so this cast is the only place the
-      // widened type actually applies here.
-      const provider = universe.auditProvider as LlmProvider;
-      const model = universe.auditModel!;
-      const cfg = env();
-      // resolveCredential, not getDecryptedKey: an Ollama universe has an
-      // llm_connections row and never an llm_api_keys one, so a key lookup
-      // here simply found nothing and left the recorded promptTokens at 0.
-      // Harmless (this estimate is best-effort — see the comment above), but
-      // it is the same seam that made the GET /estimate route 400 forever;
-      // both are resolved through one function now so they cannot drift.
-      const credential = await resolveCredential(userId, provider, cfg.llmKeyEncryptionKey);
-      if (credential) {
-        const result = await estimateAudit({
+    let estimateResult: AuditEstimate | null = null;
+    if (credential) {
+      try {
+        estimateResult = await estimateAudit({
           universeId: uid,
           scope: body.scope,
           entryId: body.entryId,
@@ -449,12 +690,72 @@ export const auditRoutes = new OpenAPIHono<AppEnv>()
         // AuditEstimate.lower → estCostUsd (lower bound matches the previous
         // input-tokens-only point estimate semantics most closely).
         estimate = {
-          promptTokens: result.breakdown.basePromptTokens,
-          estCostUsd: result.lower,
+          promptTokens: estimateResult.breakdown.basePromptTokens,
+          estCostUsd: estimateResult.lower,
         };
+      } catch {
+        // Estimate failure must NOT block an own-credential run — see above.
+        estimateResult = null;
       }
-    } catch {
-      // Estimate failure must NOT block the run — engine will surface real telemetry
+    }
+
+    // ── Shared admission ────────────────────────────────────────────────────
+    // The row itself is created by reserveSharedAudit, inside the same
+    // transaction as the reservation and the usage counters. Inserting here
+    // and reserving afterwards would leave a window where a run exists that
+    // nothing has charged for — and a crash in that window leaks quota
+    // permanently, because settlement keys off the reservation, not the run.
+    if (effective?.source === 'shared') {
+      if (!estimateResult) {
+        // No bound, no reservation. Distinct from the 422 below: this one is
+        // a transient provider/tokenizer failure and retrying is reasonable.
+        return c.json(
+          { error: 'Could not estimate run cost', code: 'estimate_unavailable' },
+          502,
+        ) as never;
+      }
+      if (estimateResult.upper <= 0) {
+        // estimateAudit returns a zeroed estimate for a model absent from
+        // PRICING (its Step 2 miss). An own-key run may proceed unpriced —
+        // the user pays their own provider directly and the engine records
+        // cost_unknown. A shared run may not: an uncapped charge against
+        // someone else's key is exactly what the monthly limit exists to
+        // prevent.
+        return c.json(SHARED_COST_UNAVAILABLE.body, SHARED_COST_UNAVAILABLE.status) as never;
+      }
+      try {
+        const reserved = await reserveSharedAudit({
+          recipientUserId: userId,
+          universeId: uid,
+          scope: body.scope,
+          scopeEntryId: body.entryId ?? null,
+          // Narrowing is sound: source==='shared' is only ever produced for a
+          // SharedProvider (llm-credential.ts refuses every other provider
+          // before it looks for a grant).
+          provider: provider as SharedProvider,
+          model,
+          grantId: effective.sharedGrantId!,
+          credentialOwnerId: effective.credentialOwnerId,
+          // Reserve the UPPER bound, clamped by the per-run ceiling the engine
+          // itself enforces: reserving the lower bound would let a run that
+          // legitimately lands mid-range overshoot the monthly cap, and
+          // settlement refunds the difference anyway.
+          reservationUsd: roundUpToSixDecimals(
+            Math.min(estimateResult.upper, cfg.auditMaxCostUsd),
+          ),
+        });
+
+        // Fire-and-forget engine — T-24-05-09: .catch net prevents unhandled rejections
+        queueMicrotask(() => {
+          runAudit(reserved.runId).catch((err) => console.error('[audit] runAudit failed:', err));
+        });
+
+        return c.json({ runId: reserved.runId, estimate }, 202);
+      } catch (e: unknown) {
+        const failure = sharedAdmissionFailure(e);
+        if (failure) return c.json(failure.body, failure.status) as never;
+        throw e;
+      }
     }
 
     // INSERT audit_runs row with status='pending' BEFORE returning 202
@@ -471,6 +772,15 @@ export const auditRoutes = new OpenAPIHono<AppEnv>()
           model: universe.auditModel!,
           status: 'pending',
           triggerSource: 'manual',
+          // #50 Task 6: own provenance written explicitly rather than left to
+          // the column default. `credential_owner_id` is what the settlement
+          // and revocation paths read to decide whether a run is chargeable
+          // to someone else; leaving it NULL here would make "personal run"
+          // and "shared run whose grant row was deleted" (the ON DELETE SET
+          // NULL tombstone) indistinguishable after the fact.
+          credentialSource: 'own',
+          credentialOwnerId: userId,
+          sharedGrantId: null,
         })
         .returning({ id: auditRuns.id });
       runId = id;
@@ -521,6 +831,10 @@ export const auditRoutes = new OpenAPIHono<AppEnv>()
         startedAt: auditRuns.startedAt,
         finishedAt: auditRuns.finishedAt,
         analyzedEntries: auditRuns.analyzedEntries,
+        // #50 Task 6 — the ONLY provenance column selected. credentialOwnerId
+        // and sharedGrantId are deliberately absent from this projection so
+        // no later `...r` spread can leak them into the response.
+        credentialSource: auditRuns.credentialSource,
       })
       .from(auditRuns)
       .leftJoin(entries, eq(entries.id, auditRuns.scopeEntryId))
@@ -596,6 +910,7 @@ export const auditRoutes = new OpenAPIHono<AppEnv>()
       suggestionsByCategory: byRunCategory.get(r.id) ?? {},
       analyzedEntries: r.analyzedEntries,
       totalEntries: r.scope === 'entry' ? null : universeTotalEntries,
+      credentialSource: r.credentialSource,
     }));
 
     return c.json(
@@ -649,9 +964,19 @@ export const auditRoutes = new OpenAPIHono<AppEnv>()
     // so a correctly configured user got a permanently disabled button while
     // the backend would have run the audit fine. resolveCredential is the one
     // place the key table and the connection table meet (spec D-3).
+    //
+    // #50 Task 6 widened this from resolveCredential to resolveRunCredential
+    // so the dialog opens for a recipient running on an administrator grant.
+    // The consent and owner-unusable refusals land here rather than after the
+    // estimate for the same reason the trigger refuses early: calling the
+    // provider would be a use of the owner's credential, and consent is
+    // exactly what is supposed to gate that use.
     const cfg = env();
-    const credential = await resolveCredential(userId, provider, cfg.llmKeyEncryptionKey);
-    if (!credential) {
+    const resolved = await resolveRunCredential(userId, provider, cfg.llmKeyEncryptionKey);
+    if (resolved.kind === 'failure') {
+      return c.json(resolved.failure.body, resolved.failure.status) as never;
+    }
+    if (resolved.kind === 'none') {
       // The two providers fail for genuinely different reasons and the copy
       // has to say which, or the user goes looking for the wrong settings
       // screen: there is no API key field for Ollama to fill in.
@@ -664,11 +989,13 @@ export const auditRoutes = new OpenAPIHono<AppEnv>()
         400,
       );
     }
+    const { credential, effective } = resolved;
 
     // T-26-08-02: wrap the estimator in try/catch — provider failure surfaces
     // 502 with generic copy, NEVER leaks provider error text or stack.
+    let result: AuditEstimate;
     try {
-      const result = await estimateAudit({
+      result = await estimateAudit({
         universeId: uid,
         scope: query.scope,
         entryId: query.entryId,
@@ -677,10 +1004,34 @@ export const auditRoutes = new OpenAPIHono<AppEnv>()
         credential,
         userId,
       });
-      return c.json(result, 200);
     } catch {
       return c.json({ error: 'Could not estimate run cost' }, 502);
     }
+
+    // A shared estimate is not just informational: the dialog's Run button
+    // leads straight to an admission the recipient cannot pass if the run
+    // does not fit. Answering 200 with a cost range and then 429-ing the
+    // trigger is the "looks finished, does not work" failure this project
+    // keeps paying for, so the same two gates the reservation applies are
+    // previewed here.
+    //
+    // This is a PREVIEW, not a second copy of the rule: reserveSharedAudit
+    // re-checks under its locks and remains the only thing that admits a run.
+    // A preview that passes and a reservation that then fails is correct
+    // behavior (someone else's run landed in between), not a contradiction.
+    if (effective?.source === 'shared') {
+      if (result.upper <= 0) {
+        return c.json(SHARED_COST_UNAVAILABLE.body, SHARED_COST_UNAVAILABLE.status) as never;
+      }
+      const reservationUsd = roundUpToSixDecimals(Math.min(result.upper, cfg.auditMaxCostUsd));
+      const quota = await getSharedQuotaSnapshot(userId);
+      const committed = Number(quota.settledUsd) + Number(quota.reservedUsd);
+      if (committed + reservationUsd > Number(quota.limitUsd)) {
+        return c.json(SHARED_LIMIT_EXCEEDED.body, SHARED_LIMIT_EXCEEDED.status) as never;
+      }
+    }
+
+    return c.json(result, 200);
   })
 
   // GET /api/universes/:uid/audits/:runId
@@ -733,6 +1084,11 @@ export const auditRoutes = new OpenAPIHono<AppEnv>()
         gapKeyCollisionCount: run.gapKeyCollisionCount,
         hallucinatedEntryReferenceCount: run.hallucinatedEntryReferenceCount,
         suggestionCount: Number(suggestionCount),
+        // #50 Task 6 — same rule as the history projection: the source, never
+        // the owner or the grant. This handler selects the whole row, so the
+        // field list below IS the redaction; adding a spread here would leak
+        // both of the other provenance columns at once.
+        credentialSource: run.credentialSource,
       },
       200
     );

@@ -28,6 +28,7 @@
  */
 
 import { describe, it, expect, beforeAll, afterAll, beforeEach, vi } from 'vitest';
+import { encryptKey } from '../src/services/llm-key.js';
 
 // CRITICAL: must be set BEFORE the first env() call. vi.hoisted runs before imports.
 vi.hoisted(() => {
@@ -47,8 +48,17 @@ vi.mock('../src/services/audit-engine.js', async (orig) => {
 });
 
 // Mock the LLM provider factory so estimate never hits real providers
+// #50 Task 6: typed with the LLMProvider.estimate() argument rather than
+// `() => Promise<number>` — the shared tests assert WHICH credential reached
+// the provider, and `mock.calls[0][0]` on a zero-arg signature is a
+// compile-time tuple-index error, not a runtime one.
 const { mockEstimate } = vi.hoisted(() => ({
-  mockEstimate: vi.fn<() => Promise<number>>(),
+  mockEstimate: vi.fn<(opts: {
+    credential: { apiKey?: string; baseUrl?: string; secret?: string };
+    messages: unknown;
+    model?: string;
+    system?: string;
+  }) => Promise<number>>(),
 }));
 vi.mock('../src/providers/llm/index.js', async (orig) => {
   const actual = (await orig()) as typeof import('../src/providers/llm/index.js');
@@ -81,8 +91,18 @@ import { createTestDb, cleanDb, createTestUser, authHeader, type TestDbHandle } 
 import { issueAccessToken } from '../src/services/auth.js';
 import { setTestDb } from '../src/db/client.js';
 import { createApp } from '../src/index.js';
-import { auditRuns, issues, personalAccessTokens } from '../src/db/schema.js';
+import { auditRuns, issues, llmApiKeys, llmSharedAuditReservations, llmSharedUsage, personalAccessTokens, users } from '../src/db/schema.js';
 import { generatePatToken } from '../src/services/pat.js';
+import {
+  consentSharedGrant,
+  createSharedGrant,
+  utcMonthStart,
+  withdrawSharedConsent,
+} from '../src/services/llm-sharing.js';
+
+const ENCRYPTION_KEY = '0'.repeat(64);
+const OWNER_SECRET = 'sk-ant-trigger-owner-secret';
+const RECIPIENT_SECRET = 'sk-ant-trigger-recipient-secret';
 
 describe('audit routes (AUDIT-10, AUDIT-11, AUDIT-03)', () => {
   let handle: TestDbHandle;
@@ -112,10 +132,36 @@ describe('audit routes (AUDIT-10, AUDIT-11, AUDIT-03)', () => {
 
   // --- Helpers ---------------------------------------------------------------
 
-  async function userWithToken(email: string) {
+  async function userWithToken(email: string, withPersonalKey = true) {
     const user = await createTestUser(handle, { email, password: 'longenoughpw12' });
+    if (withPersonalKey) {
+      const encrypted = encryptKey('sk-ant-trigger-personal-key', ENCRYPTION_KEY);
+      await handle.db.insert(llmApiKeys).values({
+        userId: user.id,
+        provider: 'anthropic',
+        ciphertext: encrypted.ciphertext,
+        iv: encrypted.iv,
+        authTag: encrypted.authTag,
+        encryptedKeyVersion: encrypted.version,
+        bodySuffix: encrypted.bodySuffix,
+      });
+    }
     const token = await issueAccessToken(user.id);
     return { user, token, hdrs: authHeader(token) };
+  }
+
+  async function insertEncryptedKey(userId: string, plaintext: string) {
+    const encrypted = encryptKey(plaintext, ENCRYPTION_KEY);
+    const [key] = await handle.db.insert(llmApiKeys).values({
+      userId,
+      provider: 'anthropic',
+      ciphertext: encrypted.ciphertext,
+      iv: encrypted.iv,
+      authTag: encrypted.authTag,
+      encryptedKeyVersion: encrypted.version,
+      bodySuffix: encrypted.bodySuffix,
+    }).returning();
+    return key;
   }
 
   async function req(
@@ -167,6 +213,32 @@ describe('audit routes (AUDIT-10, AUDIT-11, AUDIT-03)', () => {
     });
     expect(res.status).toBe(201);
     return json(res);
+  }
+
+  async function sharedFixture(model = 'claude-haiku-4-5-20251001') {
+    const owner = await userWithToken('trigger-shared-owner@test.com', false);
+    const recipient = await userWithToken('trigger-shared-recipient@test.com', false);
+    await handle.db.update(users).set({ isAdmin: true }).where(eq(users.id, owner.user.id));
+    const ownerKey = await insertEncryptedKey(owner.user.id, OWNER_SECRET);
+    const grant = await createSharedGrant(owner.user.id, recipient.user.id, 'anthropic');
+    await consentSharedGrant(recipient.user.id, grant.id);
+    const universe = await createUniverse(recipient.hdrs, 'SharedTriggerWorld');
+    await enableAudit(universe.id, recipient.hdrs, 'anthropic', model);
+    return { owner, recipient, ownerKey, grant, universe };
+  }
+
+  function expectSafeAuditResponse(value: unknown) {
+    const serialized = JSON.stringify(value);
+    // Matched as JSON KEYS (`"iv":`), not as bare substrings: 'iv' occurs
+    // inside `"source":"live"` and would fail every passing response, which
+    // makes the assertion look strict while actually being untrustworthy.
+    for (const forbidden of [
+      'ownerUserId', 'recipientUserId', 'credentialOwnerId', 'sharedGrantId',
+      'ownerKeyId', 'ciphertext', 'iv', 'authTag', 'bodySuffix', 'apiKey',
+    ]) {
+      expect(serialized).not.toContain(`"${forbidden}":`);
+    }
+    expect(serialized).not.toContain(OWNER_SECRET);
   }
 
   // --- POST /audit: 202 happy path ------------------------------------------
@@ -508,5 +580,147 @@ describe('audit routes (AUDIT-10, AUDIT-11, AUDIT-03)', () => {
     expect(res.status).toBe(202);
     const body = await json(res);
     expect(body.runId).toBeDefined();
+  });
+
+  it('admits a consented shared trigger through a reservation and records shared provenance', async () => {
+    const fixture = await sharedFixture();
+    const response = await req('POST', `/api/universes/${fixture.universe.id}/audit`, {
+      headers: fixture.recipient.hdrs,
+      body: { scope: 'universe' },
+    });
+    expect(response.status).toBe(202);
+    const body = await json(response);
+    expect(body).toMatchObject({
+      runId: expect.any(String),
+      estimate: { promptTokens: expect.any(Number), estCostUsd: expect.any(Number) },
+    });
+    expectSafeAuditResponse(body);
+    expect(mockEstimate.mock.calls[0][0]).toMatchObject({ credential: { apiKey: OWNER_SECRET } });
+
+    const [run] = await handle.db.select({
+      credentialSource: auditRuns.credentialSource,
+      credentialOwnerId: auditRuns.credentialOwnerId,
+      sharedGrantId: auditRuns.sharedGrantId,
+    }).from(auditRuns).where(eq(auditRuns.id, body.runId));
+    expect(run).toEqual({
+      credentialSource: 'shared',
+      credentialOwnerId: fixture.owner.user.id,
+      sharedGrantId: fixture.grant.id,
+    });
+    expect(await handle.db.$count(llmSharedAuditReservations)).toBe(1);
+    expect(await handle.db.$count(llmSharedUsage)).toBe(1);
+  });
+
+  it('rejects a shared trigger after consent withdrawal before estimating or reserving', async () => {
+    const fixture = await sharedFixture();
+    await withdrawSharedConsent(fixture.recipient.user.id, fixture.grant.id);
+    mockEstimate.mockClear();
+
+    const response = await req('POST', `/api/universes/${fixture.universe.id}/audit`, {
+      headers: fixture.recipient.hdrs,
+      body: { scope: 'universe' },
+    });
+    expect(response.status).toBe(403);
+    expect(await json(response)).toMatchObject({ code: 'shared_llm_consent_required' });
+    expect(mockEstimate).not.toHaveBeenCalled();
+    expect(await handle.db.$count(auditRuns)).toBe(0);
+    expect(await handle.db.$count(llmSharedAuditReservations)).toBe(0);
+  });
+
+  it('rejects a shared trigger for an unknown-priced model without provider estimation', async () => {
+    const fixture = await sharedFixture('future-unpriced-model');
+    mockEstimate.mockClear();
+
+    const response = await req('POST', `/api/universes/${fixture.universe.id}/audit`, {
+      headers: fixture.recipient.hdrs,
+      body: { scope: 'universe' },
+    });
+    expect(response.status).toBe(422);
+    expect(await json(response)).toMatchObject({ code: 'shared_cost_unavailable' });
+    expect(mockEstimate).not.toHaveBeenCalled();
+    expect(await handle.db.$count(auditRuns)).toBe(0);
+  });
+
+  it('rejects a shared trigger when the reservation exceeds the remaining monthly cap', async () => {
+    const fixture = await sharedFixture();
+    await handle.db.insert(llmSharedUsage).values({
+      recipientUserId: fixture.recipient.user.id,
+      monthStart: utcMonthStart(),
+      settledCostUsd: '1.000000',
+    });
+
+    const response = await req('POST', `/api/universes/${fixture.universe.id}/audit`, {
+      headers: fixture.recipient.hdrs,
+      body: { scope: 'universe' },
+    });
+    expect(response.status).toBe(429);
+    expect(await json(response)).toMatchObject({ code: 'shared_monthly_limit_exceeded' });
+    expect(await handle.db.$count(auditRuns)).toBe(0);
+  });
+
+  it('admits only one of two concurrent shared triggers for the recipient', async () => {
+    const fixture = await sharedFixture();
+    const [first, second] = await Promise.all([
+      req('POST', `/api/universes/${fixture.universe.id}/audit`, {
+        headers: fixture.recipient.hdrs,
+        body: { scope: 'universe' },
+      }),
+      req('POST', `/api/universes/${fixture.universe.id}/audit`, {
+        headers: fixture.recipient.hdrs,
+        body: { scope: 'universe' },
+      }),
+    ]);
+    expect([first.status, second.status].sort()).toEqual([202, 409]);
+    const rejected = first.status === 409 ? first : second;
+    expect(await json(rejected)).toMatchObject({ code: 'shared_audit_in_progress' });
+    expect(await handle.db.$count(llmSharedAuditReservations)).toBe(1);
+  });
+
+  it('keeps a personal key ahead of shared admission and writes own provenance without a reservation', async () => {
+    const fixture = await sharedFixture();
+    await insertEncryptedKey(fixture.recipient.user.id, RECIPIENT_SECRET);
+
+    const response = await req('POST', `/api/universes/${fixture.universe.id}/audit`, {
+      headers: fixture.recipient.hdrs,
+      body: { scope: 'universe' },
+    });
+    expect(response.status).toBe(202);
+    const body = await json(response);
+    expect(mockEstimate.mock.calls[0][0]).toMatchObject({ credential: { apiKey: RECIPIENT_SECRET } });
+    const [run] = await handle.db.select({
+      credentialSource: auditRuns.credentialSource,
+      credentialOwnerId: auditRuns.credentialOwnerId,
+      sharedGrantId: auditRuns.sharedGrantId,
+    }).from(auditRuns).where(eq(auditRuns.id, body.runId));
+    expect(run).toEqual({ credentialSource: 'own', credentialOwnerId: fixture.recipient.user.id, sharedGrantId: null });
+    expect(await handle.db.$count(llmSharedAuditReservations)).toBe(0);
+  });
+
+  it('rejects a shared trigger when the owner key cannot be decrypted', async () => {
+    const fixture = await sharedFixture();
+    await handle.db.update(llmApiKeys).set({ authTag: '0'.repeat(32) })
+      .where(eq(llmApiKeys.id, fixture.ownerKey.id));
+
+    const response = await req('POST', `/api/universes/${fixture.universe.id}/audit`, {
+      headers: fixture.recipient.hdrs,
+      body: { scope: 'universe' },
+    });
+    expect(response.status).toBe(503);
+    expect(await json(response)).toMatchObject({ code: 'shared_credential_unavailable' });
+    expect(mockEstimate).not.toHaveBeenCalled();
+    expect(await handle.db.$count(auditRuns)).toBe(0);
+  });
+
+  it('rejects an entry trigger whose entry belongs to another universe', async () => {
+    const fixture = await sharedFixture();
+    const otherUniverse = await createUniverse(fixture.recipient.hdrs, 'OtherTriggerWorld');
+    const otherEntry = await createEntry(otherUniverse.id, fixture.recipient.hdrs);
+
+    const response = await req('POST', `/api/universes/${fixture.universe.id}/audit`, {
+      headers: fixture.recipient.hdrs,
+      body: { scope: 'entry', entryId: otherEntry.id },
+    });
+    expect(response.status).toBe(403);
+    expect(await handle.db.$count(auditRuns)).toBe(0);
   });
 });

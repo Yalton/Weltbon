@@ -26,6 +26,7 @@
  */
 
 import { describe, it, expect, beforeAll, afterAll, beforeEach, afterEach, vi } from 'vitest';
+import { eq } from 'drizzle-orm';
 import { readFileSync } from 'node:fs';
 import { fileURLToPath } from 'node:url';
 import { dirname, resolve } from 'node:path';
@@ -38,23 +39,30 @@ vi.hoisted(() => {
 // SDK mocks — module-scope vi.fn() handles each test reprograms. The mocked
 // Anthropic + OpenAI constructors each return an object whose models.list()
 // is the controllable vi.fn — we stage success / failure / payload per test.
-const { mockAnthropicList, mockOpenAIList } = vi.hoisted(() => ({
+const {
+  mockAnthropicList,
+  mockOpenAIList,
+  mockAnthropicClient,
+  mockOpenAIClient,
+} = vi.hoisted(() => ({
   mockAnthropicList: vi.fn(),
   mockOpenAIList: vi.fn(),
+  mockAnthropicClient: vi.fn(),
+  mockOpenAIClient: vi.fn(),
 }));
 
 vi.mock('@anthropic-ai/sdk', () => {
-  const AnthropicMock = vi.fn().mockImplementation(() => ({
+  mockAnthropicClient.mockImplementation(() => ({
     models: { list: mockAnthropicList },
   }));
-  return { default: AnthropicMock };
+  return { default: mockAnthropicClient };
 });
 
 vi.mock('openai', () => {
-  const OpenAIMock = vi.fn().mockImplementation(() => ({
+  mockOpenAIClient.mockImplementation(() => ({
     models: { list: mockOpenAIList },
   }));
-  return { default: OpenAIMock };
+  return { default: mockOpenAIClient };
 });
 
 // Bypass provider.validate() so POST /api/llm-keys persists without hitting
@@ -87,6 +95,17 @@ import { createApp } from '../src/index.js';
 import { _resetModelCacheForTests } from '../src/providers/llm/model-catalog.js';
 import { PRICING } from '../src/providers/llm/pricing.js';
 import { upsertConnection } from '../src/services/llm-connection.js';
+import { encryptKey } from '../src/services/llm-key.js';
+import { llmApiKeys, users } from '../src/db/schema.js';
+import {
+  consentSharedGrant,
+  createSharedGrant,
+  withdrawSharedConsent,
+} from '../src/services/llm-sharing.js';
+
+const ENCRYPTION_KEY = '0'.repeat(64);
+const OWNER_SECRET = 'sk-ant-shared-model-owner-secret';
+const RECIPIENT_SECRET = 'sk-ant-personal-model-recipient-secret';
 
 // #48 Task 6 Fix round 1 (Finding 2) — Ollama fixtures, mirroring the
 // tests/llm-ollama.test.ts / tests/llm-connections-routes.test.ts fakeFetch
@@ -146,6 +165,8 @@ describe('GET /api/llm/models (Phase 27 Plan 03 Task 2 — endpoint integration)
     _resetModelCacheForTests();
     mockAnthropicList.mockReset();
     mockOpenAIList.mockReset();
+    mockAnthropicClient.mockClear();
+    mockOpenAIClient.mockClear();
     // Default: live SDK call returns two anthropic ids — one priced, one not.
     // Tests override per-case as needed.
     mockAnthropicList.mockReturnValue(
@@ -188,6 +209,44 @@ describe('GET /api/llm/models (Phase 27 Plan 03 Task 2 — endpoint integration)
     const user = await createTestUser(handle, { email, password: 'longenoughpw12' });
     const token = await issueAccessToken(user.id);
     return { user, token, hdrs: authHeader(token) };
+  }
+
+  async function insertEncryptedKey(userId: string, plaintext: string) {
+    const encrypted = encryptKey(plaintext, ENCRYPTION_KEY);
+    const [key] = await handle.db.insert(llmApiKeys).values({
+      userId,
+      provider: 'anthropic',
+      ciphertext: encrypted.ciphertext,
+      iv: encrypted.iv,
+      authTag: encrypted.authTag,
+      encryptedKeyVersion: encrypted.version,
+      bodySuffix: encrypted.bodySuffix,
+    }).returning();
+    return key;
+  }
+
+  async function sharedFixture() {
+    const owner = await userWithToken('shared-model-owner@test.com');
+    const recipient = await userWithToken('shared-model-recipient@test.com');
+    await handle.db.update(users).set({ isAdmin: true }).where(eq(users.id, owner.user.id));
+    const ownerKey = await insertEncryptedKey(owner.user.id, OWNER_SECRET);
+    const grant = await createSharedGrant(owner.user.id, recipient.user.id, 'anthropic');
+    await consentSharedGrant(recipient.user.id, grant.id);
+    return { owner, recipient, ownerKey, grant };
+  }
+
+  function expectSafeModelResponse(value: unknown) {
+    const serialized = JSON.stringify(value);
+    // Matched as JSON KEYS (`"iv":`), not as bare substrings: 'iv' occurs
+    // inside `"source":"live"` and would fail every passing response, which
+    // makes the assertion look strict while actually being untrustworthy.
+    for (const forbidden of [
+      'ownerUserId', 'recipientUserId', 'credentialOwnerId', 'sharedGrantId',
+      'ownerKeyId', 'ciphertext', 'iv', 'authTag', 'bodySuffix', 'apiKey',
+    ]) {
+      expect(serialized).not.toContain(`"${forbidden}":`);
+    }
+    expect(serialized).not.toContain(OWNER_SECRET);
   }
 
   async function postKey(
@@ -418,5 +477,75 @@ describe('GET /api/llm/models (Phase 27 Plan 03 Task 2 — endpoint integration)
     const res = await req('GET', '/api/llm/models?provider=anthropic', { headers: userA.hdrs });
     expect(res.status).toBe(404);
     expect(await json(res)).toEqual({ error: 'no_key_for_provider' });
+  });
+
+  it('lists a consented shared catalog with the owner credential and shares the owner-key cache entry', async () => {
+    const first = await sharedFixture();
+    const firstResponse = await req('GET', '/api/llm/models?provider=anthropic', {
+      headers: first.recipient.hdrs,
+    });
+    expect(firstResponse.status).toBe(200);
+    const firstBody = await json(firstResponse);
+    expect(firstBody.models).toEqual([
+      { id: 'claude-haiku-4-5-20251001', hasPricing: true, pricing: expect.any(Object) },
+      { id: 'claude-future-snapshot-9', hasPricing: false },
+    ]);
+    expect(mockAnthropicClient).toHaveBeenCalledWith({ apiKey: OWNER_SECRET });
+    expect(mockAnthropicList).toHaveBeenCalledTimes(1);
+    expectSafeModelResponse(firstBody);
+
+    const second = await userWithToken('shared-model-recipient-two@test.com');
+    const secondGrant = await createSharedGrant(first.owner.user.id, second.user.id, 'anthropic');
+    await consentSharedGrant(second.user.id, secondGrant.id);
+    const secondResponse = await req('GET', '/api/llm/models?provider=anthropic', {
+      headers: second.hdrs,
+    });
+    expect(secondResponse.status).toBe(200);
+    const secondBody = await json(secondResponse);
+    expect(secondBody.fetchedAt).toBe(firstBody.fetchedAt);
+    expect(secondBody.models).toEqual(firstBody.models);
+    expect(mockAnthropicList).toHaveBeenCalledTimes(1);
+    expectSafeModelResponse(secondBody);
+    expect(first.ownerKey.id).not.toBe(secondGrant.id);
+  });
+
+  it('rejects model listing after shared consent withdrawal before calling the provider', async () => {
+    const fixture = await sharedFixture();
+    await withdrawSharedConsent(fixture.recipient.user.id, fixture.grant.id);
+
+    const response = await req('GET', '/api/llm/models?provider=anthropic', {
+      headers: fixture.recipient.hdrs,
+    });
+    expect(response.status).toBe(403);
+    expect(await json(response)).toMatchObject({ code: 'shared_llm_consent_required' });
+    expect(mockAnthropicClient).not.toHaveBeenCalled();
+    expect(mockAnthropicList).not.toHaveBeenCalled();
+  });
+
+  it('returns a safe unavailable response when the shared owner key is invalid', async () => {
+    const fixture = await sharedFixture();
+    await handle.db.update(llmApiKeys).set({ authTag: '0'.repeat(32) })
+      .where(eq(llmApiKeys.id, fixture.ownerKey.id));
+
+    const response = await req('GET', '/api/llm/models?provider=anthropic', {
+      headers: fixture.recipient.hdrs,
+    });
+    expect(response.status).toBe(503);
+    expect(await json(response)).toMatchObject({ code: 'shared_credential_unavailable' });
+    expect(mockAnthropicClient).not.toHaveBeenCalled();
+    expect(mockAnthropicList).not.toHaveBeenCalled();
+  });
+
+  it('keeps a usable personal key ahead of a consented shared key', async () => {
+    const fixture = await sharedFixture();
+    await insertEncryptedKey(fixture.recipient.user.id, RECIPIENT_SECRET);
+
+    const response = await req('GET', '/api/llm/models?provider=anthropic', {
+      headers: fixture.recipient.hdrs,
+    });
+    expect(response.status).toBe(200);
+    expect(mockAnthropicClient).toHaveBeenCalledWith({ apiKey: RECIPIENT_SECRET });
+    expect(mockAnthropicClient).not.toHaveBeenCalledWith({ apiKey: OWNER_SECRET });
+    expectSafeModelResponse(await json(response));
   });
 });

@@ -17,13 +17,23 @@
  */
 
 import { describe, it, expect, beforeAll, afterAll, beforeEach, vi } from 'vitest';
+import { eq } from 'drizzle-orm';
 
 vi.hoisted(() => {
   process.env.LLM_KEY_ENCRYPTION_KEY = '0'.repeat(64);
 });
 
+// #50 Task 6: typed with the LLMProvider.estimate() argument rather than
+// `() => Promise<number>` — the shared tests assert WHICH credential reached
+// the provider, and `mock.calls[0][0]` on a zero-arg signature is a
+// compile-time tuple-index error, not a runtime one.
 const { mockEstimate } = vi.hoisted(() => ({
-  mockEstimate: vi.fn<() => Promise<number>>(),
+  mockEstimate: vi.fn<(opts: {
+    credential: { apiKey?: string; baseUrl?: string; secret?: string };
+    messages: unknown;
+    model?: string;
+    system?: string;
+  }) => Promise<number>>(),
 }));
 vi.mock('../src/providers/llm/index.js', async (orig) => {
   const actual = (await orig()) as typeof import('../src/providers/llm/index.js');
@@ -54,6 +64,18 @@ import { createTestDb, cleanDb, createTestUser, authHeader, type TestDbHandle } 
 import { issueAccessToken } from '../src/services/auth.js';
 import { setTestDb } from '../src/db/client.js';
 import { createApp } from '../src/index.js';
+import { encryptKey } from '../src/services/llm-key.js';
+import { llmApiKeys, llmSharedUsage, users } from '../src/db/schema.js';
+import {
+  consentSharedGrant,
+  createSharedGrant,
+  utcMonthStart,
+  withdrawSharedConsent,
+} from '../src/services/llm-sharing.js';
+
+const ENCRYPTION_KEY = '0'.repeat(64);
+const OWNER_SECRET = 'sk-ant-estimate-owner-secret';
+const RECIPIENT_SECRET = 'sk-ant-estimate-recipient-secret';
 
 describe('GET /api/universes/:uid/audits/estimate (Phase 26 Plan 08 Task 1)', () => {
   let handle: TestDbHandle;
@@ -77,10 +99,62 @@ describe('GET /api/universes/:uid/audits/estimate (Phase 26 Plan 08 Task 1)', ()
     mockGetDecryptedKey.mockResolvedValue('fixture-api-key');
   });
 
-  async function userWithToken(email: string) {
+  async function userWithToken(email: string, withPersonalKey = true) {
     const user = await createTestUser(handle, { email, password: 'longenoughpw12' });
+    if (withPersonalKey) {
+      const encrypted = encryptKey('sk-ant-estimate-personal-key', ENCRYPTION_KEY);
+      await handle.db.insert(llmApiKeys).values({
+        userId: user.id,
+        provider: 'anthropic',
+        ciphertext: encrypted.ciphertext,
+        iv: encrypted.iv,
+        authTag: encrypted.authTag,
+        encryptedKeyVersion: encrypted.version,
+        bodySuffix: encrypted.bodySuffix,
+      });
+    }
     const token = await issueAccessToken(user.id);
     return { user, token, hdrs: authHeader(token) };
+  }
+
+  async function insertEncryptedKey(userId: string, plaintext: string) {
+    const encrypted = encryptKey(plaintext, ENCRYPTION_KEY);
+    const [key] = await handle.db.insert(llmApiKeys).values({
+      userId,
+      provider: 'anthropic',
+      ciphertext: encrypted.ciphertext,
+      iv: encrypted.iv,
+      authTag: encrypted.authTag,
+      encryptedKeyVersion: encrypted.version,
+      bodySuffix: encrypted.bodySuffix,
+    }).returning();
+    return key;
+  }
+
+  async function sharedFixture() {
+    const owner = await userWithToken('estimate-shared-owner@test.com', false);
+    const recipient = await userWithToken('estimate-shared-recipient@test.com', false);
+    await handle.db.update(users).set({ isAdmin: true }).where(eq(users.id, owner.user.id));
+    const ownerKey = await insertEncryptedKey(owner.user.id, OWNER_SECRET);
+    const grant = await createSharedGrant(owner.user.id, recipient.user.id, 'anthropic');
+    await consentSharedGrant(recipient.user.id, grant.id);
+    const universe = await createUniverse(recipient.hdrs, 'SharedEstimateWorld');
+    await enableAudit(universe.id, recipient.hdrs);
+    return { owner, recipient, ownerKey, grant, universe };
+  }
+
+  function expectSafeEstimateResponse(value: unknown) {
+    const serialized = JSON.stringify(value);
+    // Matched as JSON KEYS (`"iv":`), not as bare substrings: 'iv' occurs
+    // inside `"source":"live"` and would fail every passing response, which
+    // makes the assertion look strict while actually being untrustworthy.
+    for (const forbidden of [
+      'ownerUserId', 'recipientUserId', 'credentialOwnerId', 'sharedGrantId',
+      'ownerKeyId', 'ciphertext', 'iv', 'authTag', 'bodySuffix', 'apiKey',
+    ]) {
+      expect(serialized).not.toContain(`"${forbidden}":`);
+    }
+    expect(serialized).not.toContain(OWNER_SECRET);
   }
 
   async function req(
@@ -213,7 +287,7 @@ describe('GET /api/universes/:uid/audits/estimate (Phase 26 Plan 08 Task 1)', ()
   // --- 400: no llm_api_keys row (decrypted key null) ------------------------
 
   it('returns 400 when no LLM API key is configured for the provider', async () => {
-    const { hdrs } = await userWithToken('estimate-nokey@test.com');
+    const { hdrs } = await userWithToken('estimate-nokey@test.com', false);
     const universe = await createUniverse(hdrs);
     await enableAudit(universe.id, hdrs);
     mockGetDecryptedKey.mockResolvedValueOnce(null);
@@ -340,5 +414,99 @@ describe('GET /api/universes/:uid/audits/estimate (Phase 26 Plan 08 Task 1)', ()
     expect(res.status).toBe(200);
     const body = await json(res);
     expect(body.lower).toBeLessThan(body.upper);
+  });
+
+  it('estimates a consented shared run with the owner credential and returns no provenance secrets', async () => {
+    const fixture = await sharedFixture();
+    const response = await req(
+      'GET',
+      `/api/universes/${fixture.universe.id}/audits/estimate?scope=universe`,
+      { headers: fixture.recipient.hdrs },
+    );
+    expect(response.status).toBe(200);
+    const body = await json(response);
+    expect(body.model).toEqual({ provider: 'anthropic', name: 'claude-haiku-4-5-20251001' });
+    expect(mockEstimate).toHaveBeenCalledTimes(1);
+    expect(mockEstimate.mock.calls[0][0]).toMatchObject({
+      credential: { apiKey: OWNER_SECRET },
+      model: 'claude-haiku-4-5-20251001',
+    });
+    expectSafeEstimateResponse(body);
+  });
+
+  it('requires shared consent before the estimate provider call', async () => {
+    const fixture = await sharedFixture();
+    await withdrawSharedConsent(fixture.recipient.user.id, fixture.grant.id);
+    mockEstimate.mockClear();
+
+    const response = await req(
+      'GET',
+      `/api/universes/${fixture.universe.id}/audits/estimate?scope=universe`,
+      { headers: fixture.recipient.hdrs },
+    );
+    expect(response.status).toBe(403);
+    expect(await json(response)).toMatchObject({ code: 'shared_llm_consent_required' });
+    expect(mockEstimate).not.toHaveBeenCalled();
+  });
+
+  it('returns shared_cost_unavailable for an unknown-priced model without estimating it', async () => {
+    const fixture = await sharedFixture();
+    mockEstimate.mockClear();
+
+    const response = await req(
+      'GET',
+      `/api/universes/${fixture.universe.id}/audits/estimate?scope=universe&model=future-unpriced-model`,
+      { headers: fixture.recipient.hdrs },
+    );
+    expect(response.status).toBe(422);
+    expect(await json(response)).toMatchObject({ code: 'shared_cost_unavailable' });
+    expect(mockEstimate).not.toHaveBeenCalled();
+  });
+
+  it('returns shared_monthly_limit_exceeded when the remaining shared cap cannot fit the estimate', async () => {
+    const fixture = await sharedFixture();
+    await handle.db.insert(llmSharedUsage).values({
+      recipientUserId: fixture.recipient.user.id,
+      monthStart: utcMonthStart(),
+      settledCostUsd: '1.000000',
+    });
+
+    const response = await req(
+      'GET',
+      `/api/universes/${fixture.universe.id}/audits/estimate?scope=universe`,
+      { headers: fixture.recipient.hdrs },
+    );
+    expect(response.status).toBe(429);
+    expect(await json(response)).toMatchObject({ code: 'shared_monthly_limit_exceeded' });
+  });
+
+  it('returns a safe unavailable response for an invalid shared owner key', async () => {
+    const fixture = await sharedFixture();
+    await handle.db.update(llmApiKeys).set({ authTag: '0'.repeat(32) })
+      .where(eq(llmApiKeys.id, fixture.ownerKey.id));
+    mockEstimate.mockClear();
+
+    const response = await req(
+      'GET',
+      `/api/universes/${fixture.universe.id}/audits/estimate?scope=universe`,
+      { headers: fixture.recipient.hdrs },
+    );
+    expect(response.status).toBe(503);
+    expect(await json(response)).toMatchObject({ code: 'shared_credential_unavailable' });
+    expect(mockEstimate).not.toHaveBeenCalled();
+  });
+
+  it('keeps personal estimate precedence and does not read the shared quota bucket', async () => {
+    const fixture = await sharedFixture();
+    await insertEncryptedKey(fixture.recipient.user.id, RECIPIENT_SECRET);
+
+    const response = await req(
+      'GET',
+      `/api/universes/${fixture.universe.id}/audits/estimate?scope=universe`,
+      { headers: fixture.recipient.hdrs },
+    );
+    expect(response.status).toBe(200);
+    expect(mockEstimate.mock.calls[0][0]).toMatchObject({ credential: { apiKey: RECIPIENT_SECRET } });
+    expect(await handle.db.$count(llmSharedUsage)).toBe(0);
   });
 });
