@@ -51,6 +51,35 @@ describe('OpenAPI schema and Scalar docs (Phase 10 — DB-independent)', () => {
       ?.properties?.grants?.type).toBe('array');
     expect(doc.paths['/llm-shares/{id}/consent']?.post?.responses?.['200']?.content?.['application/json']?.schema
       ?.required).toEqual(['grantId', 'consentedAt', 'policyVersion']);
+    const consentPost = doc.paths['/llm-shares/{id}/consent']?.post;
+    expect(consentPost?.requestBody?.required).toBe(false);
+    expect(consentPost?.requestBody?.content?.['application/json']?.schema).toMatchObject({
+      type: 'object',
+      additionalProperties: false,
+    });
+    expect(consentPost?.responses?.['400']?.content?.['application/json']?.schema).toMatchObject({
+      type: 'object',
+      required: ['error', 'code'],
+      properties: { error: { type: 'string' }, code: { type: 'string' } },
+    });
+
+    for (const operation of [
+      doc.paths['/llm-shares']?.get,
+      doc.paths['/llm-shares/{id}/consent']?.post,
+      doc.paths['/llm-shares/{id}/consent']?.delete,
+      doc.paths['/admin/llm-shares']?.get,
+      doc.paths['/admin/llm-shares']?.post,
+      doc.paths['/admin/llm-shares/{id}']?.delete,
+    ]) {
+      for (const [status, response] of Object.entries(operation?.responses ?? {})) {
+        if (!/^[45]/.test(status) || !('content' in (response as object))) continue;
+        const schema = (response as any).content?.['application/json']?.schema;
+        expect(schema).toMatchObject({
+          type: 'object',
+          required: expect.arrayContaining(['error', 'code']),
+        });
+      }
+    }
     expect(doc.paths['/admin/llm-shares']?.post?.responses?.['201']?.content?.['application/json']?.schema
       ?.required).toEqual(['id', 'owner', 'recipient', 'provider', 'status', 'createdAt', 'revokedAt', 'revokedReason', 'consentedAt', 'usage']);
   });

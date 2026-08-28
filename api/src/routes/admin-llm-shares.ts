@@ -99,6 +99,8 @@ const listRoute = createRoute({
     200: { content: { 'application/json': { schema: z.array(adminGrantSchema) } }, description: 'Active and revoked shared grants.' },
     401: { content: { 'application/json': { schema: errorSchema } }, description: 'Missing or invalid JWT bearer token.' },
     403: { content: { 'application/json': { schema: errorSchema } }, description: 'Administrator JWT required.' },
+    404: { content: { 'application/json': { schema: errorSchema } }, description: 'A shared grant participant is missing.' },
+    503: { content: { 'application/json': { schema: errorSchema } }, description: 'Shared connection service unavailable.' },
   },
 });
 
@@ -146,7 +148,15 @@ export const adminLlmShareRoutes = new OpenAPIHono<AppEnv>({
     }
   },
 })
-  .openapi(listRoute, async (c) => c.json((await listAdminSharedGrants()).map(adminGrant), 200))
+  .openapi(listRoute, async (c) => {
+    try {
+      return c.json((await listAdminSharedGrants()).map(adminGrant), 200);
+    } catch (error) {
+      const mapped = sharedError(error);
+      if (mapped) return c.json(mapped.body, mapped.status) as never;
+      throw error;
+    }
+  })
   .openapi(createRoute_, async (c) => {
     try {
       const body = c.req.valid('json');

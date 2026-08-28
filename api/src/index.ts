@@ -80,6 +80,44 @@ function scrubLogLine(msg: string): string {
     .replace(/wbn_share_[A-Za-z0-9_-]+/g, '[REDACTED]');
 }
 
+function isSharedLlmPath(path: string): boolean {
+  return path === '/api/llm-shares'
+    || path.startsWith('/api/llm-shares/')
+    || path === '/api/admin/llm-shares'
+    || path.startsWith('/api/admin/llm-shares/');
+}
+
+function sharedLlmErrorResponse(err: HTTPException): {
+  status: 400 | 401 | 403 | 404 | 409 | 503;
+  body: { error: string; code: string };
+} {
+  if (err.status === 401) {
+    if (err.message === 'Missing bearer token') {
+      return { status: 401, body: { error: err.message, code: 'missing_bearer_token' } };
+    }
+    return { status: 401, body: { error: 'Invalid token', code: 'invalid_token' } };
+  }
+  if (err.status === 403) {
+    if (err.message === 'Administrator JWT required') {
+      return { status: 403, body: { error: err.message, code: 'administrator_jwt_required' } };
+    }
+    return { status: 403, body: { error: 'Administrator required', code: 'administrator_required' } };
+  }
+  if (err.status === 400) {
+    return { status: 400, body: { error: 'Invalid shared connection request', code: 'invalid_request' } };
+  }
+  if (err.status === 404) {
+    return { status: 404, body: { error: 'Shared connection not found', code: 'shared_connection_not_found' } };
+  }
+  if (err.status === 409) {
+    return { status: 409, body: { error: 'An active shared connection already exists', code: 'shared_connection_exists' } };
+  }
+  return {
+    status: 503,
+    body: { error: 'Shared connection is temporarily unavailable', code: 'shared_connection_unavailable' },
+  };
+}
+
 export function createApp() {
   const app = new Hono();
   app.use('*', logger((msg) => {
@@ -249,6 +287,15 @@ export function createApp() {
   app.get('*', serveStatic({ path: `${webDist}/index.html` }));
 
   app.onError((err, c) => {
+    if (isSharedLlmPath(c.req.path)) {
+      if (err instanceof HTTPException) {
+        const mapped = sharedLlmErrorResponse(err);
+        return c.json(mapped.body, mapped.status);
+      }
+      const errText = err instanceof Error ? (err.stack ?? err.message) : String(err);
+      console.error(scrubLogLine(errText));
+      return c.json({ error: 'Shared connection is temporarily unavailable', code: 'shared_connection_unavailable' }, 503);
+    }
     if (err instanceof HTTPException) {
       return c.json({ error: err.message }, err.status);
     }

@@ -12,6 +12,11 @@ type AppEnv = { Variables: AuthVariables };
 
 const errorSchema = z.object({ error: z.string(), code: z.string() });
 const idParams = z.object({ id: z.string().uuid() });
+const emptyConsentBodySchema = {
+  type: 'object' as const,
+  additionalProperties: false,
+  description: 'No request fields are accepted. Omit the body or send a zero-length body.',
+};
 const usageSchema = z.object({
   monthStart: z.string(),
   settledUsd: z.string(),
@@ -97,6 +102,7 @@ const listRoute = createRoute({
   responses: {
     200: { content: { 'application/json': { schema: z.object({ grants: z.array(recipientGrantSchema) }) } }, description: 'Active recipient-owned grants.' },
     401: { content: { 'application/json': { schema: errorSchema } }, description: 'Missing or invalid JWT bearer token.' },
+    503: { content: { 'application/json': { schema: errorSchema } }, description: 'Shared connection service unavailable.' },
   },
 });
 
@@ -107,10 +113,16 @@ const consentRoute = createRoute({
   summary: 'Accept the shared LLM connection disclosure',
   security: [{ bearerJwtAuth: [] }],
   middleware: [requireJwtAuth] as const,
-  request: { params: idParams },
+  request: {
+    params: idParams,
+    body: {
+      required: false,
+      content: { 'application/json': { schema: emptyConsentBodySchema } },
+    },
+  },
   responses: {
     200: { content: { 'application/json': { schema: consentSchema } }, description: 'Consent recorded or returned unchanged.' },
-    400: { content: { 'application/json': { schema: errorSchema } }, description: 'Invalid grant id.' },
+    400: { content: { 'application/json': { schema: errorSchema } }, description: 'Invalid grant id or non-empty request body.' },
     401: { content: { 'application/json': { schema: errorSchema } }, description: 'Missing or invalid JWT bearer token.' },
     404: { content: { 'application/json': { schema: errorSchema } }, description: 'Grant is missing, revoked, or belongs to another recipient.' },
     503: { content: { 'application/json': { schema: errorSchema } }, description: 'Shared connection service unavailable.' },
@@ -139,12 +151,21 @@ export const llmShareRoutes = new OpenAPIHono<AppEnv>({
   },
 })
   .openapi(listRoute, async (c) => {
-    const grants = await listRecipientSharedGrants(c.var.userId);
-    return c.json({ grants: grants.map(recipientGrant) }, 200);
+    try {
+      const grants = await listRecipientSharedGrants(c.var.userId);
+      return c.json({ grants: grants.map(recipientGrant) }, 200);
+    } catch (error) {
+      const mapped = sharedError(error);
+      if (mapped) return c.json(mapped.body, mapped.status) as never;
+      throw error;
+    }
   })
   .openapi(consentRoute, async (c) => {
     const parsed = idParams.safeParse(c.req.param());
     if (!parsed.success) return c.json({ error: 'Invalid shared connection id', code: 'invalid_request' }, 400);
+    if ((await c.req.text()).trim().length > 0) {
+      return c.json({ error: 'Consent request body must be empty', code: 'invalid_request' }, 400);
+    }
     try {
       const result = await consentSharedGrant(c.var.userId, parsed.data.id);
       return c.json({
@@ -161,6 +182,12 @@ export const llmShareRoutes = new OpenAPIHono<AppEnv>({
   .openapi(withdrawRoute, async (c) => {
     const parsed = idParams.safeParse(c.req.param());
     if (!parsed.success) return c.json({ error: 'Invalid shared connection id', code: 'invalid_request' }, 400);
-    await withdrawSharedConsent(c.var.userId, parsed.data.id);
-    return c.body(null, 204);
+    try {
+      await withdrawSharedConsent(c.var.userId, parsed.data.id);
+      return c.body(null, 204);
+    } catch (error) {
+      const mapped = sharedError(error);
+      if (mapped) return c.json(mapped.body, mapped.status) as never;
+      throw error;
+    }
   });

@@ -10,6 +10,8 @@ import { adminAuditLog, llmApiKeys, users } from '../src/db/schema.js';
 import { setTestDb } from '../src/db/client.js';
 import { issueAccessToken } from '../src/services/auth.js';
 import { encryptKey } from '../src/services/llm-key.js';
+import * as llmSharing from '../src/services/llm-sharing.js';
+import { SharedLlmError } from '../src/services/llm-sharing.js';
 
 const ENCRYPTION_KEY = '0'.repeat(64);
 const SECRET = 'sk-ant-test-secret';
@@ -109,20 +111,27 @@ describe('shared LLM grant routes', () => {
     const adminPat = await mintPat(admin.jwt);
 
     const denied = [
-      { token: undefined, status: 401 },
-      { token: memberJwt, status: 403 },
-      { token: memberPat, status: 403 },
-      { token: adminPat, status: 403 },
-      { token: disabledAdminJwt, status: 401 },
+      { token: undefined, status: 401, body: { error: 'Missing bearer token', code: 'missing_bearer_token' } },
+      { token: 'not-a-jwt', status: 401, body: { error: 'Invalid token', code: 'invalid_token' } },
+      { token: memberJwt, status: 403, body: { error: 'Administrator required', code: 'administrator_required' } },
+      { token: memberPat, status: 403, body: { error: 'Administrator JWT required', code: 'administrator_jwt_required' } },
+      { token: adminPat, status: 403, body: { error: 'Administrator JWT required', code: 'administrator_jwt_required' } },
+      { token: disabledAdminJwt, status: 401, body: { error: 'Invalid token', code: 'invalid_token' } },
     ];
     for (const auth of denied) {
-      expect((await request('/api/admin/llm-shares', { token: auth.token })).status).toBe(auth.status);
-      expect((await request('/api/admin/llm-shares', {
+      const listed = await request('/api/admin/llm-shares', { token: auth.token });
+      expect(listed.status).toBe(auth.status);
+      expect(await listed.json()).toEqual(auth.body);
+      const created = await request('/api/admin/llm-shares', {
         method: 'POST', token: auth.token, body: { recipientUserId: member.id, provider: 'anthropic' },
-      })).status).toBe(auth.status);
-      expect((await request(`/api/admin/llm-shares/${FAKE_UUID}`, {
+      });
+      expect(created.status).toBe(auth.status);
+      expect(await created.json()).toEqual(auth.body);
+      const revoked = await request(`/api/admin/llm-shares/${FAKE_UUID}`, {
         method: 'DELETE', token: auth.token,
-      })).status).toBe(auth.status);
+      });
+      expect(revoked.status).toBe(auth.status);
+      expect(await revoked.json()).toEqual(auth.body);
     }
 
     expect((await request('/api/admin/llm-shares', { token: admin.jwt })).status).toBe(200);
@@ -146,8 +155,23 @@ describe('shared LLM grant routes', () => {
     const otherRecipientJwt = await issueAccessToken(otherRecipient.id);
     const otherAdminJwt = await issueAccessToken(otherAdmin.id);
 
-    expect((await request('/api/llm-shares')).status).toBe(401);
-    expect((await request('/api/llm-shares', { token: await mintPat(recipientJwt) })).status).toBe(401);
+    const recipientPat = await mintPat(recipientJwt);
+    const recipientAuthFailures = [
+      { token: undefined, body: { error: 'Missing bearer token', code: 'missing_bearer_token' } },
+      { token: 'not-a-jwt', body: { error: 'Invalid token', code: 'invalid_token' } },
+      { token: recipientPat, body: { error: 'Invalid token', code: 'invalid_token' } },
+    ];
+    for (const auth of recipientAuthFailures) {
+      for (const [path, method] of [
+        ['/api/llm-shares', 'GET'],
+        [`/api/llm-shares/${FAKE_UUID}/consent`, 'POST'],
+        [`/api/llm-shares/${FAKE_UUID}/consent`, 'DELETE'],
+      ] as const) {
+        const response = await request(path, { method, token: auth.token });
+        expect(response.status).toBe(401);
+        expect(await response.json()).toEqual(auth.body);
+      }
+    }
 
     const created = await request('/api/admin/llm-shares', {
       method: 'POST', token: owner.jwt, body: { recipientUserId: recipient.id, provider: 'anthropic' },
@@ -214,6 +238,75 @@ describe('shared LLM grant routes', () => {
     const auditRows = await handle.db.select({ action: adminAuditLog.action, details: adminAuditLog.details }).from(adminAuditLog);
     expect(auditRows.map((row) => row.action)).toEqual(expect.arrayContaining(['llm_shared_granted', 'llm_shared_revoked']));
     expectNoCredentialMaterial(auditRows);
+  });
+
+  it('rejects a non-empty consent body and invalid UUIDs with the documented envelope', async () => {
+    const owner = await createAdminWithKey('owner-consent-validation@test.dev');
+    const recipient = await createTestUser(handle, { email: 'recipient-consent-validation@test.dev', password: 'long-enough-password' });
+    const recipientJwt = await issueAccessToken(recipient.id);
+    const created = await request('/api/admin/llm-shares', {
+      method: 'POST', token: owner.jwt, body: { recipientUserId: recipient.id, provider: 'anthropic' },
+    });
+    expect(created.status).toBe(201);
+    const grant = await created.json() as { id: string };
+
+    const nonEmptyBody = await request(`/api/llm-shares/${grant.id}/consent`, {
+      method: 'POST', token: recipientJwt, body: {},
+    });
+    expect(nonEmptyBody.status).toBe(400);
+    expect(await nonEmptyBody.json()).toEqual({
+      error: 'Consent request body must be empty',
+      code: 'invalid_request',
+    });
+
+    const zeroLengthBody = await app.request(`/api/llm-shares/${grant.id}/consent`, {
+      method: 'POST',
+      headers: { ...authHeader(recipientJwt), 'Content-Type': 'application/json', 'Content-Length': '0' },
+      body: '',
+    });
+    expect(zeroLengthBody.status).toBe(200);
+
+    const invalidUuid = await request('/api/llm-shares/not-a-uuid/consent', {
+      method: 'POST', token: recipientJwt,
+    });
+    expect(invalidUuid.status).toBe(400);
+    expect(await invalidUuid.json()).toEqual({
+      error: 'Invalid shared connection request',
+      code: 'invalid_request',
+    });
+  });
+
+  it('maps typed admin-list failures to a safe documented response', async () => {
+    const admin = await createAdminWithKey('admin-list-error@test.dev');
+    const listSpy = vi.spyOn(llmSharing, 'listAdminSharedGrants')
+      .mockRejectedValueOnce(new SharedLlmError('shared_connection_not_found'));
+    try {
+      const response = await request('/api/admin/llm-shares', { token: admin.jwt });
+      expect(response.status).toBe(404);
+      expect(await response.json()).toEqual({
+        error: 'Shared connection not found',
+        code: 'shared_connection_not_found',
+      });
+    } finally {
+      listSpy.mockRestore();
+    }
+  });
+
+  it('normalizes unexpected sharing failures without exposing raw errors', async () => {
+    const recipient = await createTestUser(handle, { email: 'recipient-unexpected-error@test.dev', password: 'long-enough-password' });
+    const recipientJwt = await issueAccessToken(recipient.id);
+    const listSpy = vi.spyOn(llmSharing, 'listRecipientSharedGrants')
+      .mockRejectedValueOnce(new Error('database/provider failure'));
+    try {
+      const response = await request('/api/llm-shares', { token: recipientJwt });
+      expect(response.status).toBe(503);
+      expect(await response.json()).toEqual({
+        error: 'Shared connection is temporarily unavailable',
+        code: 'shared_connection_unavailable',
+      });
+    } finally {
+      listSpy.mockRestore();
+    }
   });
 
   it('maps invalid grant requests to safe stable errors', async () => {
