@@ -2,7 +2,7 @@
 import { describe, it, expect, beforeAll, afterAll, beforeEach } from 'vitest';
 import { eq } from 'drizzle-orm';
 import { createTestDb, cleanDb, createTestUser, type TestDbHandle } from './helpers.js';
-import { llmApiKeys, users } from '../src/db/schema.js';
+import { llmApiKeys, llmSharedConsents, llmSharedGrants, users } from '../src/db/schema.js';
 import { encryptKey } from '../src/services/llm-key.js';
 import {
   consentSharedGrant,
@@ -18,6 +18,25 @@ import {
 
 const KEY = 'a'.repeat(64);
 
+async function insertEncryptedKey(
+  handle: TestDbHandle,
+  userId: string,
+  provider: 'anthropic' | 'openai',
+  plaintext: string,
+) {
+  const encrypted = encryptKey(plaintext, KEY);
+  const [key] = await handle.db.insert(llmApiKeys).values({
+    userId,
+    provider,
+    ciphertext: encrypted.ciphertext,
+    iv: encrypted.iv,
+    authTag: encrypted.authTag,
+    encryptedKeyVersion: encrypted.version,
+    bodySuffix: encrypted.bodySuffix,
+  }).returning();
+  return key;
+}
+
 async function createConsentedSharedGrant(
   handle: TestDbHandle,
   provider: 'anthropic' | 'openai' = 'anthropic',
@@ -32,16 +51,7 @@ async function createConsentedSharedGrant(
   });
   await handle.db.update(users).set({ isAdmin: true }).where(eq(users.id, owner.id));
   const plaintext = provider === 'anthropic' ? 'sk-ant-owner-credential' : 'sk-openai-owner-credential';
-  const encrypted = encryptKey(plaintext, KEY);
-  const [ownerKey] = await handle.db.insert(llmApiKeys).values({
-    userId: owner.id,
-    provider,
-    ciphertext: encrypted.ciphertext,
-    iv: encrypted.iv,
-    authTag: encrypted.authTag,
-    encryptedKeyVersion: encrypted.version,
-    bodySuffix: encrypted.bodySuffix,
-  }).returning();
+  const ownerKey = await insertEncryptedKey(handle, owner.id, provider, plaintext);
   const grant = await createSharedGrant(owner.id, recipient.id, provider);
   await consentSharedGrant(recipient.id, grant.id);
   return { owner, recipient, ownerKey, grant, plaintext };
@@ -145,6 +155,93 @@ describe('shared effective credential resolution', () => {
     await handle.db.update(llmApiKeys).set({ authTag: '0'.repeat(32) }).where(eq(llmApiKeys.id, ownKey.id));
 
     expect(await resolveEffectiveCredential(recipient.id, 'anthropic', KEY)).toEqual({
+      kind: 'unavailable',
+      source: 'own',
+    });
+  });
+
+  it('returns revoked when stored consent has been withdrawn', async () => {
+    const { recipient, grant } = await createConsentedSharedGrant(handle);
+    await withdrawSharedConsent(recipient.id, grant.id);
+
+    expect(await resolveSharedGrantCredential(recipient.id, grant.id, 'anthropic', KEY)).toEqual({ kind: 'revoked' });
+  });
+
+  it('returns revoked when stored consent uses an outdated policy version', async () => {
+    const { recipient, grant } = await createConsentedSharedGrant(handle);
+    await handle.db.update(llmSharedConsents).set({ policyVersion: 'shared-llm-v0' }).where(eq(llmSharedConsents.grantId, grant.id));
+
+    expect(await resolveSharedGrantCredential(recipient.id, grant.id, 'anthropic', KEY)).toEqual({ kind: 'revoked' });
+  });
+
+  it('returns revoked when the persisted owner is disabled', async () => {
+    const { owner, recipient, grant } = await createConsentedSharedGrant(handle);
+    await handle.db.update(users).set({ disabledAt: new Date() }).where(eq(users.id, owner.id));
+
+    expect(await resolveSharedGrantCredential(recipient.id, grant.id, 'anthropic', KEY)).toEqual({ kind: 'revoked' });
+  });
+
+  it('returns revoked when the persisted owner is demoted', async () => {
+    const { owner, recipient, grant } = await createConsentedSharedGrant(handle);
+    await handle.db.update(users).set({ isAdmin: false }).where(eq(users.id, owner.id));
+
+    expect(await resolveSharedGrantCredential(recipient.id, grant.id, 'anthropic', KEY)).toEqual({ kind: 'revoked' });
+  });
+
+  it('returns revoked when the grant is requested by another recipient', async () => {
+    const { grant } = await createConsentedSharedGrant(handle);
+    const otherRecipient = await createTestUser(handle, { email: 'other-recipient@test.dev', password: 'password12345' });
+
+    expect(await resolveSharedGrantCredential(otherRecipient.id, grant.id, 'anthropic', KEY)).toEqual({ kind: 'revoked' });
+  });
+
+  it('returns revoked when the persisted grant has no owner-key reference', async () => {
+    const { recipient, grant } = await createConsentedSharedGrant(handle);
+    await handle.db.update(llmSharedGrants).set({ ownerKeyId: null, revokedAt: new Date() }).where(eq(llmSharedGrants.id, grant.id));
+
+    expect(await resolveSharedGrantCredential(recipient.id, grant.id, 'anthropic', KEY)).toEqual({ kind: 'revoked' });
+  });
+
+  it('returns revoked after owner-key deletion clears the grant reference', async () => {
+    const { owner, recipient, ownerKey, grant } = await createConsentedSharedGrant(handle);
+    await revokeSharedGrant(owner.id, grant.id, 'admin_revoked');
+    await handle.db.delete(llmApiKeys).where(eq(llmApiKeys.id, ownerKey.id));
+    const [persistedGrant] = await handle.db.select({ ownerKeyId: llmSharedGrants.ownerKeyId })
+      .from(llmSharedGrants).where(eq(llmSharedGrants.id, grant.id));
+
+    expect(persistedGrant).toEqual({ ownerKeyId: null });
+    expect(await resolveSharedGrantCredential(recipient.id, grant.id, 'anthropic', KEY)).toEqual({ kind: 'revoked' });
+  });
+
+  it('returns unavailable when the persisted owner ciphertext is tampered', async () => {
+    const { recipient, ownerKey, grant } = await createConsentedSharedGrant(handle);
+    const lastCiphertextChar = ownerKey.ciphertext.slice(-1);
+    const tamperedCiphertext = ownerKey.ciphertext.slice(0, -1) + (lastCiphertextChar === '0' ? '1' : '0');
+    await handle.db.update(llmApiKeys).set({ ciphertext: tamperedCiphertext }).where(eq(llmApiKeys.id, ownerKey.id));
+
+    expect(await resolveSharedGrantCredential(recipient.id, grant.id, 'anthropic', KEY)).toEqual({ kind: 'unavailable' });
+  });
+
+  it('returns unavailable when the persisted owner auth tag is tampered', async () => {
+    const { recipient, ownerKey, grant } = await createConsentedSharedGrant(handle);
+    const lastAuthTagChar = ownerKey.authTag.slice(-1);
+    const tamperedAuthTag = ownerKey.authTag.slice(0, -1) + (lastAuthTagChar === '0' ? '1' : '0');
+    await handle.db.update(llmApiKeys).set({ authTag: tamperedAuthTag }).where(eq(llmApiKeys.id, ownerKey.id));
+
+    expect(await resolveSharedGrantCredential(recipient.id, grant.id, 'anthropic', KEY)).toEqual({ kind: 'unavailable' });
+  });
+
+  it('returns unavailable when the shared resolver has no encryption key', async () => {
+    const { recipient, grant } = await createConsentedSharedGrant(handle);
+
+    expect(await resolveSharedGrantCredential(recipient.id, grant.id, 'anthropic', undefined)).toEqual({ kind: 'unavailable' });
+  });
+
+  it('does not fall back to a shared credential when an own row has no encryption key', async () => {
+    const { recipient, grant } = await createConsentedSharedGrant(handle);
+    await insertEncryptedKey(handle, recipient.id, 'anthropic', 'sk-ant-recipient-credential');
+
+    expect(await resolveEffectiveCredential(recipient.id, 'anthropic', undefined)).toEqual({
       kind: 'unavailable',
       source: 'own',
     });
