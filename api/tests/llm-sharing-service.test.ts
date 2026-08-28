@@ -2,7 +2,7 @@ import { afterAll, beforeAll, beforeEach, describe, expect, it } from 'vitest';
 import { eq } from 'drizzle-orm';
 import { cleanDb, createTestDb, createTestUser, type TestDbHandle } from './helpers.js';
 import { setTestDb } from '../src/db/client.js';
-import { adminAuditLog, auditRuns, llmApiKeys, llmSharedAuditReservations, llmSharedGrants, universes, users } from '../src/db/schema.js';
+import { adminAuditLog, auditRuns, llmApiKeys, llmSharedAuditReservations, llmSharedGrants, llmSharedUsage, universes, users } from '../src/db/schema.js';
 import { encryptKey } from '../src/services/llm-key.js';
 import {
   consentSharedGrant,
@@ -18,6 +18,7 @@ import {
   roundUpToSixDecimals,
   reserveSharedAudit,
   settleSharedAuditReservation,
+  utcMonthStart,
   withdrawSharedConsent,
 } from '../src/services/llm-sharing.js';
 
@@ -242,6 +243,44 @@ describe('shared LLM grants', () => {
     expect(saved).toMatchObject({ state: 'reserved', reservedUsd: '0.125000', settledUsd: '0.000000' });
   });
 
+  it('keeps shared ledger precision while normalizing legacy audit telemetry and finishing the run', async () => {
+    const owner = await createTestUser(handle, { email: 'owner-precision@test.dev', password: 'long-enough-password' });
+    const recipient = await createTestUser(handle, { email: 'recipient-precision@test.dev', password: 'long-enough-password' });
+    await handle.db.update(users).set({ isAdmin: true }).where(eq(users.id, owner.id));
+    const encrypted = encryptKey('sk-ant-precision-test-key', ENCRYPTION_KEY);
+    await handle.db.insert(llmApiKeys).values({
+      userId: owner.id, provider: 'anthropic', ciphertext: encrypted.ciphertext, iv: encrypted.iv,
+      authTag: encrypted.authTag, encryptedKeyVersion: encrypted.version, bodySuffix: encrypted.bodySuffix,
+    });
+    const grant = await createSharedGrant(owner.id, recipient.id, 'anthropic');
+    await consentSharedGrant(recipient.id, grant.id);
+    const [universe] = await handle.db.insert(universes).values({ userId: recipient.id, name: 'Precision world' }).returning();
+    const reservation = await reserveSharedAudit({
+      recipientUserId: recipient.id, universeId: universe.id, scope: 'universe', scopeEntryId: null,
+      provider: 'anthropic', model: 'claude-haiku-4-5-20251001', grantId: grant.id,
+      credentialOwnerId: owner.id, reservationUsd: 0.2,
+    });
+
+    await settleSharedAuditReservation(reservation.runId, 'succeeded', '0.123456');
+
+    const [usage] = await handle.db.select({ settledCostUsd: llmSharedUsage.settledCostUsd })
+      .from(llmSharedUsage);
+    expect(usage.settledCostUsd).toBe('0.123456');
+    const [savedReservation] = await handle.db.select({ settledCostUsd: llmSharedAuditReservations.settledCostUsd })
+      .from(llmSharedAuditReservations);
+    expect(savedReservation.settledCostUsd).toBe('0.123456');
+    const [run] = await handle.db.select({ status: auditRuns.status, costUsd: auditRuns.costUsd, finishedAt: auditRuns.finishedAt })
+      .from(auditRuns).where(eq(auditRuns.id, reservation.runId));
+    expect(run).toMatchObject({ status: 'succeeded', costUsd: '0.1235' });
+    expect(run.finishedAt).toBeInstanceOf(Date);
+  });
+
+  it('uses UTC calendar boundaries for month buckets, including offset timestamps', () => {
+    expect(utcMonthStart(new Date('2026-01-31T23:59:59Z'))).toBe('2026-01-01');
+    expect(utcMonthStart(new Date('2026-02-01T00:00:00Z'))).toBe('2026-02-01');
+    expect(utcMonthStart(new Date('2026-01-31T23:30:00-05:00'))).toBe('2026-02-01');
+  });
+
   it('rejects disabled, missing, and undecryptable owner credentials with typed errors', async () => {
     const disabledOwner = await createTestUser(handle, { email: 'owner-disabled@test.dev', password: 'long-enough-password' });
     const missingKeyOwner = await createTestUser(handle, { email: 'owner-missing@test.dev', password: 'long-enough-password' });
@@ -394,6 +433,10 @@ describe('shared LLM grants', () => {
       credentialOwnerId: owner.id, reservationUsd: 0.2,
     });
     await settleSharedAuditReservation(released.runId, 'released', 0);
+    const [releasedRun] = await handle.db.select({ status: auditRuns.status, costUsd: auditRuns.costUsd, finishedAt: auditRuns.finishedAt })
+      .from(auditRuns).where(eq(auditRuns.id, released.runId));
+    expect(releasedRun).toMatchObject({ status: 'failed', costUsd: '0.0000' });
+    expect(releasedRun.finishedAt).toBeInstanceOf(Date);
     expect(await getSharedQuotaSnapshot(recipient.id)).toMatchObject({
       settledUsd: '0.0500', reservedUsd: '0.0000', activeAudits: 0,
       completedAudits: 1, failedAudits: 0, maxConcurrentAudits: 1,

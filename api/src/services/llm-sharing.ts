@@ -122,7 +122,7 @@ function isSharedProvider(provider: string): provider is SharedProvider {
   return (SHARED_PROVIDER_NAMES as readonly string[]).includes(provider);
 }
 
-function utcMonthStart(now = new Date()): string {
+export function utcMonthStart(now = new Date()): string {
   return `${now.getUTCFullYear()}-${String(now.getUTCMonth() + 1).padStart(2, '0')}-01`;
 }
 
@@ -536,6 +536,7 @@ export async function settleSharedAuditReservation(
   }
   const settledUsd = sixDecimalAmount(actualCostUsd, true);
   if (terminalState === 'released' && Number(settledUsd) !== 0) throw new SharedLlmError('shared_cost_invalid');
+  const auditCostUsd = Number(settledUsd).toFixed(4);
   const [reservationIdentity] = await getDb().select({ recipientUserId: llmSharedAuditReservations.recipientUserId })
     .from(llmSharedAuditReservations)
     .where(eq(llmSharedAuditReservations.auditRunId, auditRunId))
@@ -553,6 +554,7 @@ export async function settleSharedAuditReservation(
       eq(llmSharedUsage.monthStart, reservation.monthStart),
     )).for('update');
     if (!usage) throw new SharedLlmError('shared_usage_unavailable');
+    const completedAt = new Date();
     const isSucceeded = terminalState === 'succeeded';
     const isFailed = terminalState === 'failed';
     await tx.update(llmSharedUsage).set({
@@ -571,14 +573,15 @@ export async function settleSharedAuditReservation(
     await tx.update(llmSharedAuditReservations).set({
       settledCostUsd: settledUsd,
       state: terminalState === 'released' ? 'released' : 'settled',
-      settledAt: new Date(),
+      settledAt: completedAt,
     }).where(and(
       eq(llmSharedAuditReservations.id, reservation.id),
       eq(llmSharedAuditReservations.state, 'reserved'),
     ));
     await tx.update(auditRuns).set({
       status: terminalState === 'released' ? 'failed' : terminalState,
-      costUsd: settledUsd,
+      costUsd: auditCostUsd,
+      finishedAt: completedAt,
     }).where(eq(auditRuns.id, auditRunId));
   });
 }
