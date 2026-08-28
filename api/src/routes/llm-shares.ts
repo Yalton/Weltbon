@@ -139,7 +139,10 @@ const withdrawRoute = createRoute({
   request: { params: idParams },
   responses: {
     204: { description: 'Consent withdrawn, including when it was already absent.' },
+    400: { content: { 'application/json': { schema: errorSchema } }, description: 'Invalid grant id.' },
     401: { content: { 'application/json': { schema: errorSchema } }, description: 'Missing or invalid JWT bearer token.' },
+    404: { content: { 'application/json': { schema: errorSchema } }, description: 'Shared grant not found.' },
+    503: { content: { 'application/json': { schema: errorSchema } }, description: 'Shared connection service unavailable.' },
   },
 });
 

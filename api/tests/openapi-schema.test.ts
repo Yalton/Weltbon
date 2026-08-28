@@ -62,6 +62,14 @@ describe('OpenAPI schema and Scalar docs (Phase 10 — DB-independent)', () => {
       required: ['error', 'code'],
       properties: { error: { type: 'string' }, code: { type: 'string' } },
     });
+    const consentDelete = doc.paths['/llm-shares/{id}/consent']?.delete;
+    for (const status of ['400', '404', '503']) {
+      expect(consentDelete?.responses?.[status]?.content?.['application/json']?.schema).toMatchObject({
+        type: 'object',
+        required: ['error', 'code'],
+        properties: { error: { type: 'string' }, code: { type: 'string' } },
+      });
+    }
 
     for (const operation of [
       doc.paths['/llm-shares']?.get,

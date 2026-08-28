@@ -274,6 +274,15 @@ describe('shared LLM grant routes', () => {
       error: 'Invalid shared connection request',
       code: 'invalid_request',
     });
+
+    const invalidUuidDelete = await request('/api/llm-shares/not-a-uuid/consent', {
+      method: 'DELETE', token: recipientJwt,
+    });
+    expect(invalidUuidDelete.status).toBe(400);
+    expect(await invalidUuidDelete.json()).toEqual({
+      error: 'Invalid shared connection request',
+      code: 'invalid_request',
+    });
   });
 
   it('maps typed admin-list failures to a safe documented response', async () => {
@@ -306,6 +315,35 @@ describe('shared LLM grant routes', () => {
       });
     } finally {
       listSpy.mockRestore();
+    }
+  });
+
+  it('maps consent withdrawal service failures to safe documented responses', async () => {
+    const recipient = await createTestUser(handle, { email: 'recipient-withdraw-errors@test.dev', password: 'long-enough-password' });
+    const recipientJwt = await issueAccessToken(recipient.id);
+    const withdrawSpy = vi.spyOn(llmSharing, 'withdrawSharedConsent')
+      .mockRejectedValueOnce(new SharedLlmError('shared_connection_not_found'))
+      .mockRejectedValueOnce(new SharedLlmError('shared_connection_unavailable'));
+    try {
+      const notFound = await request(`/api/llm-shares/${FAKE_UUID}/consent`, {
+        method: 'DELETE', token: recipientJwt,
+      });
+      expect(notFound.status).toBe(404);
+      expect(await notFound.json()).toEqual({
+        error: 'Shared connection not found',
+        code: 'shared_connection_not_found',
+      });
+
+      const unavailable = await request(`/api/llm-shares/${FAKE_UUID}/consent`, {
+        method: 'DELETE', token: recipientJwt,
+      });
+      expect(unavailable.status).toBe(503);
+      expect(await unavailable.json()).toEqual({
+        error: 'Shared connection is temporarily unavailable',
+        code: 'shared_connection_unavailable',
+      });
+    } finally {
+      withdrawSpy.mockRestore();
     }
   });
 
