@@ -20,6 +20,41 @@ import { describe, it, expect } from 'vitest';
 import { app } from '../src/index.js';
 
 describe('OpenAPI schema and Scalar docs (Phase 10 — DB-independent)', () => {
+  it('declares the shared LLM recipient and admin route contracts without credential-shaped inputs', async () => {
+    const res = await app.fetch(new Request('http://localhost/api/openapi.json'));
+    expect(res.status).toBe(200);
+    const doc = await res.json() as any;
+
+    expect(doc.paths['/llm-shares']?.get?.security).toEqual([{ bearerJwtAuth: [] }]);
+    expect(doc.paths['/llm-shares/{id}/consent']?.post?.security).toEqual([{ bearerJwtAuth: [] }]);
+    expect(doc.paths['/llm-shares/{id}/consent']?.delete?.security).toEqual([{ bearerJwtAuth: [] }]);
+    expect(doc.paths['/admin/llm-shares']?.get?.security).toEqual([{ bearerJwtAuth: [] }]);
+    expect(doc.paths['/admin/llm-shares']?.post?.security).toEqual([{ bearerJwtAuth: [] }]);
+    expect(doc.paths['/admin/llm-shares/{id}']?.delete?.security).toEqual([{ bearerJwtAuth: [] }]);
+
+    const createSchema = doc.paths['/admin/llm-shares']?.post?.requestBody
+      ?.content?.['application/json']?.schema;
+    expect(createSchema).toMatchObject({
+      type: 'object',
+      additionalProperties: false,
+      required: ['recipientUserId', 'provider'],
+      properties: {
+        recipientUserId: { type: 'string', format: 'uuid' },
+        provider: { type: 'string', enum: ['anthropic', 'openai'] },
+      },
+    });
+    for (const property of ['key', 'secret', 'baseUrl', 'ciphertext', 'ownerKeyId']) {
+      expect(createSchema.properties?.[property]).toBeUndefined();
+    }
+
+    expect(doc.paths['/llm-shares']?.get?.responses?.['200']?.content?.['application/json']?.schema
+      ?.properties?.grants?.type).toBe('array');
+    expect(doc.paths['/llm-shares/{id}/consent']?.post?.responses?.['200']?.content?.['application/json']?.schema
+      ?.required).toEqual(['grantId', 'consentedAt', 'policyVersion']);
+    expect(doc.paths['/admin/llm-shares']?.post?.responses?.['201']?.content?.['application/json']?.schema
+      ?.required).toEqual(['id', 'owner', 'recipient', 'provider', 'status', 'createdAt', 'revokedAt', 'revokedReason', 'consentedAt', 'usage']);
+  });
+
   it('does not declare an ownership refusal the handshake-only test route cannot send', async () => {
     // Mutation caught: an earlier revision mapped EVERY peer 403 to
     // SyncRemoteOwnershipError and documented 403 here to match. But this route

@@ -25,6 +25,7 @@ import { defineConfig } from 'vitest/config';
 const DB_GATED_TESTS = [
   'tests/llm-sharing-migration.test.ts',
   'tests/llm-sharing-service.test.ts',
+  'tests/llm-sharing-routes.test.ts',
   'tests/audit-engine-cost-unknown.test.ts',
   'tests/audit-recovery.test.ts',
   'tests/audit-routes.test.ts',

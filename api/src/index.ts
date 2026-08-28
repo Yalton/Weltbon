@@ -11,11 +11,13 @@ import { tokenRoutes } from './routes/tokens.js';
 import { templates } from './routes/templates.js';
 import { inviteRoutes } from './routes/invites.js';
 import { adminUserRoutes } from './routes/admin-users.js';
+import { adminLlmShareRoutes } from './routes/admin-llm-shares.js';
 // Phase 29 D-02 — share-CRUD owner-facing router (JWT-only via per-route requireJwtAuth)
 import { shareCrudRoutes } from './routes/shares.js';
 // Phase 29 SHARE-02/03 — visitor share-read router (share-token via per-route requireShareToken)
 import { shareRoutes } from './routes/share.js';
 import { llmKeyRoutes } from './routes/llm-keys.js';
+import { llmShareRoutes } from './routes/llm-shares.js';
 import { llmModelsRoutes } from './routes/llm-models.js';
 import { llmConnectionRoutes } from './routes/llm-connections.js';
 import { configRoutes } from './routes/config.js';
@@ -103,8 +105,10 @@ export function createApp() {
   const apiR = createApiRouter();
   apiR.route('/auth/tokens', tokenRoutes);
   apiR.route('/admin', adminUserRoutes);
+  apiR.route('/admin/llm-shares', adminLlmShareRoutes);
   apiR.route('/templates', templates);
   apiR.route('/llm-keys', llmKeyRoutes);
+  apiR.route('/llm-shares', llmShareRoutes);
   // Phase 27 Plan 03 Task 2 — GET /api/llm/models?provider= (model-catalog cache).
   // Mounted at the bare /api prefix; the createRoute path '/llm/models' resolves
   // to the full /api/llm/models URL. JWT-only via the route's own requireJwtAuth
