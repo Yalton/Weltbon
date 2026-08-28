@@ -45,6 +45,7 @@ import {
 } from '../providers/llm/index.js';
 import { env } from '../config.js';
 import { isUniqueViolation } from '../db/pg-error.js';
+import { revokeSharedGrantsForOwner } from '../services/llm-sharing.js';
 
 type AppEnv = { Variables: AuthVariables };
 
@@ -594,11 +595,30 @@ export const llmKeyRoutes = new OpenAPIHono<AppEnv>()
   .openapi(deleteRoute, async (c) => {
     const userId = c.var.userId;
     const { id } = c.req.valid('param');
-    const deleted = await getDb()
-      .delete(llmApiKeys)
-      .where(and(eq(llmApiKeys.id, id), eq(llmApiKeys.userId, userId)))
-      .returning({ id: llmApiKeys.id });
-    if (deleted.length === 0) {
+    const deleted = await getDb().transaction(async (tx) => {
+      const [key] = await tx
+        .select({ id: llmApiKeys.id, userId: llmApiKeys.userId })
+        .from(llmApiKeys)
+        .where(and(eq(llmApiKeys.id, id), eq(llmApiKeys.userId, userId)))
+        .limit(1);
+      if (!key) return null;
+
+      const [owner] = await tx
+        .select({ isAdmin: users.isAdmin })
+        .from(users)
+        .where(eq(users.id, userId))
+        .limit(1);
+      if (owner?.isAdmin) {
+        await revokeSharedGrantsForOwner(tx, userId, userId, 'owner_key_deleted');
+      }
+
+      const [removed] = await tx
+        .delete(llmApiKeys)
+        .where(and(eq(llmApiKeys.id, id), eq(llmApiKeys.userId, userId)))
+        .returning({ id: llmApiKeys.id });
+      return removed ?? null;
+    });
+    if (!deleted) {
       return c.json({ error: 'LLM key not found' }, 404);
     }
     return c.body(null, 204);

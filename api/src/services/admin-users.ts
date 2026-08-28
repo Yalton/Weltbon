@@ -2,6 +2,7 @@ import { and, desc, eq, isNull, sql } from 'drizzle-orm';
 import { db as getDb, type DrizzleDb } from '../db/client.js';
 import { adminAuditLog, personalAccessTokens, refreshTokens, universes, users } from '../db/schema.js';
 import { revokeAllForUser } from './auth.js';
+import { revokeSharedGrantsForOwner } from './llm-sharing.js';
 
 async function lockActiveAdmins(tx: DrizzleDb) {
   await tx.execute(sql`SELECT id FROM users WHERE is_admin = true AND disabled_at IS NULL FOR UPDATE`);
@@ -18,6 +19,9 @@ export async function disableUser(actorUserId: string, targetUserId: string, rea
       await lockActiveAdmins(tx as DrizzleDb);
       const activeAdmins = await tx.$count(users, and(eq(users.isAdmin, true), isNull(users.disabledAt)));
       if (activeAdmins <= 1) throw new LastAdminError();
+    }
+    if (target.isAdmin) {
+      await revokeSharedGrantsForOwner(tx, target.id, actor.id, 'owner_disabled');
     }
     const now = new Date();
     await tx.update(users).set({ disabledAt: now, disabledReason: reason?.trim() || null }).where(eq(users.id, target.id));
@@ -72,6 +76,9 @@ export async function setAdminStatus(actorUserId: string, targetUserId: string, 
       const activeAdmins = await tx.$count(users, and(eq(users.isAdmin, true), isNull(users.disabledAt)));
       if (activeAdmins <= 1) throw new LastAdminError();
     }
+    if (!isAdmin && target.isAdmin) {
+      await revokeSharedGrantsForOwner(tx, target.id, actor.id, 'owner_demoted');
+    }
     await tx.update(users).set({ isAdmin }).where(eq(users.id, target.id));
     await tx.insert(adminAuditLog).values({
       actorUserId: actor.id, actorEmail: actor.email, targetUserId: target.id, targetEmail: target.email,
@@ -109,6 +116,9 @@ export async function purgeUser(actorUserId: string, targetUserId: string, confi
       await lockActiveAdmins(tx as DrizzleDb);
       const activeAdmins = await tx.$count(users, and(eq(users.isAdmin, true), isNull(users.disabledAt)));
       if (activeAdmins <= 1) throw new LastAdminError();
+    }
+    if (target.isAdmin) {
+      await revokeSharedGrantsForOwner(tx, target.id, actor.id, 'owner_purged');
     }
     const impact = await getUserImpact(target.id, tx as DrizzleDb);
     await tx.insert(adminAuditLog).values({

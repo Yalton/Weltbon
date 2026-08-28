@@ -21,6 +21,7 @@ import {
   utcMonthStart,
   withdrawSharedConsent,
 } from '../src/services/llm-sharing.js';
+import { resolveSharedGrantCredential } from '../src/services/llm-credential.js';
 
 const ENCRYPTION_KEY = '0'.repeat(64);
 const RACE_TIMEOUT_MS = 5_000;
@@ -365,6 +366,60 @@ describe('shared LLM grants', () => {
       { id: second.id, revokedReason: 'owner_disabled' },
     ].sort((a, b) => a.id.localeCompare(b.id)));
     expect((await listAdminSharedGrants()).every((grant) => grant.status === 'revoked')).toBe(true);
+  });
+
+  it('soft-revokes shared access without changing active-run provenance or leaking key material', async () => {
+    const owner = await createTestUser(handle, { email: 'owner-provenance@test.dev', password: 'long-enough-password' });
+    const recipient = await createTestUser(handle, { email: 'recipient-provenance@test.dev', password: 'long-enough-password' });
+    const actor = await createTestUser(handle, { email: 'actor-provenance@test.dev', password: 'long-enough-password' });
+    await handle.db.update(users).set({ isAdmin: true }).where(eq(users.id, owner.id));
+    await handle.db.update(users).set({ isAdmin: true }).where(eq(users.id, actor.id));
+    const plaintext = 'sk-ant-provenance-owner-secret';
+    const encrypted = encryptKey(plaintext, ENCRYPTION_KEY);
+    await handle.db.insert(llmApiKeys).values({
+      userId: owner.id, provider: 'anthropic', ciphertext: encrypted.ciphertext, iv: encrypted.iv,
+      authTag: encrypted.authTag, encryptedKeyVersion: encrypted.version, bodySuffix: encrypted.bodySuffix,
+    });
+    const grant = await createSharedGrant(owner.id, recipient.id, 'anthropic');
+    await consentSharedGrant(recipient.id, grant.id);
+    const [universe] = await handle.db.insert(universes).values({ userId: recipient.id, name: 'Provenance world' }).returning();
+    const reservation = await reserveSharedAudit({
+      recipientUserId: recipient.id, universeId: universe.id, scope: 'universe', scopeEntryId: null,
+      provider: 'anthropic', model: 'claude-haiku-4-5-20251001', grantId: grant.id,
+      credentialOwnerId: owner.id, reservationUsd: 0.1,
+    });
+
+    await handle.db.transaction((tx) => revokeSharedGrantsForOwner(tx, owner.id, actor.id, 'owner_disabled'));
+
+    const [run] = await handle.db.select({
+      status: auditRuns.status,
+      credentialSource: auditRuns.credentialSource,
+      credentialOwnerId: auditRuns.credentialOwnerId,
+      sharedGrantId: auditRuns.sharedGrantId,
+    }).from(auditRuns).where(eq(auditRuns.id, reservation.runId));
+    expect(run).toEqual({
+      status: 'pending',
+      credentialSource: 'shared',
+      credentialOwnerId: owner.id,
+      sharedGrantId: grant.id,
+    });
+    expect(await getSharedAuditReservation(reservation.runId)).toMatchObject({ state: 'reserved', grantId: grant.id });
+    await expect(resolveSharedGrantCredential(recipient.id, grant.id, 'anthropic', ENCRYPTION_KEY))
+      .resolves.toMatchObject({ kind: 'revoked' });
+
+    const revocation = await handle.db.query.adminAuditLog.findFirst({
+      where: eq(adminAuditLog.action, 'llm_shared_revoked'),
+    });
+    expect(revocation).toMatchObject({
+      actorUserId: actor.id,
+      targetUserId: recipient.id,
+      details: { grantId: grant.id, provider: 'anthropic', reason: 'owner_disabled' },
+    });
+    expect(Object.keys(revocation!.details as Record<string, unknown>).sort()).toEqual(['grantId', 'provider', 'reason']);
+    expect(JSON.stringify(revocation)).not.toContain(plaintext);
+    expect(JSON.stringify(revocation)).not.toContain('ownerKeyId');
+
+    await settleSharedAuditReservation(reservation.runId, 'released', 0);
   });
 
   it('rounds up bounded amounts and rejects invalid reservation or settlement amounts', async () => {
