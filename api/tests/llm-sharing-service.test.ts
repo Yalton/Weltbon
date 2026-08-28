@@ -1,5 +1,6 @@
 import { afterAll, beforeAll, beforeEach, describe, expect, it } from 'vitest';
-import { eq } from 'drizzle-orm';
+import { and, eq } from 'drizzle-orm';
+import { randomUUID } from 'node:crypto';
 import { cleanDb, createTestDb, createTestUser, type TestDbHandle } from './helpers.js';
 import { setTestDb } from '../src/db/client.js';
 import { adminAuditLog, auditRuns, llmApiKeys, llmSharedAuditReservations, llmSharedGrants, llmSharedUsage, universes, users } from '../src/db/schema.js';
@@ -38,6 +39,23 @@ async function boundedRace<T>(operation: Promise<T>): Promise<T> {
   } finally {
     if (timeout !== undefined) clearTimeout(timeout);
   }
+}
+
+async function waitForOwnerLockWait(pool: TestDbHandle['pool']): Promise<void> {
+  const deadline = Date.now() + RACE_TIMEOUT_MS;
+  while (Date.now() < deadline) {
+    const result = await pool.query<{ pid: number }>(`
+      SELECT pid
+      FROM pg_stat_activity
+      WHERE state = 'active'
+        AND wait_event_type = 'Lock'
+        AND query ILIKE '%FOR UPDATE%'
+        AND query ILIKE '%users%'
+    `);
+    if (result.rows.length > 0) return;
+    await new Promise((resolve) => setTimeout(resolve, 10));
+  }
+  throw new Error('shared revocation did not reach the owner lock wait');
 }
 
 describe('shared LLM grants', () => {
@@ -421,6 +439,73 @@ describe('shared LLM grants', () => {
 
     await settleSharedAuditReservation(reservation.runId, 'released', 0);
   });
+
+  it.skipIf(process.env.WELTBON_TEST_DRIVER === 'pglite')(
+    'audits a grant that becomes visible after the initial recipient scan',
+    async () => {
+      const owner = await createTestUser(handle, { email: 'owner-late-revoke@test.dev', password: 'long-enough-password' });
+      const recipient = await createTestUser(handle, { email: 'recipient-late-revoke@test.dev', password: 'long-enough-password' });
+      const actor = await createTestUser(handle, { email: 'actor-late-revoke@test.dev', password: 'long-enough-password' });
+      await handle.db.update(users).set({ isAdmin: true }).where(eq(users.id, owner.id));
+      await handle.db.update(users).set({ isAdmin: true }).where(eq(users.id, actor.id));
+      const encrypted = encryptKey('sk-ant-late-revoke-owner-secret', ENCRYPTION_KEY);
+      const [key] = await handle.db.insert(llmApiKeys).values({
+        userId: owner.id,
+        provider: 'anthropic',
+        ciphertext: encrypted.ciphertext,
+        iv: encrypted.iv,
+        authTag: encrypted.authTag,
+        encryptedKeyVersion: encrypted.version,
+        bodySuffix: encrypted.bodySuffix,
+      }).returning();
+
+      const client = await handle.pool.connect();
+      let committed = false;
+      const lateGrantId = randomUUID();
+      let revokePromise: Promise<void> | undefined;
+      try {
+        await client.query('BEGIN');
+        await client.query('SELECT id FROM users WHERE id = $1 FOR UPDATE', [owner.id]);
+        revokePromise = handle.db.transaction((tx) => revokeSharedGrantsForOwner(tx, owner.id, actor.id, 'owner_disabled'));
+        await waitForOwnerLockWait(handle.pool);
+
+        await client.query(`
+          INSERT INTO llm_shared_grants (id, owner_user_id, recipient_user_id, owner_key_id, provider)
+          VALUES ($1, $2, $3, $4, $5)
+        `, [lateGrantId, owner.id, recipient.id, key.id, 'anthropic']);
+        await client.query('COMMIT');
+        committed = true;
+        await boundedRace(revokePromise);
+      } finally {
+        if (!committed) await client.query('ROLLBACK').catch(() => undefined);
+        client.release();
+        await revokePromise?.catch(() => undefined);
+      }
+
+      const [savedGrant] = await handle.db.select({
+        id: llmSharedGrants.id,
+        revokedAt: llmSharedGrants.revokedAt,
+        revokedReason: llmSharedGrants.revokedReason,
+      }).from(llmSharedGrants).where(eq(llmSharedGrants.id, lateGrantId));
+      expect(savedGrant).toMatchObject({ id: lateGrantId, revokedReason: 'owner_disabled' });
+      expect(savedGrant.revokedAt).toBeInstanceOf(Date);
+
+      const revocations = await handle.db.select({
+        actorUserId: adminAuditLog.actorUserId,
+        targetUserId: adminAuditLog.targetUserId,
+        details: adminAuditLog.details,
+      }).from(adminAuditLog).where(eq(adminAuditLog.action, 'llm_shared_revoked'));
+      expect(revocations).toHaveLength(1);
+      expect(revocations[0]).toMatchObject({
+        actorUserId: actor.id,
+        targetUserId: recipient.id,
+        details: { grantId: lateGrantId, provider: 'anthropic', reason: 'owner_disabled' },
+      });
+      expect(Object.keys(revocations[0].details as Record<string, unknown>).sort()).toEqual(['grantId', 'provider', 'reason']);
+      expect(JSON.stringify(revocations)).not.toContain('sk-ant-late-revoke-owner-secret');
+      expect(JSON.stringify(revocations)).not.toContain('ownerKeyId');
+    },
+  );
 
   it('rounds up bounded amounts and rejects invalid reservation or settlement amounts', async () => {
     expect(roundUpToSixDecimals(0.1234561)).toBe(0.123457);

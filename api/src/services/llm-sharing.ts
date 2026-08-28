@@ -601,9 +601,19 @@ export async function getSharedAuditReservation(auditRunId: string): Promise<Sha
   return row ?? null;
 }
 
-export async function revokeSharedGrantsForOwner(
+function activeOwnerGrantWhere(ownerUserId: string, ownerKeyId?: string) {
+  const ownerKeyCondition = ownerKeyId === undefined
+    ? undefined
+    : eq(llmSharedGrants.ownerKeyId, ownerKeyId);
+  return ownerKeyCondition
+    ? and(eq(llmSharedGrants.ownerUserId, ownerUserId), ownerKeyCondition, isNull(llmSharedGrants.revokedAt))
+    : and(eq(llmSharedGrants.ownerUserId, ownerUserId), isNull(llmSharedGrants.revokedAt));
+}
+
+async function revokeSharedGrantsForOwnerScoped(
   tx: SharingTx,
   ownerUserId: string,
+  ownerKeyId: string | undefined,
   actorUserId: string,
   reason: SharedRevocationReason,
 ): Promise<void> {
@@ -611,44 +621,73 @@ export async function revokeSharedGrantsForOwner(
   // Discover recipients without taking a grant lock. All account rows are
   // then acquired in one deterministic order before any grant lock.
   const grantParticipants = await tx.select({
-    id: llmSharedGrants.id,
-    ownerUserId: llmSharedGrants.ownerUserId,
     recipientUserId: llmSharedGrants.recipientUserId,
-  }).from(llmSharedGrants).where(and(
-    eq(llmSharedGrants.ownerUserId, ownerUserId),
-    isNull(llmSharedGrants.revokedAt),
-  ));
-  const lockedAccounts = await lockUsers(tx, [
+  }).from(llmSharedGrants).where(activeOwnerGrantWhere(ownerUserId, ownerKeyId));
+  await lockUsers(tx, [
     ownerUserId,
     actorUserId,
     ...grantParticipants.map((grant) => grant.recipientUserId),
   ]);
-  const actor = lockedAccounts.find((user) => user.id === actorUserId);
+
+  // The owner lock closes the window for a new grant to commit. Re-read after
+  // acquiring it so a grant that was waiting on the lock is included, then
+  // acquire every recipient row before taking grant locks or writing audits.
+  const reconciledParticipants = await tx.select({
+    recipientUserId: llmSharedGrants.recipientUserId,
+  }).from(llmSharedGrants).where(activeOwnerGrantWhere(ownerUserId, ownerKeyId));
+  const reconciledAccounts = await lockUsers(tx, [
+    ownerUserId,
+    actorUserId,
+    ...reconciledParticipants.map((grant) => grant.recipientUserId),
+  ]);
   const grants = await tx.select({
     id: llmSharedGrants.id,
     provider: llmSharedGrants.provider,
     recipientUserId: llmSharedGrants.recipientUserId,
-  }).from(llmSharedGrants).where(and(
-    eq(llmSharedGrants.ownerUserId, ownerUserId),
-    isNull(llmSharedGrants.revokedAt),
-  )).orderBy(asc(llmSharedGrants.id)).for('update');
+  }).from(llmSharedGrants).where(activeOwnerGrantWhere(ownerUserId, ownerKeyId))
+    .orderBy(asc(llmSharedGrants.id)).for('update');
+  const actor = reconciledAccounts.find((user) => user.id === actorUserId);
+  const recipients = new Map(reconciledAccounts.map((user) => [user.id, user]));
+  if (grants.length > 0 && !actor) throw new SharedLlmError('shared_connection_not_found');
+  if (grants.some((grant) => !recipients.has(grant.recipientUserId))) {
+    throw new SharedLlmError('shared_connection_not_found');
+  }
   const revokedAt = new Date();
   for (const grant of grants) {
-    const recipient = lockedAccounts.find((user) => user.id === grant.recipientUserId);
-    await tx.update(llmSharedGrants).set({
+    const recipient = recipients.get(grant.recipientUserId)!;
+    const [revoked] = await tx.update(llmSharedGrants).set({
       revokedAt,
       revokedByUserId: actorUserId,
       revokedReason: reason,
-    }).where(and(eq(llmSharedGrants.id, grant.id), isNull(llmSharedGrants.revokedAt)));
-    if (actor && recipient) {
-      await tx.insert(adminAuditLog).values({
-        actorUserId: actor.id,
-        actorEmail: actor.email,
-        targetUserId: recipient.id,
-        targetEmail: recipient.email,
-        action: 'llm_shared_revoked',
-        details: { grantId: grant.id, provider: grant.provider, reason },
-      });
-    }
+    }).where(and(eq(llmSharedGrants.id, grant.id), isNull(llmSharedGrants.revokedAt)))
+      .returning({ id: llmSharedGrants.id });
+    if (!revoked) continue;
+    await tx.insert(adminAuditLog).values({
+      actorUserId: actor!.id,
+      actorEmail: actor!.email,
+      targetUserId: recipient.id,
+      targetEmail: recipient.email,
+      action: 'llm_shared_revoked',
+      details: { grantId: grant.id, provider: grant.provider, reason },
+    });
   }
+}
+
+export async function revokeSharedGrantsForOwner(
+  tx: SharingTx,
+  ownerUserId: string,
+  actorUserId: string,
+  reason: SharedRevocationReason,
+): Promise<void> {
+  return revokeSharedGrantsForOwnerScoped(tx, ownerUserId, undefined, actorUserId, reason);
+}
+
+export async function revokeSharedGrantsForOwnerKey(
+  tx: SharingTx,
+  ownerUserId: string,
+  ownerKeyId: string,
+  actorUserId: string,
+  reason: SharedRevocationReason,
+): Promise<void> {
+  return revokeSharedGrantsForOwnerScoped(tx, ownerUserId, ownerKeyId, actorUserId, reason);
 }

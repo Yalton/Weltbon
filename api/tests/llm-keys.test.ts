@@ -655,6 +655,45 @@ describe('llm-key routes (Phase 22-04: LLMKEY-01/03/04/05/06)', () => {
       expect(JSON.stringify(revocation)).not.toContain('sk-ant-delete-owner-secret');
       expect(JSON.stringify(revocation)).not.toContain('ciphertext');
     });
+
+    it('revokes only grants attached to the deleted provider key', async () => {
+      const { userId: ownerId, jwt } = await createUserAndJwt('del-multi-provider-owner@test.com');
+      const recipient = await createTestUser(handle, { email: 'del-multi-provider-recipient@test.com', password: 'longenoughpw12' });
+      await handle.db.update(users).set({ isAdmin: true }).where(eq(users.id, ownerId));
+
+      const anthropic = await appRequest('POST', '/api/llm-keys', {
+        body: { provider: 'anthropic', key: 'sk-ant-delete-one-provider' },
+        headers: { Authorization: `Bearer ${jwt}` },
+      });
+      const openai = await appRequest('POST', '/api/llm-keys', {
+        body: { provider: 'openai', key: 'sk-openai-keep-provider' },
+        headers: { Authorization: `Bearer ${jwt}` },
+      });
+      expect(anthropic.status).toBe(200);
+      expect(openai.status).toBe(200);
+
+      const anthropicGrant = await createSharedGrant(ownerId, recipient.id, 'anthropic');
+      const openaiGrant = await createSharedGrant(ownerId, recipient.id, 'openai');
+      await consentSharedGrant(recipient.id, anthropicGrant.id);
+      await consentSharedGrant(recipient.id, openaiGrant.id);
+
+      const res = await appRequest('DELETE', `/api/llm-keys/${anthropic.body.id}`, {
+        headers: { Authorization: `Bearer ${jwt}` },
+      });
+      expect(res.status).toBe(204);
+
+      expect(await handle.db.query.llmSharedGrants.findFirst({ where: eq(llmSharedGrants.id, anthropicGrant.id) })).toMatchObject({
+        revokedReason: 'owner_key_deleted',
+      });
+      expect(await handle.db.query.llmSharedGrants.findFirst({ where: eq(llmSharedGrants.id, openaiGrant.id) })).toMatchObject({
+        ownerKeyId: openai.body.id,
+        provider: 'openai',
+        revokedAt: null,
+        revokedReason: null,
+      });
+      await expect(resolveSharedGrantCredential(recipient.id, openaiGrant.id, 'openai', ENCRYPTION_KEY))
+        .resolves.toEqual({ kind: 'ready', credential: { apiKey: 'sk-openai-keep-provider' } });
+    });
   });
 
   describe('PUT /api/llm-keys/:id with shared grants', () => {

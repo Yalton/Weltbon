@@ -45,7 +45,7 @@ import {
 } from '../providers/llm/index.js';
 import { env } from '../config.js';
 import { isUniqueViolation } from '../db/pg-error.js';
-import { revokeSharedGrantsForOwner } from '../services/llm-sharing.js';
+import { revokeSharedGrantsForOwnerKey } from '../services/llm-sharing.js';
 
 type AppEnv = { Variables: AuthVariables };
 
@@ -609,7 +609,7 @@ export const llmKeyRoutes = new OpenAPIHono<AppEnv>()
         .where(eq(users.id, userId))
         .limit(1);
       if (owner?.isAdmin) {
-        await revokeSharedGrantsForOwner(tx, userId, userId, 'owner_key_deleted');
+        await revokeSharedGrantsForOwnerKey(tx, userId, key.id, userId, 'owner_key_deleted');
       }
 
       const [removed] = await tx

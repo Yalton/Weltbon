@@ -5,7 +5,7 @@ import { revokeAllForUser } from './auth.js';
 import { revokeSharedGrantsForOwner } from './llm-sharing.js';
 
 async function lockActiveAdmins(tx: DrizzleDb) {
-  await tx.execute(sql`SELECT id FROM users WHERE is_admin = true AND disabled_at IS NULL FOR UPDATE`);
+  await tx.execute(sql`SELECT id FROM users WHERE is_admin = true AND disabled_at IS NULL ORDER BY id FOR UPDATE`);
 }
 
 export async function disableUser(actorUserId: string, targetUserId: string, reason?: string) {
