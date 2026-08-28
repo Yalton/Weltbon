@@ -1,6 +1,23 @@
 // api/tests/llm-credential.test.ts
-import { describe, it, expect, beforeAll, afterAll, beforeEach } from 'vitest';
+import { describe, it, expect, beforeAll, afterAll, beforeEach, vi } from 'vitest';
 import { eq } from 'drizzle-orm';
+
+// This file encrypts its fixtures with KEY below, but the services under test
+// read the key from env() — so every shared-grant test here silently depended
+// on the RUNNER exporting exactly that value. Without it `createSharedGrant`
+// cannot decrypt the owner key and throws `owner_key_required`, failing all
+// 15 shared cases before they reach the assertion they were written for. The
+// file reported green only when invoked with a matching
+// LLM_KEY_ENCRYPTION_KEY and red under the command documented for the branch.
+//
+// Pinned here, as every other credential-bearing test file does. The value
+// must stay '0'.repeat(64): vitest shares one worker process across files, so
+// process.env set here is also what llm-sharing-service.test.ts (which pins
+// the same constant but sets no env of its own) reads. Setting anything else
+// here fixes this file by breaking that one.
+vi.hoisted(() => {
+  process.env.LLM_KEY_ENCRYPTION_KEY = '0'.repeat(64);
+});
 import { createTestDb, cleanDb, createTestUser, type TestDbHandle } from './helpers.js';
 import { llmApiKeys, llmSharedConsents, llmSharedGrants, users } from '../src/db/schema.js';
 import { encryptKey } from '../src/services/llm-key.js';
@@ -16,7 +33,7 @@ import {
   resolveSharedGrantCredential,
 } from '../src/services/llm-credential.js';
 
-const KEY = 'a'.repeat(64);
+const KEY = '0'.repeat(64);
 
 async function insertEncryptedKey(
   handle: TestDbHandle,
