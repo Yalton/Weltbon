@@ -173,11 +173,18 @@ async function lockUsers(tx: SharingTx, userIds: string[]) {
     .for('update');
 }
 
+// Keep membership serialization separate from account-row locking so every
+// participant set can still be acquired through lockUsers in sorted order.
+async function lockOwnerMembership(tx: SharingTx, ownerUserId: string): Promise<void> {
+  await tx.execute(sql`SELECT pg_advisory_xact_lock(hashtext(${ownerUserId})::bigint)`);
+}
+
 export async function lockLifecycleAccountsForOwner(
   tx: SharingTx,
   actorUserId: string,
   ownerUserId: string,
 ): Promise<void> {
+  await lockOwnerMembership(tx, ownerUserId);
   const activeAdmins = await tx.select({ id: users.id }).from(users).where(and(
     eq(users.isAdmin, true),
     isNull(users.disabledAt),
@@ -390,6 +397,7 @@ export async function createSharedGrant(
 
   try {
     return await getDb().transaction(async (tx) => {
+    await lockOwnerMembership(tx, actorUserId);
     const lockedAccounts = await lockUsers(tx, [actorUserId, recipientUserId]);
     const actor = lockedAccounts.find((user) => user.id === actorUserId);
     const recipient = lockedAccounts.find((user) => user.id === recipientUserId);
@@ -442,6 +450,7 @@ export async function revokeSharedGrant(
     recipientUserId: llmSharedGrants.recipientUserId,
   }).from(llmSharedGrants).where(eq(llmSharedGrants.id, grantId)).limit(1);
   await getDb().transaction(async (tx) => {
+    if (participantIds) await lockOwnerMembership(tx, participantIds.ownerUserId);
     const lockedAccounts = await lockUsers(tx, [
       actorUserId,
       ...(participantIds ? [participantIds.ownerUserId, participantIds.recipientUserId] : []),
@@ -474,6 +483,7 @@ export async function reserveSharedAudit(input: SharedAuditReservationInput): Pr
   if (!isSharedProvider(input.provider)) throw new SharedLlmError('shared_provider_unsupported');
   const reservedUsd = sixDecimalAmount(input.reservationUsd, false);
   return getDb().transaction(async (tx) => {
+    await lockOwnerMembership(tx, input.credentialOwnerId);
     const lockedAccounts = await lockUsers(tx, [input.recipientUserId, input.credentialOwnerId]);
     const recipient = lockedAccounts.find((user) => user.id === input.recipientUserId);
     const owner = lockedAccounts.find((user) => user.id === input.credentialOwnerId);
@@ -641,6 +651,7 @@ async function revokeSharedGrantsForOwnerScoped(
   reason: SharedRevocationReason,
 ): Promise<void> {
   if (!REVOCATION_REASONS.has(reason)) throw new SharedLlmError('shared_revocation_reason_invalid');
+  await lockOwnerMembership(tx, ownerUserId);
   // Discover recipients without taking a grant lock. All account rows are
   // then acquired in one deterministic order before any grant lock.
   const grantParticipants = await tx.select({

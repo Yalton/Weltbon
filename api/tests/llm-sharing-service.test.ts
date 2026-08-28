@@ -59,6 +59,21 @@ async function waitForUserLockWait(pool: TestDbHandle['pool'], minimumWaiters = 
   throw new Error(`shared concurrency did not reach ${minimumWaiters} user lock wait(s)`);
 }
 
+async function waitForDatabaseLockWait(pool: TestDbHandle['pool'], minimumWaiters = 1): Promise<void> {
+  const deadline = Date.now() + RACE_TIMEOUT_MS;
+  while (Date.now() < deadline) {
+    const result = await pool.query<{ pid: number }>(`
+      SELECT pid
+      FROM pg_stat_activity
+      WHERE state = 'active'
+        AND wait_event_type = 'Lock'
+    `);
+    if (result.rows.length >= minimumWaiters) return;
+    await new Promise((resolve) => setTimeout(resolve, 10));
+  }
+  throw new Error(`shared concurrency did not reach ${minimumWaiters} database lock wait(s)`);
+}
+
 describe('shared LLM grants', () => {
   let handle: TestDbHandle;
 
@@ -675,7 +690,7 @@ describe('shared LLM grants', () => {
   });
 
   it.skipIf(process.env.WELTBON_TEST_DRIVER === 'pglite')(
-    'does not deadlock lifecycle revocation against shared reservation',
+    'does not deadlock lifecycle revocation against a late grant reservation',
     async () => {
       const created = [];
       for (const role of ['one', 'two', 'three', 'four']) {
@@ -692,7 +707,7 @@ describe('shared LLM grants', () => {
       }
 
       const encrypted = encryptKey('sk-ant-lifecycle-reservation-secret', ENCRYPTION_KEY);
-      await handle.db.insert(llmApiKeys).values({
+      const [key] = await handle.db.insert(llmApiKeys).values({
         userId: owner.id,
         provider: 'anthropic',
         ciphertext: encrypted.ciphertext,
@@ -700,25 +715,37 @@ describe('shared LLM grants', () => {
         authTag: encrypted.authTag,
         encryptedKeyVersion: encrypted.version,
         bodySuffix: encrypted.bodySuffix,
-      });
-      const grant = await createSharedGrant(owner.id, recipient.id, 'anthropic');
-      await consentSharedGrant(recipient.id, grant.id);
+      }).returning();
       const [universe] = await handle.db.insert(universes).values({
         userId: recipient.id,
         name: 'Lifecycle reservation race',
       }).returning();
 
-      const client = await handle.pool.connect();
-      let committed = false;
+      const ownerClient = await handle.pool.connect();
+      const sentinelClient = await handle.pool.connect();
+      const lateGrantId = randomUUID();
+      let ownerCommitted = false;
+      let sentinelCommitted = false;
       let lifecyclePromise: Promise<unknown> | undefined;
       let reservationPromise: Promise<unknown> | undefined;
       try {
-        await client.query('BEGIN');
-        await client.query('SELECT id FROM users WHERE id = $1 FOR UPDATE', [sentinel.id]);
+        await ownerClient.query('BEGIN');
+        await ownerClient.query('SELECT id FROM users WHERE id = $1 FOR UPDATE', [owner.id]);
+        await sentinelClient.query('BEGIN');
+        await sentinelClient.query('SELECT id FROM users WHERE id = $1 FOR UPDATE', [sentinel.id]);
 
         lifecyclePromise = disableUser(actor.id, owner.id, 'deadlock regression');
         await waitForUserLockWait(handle.pool);
 
+        await ownerClient.query(`
+          INSERT INTO llm_shared_grants (id, owner_user_id, recipient_user_id, owner_key_id, provider)
+          VALUES ($1, $2, $3, $4, $5)
+        `, [lateGrantId, owner.id, recipient.id, key.id, 'anthropic']);
+        await ownerClient.query('COMMIT');
+        ownerCommitted = true;
+        await waitForUserLockWait(handle.pool);
+
+        await consentSharedGrant(recipient.id, lateGrantId);
         reservationPromise = reserveSharedAudit({
           recipientUserId: recipient.id,
           universeId: universe.id,
@@ -726,14 +753,14 @@ describe('shared LLM grants', () => {
           scopeEntryId: null,
           provider: 'anthropic',
           model: 'claude-haiku-4-5-20251001',
-          grantId: grant.id,
+          grantId: lateGrantId,
           credentialOwnerId: owner.id,
           reservationUsd: 0.1,
         });
-        await waitForUserLockWait(handle.pool, 2);
+        await waitForDatabaseLockWait(handle.pool, 2);
 
-        await client.query('COMMIT');
-        committed = true;
+        await sentinelClient.query('COMMIT');
+        sentinelCommitted = true;
         const [lifecycle, reservation] = await boundedRace(Promise.allSettled([
           lifecyclePromise,
           reservationPromise,
@@ -744,15 +771,17 @@ describe('shared LLM grants', () => {
           expect(reservation.reason).toMatchObject({ code: 'shared_access_revoked' });
         }
       } finally {
-        if (!committed) await client.query('ROLLBACK').catch(() => undefined);
-        client.release();
+        if (!ownerCommitted) await ownerClient.query('ROLLBACK').catch(() => undefined);
+        if (!sentinelCommitted) await sentinelClient.query('ROLLBACK').catch(() => undefined);
+        ownerClient.release();
+        sentinelClient.release();
         await lifecyclePromise?.catch(() => undefined);
         await reservationPromise?.catch(() => undefined);
       }
 
       const savedOwner = await handle.db.query.users.findFirst({ where: eq(users.id, owner.id) });
       expect(savedOwner?.disabledAt).toBeInstanceOf(Date);
-      const savedGrant = await handle.db.query.llmSharedGrants.findFirst({ where: eq(llmSharedGrants.id, grant.id) });
+      const savedGrant = await handle.db.query.llmSharedGrants.findFirst({ where: eq(llmSharedGrants.id, lateGrantId) });
       expect(savedGrant?.revokedReason).toBe('owner_disabled');
       const revocations = await handle.db.query.adminAuditLog.findMany({
         where: eq(adminAuditLog.action, 'llm_shared_revoked'),
@@ -761,7 +790,7 @@ describe('shared LLM grants', () => {
       expect(revocations[0]).toMatchObject({
         actorUserId: actor.id,
         targetUserId: recipient.id,
-        details: { grantId: grant.id, provider: 'anthropic', reason: 'owner_disabled' },
+        details: { grantId: lateGrantId, provider: 'anthropic', reason: 'owner_disabled' },
       });
     },
   );
