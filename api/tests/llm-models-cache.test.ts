@@ -536,6 +536,26 @@ describe('GET /api/llm/models (Phase 27 Plan 03 Task 2 — endpoint integration)
     expect(mockAnthropicList).not.toHaveBeenCalled();
   });
 
+  // Review finding 3: the fail-closed rule, pinned at the route. A recipient
+  // whose own key cannot be decrypted must get the OWN-key 503 (no `code`) and
+  // must not have the owner's credential handed to the provider SDK.
+  it('fails closed on an undecryptable own key rather than listing the shared catalog', async () => {
+    const fixture = await sharedFixture();
+    const ownKey = await insertEncryptedKey(fixture.recipient.user.id, RECIPIENT_SECRET);
+    await handle.db.update(llmApiKeys).set({ authTag: '0'.repeat(32) })
+      .where(eq(llmApiKeys.id, ownKey.id));
+
+    const response = await req('GET', '/api/llm/models?provider=anthropic', {
+      headers: fixture.recipient.hdrs,
+    });
+    expect(response.status).toBe(503);
+    // The own-key operator copy, NOT shared_credential_unavailable — the
+    // distinction is what tells the user which key is actually broken.
+    expect(await json(response)).not.toHaveProperty('code');
+    expect(mockAnthropicClient).not.toHaveBeenCalled();
+    expect(mockAnthropicList).not.toHaveBeenCalled();
+  });
+
   it('keeps a usable personal key ahead of a consented shared key', async () => {
     const fixture = await sharedFixture();
     await insertEncryptedKey(fixture.recipient.user.id, RECIPIENT_SECRET);

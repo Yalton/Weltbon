@@ -470,6 +470,7 @@ describe('GET /api/universes/:uid/audits/estimate (Phase 26 Plan 08 Task 1)', ()
       monthStart: utcMonthStart(),
       settledCostUsd: '1.000000',
     });
+    mockEstimate.mockClear();
 
     const response = await req(
       'GET',
@@ -478,6 +479,28 @@ describe('GET /api/universes/:uid/audits/estimate (Phase 26 Plan 08 Task 1)', ()
     );
     expect(response.status).toBe(429);
     expect(await json(response)).toMatchObject({ code: 'shared_monthly_limit_exceeded' });
+    // Review finding 1: refused before the estimator, so the owner's
+    // credential is never used to answer a request the cap has already denied.
+    expect(mockEstimate).not.toHaveBeenCalled();
+  });
+
+  // Review finding 3: a BROKEN own key must not fall through to the grant.
+  // Only an ABSENT own key may. The 400 is the pre-#50 no-credential contract
+  // for this route, unchanged — what matters is that no shared estimate ran.
+  it('fails closed on an undecryptable own key rather than estimating on the grant', async () => {
+    const fixture = await sharedFixture();
+    const ownKey = await insertEncryptedKey(fixture.recipient.user.id, RECIPIENT_SECRET);
+    await handle.db.update(llmApiKeys).set({ authTag: '0'.repeat(32) })
+      .where(eq(llmApiKeys.id, ownKey.id));
+    mockEstimate.mockClear();
+
+    const response = await req(
+      'GET',
+      `/api/universes/${fixture.universe.id}/audits/estimate?scope=universe`,
+      { headers: fixture.recipient.hdrs },
+    );
+    expect(response.status).toBe(400);
+    expect(mockEstimate).not.toHaveBeenCalled();
   });
 
   it('returns a safe unavailable response for an invalid shared owner key', async () => {

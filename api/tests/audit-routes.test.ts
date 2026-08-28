@@ -649,6 +649,8 @@ describe('audit routes (AUDIT-10, AUDIT-11, AUDIT-03)', () => {
       settledCostUsd: '1.000000',
     });
 
+    mockEstimate.mockClear();
+
     const response = await req('POST', `/api/universes/${fixture.universe.id}/audit`, {
       headers: fixture.recipient.hdrs,
       body: { scope: 'universe' },
@@ -656,24 +658,39 @@ describe('audit routes (AUDIT-10, AUDIT-11, AUDIT-03)', () => {
     expect(response.status).toBe(429);
     expect(await json(response)).toMatchObject({ code: 'shared_monthly_limit_exceeded' });
     expect(await handle.db.$count(auditRuns)).toBe(0);
+    // Review finding 1: a recipient the cap has already refused must not reach
+    // the owner's provider at all. estimateAudit() calls it on the OWNER's
+    // credential, so a refusal computed after the estimate still spends an
+    // unmetered call against the administrator's rate limit.
+    expect(mockEstimate).not.toHaveBeenCalled();
   });
 
-  it('admits only one of two concurrent shared triggers for the recipient', async () => {
+  // Review finding 5: this deliberately races two DIFFERENT universes of one
+  // recipient. Racing the same universe cannot distinguish the new
+  // recipient-wide rule from the pre-existing audit_runs_universe_active_unique
+  // index, whose violation reserveSharedAudit also maps to
+  // shared_audit_in_progress — either mechanism satisfies the assertion, so
+  // the test would pass with the recipient-wide cap entirely absent.
+  it('admits only one concurrent shared trigger across two universes of one recipient', async () => {
     const fixture = await sharedFixture();
-    const [first, second] = await Promise.all([
+    const second = await createUniverse(fixture.recipient.hdrs, 'SecondSharedTriggerWorld');
+    await enableAudit(second.id, fixture.recipient.hdrs, 'anthropic', 'claude-haiku-4-5-20251001');
+
+    const [first, other] = await Promise.all([
       req('POST', `/api/universes/${fixture.universe.id}/audit`, {
         headers: fixture.recipient.hdrs,
         body: { scope: 'universe' },
       }),
-      req('POST', `/api/universes/${fixture.universe.id}/audit`, {
+      req('POST', `/api/universes/${second.id}/audit`, {
         headers: fixture.recipient.hdrs,
         body: { scope: 'universe' },
       }),
     ]);
-    expect([first.status, second.status].sort()).toEqual([202, 409]);
-    const rejected = first.status === 409 ? first : second;
+    expect([first.status, other.status].sort()).toEqual([202, 409]);
+    const rejected = first.status === 409 ? first : other;
     expect(await json(rejected)).toMatchObject({ code: 'shared_audit_in_progress' });
     expect(await handle.db.$count(llmSharedAuditReservations)).toBe(1);
+    expect(await handle.db.$count(auditRuns)).toBe(1);
   });
 
   it('keeps a personal key ahead of shared admission and writes own provenance without a reservation', async () => {
@@ -709,6 +726,37 @@ describe('audit routes (AUDIT-10, AUDIT-11, AUDIT-03)', () => {
     expect(await json(response)).toMatchObject({ code: 'shared_credential_unavailable' });
     expect(mockEstimate).not.toHaveBeenCalled();
     expect(await handle.db.$count(auditRuns)).toBe(0);
+  });
+
+  // Review finding 3: the invariant whose failure silently moves billing onto
+  // an administrator had no route-level test on any surface. A BROKEN own key
+  // is not the same as an absent one — only the absent case may use a grant.
+  it('fails closed on an undecryptable own key rather than admitting a shared run', async () => {
+    const fixture = await sharedFixture();
+    const ownKey = await insertEncryptedKey(fixture.recipient.user.id, RECIPIENT_SECRET);
+    await handle.db.update(llmApiKeys).set({ authTag: '0'.repeat(32) })
+      .where(eq(llmApiKeys.id, ownKey.id));
+    mockEstimate.mockClear();
+
+    const response = await req('POST', `/api/universes/${fixture.universe.id}/audit`, {
+      headers: fixture.recipient.hdrs,
+      body: { scope: 'universe' },
+    });
+    expect(response.status).toBe(202);
+    const body = await json(response);
+    const [run] = await handle.db.select({
+      credentialSource: auditRuns.credentialSource,
+      credentialOwnerId: auditRuns.credentialOwnerId,
+      sharedGrantId: auditRuns.sharedGrantId,
+    }).from(auditRuns).where(eq(auditRuns.id, body.runId));
+    expect(run).toEqual({
+      credentialSource: 'own',
+      credentialOwnerId: fixture.recipient.user.id,
+      sharedGrantId: null,
+    });
+    expect(await handle.db.$count(llmSharedAuditReservations)).toBe(0);
+    // Never estimated, so the owner's credential was never resolved either.
+    expect(mockEstimate).not.toHaveBeenCalled();
   });
 
   it('rejects an entry trigger whose entry belongs to another universe', async () => {

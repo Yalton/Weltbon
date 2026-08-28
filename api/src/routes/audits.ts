@@ -216,12 +216,20 @@ const auditHistoryQuerySchema = z.object({
 // live here rather than in each handler so the two cannot drift into telling a
 // recipient different stories about one grant.
 
-type SharedFailure = {
-  status: 403 | 409 | 422 | 429 | 503;
+// Review finding 2: this used to be one wide `status: 403|409|422|429|503`,
+// and every call site cast the response `as never` to get past Hono's
+// response-declaration check. That cast silenced the check entirely — deleting
+// the `429` block from a route's `responses` produced no compiler error at
+// all, which is exactly the class of bug that was caught by hand on Task 4.
+// Parameterising the status keeps each constant's code a literal, so
+// `c.json(f.body, f.status)` is checked against the route that returns it and
+// an undeclared status fails the build again.
+type SharedFailure<S extends 403 | 409 | 422 | 429 | 503> = {
+  status: S;
   body: { error: string; code: string };
 };
 
-const SHARED_CONSENT_REQUIRED: SharedFailure = {
+const SHARED_CONSENT_REQUIRED: SharedFailure<403> = {
   status: 403,
   body: {
     error: 'Shared connection requires consent before use',
@@ -233,8 +241,15 @@ const SHARED_CONSENT_REQUIRED: SharedFailure = {
 // rotated, ciphertext undecryptable) collapses to one opaque code on purpose:
 // each of those describes ANOTHER user's account, and telling a recipient
 // which one it is turns an audit button into an oracle for the administrator
-// roster. The operator still has the audit log.
-const SHARED_CREDENTIAL_UNAVAILABLE: SharedFailure = {
+// roster.
+//
+// Nothing currently records WHICH of the four it was for the operator either:
+// admin_audit_log carries grant/revoke actions, not resolution failures, and
+// llm-credential.ts forbids console output by design. An operator debugging
+// "my shared connection says unavailable" therefore has no signal at all.
+// That is a real gap — see Task 10 — but it belongs at a layer that is
+// allowed to log, not in this response.
+const SHARED_CREDENTIAL_UNAVAILABLE: SharedFailure<503> = {
   status: 503,
   body: {
     error: 'Shared connection is temporarily unavailable',
@@ -242,7 +257,7 @@ const SHARED_CREDENTIAL_UNAVAILABLE: SharedFailure = {
   },
 };
 
-const SHARED_COST_UNAVAILABLE: SharedFailure = {
+const SHARED_COST_UNAVAILABLE: SharedFailure<422> = {
   status: 422,
   body: {
     error: 'This model has no published price, so a shared run cannot be capped',
@@ -250,7 +265,7 @@ const SHARED_COST_UNAVAILABLE: SharedFailure = {
   },
 };
 
-const SHARED_LIMIT_EXCEEDED: SharedFailure = {
+const SHARED_LIMIT_EXCEEDED: SharedFailure<429> = {
   status: 429,
   body: {
     error: 'Shared monthly allowance is exhausted',
@@ -272,19 +287,37 @@ const SHARED_LIMIT_EXCEEDED: SharedFailure = {
  * rethrows: an unexpected driver error must still reach the 500 handler
  * rather than being flattened into a 503 that reads like a quota problem.
  */
-function sharedAdmissionFailure(error: unknown): SharedFailure | null {
+const SHARED_AUDIT_IN_PROGRESS: SharedFailure<409> = {
+  status: 409,
+  body: {
+    // Recipient-scoped, not universe-scoped: the cap is one concurrent shared
+    // run per recipient across every universe they own.
+    error: 'A shared audit is already running for your account',
+    code: 'shared_audit_in_progress',
+  },
+};
+
+// The grant was revoked (or its key swapped) between resolution and the
+// reservation lock. 403 rather than 503: nothing here is going to fix itself,
+// and a retry would be pointless.
+const SHARED_ACCESS_REVOKED: SharedFailure<403> = {
+  status: 403,
+  body: { error: 'Shared access is no longer available', code: 'shared_access_revoked' },
+};
+
+/** Every failure `reserveSharedAudit` can produce, for the trigger route. */
+type SharedAdmissionFailure =
+  | SharedFailure<403>
+  | SharedFailure<409>
+  | SharedFailure<422>
+  | SharedFailure<429>
+  | SharedFailure<503>;
+
+function sharedAdmissionFailure(error: unknown): SharedAdmissionFailure | null {
   if (!(error instanceof SharedLlmError)) return null;
   switch (error.code) {
     case 'shared_audit_in_progress':
-      // Recipient-scoped, not universe-scoped: the cap is one concurrent
-      // shared run per recipient across every universe they own.
-      return {
-        status: 409,
-        body: {
-          error: 'A shared audit is already running for your account',
-          code: 'shared_audit_in_progress',
-        },
-      };
+      return SHARED_AUDIT_IN_PROGRESS;
     case 'shared_monthly_limit_exceeded':
       return SHARED_LIMIT_EXCEEDED;
     case 'shared_cost_invalid':
@@ -292,13 +325,7 @@ function sharedAdmissionFailure(error: unknown): SharedFailure | null {
     case 'shared_llm_consent_required':
       return SHARED_CONSENT_REQUIRED;
     case 'shared_access_revoked':
-      // The grant was revoked (or its key swapped) between resolution and
-      // the reservation lock. 403 rather than 503: nothing is going to fix
-      // itself here, and a retry would be pointless.
-      return {
-        status: 403,
-        body: { error: 'Shared access is no longer available', code: 'shared_access_revoked' },
-      };
+      return SHARED_ACCESS_REVOKED;
     default:
       return SHARED_CREDENTIAL_UNAVAILABLE;
   }
@@ -307,7 +334,9 @@ function sharedAdmissionFailure(error: unknown): SharedFailure | null {
 type RunCredential =
   | { kind: 'ready'; credential: ProviderCredential; effective: EffectiveLlmCredential | null }
   | { kind: 'none' }
-  | { kind: 'failure'; failure: SharedFailure };
+  // Only these two: a resolution can fail for want of consent or because the
+  // owner credential is unusable, never for quota reasons.
+  | { kind: 'failure'; failure: SharedFailure<403> | SharedFailure<503> };
 
 /**
  * Resolves the credential an audit on `provider` would actually run on.
@@ -350,6 +379,41 @@ async function resolveRunCredential(
     case 'missing':
       return { kind: 'none' };
   }
+}
+
+/**
+ * Refuses a shared caller who cannot be admitted no matter what the estimate
+ * says, BEFORE the estimator runs.
+ *
+ * Review finding 1: the plan put the whole quota check after `estimateAudit`,
+ * and `estimateAudit` calls the provider on the OWNER's credential (for
+ * Anthropic, a live `messages.countTokens`). A recipient whose monthly cap was
+ * already exhausted therefore got a 429 — after three requests had made three
+ * calls against the administrator's account. countTokens is zero-billed, so
+ * that is not spend, but it is an unmetered proxy into the owner's rate limit
+ * driven by a party the server has already refused.
+ *
+ * This is NOT a second copy of the admission rule. It only ever REJECTS, and
+ * only on state that cannot improve within the request: `reserveSharedAudit`
+ * re-reads everything under its locks and stays the only thing that admits a
+ * run. Anything this lets through is still decided there.
+ *
+ * The cap comparison inherits `getSharedQuotaSnapshot`'s four-decimal
+ * rounding (`money()` in llm-sharing.ts) while the reservation compares raw
+ * numeric(12,6), so near the boundary this can refuse a recipient whose true
+ * remaining allowance is under $0.00005. That direction is deliberate: erring
+ * toward not spending an administrator's budget is the safe failure for this
+ * feature, and no real audit estimate is that small.
+ */
+async function sharedPreflightFailure(
+  userId: string,
+): Promise<SharedFailure<409> | SharedFailure<429> | null> {
+  const quota = await getSharedQuotaSnapshot(userId);
+  if (quota.activeAudits >= quota.maxConcurrentAudits) return SHARED_AUDIT_IN_PROGRESS;
+  if (Number(quota.settledUsd) + Number(quota.reservedUsd) >= Number(quota.limitUsd)) {
+    return SHARED_LIMIT_EXCEEDED;
+  }
+  return null;
 }
 
 // ─── Route definitions ───────────────────────────────────────────────────────
@@ -523,6 +587,12 @@ const getAuditEstimateRoute = createRoute({
       content: { 'application/json': { schema: errorSchema } },
       description: 'Universe not found',
     },
+    409: {
+      content: { 'application/json': { schema: errorSchema } },
+      description:
+        'Shared credential only: the recipient already has a shared audit running, so no ' +
+        'estimate is worth computing against the owner credential (shared_audit_in_progress).',
+    },
     422: {
       content: { 'application/json': { schema: errorSchema } },
       description:
@@ -656,10 +726,17 @@ export const auditRoutes = new OpenAPIHono<AppEnv>()
     // from one that actually consumed the owner's quota.
     const resolved = await resolveRunCredential(userId, provider, cfg.llmKeyEncryptionKey);
     if (resolved.kind === 'failure') {
-      return c.json(resolved.failure.body, resolved.failure.status) as never;
+      return c.json(resolved.failure.body, resolved.failure.status);
     }
     const credential = resolved.kind === 'ready' ? resolved.credential : null;
     const effective = resolved.kind === 'ready' ? resolved.effective : null;
+
+    // Refuse an already-exhausted or already-busy shared caller before the
+    // estimator touches the owner's credential — see sharedPreflightFailure.
+    if (effective?.source === 'shared') {
+      const preflight = await sharedPreflightFailure(userId);
+      if (preflight) return c.json(preflight.body, preflight.status);
+    }
 
     // Pre-run cost estimate. Phase 26 Plan 08 Task 1: inline single-point math
     // REPLACED with a call to estimateAudit() (services/audit-estimator.ts) —
@@ -712,7 +789,7 @@ export const auditRoutes = new OpenAPIHono<AppEnv>()
         return c.json(
           { error: 'Could not estimate run cost', code: 'estimate_unavailable' },
           502,
-        ) as never;
+        );
       }
       if (estimateResult.upper <= 0) {
         // estimateAudit returns a zeroed estimate for a model absent from
@@ -721,7 +798,14 @@ export const auditRoutes = new OpenAPIHono<AppEnv>()
         // cost_unknown. A shared run may not: an uncapped charge against
         // someone else's key is exactly what the monthly limit exists to
         // prevent.
-        return c.json(SHARED_COST_UNAVAILABLE.body, SHARED_COST_UNAVAILABLE.status) as never;
+        //
+        // `upper <= 0` is the PRICING-miss signal, not an arbitrary threshold:
+        // `upper` always includes maxOutputTokens x the model's output rate,
+        // and every rate in pricing.ts is strictly positive, so only the
+        // zeroed miss can reach 0. A future zero-priced or free-tier entry
+        // would break that and produce a false shared_cost_unavailable —
+        // check here first if one is ever added.
+        return c.json(SHARED_COST_UNAVAILABLE.body, SHARED_COST_UNAVAILABLE.status);
       }
       try {
         const reserved = await reserveSharedAudit({
@@ -753,7 +837,7 @@ export const auditRoutes = new OpenAPIHono<AppEnv>()
         return c.json({ runId: reserved.runId, estimate }, 202);
       } catch (e: unknown) {
         const failure = sharedAdmissionFailure(e);
-        if (failure) return c.json(failure.body, failure.status) as never;
+        if (failure) return c.json(failure.body, failure.status);
         throw e;
       }
     }
@@ -974,7 +1058,7 @@ export const auditRoutes = new OpenAPIHono<AppEnv>()
     const cfg = env();
     const resolved = await resolveRunCredential(userId, provider, cfg.llmKeyEncryptionKey);
     if (resolved.kind === 'failure') {
-      return c.json(resolved.failure.body, resolved.failure.status) as never;
+      return c.json(resolved.failure.body, resolved.failure.status);
     }
     if (resolved.kind === 'none') {
       // The two providers fail for genuinely different reasons and the copy
@@ -990,6 +1074,15 @@ export const auditRoutes = new OpenAPIHono<AppEnv>()
       );
     }
     const { credential, effective } = resolved;
+
+    // Same pre-estimator refusal the trigger applies: a recipient who is over
+    // cap or already running a shared audit must not reach the owner's
+    // provider just to be told so afterwards. This also covers the
+    // concurrency gate the post-estimate preview below does not.
+    if (effective?.source === 'shared') {
+      const preflight = await sharedPreflightFailure(userId);
+      if (preflight) return c.json(preflight.body, preflight.status);
+    }
 
     // T-26-08-02: wrap the estimator in try/catch — provider failure surfaces
     // 502 with generic copy, NEVER leaks provider error text or stack.
@@ -1012,22 +1105,26 @@ export const auditRoutes = new OpenAPIHono<AppEnv>()
     // leads straight to an admission the recipient cannot pass if the run
     // does not fit. Answering 200 with a cost range and then 429-ing the
     // trigger is the "looks finished, does not work" failure this project
-    // keeps paying for, so the same two gates the reservation applies are
-    // previewed here.
+    // keeps paying for, so the cap is previewed against THIS estimate's
+    // bounded reservation — the one thing sharedPreflightFailure above cannot
+    // check, because the amount does not exist until the estimator returns.
     //
     // This is a PREVIEW, not a second copy of the rule: reserveSharedAudit
     // re-checks under its locks and remains the only thing that admits a run.
     // A preview that passes and a reservation that then fails is correct
     // behavior (someone else's run landed in between), not a contradiction.
+    // It also inherits the snapshot's four-decimal rounding while the
+    // reservation compares numeric(12,6), so the two can disagree within
+    // $0.00005 of the cap.
     if (effective?.source === 'shared') {
       if (result.upper <= 0) {
-        return c.json(SHARED_COST_UNAVAILABLE.body, SHARED_COST_UNAVAILABLE.status) as never;
+        return c.json(SHARED_COST_UNAVAILABLE.body, SHARED_COST_UNAVAILABLE.status);
       }
       const reservationUsd = roundUpToSixDecimals(Math.min(result.upper, cfg.auditMaxCostUsd));
       const quota = await getSharedQuotaSnapshot(userId);
       const committed = Number(quota.settledUsd) + Number(quota.reservedUsd);
       if (committed + reservationUsd > Number(quota.limitUsd)) {
-        return c.json(SHARED_LIMIT_EXCEEDED.body, SHARED_LIMIT_EXCEEDED.status) as never;
+        return c.json(SHARED_LIMIT_EXCEEDED.body, SHARED_LIMIT_EXCEEDED.status);
       }
     }
 
