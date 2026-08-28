@@ -173,6 +173,29 @@ async function lockUsers(tx: SharingTx, userIds: string[]) {
     .for('update');
 }
 
+export async function lockLifecycleAccountsForOwner(
+  tx: SharingTx,
+  actorUserId: string,
+  ownerUserId: string,
+): Promise<void> {
+  const activeAdmins = await tx.select({ id: users.id }).from(users).where(and(
+    eq(users.isAdmin, true),
+    isNull(users.disabledAt),
+  ));
+  const ownerGrantRecipients = await tx.select({
+    recipientUserId: llmSharedGrants.recipientUserId,
+  }).from(llmSharedGrants).where(and(
+    eq(llmSharedGrants.ownerUserId, ownerUserId),
+    isNull(llmSharedGrants.revokedAt),
+  ));
+  await lockUsers(tx, [
+    actorUserId,
+    ownerUserId,
+    ...activeAdmins.map((admin) => admin.id),
+    ...ownerGrantRecipients.map((grant) => grant.recipientUserId),
+  ]);
+}
+
 export async function getSharedQuotaSnapshot(userId: string): Promise<SharedQuotaSnapshot> {
   const [month] = await getDb().select({ monthStart: sql<string>`DATE_TRUNC('month', NOW() AT TIME ZONE 'UTC')::date` })
     .from(users).where(eq(users.id, userId)).limit(1);

@@ -1,12 +1,8 @@
-import { and, desc, eq, isNull, sql } from 'drizzle-orm';
+import { and, desc, eq, isNull } from 'drizzle-orm';
 import { db as getDb, type DrizzleDb } from '../db/client.js';
 import { adminAuditLog, personalAccessTokens, refreshTokens, universes, users } from '../db/schema.js';
 import { revokeAllForUser } from './auth.js';
-import { revokeSharedGrantsForOwner } from './llm-sharing.js';
-
-async function lockActiveAdmins(tx: DrizzleDb) {
-  await tx.execute(sql`SELECT id FROM users WHERE is_admin = true AND disabled_at IS NULL ORDER BY id FOR UPDATE`);
-}
+import { lockLifecycleAccountsForOwner, revokeSharedGrantsForOwner } from './llm-sharing.js';
 
 export async function disableUser(actorUserId: string, targetUserId: string, reason?: string) {
   return getDb().transaction(async (tx) => {
@@ -15,12 +11,12 @@ export async function disableUser(actorUserId: string, targetUserId: string, rea
       tx.query.users.findFirst({ where: eq(users.id, targetUserId) }),
     ]);
     if (!actor || !target) return null;
-    if (target.isAdmin && !target.disabledAt) {
-      await lockActiveAdmins(tx as DrizzleDb);
-      const activeAdmins = await tx.$count(users, and(eq(users.isAdmin, true), isNull(users.disabledAt)));
-      if (activeAdmins <= 1) throw new LastAdminError();
-    }
     if (target.isAdmin) {
+      await lockLifecycleAccountsForOwner(tx as DrizzleDb, actor.id, target.id);
+      if (!target.disabledAt) {
+        const activeAdmins = await tx.$count(users, and(eq(users.isAdmin, true), isNull(users.disabledAt)));
+        if (activeAdmins <= 1) throw new LastAdminError();
+      }
       await revokeSharedGrantsForOwner(tx, target.id, actor.id, 'owner_disabled');
     }
     const now = new Date();
@@ -71,12 +67,12 @@ export async function setAdminStatus(actorUserId: string, targetUserId: string, 
       tx.query.users.findFirst({ where: eq(users.id, targetUserId) }),
     ]);
     if (!actor || !target) return null;
-    if (!isAdmin && target.isAdmin && !target.disabledAt) {
-      await lockActiveAdmins(tx as DrizzleDb);
-      const activeAdmins = await tx.$count(users, and(eq(users.isAdmin, true), isNull(users.disabledAt)));
-      if (activeAdmins <= 1) throw new LastAdminError();
-    }
     if (!isAdmin && target.isAdmin) {
+      await lockLifecycleAccountsForOwner(tx as DrizzleDb, actor.id, target.id);
+      if (!target.disabledAt) {
+        const activeAdmins = await tx.$count(users, and(eq(users.isAdmin, true), isNull(users.disabledAt)));
+        if (activeAdmins <= 1) throw new LastAdminError();
+      }
       await revokeSharedGrantsForOwner(tx, target.id, actor.id, 'owner_demoted');
     }
     await tx.update(users).set({ isAdmin }).where(eq(users.id, target.id));
@@ -112,12 +108,12 @@ export async function purgeUser(actorUserId: string, targetUserId: string, confi
     ]);
     if (!actor || !target) return null;
     if (confirmEmail !== target.email) throw new PurgeConfirmationError();
-    if (target.isAdmin && !target.disabledAt) {
-      await lockActiveAdmins(tx as DrizzleDb);
-      const activeAdmins = await tx.$count(users, and(eq(users.isAdmin, true), isNull(users.disabledAt)));
-      if (activeAdmins <= 1) throw new LastAdminError();
-    }
     if (target.isAdmin) {
+      await lockLifecycleAccountsForOwner(tx as DrizzleDb, actor.id, target.id);
+      if (!target.disabledAt) {
+        const activeAdmins = await tx.$count(users, and(eq(users.isAdmin, true), isNull(users.disabledAt)));
+        if (activeAdmins <= 1) throw new LastAdminError();
+      }
       await revokeSharedGrantsForOwner(tx, target.id, actor.id, 'owner_purged');
     }
     const impact = await getUserImpact(target.id, tx as DrizzleDb);
