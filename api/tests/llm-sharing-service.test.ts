@@ -2,21 +2,41 @@ import { afterAll, beforeAll, beforeEach, describe, expect, it } from 'vitest';
 import { eq } from 'drizzle-orm';
 import { cleanDb, createTestDb, createTestUser, type TestDbHandle } from './helpers.js';
 import { setTestDb } from '../src/db/client.js';
-import { adminAuditLog, llmApiKeys, llmSharedGrants, universes, users } from '../src/db/schema.js';
+import { adminAuditLog, auditRuns, llmApiKeys, llmSharedAuditReservations, llmSharedGrants, universes, users } from '../src/db/schema.js';
 import { encryptKey } from '../src/services/llm-key.js';
 import {
   consentSharedGrant,
   createSharedGrant,
+  findSharedGrantByIdForRecipient,
   findSharedGrantForRecipient,
+  getSharedAuditReservation,
   getSharedQuotaSnapshot,
+  listAdminSharedGrants,
   listRecipientSharedGrants,
+  revokeSharedGrantsForOwner,
   revokeSharedGrant,
+  roundUpToSixDecimals,
   reserveSharedAudit,
   settleSharedAuditReservation,
   withdrawSharedConsent,
 } from '../src/services/llm-sharing.js';
 
 const ENCRYPTION_KEY = '0'.repeat(64);
+const RACE_TIMEOUT_MS = 5_000;
+
+async function boundedRace<T>(operation: Promise<T>): Promise<T> {
+  let timeout: ReturnType<typeof setTimeout> | undefined;
+  try {
+    return await Promise.race([
+      operation,
+      new Promise<never>((_, reject) => {
+        timeout = setTimeout(() => reject(new Error('shared concurrency regression timed out')), RACE_TIMEOUT_MS);
+      }),
+    ]);
+  } finally {
+    if (timeout !== undefined) clearTimeout(timeout);
+  }
+}
 
 describe('shared LLM grants', () => {
   let handle: TestDbHandle;
@@ -88,21 +108,28 @@ describe('shared LLM grants', () => {
         contentLeavesThisInstance: true,
       },
     });
+    expect(Object.keys(before).sort()).toEqual(['consentedAt', 'createdAt', 'disclosure', 'id', 'policyVersion', 'provider', 'status', 'usage']);
+    expect(before.usage).toMatchObject({ settledUsd: '0.0000', reservedUsd: '0.0000', limitUsd: '1.0000', activeAudits: 0, completedAudits: 0, failedAudits: 0 });
     expect(JSON.stringify(before)).not.toContain('ownerKeyId');
     expect(JSON.stringify(before)).not.toContain('ciphertext');
 
     const consent = await consentSharedGrant(recipient.id, grant.id);
     expect(consent).toMatchObject({ grantId: grant.id, policyVersion: 'shared-llm-v1' });
     expect(consent.consentedAt).toBeInstanceOf(Date);
+    const repeatedConsent = await consentSharedGrant(recipient.id, grant.id);
+    expect(repeatedConsent).toEqual(consent);
     await withdrawSharedConsent(recipient.id, grant.id);
     expect((await listRecipientSharedGrants(recipient.id))[0]?.consentedAt).toBeNull();
+    await expect(withdrawSharedConsent(recipient.id, grant.id)).resolves.toBeUndefined();
   });
 
   it('rejects invalid grants and safely audits a revocation', async () => {
     const owner = await createTestUser(handle, { email: 'owner-state@test.dev', password: 'long-enough-password' });
     const recipient = await createTestUser(handle, { email: 'recipient-state@test.dev', password: 'long-enough-password' });
     const member = await createTestUser(handle, { email: 'member-state@test.dev', password: 'long-enough-password' });
+    const otherAdmin = await createTestUser(handle, { email: 'other-admin-state@test.dev', password: 'long-enough-password' });
     await handle.db.update(users).set({ isAdmin: true }).where(eq(users.id, owner.id));
+    await handle.db.update(users).set({ isAdmin: true }).where(eq(users.id, otherAdmin.id));
     const encrypted = encryptKey('sk-ant-state-test-key', ENCRYPTION_KEY);
     await handle.db.insert(llmApiKeys).values({
       userId: owner.id, provider: 'anthropic', ciphertext: encrypted.ciphertext, iv: encrypted.iv,
@@ -118,9 +145,9 @@ describe('shared LLM grants', () => {
     await expect(createSharedGrant(owner.id, recipient.id, 'anthropic')).rejects.toMatchObject({ code: 'shared_connection_exists' });
     await expect(consentSharedGrant(member.id, grant.id)).rejects.toMatchObject({ code: 'shared_connection_not_found' });
 
-    await revokeSharedGrant(owner.id, grant.id, 'admin_revoked');
+    await revokeSharedGrant(otherAdmin.id, grant.id, 'admin_revoked');
     await expect(consentSharedGrant(recipient.id, grant.id)).rejects.toMatchObject({ code: 'shared_connection_not_found' });
-    await revokeSharedGrant(owner.id, grant.id, 'admin_revoked');
+    await revokeSharedGrant(otherAdmin.id, grant.id, 'admin_revoked');
     const auditRows = await handle.db.select({ details: adminAuditLog.details }).from(adminAuditLog);
     expect(auditRows).toHaveLength(2);
     expect(JSON.stringify(auditRows)).not.toContain('sk-ant-state-test-key');
@@ -152,6 +179,12 @@ describe('shared LLM grants', () => {
       reservationUsd: 0.125,
     });
     expect(reservation.reservedUsd).toBe('0.125000');
+    const [savedRun] = await handle.db.select({ credentialSource: auditRuns.credentialSource, credentialOwnerId: auditRuns.credentialOwnerId, sharedGrantId: auditRuns.sharedGrantId })
+      .from(auditRuns);
+    expect(savedRun).toEqual({ credentialSource: 'shared', credentialOwnerId: owner.id, sharedGrantId: grant.id });
+    const [savedReservation] = await handle.db.select({ grantId: llmSharedAuditReservations.grantId, state: llmSharedAuditReservations.state })
+      .from(llmSharedAuditReservations);
+    expect(savedReservation).toEqual({ grantId: grant.id, state: 'reserved' });
 
     await settleSharedAuditReservation(reservation.runId, 'failed', '0.0100');
     await settleSharedAuditReservation(reservation.runId, 'failed', '0.0100');
@@ -180,5 +213,280 @@ describe('shared LLM grants', () => {
     });
     expect(await findSharedGrantForRecipient(other.id, 'anthropic')).toBeNull();
     expect(JSON.stringify(await findSharedGrantForRecipient(recipient.id, 'anthropic'))).not.toContain('ciphertext');
+  });
+
+  it('rejects an invalid terminal state before changing reservation accounting', async () => {
+    const owner = await createTestUser(handle, { email: 'owner-terminal@test.dev', password: 'long-enough-password' });
+    const recipient = await createTestUser(handle, { email: 'recipient-terminal@test.dev', password: 'long-enough-password' });
+    await handle.db.update(users).set({ isAdmin: true }).where(eq(users.id, owner.id));
+    const encrypted = encryptKey('sk-ant-terminal-test-key', ENCRYPTION_KEY);
+    await handle.db.insert(llmApiKeys).values({
+      userId: owner.id, provider: 'anthropic', ciphertext: encrypted.ciphertext, iv: encrypted.iv,
+      authTag: encrypted.authTag, encryptedKeyVersion: encrypted.version, bodySuffix: encrypted.bodySuffix,
+    });
+    const grant = await createSharedGrant(owner.id, recipient.id, 'anthropic');
+    await consentSharedGrant(recipient.id, grant.id);
+    const [universe] = await handle.db.insert(universes).values({ userId: recipient.id, name: 'Terminal world' }).returning();
+    const reservation = await reserveSharedAudit({
+      recipientUserId: recipient.id, universeId: universe.id, scope: 'universe', scopeEntryId: null,
+      provider: 'anthropic', model: 'claude-haiku-4-5-20251001', grantId: grant.id,
+      credentialOwnerId: owner.id, reservationUsd: 0.125,
+    });
+    const before = await getSharedQuotaSnapshot(recipient.id);
+
+    await expect(settleSharedAuditReservation(reservation.runId, 'bogus' as any, 0))
+      .rejects.toMatchObject({ code: 'shared_terminal_state_invalid' });
+
+    expect(await getSharedQuotaSnapshot(recipient.id)).toEqual(before);
+    const saved = await getSharedAuditReservation(reservation.runId);
+    expect(saved).toMatchObject({ state: 'reserved', reservedUsd: '0.125000', settledUsd: '0.000000' });
+  });
+
+  it('rejects disabled, missing, and undecryptable owner credentials with typed errors', async () => {
+    const disabledOwner = await createTestUser(handle, { email: 'owner-disabled@test.dev', password: 'long-enough-password' });
+    const missingKeyOwner = await createTestUser(handle, { email: 'owner-missing@test.dev', password: 'long-enough-password' });
+    const badKeyOwner = await createTestUser(handle, { email: 'owner-bad-key@test.dev', password: 'long-enough-password' });
+    const recipient = await createTestUser(handle, { email: 'recipient-owner-errors@test.dev', password: 'long-enough-password' });
+    const disabledRecipient = await createTestUser(handle, { email: 'recipient-disabled@test.dev', password: 'long-enough-password' });
+    await handle.db.update(users).set({ isAdmin: true, disabledAt: new Date() }).where(eq(users.id, disabledOwner.id));
+    await handle.db.update(users).set({ isAdmin: true }).where(eq(users.id, missingKeyOwner.id));
+    await handle.db.update(users).set({ isAdmin: true }).where(eq(users.id, badKeyOwner.id));
+    await handle.db.update(users).set({ disabledAt: new Date() }).where(eq(users.id, disabledRecipient.id));
+    const encrypted = encryptKey('sk-ant-wrong-envelope-key', '1'.repeat(64));
+    await handle.db.insert(llmApiKeys).values({
+      userId: badKeyOwner.id, provider: 'anthropic', ciphertext: encrypted.ciphertext, iv: encrypted.iv,
+      authTag: encrypted.authTag, encryptedKeyVersion: encrypted.version, bodySuffix: encrypted.bodySuffix,
+    });
+
+    await expect(createSharedGrant(disabledOwner.id, recipient.id, 'anthropic'))
+      .rejects.toMatchObject({ code: 'shared_admin_required' });
+    await expect(createSharedGrant(missingKeyOwner.id, recipient.id, 'anthropic'))
+      .rejects.toMatchObject({ code: 'owner_key_required' });
+    await expect(createSharedGrant(badKeyOwner.id, recipient.id, 'anthropic'))
+      .rejects.toMatchObject({ code: 'owner_key_required' });
+    await expect(createSharedGrant(missingKeyOwner.id, disabledRecipient.id, 'anthropic'))
+      .rejects.toMatchObject({ code: 'shared_recipient_unavailable' });
+  });
+
+  it('returns a safe admin projection and scopes grant-by-id lookup to its recipient', async () => {
+    const owner = await createTestUser(handle, { email: 'owner-admin-view@test.dev', password: 'long-enough-password', displayName: 'Owner' });
+    const recipient = await createTestUser(handle, { email: 'recipient-admin-view@test.dev', password: 'long-enough-password', displayName: 'Recipient' });
+    const other = await createTestUser(handle, { email: 'other-admin-view@test.dev', password: 'long-enough-password' });
+    await handle.db.update(users).set({ isAdmin: true }).where(eq(users.id, owner.id));
+    const encrypted = encryptKey('sk-ant-admin-view-test-key', ENCRYPTION_KEY);
+    const [key] = await handle.db.insert(llmApiKeys).values({
+      userId: owner.id, provider: 'anthropic', ciphertext: encrypted.ciphertext, iv: encrypted.iv,
+      authTag: encrypted.authTag, encryptedKeyVersion: encrypted.version, bodySuffix: encrypted.bodySuffix,
+    }).returning();
+    const grant = await createSharedGrant(owner.id, recipient.id, 'anthropic');
+
+    expect(await findSharedGrantByIdForRecipient(recipient.id, grant.id)).toMatchObject({ id: grant.id, ownerKeyId: key.id });
+    expect(await findSharedGrantByIdForRecipient(other.id, grant.id)).toBeNull();
+    const [adminView] = await listAdminSharedGrants();
+    expect(adminView).toMatchObject({
+      id: grant.id,
+      owner: { id: owner.id, displayName: 'Owner', email: 'owner-admin-view@test.dev' },
+      recipient: { id: recipient.id, displayName: 'Recipient', email: 'recipient-admin-view@test.dev' },
+      provider: 'anthropic',
+      status: 'active',
+      revokedAt: null,
+      revokedReason: null,
+      consentedAt: null,
+      usage: { limitUsd: '1.0000', maxConcurrentAudits: 1 },
+    });
+    expect(Object.keys(adminView).sort()).toEqual([
+      'consentedAt', 'createdAt', 'id', 'owner', 'provider', 'recipient', 'revokedAt', 'revokedReason', 'status', 'usage',
+    ]);
+    expect(adminView.usage).toMatchObject({ settledUsd: '0.0000', reservedUsd: '0.0000', limitUsd: '1.0000' });
+    expect(JSON.stringify(adminView)).not.toContain('ownerKeyId');
+    expect(JSON.stringify(adminView)).not.toContain('ciphertext');
+    expect(JSON.stringify(adminView)).not.toContain('sk-ant-admin-view-test-key');
+  });
+
+  it('revokes every active grant for an owner atomically and records each safe reason', async () => {
+    const owner = await createTestUser(handle, { email: 'owner-bulk-revoke@test.dev', password: 'long-enough-password' });
+    const recipientOne = await createTestUser(handle, { email: 'recipient-bulk-one@test.dev', password: 'long-enough-password' });
+    const recipientTwo = await createTestUser(handle, { email: 'recipient-bulk-two@test.dev', password: 'long-enough-password' });
+    const actor = await createTestUser(handle, { email: 'actor-bulk-revoke@test.dev', password: 'long-enough-password' });
+    await handle.db.update(users).set({ isAdmin: true }).where(eq(users.id, owner.id));
+    await handle.db.update(users).set({ isAdmin: true }).where(eq(users.id, actor.id));
+    const encrypted = encryptKey('sk-ant-bulk-revoke-test-key', ENCRYPTION_KEY);
+    await handle.db.insert(llmApiKeys).values({
+      userId: owner.id, provider: 'anthropic', ciphertext: encrypted.ciphertext, iv: encrypted.iv,
+      authTag: encrypted.authTag, encryptedKeyVersion: encrypted.version, bodySuffix: encrypted.bodySuffix,
+    });
+    const first = await createSharedGrant(owner.id, recipientOne.id, 'anthropic');
+    const second = await createSharedGrant(owner.id, recipientTwo.id, 'anthropic');
+
+    await handle.db.transaction((tx) => revokeSharedGrantsForOwner(tx, owner.id, actor.id, 'owner_disabled'));
+    const saved = await handle.db.select({ id: llmSharedGrants.id, revokedReason: llmSharedGrants.revokedReason })
+      .from(llmSharedGrants).orderBy(llmSharedGrants.id);
+    expect(saved).toEqual([
+      { id: first.id, revokedReason: 'owner_disabled' },
+      { id: second.id, revokedReason: 'owner_disabled' },
+    ].sort((a, b) => a.id.localeCompare(b.id)));
+    expect((await listAdminSharedGrants()).every((grant) => grant.status === 'revoked')).toBe(true);
+  });
+
+  it('rounds up bounded amounts and rejects invalid reservation or settlement amounts', async () => {
+    expect(roundUpToSixDecimals(0.1234561)).toBe(0.123457);
+    expect(roundUpToSixDecimals(0.125)).toBe(0.125);
+    const owner = await createTestUser(handle, { email: 'owner-amounts@test.dev', password: 'long-enough-password' });
+    const recipient = await createTestUser(handle, { email: 'recipient-amounts@test.dev', password: 'long-enough-password' });
+    await handle.db.update(users).set({ isAdmin: true }).where(eq(users.id, owner.id));
+    const encrypted = encryptKey('sk-ant-amounts-test-key', ENCRYPTION_KEY);
+    await handle.db.insert(llmApiKeys).values({
+      userId: owner.id, provider: 'anthropic', ciphertext: encrypted.ciphertext, iv: encrypted.iv,
+      authTag: encrypted.authTag, encryptedKeyVersion: encrypted.version, bodySuffix: encrypted.bodySuffix,
+    });
+    const grant = await createSharedGrant(owner.id, recipient.id, 'anthropic');
+    await consentSharedGrant(recipient.id, grant.id);
+    const [universe] = await handle.db.insert(universes).values({ userId: recipient.id, name: 'Amount world' }).returning();
+    await expect(reserveSharedAudit({
+      recipientUserId: recipient.id, universeId: universe.id, scope: 'universe', scopeEntryId: null,
+      provider: 'anthropic', model: 'claude-haiku-4-5-20251001', grantId: grant.id,
+      credentialOwnerId: owner.id, reservationUsd: 0,
+    })).rejects.toMatchObject({ code: 'shared_cost_invalid' });
+    await expect(reserveSharedAudit({
+      recipientUserId: recipient.id, universeId: universe.id, scope: 'universe', scopeEntryId: null,
+      provider: 'anthropic', model: 'claude-haiku-4-5-20251001', grantId: grant.id,
+      credentialOwnerId: owner.id, reservationUsd: 0.0000001,
+    })).rejects.toMatchObject({ code: 'shared_cost_invalid' });
+    await expect(reserveSharedAudit({
+      recipientUserId: recipient.id, universeId: universe.id, scope: 'universe', scopeEntryId: null,
+      provider: 'anthropic', model: 'claude-haiku-4-5-20251001', grantId: grant.id,
+      credentialOwnerId: owner.id, reservationUsd: Number.NaN,
+    })).rejects.toMatchObject({ code: 'shared_cost_invalid' });
+    const valid = await reserveSharedAudit({
+      recipientUserId: recipient.id, universeId: universe.id, scope: 'universe', scopeEntryId: null,
+      provider: 'anthropic', model: 'claude-haiku-4-5-20251001', grantId: grant.id,
+      credentialOwnerId: owner.id, reservationUsd: 0.1,
+    });
+    const before = await getSharedQuotaSnapshot(recipient.id);
+    await expect(settleSharedAuditReservation(valid.runId, 'failed', Number.POSITIVE_INFINITY))
+      .rejects.toMatchObject({ code: 'shared_cost_invalid' });
+    expect(await getSharedQuotaSnapshot(recipient.id)).toEqual(before);
+    await settleSharedAuditReservation(valid.runId, 'released', 0);
+  });
+
+  it('enforces the recipient-wide monthly cap and accounts success and zero-cost release', async () => {
+    const owner = await createTestUser(handle, { email: 'owner-accounting@test.dev', password: 'long-enough-password' });
+    const recipient = await createTestUser(handle, { email: 'recipient-accounting@test.dev', password: 'long-enough-password' });
+    await handle.db.update(users).set({ isAdmin: true }).where(eq(users.id, owner.id));
+    const encrypted = encryptKey('sk-ant-accounting-test-key', ENCRYPTION_KEY);
+    await handle.db.insert(llmApiKeys).values({
+      userId: owner.id, provider: 'anthropic', ciphertext: encrypted.ciphertext, iv: encrypted.iv,
+      authTag: encrypted.authTag, encryptedKeyVersion: encrypted.version, bodySuffix: encrypted.bodySuffix,
+    });
+    const grant = await createSharedGrant(owner.id, recipient.id, 'anthropic');
+    await consentSharedGrant(recipient.id, grant.id);
+    const [universeOne] = await handle.db.insert(universes).values({ userId: recipient.id, name: 'Accounting one' }).returning();
+    const [universeTwo] = await handle.db.insert(universes).values({ userId: recipient.id, name: 'Accounting two' }).returning();
+    const successful = await reserveSharedAudit({
+      recipientUserId: recipient.id, universeId: universeOne.id, scope: 'universe', scopeEntryId: null,
+      provider: 'anthropic', model: 'claude-haiku-4-5-20251001', grantId: grant.id,
+      credentialOwnerId: owner.id, reservationUsd: 0.2,
+    });
+    await settleSharedAuditReservation(successful.runId, 'succeeded', '0.050000');
+    const released = await reserveSharedAudit({
+      recipientUserId: recipient.id, universeId: universeTwo.id, scope: 'universe', scopeEntryId: null,
+      provider: 'anthropic', model: 'claude-haiku-4-5-20251001', grantId: grant.id,
+      credentialOwnerId: owner.id, reservationUsd: 0.2,
+    });
+    await settleSharedAuditReservation(released.runId, 'released', 0);
+    expect(await getSharedQuotaSnapshot(recipient.id)).toMatchObject({
+      settledUsd: '0.0500', reservedUsd: '0.0000', activeAudits: 0,
+      completedAudits: 1, failedAudits: 0, maxConcurrentAudits: 1,
+    });
+    const [universeThree] = await handle.db.insert(universes).values({ userId: recipient.id, name: 'Accounting three' }).returning();
+    await expect(reserveSharedAudit({
+      recipientUserId: recipient.id, universeId: universeThree.id, scope: 'universe', scopeEntryId: null,
+      provider: 'anthropic', model: 'claude-haiku-4-5-20251001', grantId: grant.id,
+      credentialOwnerId: owner.id, reservationUsd: 0.96,
+    })).rejects.toMatchObject({ code: 'shared_monthly_limit_exceeded' });
+  });
+
+  it('returns the UTC first-of-month bucket and blocks later admission after over-reservation', async () => {
+    const owner = await createTestUser(handle, { email: 'owner-overrun@test.dev', password: 'long-enough-password' });
+    const recipient = await createTestUser(handle, { email: 'recipient-overrun@test.dev', password: 'long-enough-password' });
+    await handle.db.update(users).set({ isAdmin: true }).where(eq(users.id, owner.id));
+    const encrypted = encryptKey('sk-ant-overrun-test-key', ENCRYPTION_KEY);
+    await handle.db.insert(llmApiKeys).values({
+      userId: owner.id, provider: 'anthropic', ciphertext: encrypted.ciphertext, iv: encrypted.iv,
+      authTag: encrypted.authTag, encryptedKeyVersion: encrypted.version, bodySuffix: encrypted.bodySuffix,
+    });
+    const grant = await createSharedGrant(owner.id, recipient.id, 'anthropic');
+    await consentSharedGrant(recipient.id, grant.id);
+    const [universeOne] = await handle.db.insert(universes).values({ userId: recipient.id, name: 'Overrun one' }).returning();
+    const [universeTwo] = await handle.db.insert(universes).values({ userId: recipient.id, name: 'Overrun two' }).returning();
+    const reservation = await reserveSharedAudit({
+      recipientUserId: recipient.id, universeId: universeOne.id, scope: 'universe', scopeEntryId: null,
+      provider: 'anthropic', model: 'claude-haiku-4-5-20251001', grantId: grant.id,
+      credentialOwnerId: owner.id, reservationUsd: 0.2,
+    });
+    await settleSharedAuditReservation(reservation.runId, 'failed', '0.600000');
+    const snapshot = await getSharedQuotaSnapshot(recipient.id);
+    expect(snapshot.monthStart).toMatch(/^\d{4}-\d{2}-01$/);
+    expect(snapshot.settledUsd).toBe('0.6000');
+    await expect(reserveSharedAudit({
+      recipientUserId: recipient.id, universeId: universeTwo.id, scope: 'universe', scopeEntryId: null,
+      provider: 'anthropic', model: 'claude-haiku-4-5-20251001', grantId: grant.id,
+      credentialOwnerId: owner.id, reservationUsd: 0.41,
+    })).rejects.toMatchObject({ code: 'shared_monthly_limit_exceeded' });
+  });
+
+  it('admits exactly one concurrent shared reservation and returns a typed result when revocation races admission', async () => {
+    const owner = await createTestUser(handle, { email: 'owner-race@test.dev', password: 'long-enough-password' });
+    const recipient = await createTestUser(handle, { email: 'recipient-race@test.dev', password: 'long-enough-password' });
+    await handle.db.update(users).set({ isAdmin: true }).where(eq(users.id, owner.id));
+    const encrypted = encryptKey('sk-ant-race-test-key', ENCRYPTION_KEY);
+    await handle.db.insert(llmApiKeys).values({
+      userId: owner.id, provider: 'anthropic', ciphertext: encrypted.ciphertext, iv: encrypted.iv,
+      authTag: encrypted.authTag, encryptedKeyVersion: encrypted.version, bodySuffix: encrypted.bodySuffix,
+    });
+    const grant = await createSharedGrant(owner.id, recipient.id, 'anthropic');
+    await consentSharedGrant(recipient.id, grant.id);
+    const [universeOne, universeTwo, universeThree] = await Promise.all([
+      handle.db.insert(universes).values({ userId: recipient.id, name: 'Race one' }).returning(),
+      handle.db.insert(universes).values({ userId: recipient.id, name: 'Race two' }).returning(),
+      handle.db.insert(universes).values({ userId: recipient.id, name: 'Race three' }).returning(),
+    ]).then(([one, two, three]) => [one[0], two[0], three[0]]);
+    const concurrent = await boundedRace(Promise.allSettled([
+      reserveSharedAudit({
+        recipientUserId: recipient.id, universeId: universeOne.id, scope: 'universe', scopeEntryId: null,
+        provider: 'anthropic', model: 'claude-haiku-4-5-20251001', grantId: grant.id,
+        credentialOwnerId: owner.id, reservationUsd: 0.1,
+      }),
+      reserveSharedAudit({
+        recipientUserId: recipient.id, universeId: universeThree.id, scope: 'universe', scopeEntryId: null,
+        provider: 'anthropic', model: 'claude-haiku-4-5-20251001', grantId: grant.id,
+        credentialOwnerId: owner.id, reservationUsd: 0.1,
+      }),
+    ]));
+    const admitted = concurrent.filter((result) => result.status === 'fulfilled');
+    const rejected = concurrent.filter((result) => result.status === 'rejected');
+    expect(admitted).toHaveLength(1);
+    expect(rejected).toHaveLength(1);
+    expect((rejected[0] as PromiseRejectedResult).reason).toMatchObject({ code: 'shared_audit_in_progress' });
+    const first = (admitted[0] as PromiseFulfilledResult<Awaited<ReturnType<typeof reserveSharedAudit>>>).value;
+    await settleSharedAuditReservation(first.runId, 'released', 0);
+
+    const [raceUniverse] = await handle.db.insert(universes).values({ userId: recipient.id, name: 'Revoke race' }).returning();
+    const raced = await boundedRace(Promise.allSettled([
+      revokeSharedGrant(owner.id, grant.id, 'admin_revoked'),
+      reserveSharedAudit({
+        recipientUserId: recipient.id, universeId: raceUniverse.id, scope: 'universe', scopeEntryId: null,
+        provider: 'anthropic', model: 'claude-haiku-4-5-20251001', grantId: grant.id,
+        credentialOwnerId: owner.id, reservationUsd: 0.1,
+      }),
+    ]));
+    expect(raced[0].status).toBe('fulfilled');
+    if (raced[1].status === 'rejected') {
+      expect(['shared_audit_in_progress', 'shared_access_revoked'])
+        .toContain((raced[1].reason as { code?: string }).code);
+    } else {
+      expect(raced[1].value).toMatchObject({ runId: expect.any(String) });
+      await settleSharedAuditReservation(raced[1].value.runId, 'released', 0);
+    }
   });
 });

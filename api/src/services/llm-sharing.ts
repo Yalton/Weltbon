@@ -1,4 +1,4 @@
-import { and, eq, isNull, sql } from 'drizzle-orm';
+import { and, asc, eq, inArray, isNull, sql } from 'drizzle-orm';
 import { env } from '../config.js';
 import { db as getDb } from '../db/client.js';
 import { isUniqueViolation } from '../db/pg-error.js';
@@ -28,6 +28,9 @@ export type SharedRevocationReason =
 const REVOCATION_REASONS: ReadonlySet<SharedRevocationReason> = new Set([
   'admin_revoked', 'owner_disabled', 'owner_demoted', 'owner_purged', 'owner_key_deleted',
 ]);
+const TERMINAL_STATES = new Set(['succeeded', 'failed', 'released']);
+
+type SharingTx = Parameters<Parameters<ReturnType<typeof getDb>['transaction']>[0]>[0];
 
 export class SharedLlmError extends Error {
   constructor(public readonly code: string) {
@@ -147,13 +150,27 @@ function sixDecimalAmount(value: number | string, allowZero: boolean): string {
 }
 
 async function lockedUtcMonthStart(
-  tx: Parameters<Parameters<ReturnType<typeof getDb>['transaction']>[0]>[0],
+  tx: SharingTx,
   userId: string,
 ): Promise<string> {
   const [row] = await tx.select({ monthStart: sql<string>`DATE_TRUNC('month', NOW() AT TIME ZONE 'UTC')::date` })
     .from(users).where(eq(users.id, userId)).limit(1);
   if (!row) throw new SharedLlmError('shared_recipient_unavailable');
   return row.monthStart;
+}
+
+/**
+ * Every mutating sharing transaction acquires account locks through this
+ * helper. Sorting the IDs makes the order independent of the caller's role
+ * (actor/owner/recipient), which prevents revoke-vs-reserve cycles.
+ */
+async function lockUsers(tx: SharingTx, userIds: string[]) {
+  const ids = [...new Set(userIds)].sort();
+  if (ids.length === 0) return [];
+  return tx.select().from(users)
+    .where(inArray(users.id, ids))
+    .orderBy(asc(users.id))
+    .for('update');
 }
 
 export async function getSharedQuotaSnapshot(userId: string): Promise<SharedQuotaSnapshot> {
@@ -266,7 +283,15 @@ async function findActiveRecipientGrant(
     eq(llmSharedConsents.recipientUserId, userId),
   )).where(where).limit(1);
   if (!row || row.ownerKeyId === null) return null;
-  return row;
+  return {
+    id: row.id,
+    ownerUserId: row.ownerUserId,
+    recipientUserId: row.recipientUserId,
+    ownerKeyId: row.ownerKeyId,
+    provider: row.provider,
+    consentedAt: row.consentedAt,
+    policyVersion: row.policyVersion,
+  };
 }
 
 export async function findSharedGrantForRecipient(
@@ -294,6 +319,8 @@ export async function findSharedGrantByIdForRecipient(
 
 export async function consentSharedGrant(userId: string, grantId: string) {
   return getDb().transaction(async (tx) => {
+    const lockedAccounts = await lockUsers(tx, [userId]);
+    if (lockedAccounts.length === 0) throw new SharedLlmError('shared_connection_not_found');
     const [grant] = await tx.select().from(llmSharedGrants).where(and(
       eq(llmSharedGrants.id, grantId),
       eq(llmSharedGrants.recipientUserId, userId),
@@ -321,10 +348,14 @@ export async function consentSharedGrant(userId: string, grantId: string) {
 }
 
 export async function withdrawSharedConsent(userId: string, grantId: string): Promise<void> {
-  await getDb().delete(llmSharedConsents).where(and(
-    eq(llmSharedConsents.grantId, grantId),
-    eq(llmSharedConsents.recipientUserId, userId),
-  ));
+  await getDb().transaction(async (tx) => {
+    const lockedAccounts = await lockUsers(tx, [userId]);
+    if (lockedAccounts.length === 0) return;
+    await tx.delete(llmSharedConsents).where(and(
+      eq(llmSharedConsents.grantId, grantId),
+      eq(llmSharedConsents.recipientUserId, userId),
+    ));
+  });
 }
 
 export async function createSharedGrant(
@@ -336,8 +367,9 @@ export async function createSharedGrant(
 
   try {
     return await getDb().transaction(async (tx) => {
-    const [actor] = await tx.select().from(users).where(eq(users.id, actorUserId)).for('update');
-    const [recipient] = await tx.select().from(users).where(eq(users.id, recipientUserId)).for('update');
+    const lockedAccounts = await lockUsers(tx, [actorUserId, recipientUserId]);
+    const actor = lockedAccounts.find((user) => user.id === actorUserId);
+    const recipient = lockedAccounts.find((user) => user.id === recipientUserId);
     if (!actor || !actor.isAdmin || actor.disabledAt) throw new SharedLlmError('shared_admin_required');
     if (!recipient || recipient.disabledAt) throw new SharedLlmError('shared_recipient_unavailable');
     if (actor.id === recipient.id) throw new SharedLlmError('shared_recipient_invalid');
@@ -379,13 +411,24 @@ export async function revokeSharedGrant(
   reason: SharedRevocationReason,
 ): Promise<void> {
   if (!REVOCATION_REASONS.has(reason)) throw new SharedLlmError('shared_revocation_reason_invalid');
+  // This read only discovers the immutable participant IDs. It deliberately
+  // does not lock the grant; the transaction locks every account first, then
+  // re-reads and locks the grant using the canonical order.
+  const [participantIds] = await getDb().select({
+    ownerUserId: llmSharedGrants.ownerUserId,
+    recipientUserId: llmSharedGrants.recipientUserId,
+  }).from(llmSharedGrants).where(eq(llmSharedGrants.id, grantId)).limit(1);
   await getDb().transaction(async (tx) => {
-    const [actor] = await tx.select().from(users).where(eq(users.id, actorUserId)).for('update');
+    const lockedAccounts = await lockUsers(tx, [
+      actorUserId,
+      ...(participantIds ? [participantIds.ownerUserId, participantIds.recipientUserId] : []),
+    ]);
+    const actor = lockedAccounts.find((user) => user.id === actorUserId);
     if (!actor || !actor.isAdmin || actor.disabledAt) throw new SharedLlmError('shared_admin_required');
     const [grant] = await tx.select().from(llmSharedGrants).where(eq(llmSharedGrants.id, grantId)).for('update');
     if (!grant) throw new SharedLlmError('shared_connection_not_found');
     if (grant.revokedAt) return;
-    const [recipient] = await tx.select().from(users).where(eq(users.id, grant.recipientUserId)).for('update');
+    const recipient = lockedAccounts.find((user) => user.id === grant.recipientUserId);
     if (!recipient) throw new SharedLlmError('shared_connection_not_found');
     const revokedAt = new Date();
     await tx.update(llmSharedGrants).set({
@@ -408,6 +451,22 @@ export async function reserveSharedAudit(input: SharedAuditReservationInput): Pr
   if (!isSharedProvider(input.provider)) throw new SharedLlmError('shared_provider_unsupported');
   const reservedUsd = sixDecimalAmount(input.reservationUsd, false);
   return getDb().transaction(async (tx) => {
+    const lockedAccounts = await lockUsers(tx, [input.recipientUserId, input.credentialOwnerId]);
+    const recipient = lockedAccounts.find((user) => user.id === input.recipientUserId);
+    const owner = lockedAccounts.find((user) => user.id === input.credentialOwnerId);
+    if (!recipient || recipient.disabledAt) throw new SharedLlmError('shared_recipient_unavailable');
+    if (!owner || !owner.isAdmin || owner.disabledAt) throw new SharedLlmError('shared_access_revoked');
+
+    // Grant is the first non-account row locked by both reserve and revoke.
+    const [grant] = await tx.select().from(llmSharedGrants).where(and(
+      eq(llmSharedGrants.id, input.grantId),
+      eq(llmSharedGrants.recipientUserId, input.recipientUserId),
+      eq(llmSharedGrants.ownerUserId, input.credentialOwnerId),
+      eq(llmSharedGrants.provider, input.provider),
+      isNull(llmSharedGrants.revokedAt),
+    )).for('update');
+    if (!grant) throw new SharedLlmError('shared_access_revoked');
+
     const monthStart = await lockedUtcMonthStart(tx, input.recipientUserId);
     await tx.insert(llmSharedUsage).values({
       recipientUserId: input.recipientUserId,
@@ -419,27 +478,17 @@ export async function reserveSharedAudit(input: SharedAuditReservationInput): Pr
     )).for('update');
     if (!usage) throw new SharedLlmError('shared_usage_unavailable');
 
-    const [recipient] = await tx.select().from(users).where(eq(users.id, input.recipientUserId)).for('update');
-    const [owner] = await tx.select().from(users).where(eq(users.id, input.credentialOwnerId)).for('update');
-    const [grant] = await tx.select().from(llmSharedGrants).where(and(
-      eq(llmSharedGrants.id, input.grantId),
-      eq(llmSharedGrants.recipientUserId, input.recipientUserId),
-      eq(llmSharedGrants.ownerUserId, input.credentialOwnerId),
-      eq(llmSharedGrants.provider, input.provider),
-      isNull(llmSharedGrants.revokedAt),
+    // Key and consent locks follow the grant/usage order consistently.
+    const [key] = await tx.select().from(llmApiKeys).where(and(
+      eq(llmApiKeys.userId, input.credentialOwnerId),
+      eq(llmApiKeys.provider, input.provider),
     )).for('update');
+    if (!key || grant.ownerKeyId !== key.id) throw new SharedLlmError('shared_access_revoked');
     const [consent] = await tx.select().from(llmSharedConsents).where(and(
       eq(llmSharedConsents.grantId, input.grantId),
       eq(llmSharedConsents.recipientUserId, input.recipientUserId),
       eq(llmSharedConsents.policyVersion, SHARED_LLM_POLICY_VERSION),
     )).for('update');
-    const [key] = await tx.select().from(llmApiKeys).where(and(
-      eq(llmApiKeys.userId, input.credentialOwnerId),
-      eq(llmApiKeys.provider, input.provider),
-    )).for('update');
-    if (!recipient || recipient.disabledAt) throw new SharedLlmError('shared_recipient_unavailable');
-    if (!owner || !owner.isAdmin || owner.disabledAt) throw new SharedLlmError('shared_access_revoked');
-    if (!grant || !key || grant.ownerKeyId !== key.id) throw new SharedLlmError('shared_access_revoked');
     if (!consent) throw new SharedLlmError('shared_llm_consent_required');
     if (usage.activeAuditCount >= MAX_SHARED_CONCURRENT_AUDITS) throw new SharedLlmError('shared_audit_in_progress');
     if (Number(usage.settledCostUsd) + Number(usage.reservedCostUsd) + Number(reservedUsd) > env().sharedLlmMonthlyCostUsd) {
@@ -482,9 +531,19 @@ export async function settleSharedAuditReservation(
   terminalState: 'succeeded' | 'failed' | 'released',
   actualCostUsd: number | string,
 ): Promise<void> {
+  if (!TERMINAL_STATES.has(terminalState)) {
+    throw new SharedLlmError('shared_terminal_state_invalid');
+  }
   const settledUsd = sixDecimalAmount(actualCostUsd, true);
   if (terminalState === 'released' && Number(settledUsd) !== 0) throw new SharedLlmError('shared_cost_invalid');
+  const [reservationIdentity] = await getDb().select({ recipientUserId: llmSharedAuditReservations.recipientUserId })
+    .from(llmSharedAuditReservations)
+    .where(eq(llmSharedAuditReservations.auditRunId, auditRunId))
+    .limit(1);
+  if (!reservationIdentity) throw new SharedLlmError('shared_audit_reservation_not_found');
   await getDb().transaction(async (tx) => {
+    const lockedAccounts = await lockUsers(tx, [reservationIdentity.recipientUserId]);
+    if (lockedAccounts.length === 0) throw new SharedLlmError('shared_audit_reservation_not_found');
     const [reservation] = await tx.select().from(llmSharedAuditReservations)
       .where(eq(llmSharedAuditReservations.auditRunId, auditRunId)).for('update');
     if (!reservation) throw new SharedLlmError('shared_audit_reservation_not_found');
@@ -517,6 +576,10 @@ export async function settleSharedAuditReservation(
       eq(llmSharedAuditReservations.id, reservation.id),
       eq(llmSharedAuditReservations.state, 'reserved'),
     ));
+    await tx.update(auditRuns).set({
+      status: terminalState === 'released' ? 'failed' : terminalState,
+      costUsd: settledUsd,
+    }).where(eq(auditRuns.id, auditRunId));
   });
 }
 
@@ -536,13 +599,28 @@ export async function getSharedAuditReservation(auditRunId: string): Promise<Sha
 }
 
 export async function revokeSharedGrantsForOwner(
-  tx: Parameters<Parameters<ReturnType<typeof getDb>['transaction']>[0]>[0],
+  tx: SharingTx,
   ownerUserId: string,
   actorUserId: string,
   reason: SharedRevocationReason,
 ): Promise<void> {
   if (!REVOCATION_REASONS.has(reason)) throw new SharedLlmError('shared_revocation_reason_invalid');
-  const actor = await tx.query.users.findFirst({ where: eq(users.id, actorUserId) });
+  // Discover recipients without taking a grant lock. All account rows are
+  // then acquired in one deterministic order before any grant lock.
+  const grantParticipants = await tx.select({
+    id: llmSharedGrants.id,
+    ownerUserId: llmSharedGrants.ownerUserId,
+    recipientUserId: llmSharedGrants.recipientUserId,
+  }).from(llmSharedGrants).where(and(
+    eq(llmSharedGrants.ownerUserId, ownerUserId),
+    isNull(llmSharedGrants.revokedAt),
+  ));
+  const lockedAccounts = await lockUsers(tx, [
+    ownerUserId,
+    actorUserId,
+    ...grantParticipants.map((grant) => grant.recipientUserId),
+  ]);
+  const actor = lockedAccounts.find((user) => user.id === actorUserId);
   const grants = await tx.select({
     id: llmSharedGrants.id,
     provider: llmSharedGrants.provider,
@@ -550,10 +628,10 @@ export async function revokeSharedGrantsForOwner(
   }).from(llmSharedGrants).where(and(
     eq(llmSharedGrants.ownerUserId, ownerUserId),
     isNull(llmSharedGrants.revokedAt),
-  )).for('update');
+  )).orderBy(asc(llmSharedGrants.id)).for('update');
   const revokedAt = new Date();
   for (const grant of grants) {
-    const recipient = await tx.query.users.findFirst({ where: eq(users.id, grant.recipientUserId) });
+    const recipient = lockedAccounts.find((user) => user.id === grant.recipientUserId);
     await tx.update(llmSharedGrants).set({
       revokedAt,
       revokedByUserId: actorUserId,
