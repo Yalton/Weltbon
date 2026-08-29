@@ -297,6 +297,16 @@ export function useEstimateAudit(
  * match `LlmProvider` (api/src/services/llm-key.ts). See
  * UniverseSettings.tsx for the caller that now actually passes 'ollama'.
  */
+/**
+ * Exported so useLlmShares can invalidate it. Accepting or withdrawing a
+ * shared connection changes which credential /llm/models resolves through
+ * (Task 6), and therefore what it answers with — and the 30-minute staleTime
+ * below means a stale answer would otherwise persist for that long.
+ */
+export function llmModelsKey(provider: 'anthropic' | 'openai' | 'ollama') {
+  return ['llm-models', provider] as const;
+}
+
 export function useListModels(
   provider: 'anthropic' | 'openai' | 'ollama' | undefined,
 ): UseQueryResult<ListingsResult> {

@@ -29,12 +29,14 @@
  * of thing a later "just add the owner name" change would quietly widen.
  */
 
+import { useState } from 'react';
 import {
   useSharedLlmGrants,
   useConsentSharedLlmGrant,
   useWithdrawSharedLlmConsent,
   type SharedGrant,
 } from '../hooks/useLlmShares';
+import { ConfirmDialog } from './ConfirmDialog';
 import { ApiError } from '../api/client';
 
 function statusMessage(err: unknown): string {
@@ -46,11 +48,18 @@ function statusMessage(err: unknown): string {
 function GrantCard({ grant }: { grant: SharedGrant }) {
   const consent = useConsentSharedLlmGrant();
   const withdraw = useWithdrawSharedLlmConsent();
+  const [confirmWithdraw, setConfirmWithdraw] = useState(false);
+  const [outcome, setOutcome] = useState('');
 
   const providerName = grant.disclosure.providerName;
   const accepted = grant.consentedAt !== null;
   const pending = consent.isPending || withdraw.isPending;
-  const error = consent.error ?? withdraw.error;
+  // Review finding: `consent.error ?? withdraw.error` kept showing a failed
+  // withdrawal's alert next to a connection a later Accept had just fixed.
+  // Only the action the user last invoked can be the one they are reading
+  // about, so the error is keyed to it.
+  const [lastAction, setLastAction] = useState<'consent' | 'withdraw' | null>(null);
+  const error = lastAction === 'consent' ? consent.error : lastAction === 'withdraw' ? withdraw.error : null;
 
   return (
     <li
@@ -94,7 +103,7 @@ function GrantCard({ grant }: { grant: SharedGrant }) {
         {accepted ? (
           <button
             type="button"
-            onClick={() => withdraw.mutate({ grantId: grant.id })}
+            onClick={() => setConfirmWithdraw(true)}
             disabled={pending}
             className="text-sm px-3 py-1.5 rounded-md border border-neutral-300 dark:border-neutral-700 hover:bg-neutral-50 dark:hover:bg-neutral-800 focus:outline-none focus:ring-2 focus:ring-[color:var(--color-accent)] focus:ring-offset-2 disabled:opacity-50"
           >
@@ -103,7 +112,14 @@ function GrantCard({ grant }: { grant: SharedGrant }) {
         ) : (
           <button
             type="button"
-            onClick={() => consent.mutate({ grantId: grant.id })}
+            onClick={() => {
+              setLastAction('consent');
+              setOutcome('');
+              consent.mutate(
+                { grantId: grant.id },
+                { onSuccess: () => setOutcome(`${providerName} shared connection accepted.`) },
+              );
+            }}
             disabled={pending}
             className="bg-[color:var(--color-accent)] text-white text-sm font-medium px-4 py-2 rounded-md hover:opacity-90 focus:outline-none focus:ring-2 focus:ring-[color:var(--color-accent)] focus:ring-offset-2 disabled:opacity-50"
           >
@@ -112,28 +128,55 @@ function GrantCard({ grant }: { grant: SharedGrant }) {
         )}
       </div>
 
-      {accepted && (
-        <p className="mt-2 text-xs text-neutral-500 dark:text-neutral-400">
-          Withdrawing takes effect at the next audit checkpoint; an audit
-          already running will stop rather than finish.
-        </p>
-      )}
-
       {/* One live region per card, carrying both outcomes: a screen reader
           user acting on a specific connection needs the result of THAT
-          action, not a page-level status that could belong to any card. */}
+          action, not a page-level status that could belong to any card.
+          Review finding: it used to announce only 'Saving…', so a completed
+          accept-or-withdraw — the entire point of the interaction — passed
+          silently, with the button label as the only evidence. */}
       <p
         aria-live="polite"
-        role="status"
         className="mt-2 text-xs text-neutral-500 dark:text-neutral-400 empty:mt-0"
       >
-        {pending ? 'Saving…' : ''}
+        {pending ? 'Saving…' : outcome}
       </p>
       {error && (
         <p className="mt-1 text-sm text-red-500" role="alert">
           {statusMessage(error)}
         </p>
       )}
+
+      {/* Review finding: this was a single unguarded click, while key
+          revocation two components over goes through ConfirmDialog. It is
+          less severe than deleting a key — re-accepting is one click and the
+          server is idempotent — but it is not free either: the engine's
+          checkpoint kills a running audit, so the recipient loses that run's
+          output while the owner has already paid for the turns it spent.
+          That consequence belongs at the moment of decision, which is why
+          the sentence moved off the card and into the dialog body. */}
+      <ConfirmDialog
+        open={confirmWithdraw}
+        onOpenChange={setConfirmWithdraw}
+        title={`Withdraw ${providerName} consent`}
+        body={
+          `You will stop being able to run audits on the ${providerName} connection ` +
+          'an administrator shared with you, until you accept it again. This takes ' +
+          'effect at the next audit checkpoint: an audit already running will stop ' +
+          'rather than finish, and its results are discarded.'
+        }
+        confirmLabel="Withdraw consent"
+        cancelLabel="Keep it"
+        destructive={true}
+        onConfirm={() => {
+          setLastAction('withdraw');
+          setOutcome('');
+          withdraw.mutate(
+            { grantId: grant.id },
+            { onSuccess: () => setOutcome(`${providerName} shared connection withdrawn.`) },
+          );
+          setConfirmWithdraw(false);
+        }}
+      />
     </li>
   );
 }

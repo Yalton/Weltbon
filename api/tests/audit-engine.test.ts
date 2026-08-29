@@ -1904,6 +1904,72 @@ describe('audit-engine shared-credential runs (#50 Task 7)', () => {
     expect(serialized).not.toContain(OWNER_ID);
   });
 
+  // Review finding: both fail-closed guards below survived deletion with a
+  // fully green suite. The first is the billing-switch guard — the single
+  // thing this whole design exists to prevent — so "correct by inspection"
+  // is not good enough for either.
+
+  it('fails a shared run whose grant row was deleted instead of using the recipient key', async () => {
+    // The provenance FK is ON DELETE SET NULL and the row check permits
+    // credential_source='shared' with both provenance columns NULL (see
+    // tests/llm-sharing-migration.test.ts). Falling through to the personal
+    // resolver there would move the run onto whatever key the recipient
+    // happens to have now — silently changing who pays.
+    const updateCalls: DbUpdateCall[] = [];
+    const { dbStub } = makeDbStub({
+      runRow: { ...SHARED_RUN_ROW, sharedGrantId: null, credentialOwnerId: null },
+      updateCalls,
+    });
+
+    await runAudit(RUN_ID, sharedDeps(dbStub));
+
+    expect(
+      updateCalls.find(
+        (c) => c.set.status === 'failed' && c.set.error === ENGINE_ERROR.SHARED_ACCESS_REVOKED,
+      ),
+    ).toBeDefined();
+    expect(mockRunAudit).not.toHaveBeenCalled();
+    // Never reached for the recipient's own key.
+    expect(mockResolveCredential).not.toHaveBeenCalled();
+  });
+
+  it('fails a shared run with no live reservation rather than restoring the configured cap', async () => {
+    // Admission creates the run and the reservation in one transaction, so a
+    // missing one means the run and the ledger disagree. Continuing would
+    // spend against an administrator's key with nothing withheld from anyone.
+    mockGetReservation.mockResolvedValue(null);
+    const updateCalls: DbUpdateCall[] = [];
+    const { dbStub } = makeDbStub({ runRow: SHARED_RUN_ROW, updateCalls });
+
+    await runAudit(RUN_ID, sharedDeps(dbStub, { auditMaxCostUsd: 100 }));
+
+    expect(
+      updateCalls.find(
+        (c) => c.set.status === 'failed' && c.set.error === ENGINE_ERROR.UNKNOWN,
+      ),
+    ).toBeDefined();
+    expect(mockRunAudit).not.toHaveBeenCalled();
+  });
+
+  it('fails a shared run whose reservation was already settled', async () => {
+    mockGetReservation.mockResolvedValue({
+      auditRunId: RUN_ID,
+      reservedUsd: '1.000000',
+      state: 'settled',
+    });
+    const updateCalls: DbUpdateCall[] = [];
+    const { dbStub } = makeDbStub({ runRow: SHARED_RUN_ROW, updateCalls });
+
+    await runAudit(RUN_ID, sharedDeps(dbStub));
+
+    expect(
+      updateCalls.find(
+        (c) => c.set.status === 'failed' && c.set.error === ENGINE_ERROR.UNKNOWN,
+      ),
+    ).toBeDefined();
+    expect(mockRunAudit).not.toHaveBeenCalled();
+  });
+
   it('leaves a personal run untouched by any shared machinery', async () => {
     const { dbStub } = makeDbStub({});
 

@@ -635,7 +635,15 @@ export async function settleSharedAuditReservation(
  * charged. Idempotent by the same predicate — a reservation that is no longer
  * `reserved` is left alone.
  */
-export async function releaseSharedReservation(auditRunId: string): Promise<void> {
+async function finalizeReservationWithoutRun(
+  auditRunId: string,
+  terminalState: 'succeeded' | 'failed' | 'released',
+  actualCostUsd: number | string,
+): Promise<void> {
+  const settledUsd = sixDecimalAmount(actualCostUsd, true);
+  if (terminalState === 'released' && Number(settledUsd) !== 0) {
+    throw new SharedLlmError('shared_cost_invalid');
+  }
   const [identity] = await getDb().select({ recipientUserId: llmSharedAuditReservations.recipientUserId })
     .from(llmSharedAuditReservations)
     .where(eq(llmSharedAuditReservations.auditRunId, auditRunId))
@@ -651,23 +659,34 @@ export async function releaseSharedReservation(auditRunId: string): Promise<void
       eq(llmSharedUsage.monthStart, reservation.monthStart),
     )).for('update');
     if (!usage) throw new SharedLlmError('shared_usage_unavailable');
+    const isSucceeded = terminalState === 'succeeded';
+    const isFailed = terminalState === 'failed';
     await tx.update(llmSharedUsage).set({
       reservedCostUsd: sql`${llmSharedUsage.reservedCostUsd} - ${reservation.reservedCostUsd}::numeric`,
+      settledCostUsd: isSucceeded || isFailed
+        ? sql`${llmSharedUsage.settledCostUsd} + ${settledUsd}::numeric`
+        : usage.settledCostUsd,
       activeAuditCount: sql`${llmSharedUsage.activeAuditCount} - 1`,
+      completedAuditCount: isSucceeded ? sql`${llmSharedUsage.completedAuditCount} + 1` : usage.completedAuditCount,
+      failedAuditCount: isFailed ? sql`${llmSharedUsage.failedAuditCount} + 1` : usage.failedAuditCount,
       updatedAt: new Date(),
     }).where(and(
       eq(llmSharedUsage.recipientUserId, reservation.recipientUserId),
       eq(llmSharedUsage.monthStart, reservation.monthStart),
     ));
     await tx.update(llmSharedAuditReservations).set({
-      settledCostUsd: '0.000000',
-      state: 'released',
+      settledCostUsd: settledUsd,
+      state: terminalState === 'released' ? 'released' : 'settled',
       settledAt: new Date(),
     }).where(and(
       eq(llmSharedAuditReservations.id, reservation.id),
       eq(llmSharedAuditReservations.state, 'reserved'),
     ));
   });
+}
+
+export async function releaseSharedReservation(auditRunId: string): Promise<void> {
+  await finalizeReservationWithoutRun(auditRunId, 'released', 0);
 }
 
 /**
@@ -685,7 +704,11 @@ export async function releaseSharedReservation(auditRunId: string): Promise<void
  * Returns the number released, for boot-log observability.
  */
 export async function releaseStrandedSharedReservations(): Promise<number> {
-  const stranded = await getDb().select({ auditRunId: llmSharedAuditReservations.auditRunId })
+  const stranded = await getDb().select({
+    auditRunId: llmSharedAuditReservations.auditRunId,
+    status: auditRuns.status,
+    costUsd: auditRuns.costUsd,
+  })
     .from(llmSharedAuditReservations)
     .innerJoin(auditRuns, eq(auditRuns.id, llmSharedAuditReservations.auditRunId))
     .where(and(
@@ -696,13 +719,94 @@ export async function releaseStrandedSharedReservations(): Promise<number> {
   let released = 0;
   for (const row of stranded) {
     try {
-      await releaseSharedReservation(row.auditRunId);
+      // Review finding: this used to release every stranded reservation at 0,
+      // which silently forgave the charge for a run that had ALREADY
+      // succeeded — the owner's month never debited for an audit the
+      // recipient received, and the completedAudits counter the recipient's
+      // settings page now shows under-reporting it. A terminal run's recorded
+      // cost is the honest amount, so it is settled at that cost under its
+      // own status; only a run that recorded nothing is released whole.
+      const cost = Number(row.costUsd);
+      // The WHERE above already restricts to these two, but audit_runs.status
+      // is free text at the type level; narrowing here rather than casting
+      // keeps a future third terminal status from silently becoming a
+      // settlement state nobody chose.
+      const terminal = row.status === 'succeeded' ? 'succeeded' as const
+        : row.status === 'failed' ? 'failed' as const
+        : null;
+      const chargeable = terminal !== null && Number.isFinite(cost) && cost > 0;
+      await (chargeable
+        ? finalizeReservationWithoutRun(row.auditRunId, terminal, cost)
+        : releaseSharedReservation(row.auditRunId));
       released += 1;
     } catch {
       // One unreleasable row must not stop the rest. The caller runs at boot.
     }
   }
   return released;
+}
+
+/**
+ * Recomputes each recipient-month's held totals from the reservations that
+ * actually survive.
+ *
+ * `llm_shared_audit_reservations.audit_run_id` cascades from `audit_runs`, but
+ * `llm_shared_usage` has no run reference and cascades from nothing. Deleting
+ * a universe with a shared audit in flight — which `DELETE /universes/:id`
+ * permits — therefore removes the run and its reservation while leaving
+ * `active_audit_count` and `reserved_cost_usd` incremented, with nothing left
+ * for either the engine or the reservation sweep to find. The recipient is
+ * locked out of shared audits for the rest of the UTC month, which is the
+ * exact outcome all of this machinery exists to prevent.
+ *
+ * Boot-only, and safe there for the same reason the sweep is: the orphan pass
+ * has already force-failed every pending/running run, so any reservation still
+ * `reserved` is settled or released before this runs, and the recomputed
+ * totals cannot race a live audit.
+ *
+ * Deliberately does NOT touch settled/completed/failed counters — those are
+ * cumulative history, not a live hold, and nothing can orphan them.
+ */
+export async function reconcileSharedUsageCounters(): Promise<number> {
+  const held = await getDb().select({
+    recipientUserId: llmSharedAuditReservations.recipientUserId,
+    monthStart: llmSharedAuditReservations.monthStart,
+    heldUsd: sql<string>`COALESCE(SUM(${llmSharedAuditReservations.reservedCostUsd}), 0)`,
+    heldCount: sql<number>`COUNT(*)::int`,
+  })
+    .from(llmSharedAuditReservations)
+    .where(eq(llmSharedAuditReservations.state, 'reserved'))
+    .groupBy(llmSharedAuditReservations.recipientUserId, llmSharedAuditReservations.monthStart);
+
+  const heldBy = new Map(held.map((row) => [
+    `${row.recipientUserId}:${row.monthStart}`,
+    { usd: row.heldUsd, count: Number(row.heldCount) },
+  ]));
+
+  const rows = await getDb().select({
+    recipientUserId: llmSharedUsage.recipientUserId,
+    monthStart: llmSharedUsage.monthStart,
+    reservedCostUsd: llmSharedUsage.reservedCostUsd,
+    activeAuditCount: llmSharedUsage.activeAuditCount,
+  }).from(llmSharedUsage);
+
+  let repaired = 0;
+  for (const row of rows) {
+    const actual = heldBy.get(`${row.recipientUserId}:${row.monthStart}`) ?? { usd: '0', count: 0 };
+    if (Number(row.reservedCostUsd) === Number(actual.usd) && row.activeAuditCount === actual.count) {
+      continue;
+    }
+    await getDb().update(llmSharedUsage).set({
+      reservedCostUsd: Number(actual.usd).toFixed(6),
+      activeAuditCount: actual.count,
+      updatedAt: new Date(),
+    }).where(and(
+      eq(llmSharedUsage.recipientUserId, row.recipientUserId),
+      eq(llmSharedUsage.monthStart, row.monthStart),
+    ));
+    repaired += 1;
+  }
+  return repaired;
 }
 
 export async function getSharedAuditReservation(auditRunId: string): Promise<SharedAuditReservationLookup | null> {

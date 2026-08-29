@@ -265,6 +265,51 @@ describe('audit-engine shared settlement (#50 Task 7, real ledger)', () => {
     expect(after.reservation.state).toBe('settled');
   });
 
+  it('sweeps a stranded SUCCEEDED run at its recorded cost rather than forgiving the charge', async () => {
+    // Review finding: the sweep released everything at 0, so a run that had
+    // already succeeded — the recipient got their audit, the provider billed
+    // the owner — was silently forgiven, and the completedAudits counter the
+    // recipient's settings page shows under-reported it.
+    const fixture = await sharedFixture();
+    const reserved = await admitSharedRun(fixture);
+    await handle.db.update(auditRuns)
+      .set({ status: 'succeeded', costUsd: '0.0053', finishedAt: new Date() })
+      .where(eq(auditRuns.id, reserved.runId));
+
+    await recoverOrphanAuditRuns(handle.db);
+
+    const { reservation, usage } = await ledger(fixture.recipient.id);
+    expect(reservation.state).toBe('settled');
+    expect(Number(reservation.settledCostUsd)).toBeCloseTo(0.0053, 4);
+    expect(Number(usage.settledCostUsd)).toBeCloseTo(0.0053, 4);
+    expect(usage.completedAuditCount).toBe(1);
+    expect(usage.activeAuditCount).toBe(0);
+    expect(Number(usage.reservedCostUsd)).toBe(0);
+  });
+
+  it('reconciles a usage hold left behind when the run and reservation cascade away', async () => {
+    // Deleting a universe mid-run cascades the run AND its reservation out of
+    // existence, but llm_shared_usage references neither, so its hold stays.
+    // Nothing else in the system can see that: there is no reservation left
+    // for the sweep to find and no run for the orphan pass to fail. The
+    // recipient is locked out of shared audits for the rest of the month.
+    const fixture = await sharedFixture();
+    await admitSharedRun(fixture);
+    await handle.db.delete(universes).where(eq(universes.id, fixture.universeId));
+
+    // Precondition: the hold really is orphaned.
+    const orphaned = await ledger(fixture.recipient.id);
+    expect(orphaned.reservation).toBeUndefined();
+    expect(orphaned.usage.activeAuditCount).toBe(1);
+    expect(Number(orphaned.usage.reservedCostUsd)).toBeGreaterThan(0);
+
+    await recoverOrphanAuditRuns(handle.db);
+
+    const { usage } = await ledger(fixture.recipient.id);
+    expect(usage.activeAuditCount).toBe(0);
+    expect(Number(usage.reservedCostUsd)).toBe(0);
+  });
+
   it('sweeps a reservation stranded on an already-terminal run', async () => {
     // Settlement threw, or the process died between the terminal status write
     // and the settlement. The run is terminal, so the orphan pass cannot see

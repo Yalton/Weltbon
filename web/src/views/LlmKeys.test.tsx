@@ -174,6 +174,25 @@ describe('LlmKeys view', () => {
     ).toBeInTheDocument();
   });
 
+  it('renders the shared-connection panel alongside the personal key table after consent', async () => {
+    // The panel mounts in all three render branches; the gate test above only
+    // covers one of them.
+    vi.mocked(api).mockImplementation(
+      makeApiDispatcher({
+        '/llm-keys/consent': { consentedAt: new Date().toISOString() },
+        '/llm-keys': [mockLlmKey],
+        '/llm-shares': { grants: [SHARED_GRANT] },
+      }),
+    );
+    const qc = makeClient();
+    render(<LlmKeys />, { wrapper: ({ children }) => <Wrapper qc={qc}>{children}</Wrapper> });
+
+    expect(await screen.findByText('LLM API keys')).toBeInTheDocument();
+    expect(
+      await screen.findByRole('button', { name: 'Accept Anthropic shared connection' }),
+    ).toBeInTheDocument();
+  });
+
   // ─── Consent gate ──────────────────────────────────────────────────────
 
   it('renders consent block when consentedAt is null (LLMKEY-07)', async () => {

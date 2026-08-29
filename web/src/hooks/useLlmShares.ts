@@ -35,10 +35,12 @@ import {
   useMutation,
   useQuery,
   useQueryClient,
+  type QueryClient,
   type UseMutationResult,
   type UseQueryResult,
 } from '@tanstack/react-query';
 import { api } from '../api/client';
+import { llmModelsKey } from './useAudits';
 
 export type SharedProvider = 'anthropic' | 'openai';
 
@@ -102,6 +104,23 @@ export interface AdminSharedGrant {
 
 export const LLM_SHARES_QUERY_KEY = ['llm-shares'] as const;
 
+/**
+ * Consent is the thing that decides whether `/llm/models` answers with the
+ * owner's catalog or a 403 (Task 6 routed model listing through the effective
+ * credential), so accepting or withdrawing changes an answer cached elsewhere
+ * under a different key — with a 30-minute staleTime, which is how long a
+ * newly-accepted recipient would otherwise keep seeing an empty model picker.
+ *
+ * The grant's provider is read from the cached list rather than passed in,
+ * because the mutation variables carry only the grant id — and if the list is
+ * not cached the model query cannot be either, so there is nothing to do.
+ */
+function invalidateProviderModels(qc: QueryClient, grantId: string) {
+  const cached = qc.getQueryData<{ grants: SharedGrant[] }>(LLM_SHARES_QUERY_KEY);
+  const provider = cached?.grants.find((g) => g.id === grantId)?.provider;
+  if (provider) qc.invalidateQueries({ queryKey: llmModelsKey(provider) });
+}
+
 /** List the caller's active shared connections, consented or not. */
 export function useSharedLlmGrants(): UseQueryResult<{ grants: SharedGrant[] }> {
   return useQuery({
@@ -127,8 +146,9 @@ export function useConsentSharedLlmGrant(): UseMutationResult<
   return useMutation({
     mutationFn: (vars: { grantId: string }) =>
       api<SharedConsent>(`/llm-shares/${vars.grantId}/consent`, { method: 'POST' }),
-    onSuccess: () => {
+    onSuccess: (_data, vars, _ctx) => {
       qc.invalidateQueries({ queryKey: LLM_SHARES_QUERY_KEY });
+      invalidateProviderModels(qc, vars.grantId);
     },
   });
 }
@@ -150,8 +170,9 @@ export function useWithdrawSharedLlmConsent(): UseMutationResult<
   return useMutation({
     mutationFn: (vars: { grantId: string }) =>
       api<void>(`/llm-shares/${vars.grantId}/consent`, { method: 'DELETE' }),
-    onSuccess: () => {
+    onSuccess: (_data, vars, _ctx) => {
       qc.invalidateQueries({ queryKey: LLM_SHARES_QUERY_KEY });
+      invalidateProviderModels(qc, vars.grantId);
     },
     onError: () => {
       qc.invalidateQueries({ queryKey: LLM_SHARES_QUERY_KEY });

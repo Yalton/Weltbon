@@ -1,13 +1,27 @@
 /**
  * #50 Task 8 — recipient shared-connection panel.
  *
- * The security-relevant assertions here are the negative ones. The panel is
- * the only place a recipient sees anything about an administrator's
- * credential, so it is the place where owner identity or key material would
- * leak if a later change widened the type. `expectNoOwnerOrKeyMaterial`
- * therefore checks the rendered DOM text rather than the props: a component
- * that never receives a secret cannot render one, and that is exactly the
- * property worth pinning against a future "just show which admin shared it".
+ * The security-relevant assertions here are the negative ones, and the first
+ * version of them was worthless. It searched the DOM for literals no fixture
+ * contained and for FIELD NAMES ('ownerUserId') when a real leak renders a
+ * VALUE — so a reviewer could widen the type, render "Shared by Alice Admin"
+ * with the administrator's email in a title attribute, and watch all eight
+ * tests pass. That is the second negative assertion on this branch to pass
+ * for reasons unrelated to what it guarded (the first matched 'iv' inside
+ * `"source":"live"`).
+ *
+ * So the rule this file now follows: a negative assertion must be shown to
+ * fail against a simulated leak. Two mechanisms make that possible here.
+ *
+ *   1. The fixtures carry POISON — plausible owner identity and key material
+ *      attached as extra properties the component's type does not declare.
+ *      Nothing renders them today; anything that starts to, will.
+ *   2. The check walks text AND every attribute value of the rendered card,
+ *      because the leak that got past the old version was in a `title`.
+ *
+ * Assertions on what the card DOES render are exact-text rather than
+ * substring, so a field added to the card is a test failure that has to be
+ * looked at rather than silently absorbed.
  */
 
 import { describe, it, expect, vi, beforeEach } from 'vitest';
@@ -101,20 +115,58 @@ const CONSENTED_OPENAI: SharedGrant = {
 };
 
 /**
- * Nothing that identifies the owner, and nothing shaped like a credential —
- * including the masked preview the personal-key table legitimately renders.
+ * Every VALUE the poison fixtures carry. These are what a leak renders; the
+ * field names they arrive under are not.
+ */
+const POISON_VALUES = [
+  'Alice Admin',
+  'alice.admin@corp.example',
+  'admin-user-uuid-1',
+  'owner-key-uuid-1',
+  'sk-ant-owner-plaintext-secret',
+  'QZ4T',
+  'c1ph3rt3xt',
+];
+
+/**
+ * Owner identity and key material must not reach the DOM — through text, or
+ * through any attribute value (title, aria-label, data-*, href).
+ *
+ * Scoped to the whole document rather than one card so a leak rendered in a
+ * heading, a tooltip or a hidden node is still caught.
  */
 function expectNoOwnerOrKeyMaterial() {
-  expect(screen.queryByText(/••••/)).not.toBeInTheDocument();
-  expect(
-    screen.queryByText(
-      /owner@test\.example|sk-ant-test-secret|base url|ciphertext|body suffix|auth tag/i,
-    ),
-  ).not.toBeInTheDocument();
-  const rendered = document.body.textContent ?? '';
-  for (const forbidden of ['ownerUserId', 'ownerKeyId', 'credentialOwnerId', 'sharedGrantId']) {
-    expect(rendered).not.toContain(forbidden);
+  const text = document.body.textContent ?? '';
+  const attributeValues: string[] = [];
+  for (const el of Array.from(document.querySelectorAll('*'))) {
+    for (const attr of Array.from(el.attributes)) attributeValues.push(attr.value);
   }
+  const haystack = `${text}\n${attributeValues.join('\n')}`;
+
+  for (const secret of POISON_VALUES) {
+    expect(haystack).not.toContain(secret);
+  }
+  // The masked preview LlmKeys legitimately renders for the user's OWN key.
+  // A suffix is a fingerprint of someone else's secret; it has no place here.
+  expect(haystack).not.toContain('••••');
+}
+
+/**
+ * Owner identity and key material as a real payload would carry them, cast
+ * through `unknown` because the recipient's type correctly refuses to declare
+ * any of it. The component must ignore every one of these.
+ */
+function withPoison(grant: SharedGrant): SharedGrant {
+  return {
+    ...grant,
+    owner: { id: 'admin-user-uuid-1', displayName: 'Alice Admin', email: 'alice.admin@corp.example' },
+    ownerUserId: 'admin-user-uuid-1',
+    ownerKeyId: 'owner-key-uuid-1',
+    credentialOwnerId: 'admin-user-uuid-1',
+    apiKey: 'sk-ant-owner-plaintext-secret',
+    bodySuffix: 'QZ4T',
+    ciphertext: 'c1ph3rt3xt',
+  } as unknown as SharedGrant;
 }
 
 describe('SharedLlmConnections', () => {
@@ -123,7 +175,7 @@ describe('SharedLlmConnections', () => {
   });
 
   it('shows the disclosure, the monthly limit and an Accept action for an unconsented grant', async () => {
-    vi.mocked(api).mockResolvedValue({ grants: [UNCONSENTED_ANTHROPIC] });
+    vi.mocked(api).mockResolvedValue({ grants: [withPoison(UNCONSENTED_ANTHROPIC)] });
     renderPanel();
 
     expect(await screen.findByText(/content leaves this instance/i)).toBeInTheDocument();
@@ -134,10 +186,29 @@ describe('SharedLlmConnections', () => {
       screen.getByRole('button', { name: 'Accept Anthropic shared connection' }),
     ).toBeInTheDocument();
     expectNoOwnerOrKeyMaterial();
+
+    // Exact, not substring: anything ADDED to the card fails here and has to
+    // be looked at, which is the only way a rendered-DOM check can guard
+    // against a field nobody thought to forbid by name.
+    expect(
+      screen.getByTestId('shared-llm-grant-grant-anthropic-1').textContent,
+    ).toBe(
+      'Anthropic (shared)Not yet accepted' +
+        'Your content leaves this instance: entries, summaries, links and tags ' +
+        'are sent to Anthropic to run the audit. The credential is ' +
+        'administrator-managed — an administrator pays for the tokens, and can ' +
+        'withdraw this connection at any time.' +
+        'Monthly allowance$0.0000 used of $1.0000 monthly limit' +
+        'Reserved right now$0.0000' +
+        'Audits this month0 completed, 0 failed' +
+        'Running now0 of 1 at a time' +
+        'Disclosure versionshared-llm-v1' +
+        'Accept Anthropic shared connection',
+    );
   });
 
   it('renders usage counters and a Withdraw action for a consented grant', async () => {
-    vi.mocked(api).mockResolvedValue({ grants: [CONSENTED_OPENAI] });
+    vi.mocked(api).mockResolvedValue({ grants: [withPoison(CONSENTED_OPENAI)] });
     renderPanel();
 
     expect(await screen.findByText(/\$0\.2500 used of \$1\.0000 monthly limit/)).toBeInTheDocument();
@@ -152,7 +223,9 @@ describe('SharedLlmConnections', () => {
   });
 
   it('renders one card per grant', async () => {
-    vi.mocked(api).mockResolvedValue({ grants: [UNCONSENTED_ANTHROPIC, CONSENTED_OPENAI] });
+    vi.mocked(api).mockResolvedValue({
+      grants: [withPoison(UNCONSENTED_ANTHROPIC), withPoison(CONSENTED_OPENAI)],
+    });
     renderPanel();
 
     expect(await screen.findByTestId('shared-llm-grant-grant-anthropic-1')).toBeInTheDocument();
@@ -199,12 +272,12 @@ describe('SharedLlmConnections', () => {
     });
   });
 
-  it('withdraws by DELETEing the grant consent path', async () => {
+  it('confirms before withdrawing, then DELETEs the grant consent path', async () => {
     const calls: Array<[string, RequestInit | undefined]> = [];
     vi.mocked(api).mockImplementation((path: string, init?: RequestInit) => {
       calls.push([path, init]);
       if (init?.method === 'DELETE') return Promise.resolve(undefined);
-      return Promise.resolve({ grants: [CONSENTED_OPENAI] });
+      return Promise.resolve({ grants: [withPoison(CONSENTED_OPENAI)] });
     });
     renderPanel();
 
@@ -212,9 +285,36 @@ describe('SharedLlmConnections', () => {
       await screen.findByRole('button', { name: 'Withdraw consent for OpenAI shared connection' }),
     );
 
+    // The click opens a confirmation, it does NOT withdraw. Withdrawal kills a
+    // running audit, so a single stray click must not be able to do it.
+    expect(calls.some(([, i]) => i?.method === 'DELETE')).toBe(false);
+    expect(await screen.findByText(/an audit already running will stop rather than finish/i))
+      .toBeInTheDocument();
+
+    await userEvent.click(screen.getByRole('button', { name: 'Withdraw consent' }));
+
     await waitFor(() => {
       expect(calls.some(([p, i]) => p === '/llm-shares/grant-openai-1/consent' && i?.method === 'DELETE')).toBe(true);
     });
+  });
+
+  it('does not withdraw when the confirmation is dismissed', async () => {
+    const calls: Array<[string, RequestInit | undefined]> = [];
+    vi.mocked(api).mockImplementation((path: string, init?: RequestInit) => {
+      calls.push([path, init]);
+      return Promise.resolve({ grants: [withPoison(CONSENTED_OPENAI)] });
+    });
+    renderPanel();
+
+    await userEvent.click(
+      await screen.findByRole('button', { name: 'Withdraw consent for OpenAI shared connection' }),
+    );
+    await userEvent.click(screen.getByRole('button', { name: 'Keep it' }));
+
+    expect(calls.some(([, i]) => i?.method === 'DELETE')).toBe(false);
+    expect(
+      screen.getByRole('button', { name: 'Withdraw consent for OpenAI shared connection' }),
+    ).toBeInTheDocument();
   });
 
   it('surfaces the server message when a mutation fails, without losing the card', async () => {

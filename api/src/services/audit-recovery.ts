@@ -3,6 +3,7 @@ import type { NodePgDatabase } from 'drizzle-orm/node-postgres';
 import { auditRuns } from '../db/schema.js';
 import type * as schema from '../db/schema.js';
 import {
+  reconcileSharedUsageCounters,
   releaseSharedReservation,
   releaseStrandedSharedReservations,
 } from './llm-sharing.js';
@@ -11,6 +12,7 @@ export interface AuditRecoveryDeps {
   /** Injectable for the same reason the engine's is: unit isolation. */
   releaseSharedReservation?: typeof releaseSharedReservation;
   releaseStrandedSharedReservations?: typeof releaseStrandedSharedReservations;
+  reconcileSharedUsageCounters?: typeof reconcileSharedUsageCounters;
 }
 
 /**
@@ -53,6 +55,11 @@ export interface AuditRecoveryDeps {
  * settlement that threw, or a process death between the two writes. Those are
  * invisible to any status-keyed scan, and each costs its recipient a
  * concurrency slot permanently, so they need a sweep of their own.
+ *
+ * A third pass reconciles llm_shared_usage against the reservations that
+ * survive, for the case where there is no reservation left to sweep either
+ * (a universe deleted mid-run cascades the run and reservation away and
+ * leaves the hold behind).
  */
 export async function recoverOrphanAuditRuns(
   database: NodePgDatabase<typeof schema>,
@@ -62,6 +69,8 @@ export async function recoverOrphanAuditRuns(
     deps?.releaseSharedReservation ?? releaseSharedReservation;
   const _releaseStrandedSharedReservations =
     deps?.releaseStrandedSharedReservations ?? releaseStrandedSharedReservations;
+  const _reconcileSharedUsageCounters =
+    deps?.reconcileSharedUsageCounters ?? reconcileSharedUsageCounters;
 
   const updated = await database
     .update(auditRuns)
@@ -93,6 +102,21 @@ export async function recoverOrphanAuditRuns(
     }
   } catch {
     console.error('[audit-recovery] stranded-reservation sweep failed');
+  }
+
+  // Last, because it recomputes from whatever the two passes above left
+  // behind. This is the net for held totals with no reservation left to
+  // release at all — deleting a universe mid-run cascades the run and its
+  // reservation away while llm_shared_usage, which references neither, keeps
+  // the hold. Nothing else in the system can see that, and the recipient is
+  // locked out for the rest of the month.
+  try {
+    const repaired = await _reconcileSharedUsageCounters();
+    if (repaired > 0) {
+      console.log(`[audit-recovery] reconciled ${repaired} shared usage row(s)`);
+    }
+  } catch {
+    console.error('[audit-recovery] shared usage reconciliation failed');
   }
 
   // Contract preserved: the count of force-failed rows, not of releases.

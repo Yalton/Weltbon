@@ -388,7 +388,11 @@ export async function runAudit(runId: string, deps?: AuditEngineDeps): Promise<v
    * charging a month a different one than the run reports is indefensible.
    *
    * Falls back to the accumulator, rounded up into range, only when the row
-   * cannot be read.
+   * cannot be read — which in practice means a DB error, since cost_usd is
+   * NOT NULL DEFAULT 0. That fallback is valid for any amount this engine can
+   * produce, but not for arbitrary ones: roundUpToSixDecimals stops yielding
+   * a clean six-decimal above roughly 1e4, well past auditMaxCostUsd. Do not
+   * reuse it as a general-purpose settlement amount.
    */
   async function settleableCostUsd(): Promise<number> {
     try {
