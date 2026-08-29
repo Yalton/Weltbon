@@ -19,6 +19,22 @@
 # pass before merging -> mark `ci / unit` AND `ci / integration` as required.
 # Documented in the phase SUMMARY.
 #
+# Runner: `[self-hosted, citreum]` — the `llcbox-citreum` runner registered to
+# this repository, not a GitHub-hosted one. GitHub-hosted minutes stopped being
+# billable on the org account, and every job failed before checkout with "The
+# job was not started because recent account payments have failed"; self-hosted
+# minutes are free. The repository is PRIVATE, which is what makes this safe:
+# a self-hosted runner on a public repo executes code from any fork's pull
+# request. Do not make this repository public without moving CI back to hosted
+# runners or gating the workflow on `pull_request_target` review.
+#
+# The runner is one machine, so the two lanes below run sequentially rather
+# than in parallel. It also shares a host with the production deployment; the
+# integration lane's postgres service container binds host 5432, which is free
+# there because the production database is published only on the container
+# network. If that ever changes, this lane would point DATABASE_URL at
+# production and the suite's per-file schema teardown would run against it.
+#
 # Test-only postgres creds (weltbon/weltbon/weltbon) are scoped to the
 # ephemeral service container and mirror docker-compose.yml verbatim per D-14.
 # Per the phase threat model (T-27-01-01), this workflow MUST NOT reference
@@ -43,7 +59,7 @@ concurrency:
 jobs:
   unit:
     name: unit
-    runs-on: ubuntu-latest
+    runs-on: [self-hosted, citreum]
     steps:
       - name: Checkout
         uses: actions/checkout@v4
@@ -74,7 +90,7 @@ jobs:
 
   integration:
     name: integration
-    runs-on: ubuntu-latest
+    runs-on: [self-hosted, citreum]
     services:
       postgres:
         image: postgres:16-alpine
