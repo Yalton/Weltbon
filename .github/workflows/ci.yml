@@ -76,8 +76,16 @@ jobs:
       - name: Install dependencies
         run: pnpm install --frozen-lockfile
 
+      # --maxWorkers=2 is for the self-hosted runner, not a preference. The
+      # db/client tests construct pglite (Postgres compiled to WASM), which
+      # costs 1.6-3.3s each even in isolation. At default parallelism on a
+      # four-core box that also runs production, several of those construct at
+      # once and blow the 10s default timeout — three consecutive runs failed
+      # on three DIFFERENT pglite tests, which is the signature of contention
+      # rather than a defect. Capping workers fixes the cause; raising the
+      # timeouts would only have hidden it.
       - name: Run api unit tests
-        run: cd api && pnpm test
+        run: cd api && pnpm test -- --maxWorkers=2
 
       - name: Run web tests
         run: cd web && pnpm exec vitest run
