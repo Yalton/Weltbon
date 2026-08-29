@@ -27,6 +27,16 @@ vi.hoisted(() => {
   process.env.LLM_KEY_ENCRYPTION_KEY = '0'.repeat(64);
 });
 
+/**
+ * Same reasoning as llm-credential.test.ts: every case here builds real
+ * accounts through bcrypt at cost 12, admits a reservation, and runs the
+ * engine end to end. Measured at ~1s per test on an idle developer machine
+ * and 3.5-4.0s on the CI host, which shares four cores with production — so
+ * these passed their first CI run with only 40% of the 10s default left. That
+ * is not margin, it is luck, and the file next door already spent it.
+ */
+vi.setConfig({ testTimeout: 30_000 });
+
 import { createTestDb, cleanDb, createTestUser, type TestDbHandle } from './helpers.js';
 import { setTestDb } from '../src/db/client.js';
 import {

@@ -18,6 +18,25 @@ import { eq } from 'drizzle-orm';
 vi.hoisted(() => {
   process.env.LLM_KEY_ENCRYPTION_KEY = '0'.repeat(64);
 });
+
+/**
+ * Every test here builds real accounts, and createTestUser hashes with bcrypt
+ * at cost 12 — the production cost, deliberately. Measured on an idle
+ * developer machine: 5.5s for the ownership matrix below, 1.2-1.7s for the
+ * single-fixture cases. The 10s default left the matrix 45% of headroom, and a
+ * CI host that also runs production ate through that on the first run.
+ *
+ * Worth being precise about why this only surfaced now. Before the encryption
+ * key was pinned above, all fifteen shared cases threw owner_key_required
+ * inside createSharedGrant and finished in milliseconds without ever reaching
+ * an assertion. Pinning it did not make these tests slow — it made them RUN,
+ * and nobody had ever measured what they cost.
+ *
+ * 30s is roughly 5x the measured worst case: contention cannot fail it, and a
+ * genuine hang still fails the lane rather than stalling it for the default
+ * five minutes.
+ */
+vi.setConfig({ testTimeout: 30_000 });
 import { createTestDb, cleanDb, createTestUser, type TestDbHandle } from './helpers.js';
 import { llmApiKeys, llmSharedConsents, llmSharedGrants, users } from '../src/db/schema.js';
 import { encryptKey } from '../src/services/llm-key.js';
@@ -54,16 +73,29 @@ async function insertEncryptedKey(
   return key;
 }
 
+/**
+ * Fixture identities are unique per call rather than per provider.
+ *
+ * They used to be `owner-${provider}@test.dev`, fixed. When one test in this
+ * file timed out mid-fixture on CI, its half-written rows survived into the
+ * next test, which then died on a users_email_unique violation — so a single
+ * slow test reported as two failures, and the second one pointed at a
+ * constraint that had nothing to do with the bug. Unique identities keep a
+ * failure contained to the test that caused it.
+ */
+let fixtureSeq = 0;
+
 async function createConsentedSharedGrant(
   handle: TestDbHandle,
   provider: 'anthropic' | 'openai' = 'anthropic',
 ) {
+  const seq = ++fixtureSeq;
   const owner = await createTestUser(handle, {
-    email: `owner-${provider}@test.dev`,
+    email: `owner-${provider}-${seq}@test.dev`,
     password: 'password12345',
   });
   const recipient = await createTestUser(handle, {
-    email: `recipient-${provider}@test.dev`,
+    email: `recipient-${provider}-${seq}@test.dev`,
     password: 'password12345',
   });
   await handle.db.update(users).set({ isAdmin: true }).where(eq(users.id, owner.id));
