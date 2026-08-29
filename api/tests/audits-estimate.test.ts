@@ -484,6 +484,29 @@ describe('GET /api/universes/:uid/audits/estimate (Phase 26 Plan 08 Task 1)', ()
     expect(mockEstimate).not.toHaveBeenCalled();
   });
 
+  // Review finding: the 409 this route gained when the pre-estimator refusal
+  // was added had no test at all — a new user-visible status on a
+  // security-relevant surface.
+  it('refuses to estimate while the recipient already has a shared audit running', async () => {
+    const fixture = await sharedFixture();
+    await handle.db.insert(llmSharedUsage).values({
+      recipientUserId: fixture.recipient.user.id,
+      monthStart: utcMonthStart(),
+      activeAuditCount: 1,
+    });
+    mockEstimate.mockClear();
+
+    const response = await req(
+      'GET',
+      `/api/universes/${fixture.universe.id}/audits/estimate?scope=universe`,
+      { headers: fixture.recipient.hdrs },
+    );
+    expect(response.status).toBe(409);
+    expect(await json(response)).toMatchObject({ code: 'shared_audit_in_progress' });
+    // The point of refusing here rather than after: no call on the owner's key.
+    expect(mockEstimate).not.toHaveBeenCalled();
+  });
+
   // Review finding 3: a BROKEN own key must not fall through to the grant.
   // Only an ABSENT own key may. The 400 is the pre-#50 no-credential contract
   // for this route, unchanged — what matters is that no shared estimate ran.

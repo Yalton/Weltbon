@@ -23,7 +23,10 @@ describe('recoverOrphanAuditRuns (AUDIT-12 + CONTEXT D-03)', () => {
   let handle: TestDbHandle;
   let recoverOrphanAuditRuns: (
     db: TestDbHandle['db'],
-    deps?: { settleSharedAuditReservation?: unknown },
+    deps?: {
+      releaseSharedReservation?: unknown;
+      releaseStrandedSharedReservations?: unknown;
+    },
   ) => Promise<number>;
 
   beforeAll(async () => {
@@ -31,7 +34,10 @@ describe('recoverOrphanAuditRuns (AUDIT-12 + CONTEXT D-03)', () => {
     const mod = await import('../src/services/audit-recovery.js');
     recoverOrphanAuditRuns = mod.recoverOrphanAuditRuns as unknown as (
       db: TestDbHandle['db'],
-      deps?: { settleSharedAuditReservation?: unknown },
+      deps?: {
+        releaseSharedReservation?: unknown;
+        releaseStrandedSharedReservations?: unknown;
+      },
     ) => Promise<number>;
   });
 
@@ -289,23 +295,18 @@ describe('recoverOrphanAuditRuns (AUDIT-12 + CONTEXT D-03)', () => {
       .where(eq(auditRuns.id, sharedRunId));
     const personalRunId = await seedAuditRun(personalUniverse, user.id, 'pending');
 
-    const settled: Array<[string, string, number]> = [];
+    const released: string[] = [];
     const count = await recoverOrphanAuditRuns(handle.db, {
-      settleSharedAuditReservation: async (
-        runId: string,
-        state: string,
-        cost: number,
-      ) => {
-        settled.push([runId, state, cost]);
+      releaseSharedReservation: async (runId: string) => {
+        released.push(runId);
       },
+      releaseStrandedSharedReservations: async () => 0,
     });
 
-    // Contract preserved: the count is of force-failed ROWS, not settlements.
+    // Contract preserved: the count is of force-failed ROWS, not releases.
     expect(count).toBe(2);
-    // Released at zero — the engine died before writing any cost to the row,
-    // so there is no honest amount to charge the owner for.
-    expect(settled).toEqual([[sharedRunId, 'released', 0]]);
-    expect(settled.map((s) => s[0])).not.toContain(personalRunId);
+    expect(released).toEqual([sharedRunId]);
+    expect(released).not.toContain(personalRunId);
 
     // Both rows still get the existing recovery treatment.
     for (const id of [sharedRunId, personalRunId]) {
@@ -335,19 +336,76 @@ describe('recoverOrphanAuditRuns (AUDIT-12 + CONTEXT D-03)', () => {
       .set({ credentialSource: 'shared' })
       .where(inArray(auditRuns.id, [failing, succeeding]));
 
-    const settled: string[] = [];
+    const released: string[] = [];
     const count = await recoverOrphanAuditRuns(handle.db, {
-      settleSharedAuditReservation: async (runId: string) => {
+      releaseSharedReservation: async (runId: string) => {
         if (runId === failing) throw new Error('usage row is gone');
-        settled.push(runId);
+        released.push(runId);
       },
+      releaseStrandedSharedReservations: async () => 0,
     });
 
     expect(count).toBe(2);
-    expect(settled).toEqual([succeeding]);
+    expect(released).toEqual([succeeding]);
     const rows = await handle.db
       .select({ id: auditRuns.id, status: auditRuns.status })
       .from(auditRuns);
     expect(rows.every((r) => r.status === 'failed')).toBe(true);
+  });
+
+  // ---------------------------------------------------------------------------
+  // Review finding: a crashed run's recorded cost is evidence, not accounting
+  // ---------------------------------------------------------------------------
+
+  it('releases an orphaned shared reservation without erasing what the run had cost', async () => {
+    const user = await seedUser('recovery-cost@example.com');
+    const universe = await seedUniverse(user.id);
+    const runId = await seedAuditRun(universe, user.id, 'running');
+    // The engine writes per-turn telemetry as it goes, so a crashed run really
+    // does carry the cost incurred before the process died.
+    await handle.db
+      .update(auditRuns)
+      .set({ credentialSource: 'shared', costUsd: '0.1234' })
+      .where(eq(auditRuns.id, runId));
+
+    await recoverOrphanAuditRuns(handle.db, {
+      releaseSharedReservation: async () => {},
+      releaseStrandedSharedReservations: async () => 0,
+    });
+
+    const [row] = await handle.db
+      .select({ status: auditRuns.status, error: auditRuns.error, costUsd: auditRuns.costUsd })
+      .from(auditRuns)
+      .where(eq(auditRuns.id, runId))
+      .limit(1);
+    // Not charged to the owner, but not erased either: settling through the
+    // normal path would have overwritten this with 0.0000.
+    expect(row).toMatchObject({
+      status: 'failed',
+      error: 'process_restarted',
+      costUsd: '0.1234',
+    });
+  });
+
+  it('sweeps reservations stranded on runs that are already terminal', async () => {
+    // The class no status-keyed scan can reach: settlement threw, or the
+    // process died between the terminal status write and the settlement.
+    const user = await seedUser('recovery-stranded@example.com');
+    const universe = await seedUniverse(user.id);
+    await seedAuditRun(universe, user.id, 'succeeded');
+
+    let sweptCount = 0;
+    const count = await recoverOrphanAuditRuns(handle.db, {
+      releaseSharedReservation: async () => {},
+      releaseStrandedSharedReservations: async () => {
+        sweptCount = 1;
+        return 1;
+      },
+    });
+
+    // No pending/running rows, so the orphan pass finds nothing...
+    expect(count).toBe(0);
+    // ...and the sweep still runs. Without it the reservation is held forever.
+    expect(sweptCount).toBe(1);
   });
 });

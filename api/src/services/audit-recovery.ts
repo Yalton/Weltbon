@@ -2,11 +2,15 @@ import { inArray } from 'drizzle-orm';
 import type { NodePgDatabase } from 'drizzle-orm/node-postgres';
 import { auditRuns } from '../db/schema.js';
 import type * as schema from '../db/schema.js';
-import { settleSharedAuditReservation, SharedLlmError } from './llm-sharing.js';
+import {
+  releaseSharedReservation,
+  releaseStrandedSharedReservations,
+} from './llm-sharing.js';
 
 export interface AuditRecoveryDeps {
   /** Injectable for the same reason the engine's is: unit isolation. */
-  settleSharedAuditReservation?: typeof settleSharedAuditReservation;
+  releaseSharedReservation?: typeof releaseSharedReservation;
+  releaseStrandedSharedReservations?: typeof releaseStrandedSharedReservations;
 }
 
 /**
@@ -30,19 +34,34 @@ export interface AuditRecoveryDeps {
  *
  * #50 Task 7: an orphaned SHARED run also holds a reservation — one of the
  * recipient's concurrent slots plus a slice of the owner's month. The crash
- * is precisely the case where nothing else will ever release it, so each is
- * released here at cost 0. Released rather than failed-with-a-cost because
- * the engine died mid-run: whatever the provider had charged by then was
- * never written to the run row, so there is no honest number to settle, and
- * charging the owner for an audit that produced nothing is the wrong way to
- * be wrong.
+ * is precisely the case where nothing else will ever release it, so the hold
+ * is released here and nothing is charged: the run produced no result the
+ * recipient can use, and billing an administrator for that is the wrong way
+ * to be wrong.
+ *
+ * Released through releaseSharedReservation rather than a `released`
+ * settlement so the run row is left alone. Review finding: the engine writes
+ * per-turn telemetry as it goes, so a crashed run's `cost_usd` DOES hold what
+ * the provider billed before the process died — and settling through the
+ * normal path overwrites it with 0.0000, destroying the only record of it.
+ * Not charging for the run and erasing what it cost are two different
+ * decisions, and only the first one was ever intended.
+ *
+ * A second, reservation-keyed sweep then runs. Orphan recovery can only see
+ * runs stuck in pending/running; a reservation is also stranded whenever a
+ * run reached a terminal status but its settlement did not complete — a
+ * settlement that threw, or a process death between the two writes. Those are
+ * invisible to any status-keyed scan, and each costs its recipient a
+ * concurrency slot permanently, so they need a sweep of their own.
  */
 export async function recoverOrphanAuditRuns(
   database: NodePgDatabase<typeof schema>,
   deps?: AuditRecoveryDeps,
 ): Promise<number> {
-  const _settleSharedAuditReservation =
-    deps?.settleSharedAuditReservation ?? settleSharedAuditReservation;
+  const _releaseSharedReservation =
+    deps?.releaseSharedReservation ?? releaseSharedReservation;
+  const _releaseStrandedSharedReservations =
+    deps?.releaseStrandedSharedReservations ?? releaseStrandedSharedReservations;
 
   const updated = await database
     .update(auditRuns)
@@ -59,13 +78,23 @@ export async function recoverOrphanAuditRuns(
   for (const row of updated) {
     if (row.credentialSource !== 'shared') continue;
     try {
-      await _settleSharedAuditReservation(row.id, 'released', 0);
-    } catch (err) {
-      if (err instanceof SharedLlmError && err.code === 'shared_audit_reservation_not_found') continue;
+      await _releaseSharedReservation(row.id);
+    } catch {
       console.error('[audit-recovery] could not release shared reservation for run:', row.id);
     }
   }
 
-  // Contract preserved: the count of force-failed rows, not of settlements.
+  // Reservations held by runs that are ALREADY terminal — the class the loop
+  // above cannot reach by construction.
+  try {
+    const stranded = await _releaseStrandedSharedReservations();
+    if (stranded > 0) {
+      console.log(`[audit-recovery] released ${stranded} stranded shared reservation(s)`);
+    }
+  } catch {
+    console.error('[audit-recovery] stranded-reservation sweep failed');
+  }
+
+  // Contract preserved: the count of force-failed rows, not of releases.
   return updated.length;
 }

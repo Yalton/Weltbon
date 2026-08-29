@@ -619,6 +619,92 @@ export async function settleSharedAuditReservation(
   });
 }
 
+/**
+ * Releases a reservation's hold WITHOUT touching the audit run row.
+ *
+ * `settleSharedAuditReservation` deliberately rewrites `audit_runs.status`,
+ * `cost_usd` and `finished_at`, because for a run the engine finished those
+ * three ARE the settlement. Recovery needs the opposite: the run row already
+ * carries the truth (`process_restarted`, plus whatever per-turn telemetry the
+ * engine managed to write before it died), and settling through the normal
+ * path would overwrite the recorded cost with 0 — erasing the only record of
+ * what the provider actually billed for that run.
+ *
+ * The accounting is identical to a `released` settlement: the hold comes off
+ * `reserved_cost_usd`, the concurrency slot is returned, and nothing is
+ * charged. Idempotent by the same predicate — a reservation that is no longer
+ * `reserved` is left alone.
+ */
+export async function releaseSharedReservation(auditRunId: string): Promise<void> {
+  const [identity] = await getDb().select({ recipientUserId: llmSharedAuditReservations.recipientUserId })
+    .from(llmSharedAuditReservations)
+    .where(eq(llmSharedAuditReservations.auditRunId, auditRunId))
+    .limit(1);
+  if (!identity) return;
+  await getDb().transaction(async (tx) => {
+    await lockUsers(tx, [identity.recipientUserId]);
+    const [reservation] = await tx.select().from(llmSharedAuditReservations)
+      .where(eq(llmSharedAuditReservations.auditRunId, auditRunId)).for('update');
+    if (!reservation || reservation.state !== 'reserved') return;
+    const [usage] = await tx.select().from(llmSharedUsage).where(and(
+      eq(llmSharedUsage.recipientUserId, reservation.recipientUserId),
+      eq(llmSharedUsage.monthStart, reservation.monthStart),
+    )).for('update');
+    if (!usage) throw new SharedLlmError('shared_usage_unavailable');
+    await tx.update(llmSharedUsage).set({
+      reservedCostUsd: sql`${llmSharedUsage.reservedCostUsd} - ${reservation.reservedCostUsd}::numeric`,
+      activeAuditCount: sql`${llmSharedUsage.activeAuditCount} - 1`,
+      updatedAt: new Date(),
+    }).where(and(
+      eq(llmSharedUsage.recipientUserId, reservation.recipientUserId),
+      eq(llmSharedUsage.monthStart, reservation.monthStart),
+    ));
+    await tx.update(llmSharedAuditReservations).set({
+      settledCostUsd: '0.000000',
+      state: 'released',
+      settledAt: new Date(),
+    }).where(and(
+      eq(llmSharedAuditReservations.id, reservation.id),
+      eq(llmSharedAuditReservations.state, 'reserved'),
+    ));
+  });
+}
+
+/**
+ * Releases every reservation still held by a run that has already finished.
+ *
+ * This is the recovery net for the whole stranding class, and it is keyed on
+ * the RESERVATION rather than on the run's status — which is the difference
+ * that matters. `recoverOrphanAuditRuns` finds runs stuck in `pending`/
+ * `running`; a reservation is stranded precisely when the run reached a
+ * terminal status but its settlement did not complete (settlement threw, the
+ * process died in the window between the two writes, or a code path failed to
+ * settle at all). Those runs are invisible to a status-keyed sweep forever,
+ * and each one costs its recipient a permanent concurrency slot.
+ *
+ * Returns the number released, for boot-log observability.
+ */
+export async function releaseStrandedSharedReservations(): Promise<number> {
+  const stranded = await getDb().select({ auditRunId: llmSharedAuditReservations.auditRunId })
+    .from(llmSharedAuditReservations)
+    .innerJoin(auditRuns, eq(auditRuns.id, llmSharedAuditReservations.auditRunId))
+    .where(and(
+      eq(llmSharedAuditReservations.state, 'reserved'),
+      inArray(auditRuns.status, ['succeeded', 'failed']),
+    ));
+
+  let released = 0;
+  for (const row of stranded) {
+    try {
+      await releaseSharedReservation(row.auditRunId);
+      released += 1;
+    } catch {
+      // One unreleasable row must not stop the rest. The caller runs at boot.
+    }
+  }
+  return released;
+}
+
 export async function getSharedAuditReservation(auditRunId: string): Promise<SharedAuditReservationLookup | null> {
   const [row] = await getDb().select({
     id: llmSharedAuditReservations.id,

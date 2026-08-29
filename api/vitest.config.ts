@@ -27,6 +27,10 @@ const DB_GATED_TESTS = [
   'tests/llm-sharing-service.test.ts',
   'tests/llm-sharing-routes.test.ts',
   'tests/audit-engine-cost-unknown.test.ts',
+  // #50 Task 7 review round 1 — shared settlement against the real ledger.
+  // tests/audit-engine.test.ts stays in the UNIT lane (db stub); this file is
+  // its DB-gated counterpart and must be listed here or it never runs.
+  'tests/audit-engine-shared.test.ts',
   'tests/audit-recovery.test.ts',
   'tests/audit-routes.test.ts',
   'tests/audits-estimate.test.ts',
