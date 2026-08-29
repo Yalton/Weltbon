@@ -25,6 +25,11 @@
  * from a fetched row — only `bodySuffix` is rendered. The masking-invariant
  * grep gates in 22-05-PLAN acceptance criteria enforce this.
  *
+ * #50 Task 8: SharedLlmConnections mounts above the consent gate in all three
+ * branches. It is not gated by `llmConsentedAt` — that consent covers a key
+ * the user pays for themselves, and a recipient of an administrator-provided
+ * connection may never own one.
+ *
  * Threat surface: T-22-05-01..06 mitigations enumerated in 22-05-PLAN.md.
  */
 
@@ -42,6 +47,7 @@ import { ConfirmDialog } from '../components/ConfirmDialog';
 import { CreateLlmKeyDialog } from '../components/CreateLlmKeyDialog';
 import { PricingTable } from '../components/PricingTable';
 import { OllamaConnectionSection } from '../components/OllamaConnectionSection';
+import { SharedLlmConnections } from '../components/SharedLlmConnections';
 import { formatRelative } from '../utils/formatRelative';
 import { ApiError } from '../api/client';
 
@@ -86,6 +92,15 @@ export default function LlmKeys() {
             local mode; renders nothing on a hosted instance or while still
             loading /api/config. */}
         <OllamaConnectionSection />
+        {/* #50 Task 8: above the BYOK consent gate, like the Ollama section
+            and for the same reason. A recipient running on an
+            administrator's connection may never add a key of their own, and
+            the gate's copy ("you pay for the tokens") describes an
+            arrangement that is not theirs — gating their only route to the
+            audit feature behind it would strand them on a form they have no
+            reason to fill in. The panel self-hides when there are no
+            grants, so this costs a user without one nothing. */}
+        <SharedLlmConnections />
         <div className="mt-6 h-24 rounded-md bg-neutral-100 dark:bg-neutral-800 animate-pulse" />
       </div>
     );
@@ -96,6 +111,7 @@ export default function LlmKeys() {
     return (
       <div className="max-w-3xl">
         <OllamaConnectionSection />
+        <SharedLlmConnections />
         <section
           aria-labelledby="llm-consent-heading"
           data-testid="llm-consent-block"
@@ -159,6 +175,7 @@ export default function LlmKeys() {
   return (
     <div className="max-w-3xl">
       <OllamaConnectionSection />
+      <SharedLlmConnections />
 
       {/* Page header */}
       <div className="flex items-center justify-between">
