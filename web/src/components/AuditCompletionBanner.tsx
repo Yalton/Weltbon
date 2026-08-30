@@ -36,8 +36,18 @@ import { formatRelative } from '../utils/formatRelative';
  * surfaces raw provider text to the user (T-26-05-01).
  */
 
-/** Locked LLMError → copy mapping (UI-SPEC §Copywriting). Do NOT paraphrase. */
-const ERROR_COPY: Record<string, string> = {
+/**
+ * Locked LLMError → copy mapping (UI-SPEC §Copywriting). Do NOT paraphrase.
+ *
+ * Exported ONLY so AuditCompletionBanner.test.tsx's owner-key-state leak
+ * checks can plant a regressed line here and render it through this component
+ * — the real producer — instead of asserting against a hand-written array of
+ * phrasings. A guard validated against a curated list validates the list; the
+ * branch's standing rule (task-10-brief.md) is that the poison goes through
+ * the real path. Nothing in src/ imports this, and nothing should: the table
+ * is the component's own copy, not shared vocabulary.
+ */
+export const ERROR_COPY: Record<string, string> = {
   budget_exhausted:
     'The run exceeded the configured cost or token cap. Partial suggestions were persisted.',
   invalid_output:
