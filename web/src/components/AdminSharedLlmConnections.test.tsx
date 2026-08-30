@@ -129,7 +129,7 @@ function mockApi(opts: {
   users?: AdminUser[];
   grants?: AdminSharedGrant[];
   onPost?: (body: unknown) => AdminSharedGrant | Promise<AdminSharedGrant>;
-  onDelete?: (id: string) => void;
+  onDelete?: (id: string) => void | Promise<void>;
 }) {
   const calls: Array<[string, RequestInit | undefined]> = [];
   vi.mocked(api).mockImplementation((path: string, init?: RequestInit) => {
@@ -148,7 +148,7 @@ function mockApi(opts: {
     }
     if (path.startsWith('/admin/llm-shares/') && method === 'DELETE') {
       const id = path.split('/').pop()!;
-      opts.onDelete?.(id);
+      if (opts.onDelete) return Promise.resolve(opts.onDelete(id)) as never;
       return Promise.resolve(undefined as never);
     }
     return Promise.resolve(undefined as never);
@@ -267,6 +267,33 @@ describe('AdminSharedLlmConnections', () => {
     await waitFor(() => {
       expect(deletedId).toBe(ADMIN_GRANT.id);
     });
+  });
+
+  it('shows an alert and keeps the row when revoke fails, without implying access was cut', async () => {
+    // Review finding: revoke.mutate was called with only onSuccess — a
+    // failed revoke (403/409/network) left the row in place with NO
+    // message anywhere, so an administrator would reasonably (and
+    // wrongly) conclude access had been cut.
+    mockApi({
+      users: [ACTIVE_USER],
+      grants: [ADMIN_GRANT],
+      onDelete: () => Promise.reject(new ApiError(403, {}, 'Only the owning administrator can revoke this connection')),
+    });
+    renderPanel();
+
+    await screen.findByText(ACTIVE_USER.email);
+    await userEvent.click(screen.getByRole('button', { name: /revoke/i }));
+    const dialogConfirm = await screen.findByRole('button', { name: /^revoke$/i });
+    await userEvent.click(dialogConfirm);
+
+    expect(await screen.findByRole('alert')).toHaveTextContent(
+      'Only the owning administrator can revoke this connection',
+    );
+    // The row must still show as active — a failed revoke must not read as
+    // a successful one, and the grant must not silently vanish either.
+    expect(screen.getByText(ACTIVE_USER.email)).toBeInTheDocument();
+    expect(screen.getByText('active')).toBeInTheDocument();
+    expect(screen.getByRole('button', { name: /revoke/i })).toBeInTheDocument();
   });
 
   it('shows a safe message and keeps it visible for a duplicate-grant (409) error', async () => {

@@ -165,6 +165,51 @@ describe('AuditCompletionBanner — context truncation', () => {
   });
 });
 
+/**
+ * #50 Task 9 — whether `text` implies something about the OWNER's/
+ * administrator's key state (existence, validity, deletion, revocation),
+ * which the server deliberately never discloses to the recipient (see
+ * useLlmShares.ts's file header: "a recipient who could tell one owner-side
+ * failure from another has been handed an oracle for the administrator
+ * roster").
+ *
+ * This is prose, not a secret value, so it cannot be a literal poison-value
+ * scan the way SharedLlmConnections.test.tsx's `expectNoOwnerOrKeyMaterial`
+ * is. A first version of this check used two regexes
+ * (`/administrator'?s key/i` and a same-clause deleted/revoked proximity
+ * scan) that a review caught as PERMEABLE: they miss "the owner's key is
+ * invalid", "the owner's API key has expired", and "the administrator...
+ * deleted their key" — the most natural ways this copy could regress. The
+ * fix strips the legitimate copy's OWN mention of the recipient's key ("a
+ * personal API key") before scanning, which is what makes a broad
+ * bidirectional proximity match usable without colliding with the real
+ * sentence ("Contact the administrator... add a personal API key") — see
+ * the LEAK CHECK tests below, which prove this catches each phrasing a
+ * reviewer supplied, and the two real-copy tests above, which prove it does
+ * NOT fire on the actual banner text.
+ */
+function impliesOwnerKeyState(rawText: string): boolean {
+  // The only place "key" legitimately sits near "administrator" in this
+  // banner's copy is the recipient's OWN key ("add a personal API key") —
+  // strip that phrase first so the proximity scan below has nothing left to
+  // false-positive on.
+  const text = rawText.replace(/\b(a |your )?personal\s+(api\s+)?key\b/gi, '');
+  const subject = '(administrator|owner|admin)';
+  const object = '(key|credential)';
+  const verb = '(deleted|revoked|invalid|expired|disabled)';
+  if (new RegExp(`${subject}'s\\s+(\\w+\\s+)?${object}`, 'i').test(text)) return true;
+  if (new RegExp(`${subject}[^.]{0,80}\\btheir\\s+${object}\\b`, 'i').test(text)) return true;
+  if (new RegExp(`${subject}[^.]{0,60}${object}[^.]{0,20}${verb}`, 'i').test(text)) return true;
+  if (new RegExp(`${verb}[^.]{0,20}${object}[^.]{0,60}${subject}`, 'i').test(text)) return true;
+  if (new RegExp(`${object}[^.]{0,60}${subject}[^.]{0,20}${verb}`, 'i').test(text)) return true;
+  return false;
+}
+
+function expectNoOwnerKeyStateImplication() {
+  const text = document.body.textContent ?? '';
+  expect(impliesOwnerKeyState(text)).toBe(false);
+}
+
 describe('AuditCompletionBanner — #50 Task 9 shared-connection error copy', () => {
   beforeEach(() => {
     vi.mocked(useEstimateAudit).mockReturnValue({ data: undefined } as never);
@@ -195,14 +240,11 @@ describe('AuditCompletionBanner — #50 Task 9 shared-connection error copy', ()
     // Must not fall through to the generic fallback copy.
     expect(screen.queryByText(/An unexpected error occurred/)).not.toBeInTheDocument();
     // Must not imply anything about the OWNER's key state — the server
-    // deliberately never discloses that to the recipient. Specific phrasing,
-    // not a broad 'administrator...key' scan: the legitimate copy itself
-    // says both words in one sentence ("Contact the administrator... add a
-    // personal API key"), so a loose proximity match would fail against its
-    // own correct copy.
-    const text = document.body.textContent ?? '';
-    expect(text).not.toMatch(/administrator'?s key/i);
-    expect(text).not.toMatch(/(deleted|revoked|invalid|expired|disabled)[^.]{0,30}(administrator|owner)/i);
+    // deliberately never discloses that to the recipient. Leak-simulated
+    // below (LEAK CHECK tests): this check is shown to actually catch the
+    // phrasings a real regression would produce, not just to pass on this
+    // copy.
+    expectNoOwnerKeyStateImplication();
   });
 
   it('shared_credential_unavailable tells the recipient the connection is unusable right now, without diagnosing why', () => {
@@ -226,8 +268,32 @@ describe('AuditCompletionBanner — #50 Task 9 shared-connection error copy', ()
     expect(screen.getByText(/Contact the administrator/i)).toBeInTheDocument();
     expect(screen.getByText(/personal API key in Settings/i)).toBeInTheDocument();
     expect(screen.queryByText(/An unexpected error occurred/)).not.toBeInTheDocument();
-    const text2 = document.body.textContent ?? '';
-    expect(text2).not.toMatch(/administrator'?s key/i);
-    expect(text2).not.toMatch(/(deleted|revoked|invalid|expired|disabled)[^.]{0,30}(administrator|owner)/i);
+    expectNoOwnerKeyStateImplication();
+  });
+});
+
+describe('AuditCompletionBanner — #50 Task 9 leak simulation for the owner-key-state guard', () => {
+  // Reviewer-supplied realistic leak phrasings the first version of this
+  // guard (see impliesOwnerKeyState's doc) missed. Each must be shown to
+  // actually TRIP the guard — a poison-text scan that never trips is the
+  // same class of bug as the `'iv'` substring matching `"source":"live"`.
+  const LEAK_PHRASINGS = [
+    "The administrator's key was revoked.",
+    "The connection owner's key is invalid.",
+    "The owner's API key has expired.",
+    'The administrator who shared this deleted their key.',
+  ];
+
+  it.each(LEAK_PHRASINGS)('LEAK CHECK: catches %j', (phrase) => {
+    document.body.innerHTML = `<div>${phrase}</div>`;
+    expect(() => expectNoOwnerKeyStateImplication()).toThrow();
+    document.body.innerHTML = '';
+  });
+
+  it('does not false-positive on the actual shared-connection remedy copy', () => {
+    document.body.innerHTML =
+      '<div>Contact the administrator who shared it, or add a personal API key in Settings \u2192 LLM keys.</div>';
+    expect(() => expectNoOwnerKeyStateImplication()).not.toThrow();
+    document.body.innerHTML = '';
   });
 });

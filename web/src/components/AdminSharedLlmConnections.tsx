@@ -145,6 +145,17 @@ export function AdminSharedLlmConnections() {
           {statusMessage(create.error)}
         </p>
       )}
+      {/* Review finding: a failed revoke (403/409/network) previously left
+          the row in place with NO message at all — for a security-relevant
+          action ("recipient immediately loses the ability to run audits")
+          that is the worst direction to fail silently: the administrator
+          sees nothing and reasonably concludes access was cut when it was
+          not. Rendered the same way as `create.error` above. */}
+      {revoke.error && (
+        <p className="mt-1 text-sm text-red-500" role="alert">
+          {statusMessage(revoke.error)}
+        </p>
+      )}
 
       {isPending ? (
         <p className="mt-4 text-sm text-neutral-500 dark:text-neutral-400">Loading…</p>
@@ -231,6 +242,7 @@ export function AdminSharedLlmConnections() {
           if (!revokeTarget) return;
           const target = revokeTarget;
           setRevokeTarget(null);
+          setOutcome('');
           revoke.mutate(
             { grantId: target.id },
             { onSuccess: () => setOutcome('Shared connection revoked.') },
