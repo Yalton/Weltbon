@@ -335,3 +335,68 @@ describe('local builds stamp the build identity', () => {
     ).toBe(false);
   });
 });
+
+// ─────────────────────────────────────────────────────────────────────────────
+// OPS-09: README Shared LLM Connections documentation (issue #50, Task 10)
+// ─────────────────────────────────────────────────────────────────────────────
+
+/**
+ * The exact operator guidance text the plan mandates verbatim. Copied here as
+ * one string with the plan's own line breaks so the assertion below is
+ * genuinely exact rather than a paraphrase check — a rewritten README that
+ * drops "finite" or "UTC calendar month" would still read fine to a human
+ * but would silently misinform an operator about the actual boot-time
+ * validation in `api/src/config.ts`.
+ */
+const SHARED_LLM_OPERATOR_GUIDANCE = [
+  'SHARED_LLM_MONTHLY_COST_USD controls the per-recipient shared hosted-LLM',
+  'budget for the current UTC calendar month. It defaults to 1.00 USD and must',
+  'be a finite positive number. Shared connections support Anthropic and OpenAI',
+  'API keys only; Ollama connections remain private to the desktop instance.',
+  'Administrators must explicitly grant a user access, and that user must accept',
+  'the provider disclosure before content can leave the instance.',
+].join('\n');
+
+describe('OPS-09 — README Shared LLM Connections documentation', () => {
+  it('contains the ### Shared LLM Connections subsection', () => {
+    expect(readme).toMatch(/^### Shared LLM Connections$/m);
+  });
+
+  it('contains the exact operator guidance text verbatim', () => {
+    expect(readme).toContain(SHARED_LLM_OPERATOR_GUIDANCE);
+  });
+
+  /**
+   * "Keep the existing LLM_KEY_ENCRYPTION_KEY requirement next to it"
+   * (task-10-brief.md Step 3) is a placement instruction, not just a content
+   * instruction — the guidance text could be pasted anywhere in the README
+   * and a bare `toContain` check for both strings would pass. This isolates
+   * the Shared LLM Connections section body (heading to next heading) and
+   * requires BOTH strings inside that one section, so moving the guidance
+   * text away from the LLM_KEY_ENCRYPTION_KEY mention fails this test even
+   * though the mention still exists elsewhere in the README.
+   */
+  it('keeps the LLM_KEY_ENCRYPTION_KEY requirement next to the guidance text', () => {
+    const lines = readme.split('\n');
+    const headingLine = lines.findIndex((line) => line === '### Shared LLM Connections');
+    expect(headingLine, 'Shared LLM Connections subsection not found').toBeGreaterThanOrEqual(0);
+    // First heading line AFTER the section's own heading line, of any level.
+    let nextHeadingLine = lines.length;
+    for (let i = headingLine + 1; i < lines.length; i++) {
+      if (/^#{1,6} /.test(lines[i])) { nextHeadingLine = i; break; }
+    }
+    const section = lines.slice(headingLine, nextHeadingLine).join('\n');
+
+    expect(section).toContain(SHARED_LLM_OPERATOR_GUIDANCE);
+    expect(section).toContain('LLM_KEY_ENCRYPTION_KEY');
+  });
+
+  it('documents the SHARED_LLM_MONTHLY_COST_USD default and boot validation in the .env Reference table', () => {
+    expect(readme).toMatch(/\| `SHARED_LLM_MONTHLY_COST_USD` \|/);
+    expect(readme).toMatch(/SHARED_LLM_MONTHLY_COST_USD.*finite.*positive/s);
+  });
+
+  it('documents the boot-time SHARED_LLM_MONTHLY_COST_USD validation error alongside the Startup Guard', () => {
+    expect(readme).toMatch(/"SHARED_LLM_MONTHLY_COST_USD must be a finite positive number"/);
+  });
+});

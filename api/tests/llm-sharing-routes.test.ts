@@ -100,6 +100,27 @@ describe('shared LLM grant routes', () => {
     expect(serialized).not.toContain(SECRET);
   }
 
+  /**
+   * Task 10 final boundary check — scans free-text (captured console output,
+   * which is lines, not a JSON object) rather than a parsed value. A field-name
+   * scan alone was rejected in earlier review on this branch for two reasons
+   * that both apply here: (1) `expectNoCredentialMaterial`'s FIELD-NAME walk
+   * cannot run over plain text at all, so logger output needs its own scan;
+   * (2) a scan that only recognises a quoted `"key":` shape would miss the
+   * VALUE leaking on its own line (e.g. a stack trace interpolating the raw
+   * secret with no surrounding braces), so the plaintext-key check is a bare
+   * substring match independent of the field-name regexes below it.
+   */
+  function expectNoCredentialLeakInText(text: string, context: string) {
+    expect(text, `${context} must not contain the seeded plaintext key`).not.toContain(SECRET);
+    for (const forbidden of FORBIDDEN) {
+      expect(
+        text,
+        `${context} must not expose the "${forbidden}" field name`,
+      ).not.toMatch(new RegExp(`["']${forbidden}["']\\s*:`));
+    }
+  }
+
   it('allows only an active administrator JWT to list, create, and revoke grants', async () => {
     const admin = await createAdminWithKey('admin-route@test.dev');
     const member = await createTestUser(handle, { email: 'member-route@test.dev', password: 'long-enough-password' });
@@ -379,5 +400,80 @@ describe('shared LLM grant routes', () => {
     });
     expect(duplicate.status).toBe(409);
     expect(await duplicate.json()).toEqual({ error: 'An active shared connection already exists', code: 'shared_connection_exists' });
+  });
+
+  /**
+   * Task 10 final boundary check. Captures REAL console output (both the Hono
+   * request logger and app.onError's console.error) across a success flow
+   * (grant creation against an admin whose real ciphertext-backed key is
+   * seeded — SECRET, above) and a forced unexpected-error flow (the same
+   * pattern `normalizes unexpected sharing failures` above uses to reach
+   * app.onError's shared-path console.error), then scans everything captured.
+   *
+   * This is deliberately over the REAL logger call sites in api/src/index.ts
+   * rather than a synthetic string — a passing assertion here is evidence
+   * about production log output, not just about the scanning function.
+   */
+  it('never emits credential material through captured logger output on shared routes', async () => {
+    const owner = await createAdminWithKey('owner-logger-scan@test.dev');
+    const recipient = await createTestUser(handle, { email: 'recipient-logger-scan@test.dev', password: 'long-enough-password' });
+    const recipientJwt = await issueAccessToken(recipient.id);
+
+    const captured: string[] = [];
+    const capture = (...args: unknown[]) => { captured.push(args.map(String).join(' ')); };
+    const logSpy = vi.spyOn(console, 'log').mockImplementation(capture);
+    const errorSpy = vi.spyOn(console, 'error').mockImplementation(capture);
+    const listSpy = vi.spyOn(llmSharing, 'listRecipientSharedGrants')
+      .mockRejectedValueOnce(new Error('database/provider failure'));
+
+    try {
+      const created = await request('/api/admin/llm-shares', {
+        method: 'POST', token: owner.jwt, body: { recipientUserId: recipient.id, provider: 'anthropic' },
+      });
+      expect(created.status).toBe(201);
+      expect((await request('/api/admin/llm-shares', { token: owner.jwt })).status).toBe(200);
+
+      // Forced unexpected-error path — this one IS logged, via app.onError's
+      // shared-path console.error(scrubLogLine(...)) branch (api/src/index.ts).
+      const failed = await request('/api/llm-shares', { token: recipientJwt });
+      expect(failed.status).toBe(503);
+    } finally {
+      listSpy.mockRestore();
+      logSpy.mockRestore();
+      errorSpy.mockRestore();
+    }
+
+    expectNoCredentialLeakInText(captured.join('\n'), 'captured logger output');
+  });
+
+  /**
+   * Standing rule for this branch (task-10-brief.md): a negative security
+   * assertion must be shown to FAIL against a simulated leak before it is
+   * trusted, and the leak simulated must be the class the assertion guards.
+   * `expectNoCredentialMaterial` already combines a field-name walk with a
+   * plaintext-key substring check (unlike the bare field-name scans this rule
+   * was written to catch elsewhere on this branch) — this proves neither half
+   * is vacuous by planting exactly what each half looks for.
+   */
+  it('LEAK CHECK: expectNoCredentialMaterial fails on a planted forbidden field name or the plaintext key (proves the assertion is not vacuous)', () => {
+    expect(() => expectNoCredentialMaterial({ ciphertext: 'irrelevant-value' })).toThrow();
+    expect(() => expectNoCredentialMaterial({ note: `leaked: ${SECRET}` })).toThrow();
+    // Negative control: an unrelated object with no forbidden name or the
+    // secret's value must NOT throw — otherwise the check would be trivially
+    // "always fails" rather than actually discriminating.
+    expect(() => expectNoCredentialMaterial({ id: 'abc', provider: 'anthropic' })).not.toThrow();
+  });
+
+  /**
+   * Same standing rule, for the text-based scan the logger-output test above
+   * depends on. Field-name and plaintext-key leaks are planted separately so
+   * a future edit that only fixes one half cannot pass by accident.
+   */
+  it('LEAK CHECK: expectNoCredentialLeakInText fails on a planted forbidden field name or the plaintext key (proves the assertion is not vacuous)', () => {
+    expect(() => expectNoCredentialLeakInText(`some log line mentioning ${SECRET}`, 'test')).toThrow();
+    expect(() => expectNoCredentialLeakInText('unhandled error: {"ciphertext":"abc"}', 'test')).toThrow();
+    expect(() => expectNoCredentialLeakInText("unhandled error: {'ownerKeyId':'abc'}", 'test')).toThrow();
+    // Negative control.
+    expect(() => expectNoCredentialLeakInText('--> GET /api/llm-shares 200 3ms', 'test')).not.toThrow();
   });
 });

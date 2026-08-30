@@ -128,9 +128,31 @@ Every variable from `.env.example`. Replace `<owner>` with the GitHub user or or
 | `DATABASE_URL` | yes | Postgres connection string for the API | Templated as `postgresql://weltbon:${POSTGRES_PASSWORD}@db:5432/weltbon` |
 | `INVITE_CODE` | first boot only | Seeds the `invite_codes` table on cold start if the table is empty; required only for the first registration | Any string; can be removed from `.env` after the first user account exists |
 | `LLM_KEY_ENCRYPTION_KEY` | when any user has saved an LLM key (conditional) | 32-byte hex AES-256-GCM key used to encrypt per-user LLM API keys at rest. The API refuses to boot if the `llm_api_keys` table has rows but this variable is unset. Format-validated at load (must match `[0-9a-f]{64}`). | `openssl rand -hex 32`. Back up the value separately — see [Backup](#backup). |
+| `SHARED_LLM_MONTHLY_COST_USD` | no | Per-recipient shared hosted-LLM budget for the current UTC calendar month. Rejected at boot unless finite and strictly positive. | Default: `1.00`. See [Shared LLM Connections](#shared-llm-connections) below. |
 | `PORT` | no | API listen port inside the container | Default: `3000` |
 | `CHROMIUM_PATH` | no | System Chromium binary for PDF export | Container ships `/usr/bin/chromium` and sets this automatically; only set for bare-Node runs — see [Self-Host (Bare Node)](#self-host-bare-node) |
 | `WELTBON_PUBLIC_ORIGIN` | no | Public origin for CORS allow-list when behind a reverse proxy (e.g., `https://welt.example.com`); absent keeps dev-friendly permissive CORS | The operator's external origin — see [docs/reverse-proxy/](docs/reverse-proxy/) |
+
+### Shared LLM Connections
+
+An administrator can grant a user access to run audits on the administrator's
+own hosted Anthropic or OpenAI key, instead of that user configuring their
+own. This shares a credential, not an account — the recipient never receives
+the key itself.
+
+```text
+SHARED_LLM_MONTHLY_COST_USD controls the per-recipient shared hosted-LLM
+budget for the current UTC calendar month. It defaults to 1.00 USD and must
+be a finite positive number. Shared connections support Anthropic and OpenAI
+API keys only; Ollama connections remain private to the desktop instance.
+Administrators must explicitly grant a user access, and that user must accept
+the provider disclosure before content can leave the instance.
+```
+
+Shared connections reuse the same `LLM_KEY_ENCRYPTION_KEY` documented above —
+the administrator's key is encrypted at rest under it exactly like a personal
+BYOK key, and a recipient's audits run against the ciphertext without it ever
+being decrypted into a response body, an admin audit-log entry, or a log line.
 
 ### Example `.env`
 
@@ -341,6 +363,7 @@ Keep these out of git regardless of where you back them up:
 |------------------|--------------------------------------------------------------------|----------------------------------------------|
 | `PORT`           | API listen port                                                    | `3000`                                       |
 | `CHROMIUM_PATH`  | System Chromium binary path for PDF export (`puppeteer-core`)      | unset; PDF export 503s without it. See [Self-Host (Bare Node)](#self-host-bare-node) for per-OS values. |
+| `SHARED_LLM_MONTHLY_COST_USD` | Per-recipient shared hosted-LLM spend cap for the current UTC calendar month | `1.00`. Must be finite and strictly positive — see [Shared LLM Connections](#shared-llm-connections). |
 
 ### Startup Guard
 
@@ -350,8 +373,9 @@ The config guard lives in `api/src/config.ts`. It validates environment variable
 - **`JWT_SECRET` too short**: `"JWT_SECRET must be at least 32 characters (got N). Generate one with: openssl rand -hex 32"`
 - **Missing `DATABASE_URL`**: `"DATABASE_URL must be set (expected postgresql:// URL)."`
 - **Wrong `DATABASE_URL` scheme**: `"DATABASE_URL must start with postgresql:// or postgres://"`
+- **Non-finite or non-positive `SHARED_LLM_MONTHLY_COST_USD`**: `"SHARED_LLM_MONTHLY_COST_USD must be a finite positive number"`
 
-This guard is covered by `api/tests/startup.test.ts`. See the "Verifying the Startup Guard" section below to test it manually.
+The `JWT_SECRET` and `DATABASE_URL` checks are covered by `api/tests/startup.test.ts`; the `SHARED_LLM_MONTHLY_COST_USD` check by `api/tests/llm-sharing-config.test.ts`. See the "Verifying the Startup Guard" section below to test the guard manually.
 
 ## Admin / Operator Commands
 
