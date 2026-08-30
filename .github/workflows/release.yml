@@ -47,7 +47,22 @@ concurrency:
 
 jobs:
   release:
-    runs-on: ubuntu-latest
+    # Self-hosted, NOT ubuntu-latest. GitHub-hosted runners stopped starting on
+    # 2026-08-29 — every job failed in under three seconds, before checkout,
+    # with "recent account payments have failed or your spending limit needs to
+    # be increased". That is an org billing state, not something a workflow can
+    # retry past, and it left the repo unable to cut a release at all. ci.yml
+    # moved to citreum-runner-01 for the same reason; this follows it so that
+    # tagging keeps working while the billing is sorted out.
+    #
+    # This job needs node (next-version.mjs), git and gh (the verify step). All
+    # three are in the runner image — checked, not assumed. It builds nothing
+    # and needs no Docker.
+    #
+    # Move this back to ubuntu-latest once billing is restored: a release job
+    # holds RELEASE_TOKEN, and a hosted runner is a cleaner place for a
+    # repo-writing credential than a box that also runs production.
+    runs-on: [self-hosted, citreum]
     # The release commit is itself a push to master. Without this guard the
     # workflow re-enters, finds `chore(release):` in range (no bump, since chore
     # is not a releasing type) and does nothing — harmless but a wasted run every
