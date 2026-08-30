@@ -102,27 +102,6 @@ describe('shared LLM grant routes', () => {
   }
 
   /**
-   * Task 10 final boundary check — scans free-text (captured console output,
-   * which is lines, not a JSON object) rather than a parsed value. A field-name
-   * scan alone was rejected in earlier review on this branch for two reasons
-   * that both apply here: (1) `expectNoCredentialMaterial`'s FIELD-NAME walk
-   * cannot run over plain text at all, so logger output needs its own scan;
-   * (2) a scan that only recognises a quoted `"key":` shape would miss the
-   * VALUE leaking on its own line (e.g. a stack trace interpolating the raw
-   * secret with no surrounding braces), so the plaintext-key check is a bare
-   * substring match independent of the field-name regexes below it.
-   *
-   * The field-name regex accepts an OPTIONAL quote before the colon, not a
-   * required one: `JSON.stringify` produces `"ownerKeyId":`, but `node:util`'s
-   * `inspect` — which the logger-output test below now renders object
-   * arguments through, per Task 10 review finding 1 — renders plain
-   * identifier keys unquoted as `ownerKeyId: 'value'`. A fixed-quote regex
-   * caught the JSON shape and silently missed the inspect shape; confirmed by
-   * execution (see the fix report): planting `{ ownerKeyId: '...' }` (no
-   * quotes, no matching plaintext-key substring) into the real
-   * `console.error` path in `api/src/index.ts` passed with the old regex.
-   */
-  /**
    * Renders one console argument the way a human reading the real terminal
    * would see it.
    *
@@ -144,6 +123,27 @@ describe('shared LLM grant routes', () => {
       : inspect(value, { depth: null, maxStringLength: Infinity, maxArrayLength: Infinity })
   );
 
+  /**
+   * Task 10 final boundary check — scans free-text (captured console output,
+   * which is lines, not a JSON object) rather than a parsed value. A field-name
+   * scan alone was rejected in earlier review on this branch for two reasons
+   * that both apply here: (1) `expectNoCredentialMaterial`'s FIELD-NAME walk
+   * cannot run over plain text at all, so logger output needs its own scan;
+   * (2) a scan that only recognises a quoted `"key":` shape would miss the
+   * VALUE leaking on its own line (e.g. a stack trace interpolating the raw
+   * secret with no surrounding braces), so the plaintext-key check is a bare
+   * substring match independent of the field-name regexes below it.
+   *
+   * The field-name regex accepts an OPTIONAL quote before the colon, not a
+   * required one: `JSON.stringify` produces `"ownerKeyId":`, but `node:util`'s
+   * `inspect` — which the logger-output test below now renders object
+   * arguments through, per Task 10 review finding 1 — renders plain
+   * identifier keys unquoted as `ownerKeyId: 'value'`. A fixed-quote regex
+   * caught the JSON shape and silently missed the inspect shape; confirmed by
+   * execution (see the fix report): planting `{ ownerKeyId: '...' }` (no
+   * quotes, no matching plaintext-key substring) into the real
+   * `console.error` path in `api/src/index.ts` passed with the old regex.
+   */
   function expectNoCredentialLeakInText(text: string, context: string) {
     expect(text, `${context} must not contain the seeded plaintext key`).not.toContain(SECRET);
     for (const forbidden of FORBIDDEN) {
