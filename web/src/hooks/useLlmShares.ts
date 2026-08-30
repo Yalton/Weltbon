@@ -103,6 +103,7 @@ export interface AdminSharedGrant {
 }
 
 export const LLM_SHARES_QUERY_KEY = ['llm-shares'] as const;
+export const ADMIN_LLM_SHARES_QUERY_KEY = ['admin-llm-shares'] as const;
 
 /**
  * Consent is the thing that decides whether `/llm/models` answers with the
@@ -176,6 +177,82 @@ export function useWithdrawSharedLlmConsent(): UseMutationResult<
     },
     onError: () => {
       qc.invalidateQueries({ queryKey: LLM_SHARES_QUERY_KEY });
+    },
+  });
+}
+
+// ─── Administrator hooks (Task 9) ───────────────────────────────────────────
+//
+// Wire shape (api/src/routes/admin-llm-shares.ts, mounted at /api/admin/llm-shares):
+//   GET    /api/admin/llm-shares       → AdminSharedGrant[]  (bare array, unlike
+//                                          the recipient's `{ grants: [...] }`)
+//   POST   /api/admin/llm-shares       → AdminSharedGrant (201), body EXACTLY
+//                                          `{ recipientUserId, provider }` — the
+//                                          server's `createBody` schema is
+//                                          `.strict()` and rejects a third field.
+//   DELETE /api/admin/llm-shares/:id   → 204 (void)
+//
+// Every mutation here invalidates BOTH this list and the admin operator-log
+// (`['admin-audit-log']`, see useAdminUsers.ts) because granting or revoking
+// shared access is itself an administrative action the audit log records
+// (admin-llm-shares.ts calls into the same operator-action logging every
+// other admin mutation does) — leaving the log stale would show every OTHER
+// admin action instantly but a grant/revoke only after some unrelated
+// invalidation happened to run.
+
+/** List every shared grant system-wide (active and revoked), admin-only. */
+export function useAdminSharedLlmGrants(): UseQueryResult<AdminSharedGrant[]> {
+  return useQuery({
+    queryKey: ADMIN_LLM_SHARES_QUERY_KEY,
+    queryFn: () => api<AdminSharedGrant[]>('/admin/llm-shares'),
+  });
+}
+
+/**
+ * Grant a user access to the calling administrator's own hosted credential.
+ *
+ * The mutation variables ARE the request body, sent unmodified — this is the
+ * enforcement point for "no third field, ever": there is no object-spread or
+ * default-merge step here that a later edit could widen. If a caller needs a
+ * third field it has to change this function's own parameter type, which is
+ * a visible, reviewable diff instead of a silent body-shape drift.
+ */
+export function useCreateAdminSharedLlmGrant(): UseMutationResult<
+  AdminSharedGrant,
+  Error,
+  { recipientUserId: string; provider: SharedProvider }
+> {
+  const qc = useQueryClient();
+  return useMutation({
+    mutationFn: (vars: { recipientUserId: string; provider: SharedProvider }) =>
+      api<AdminSharedGrant>('/admin/llm-shares', {
+        method: 'POST',
+        body: JSON.stringify(vars),
+      }),
+    onSuccess: () => {
+      qc.invalidateQueries({ queryKey: ADMIN_LLM_SHARES_QUERY_KEY });
+      qc.invalidateQueries({ queryKey: ['admin-audit-log'] });
+    },
+  });
+}
+
+/**
+ * Revoke a shared connection by grant id. Idempotent server-side (revoking
+ * an already-revoked grant still returns 204 — see admin-llm-shares.ts),
+ * same reasoning as `useWithdrawSharedLlmConsent`'s double-click safety.
+ */
+export function useRevokeAdminSharedLlmGrant(): UseMutationResult<
+  void,
+  Error,
+  { grantId: string }
+> {
+  const qc = useQueryClient();
+  return useMutation({
+    mutationFn: (vars: { grantId: string }) =>
+      api<void>(`/admin/llm-shares/${vars.grantId}`, { method: 'DELETE' }),
+    onSuccess: () => {
+      qc.invalidateQueries({ queryKey: ADMIN_LLM_SHARES_QUERY_KEY });
+      qc.invalidateQueries({ queryKey: ['admin-audit-log'] });
     },
   });
 }

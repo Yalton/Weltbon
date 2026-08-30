@@ -92,6 +92,12 @@ export interface AuditRun {
   analyzedEntries?: number;
   /** Phase 24 partial-suggestions checkpoint timestamp. */
   partialSuggestionsPersistedAt?: string | null;
+  /**
+   * #50 Task 9 — see AuditHistoryRow's field of the same name (types/audit.ts)
+   * for the full rationale: `'own' | 'shared'` is the entire provenance the
+   * server discloses, and this is optional for the same back-compat reason.
+   */
+  credentialSource?: 'own' | 'shared';
 }
 
 /**
@@ -303,7 +309,7 @@ export function useEstimateAudit(
  * (Task 6), and therefore what it answers with — and the 30-minute staleTime
  * below means a stale answer would otherwise persist for that long.
  */
-export function llmModelsKey(provider: 'anthropic' | 'openai' | 'ollama') {
+export function llmModelsKey(provider: 'anthropic' | 'openai' | 'ollama' | undefined) {
   return ['llm-models', provider] as const;
 }
 
@@ -311,7 +317,13 @@ export function useListModels(
   provider: 'anthropic' | 'openai' | 'ollama' | undefined,
 ): UseQueryResult<ListingsResult> {
   return useQuery({
-    queryKey: ['llm-models', provider],
+    // #50 Task 9: was the inline literal `['llm-models', provider]` — a
+    // second source of truth alongside `llmModelsKey` below, which
+    // useLlmShares.ts's `invalidateProviderModels` computes independently to
+    // invalidate this same cache entry on consent/withdrawal. Two literals
+    // that must stay byte-identical and nothing enforcing it is exactly how
+    // a future edit to one silently stops invalidating the other.
+    queryKey: llmModelsKey(provider),
     queryFn: () =>
       api<ListingsResult>(`/llm/models?provider=${provider}`),
     enabled: !!provider,

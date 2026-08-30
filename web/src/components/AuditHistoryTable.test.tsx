@@ -123,3 +123,69 @@ describe('AuditHistoryTable — Phase 27 D-06 cost_unknown chip in cost cell', (
     expect(screen.queryByText(/cost unknown/i)).not.toBeInTheDocument();
   });
 });
+
+describe('AuditHistoryTable — #50 Task 9 credentialSource display', () => {
+  beforeEach(() => {
+    vi.mocked(useAuditHistory).mockReset();
+  });
+
+  it("renders a compact 'Shared connection' label when credentialSource is 'shared'", () => {
+    renderWithRows([
+      baseRow({
+        id: 'dddddddd-0000-0000-0000-000000000004',
+        credentialSource: 'shared',
+      }),
+    ]);
+
+    expect(screen.getByText(/shared connection/i)).toBeInTheDocument();
+  });
+
+  it("renders no label when credentialSource is 'own'", () => {
+    renderWithRows([
+      baseRow({
+        id: 'eeeeeeee-0000-0000-0000-000000000005',
+        credentialSource: 'own',
+      }),
+    ]);
+
+    expect(screen.queryByText(/shared connection/i)).not.toBeInTheDocument();
+  });
+
+  it('renders no label and does not crash for older cached rows lacking credentialSource', () => {
+    const { credentialSource: _omit, ...legacyRow } = baseRow({
+      id: 'ffffffff-0000-0000-0000-000000000006',
+      credentialSource: 'own',
+    });
+    void _omit;
+
+    expect(() => renderWithRows([legacyRow as AuditHistoryRow])).not.toThrow();
+    expect(screen.queryByText(/shared connection/i)).not.toBeInTheDocument();
+  });
+
+  it('renders no owner, grant id, or usage secret for a shared row (redaction check)', () => {
+    // Poison: fields the server deliberately never sends for a shared row,
+    // attached as extras the type does not declare. Nothing should render
+    // them today; anything that starts to, will.
+    const POISON = {
+      ownerUserId: 'admin-user-uuid-1',
+      ownerEmail: 'alice.admin@corp.example',
+      grantId: 'grant-uuid-1',
+      usageSecret: 'sk-ant-owner-plaintext-secret',
+    };
+    renderWithRows([
+      { ...baseRow({ id: '00000000-0000-0000-0000-0000000000aa', credentialSource: 'shared' }), ...POISON } as AuditHistoryRow,
+    ]);
+
+    const text = document.body.textContent ?? '';
+    for (const value of Object.values(POISON)) {
+      expect(text).not.toContain(value);
+    }
+  });
+
+  it('LEAK CHECK: the redaction check above fails when poison actually renders (proves it is not vacuous)', () => {
+    renderWithRows([baseRow({ id: '00000000-0000-0000-0000-0000000000bb', credentialSource: 'shared' })]);
+    document.body.innerHTML += '<div>alice.admin@corp.example</div>';
+    const text = document.body.textContent ?? '';
+    expect(() => expect(text).not.toContain('alice.admin@corp.example')).toThrow();
+  });
+});

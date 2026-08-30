@@ -243,6 +243,18 @@ export function AuditHistoryTable({
                 </td>
                 <td className="py-3 pr-4 text-sm leading-[1.5] text-neutral-700 dark:text-neutral-300">
                   {row.provider} / {row.model}
+                  {/* #50 Task 9 — the ENTIRE provenance the server discloses
+                      is `credentialSource: 'own' | 'shared'` (routes/audits.ts):
+                      no owner id, no grant id, no key label. Render nothing
+                      beyond this compact label, and render nothing at all for
+                      'own' or for an older cached row where the field is
+                      absent — that is the pre-Task-9 behavior and stays the
+                      default. */}
+                  {row.credentialSource === 'shared' && (
+                    <span className="ml-2 inline-block text-xs text-neutral-500 dark:text-neutral-400 border border-neutral-300 dark:border-neutral-700 rounded px-1.5 py-0.5 align-middle">
+                      Shared connection
+                    </span>
+                  )}
                 </td>
                 <td className="py-3 pr-4 text-sm leading-[1.5] tabular-nums text-right">
                   {/* Phase 27 D-06 — three-branch conditional with the

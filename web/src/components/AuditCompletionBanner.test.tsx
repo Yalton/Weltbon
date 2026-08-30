@@ -164,3 +164,70 @@ describe('AuditCompletionBanner — context truncation', () => {
     expect(screen.queryByText(/not available on this account/i)).not.toBeInTheDocument();
   });
 });
+
+describe('AuditCompletionBanner — #50 Task 9 shared-connection error copy', () => {
+  beforeEach(() => {
+    vi.mocked(useEstimateAudit).mockReturnValue({ data: undefined } as never);
+    vi.mocked(useUniverse).mockReturnValue({ data: { auditEnabled: true } } as never);
+    vi.mocked(useIssues).mockReturnValue({ data: [] } as never);
+  });
+
+  it("shared_access_revoked tells the recipient their access ended, not that the owner's key failed", () => {
+    vi.mocked(useAuditRun).mockReturnValue({
+      data: {
+        ...BASE_RUN,
+        status: 'failed',
+        error: 'shared_access_revoked',
+        suggestionCount: 0,
+      },
+    } as never);
+
+    render(
+      <AuditCompletionBanner universeId={BASE_RUN.universeId} runId={BASE_RUN.id} />,
+      { wrapper: Wrapper },
+    );
+
+    expect(
+      screen.getByText(/Your access to this shared connection has ended\./),
+    ).toBeInTheDocument();
+    expect(screen.getByText(/Contact the administrator/i)).toBeInTheDocument();
+    expect(screen.getByText(/personal API key in Settings/i)).toBeInTheDocument();
+    // Must not fall through to the generic fallback copy.
+    expect(screen.queryByText(/An unexpected error occurred/)).not.toBeInTheDocument();
+    // Must not imply anything about the OWNER's key state — the server
+    // deliberately never discloses that to the recipient. Specific phrasing,
+    // not a broad 'administrator...key' scan: the legitimate copy itself
+    // says both words in one sentence ("Contact the administrator... add a
+    // personal API key"), so a loose proximity match would fail against its
+    // own correct copy.
+    const text = document.body.textContent ?? '';
+    expect(text).not.toMatch(/administrator'?s key/i);
+    expect(text).not.toMatch(/(deleted|revoked|invalid|expired|disabled)[^.]{0,30}(administrator|owner)/i);
+  });
+
+  it('shared_credential_unavailable tells the recipient the connection is unusable right now, without diagnosing why', () => {
+    vi.mocked(useAuditRun).mockReturnValue({
+      data: {
+        ...BASE_RUN,
+        status: 'failed',
+        error: 'shared_credential_unavailable',
+        suggestionCount: 0,
+      },
+    } as never);
+
+    render(
+      <AuditCompletionBanner universeId={BASE_RUN.universeId} runId={BASE_RUN.id} />,
+      { wrapper: Wrapper },
+    );
+
+    expect(
+      screen.getByText(/the shared connection is not currently usable/i),
+    ).toBeInTheDocument();
+    expect(screen.getByText(/Contact the administrator/i)).toBeInTheDocument();
+    expect(screen.getByText(/personal API key in Settings/i)).toBeInTheDocument();
+    expect(screen.queryByText(/An unexpected error occurred/)).not.toBeInTheDocument();
+    const text2 = document.body.textContent ?? '';
+    expect(text2).not.toMatch(/administrator'?s key/i);
+    expect(text2).not.toMatch(/(deleted|revoked|invalid|expired|disabled)[^.]{0,30}(administrator|owner)/i);
+  });
+});

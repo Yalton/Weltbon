@@ -61,6 +61,20 @@ const ERROR_COPY: Record<string, string> = {
     "The audit scope is too large for the selected model's context window. Try a narrower audit scope.",
   content_blocked:
     'The provider blocked some content for safety reasons. Try a narrower audit scope.',
+  // #50 Task 9 — Task 7 introduced these two tags precisely so a recipient of
+  // a shared connection is not misdirected to their OWN Settings by the
+  // generic provider-error copy above ("Update or replace it under Settings
+  // → LLM keys" is meaningless for a credential the recipient never holds).
+  // Neither line says anything about the OWNER's key state — deleted,
+  // revoked, invalid, expired — because the server itself deliberately never
+  // discloses that to the recipient (see useLlmShares.ts's file header: "a
+  // recipient who could tell one owner-side failure from another has been
+  // handed an oracle for the administrator roster"). Both point at the same
+  // two remedies: ask the administrator, or fall back to a personal key.
+  shared_access_revoked:
+    'Your access to this shared connection has ended. Contact the administrator who shared it, or add a personal API key in Settings → LLM keys.',
+  shared_credential_unavailable:
+    'The shared connection is not currently usable. Contact the administrator who shared it, or add a personal API key in Settings → LLM keys.',
   fallback:
     'An unexpected error occurred. See the run details for more.',
 };

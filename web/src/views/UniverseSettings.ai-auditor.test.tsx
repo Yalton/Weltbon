@@ -13,6 +13,16 @@
  *   - Test 4: PRICING fallback path — when source='pricing_fallback' but
  *     models are populated and all hasPricing=true, the dropdown still
  *     renders and no warning suffix appears.
+ *
+ * #50 Task 9 adds a second describe block below: shared-connection provider
+ * availability. A hosted provider (anthropic/openai) is now enabled by
+ * EITHER a personal key OR a consented shared grant; an unconsented grant
+ * must not enable the option and must not let `useListModels` probe
+ * `/llm/models` for it (Task 6 already 403s that request server-side, but
+ * the point is the UI must never even try — see the brief's global
+ * constraint that an unconsented grant "does not load models"). Ollama stays
+ * driven only by `localMode` + the local connection query, independent of
+ * any shared grant.
  */
 
 import { describe, it, expect, beforeEach, vi } from 'vitest';
@@ -26,7 +36,9 @@ vi.mock('../api/client', async () => {
   return { ...actual, api: vi.fn() };
 });
 import { api } from '../api/client';
+import { useAuthStore } from '../store/auth';
 import { UniverseSettings } from './UniverseSettings';
+import type { SharedGrant } from '../hooks/useLlmShares';
 
 const UNIVERSE = {
   id: 'U1',
@@ -54,12 +66,44 @@ const LLM_KEYS = [
   },
 ];
 
-function renderAiTab(modelsResponse: unknown, universePatch: Partial<typeof UNIVERSE> = {}) {
+/**
+ * #50 Task 9 — extra opts beyond the original two params. All optional and
+ * additive, so every pre-existing call site above (which passes only the
+ * first two args) is unaffected:
+ *   - `sharedGrants` backs GET /llm-shares (defaults to none, matching the
+ *     pre-Task-9 behavior where the endpoint was never even mocked).
+ *   - `llmKeys` overrides the default single-Anthropic-key fixture, so the
+ *     shared-availability tests can render a universe with NO personal key
+ *     at all and isolate what the shared grant alone contributes.
+ *   - `localMode` / `ollamaConnection` back GET /config and
+ *     GET /llm-connections/ollama for the Ollama-local case. `/config`
+ *     itself is only reachable behind a session (useInstanceConfig's own
+ *     `enabled: user !== null` gate), so a test that needs `localMode: true`
+ *     to actually resolve must also set `useAuthStore` — see that test.
+ */
+function renderAiTab(
+  modelsResponse: unknown,
+  universePatch: Partial<typeof UNIVERSE> = {},
+  opts: {
+    sharedGrants?: SharedGrant[];
+    llmKeys?: typeof LLM_KEYS;
+    localMode?: boolean;
+    ollamaConnection?: unknown;
+  } = {},
+) {
   const merged = { ...UNIVERSE, ...universePatch };
+  const sharedGrants = opts.sharedGrants ?? [];
+  const llmKeys = opts.llmKeys ?? LLM_KEYS;
   vi.mocked(api).mockImplementation(async (path: string, init?: RequestInit) => {
     const method = init?.method ?? 'GET';
     if (path === '/universes/U1' && method === 'GET') return merged as never;
-    if (path === '/llm-keys' && method === 'GET') return LLM_KEYS as never;
+    if (path === '/llm-keys' && method === 'GET') return llmKeys as never;
+    if (path === '/llm-shares' && method === 'GET') return { grants: sharedGrants } as never;
+    if (path === '/config' && method === 'GET') return { localMode: opts.localMode ?? false } as never;
+    if (path === '/llm-connections/ollama' && method === 'GET') {
+      if (opts.ollamaConnection === undefined) throw new Error('no ollama connection configured');
+      return opts.ollamaConnection as never;
+    }
     if (path.startsWith('/llm/models') && method === 'GET') {
       if (modelsResponse instanceof Error) throw modelsResponse;
       return modelsResponse as never;
@@ -235,6 +279,179 @@ describe('UniverseSettings AI-auditor — useListModels integration smoke', () =
       expect(modelsCalls.length).toBeGreaterThanOrEqual(1);
       expect(modelsCalls[0][0]).toBe('/llm/models?provider=anthropic');
     });
+  });
+});
+
+const CONSENTED_ANTHROPIC_GRANT: SharedGrant = {
+  id: 'grant-anthropic-1',
+  provider: 'anthropic',
+  status: 'active',
+  createdAt: '2026-08-01T00:00:00.000Z',
+  consentedAt: '2026-08-02T00:00:00.000Z',
+  policyVersion: 'shared-llm-v1',
+  disclosure: {
+    providerName: 'Anthropic',
+    credentialOwner: 'administrator-managed',
+    contentLeavesThisInstance: true,
+  },
+  usage: {
+    monthStart: '2026-08-01',
+    settledUsd: '0.0000',
+    reservedUsd: '0.0000',
+    limitUsd: '1.0000',
+    activeAudits: 0,
+    maxConcurrentAudits: 1,
+    completedAudits: 0,
+    failedAudits: 0,
+  },
+};
+
+const UNCONSENTED_OPENAI_GRANT: SharedGrant = {
+  ...CONSENTED_ANTHROPIC_GRANT,
+  id: 'grant-openai-1',
+  provider: 'openai',
+  consentedAt: null,
+  disclosure: {
+    providerName: 'OpenAI',
+    credentialOwner: 'administrator-managed',
+    contentLeavesThisInstance: true,
+  },
+};
+
+const OLLAMA_CONNECTION = {
+  provider: 'ollama' as const,
+  baseUrl: 'http://localhost:11434',
+  label: '',
+  bodySuffix: null,
+  createdAt: '2026-08-01T00:00:00.000Z',
+  lastValidatedAt: '2026-08-20T00:00:00.000Z',
+};
+
+describe('UniverseSettings AI-auditor — shared connection provider availability (#50 Task 9)', () => {
+  beforeEach(() => {
+    vi.mocked(api).mockReset();
+  });
+
+  it('personal-only: a configured personal key enables its provider with no shared wording', async () => {
+    renderAiTab(
+      { models: [], source: 'pricing_fallback', fetchedAt: '2026-05-26T00:00:00.000Z' },
+      {},
+      { sharedGrants: [] },
+    );
+
+    await screen.findByLabelText('Provider');
+
+    // Anthropic has a personal key (default LLM_KEYS fixture) and no shared
+    // grant — enabled, plain label, no "managed" wording.
+    const anthropicOption = screen.getByRole('option', { name: 'Anthropic' });
+    expect(anthropicOption).toBeEnabled();
+    expect(anthropicOption.textContent).not.toMatch(/managed/i);
+
+    // OpenAI has neither a personal key nor a shared grant — disabled, the
+    // pre-existing "(no key configured)" copy, not the new consent copy.
+    const openaiOption = screen.getByRole('option', { name: /OpenAI \(no key configured\)/ });
+    expect(openaiOption).toBeDisabled();
+    expect(screen.queryByText(/review consent in Settings/i)).not.toBeInTheDocument();
+  });
+
+  it('shared-consented + shared-unconsented: enables one provider, keeps the other gated behind consent', async () => {
+    renderAiTab(
+      {
+        models: [
+          {
+            id: 'claude-haiku-4-5-20251001',
+            hasPricing: true,
+            pricing: { id: 'claude-haiku-4-5-20251001', inputUsdPer1M: 1.0, outputUsdPer1M: 5.0 },
+          },
+        ],
+        source: 'live',
+        fetchedAt: '2026-05-26T00:00:00.000Z',
+      },
+      {},
+      {
+        // No personal key for either provider — only shared grants decide
+        // availability here.
+        llmKeys: [],
+        sharedGrants: [CONSENTED_ANTHROPIC_GRANT, UNCONSENTED_OPENAI_GRANT],
+      },
+    );
+
+    await screen.findByLabelText('Provider');
+
+    await waitFor(() => {
+      expect(screen.getByRole('option', { name: /Anthropic.*managed/i })).toBeEnabled();
+    });
+    expect(screen.getByRole('option', { name: /OpenAI.*requires Settings consent/i })).toBeDisabled();
+    expect(screen.getByText(/review consent in Settings/i)).toBeInTheDocument();
+    expect(screen.queryByRole('option', { name: /Ollama.*managed/i })).not.toBeInTheDocument();
+
+    // The default universe fixture's auditProvider is 'anthropic' (consented
+    // shared), so the model route IS probed for it — the disabled-by-default
+    // Loading state some earlier tests assert on is not what's under test
+    // here; the live-model fetch settling is:
+    await waitFor(() => {
+      const calls = vi.mocked(api).mock.calls.filter(([p]) => String(p).startsWith('/llm/models'));
+      expect(calls.some(([p]) => p === '/llm/models?provider=anthropic')).toBe(true);
+    });
+  });
+
+  it('does not probe /llm/models for a provider with only an unconsented shared grant', async () => {
+    renderAiTab(
+      { models: [], source: 'pricing_fallback', fetchedAt: '2026-05-26T00:00:00.000Z' },
+      // The universe's SAVED provider is the one gated behind consent.
+      { auditProvider: 'openai' },
+      { llmKeys: [], sharedGrants: [UNCONSENTED_OPENAI_GRANT] },
+    );
+
+    await screen.findByLabelText('Provider');
+    // Give any (incorrect) fetch a chance to fire before asserting its absence.
+    await new Promise((r) => setTimeout(r, 30));
+
+    const modelsCalls = vi
+      .mocked(api)
+      .mock.calls.filter(([p]) => String(p).startsWith('/llm/models'));
+    expect(modelsCalls).toHaveLength(0);
+  });
+
+  it('Ollama-local: local instance shows Ollama independent of shared grants, never "managed"', async () => {
+    useAuthStore.setState({ user: { id: 'user-1', email: 'a@b.com', displayName: 'A' } });
+    try {
+      renderAiTab(
+        {
+          models: [
+            {
+              id: 'claude-haiku-4-5-20251001',
+              hasPricing: true,
+              pricing: { id: 'claude-haiku-4-5-20251001', inputUsdPer1M: 1.0, outputUsdPer1M: 5.0 },
+            },
+          ],
+          source: 'live',
+          fetchedAt: '2026-05-26T00:00:00.000Z',
+        },
+        {},
+        {
+          localMode: true,
+          ollamaConnection: OLLAMA_CONNECTION,
+          // A shared grant on an unrelated provider must not leak "managed"
+          // wording onto Ollama's option.
+          sharedGrants: [CONSENTED_ANTHROPIC_GRANT],
+        },
+      );
+
+      await screen.findByLabelText('Provider');
+      const ollamaOption = await screen.findByRole('option', { name: 'Ollama' });
+      expect(ollamaOption).toBeEnabled();
+      expect(ollamaOption.textContent).not.toMatch(/managed/i);
+      expect(screen.queryByRole('option', { name: /Ollama.*managed/i })).not.toBeInTheDocument();
+
+      // The default fixture's auditProvider ('anthropic', consented) also
+      // triggers a model-catalog fetch in the background — drain it before
+      // the test ends so its resolution doesn't land as a post-test state
+      // update (React act() warning) once this test's own assertions are done.
+      await screen.findByRole('option', { name: 'claude-haiku-4-5-20251001' });
+    } finally {
+      useAuthStore.setState({ user: null });
+    }
   });
 });
 
