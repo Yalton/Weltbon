@@ -122,6 +122,28 @@ describe('shared LLM grant routes', () => {
    * quotes, no matching plaintext-key substring) into the real
    * `console.error` path in `api/src/index.ts` passed with the old regex.
    */
+  /**
+   * Renders one console argument the way a human reading the real terminal
+   * would see it.
+   *
+   * The three explicit options are the whole point and none of them is a
+   * default. `depth: null` was already here; `maxStringLength` (10000) and
+   * `maxArrayLength` (100) are Node's defaults and both TRUNCATE with a
+   * "... N more characters"/"... N more items" marker. A secret sitting inside
+   * a long string property — a request body echoed into an error, a stack
+   * trace with an interpolated key — or past the 100th element of an array
+   * would be cut off before the scan below ever saw it, and the assertion
+   * would pass for the one reason it must never pass: it did not look. This
+   * is the branch's strongest log assertion; leaving a truncation hole in it
+   * is leaving a hole in the thing everything else is checked against.
+   * Leak-simulated in the LEAK CHECK at the bottom of this file.
+   */
+  const renderLogArgument = (value: unknown) => (
+    typeof value === 'string'
+      ? value
+      : inspect(value, { depth: null, maxStringLength: Infinity, maxArrayLength: Infinity })
+  );
+
   function expectNoCredentialLeakInText(text: string, context: string) {
     expect(text, `${context} must not contain the seeded plaintext key`).not.toContain(SECRET);
     for (const forbidden of FORBIDDEN) {
@@ -437,8 +459,7 @@ describe('shared LLM grant routes', () => {
     // exactly the shape that would hide a leak from every check below.
     // `inspect` renders the actual field names and values, matching what a
     // human reading the real terminal output would see.
-    const render = (value: unknown) => (typeof value === 'string' ? value : inspect(value, { depth: null }));
-    const capture = (...args: unknown[]) => { captured.push(args.map(render).join(' ')); };
+    const capture = (...args: unknown[]) => { captured.push(args.map(renderLogArgument).join(' ')); };
     const logSpy = vi.spyOn(console, 'log').mockImplementation(capture);
     const errorSpy = vi.spyOn(console, 'error').mockImplementation(capture);
     const listSpy = vi.spyOn(llmSharing, 'listRecipientSharedGrants')
@@ -500,5 +521,37 @@ describe('shared LLM grant routes', () => {
     expect(() => expectNoCredentialLeakInText("shared ctx { ownerKeyId: 'abc' }", 'test')).toThrow();
     // Negative control.
     expect(() => expectNoCredentialLeakInText('--> GET /api/llm-shares 200 3ms', 'test')).not.toThrow();
+  });
+
+  /**
+   * Final-review finding 5. Same standing rule, aimed at the RENDERER rather
+   * than the scanner: a scan that is perfect cannot save an assertion that was
+   * handed truncated text.
+   *
+   * Both leaks below are planted past a Node `inspect` DEFAULT — 10000
+   * characters into a string property, and at index 150 of an array — which is
+   * exactly the shape a real leak takes when an error carries a request body,
+   * a provider response, or a batch of rows. With the previous
+   * `inspect(value, { depth: null })` these rendered as "... 43 more
+   * characters" / "... 51 more items" and the scan passed. The assertions
+   * therefore fail without `maxStringLength`/`maxArrayLength: Infinity`, which
+   * is what makes them evidence rather than decoration.
+   */
+  it('LEAK CHECK: the log renderer does not truncate a secret out of a long string or a long array', () => {
+    const buried = { body: `${'x'.repeat(10_000)}${SECRET}` };
+    expect(renderLogArgument(buried)).toContain(SECRET);
+    expect(() => expectNoCredentialLeakInText(renderLogArgument(buried), 'test')).toThrow();
+
+    const late = Array.from({ length: 200 }, (_, index) => (index === 150 ? SECRET : 'ok'));
+    expect(renderLogArgument(late)).toContain(SECRET);
+    expect(() => expectNoCredentialLeakInText(renderLogArgument(late), 'test')).toThrow();
+
+    // And the field-name half, past the same two boundaries — a forbidden name
+    // can be truncated away just as easily as a value.
+    const lateField = Array.from({ length: 200 }, (_, index) => (index === 150 ? { ownerKeyId: 'abc' } : 'ok'));
+    expect(() => expectNoCredentialLeakInText(renderLogArgument(lateField), 'test')).toThrow();
+
+    // Negative control: the renderer must still not invent a match.
+    expect(() => expectNoCredentialLeakInText(renderLogArgument({ provider: 'anthropic' }), 'test')).not.toThrow();
   });
 });
