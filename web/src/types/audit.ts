@@ -110,6 +110,15 @@ export interface AuditHistoryRow {
   analyzedEntries: number;
   /** Universe total entry count at run time. `null` for entry-scoped runs. */
   totalEntries: number | null;
+  /**
+   * #50 Task 9 — which credential ran this audit: the user's own, or a
+   * shared connection an administrator granted. This is the ENTIRE
+   * provenance the server discloses (routes/audits.ts) — no owner id, no
+   * grant id, no key label. Optional so older cached rows (fetched before
+   * this field existed) don't break; treat absence like `'own'` (render
+   * nothing extra).
+   */
+  credentialSource?: 'own' | 'shared';
 }
 
 // ─── Phase 27 Plan 04 — Live model catalog (D-01..D-05) ────────────────────

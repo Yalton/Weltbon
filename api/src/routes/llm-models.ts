@@ -17,16 +17,17 @@
  *     which returns `null` when no `llm_connections` row exists. That MUST
  *     NOT 404 — see the branch below for why an absent connection collapses
  *     to an empty listing instead (`getModels`'s own D-1/Task 6 guard).
- *   - Key-based (anthropic/openai): UNCHANGED from before this fix — same
- *     `llm_api_keys` row pre-check (404 "no_key_for_provider") followed by
- *     `getDecryptedKey` (503 on decrypt failure). This is intentionally NOT
- *     routed through `resolveCredential`: that function collapses "no row"
- *     and "row exists but cannot decrypt" into a single `null` (documented
- *     in llm-credential.ts), which cannot reproduce the 404-vs-503
- *     distinction `tests/llm-models-cache.test.ts` Test 5 pins. Task 2's
- *     `KEY_PROVIDER_NAMES` scoping was correct for `llm-keys.ts` (a stored
- *     API key genuinely is key-providers-only) and stays correct there; this
- *     route alone now serves the wider `PROVIDER_NAMES`.
+ *   - Key-based (anthropic/openai): resolved by #50 Task 6 through
+ *     `resolveEffectiveCredential`, which returns a four-case union rather
+ *     than the single `null` of `resolveCredential`. That distinction is why
+ *     this branch could not use `resolveCredential` before and can use the
+ *     effective resolver now: "no row" and "row will not decrypt" stay
+ *     separable, so the 404-vs-503 split this route's contract pins survives
+ *     while the two shared-grant outcomes (403 consent, 503 owner-side
+ *     unusable) become expressible at all. Task 2's `KEY_PROVIDER_NAMES`
+ *     scoping was correct for `llm-keys.ts` (a stored API key genuinely is
+ *     key-providers-only) and stays correct there; this route alone now
+ *     serves the wider `PROVIDER_NAMES`.
  *
  * Auth posture (mirrors LLMKEY-06 / D-13):
  *   - JWT-only via `requireJwtAuth` middleware. PATs cannot reach this route
@@ -44,12 +45,22 @@
  *     because it means anything to the cache.
  *
  * Failure modes:
- *   - Key-based, no `llm_api_keys` row for (userId, provider) → 404 with
- *     `{ error: 'no_key_for_provider' }`. Frontend renders an empty dropdown
- *     + a "Add a key in Settings" prompt; never a 500.
- *   - Key-based, decryption fails (missing LLM_KEY_ENCRYPTION_KEY env,
- *     malformed ciphertext) → 503 with the same envelope the revalidate
- *     route uses.
+ *   - Key-based, no own `llm_api_keys` row AND no shared grant for
+ *     (userId, provider) → 404 with `{ error: 'no_key_for_provider' }`.
+ *     Frontend renders an empty dropdown + a "Add a key in Settings" prompt;
+ *     never a 500.
+ *   - Key-based, own row present but decryption fails (missing
+ *     LLM_KEY_ENCRYPTION_KEY env, malformed ciphertext) → 503 with the same
+ *     envelope the revalidate route uses. A present-but-broken own row does
+ *     NOT fall through to a shared grant: that would move the billing owner
+ *     of a listing without the user asking (llm-credential.ts fail-closed).
+ *   - Key-based, no own row and a grant awaiting consent → 403
+ *     `shared_llm_consent_required`.
+ *   - Key-based, no own row and a consented grant whose owner credential is
+ *     unusable (owner disabled/demoted, key deleted or rotated, ciphertext
+ *     undecryptable) → 503 `shared_credential_unavailable`. The four causes
+ *     are deliberately indistinguishable to the recipient — each describes
+ *     another user's account state.
  *   - Ollama, no `llm_connections` row → 200 with an empty listing (NOT 404 —
  *     see the branch below).
  *   - Ollama, connection configured but server unreachable → 200 with an
@@ -65,16 +76,16 @@
  */
 
 import { OpenAPIHono, createRoute, z } from '@hono/zod-openapi';
-import { and, eq } from 'drizzle-orm';
-import { db as getDb } from '../db/client.js';
-import { llmApiKeys } from '../db/schema.js';
 import { requireJwtAuth, type AuthVariables } from '../middleware/auth.js';
 import {
-  getDecryptedKey,
   PROVIDER_NAMES,
   type LlmProvider,
 } from '../services/llm-key.js';
-import { resolveCredential, isEndpointProvider } from '../services/llm-credential.js';
+import {
+  resolveCredential,
+  resolveEffectiveCredential,
+  isEndpointProvider,
+} from '../services/llm-credential.js';
 import { getModels } from '../providers/llm/index.js';
 import { env } from '../config.js';
 
@@ -82,8 +93,14 @@ type AppEnv = { Variables: AuthVariables };
 
 // ─── Zod schemas ────────────────────────────────────────────────────────────
 
+// #50 Task 6: the pre-#50 shape was `{ error }` alone and both existing
+// bodies ('no_key_for_provider', the decrypt-failure copy) keep it verbatim.
+// `code` is optional rather than a second schema so the shared failures can
+// be machine-branched by the recipient UI without restating the envelope —
+// and so widening it never silently drops the older bodies from the document.
 const errorSchema = z.object({
   error: z.string(),
+  code: z.string().optional(),
 });
 
 // Fix round 1 (#48 review, Finding 2): widened from KEY_PROVIDER_NAMES to the
@@ -160,13 +177,21 @@ const getModelsRoute = createRoute({
       content: { 'application/json': { schema: errorSchema } },
       description: 'Missing or invalid JWT bearer token (or PAT — LLMKEY-06).',
     },
+    403: {
+      content: { 'application/json': { schema: errorSchema } },
+      description:
+        'Key-based provider only: the caller has no own key and their shared grant has ' +
+        'not been consented to under the current policy version (shared_llm_consent_required).',
+    },
     404: {
       content: { 'application/json': { schema: errorSchema } },
-      description: 'Key-based provider only: no llm_api_keys row for (caller, provider).',
+      description: 'Key-based provider only: no llm_api_keys row and no shared grant for (caller, provider).',
     },
     503: {
       content: { 'application/json': { schema: errorSchema } },
-      description: 'Key-based provider only: server cannot decrypt the stored key (env or row state).',
+      description:
+        'Key-based provider only: server cannot decrypt the caller\'s stored key (env or row ' +
+        'state), or the shared owner credential is currently unusable (shared_credential_unavailable).',
     },
   },
 });
@@ -196,64 +221,91 @@ export const llmModelsRoutes = new OpenAPIHono<AppEnv>().openapi(
       return c.json(result, 200);
     }
 
-    // Key-based (anthropic/openai) — UNCHANGED from before this fix. See the
-    // file header for why this stays a direct llm_api_keys lookup rather than
-    // resolveCredential: the 404-vs-503 distinction below depends on knowing
-    // WHETHER a row exists, which resolveCredential's collapsed null cannot
-    // tell us.
+    // Key-based (anthropic/openai) — #50 Task 6 routes this through
+    // resolveEffectiveCredential rather than a direct llm_api_keys lookup +
+    // getDecryptedKey. The reason the pre-#50 code avoided the shared resolver
+    // (`resolveCredential` collapses "no row" and "row will not decrypt" into
+    // one null, which cannot produce the 404-vs-503 split this route's
+    // contract pins) does not apply to `resolveEffectiveCredential`: its
+    // result is a four-case discriminated union, so both of those stay
+    // distinguishable AND the two shared-only outcomes become expressible.
     //
-    // Look up the user's row for this provider. Phase 22 schema enforces at
-    // most one row per (user, provider) via UNIQUE — `.limit(1)` is defensive.
-    // We only need `id` for the cache key; the ciphertext/iv/authTag are read
-    // inside `getDecryptedKey`.
-    const rows = await getDb()
-      .select({ id: llmApiKeys.id })
-      .from(llmApiKeys)
-      .where(
-        and(
-          eq(llmApiKeys.userId, userId),
-          eq(llmApiKeys.provider, provider),
-        ),
-      )
-      .limit(1);
+    // The mapping keeps every pre-#50 body byte-identical:
+    //   missing            → 404 { error: 'no_key_for_provider' }   (unchanged)
+    //   unavailable/own    → 503 with the operator copy              (unchanged)
+    //   consent_required   → 403 shared_llm_consent_required         (new)
+    //   unavailable/shared → 503 shared_credential_unavailable       (new)
+    //
+    // "missing" now means "no own key AND no grant", so a recipient who has a
+    // grant never sees the "Add a key in Settings" empty dropdown.
+    const resolved = await resolveEffectiveCredential(
+      userId,
+      provider as LlmProvider,
+      cfg.llmKeyEncryptionKey,
+    );
 
-    if (rows.length === 0) {
+    if (resolved.kind === 'missing') {
       // 404 — documented contract. Frontend renders the empty-dropdown +
       // "Add a key in Settings" hint. Never a 500.
       return c.json({ error: 'no_key_for_provider' }, 404);
     }
 
-    const keyId = rows[0].id;
-
-    // Decrypt via the existing helper (same one the revalidate route uses).
-    // null collapses no-row / decrypt-fail / missing-env / version-mismatch
-    // into a single sentinel per D-11; we surface as 503 to mirror the
-    // revalidate route's behavior verbatim.
-    const apiKey = await getDecryptedKey(
-      userId,
-      provider as LlmProvider,
-      cfg.llmKeyEncryptionKey,
-    );
-    if (apiKey === null) {
+    if (resolved.kind === 'consent_required') {
+      // The grant exists but the recipient has not accepted the current
+      // disclosure. Deliberately NOT an empty listing: silently showing the
+      // owner's catalog would be the first use of their credential, before
+      // the consent that is supposed to gate it. The grant id stays out of
+      // the body — the recipient's own settings page already knows it.
       return c.json(
         {
-          error:
-            'Server cannot decrypt the stored key. ' +
-            'Operator must verify LLM_KEY_ENCRYPTION_KEY (see README ## Self-Host).',
+          error: 'Shared connection requires consent before use',
+          code: 'shared_llm_consent_required',
         },
-        503,
+        403,
       );
+    }
+
+    if (resolved.kind === 'unavailable') {
+      return resolved.source === 'shared'
+        // Owner-side state (disabled administrator, deleted/rotated key,
+        // undecryptable ciphertext) collapses to one opaque code: which of
+        // those it is describes another user's account, so the recipient is
+        // told only that the connection is unusable right now.
+        ? c.json(
+            {
+              error: 'Shared connection is temporarily unavailable',
+              code: 'shared_credential_unavailable',
+            },
+            503,
+          )
+        : c.json(
+            {
+              error:
+                'Server cannot decrypt the stored key. ' +
+                'Operator must verify LLM_KEY_ENCRYPTION_KEY (see README ## Self-Host).',
+            },
+            503,
+          );
     }
 
     // Hand off to the cache module. Per D-02, getModels NEVER throws — on
     // provider SDK failure it falls back to stale cache or PRICING. We can
-    // therefore return its result directly without try/catch. apiKey is a
-    // local `const` and is never logged, never returned, never stored in any
-    // cache state (T-27-03-02 mitigation). #48 Task 3: getModels now takes a
-    // ProviderCredential — this branch only ever serves key-based providers
-    // (the isEndpointProvider() check above already peeled 'ollama' off), so
-    // `{ apiKey }` is always the right shape.
-    const result = await getModels(provider as LlmProvider, keyId, { apiKey });
+    // therefore return its result directly without try/catch. The decrypted
+    // key lives only inside `resolved.value.credential`; it is never logged,
+    // never returned, never stored in any cache state (T-27-03-02 mitigation).
+    //
+    // D-03/LLMKEY-03 cache identity: `keyId` is the llm_api_keys row id that
+    // the credential actually came from — for a shared resolution that is the
+    // OWNER's key, so two recipients of one grant share a single cache entry
+    // and one upstream models.list() call, and neither can ever be served a
+    // listing fetched with a different key. Keying on the recipient id
+    // instead would multiply the owner's rate-limit exposure by the number of
+    // recipients while caching identical payloads.
+    const result = await getModels(
+      provider as LlmProvider,
+      resolved.value.keyId,
+      resolved.value.credential,
+    );
     return c.json(result, 200);
   },
 );

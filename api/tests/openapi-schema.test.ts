@@ -20,6 +20,148 @@ import { describe, it, expect } from 'vitest';
 import { app } from '../src/index.js';
 
 describe('OpenAPI schema and Scalar docs (Phase 10 — DB-independent)', () => {
+  it('declares the shared LLM recipient and admin route contracts without credential-shaped inputs', async () => {
+    const res = await app.fetch(new Request('http://localhost/api/openapi.json'));
+    expect(res.status).toBe(200);
+    const doc = await res.json() as any;
+
+    expect(doc.paths['/llm-shares']?.get?.security).toEqual([{ bearerJwtAuth: [] }]);
+    expect(doc.paths['/llm-shares/{id}/consent']?.post?.security).toEqual([{ bearerJwtAuth: [] }]);
+    expect(doc.paths['/llm-shares/{id}/consent']?.delete?.security).toEqual([{ bearerJwtAuth: [] }]);
+    expect(doc.paths['/admin/llm-shares']?.get?.security).toEqual([{ bearerJwtAuth: [] }]);
+    expect(doc.paths['/admin/llm-shares']?.post?.security).toEqual([{ bearerJwtAuth: [] }]);
+    expect(doc.paths['/admin/llm-shares/{id}']?.delete?.security).toEqual([{ bearerJwtAuth: [] }]);
+
+    const createSchema = doc.paths['/admin/llm-shares']?.post?.requestBody
+      ?.content?.['application/json']?.schema;
+    expect(createSchema).toMatchObject({
+      type: 'object',
+      additionalProperties: false,
+      required: ['recipientUserId', 'provider'],
+      properties: {
+        recipientUserId: { type: 'string', format: 'uuid' },
+        provider: { type: 'string', enum: ['anthropic', 'openai'] },
+      },
+    });
+    for (const property of ['key', 'secret', 'baseUrl', 'ciphertext', 'ownerKeyId']) {
+      expect(createSchema.properties?.[property]).toBeUndefined();
+    }
+
+    expect(doc.paths['/llm-shares']?.get?.responses?.['200']?.content?.['application/json']?.schema
+      ?.properties?.grants?.type).toBe('array');
+    expect(doc.paths['/llm-shares/{id}/consent']?.post?.responses?.['200']?.content?.['application/json']?.schema
+      ?.required).toEqual(['grantId', 'consentedAt', 'policyVersion']);
+    const consentPost = doc.paths['/llm-shares/{id}/consent']?.post;
+    expect(consentPost?.requestBody?.required).toBe(false);
+    expect(consentPost?.requestBody?.content?.['application/json']?.schema).toMatchObject({
+      type: 'object',
+      additionalProperties: false,
+    });
+    expect(consentPost?.responses?.['400']?.content?.['application/json']?.schema).toMatchObject({
+      type: 'object',
+      required: ['error', 'code'],
+      properties: { error: { type: 'string' }, code: { type: 'string' } },
+    });
+    const consentDelete = doc.paths['/llm-shares/{id}/consent']?.delete;
+    for (const status of ['400', '404', '503']) {
+      expect(consentDelete?.responses?.[status]?.content?.['application/json']?.schema).toMatchObject({
+        type: 'object',
+        required: ['error', 'code'],
+        properties: { error: { type: 'string' }, code: { type: 'string' } },
+      });
+    }
+
+    for (const operation of [
+      doc.paths['/llm-shares']?.get,
+      doc.paths['/llm-shares/{id}/consent']?.post,
+      doc.paths['/llm-shares/{id}/consent']?.delete,
+      doc.paths['/admin/llm-shares']?.get,
+      doc.paths['/admin/llm-shares']?.post,
+      doc.paths['/admin/llm-shares/{id}']?.delete,
+    ]) {
+      for (const [status, response] of Object.entries(operation?.responses ?? {})) {
+        if (!/^[45]/.test(status) || !('content' in (response as object))) continue;
+        const schema = (response as any).content?.['application/json']?.schema;
+        expect(schema).toMatchObject({
+          type: 'object',
+          required: expect.arrayContaining(['error', 'code']),
+        });
+      }
+    }
+    expect(doc.paths['/admin/llm-shares']?.post?.responses?.['201']?.content?.['application/json']?.schema
+      ?.required).toEqual(['id', 'owner', 'recipient', 'provider', 'status', 'createdAt', 'revokedAt', 'revokedReason', 'consentedAt', 'usage']);
+  });
+
+  /**
+   * Task 10 final boundary check. The forbidden-property loop above only
+   * covers POST /admin/llm-shares's requestBody. This generalises it across
+   * EVERY shared-route path/method that declares a JSON request body, so a
+   * future request field on any shared route (e.g. a PATCH added to
+   * /llm-shares/{id}) is caught by construction rather than needing a new
+   * hand-written block here. `checkedAtLeastOneSchema` exists because a loop
+   * over zero schemas passes vacuously — the same trap this branch's standing
+   * rule exists to catch, just at the schema-discovery step instead of the
+   * assertion step.
+   */
+  it('scans every new shared-route request schema for forbidden property names', async () => {
+    const res = await app.fetch(new Request('http://localhost/api/openapi.json'));
+    expect(res.status).toBe(200);
+    const doc = await res.json() as any;
+
+    const sharedRoutePaths = Object.keys(doc.paths).filter((path) =>
+      path === '/llm-shares' || path.startsWith('/llm-shares/')
+        || path === '/admin/llm-shares' || path.startsWith('/admin/llm-shares/'));
+    expect(sharedRoutePaths.length, 'no shared-route paths found in the OpenAPI document').toBeGreaterThan(0);
+
+    let checkedAtLeastOneSchema = false;
+    for (const pathKey of sharedRoutePaths) {
+      for (const method of ['get', 'post', 'put', 'patch', 'delete'] as const) {
+        const schema = doc.paths[pathKey]?.[method]?.requestBody?.content?.['application/json']?.schema;
+        if (!schema) continue;
+        checkedAtLeastOneSchema = true;
+        for (const property of ['key', 'secret', 'baseUrl', 'ciphertext', 'ownerKeyId']) {
+          expect(
+            schema.properties?.[property],
+            `${method.toUpperCase()} ${pathKey} request schema exposes forbidden property "${property}"`,
+          ).toBeUndefined();
+        }
+      }
+    }
+    expect(checkedAtLeastOneSchema, 'no shared-route request schema with a body was found to scan').toBe(true);
+  });
+
+  /**
+   * Standing rule for this branch: a negative security assertion must be
+   * shown to fail against a simulated leak before it is trusted. Plants a
+   * forbidden property directly into a schema object taken from the real
+   * response (not a hand-built stand-in) and re-runs the identical assertion
+   * shape used above, proving the check discriminates rather than always
+   * passing.
+   */
+  it('LEAK CHECK: the forbidden-property scan fails when a schema actually declares one (proves the assertion above is not vacuous)', async () => {
+    const res = await app.fetch(new Request('http://localhost/api/openapi.json'));
+    const doc = await res.json() as any;
+    const createSchema = doc.paths['/admin/llm-shares']?.post?.requestBody
+      ?.content?.['application/json']?.schema;
+    const poisoned = {
+      ...createSchema,
+      properties: { ...createSchema.properties, ciphertext: { type: 'string' } },
+    };
+
+    expect(() => {
+      for (const property of ['key', 'secret', 'baseUrl', 'ciphertext', 'ownerKeyId']) {
+        expect(poisoned.properties?.[property]).toBeUndefined();
+      }
+    }).toThrow();
+
+    // Negative control: the real (unpoisoned) schema must NOT throw the same check.
+    expect(() => {
+      for (const property of ['key', 'secret', 'baseUrl', 'ciphertext', 'ownerKeyId']) {
+        expect(createSchema.properties?.[property]).toBeUndefined();
+      }
+    }).not.toThrow();
+  });
+
   it('does not declare an ownership refusal the handshake-only test route cannot send', async () => {
     // Mutation caught: an earlier revision mapped EVERY peer 403 to
     // SyncRemoteOwnershipError and documented 403 here to match. But this route

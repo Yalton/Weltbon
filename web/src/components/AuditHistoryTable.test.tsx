@@ -123,3 +123,120 @@ describe('AuditHistoryTable — Phase 27 D-06 cost_unknown chip in cost cell', (
     expect(screen.queryByText(/cost unknown/i)).not.toBeInTheDocument();
   });
 });
+
+/**
+ * #50 Task 9 (review fix) — scans BOTH text content and every element's
+ * attribute values, not just `document.body.textContent`. A text-only scan
+ * cannot detect the attribute-leak class the standing rule exists for
+ * (`document.body.textContent` never contains attribute values — that is a
+ * DOM fact, not a maybe), and this component already builds an aria-label
+ * from row fields right above the new badge, so that path is live here.
+ * Mirrors AdminSharedLlmConnections.test.tsx's `expectNoKeyMaterial`.
+ */
+function expectNoOwnerOrKeyMaterial(poisonValues: string[]) {
+  const text = document.body.textContent ?? '';
+  const attributeValues: string[] = [];
+  for (const el of Array.from(document.querySelectorAll('*'))) {
+    for (const attr of Array.from(el.attributes)) attributeValues.push(attr.value);
+  }
+  const haystack = `${text}\n${attributeValues.join('\n')}`;
+  for (const value of poisonValues) {
+    expect(haystack).not.toContain(value);
+  }
+}
+
+describe('AuditHistoryTable — #50 Task 9 credentialSource display', () => {
+  beforeEach(() => {
+    vi.mocked(useAuditHistory).mockReset();
+  });
+
+  it("renders a compact 'Shared connection' label when credentialSource is 'shared'", () => {
+    renderWithRows([
+      baseRow({
+        id: 'dddddddd-0000-0000-0000-000000000004',
+        credentialSource: 'shared',
+      }),
+    ]);
+
+    expect(screen.getByText(/shared connection/i)).toBeInTheDocument();
+  });
+
+  it("renders no label when credentialSource is 'own'", () => {
+    renderWithRows([
+      baseRow({
+        id: 'eeeeeeee-0000-0000-0000-000000000005',
+        credentialSource: 'own',
+      }),
+    ]);
+
+    expect(screen.queryByText(/shared connection/i)).not.toBeInTheDocument();
+  });
+
+  it('renders no label and does not crash for older cached rows lacking credentialSource', () => {
+    const { credentialSource: _omit, ...legacyRow } = baseRow({
+      id: 'ffffffff-0000-0000-0000-000000000006',
+      credentialSource: 'own',
+    });
+    void _omit;
+
+    expect(() => renderWithRows([legacyRow as AuditHistoryRow])).not.toThrow();
+    expect(screen.queryByText(/shared connection/i)).not.toBeInTheDocument();
+  });
+
+  it('renders no owner, grant id, or usage secret for a shared row (redaction check)', () => {
+    // Poison: fields the server deliberately never sends for a shared row,
+    // attached as extras the type does not declare. Nothing should render
+    // them today; anything that starts to, will.
+    const POISON = {
+      ownerUserId: 'admin-user-uuid-1',
+      ownerEmail: 'alice.admin@corp.example',
+      grantId: 'grant-uuid-1',
+      usageSecret: 'sk-ant-owner-plaintext-secret',
+    };
+    renderWithRows([
+      { ...baseRow({ id: '00000000-0000-0000-0000-0000000000aa', credentialSource: 'shared' }), ...POISON } as AuditHistoryRow,
+    ]);
+
+    expectNoOwnerOrKeyMaterial(Object.values(POISON));
+  });
+
+  it('LEAK CHECK (text): the redaction check above fails when poison renders as text (proves it is not vacuous)', () => {
+    renderWithRows([baseRow({ id: '00000000-0000-0000-0000-0000000000bb', credentialSource: 'shared' })]);
+    // Appended as a standalone node (not via `innerHTML +=`, which persists
+    // across tests sharing this file's jsdom document and would let one
+    // LEAK CHECK's poison silently satisfy the next) so it can be removed
+    // in `finally`, keeping this test's poison from contaminating the
+    // attribute LEAK CHECK below.
+    const poison = document.createElement('div');
+    poison.textContent = 'text-leak-alice.admin@corp.example';
+    document.body.appendChild(poison);
+    try {
+      expect(() => expectNoOwnerOrKeyMaterial(['text-leak-alice.admin@corp.example'])).toThrow();
+    } finally {
+      document.body.removeChild(poison);
+    }
+  });
+
+  it('LEAK CHECK (attribute): the redaction check above fails when poison renders into an attribute, not just text', () => {
+    // Review finding: `document.body.textContent` never contains attribute
+    // values — that is a DOM-level fact, not a maybe. A text-only poison
+    // proves nothing about the attribute-leak class, and this component
+    // already builds an aria-label from row fields one line above the new
+    // badge (`aria-label={... row.scope ... row.status}`), so "a field
+    // rendered into an attribute" is a live path here, not a hypothetical.
+    // A DIFFERENT poison value than the text LEAK CHECK above, so this
+    // assertion cannot pass merely because the previous test's poison text
+    // is still sitting in the DOM (RTL's `cleanup()` only unmounts tracked
+    // `render()` containers, not nodes appended directly to `document.body`).
+    renderWithRows([baseRow({ id: '00000000-0000-0000-0000-0000000000cc', credentialSource: 'shared' })]);
+    const poison = document.createElement('div');
+    poison.setAttribute('title', 'attr-leak-alice.admin@corp.example');
+    poison.textContent = 'x';
+    document.body.appendChild(poison);
+    try {
+      expect(() => expectNoOwnerOrKeyMaterial(['attr-leak-alice.admin@corp.example'])).toThrow();
+    } finally {
+      document.body.removeChild(poison);
+    }
+  });
+});

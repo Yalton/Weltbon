@@ -11,6 +11,7 @@ import { SyncTab } from '../components/SyncTab';
 import { Toggle } from '../components/Toggle';
 import { AuditHistoryTable } from '../components/AuditHistoryTable';
 import { useLlmKeys } from '../hooks/useLlmKeys';
+import { useSharedLlmGrants } from '../hooks/useLlmShares';
 import { useListModels } from '../hooks/useAudits';
 import { useInstanceConfig } from '../hooks/useInstanceConfig';
 import { useLlmConnection } from '../hooks/useLlmConnection';
@@ -67,6 +68,23 @@ import { Loading } from '../components/ui/Loading';
  * the way in.
  */
 
+/**
+ * #50 Task 9 — the suffix a hosted-provider `<option>` carries, layered by
+ * priority: a personal key needs no explanation (plain name); otherwise a
+ * CONSENTED shared grant says so ("administrator-managed", matching the
+ * vocabulary `SharedDisclosure.credentialOwner` already uses in
+ * useLlmShares.ts/SharedLlmConnections.tsx); otherwise an UNCONSENTED grant
+ * says what's blocking it; otherwise the pre-Task-9 "no key configured".
+ * Never used for 'ollama' — that option's copy is untouched, still driven
+ * only by `hasOllamaConnection` below.
+ */
+function providerOptionSuffix(hasKey: boolean, consented: boolean, unconsented: boolean): string {
+  if (hasKey) return '';
+  if (consented) return ' (administrator-managed)';
+  if (unconsented) return ' (requires Settings consent)';
+  return ' (no key configured)';
+}
+
 const TABS = [
   { id: 'general', label: 'General' },
   // Universe theming (2026-07-10 spec) — its own tab: ThemeSection carries its
@@ -103,6 +121,11 @@ export function UniverseSettings() {
   // empty array defensively so `.some(...)` never throws on a non-array value.
   const { data: llmKeysRaw } = useLlmKeys();
   const llmKeys = Array.isArray(llmKeysRaw) ? llmKeysRaw : [];
+  // #50 Task 9 — same defensive coercion as llmKeys above: `data` starts
+  // undefined while loading, and the wrapper shape is `{ grants: [...] }`
+  // rather than a bare array.
+  const { data: sharedGrantsRaw } = useSharedLlmGrants();
+  const sharedGrants = Array.isArray(sharedGrantsRaw?.grants) ? sharedGrantsRaw.grants : [];
   const [name, setName] = useState('');
   const [description, setDescription] = useState('');
   const [confirmOpen, setConfirmOpen] = useState(false);
@@ -136,14 +159,45 @@ export function UniverseSettings() {
   const { data: ollamaConnection } = useLlmConnection('ollama', { enabled: isLocal });
   const hasOllamaConnection = ollamaConnection !== undefined;
 
+  const hasAnthropicKey = llmKeys.some((k) => k.provider === 'anthropic');
+  const hasOpenAIKey = llmKeys.some((k) => k.provider === 'openai');
+
+  // #50 Task 9 — a hosted provider (anthropic/openai) is available through
+  // EITHER a personal key OR a shared grant the recipient has consented to.
+  // An unconsented grant is a DIFFERENT thing: it exists, but must not
+  // enable the option (the recipient has not yet agreed to the disclosure)
+  // and must not let this component probe /llm/models for it either — see
+  // `canProbeModels` below. Computed as `Set`s (not booleans) so the
+  // provider-option JSX and the model-probe gate below share one source of
+  // truth instead of recomputing "is anthropic consented?" twice.
+  const hasConsentedSharedProvider = new Set(
+    sharedGrants.filter((grant) => grant.consentedAt !== null).map((grant) => grant.provider),
+  );
+  const hasUnconsentedSharedProvider = new Set(
+    sharedGrants.filter((grant) => grant.consentedAt === null).map((grant) => grant.provider),
+  );
+
   // Phase 27 D-01 — live model catalog for the active provider. Hook is
   // disabled (no fetch) when provider is empty; 30-min staleTime aligns with
   // backend cache TTL. Issue #48 Task 7: 'ollama' flows through the same
   // call now that useListModels' signature is widened — the backend
   // (llm-models.ts) has served it since Task 6; this call site was the only
   // thing that could not yet ask.
+  //
+  // #50 Task 9 — 'ollama' is always local/desktop and carries no shared
+  // concept, so it probes unconditionally (unchanged from before this task).
+  // For anthropic/openai, probing requires the SAME availability the
+  // provider <option> below is enabled under: a personal key OR a consented
+  // shared grant. An unconsented grant must not reach this branch — probing
+  // the model route before consent is exactly the leak the brief's global
+  // constraint rules out (the server 403s it, but the point is the UI must
+  // never even try).
+  const canProbeModels =
+    auditProvider === 'ollama' ||
+    (auditProvider === 'anthropic' && (hasAnthropicKey || hasConsentedSharedProvider.has('anthropic'))) ||
+    (auditProvider === 'openai' && (hasOpenAIKey || hasConsentedSharedProvider.has('openai')));
   const { data: modelListing } = useListModels(
-    auditProvider === '' ? undefined : auditProvider,
+    auditProvider !== '' && canProbeModels ? auditProvider : undefined,
   );
   const modelOptions: ModelListingWithCoverage[] = useMemo(
     () => modelListing?.models ?? [],
@@ -176,9 +230,6 @@ export function UniverseSettings() {
 
   const activeTab = searchParams.get('tab') ?? 'general';
   const safeTab = TABS.some((t) => t.id === activeTab) ? activeTab : 'general';
-
-  const hasAnthropicKey = llmKeys.some((k) => k.provider === 'anthropic');
-  const hasOpenAIKey = llmKeys.some((k) => k.provider === 'openai');
 
   const handleSave = async () => {
     const patch: {
@@ -359,11 +410,20 @@ export function UniverseSettings() {
               className={`w-full rounded-md border border-neutral-300 dark:border-neutral-700 bg-transparent px-3 py-2 text-sm ${!auditEnabled ? 'opacity-50 cursor-not-allowed' : ''}`}
             >
               <option value="">Select provider</option>
-              <option value="anthropic" disabled={!hasAnthropicKey}>
-                Anthropic{!hasAnthropicKey ? ' (no key configured)' : ''}
+              {/* #50 Task 9 — enabled by a personal key OR a CONSENTED shared
+                  grant; an unconsented grant is visible but stays disabled,
+                  with a link to settle consent (see the inline help below). */}
+              <option
+                value="anthropic"
+                disabled={!hasAnthropicKey && !hasConsentedSharedProvider.has('anthropic')}
+              >
+                Anthropic{providerOptionSuffix(hasAnthropicKey, hasConsentedSharedProvider.has('anthropic'), hasUnconsentedSharedProvider.has('anthropic'))}
               </option>
-              <option value="openai" disabled={!hasOpenAIKey}>
-                OpenAI{!hasOpenAIKey ? ' (no key configured)' : ''}
+              <option
+                value="openai"
+                disabled={!hasOpenAIKey && !hasConsentedSharedProvider.has('openai')}
+              >
+                OpenAI{providerOptionSuffix(hasOpenAIKey, hasConsentedSharedProvider.has('openai'), hasUnconsentedSharedProvider.has('openai'))}
               </option>
               {/* Issue #48 Task 7: only offered on a local (desktop) instance
                   — a hosted instance has no route to a user's machine, so
@@ -379,14 +439,39 @@ export function UniverseSettings() {
               )}
             </select>
 
-            {/* Add key / connection inline help when selected provider has none configured */}
-            {auditProvider === 'anthropic' && !hasAnthropicKey && (
+            {/* #50 Task 9 — an unconsented shared grant is informational
+                regardless of which provider is CURRENTLY selected: an admin
+                may have shared Anthropic while OpenAI is what's picked, and
+                the recipient still needs to learn a connection is waiting on
+                their consent. Not gated on `auditProvider === …`, unlike the
+                "Add key" hints below — those stay per-selection since adding
+                a key is an action for the selected provider specifically. */}
+            {hasUnconsentedSharedProvider.has('anthropic') && (
+              <p className="text-xs text-amber-600 dark:text-amber-400 mt-1">
+                An administrator shared an Anthropic connection with you — review consent in Settings → LLM keys{' '}
+                <Link to="/settings/llm" className="underline">Review →</Link>
+              </p>
+            )}
+            {hasUnconsentedSharedProvider.has('openai') && (
+              <p className="text-xs text-amber-600 dark:text-amber-400 mt-1">
+                An administrator shared an OpenAI connection with you — review consent in Settings → LLM keys{' '}
+                <Link to="/settings/llm" className="underline">Review →</Link>
+              </p>
+            )}
+
+            {/* Add key inline help when the SELECTED provider has neither a
+                personal key nor any shared grant at all (consented or not —
+                an unconsented one is already covered by the block above,
+                and "Add key" would be the wrong instruction for it: the
+                credential already exists, it's an administrator's, and the
+                fix is accepting the disclosure, not adding a new key). */}
+            {auditProvider === 'anthropic' && !hasAnthropicKey && !hasConsentedSharedProvider.has('anthropic') && !hasUnconsentedSharedProvider.has('anthropic') && (
               <p className="text-xs text-amber-600 dark:text-amber-400 mt-1">
                 Add an Anthropic key in Settings → LLM keys{' '}
                 <Link to="/settings/llm" className="underline">Add key →</Link>
               </p>
             )}
-            {auditProvider === 'openai' && !hasOpenAIKey && (
+            {auditProvider === 'openai' && !hasOpenAIKey && !hasConsentedSharedProvider.has('openai') && !hasUnconsentedSharedProvider.has('openai') && (
               <p className="text-xs text-amber-600 dark:text-amber-400 mt-1">
                 Add an OpenAI key in Settings → LLM keys{' '}
                 <Link to="/settings/llm" className="underline">Add key →</Link>

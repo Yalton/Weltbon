@@ -27,9 +27,15 @@ vi.mock('../api/client', () => ({
 }));
 
 import { api } from '../api/client';
-import { useListModels, type AuditRun } from './useAudits';
+import { useListModels, llmModelsKey, type AuditRun } from './useAudits';
 import type { ListingsResult, ModelListingWithCoverage, AuditHistoryRow } from '../types/audit';
 import type { LlmKey } from './useLlmKeys';
+import {
+  useConsentSharedLlmGrant,
+  useWithdrawSharedLlmConsent,
+  LLM_SHARES_QUERY_KEY,
+  type SharedGrant,
+} from './useLlmShares';
 
 function makeClient() {
   return new QueryClient({
@@ -113,6 +119,131 @@ describe('useListModels — Phase 27 D-01 (live model catalog hook)', () => {
     // assertion site.
     const options = entry?.options as { staleTime?: number } | undefined;
     expect(options?.staleTime).toBe(1_800_000);
+  });
+});
+
+describe('#50 Task 9 — useListModels / useLlmShares share one query key (llmModelsKey)', () => {
+  beforeEach(() => {
+    vi.mocked(api).mockReset();
+  });
+
+  it("useListModels' cache entry lives at exactly llmModelsKey(provider) — not a second inline literal", async () => {
+    vi.mocked(api).mockResolvedValue(SAMPLE_LISTING as never);
+    const qc = makeClient();
+    const wrapper = makeWrapper(qc);
+
+    renderHook(() => useListModels('anthropic'), { wrapper });
+
+    await waitFor(() => {
+      expect(qc.getQueryState(llmModelsKey('anthropic'))?.data).toBeDefined();
+    });
+  });
+
+  const GRANT: SharedGrant = {
+    id: 'grant-1',
+    provider: 'anthropic',
+    status: 'active',
+    createdAt: '2026-08-01T00:00:00.000Z',
+    consentedAt: null,
+    policyVersion: 'shared-llm-v1',
+    disclosure: {
+      providerName: 'Anthropic',
+      credentialOwner: 'administrator-managed',
+      contentLeavesThisInstance: true,
+    },
+    usage: {
+      monthStart: '2026-08-01',
+      settledUsd: '0.0000',
+      reservedUsd: '0.0000',
+      limitUsd: '1.0000',
+      activeAudits: 0,
+      maxConcurrentAudits: 1,
+      completedAudits: 0,
+      failedAudits: 0,
+    },
+  };
+
+  it('accepting a shared grant invalidates the stale llm-models cache entry for that provider', async () => {
+    const qc = makeClient();
+    // Seed both caches as they would be after an initial page load: the
+    // grant list (unconsented) and a stale live-models answer for the
+    // provider it names.
+    qc.setQueryData(LLM_SHARES_QUERY_KEY, { grants: [GRANT] });
+    qc.setQueryData(llmModelsKey('anthropic'), SAMPLE_LISTING);
+
+    vi.mocked(api).mockImplementation((path: string, init?: RequestInit) => {
+      if (init?.method === 'POST') {
+        return Promise.resolve({
+          grantId: GRANT.id,
+          consentedAt: '2026-08-28T00:00:00.000Z',
+          policyVersion: 'shared-llm-v1',
+        } as never);
+      }
+      return Promise.resolve({
+        grants: [{ ...GRANT, consentedAt: '2026-08-28T00:00:00.000Z' }],
+      } as never);
+    });
+
+    const wrapper = makeWrapper(qc);
+    const { result } = renderHook(() => useConsentSharedLlmGrant(), { wrapper });
+    result.current.mutate({ grantId: GRANT.id });
+
+    await waitFor(() => expect(result.current.isSuccess).toBe(true));
+
+    // The models cache for 'anthropic' — the grant's provider — must be
+    // marked invalid, or a newly-consented recipient keeps seeing the
+    // pre-consent (likely empty/403) answer for up to the 30-min staleTime.
+    const state = qc.getQueryState(llmModelsKey('anthropic'));
+    expect(state?.isInvalidated).toBe(true);
+  });
+
+  it('withdrawing consent invalidates the llm-models cache entry for that provider', async () => {
+    const qc = makeClient();
+    qc.setQueryData(LLM_SHARES_QUERY_KEY, {
+      grants: [{ ...GRANT, consentedAt: '2026-08-03T00:00:00.000Z' }],
+    });
+    qc.setQueryData(llmModelsKey('anthropic'), SAMPLE_LISTING);
+
+    vi.mocked(api).mockImplementation((path: string, init?: RequestInit) => {
+      if (init?.method === 'DELETE') return Promise.resolve(undefined as never);
+      return Promise.resolve({ grants: [GRANT] } as never);
+    });
+
+    const wrapper = makeWrapper(qc);
+    const { result } = renderHook(() => useWithdrawSharedLlmConsent(), { wrapper });
+    result.current.mutate({ grantId: GRANT.id });
+
+    await waitFor(() => expect(result.current.isSuccess).toBe(true));
+
+    const state = qc.getQueryState(llmModelsKey('anthropic'));
+    expect(state?.isInvalidated).toBe(true);
+  });
+
+  it('consenting a grant NOT present in the cached list invalidates nothing (no provider to key off)', async () => {
+    const qc = makeClient();
+    // Grant list cache is empty/absent — mutation variables carry only the
+    // grant id, so invalidateProviderModels has no provider to look up.
+    qc.setQueryData(llmModelsKey('anthropic'), SAMPLE_LISTING);
+
+    vi.mocked(api).mockImplementation((path: string, init?: RequestInit) => {
+      if (init?.method === 'POST') {
+        return Promise.resolve({
+          grantId: 'grant-unknown',
+          consentedAt: '2026-08-28T00:00:00.000Z',
+          policyVersion: 'shared-llm-v1',
+        } as never);
+      }
+      return Promise.resolve({ grants: [] } as never);
+    });
+
+    const wrapper = makeWrapper(qc);
+    const { result } = renderHook(() => useConsentSharedLlmGrant(), { wrapper });
+    result.current.mutate({ grantId: 'grant-unknown' });
+
+    await waitFor(() => expect(result.current.isSuccess).toBe(true));
+
+    const state = qc.getQueryState(llmModelsKey('anthropic'));
+    expect(state?.isInvalidated).toBe(false);
   });
 });
 

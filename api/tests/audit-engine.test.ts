@@ -1621,3 +1621,363 @@ describe('Phase 25 dismissed-set filter (AISSUE-04, AISSUE-05)', () => {
     },
   );
 });
+
+// ===========================================================================
+// #50 Task 7 — shared-credential runs
+//
+// A shared run spends an administrator's key against a reservation held out
+// of that administrator's monthly allowance. Two things therefore have to be
+// true on every path through the engine, and neither is true by default:
+//
+//   1. Access is re-checked on both sides of every provider call. A grant
+//      revoked mid-run must stop the run, and output produced under access
+//      that ended during the call must not be persisted.
+//   2. The reservation is released exactly once, whatever the outcome. A
+//      stranded reservation holds one of the recipient's concurrent slots and
+//      part of the owner's month forever — the recipient is locked out of
+//      every future shared audit with no way to clear it.
+//
+// These drive the same db stub the rest of this file uses; the grant
+// resolver, the settlement service and the reservation read are injected, so
+// no test here touches a real grant or usage row.
+// ===========================================================================
+
+const SHARED_GRANT_ID = 'dddddddd-dddd-4ddd-8ddd-dddddddddddd';
+const OWNER_ID = 'eeeeeeee-eeee-4eee-8eee-eeeeeeeeeeee';
+const OWNER_SECRET = 'sk-ant-owner-secret-never-persisted';
+
+/** A run row whose provenance says "spend the administrator's key". */
+const SHARED_RUN_ROW = {
+  id: RUN_ID,
+  universeId: UNIVERSE_ID,
+  userId: 'user-1',
+  provider: 'anthropic',
+  model: 'claude-haiku-4-5',
+  scope: 'universe',
+  scopeEntryId: null,
+  credentialSource: 'shared',
+  sharedGrantId: SHARED_GRANT_ID,
+  credentialOwnerId: OWNER_ID,
+};
+
+describe('audit-engine shared-credential runs (#50 Task 7)', () => {
+  let mockResolveShared: ReturnType<typeof vi.fn>;
+  let mockSettle: ReturnType<typeof vi.fn>;
+  let mockGetReservation: ReturnType<typeof vi.fn>;
+
+  beforeEach(() => {
+    mockResolveShared = vi.fn().mockResolvedValue({
+      kind: 'ready',
+      credential: { apiKey: OWNER_SECRET },
+    });
+    mockSettle = vi.fn().mockResolvedValue(undefined);
+    mockGetReservation = vi.fn().mockResolvedValue({
+      auditRunId: RUN_ID,
+      reservedUsd: '1.000000',
+      state: 'reserved',
+    });
+  });
+
+  // The file-level provider mock's `pricing` always returns undefined, which
+  // makes every run cost_unknown and therefore settle at 0. That is the right
+  // default for the rest of this file, but it would hide the cost path
+  // entirely — so the tests that assert a settled AMOUNT inject a provider
+  // that has a price.
+  function pricedProvider() {
+    return vi.fn(() => ({
+      validate: mockValidate,
+      estimate: mockEstimate,
+      runAudit: mockRunAudit,
+      listModels: vi.fn(() => []),
+      pricing: vi.fn(() => ({
+        inputUsdPer1M: 1,
+        outputUsdPer1M: 5,
+        cachedInputUsdPer1M: 0.1,
+      })),
+    })) as never;
+  }
+
+  function sharedDeps(
+    dbStub: unknown,
+    cfg?: Record<string, number>,
+    getProvider?: unknown,
+  ) {
+    return {
+      db: dbStub as unknown as typeof import('../src/db/client.js').db,
+      ...(getProvider ? { getProvider: getProvider as never } : {}),
+      resolveCredential: mockResolveCredential,
+      resolveSharedGrantCredential: mockResolveShared as never,
+      settleSharedAuditReservation: mockSettle as never,
+      getSharedAuditReservation: mockGetReservation as never,
+      runCheapFinds: mockRunCheapFinds,
+      buildStructuralDigest: mockBuildStructuralDigest,
+      validateReferencedEntryIds: mockValidateReferencedEntryIds,
+      computeGapKey: mockComputeGapKey,
+      getEntryBody: mockGetEntryBody,
+      cfg: {
+        auditMaxToolCalls: 20,
+        auditMaxCostUsd: 100,
+        auditMaxTokensTotal: 10_000_000,
+        auditMaxWallClockMs: 120_000,
+        ...cfg,
+      },
+    };
+  }
+
+  it('never calls the provider when the grant is already revoked at run start', async () => {
+    mockResolveShared.mockResolvedValue({ kind: 'revoked' });
+    const updateCalls: DbUpdateCall[] = [];
+    const { dbStub } = makeDbStub({ runRow: SHARED_RUN_ROW, updateCalls });
+
+    await runAudit(RUN_ID, sharedDeps(dbStub));
+
+    expect(mockRunAudit).not.toHaveBeenCalled();
+    expect(
+      updateCalls.find(
+        (c) => c.set.status === 'failed' && c.set.error === ENGINE_ERROR.SHARED_ACCESS_REVOKED,
+      ),
+    ).toBeDefined();
+    // Released whole: nothing was spent, so the owner's month gets it all back.
+    expect(mockSettle).toHaveBeenCalledTimes(1);
+    expect(mockSettle).toHaveBeenCalledWith(RUN_ID, 'failed', 0);
+  });
+
+  it('reports an undecryptable owner key distinctly from a revoked grant', async () => {
+    mockResolveShared.mockResolvedValue({ kind: 'unavailable' });
+    const updateCalls: DbUpdateCall[] = [];
+    const { dbStub } = makeDbStub({ runRow: SHARED_RUN_ROW, updateCalls });
+
+    await runAudit(RUN_ID, sharedDeps(dbStub));
+
+    expect(mockRunAudit).not.toHaveBeenCalled();
+    expect(
+      updateCalls.find(
+        (c) =>
+          c.set.status === 'failed' &&
+          c.set.error === ENGINE_ERROR.SHARED_CREDENTIAL_UNAVAILABLE,
+      ),
+    ).toBeDefined();
+  });
+
+  it('stops mid-run and persists nothing when access ends during a provider call', async () => {
+    // Ready for the initial resolution and the pre-call checkpoint; revoked on
+    // the post-call checkpoint — i.e. the grant died while the model answered.
+    mockResolveShared
+      .mockResolvedValueOnce({ kind: 'ready', credential: { apiKey: OWNER_SECRET } })
+      .mockResolvedValueOnce({ kind: 'ready', credential: { apiKey: OWNER_SECRET } })
+      .mockResolvedValue({ kind: 'revoked' });
+    // A final-answer turn: without the post-call checkpoint its suggestions
+    // would be parsed and inserted below.
+    mockRunAudit.mockResolvedValue(VALID_SUGGESTION_OUTPUT);
+
+    const updateCalls: DbUpdateCall[] = [];
+    const insertCalls: DbInsertCall[] = [];
+    const { dbStub } = makeDbStub({ runRow: SHARED_RUN_ROW, updateCalls, insertCalls });
+
+    await runAudit(RUN_ID, sharedDeps(dbStub, undefined, pricedProvider()));
+
+    // The turn that was already in flight completed; no second turn started.
+    expect(mockRunAudit).toHaveBeenCalledTimes(1);
+    // Output produced under access that had ended is discarded entirely.
+    expect(insertCalls.length).toBe(0);
+    expect(
+      updateCalls.find(
+        (c) => c.set.status === 'failed' && c.set.error === ENGINE_ERROR.SHARED_ACCESS_REVOKED,
+      ),
+    ).toBeDefined();
+    // The turn really did use the owner's key, so its cost is settled, not released.
+    expect(mockSettle).toHaveBeenCalledTimes(1);
+    expect(mockSettle).toHaveBeenCalledWith(RUN_ID, 'failed', VALID_SUGGESTION_OUTPUT.costUsd);
+  });
+
+  it('re-checks access before every turn of a multi-turn run', async () => {
+    mockRunAudit
+      .mockResolvedValueOnce(TOOL_USE_RESPONSE)
+      .mockResolvedValue(VALID_SUGGESTION_OUTPUT);
+    mockGetEntryBody.mockResolvedValue({
+      id: VALID_ENTRY_ID,
+      title: 'Test',
+      body: 'body',
+      summary: null,
+      tags: [],
+      meta: {},
+      // eslint-disable-next-line @typescript-eslint/no-explicit-any
+    } as any);
+    const { dbStub } = makeDbStub({ runRow: SHARED_RUN_ROW });
+
+    await runAudit(RUN_ID, sharedDeps(dbStub));
+
+    // Two turns: one initial resolution + a before/after pair per turn.
+    expect(mockRunAudit).toHaveBeenCalledTimes(2);
+    expect(mockResolveShared).toHaveBeenCalledTimes(5);
+    // Always the STORED grant — never re-derived from the recipient's keys.
+    for (const call of mockResolveShared.mock.calls) {
+      expect(call[1]).toBe(SHARED_GRANT_ID);
+    }
+  });
+
+  it('settles a successful run once, at its accumulated cost', async () => {
+    const { dbStub } = makeDbStub({ runRow: SHARED_RUN_ROW });
+
+    await runAudit(RUN_ID, sharedDeps(dbStub, undefined, pricedProvider()));
+
+    expect(mockSettle).toHaveBeenCalledTimes(1);
+    expect(mockSettle).toHaveBeenCalledWith(
+      RUN_ID,
+      'succeeded',
+      VALID_SUGGESTION_OUTPUT.costUsd,
+    );
+  });
+
+  it('settles an unpriced run at zero, matching the row it pins to 0.0000', async () => {
+    // Phase 27 D-06 pins cost_usd at '0.0000' for a model absent from
+    // PRICING. Settling the provider's reported cost anyway would charge the
+    // owner's month an amount the run row itself denies.
+    const { dbStub } = makeDbStub({ runRow: SHARED_RUN_ROW });
+
+    await runAudit(RUN_ID, sharedDeps(dbStub));
+
+    expect(mockSettle).toHaveBeenCalledWith(RUN_ID, 'succeeded', 0);
+  });
+
+  it('caps a shared run at its reservation, not at the configured ceiling', async () => {
+    // Reservation is $0.05; the configured cap is $100. One turn costs $0.60,
+    // so only the reservation can stop it.
+    mockGetReservation.mockResolvedValue({
+      auditRunId: RUN_ID,
+      reservedUsd: '0.050000',
+      state: 'reserved',
+    });
+    mockRunAudit.mockResolvedValue({
+      ...VALID_SUGGESTION_OUTPUT,
+      text: '',
+      toolUse: [{ id: 'tool-1', name: 'getEntryBody', input: { entryId: VALID_ENTRY_ID } }],
+      costUsd: 0.6,
+    });
+    const updateCalls: DbUpdateCall[] = [];
+    const { dbStub } = makeDbStub({ runRow: SHARED_RUN_ROW, updateCalls });
+
+    await runAudit(RUN_ID, sharedDeps(dbStub, { auditMaxCostUsd: 100 }, pricedProvider()));
+
+    expect(
+      updateCalls.find(
+        (c) => c.set.status === 'failed' && c.set.error === ENGINE_ERROR.BUDGET_EXHAUSTED,
+      ),
+    ).toBeDefined();
+    expect(mockRunAudit).toHaveBeenCalledTimes(1);
+  });
+
+  it('settles once and fails the run when the engine throws', async () => {
+    // A non-provider throw is re-raised for the caller. A personal run would
+    // be left 'running' for boot recovery; a shared one cannot wait, because
+    // its reservation would hold the recipient's only slot until a restart.
+    mockRunAudit.mockRejectedValue(new Error('unwrapped programming error'));
+    const updateCalls: DbUpdateCall[] = [];
+    const { dbStub } = makeDbStub({ runRow: SHARED_RUN_ROW, updateCalls });
+
+    await expect(runAudit(RUN_ID, sharedDeps(dbStub))).rejects.toThrow(
+      'unwrapped programming error',
+    );
+
+    expect(
+      updateCalls.find(
+        (c) => c.set.status === 'failed' && c.set.error === ENGINE_ERROR.UNKNOWN,
+      ),
+    ).toBeDefined();
+    expect(mockSettle).toHaveBeenCalledTimes(1);
+    expect(mockSettle).toHaveBeenCalledWith(RUN_ID, 'failed', 0);
+  });
+
+  it('never writes the owner secret or provider text into the run row', async () => {
+    mockRunAudit.mockRejectedValue(
+      new LLMProviderError(LLMError.InvalidApiKey, `raw provider text ${OWNER_SECRET}`),
+    );
+    const updateCalls: DbUpdateCall[] = [];
+    const { dbStub } = makeDbStub({ runRow: SHARED_RUN_ROW, updateCalls });
+
+    await runAudit(RUN_ID, sharedDeps(dbStub));
+
+    const serialized = JSON.stringify(updateCalls);
+    expect(serialized).not.toContain(OWNER_SECRET);
+    expect(serialized).not.toContain('raw provider text');
+    expect(serialized).not.toContain(SHARED_GRANT_ID);
+    expect(serialized).not.toContain(OWNER_ID);
+  });
+
+  // Review finding: both fail-closed guards below survived deletion with a
+  // fully green suite. The first is the billing-switch guard — the single
+  // thing this whole design exists to prevent — so "correct by inspection"
+  // is not good enough for either.
+
+  it('fails a shared run whose grant row was deleted instead of using the recipient key', async () => {
+    // The provenance FK is ON DELETE SET NULL and the row check permits
+    // credential_source='shared' with both provenance columns NULL (see
+    // tests/llm-sharing-migration.test.ts). Falling through to the personal
+    // resolver there would move the run onto whatever key the recipient
+    // happens to have now — silently changing who pays.
+    const updateCalls: DbUpdateCall[] = [];
+    const { dbStub } = makeDbStub({
+      runRow: { ...SHARED_RUN_ROW, sharedGrantId: null, credentialOwnerId: null },
+      updateCalls,
+    });
+
+    await runAudit(RUN_ID, sharedDeps(dbStub));
+
+    expect(
+      updateCalls.find(
+        (c) => c.set.status === 'failed' && c.set.error === ENGINE_ERROR.SHARED_ACCESS_REVOKED,
+      ),
+    ).toBeDefined();
+    expect(mockRunAudit).not.toHaveBeenCalled();
+    // Never reached for the recipient's own key.
+    expect(mockResolveCredential).not.toHaveBeenCalled();
+  });
+
+  it('fails a shared run with no live reservation rather than restoring the configured cap', async () => {
+    // Admission creates the run and the reservation in one transaction, so a
+    // missing one means the run and the ledger disagree. Continuing would
+    // spend against an administrator's key with nothing withheld from anyone.
+    mockGetReservation.mockResolvedValue(null);
+    const updateCalls: DbUpdateCall[] = [];
+    const { dbStub } = makeDbStub({ runRow: SHARED_RUN_ROW, updateCalls });
+
+    await runAudit(RUN_ID, sharedDeps(dbStub, { auditMaxCostUsd: 100 }));
+
+    expect(
+      updateCalls.find(
+        (c) => c.set.status === 'failed' && c.set.error === ENGINE_ERROR.UNKNOWN,
+      ),
+    ).toBeDefined();
+    expect(mockRunAudit).not.toHaveBeenCalled();
+  });
+
+  it('fails a shared run whose reservation was already settled', async () => {
+    mockGetReservation.mockResolvedValue({
+      auditRunId: RUN_ID,
+      reservedUsd: '1.000000',
+      state: 'settled',
+    });
+    const updateCalls: DbUpdateCall[] = [];
+    const { dbStub } = makeDbStub({ runRow: SHARED_RUN_ROW, updateCalls });
+
+    await runAudit(RUN_ID, sharedDeps(dbStub));
+
+    expect(
+      updateCalls.find(
+        (c) => c.set.status === 'failed' && c.set.error === ENGINE_ERROR.UNKNOWN,
+      ),
+    ).toBeDefined();
+    expect(mockRunAudit).not.toHaveBeenCalled();
+  });
+
+  it('leaves a personal run untouched by any shared machinery', async () => {
+    const { dbStub } = makeDbStub({});
+
+    await runAudit(RUN_ID, sharedDeps(dbStub));
+
+    expect(mockResolveShared).not.toHaveBeenCalled();
+    expect(mockSettle).not.toHaveBeenCalled();
+    expect(mockGetReservation).not.toHaveBeenCalled();
+    expect(mockResolveCredential).toHaveBeenCalled();
+  });
+});

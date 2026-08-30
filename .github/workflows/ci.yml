@@ -19,6 +19,29 @@
 # pass before merging -> mark `ci / unit` AND `ci / integration` as required.
 # Documented in the phase SUMMARY.
 #
+# Runner: `[self-hosted, citreum]` — the `llcbox-citreum` runner registered to
+# this repository, not a GitHub-hosted one. GitHub-hosted minutes stopped being
+# billable on the org account, and every job failed before checkout with "The
+# job was not started because recent account payments have failed"; self-hosted
+# minutes are free. The repository is PRIVATE, which is what makes this safe:
+# a self-hosted runner on a public repo executes code from any fork's pull
+# request. Do not make this repository public without moving CI back to hosted
+# runners or gating the workflow on `pull_request_target` review.
+#
+# The runner is one machine, so the two lanes below run sequentially rather
+# than in parallel. It also shares a host with the production deployment, which
+# is why the integration lane's postgres service publishes host port 5441 and
+# not 5432. 5432 is the port `docker compose up -d db` — the DEV database this
+# repo's project documentation tells everyone to start on their box — binds, and the port a
+# production compose stack would publish if it ever stopped being
+# container-network-only. Sharing it cost both directions at once: a dev DB
+# already up made every CI run fail to bind, a CI run in flight blocked that
+# container from restarting, and in the worst version DATABASE_URL below would
+# have addressed a real database while the suite's per-file schema teardown
+# ran. 5441 is claimed by nothing on this host and is one off from the 5440 the
+# local integration DB uses, so the two cannot collide either. Change it only
+# together with DATABASE_URL below — they are one setting written twice.
+#
 # Test-only postgres creds (weltbon/weltbon/weltbon) are scoped to the
 # ephemeral service container and mirror docker-compose.yml verbatim per D-14.
 # Per the phase threat model (T-27-01-01), this workflow MUST NOT reference
@@ -43,7 +66,7 @@ concurrency:
 jobs:
   unit:
     name: unit
-    runs-on: ubuntu-latest
+    runs-on: [self-hosted, citreum]
     steps:
       - name: Checkout
         uses: actions/checkout@v4
@@ -60,8 +83,16 @@ jobs:
       - name: Install dependencies
         run: pnpm install --frozen-lockfile
 
+      # --maxWorkers=2 is for the self-hosted runner, not a preference. The
+      # db/client tests construct pglite (Postgres compiled to WASM), which
+      # costs 1.6-3.3s each even in isolation. At default parallelism on a
+      # four-core box that also runs production, several of those construct at
+      # once and blow the 10s default timeout — three consecutive runs failed
+      # on three DIFFERENT pglite tests, which is the signature of contention
+      # rather than a defect. Capping workers fixes the cause; raising the
+      # timeouts would only have hidden it.
       - name: Run api unit tests
-        run: cd api && pnpm test
+        run: cd api && pnpm test -- --maxWorkers=2
 
       - name: Run web tests
         run: cd web && pnpm exec vitest run
@@ -74,7 +105,7 @@ jobs:
 
   integration:
     name: integration
-    runs-on: ubuntu-latest
+    runs-on: [self-hosted, citreum]
     services:
       postgres:
         image: postgres:16-alpine
@@ -83,14 +114,16 @@ jobs:
           POSTGRES_USER: weltbon
           POSTGRES_PASSWORD: weltbon
         ports:
-          - 5432:5432
+          # Host 5441, container 5432. See the header: 5432 on this runner
+          # belongs to the dev/production compose stack, not to CI.
+          - 5441:5432
         options: >-
           --health-cmd "pg_isready -U weltbon -d weltbon"
           --health-interval 10s
           --health-timeout 5s
           --health-retries 5
     env:
-      DATABASE_URL: postgresql://weltbon:weltbon@localhost:5432/weltbon
+      DATABASE_URL: postgresql://weltbon:weltbon@localhost:5441/weltbon
     steps:
       - name: Checkout
         uses: actions/checkout@v4

@@ -1,11 +1,16 @@
 import { afterAll, beforeAll, beforeEach, describe, expect, it } from 'vitest';
 import { eq } from 'drizzle-orm';
 import { cleanDb, createTestDb, createTestUser, type TestDbHandle } from './helpers.js';
-import { adminAuditLog, personalAccessTokens, users } from '../src/db/schema.js';
+import { adminAuditLog, llmApiKeys, llmSharedGrants, personalAccessTokens, users } from '../src/db/schema.js';
 import { issueAccessToken } from '../src/services/auth.js';
 import { hashPatToken } from '../src/services/pat.js';
 import { requireAdmin } from '../src/middleware/auth.js';
 import { Hono } from 'hono';
+import { encryptKey } from '../src/services/llm-key.js';
+import { consentSharedGrant, createSharedGrant } from '../src/services/llm-sharing.js';
+import { resolveSharedGrantCredential } from '../src/services/llm-credential.js';
+
+const ENCRYPTION_KEY = '0'.repeat(64);
 
 describe('production admin user-management persistence', () => {
   let handle: TestDbHandle;
@@ -25,6 +30,27 @@ describe('production admin user-management persistence', () => {
       headers: { Authorization: `Bearer ${token}` },
       body: body === undefined ? undefined : JSON.stringify(body),
     }));
+  }
+
+  async function seedSharedGrant(ownerEmail: string, recipientEmail: string, actorEmail: string, plaintext: string) {
+    const owner = await createTestUser(handle, { email: ownerEmail, password: 'longenoughpw12' });
+    const recipient = await createTestUser(handle, { email: recipientEmail, password: 'longenoughpw12' });
+    const actor = await createTestUser(handle, { email: actorEmail, password: 'longenoughpw12' });
+    await handle.db.update(users).set({ isAdmin: true }).where(eq(users.id, owner.id));
+    await handle.db.update(users).set({ isAdmin: true }).where(eq(users.id, actor.id));
+    const encrypted = encryptKey(plaintext, ENCRYPTION_KEY);
+    const [key] = await handle.db.insert(llmApiKeys).values({
+      userId: owner.id,
+      provider: 'anthropic',
+      ciphertext: encrypted.ciphertext,
+      iv: encrypted.iv,
+      authTag: encrypted.authTag,
+      encryptedKeyVersion: encrypted.version,
+      bodySuffix: encrypted.bodySuffix,
+    }).returning();
+    const grant = await createSharedGrant(owner.id, recipient.id, 'anthropic');
+    await consentSharedGrant(recipient.id, grant.id);
+    return { owner, recipient, actor, key, grant };
   }
 
   afterAll(async () => {
@@ -186,5 +212,98 @@ describe('production admin user-management persistence', () => {
     const audit = await request('/api/admin/audit-log', token);
     expect(audit.status).toBe(200);
     expect((await audit.json() as Array<{ action: string }>).map((event) => event.action)).toEqual(expect.arrayContaining(['enabled', 'purged']));
+  });
+
+  it('disables an administrator by revoking shared grants and does not restore them on enable', async () => {
+    const { owner, recipient, actor, grant } = await seedSharedGrant(
+      'owner-disable@test.dev',
+      'recipient-disable@test.dev',
+      'actor-disable@test.dev',
+      'sk-ant-disable-owner-secret',
+    );
+    const token = await issueAccessToken(actor.id);
+
+    const disabled = await request(`/api/admin/users/${owner.id}/disable`, token, 'POST', { reason: 'offboarding' });
+    expect(disabled.status).toBe(200);
+
+    const disabledGrant = await handle.db.query.llmSharedGrants.findFirst({ where: eq(llmSharedGrants.id, grant.id) });
+    expect(disabledGrant?.revokedAt).toBeInstanceOf(Date);
+    expect(disabledGrant?.revokedByUserId).toBe(actor.id);
+    expect(disabledGrant?.revokedReason).toBe('owner_disabled');
+    const revocations = await handle.db.query.adminAuditLog.findMany({
+      where: eq(adminAuditLog.action, 'llm_shared_revoked'),
+    });
+    expect(revocations).toHaveLength(1);
+    expect(revocations[0]).toMatchObject({
+      actorUserId: actor.id,
+      targetUserId: recipient.id,
+      details: { grantId: grant.id, provider: 'anthropic', reason: 'owner_disabled' },
+    });
+    expect(Object.keys(revocations[0].details as Record<string, unknown>).sort()).toEqual(['grantId', 'provider', 'reason']);
+    expect(JSON.stringify(revocations)).not.toContain('sk-ant-disable-owner-secret');
+    expect(JSON.stringify(revocations)).not.toContain('ownerKeyId');
+
+    expect((await request(`/api/admin/users/${owner.id}/enable`, token, 'POST')).status).toBe(200);
+    expect((await handle.db.query.users.findFirst({ where: eq(users.id, owner.id) }))?.disabledAt).toBeNull();
+    expect((await handle.db.query.llmSharedGrants.findFirst({ where: eq(llmSharedGrants.id, grant.id) }))?.revokedAt).toBeInstanceOf(Date);
+    await expect(resolveSharedGrantCredential(recipient.id, grant.id, 'anthropic', ENCRYPTION_KEY))
+      .resolves.toMatchObject({ kind: 'revoked' });
+  });
+
+  it('demotes an administrator by revoking shared grants and does not restore them on promotion', async () => {
+    const { owner, recipient, actor, grant } = await seedSharedGrant(
+      'owner-demote@test.dev',
+      'recipient-demote@test.dev',
+      'actor-demote@test.dev',
+      'sk-ant-demote-owner-secret',
+    );
+    const token = await issueAccessToken(actor.id);
+
+    const demoted = await request(`/api/admin/users/${owner.id}/admin`, token, 'PATCH', { isAdmin: false });
+    expect(demoted.status).toBe(200);
+    expect((await handle.db.query.users.findFirst({ where: eq(users.id, owner.id) }))?.isAdmin).toBe(false);
+    expect((await handle.db.query.llmSharedGrants.findFirst({ where: eq(llmSharedGrants.id, grant.id) }))?.revokedReason).toBe('owner_demoted');
+
+    const revocation = await handle.db.query.adminAuditLog.findFirst({
+      where: eq(adminAuditLog.action, 'llm_shared_revoked'),
+    });
+    expect(revocation).toMatchObject({
+      actorUserId: actor.id,
+      targetUserId: recipient.id,
+      details: { grantId: grant.id, provider: 'anthropic', reason: 'owner_demoted' },
+    });
+    expect(JSON.stringify(revocation)).not.toContain('sk-ant-demote-owner-secret');
+
+    expect((await request(`/api/admin/users/${owner.id}/admin`, token, 'PATCH', { isAdmin: true })).status).toBe(200);
+    expect((await handle.db.query.llmSharedGrants.findFirst({ where: eq(llmSharedGrants.id, grant.id) }))?.revokedAt).toBeInstanceOf(Date);
+    await expect(resolveSharedGrantCredential(recipient.id, grant.id, 'anthropic', ENCRYPTION_KEY))
+      .resolves.toMatchObject({ kind: 'revoked' });
+  });
+
+  it('purges an administrator only after recording safe revocations for its shared grants', async () => {
+    const { owner, recipient, actor, grant } = await seedSharedGrant(
+      'owner-purge@test.dev',
+      'recipient-purge@test.dev',
+      'actor-purge@test.dev',
+      'sk-ant-purge-owner-secret',
+    );
+    const token = await issueAccessToken(actor.id);
+
+    const purged = await request(`/api/admin/users/${owner.id}`, token, 'DELETE', { confirmEmail: owner.email });
+    expect(purged.status).toBe(200);
+    expect(await handle.db.query.users.findFirst({ where: eq(users.id, owner.id) })).toBeUndefined();
+    expect(await handle.db.query.llmSharedGrants.findFirst({ where: eq(llmSharedGrants.id, grant.id) })).toBeUndefined();
+
+    const revocation = await handle.db.query.adminAuditLog.findFirst({
+      where: eq(adminAuditLog.action, 'llm_shared_revoked'),
+    });
+    expect(revocation).toMatchObject({
+      actorUserId: actor.id,
+      targetUserId: recipient.id,
+      details: { grantId: grant.id, provider: 'anthropic', reason: 'owner_purged' },
+    });
+    expect(Object.keys(revocation!.details as Record<string, unknown>).sort()).toEqual(['grantId', 'provider', 'reason']);
+    expect(JSON.stringify(revocation)).not.toContain('sk-ant-purge-owner-secret');
+    expect(JSON.stringify(revocation)).not.toContain('ciphertext');
   });
 });

@@ -36,8 +36,18 @@ import { formatRelative } from '../utils/formatRelative';
  * surfaces raw provider text to the user (T-26-05-01).
  */
 
-/** Locked LLMError → copy mapping (UI-SPEC §Copywriting). Do NOT paraphrase. */
-const ERROR_COPY: Record<string, string> = {
+/**
+ * Locked LLMError → copy mapping (UI-SPEC §Copywriting). Do NOT paraphrase.
+ *
+ * Exported ONLY so AuditCompletionBanner.test.tsx's owner-key-state leak
+ * checks can plant a regressed line here and render it through this component
+ * — the real producer — instead of asserting against a hand-written array of
+ * phrasings. A guard validated against a curated list validates the list; the
+ * branch's standing rule (task-10-brief.md) is that the poison goes through
+ * the real path. Nothing in src/ imports this, and nothing should: the table
+ * is the component's own copy, not shared vocabulary.
+ */
+export const ERROR_COPY: Record<string, string> = {
   budget_exhausted:
     'The run exceeded the configured cost or token cap. Partial suggestions were persisted.',
   invalid_output:
@@ -61,6 +71,20 @@ const ERROR_COPY: Record<string, string> = {
     "The audit scope is too large for the selected model's context window. Try a narrower audit scope.",
   content_blocked:
     'The provider blocked some content for safety reasons. Try a narrower audit scope.',
+  // #50 Task 9 — Task 7 introduced these two tags precisely so a recipient of
+  // a shared connection is not misdirected to their OWN Settings by the
+  // generic provider-error copy above ("Update or replace it under Settings
+  // → LLM keys" is meaningless for a credential the recipient never holds).
+  // Neither line says anything about the OWNER's key state — deleted,
+  // revoked, invalid, expired — because the server itself deliberately never
+  // discloses that to the recipient (see useLlmShares.ts's file header: "a
+  // recipient who could tell one owner-side failure from another has been
+  // handed an oracle for the administrator roster"). Both point at the same
+  // two remedies: ask the administrator, or fall back to a personal key.
+  shared_access_revoked:
+    'Your access to this shared connection has ended. Contact the administrator who shared it, or add a personal API key in Settings → LLM keys.',
+  shared_credential_unavailable:
+    'The shared connection is not currently usable. Contact the administrator who shared it, or add a personal API key in Settings → LLM keys.',
   fallback:
     'An unexpected error occurred. See the run details for more.',
 };

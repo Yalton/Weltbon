@@ -75,11 +75,25 @@ type Handler =
   | Error
   | ((path: string, init?: RequestInit) => unknown);
 
+/**
+ * #50 Task 8: the view now mounts SharedLlmConnections, which queries
+ * /llm-shares on every render path. Defaulted to an empty list rather than
+ * added to each case: a test about the personal-key consent gate should not
+ * have to know that a shared-connection panel exists, and without the default
+ * every one of them would render that panel's "could not load" alert — a
+ * second role="alert" in the tree that quietly changes what getByRole finds.
+ * Cases that care about shared connections override it explicitly.
+ */
+const DEFAULT_ROUTES: Record<string, Handler> = {
+  '/llm-shares': { grants: [] },
+};
+
 function makeApiDispatcher(routes: Record<string, Handler>) {
+  const all = { ...DEFAULT_ROUTES, ...routes };
   return vi.fn((path: string, init?: RequestInit) => {
     const method = init?.method ?? 'GET';
     const key = `${method} ${path}`;
-    const handler = key in routes ? routes[key] : routes[path];
+    const handler = key in all ? all[key] : all[path];
     if (handler === undefined) {
       return Promise.reject(new Error(`Unhandled api() call: ${key}`));
     }
@@ -93,6 +107,30 @@ function makeApiDispatcher(routes: Record<string, Handler>) {
     return Promise.resolve(handler);
   });
 }
+
+const SHARED_GRANT = {
+  id: 'grant-shared-1',
+  provider: 'anthropic' as const,
+  status: 'active' as const,
+  createdAt: '2026-08-01T00:00:00.000Z',
+  consentedAt: null,
+  policyVersion: 'shared-llm-v1',
+  disclosure: {
+    providerName: 'Anthropic',
+    credentialOwner: 'administrator-managed' as const,
+    contentLeavesThisInstance: true as const,
+  },
+  usage: {
+    monthStart: '2026-08-01',
+    settledUsd: '0.0000',
+    reservedUsd: '0.0000',
+    limitUsd: '1.0000',
+    activeAudits: 0,
+    maxConcurrentAudits: 1,
+    completedAudits: 0,
+    failedAudits: 0,
+  },
+};
 
 const NEVER_RESOLVES = () => new Promise(() => {});
 
@@ -110,6 +148,49 @@ const mockLlmKey = {
 describe('LlmKeys view', () => {
   beforeEach(() => {
     vi.mocked(api).mockReset();
+  });
+
+  // ─── Shared connections are not behind the personal consent gate ───────
+
+  it('renders the shared-connection panel while the personal BYOK gate is still blocking', async () => {
+    // The gate's own copy is about a key the user pays for. A recipient of an
+    // administrator-provided connection may never add one, so gating their
+    // only route to the audit feature behind it would strand them.
+    vi.mocked(api).mockImplementation(
+      makeApiDispatcher({
+        '/llm-keys/consent': { consentedAt: null },
+        '/llm-keys': [],
+        '/llm-shares': { grants: [SHARED_GRANT] },
+      }),
+    );
+    const qc = makeClient();
+    render(<LlmKeys />, { wrapper: ({ children }) => <Wrapper qc={qc}>{children}</Wrapper> });
+
+    // The personal gate is up...
+    expect(await screen.findByTestId('llm-consent-block')).toBeInTheDocument();
+    // ...and the shared panel is usable anyway.
+    expect(
+      await screen.findByRole('button', { name: 'Accept Anthropic shared connection' }),
+    ).toBeInTheDocument();
+  });
+
+  it('renders the shared-connection panel alongside the personal key table after consent', async () => {
+    // The panel mounts in all three render branches; the gate test above only
+    // covers one of them.
+    vi.mocked(api).mockImplementation(
+      makeApiDispatcher({
+        '/llm-keys/consent': { consentedAt: new Date().toISOString() },
+        '/llm-keys': [mockLlmKey],
+        '/llm-shares': { grants: [SHARED_GRANT] },
+      }),
+    );
+    const qc = makeClient();
+    render(<LlmKeys />, { wrapper: ({ children }) => <Wrapper qc={qc}>{children}</Wrapper> });
+
+    expect(await screen.findByText('LLM API keys')).toBeInTheDocument();
+    expect(
+      await screen.findByRole('button', { name: 'Accept Anthropic shared connection' }),
+    ).toBeInTheDocument();
   });
 
   // ─── Consent gate ──────────────────────────────────────────────────────

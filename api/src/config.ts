@@ -20,6 +20,7 @@ export interface Env {
   auditMaxCostUsd: number;       // AUDIT_MAX_COST_USD, default 1.00
   auditMaxTokensTotal: number;   // AUDIT_MAX_TOKENS_TOTAL, default 200_000
   auditShutdownGraceMs: number;  // AUDIT_SHUTDOWN_GRACE_MS, default 15_000
+  sharedLlmMonthlyCostUsd: number;
   /** DV-11: local desktop mode. Enables the credential-free local session route. */
   localMode: boolean;
   /**
@@ -139,6 +140,10 @@ export function loadEnv(source: NodeJS.ProcessEnv = process.env): Env {
   if (Number.isNaN(auditShutdownGraceMs) || auditShutdownGraceMs <= 0) {
     throw new Error('AUDIT_SHUTDOWN_GRACE_MS must be a positive number');
   }
+  const sharedLlmMonthlyCostUsd = Number(source.SHARED_LLM_MONTHLY_COST_USD ?? 1.00);
+  if (!Number.isFinite(sharedLlmMonthlyCostUsd) || sharedLlmMonthlyCostUsd <= 0) {
+    throw new Error('SHARED_LLM_MONTHLY_COST_USD must be a finite positive number');
+  }
 
   return {
     jwtSecret: new TextEncoder().encode(jwt),
@@ -155,6 +160,7 @@ export function loadEnv(source: NodeJS.ProcessEnv = process.env): Env {
     auditMaxCostUsd,
     auditMaxTokensTotal,
     auditShutdownGraceMs,
+    sharedLlmMonthlyCostUsd,
     localMode: source.WELTBON_LOCAL_MODE === '1' || source.WELTBON_LOCAL_MODE === 'true',
     // `|| undefined` (not `??`): an explicitly-set-but-empty WELTBON_BIND_HOST=
     // must fall back to the all-interfaces default too, not pass '' through to

@@ -113,6 +113,7 @@ describe('GET /api/universes/:uid/audits (Phase 26 Plan 03 Task 2 — D-09 audit
     startedAt?: Date;
     finishedAt?: Date | null;
     analyzedEntries?: number;
+    credentialSource?: 'own' | 'shared';
   }): Promise<{ id: string }> {
     const [row] = await handle.db
       .insert(auditRuns)
@@ -127,6 +128,7 @@ describe('GET /api/universes/:uid/audits (Phase 26 Plan 03 Task 2 — D-09 audit
         costUsd: opts.costUsd ?? '0.0050',
         triggerSource: 'manual',
         analyzedEntries: opts.analyzedEntries ?? 0,
+        credentialSource: opts.credentialSource ?? 'own',
         ...(opts.startedAt ? { startedAt: opts.startedAt } : {}),
         ...(opts.finishedAt !== undefined ? { finishedAt: opts.finishedAt } : {}),
       })
@@ -401,5 +403,35 @@ describe('GET /api/universes/:uid/audits (Phase 26 Plan 03 Task 2 — D-09 audit
       scopeEntryTitle: 'The Protagonist',
       totalEntries: null, // entry-scoped — totalEntries is null per AuditHistoryRow JSDoc
     });
+  });
+
+  it('exposes only the own/shared credential source in history', async () => {
+    const { user, hdrs } = await userWithToken('history-source@test.com');
+    const u = await insertUniverse(user.id, 'Credential Source Universe');
+    const own = await insertAuditRun({
+      universeId: u.id,
+      userId: user.id,
+      status: 'succeeded',
+      credentialSource: 'own',
+      startedAt: new Date('2026-06-01T10:00:00Z'),
+    });
+    const shared = await insertAuditRun({
+      universeId: u.id,
+      userId: user.id,
+      status: 'failed',
+      credentialSource: 'shared',
+      startedAt: new Date('2026-06-02T10:00:00Z'),
+    });
+
+    const response = await req('GET', `/api/universes/${u.id}/audits`, { headers: hdrs });
+    expect(response.status).toBe(200);
+    const body = await json(response);
+    expect(body.rows).toHaveLength(2);
+    expect(body.rows.find((row: { id: string }) => row.id === own.id)).toMatchObject({ credentialSource: 'own' });
+    expect(body.rows.find((row: { id: string }) => row.id === shared.id)).toMatchObject({ credentialSource: 'shared' });
+    for (const row of body.rows) {
+      expect(row).not.toHaveProperty('credentialOwnerId');
+      expect(row).not.toHaveProperty('sharedGrantId');
+    }
   });
 });

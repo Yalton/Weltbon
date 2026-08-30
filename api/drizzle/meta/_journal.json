@@ -288,6 +288,13 @@
       "when": 1787625092070,
       "tag": "0040_admin_user_management",
       "breakpoints": true
+    },
+    {
+      "idx": 41,
+      "version": "7",
+      "when": 1787871760628,
+      "tag": "0041_shared_llm_connections",
+      "breakpoints": true
     }
   ]
 }

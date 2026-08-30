@@ -70,7 +70,14 @@ import {
   MIN_CACHEABLE_TOKENS,
   type LlmProvider,
 } from '../providers/llm/index.js';
-import { resolveCredential } from './llm-credential.js';
+import { resolveCredential, resolveSharedGrantCredential } from './llm-credential.js';
+import type { ProviderCredential } from '../providers/llm/interface.js';
+import {
+  getSharedAuditReservation,
+  roundUpToSixDecimals,
+  settleSharedAuditReservation,
+  SharedLlmError,
+} from './llm-sharing.js';
 import { runCheapFinds, CATEGORY_SEVERITY } from './cheap-finds.js';
 import { buildStructuralDigest } from './structural-digest.js';
 import { getEntryBody, validateReferencedEntryIds } from './audit-tools.js';
@@ -98,6 +105,13 @@ export const ENGINE_ERROR = {
   PROVIDER_ERROR: 'provider_error',
   INVALID_OUTPUT: 'invalid_output',
   UNKNOWN: 'unknown',
+  // #50 Task 7 — shared-credential runs only. Kept distinct from
+  // PROVIDER_ERROR because they mean something the recipient can act on:
+  // the administrator withdrew access, or their key stopped working. A
+  // recipient told "provider error" would go looking at their own settings,
+  // where there is nothing to fix.
+  SHARED_ACCESS_REVOKED: 'shared_access_revoked',
+  SHARED_CREDENTIAL_UNAVAILABLE: 'shared_credential_unavailable',
   // LLMError variants surfaced verbatim (snake_case) so the UI banner can
   // show a useful, variant-specific message instead of the generic
   // "provider returned an error" fallback. Raw provider error text is still
@@ -228,6 +242,16 @@ export interface AuditEngineDeps {
   db?: typeof db;
   getProvider?: typeof getProvider;
   resolveCredential?: typeof resolveCredential;
+  // #50 Task 7 — shared-credential runs. Injectable for the same reason
+  // resolveCredential is: the engine's unit tests drive a db stub and must
+  // never reach a real grant table.
+  resolveSharedGrantCredential?: typeof resolveSharedGrantCredential;
+  settleSharedAuditReservation?: typeof settleSharedAuditReservation;
+  // Not named in the Task 7 interface list, but the reservation amount is the
+  // run's real cost ceiling and lives in llm_shared_audit_reservations — there
+  // is no way to enforce it without reading that row, and no way to unit-test
+  // the enforcement without being able to stub the read.
+  getSharedAuditReservation?: typeof getSharedAuditReservation;
   runCheapFinds?: typeof runCheapFinds;
   buildStructuralDigest?: typeof buildStructuralDigest;
   getEntryBody?: typeof getEntryBody;
@@ -267,30 +291,173 @@ export async function runAudit(runId: string, deps?: AuditEngineDeps): Promise<v
   const _db = deps?.db ?? db;
   const _getProvider = deps?.getProvider ?? getProvider;
   const _resolveCredential = deps?.resolveCredential ?? resolveCredential;
+  const _resolveSharedGrantCredential =
+    deps?.resolveSharedGrantCredential ?? resolveSharedGrantCredential;
+  const _settleSharedAuditReservation =
+    deps?.settleSharedAuditReservation ?? settleSharedAuditReservation;
+  const _getSharedAuditReservation =
+    deps?.getSharedAuditReservation ?? getSharedAuditReservation;
   const _runCheapFinds = deps?.runCheapFinds ?? runCheapFinds;
   const _buildStructuralDigest = deps?.buildStructuralDigest ?? buildStructuralDigest;
   const _getEntryBody = deps?.getEntryBody ?? getEntryBody;
   const _validateReferencedEntryIds = deps?.validateReferencedEntryIds ?? validateReferencedEntryIds;
   const _computeGapKey = deps?.computeGapKey ?? computeGapKey;
 
+  // #50 Task 7 — shared settlement bookkeeping.
+  //
+  // The plan asked for a terminal helper invoked from every markFailed,
+  // success, partial-success and thrown-error path. It is driven from the
+  // existing `finally` instead, off this record. Same coverage by
+  // construction rather than by enumeration: `finally` already runs at every
+  // terminal exit — that is precisely why releaseRun lives there — so a path
+  // added later cannot forget to settle. Enumerating ~10 call sites is how a
+  // reservation gets stranded, and a stranded reservation blocks its
+  // recipient from every future shared audit, permanently.
+  const shared = {
+    /** True once a shared run's provenance has been loaded. */
+    active: false,
+    grantId: null as string | null,
+    /** Set by markFailed and by the success transitions; null means neither ran. */
+    outcome: null as 'succeeded' | 'failed' | null,
+    /** Cost to settle against the owner's month. Stays 0 for an unpriced run. */
+    costUsd: 0,
+  };
+
   // Local helper that uses the injected _db (important for unit test isolation)
   async function markFailed(failRunId: string, errorTag: EngineErrorTag): Promise<void> {
+    shared.outcome = 'failed';
     await _db()
       .update(auditRuns)
       .set({ status: 'failed', error: errorTag, finishedAt: new Date() })
       .where(eq(auditRuns.id, failRunId));
   }
 
+  /**
+   * Releases the run's hold on the owner's monthly allowance exactly once.
+   *
+   * Idempotence is the service's, not ours: settleSharedAuditReservation
+   * returns without effect unless the reservation is still `reserved`, under
+   * the row lock. This wrapper therefore never has to reason about whether it
+   * already ran — which matters, because recovery may also settle the same
+   * run after a crash.
+   *
+   * Never allowed to fail the run. A settlement error is an accounting
+   * problem for the operator; turning it into a thrown engine error would
+   * additionally lose the audit the user already paid for.
+   */
+  async function settleSharedRun(): Promise<void> {
+    if (!shared.active) return;
+    try {
+      await _settleSharedAuditReservation(
+        runId,
+        // No terminal transition ran at all — only reachable if a future
+        // early return is added between the run-row load and the first status
+        // write. Nothing was charged in that window, so release the hold whole.
+        shared.outcome ?? 'released',
+        shared.outcome === null ? 0 : await settleableCostUsd(),
+      );
+    } catch (err) {
+      if (err instanceof SharedLlmError && err.code === 'shared_audit_reservation_not_found') {
+        // The reservation row is gone. That happens when the run row itself
+        // was deleted (the reservation cascades from it) — a universe deleted
+        // mid-run, say. Note that llm_shared_usage does NOT cascade, so the
+        // recipient's counters are left holding a slot for a run that no
+        // longer exists. Nothing this function can do about it: there is no
+        // reservation left to read the amount from.
+        return;
+      }
+      // Metadata only — never the recipient, the owner, or any amount. This
+      // is the condition that strands a reservation, so it is also what
+      // releaseStrandedSharedReservations() exists to repair on next boot.
+      console.error('[audit-engine] shared settlement failed; reservation left for boot recovery:', runId);
+    }
+  }
+
+  /**
+   * The amount to settle against the owner's month.
+   *
+   * The RECORDED `audit_runs.cost_usd` is the source of truth, not the
+   * engine's in-memory accumulator. Two reasons, and the first one is not
+   * cosmetic: settlement validates its input as a clean six-decimal amount,
+   * and a summed float of per-turn provider costs is almost never one.
+   * `cachedInputUsdPer1M: 0.1` against a realistic token count yields values
+   * like 0.005303499999999999, which `sixDecimalAmount` rejects outright —
+   * the settlement then throws, gets swallowed above, and the reservation is
+   * stranded for good. The column is numeric(10,4), so what comes back from
+   * it is always valid. Second, it is the number the user is shown, and
+   * charging a month a different one than the run reports is indefensible.
+   *
+   * Falls back to the accumulator, rounded up into range, only when the row
+   * cannot be read — which in practice means a DB error, since cost_usd is
+   * NOT NULL DEFAULT 0. That fallback is valid for any amount this engine can
+   * produce, but not for arbitrary ones: roundUpToSixDecimals stops yielding
+   * a clean six-decimal above roughly 1e4, well past auditMaxCostUsd. Do not
+   * reuse it as a general-purpose settlement amount.
+   */
+  async function settleableCostUsd(): Promise<number> {
+    try {
+      const [row] = await _db()
+        .select({ costUsd: auditRuns.costUsd })
+        .from(auditRuns)
+        .where(eq(auditRuns.id, runId))
+        .limit(1);
+      if (row?.costUsd !== undefined && row.costUsd !== null) {
+        const recorded = Number(row.costUsd);
+        if (Number.isFinite(recorded) && recorded >= 0) return recorded;
+      }
+    } catch {
+      // Fall through to the accumulator.
+    }
+    // Math.max also normalizes the -0 that roundUpToSixDecimals returns for
+    // an input of 0 (its `value - EPSILON` goes fractionally negative before
+    // the ceil). sixDecimalAmount accepts -0, but handing a negative zero to
+    // an accounting API is the kind of thing that reads as a bug forever.
+    return Math.max(0, roundUpToSixDecimals(shared.costUsd));
+  }
+
   // Load config (merge injected overrides for test cap tuning)
   const cfg = env();
   const maxToolCalls = deps?.cfg?.auditMaxToolCalls ?? cfg.auditMaxToolCalls;
   const maxWallClockMs = deps?.cfg?.auditMaxWallClockMs ?? cfg.auditMaxWallClockMs;
-  const maxCostUsd = deps?.cfg?.auditMaxCostUsd ?? cfg.auditMaxCostUsd;
+  // Mutable: a shared run's reservation lowers it below the configured cap
+  // once the run's provenance is known (see the reservation read below).
+  let maxCostUsd = deps?.cfg?.auditMaxCostUsd ?? cfg.auditMaxCostUsd;
   const maxTokensTotal = deps?.cfg?.auditMaxTokensTotal ?? cfg.auditMaxTokensTotal;
   const encryptionKey =
     deps?.cfg?.llmKeyEncryptionKey !== undefined
       ? deps.cfg.llmKeyEncryptionKey
       : cfg.llmKeyEncryptionKey;
+
+  /**
+   * Re-resolves the run's stored grant. Returns null when access is still
+   * good (leaving `credential` refreshed for the next turn), or the tag the
+   * run must fail with.
+   *
+   * Called on BOTH sides of every provider call. Before, so a run whose grant
+   * was revoked while it was thinking never makes another call on the
+   * owner's key. After, because a revocation that lands DURING a call would
+   * otherwise be discovered only on the next iteration — which never comes if
+   * that call was the final turn, and the run would persist findings produced
+   * with access the owner had already withdrawn.
+   */
+  async function sharedAccessCheckpoint(): Promise<EngineErrorTag | null> {
+    if (!shared.active || shared.grantId === null) return null;
+    const stored = await _resolveSharedGrantCredential(
+      userIdForCheckpoint,
+      shared.grantId,
+      providerForCheckpoint as LlmProvider,
+      encryptionKey,
+    );
+    if (stored.kind === 'revoked') return ENGINE_ERROR.SHARED_ACCESS_REVOKED;
+    if (stored.kind === 'unavailable') return ENGINE_ERROR.SHARED_CREDENTIAL_UNAVAILABLE;
+    turnCredential = stored.credential;
+    return null;
+  }
+
+  // Assigned once the run row is loaded; the checkpoint above closes over them.
+  let userIdForCheckpoint = '';
+  let providerForCheckpoint = '';
+  let turnCredential: ProviderCredential | null = null;
 
   // ---------------------------------------------------------------------------
   // Step 1: Transition to 'running' and load run + universe context
@@ -316,6 +483,18 @@ export async function runAudit(runId: string, deps?: AuditEngineDeps): Promise<v
       model: auditRuns.model,
       scope: auditRuns.scope,
       scopeEntryId: auditRuns.scopeEntryId,
+      // #50 Task 7 — the run's own provenance decides which credential it may
+      // use. Read from the ROW, never re-derived from the user's current
+      // keys: a recipient who adds a personal key mid-run must not have the
+      // run silently switch billing owner underneath them, and one whose
+      // grant was revoked must not keep running on a resolver that would now
+      // answer differently.
+      credentialSource: auditRuns.credentialSource,
+      sharedGrantId: auditRuns.sharedGrantId,
+      // credentialOwnerId is deliberately NOT selected: the grant id already
+      // determines the owner, resolveSharedGrantCredential re-verifies owner
+      // state per turn, and a column the engine loads but never reads invites
+      // a later reader to assume it is being checked.
     })
     .from(auditRuns)
     .where(eq(auditRuns.id, runId))
@@ -328,6 +507,19 @@ export async function runAudit(runId: string, deps?: AuditEngineDeps): Promise<v
 
   const run = runRows[0];
   const { universeId, userId, provider, model } = run;
+  userIdForCheckpoint = userId;
+  providerForCheckpoint = provider;
+
+  // Arm settlement HERE, the moment the run's provenance is known — not at
+  // credential resolution twenty lines down. Review finding: the universe
+  // guard below returns between those two points, and with the flag still
+  // false the `finally` settled nothing, leaving the reservation held by a
+  // run that is already terminal — which no status-keyed recovery can ever
+  // find. Coverage that depends on a flag set late is coverage by
+  // enumeration wearing a different hat; this is the assignment that makes
+  // the `finally` mean what it says.
+  shared.active = run.credentialSource === 'shared';
+  shared.grantId = run.sharedGrantId;
 
   // Defense in depth: load universe to verify audit_enabled (routes enforce, but
   // a race between flag-flip and unawaited engine execution is possible).
@@ -349,10 +541,66 @@ export async function runAudit(runId: string, deps?: AuditEngineDeps): Promise<v
   // that module's doc comment for why "no connection row" is the same null)
   // ---------------------------------------------------------------------------
 
-  const credential = await _resolveCredential(userId, provider as LlmProvider, encryptionKey);
-  if (credential === null) {
-    await markFailed(runId, ENGINE_ERROR.PROVIDER_ERROR);
-    return;
+  // #50 Task 7: a shared run resolves ONLY its stored grant. Falling back to
+  // resolveCredential here would defeat the whole feature in the worst
+  // possible direction — a revoked grant would quietly resolve to whatever
+  // key the recipient happens to have now, or to the recipient's own key,
+  // changing who pays for a run that was already admitted against someone
+  // else's allowance.
+  let credential: ProviderCredential;
+  if (run.credentialSource === 'shared') {
+    // The provenance FK is ON DELETE SET NULL and the row check permits a
+    // shared run with both provenance columns NULL — the tombstone left when
+    // a grant row is hard-deleted. Falling through to the personal resolver
+    // there would do exactly what this design exists to prevent: quietly move
+    // the run onto whatever key the recipient has now. `credentialSource` is
+    // the discriminator; a shared run with no grant has lost its access.
+    if (run.sharedGrantId === null) {
+      await markFailed(runId, ENGINE_ERROR.SHARED_ACCESS_REVOKED);
+      return;
+    }
+
+    const stored = await _resolveSharedGrantCredential(
+      userId,
+      run.sharedGrantId,
+      provider as LlmProvider,
+      encryptionKey,
+    );
+    if (stored.kind === 'revoked') {
+      await markFailed(runId, ENGINE_ERROR.SHARED_ACCESS_REVOKED);
+      return;
+    }
+    if (stored.kind === 'unavailable') {
+      await markFailed(runId, ENGINE_ERROR.SHARED_CREDENTIAL_UNAVAILABLE);
+      return;
+    }
+    credential = stored.credential;
+
+    // The reservation is what was actually withheld from the recipient's
+    // monthly allowance, and it is bounded by the configured cap at admission
+    // time — so it is normally the SMALLER of the two. Enforcing the
+    // configured cap alone would let a run spend more of the owner's month
+    // than was ever reserved for it, and settlement would then charge the
+    // overage to a month that never agreed to it.
+    const reservation = await _getSharedAuditReservation(runId);
+    if (reservation === null || reservation.state !== 'reserved') {
+      // Fail closed. A shared run always has a live reservation — admission
+      // creates the two in one transaction — so its absence means the run and
+      // the ledger disagree. Continuing would restore the full configured
+      // ceiling and let the run spend against an administrator's key with
+      // nothing withheld from anyone's allowance, which is the one outcome
+      // the cap exists to make impossible.
+      await markFailed(runId, ENGINE_ERROR.UNKNOWN);
+      return;
+    }
+    maxCostUsd = Math.min(maxCostUsd, Number(reservation.reservedUsd));
+  } else {
+    const own = await _resolveCredential(userId, provider as LlmProvider, encryptionKey);
+    if (own === null) {
+      await markFailed(runId, ENGINE_ERROR.PROVIDER_ERROR);
+      return;
+    }
+    credential = own;
   }
 
   // ---------------------------------------------------------------------------
@@ -566,6 +814,15 @@ When you are ready to deliver your complete list of findings, call the \`emit_fi
       return;
     }
 
+    // #50 Task 7: shared access is re-checked before EVERY turn, not just at
+    // run start. A grant revoked at 09:00 must not keep spending the owner's
+    // key until a multi-turn run finishes at 09:05.
+    const preCallTag = await sharedAccessCheckpoint();
+    if (preCallTag !== null) {
+      await markFailed(runId, preCallTag);
+      return;
+    }
+
     // -------------------------------------------------------------------------
     // Provider call — single turn
     // -------------------------------------------------------------------------
@@ -590,7 +847,9 @@ When you are ready to deliver your complete list of findings, call the \`emit_fi
     let timeoutHandle: ReturnType<typeof setTimeout> | undefined;
     try {
       const providerCall = _getProvider(provider as LlmProvider).runAudit({
-        credential,
+        // The checkpoint above refreshed this for a shared run; a personal run
+        // keeps the credential resolved once at run start.
+        credential: turnCredential ?? credential,
         messages,
         model,
         // Phase 27 D-10/D-12: both tools flow on every turn.
@@ -660,6 +919,27 @@ When you are ready to deliver your complete list of findings, call the \`emit_fi
     totalCost += result.costUsd;
     totalTokens += turnTotalTokens;
     toolCalls += turnToolCalls;
+
+    // #50 Task 7: what settlement will charge the owner's month. Mirrors the
+    // costUnknown rule the telemetry UPDATE above applies — an unpriced run
+    // records 0 rather than a guess, so it must settle at 0 too or the
+    // reservation and the run row would disagree about the same run.
+    shared.costUsd = costUnknown ? 0 : totalCost;
+
+    // #50 Task 7: post-call checkpoint. Telemetry above has already recorded
+    // what this turn cost — the owner's key was used, so the charge is real
+    // and is settled either way. What is discarded is the OUTPUT: if access
+    // ended while the provider was answering, `result.text` and
+    // `result.toolUse` were produced under a grant that no longer exists, so
+    // no issue derived from them may be persisted and no further turn may
+    // run. Placed before the emit_findings parse for exactly that reason —
+    // one line later and the final answer would already be on its way into
+    // the issues table.
+    const postCallTag = await sharedAccessCheckpoint();
+    if (postCallTag !== null) {
+      await markFailed(runId, postCallTag);
+      return;
+    }
 
     // BL-04 (Phase 24-10): post-call cap recheck. The pre-call gate alone allows a
     // single oversized turn to slip through (e.g., a turn returning costUsd=$10 with
@@ -831,6 +1111,7 @@ When you are ready to deliver your complete list of findings, call the \`emit_fi
         await markFailed(runId, ENGINE_ERROR.INVALID_OUTPUT);
       } else {
         // Some suggestions already persisted — succeed with what we have
+        shared.outcome = 'succeeded';
         await _db()
           .update(auditRuns)
           .set({ status: 'succeeded', finishedAt: new Date() })
@@ -964,6 +1245,7 @@ When you are ready to deliver your complete list of findings, call the \`emit_fi
     `);
 
     // Terminal success
+    shared.outcome = 'succeeded';
     await _db()
       .update(auditRuns)
       .set({ status: 'succeeded', finishedAt: new Date() })
@@ -972,11 +1254,33 @@ When you are ready to deliver your complete list of findings, call the \`emit_fi
     return;
   }
 
+  } catch (err) {
+    // #50 Task 7: a personal run that throws is deliberately left 'running'
+    // for recoverOrphanAuditRuns to force-fail on the next boot — that
+    // behavior is unchanged. A SHARED run cannot afford to wait for a
+    // restart that may never come: its reservation would keep one of the
+    // recipient's concurrent slots and part of the owner's month held
+    // indefinitely, and the recipient would be locked out of every future
+    // shared audit with no way to clear it. So it is failed here and settled
+    // below at the cost already incurred, which the owner really did pay.
+    if (shared.active) await markFailed(runId, ENGINE_ERROR.UNKNOWN);
+    throw err;
   } finally {
     // Release the in-flight Set entry at every terminal exit path:
     // succeeded, budget_exhausted, provider_error, invalid_output, unknown, or re-throw.
     // Any run still in-flight at SIGTERM expiry becomes a process_restarted orphan
     // on next boot via recoverOrphanAuditRuns (AUDIT-12).
+    //
+    // Ordered BEFORE settlement deliberately: settlement takes FOR UPDATE
+    // locks on the recipient's account and usage rows, and if it blocks, a run
+    // still in the in-flight set holds the SIGTERM drain open for its whole
+    // grace window. The engine's work is done by this point either way.
     releaseRun(runId);
+
+    // #50 Task 7 — settle unconditionally: `finally` covers success, every
+    // markFailed path, the early returns after the run row loads, and the
+    // re-throw above, so no exit can strand the reservation. A no-op for
+    // personal runs, and idempotent for shared ones.
+    await settleSharedRun();
   }
 }
