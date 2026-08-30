@@ -15,6 +15,38 @@ CREATE UNIQUE INDEX "llm_api_keys_id_user_id_provider_unique" ON "llm_api_keys" 
 CREATE UNIQUE INDEX "llm_shared_grants_id_owner_unique" ON "llm_shared_grants" ("id", "owner_user_id");--> statement-breakpoint
 ALTER TABLE "llm_shared_grants" ADD CONSTRAINT "llm_shared_grants_owner_fk" FOREIGN KEY ("owner_user_id") REFERENCES "users"("id") ON DELETE cascade ON UPDATE no action;--> statement-breakpoint
 ALTER TABLE "llm_shared_grants" ADD CONSTRAINT "llm_shared_grants_recipient_fk" FOREIGN KEY ("recipient_user_id") REFERENCES "users"("id") ON DELETE cascade ON UPDATE no action;--> statement-breakpoint
+-- The two owner-key foreign keys below are ONE mechanism, and it depends on a
+-- default nobody writes down: MATCH SIMPLE.
+--
+-- The single-column FK is ON DELETE SET NULL, so deleting the administrator's
+-- llm_api_keys row nulls owner_key_id here rather than deleting the grant --
+-- the grant must survive as an audit record of who was given access.
+--
+-- The composite FK (owner_key_id, owner_user_id, provider) is what actually
+-- enforces the invariant that matters: a grant may only ever point at a key
+-- that belongs to ITS owner and is for ITS provider. Nothing may repoint a
+-- grant at some other administrator's key by updating one column.
+--
+-- Those two look contradictory: SET NULL writes NULL into a column that is
+-- part of a composite FK whose other two columns are still NOT NULL, which
+-- under MATCH FULL would be rejected outright and would make the delete fail.
+-- Postgres defaults to MATCH SIMPLE, where a composite foreign key with ANY
+-- null column is satisfied vacuously -- so the moment owner_key_id becomes
+-- NULL the composite constraint stops applying, and the SET NULL succeeds.
+-- That is deliberate, not a lucky accident, and it is the whole reason the
+-- pair can coexist.
+--
+-- llm_shared_grants_active_owner_key_check ("owner_key_id" IS NOT NULL OR
+-- "revoked_at" IS NOT NULL) is the other half: it makes the vacuous window
+-- unreachable for an ACTIVE grant. A grant whose key was deleted must already
+-- be revoked, so a row can never sit active with a null owner_key_id and no
+-- composite constraint holding it to its owner. Application code
+-- (revokeSharedGrantsForOwnerKey) does the revocation; this check is what
+-- makes forgetting to impossible rather than merely unlikely.
+--
+-- If anyone ever adds MATCH FULL to the composite FK, or drops the active-key
+-- check, the other one silently becomes load-bearing in a way it was never
+-- designed to be. Change them together or not at all.
 ALTER TABLE "llm_shared_grants" ADD CONSTRAINT "llm_shared_grants_owner_key_fk" FOREIGN KEY ("owner_key_id") REFERENCES "llm_api_keys"("id") ON DELETE set null ON UPDATE no action;--> statement-breakpoint
 ALTER TABLE "llm_shared_grants" ADD CONSTRAINT "llm_shared_grants_owner_key_owner_provider_fk" FOREIGN KEY ("owner_key_id", "owner_user_id", "provider") REFERENCES "llm_api_keys"("id", "user_id", "provider") ON DELETE no action ON UPDATE no action;--> statement-breakpoint
 ALTER TABLE "llm_shared_grants" ADD CONSTRAINT "llm_shared_grants_revoked_by_fk" FOREIGN KEY ("revoked_by_user_id") REFERENCES "users"("id") ON DELETE set null ON UPDATE no action;--> statement-breakpoint

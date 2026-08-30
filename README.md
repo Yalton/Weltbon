@@ -151,8 +151,11 @@ the provider disclosure before content can leave the instance.
 
 Shared connections reuse the same `LLM_KEY_ENCRYPTION_KEY` documented above —
 the administrator's key is encrypted at rest under it exactly like a personal
-BYOK key, and a recipient's audits run against the ciphertext without it ever
-being decrypted into a response body, an admin audit-log entry, or a log line.
+BYOK key. Running a recipient's audit does require the plaintext: it is
+decrypted only inside the API process, only for the duration of the provider
+call, and never into a response body, an admin audit-log entry, or a log line.
+The recipient is never shown the key, the key's owner, or which owner-side
+failure ended a run.
 
 ### Example `.env`
 
