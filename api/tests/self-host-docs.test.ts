@@ -391,9 +391,31 @@ describe('OPS-09 — README Shared LLM Connections documentation', () => {
     expect(section).toContain('LLM_KEY_ENCRYPTION_KEY');
   });
 
-  it('documents the SHARED_LLM_MONTHLY_COST_USD default and boot validation in the .env Reference table', () => {
-    expect(readme).toMatch(/\| `SHARED_LLM_MONTHLY_COST_USD` \|/);
-    expect(readme).toMatch(/SHARED_LLM_MONTHLY_COST_USD.*finite.*positive/s);
+  /**
+   * Task 10 review finding 2: the original version of this test used a
+   * whole-document `/s` regex (`SHARED_LLM_MONTHLY_COST_USD.*finite.*positive`),
+   * so the MANDATED GUIDANCE BLOCK's own "must be a finite positive number"
+   * satisfied it regardless of whether either table row said anything at all,
+   * and nothing anywhere asserted the `1.00` default. Confirmed by execution
+   * (see the fix report): rewriting both table rows to strip every one of
+   * "finite", "positive" and "1.00" left all 5 OPS-09 tests green. This
+   * version selects each table row LINE by its literal cell prefix and
+   * asserts on that line alone, so a table row that regresses to vague
+   * "Budget knob" text fails here even though the guidance block elsewhere
+   * in the README still carries the real rule.
+   */
+  it('documents the SHARED_LLM_MONTHLY_COST_USD default and boot validation in both env tables', () => {
+    const rows = readme.split('\n').filter((line) => line.startsWith('| `SHARED_LLM_MONTHLY_COST_USD` |'));
+    expect(
+      rows.length,
+      `expected exactly one SHARED_LLM_MONTHLY_COST_USD row in each of the two env tables ` +
+        `(.env Reference and Environment Variables > Optional); found ${rows.length}`,
+    ).toBe(2);
+    for (const row of rows) {
+      expect(row, `table row does not document "finite": ${row}`).toMatch(/finite/);
+      expect(row, `table row does not document "positive": ${row}`).toMatch(/positive/);
+      expect(row, `table row does not document the 1.00 default: ${row}`).toMatch(/1\.00/);
+    }
   });
 
   it('documents the boot-time SHARED_LLM_MONTHLY_COST_USD validation error alongside the Startup Guard', () => {

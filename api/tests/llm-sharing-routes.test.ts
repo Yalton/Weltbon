@@ -1,4 +1,5 @@
 import { afterAll, beforeAll, beforeEach, describe, expect, it, vi } from 'vitest';
+import { inspect } from 'node:util';
 
 vi.hoisted(() => {
   process.env.LLM_KEY_ENCRYPTION_KEY = '0'.repeat(64);
@@ -110,6 +111,16 @@ describe('shared LLM grant routes', () => {
    * VALUE leaking on its own line (e.g. a stack trace interpolating the raw
    * secret with no surrounding braces), so the plaintext-key check is a bare
    * substring match independent of the field-name regexes below it.
+   *
+   * The field-name regex accepts an OPTIONAL quote before the colon, not a
+   * required one: `JSON.stringify` produces `"ownerKeyId":`, but `node:util`'s
+   * `inspect` — which the logger-output test below now renders object
+   * arguments through, per Task 10 review finding 1 — renders plain
+   * identifier keys unquoted as `ownerKeyId: 'value'`. A fixed-quote regex
+   * caught the JSON shape and silently missed the inspect shape; confirmed by
+   * execution (see the fix report): planting `{ ownerKeyId: '...' }` (no
+   * quotes, no matching plaintext-key substring) into the real
+   * `console.error` path in `api/src/index.ts` passed with the old regex.
    */
   function expectNoCredentialLeakInText(text: string, context: string) {
     expect(text, `${context} must not contain the seeded plaintext key`).not.toContain(SECRET);
@@ -117,7 +128,7 @@ describe('shared LLM grant routes', () => {
       expect(
         text,
         `${context} must not expose the "${forbidden}" field name`,
-      ).not.toMatch(new RegExp(`["']${forbidden}["']\\s*:`));
+      ).not.toMatch(new RegExp(`\\b${forbidden}["']?\\s*:`));
     }
   }
 
@@ -420,7 +431,14 @@ describe('shared LLM grant routes', () => {
     const recipientJwt = await issueAccessToken(recipient.id);
 
     const captured: string[] = [];
-    const capture = (...args: unknown[]) => { captured.push(args.map(String).join(' ')); };
+    // `String(x)` on an object argument collapses it to the literal text
+    // "[object Object]" -- exactly the shape a real `console.error('context',
+    // err)` or `console.error('ctx', { ownerKeyId, key })` call takes, and
+    // exactly the shape that would hide a leak from every check below.
+    // `inspect` renders the actual field names and values, matching what a
+    // human reading the real terminal output would see.
+    const render = (value: unknown) => (typeof value === 'string' ? value : inspect(value, { depth: null }));
+    const capture = (...args: unknown[]) => { captured.push(args.map(render).join(' ')); };
     const logSpy = vi.spyOn(console, 'log').mockImplementation(capture);
     const errorSpy = vi.spyOn(console, 'error').mockImplementation(capture);
     const listSpy = vi.spyOn(llmSharing, 'listRecipientSharedGrants')
@@ -473,6 +491,13 @@ describe('shared LLM grant routes', () => {
     expect(() => expectNoCredentialLeakInText(`some log line mentioning ${SECRET}`, 'test')).toThrow();
     expect(() => expectNoCredentialLeakInText('unhandled error: {"ciphertext":"abc"}', 'test')).toThrow();
     expect(() => expectNoCredentialLeakInText("unhandled error: {'ownerKeyId':'abc'}", 'test')).toThrow();
+    // Task 10 review finding 1 fix round: `node:util`'s `inspect` (which the
+    // logger-output test above now renders object arguments through) writes
+    // plain identifier keys UNQUOTED — `{ ownerKeyId: 'abc' }`, not
+    // `{"ownerKeyId":"abc"}`. Regression-locks the exact gap review finding 1
+    // demonstrated: planting this unquoted shape into the real
+    // `console.error` path passed before the regex accepted an optional quote.
+    expect(() => expectNoCredentialLeakInText("shared ctx { ownerKeyId: 'abc' }", 'test')).toThrow();
     // Negative control.
     expect(() => expectNoCredentialLeakInText('--> GET /api/llm-shares 200 3ms', 'test')).not.toThrow();
   });
