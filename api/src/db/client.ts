@@ -21,6 +21,28 @@ type Schema = typeof schema;
  */
 export type AppDatabase = NodePgDatabase<Schema>;
 
+/**
+ * The handle a service function accepts when it must work BOTH on the pooled
+ * database and inside an already-open transaction.
+ *
+ * `services/admin-users.ts` imported this name from here for a long time while
+ * nothing exported it. TypeScript reports that once, on the import line, and
+ * then resolves `DrizzleDb` to an error type — which silently made every
+ * `tx as DrizzleDb` in that file an assertion to `any`, checking nothing. The
+ * casts looked like careful typing and were doing the opposite; a review
+ * caught it only because #50 added three more of them around
+ * `lockLifecycleAccountsForOwner`.
+ *
+ * Structural rather than `AppDatabase` because a drizzle transaction object is
+ * NOT an `AppDatabase` — it has no pool and no `$client` — but it does carry
+ * every query method these helpers use. `Record<string, any>` keeps the older
+ * call sites that reach for a driver-specific escape hatch compiling; narrow
+ * it when those are gone, not before.
+ */
+export type DrizzleDb =
+  Pick<AppDatabase, 'insert' | 'update' | 'select' | 'delete' | 'query' | 'transaction'>
+  & Record<string, any>;
+
 let _db: AppDatabase | null = null;
 let _pool: pg.Pool | null = null;
 let _close: (() => Promise<void>) | null = null;

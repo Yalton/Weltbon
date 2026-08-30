@@ -12,7 +12,7 @@ export async function disableUser(actorUserId: string, targetUserId: string, rea
     ]);
     if (!actor || !target) return null;
     if (target.isAdmin) {
-      await lockLifecycleAccountsForOwner(tx as DrizzleDb, actor.id, target.id);
+      await lockLifecycleAccountsForOwner(tx, actor.id, target.id);
       if (!target.disabledAt) {
         const activeAdmins = await tx.$count(users, and(eq(users.isAdmin, true), isNull(users.disabledAt)));
         if (activeAdmins <= 1) throw new LastAdminError();
@@ -68,7 +68,7 @@ export async function setAdminStatus(actorUserId: string, targetUserId: string, 
     ]);
     if (!actor || !target) return null;
     if (!isAdmin && target.isAdmin) {
-      await lockLifecycleAccountsForOwner(tx as DrizzleDb, actor.id, target.id);
+      await lockLifecycleAccountsForOwner(tx, actor.id, target.id);
       if (!target.disabledAt) {
         const activeAdmins = await tx.$count(users, and(eq(users.isAdmin, true), isNull(users.disabledAt)));
         if (activeAdmins <= 1) throw new LastAdminError();
@@ -109,7 +109,7 @@ export async function purgeUser(actorUserId: string, targetUserId: string, confi
     if (!actor || !target) return null;
     if (confirmEmail !== target.email) throw new PurgeConfirmationError();
     if (target.isAdmin) {
-      await lockLifecycleAccountsForOwner(tx as DrizzleDb, actor.id, target.id);
+      await lockLifecycleAccountsForOwner(tx, actor.id, target.id);
       if (!target.disabledAt) {
         const activeAdmins = await tx.$count(users, and(eq(users.isAdmin, true), isNull(users.disabledAt)));
         if (activeAdmins <= 1) throw new LastAdminError();
