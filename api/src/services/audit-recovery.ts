@@ -60,6 +60,14 @@ export interface AuditRecoveryDeps {
  * survive, for the case where there is no reservation left to sweep either
  * (a universe deleted mid-run cascades the run and reservation away and
  * leaves the hold behind).
+ *
+ * That third pass is no longer the ONLY repair for the cascade case, and must
+ * not be relied on as if it were: boot is far too rare on a hosted instance
+ * for a user-triggerable strand. `reserveSharedAudit` now recomputes the same
+ * held totals under the usage row's own FOR UPDATE lock, so a stranded
+ * counter heals on the recipient's next attempt. This pass is kept because it
+ * also repairs recipients who never attempt another audit, and because it
+ * costs one grouped query at boot.
  */
 export async function recoverOrphanAuditRuns(
   database: NodePgDatabase<typeof schema>,

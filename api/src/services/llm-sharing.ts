@@ -1,4 +1,5 @@
 import { and, asc, eq, inArray, isNull, sql } from 'drizzle-orm';
+import { alias } from 'drizzle-orm/pg-core';
 import { env } from '../config.js';
 import { db as getDb } from '../db/client.js';
 import { isUniqueViolation } from '../db/pg-error.js';
@@ -261,39 +262,124 @@ export async function listRecipientSharedGrants(userId: string): Promise<SharedR
   }));
 }
 
-export async function listAdminSharedGrants(): Promise<SharedAdminGrantView[]> {
-  const grants = await getDb().select({
+// A function, not a shared constant: the same `sql` fragment is embedded twice
+// in one statement (select list and join predicate), and reusing one object
+// across both positions relies on drizzle's fragment reuse being safe. Building
+// a fresh one costs nothing and does not.
+function monthStartExpr() {
+  return sql<string>`DATE_TRUNC('month', NOW() AT TIME ZONE 'UTC')::date`;
+}
+
+/**
+ * One statement for the whole admin grant listing.
+ *
+ * Review finding: this used to fan out per grant — two `users` lookups plus a
+ * `getSharedQuotaSnapshot` (two more queries), all fired concurrently through
+ * `Promise.all` over the entire grant list. At 100 grants that is ~400
+ * concurrent queries to answer one request, and it recomputed the *identical*
+ * quota snapshot once per provider grant a recipient holds. Every one of those
+ * reads was already available as a join.
+ *
+ * `users` is joined twice (owner and recipient) with LEFT joins rather than
+ * INNER, deliberately: an inner join would silently DROP a grant whose
+ * participant row is missing, turning a broken invariant into a shorter list
+ * nobody notices. The explicit null check below keeps the documented 404
+ * (`shared_connection_not_found`) that the route's OpenAPI response describes.
+ *
+ * The month boundary is computed by Postgres in the same statement rather than
+ * in Node, matching `getSharedQuotaSnapshot`/`lockedUtcMonthStart` — the DB's
+ * clock is the one every write already uses, and deriving it here from the
+ * API process's clock would let a listing and a reservation disagree about
+ * which month a recipient is in.
+ *
+ * The projection is unchanged and must stay that way: `SharedAdminGrantView`
+ * carries no key material, no ciphertext and no `ownerKeyId`. Widening the
+ * select list here widens what the admin route serializes.
+ */
+function selectAdminSharedGrants(where?: ReturnType<typeof eq>) {
+  const ownerUser = alias(users, 'owner_user');
+  const recipientUser = alias(users, 'recipient_user');
+  const query = getDb().select({
     id: llmSharedGrants.id,
-    ownerUserId: llmSharedGrants.ownerUserId,
-    recipientUserId: llmSharedGrants.recipientUserId,
     provider: llmSharedGrants.provider,
     createdAt: llmSharedGrants.createdAt,
     revokedAt: llmSharedGrants.revokedAt,
     revokedReason: llmSharedGrants.revokedReason,
     consentedAt: llmSharedConsents.consentedAt,
-  }).from(llmSharedGrants).leftJoin(llmSharedConsents, and(
-    eq(llmSharedConsents.grantId, llmSharedGrants.id),
-    eq(llmSharedConsents.recipientUserId, llmSharedGrants.recipientUserId),
-  ));
-  return Promise.all(grants.map(async (grant) => {
-    const [owner, recipient] = await Promise.all([
-      getDb().query.users.findFirst({ where: eq(users.id, grant.ownerUserId), columns: { id: true, displayName: true, email: true } }),
-      getDb().query.users.findFirst({ where: eq(users.id, grant.recipientUserId), columns: { id: true, displayName: true, email: true } }),
-    ]);
-    if (!owner || !recipient) throw new SharedLlmError('shared_connection_not_found');
-    return {
-      id: grant.id,
-      owner,
-      recipient,
-      provider: grant.provider,
-      status: grant.revokedAt ? 'revoked' as const : 'active' as const,
-      createdAt: grant.createdAt,
-      revokedAt: grant.revokedAt,
-      revokedReason: grant.revokedReason,
-      consentedAt: grant.consentedAt,
-      usage: await getSharedQuotaSnapshot(grant.recipientUserId),
-    };
-  }));
+    ownerId: ownerUser.id,
+    ownerDisplayName: ownerUser.displayName,
+    ownerEmail: ownerUser.email,
+    recipientId: recipientUser.id,
+    recipientDisplayName: recipientUser.displayName,
+    recipientEmail: recipientUser.email,
+    monthStart: monthStartExpr(),
+    settledCostUsd: llmSharedUsage.settledCostUsd,
+    reservedCostUsd: llmSharedUsage.reservedCostUsd,
+    activeAuditCount: llmSharedUsage.activeAuditCount,
+    completedAuditCount: llmSharedUsage.completedAuditCount,
+    failedAuditCount: llmSharedUsage.failedAuditCount,
+  })
+    .from(llmSharedGrants)
+    .leftJoin(ownerUser, eq(ownerUser.id, llmSharedGrants.ownerUserId))
+    .leftJoin(recipientUser, eq(recipientUser.id, llmSharedGrants.recipientUserId))
+    .leftJoin(llmSharedConsents, and(
+      eq(llmSharedConsents.grantId, llmSharedGrants.id),
+      eq(llmSharedConsents.recipientUserId, llmSharedGrants.recipientUserId),
+    ))
+    .leftJoin(llmSharedUsage, and(
+      eq(llmSharedUsage.recipientUserId, llmSharedGrants.recipientUserId),
+      eq(llmSharedUsage.monthStart, monthStartExpr()),
+    ));
+  return where ? query.where(where) : query;
+}
+
+type AdminSharedGrantRow = Awaited<ReturnType<typeof selectAdminSharedGrants>>[number];
+
+function toAdminSharedGrantView(row: AdminSharedGrantRow): SharedAdminGrantView {
+  if (row.ownerId === null || row.ownerDisplayName === null || row.ownerEmail === null
+    || row.recipientId === null || row.recipientDisplayName === null || row.recipientEmail === null) {
+    throw new SharedLlmError('shared_connection_not_found');
+  }
+  return {
+    id: row.id,
+    owner: { id: row.ownerId, displayName: row.ownerDisplayName, email: row.ownerEmail },
+    recipient: { id: row.recipientId, displayName: row.recipientDisplayName, email: row.recipientEmail },
+    provider: row.provider,
+    status: row.revokedAt ? 'revoked' : 'active',
+    createdAt: row.createdAt,
+    revokedAt: row.revokedAt,
+    revokedReason: row.revokedReason,
+    consentedAt: row.consentedAt,
+    usage: {
+      monthStart: row.monthStart,
+      settledUsd: money(row.settledCostUsd ?? 0),
+      reservedUsd: money(row.reservedCostUsd ?? 0),
+      limitUsd: money(env().sharedLlmMonthlyCostUsd),
+      activeAudits: row.activeAuditCount ?? 0,
+      maxConcurrentAudits: MAX_SHARED_CONCURRENT_AUDITS,
+      completedAudits: row.completedAuditCount ?? 0,
+      failedAudits: row.failedAuditCount ?? 0,
+    },
+  };
+}
+
+export async function listAdminSharedGrants(): Promise<SharedAdminGrantView[]> {
+  return (await selectAdminSharedGrants()).map(toAdminSharedGrantView);
+}
+
+/**
+ * Projects ONE grant through the same statement the listing uses.
+ *
+ * Exists because the create route used to call `listAdminSharedGrants()` and
+ * then `.find()` the row it had just inserted — the entire fan-out above,
+ * every grant on the instance, to answer a 201 about one of them. Sharing
+ * `selectAdminSharedGrants` rather than hand-rolling a second projection is
+ * the point: two projections would be two places for a field to leak into the
+ * admin response, and only one of them would be reviewed.
+ */
+export async function getAdminSharedGrant(grantId: string): Promise<SharedAdminGrantView | null> {
+  const [row] = await selectAdminSharedGrants(eq(llmSharedGrants.id, grantId)).limit(1);
+  return row ? toAdminSharedGrantView(row) : null;
 }
 
 async function findActiveRecipientGrant(
@@ -511,6 +597,59 @@ export async function reserveSharedAudit(input: SharedAuditReservationInput): Pr
     )).for('update');
     if (!usage) throw new SharedLlmError('shared_usage_unavailable');
 
+    // Self-healing admission. `llm_shared_usage` references only `users`, so
+    // nothing cascades into it: deleting a universe removes its `audit_runs`,
+    // which cascades to `llm_shared_audit_reservations`, and leaves this row
+    // still holding the charge AND the concurrency slot with no reservation
+    // and no run left for the engine or the stranded-reservation sweep to
+    // find. `reconcileSharedUsageCounters()` repairs exactly that, but
+    // `audit-recovery.ts` calls it at BOOT ONLY; on a hosted instance that is
+    // restarted rarely, one universe deletion locks the recipient out of
+    // shared audits for the rest of the UTC month with no self-service
+    // remedy, and their settings page reads "1 of 1 at a time" with no run to
+    // point at. The row is already locked FOR UPDATE, so recomputing the held
+    // totals from the reservations that actually survive costs one indexed
+    // query (llm_shared_reservations_recipient_month_idx covers exactly this
+    // predicate) on the admission path and makes the counter self-healing.
+    //
+    // This is NOT the concurrency guard and must not be mistaken for one —
+    // the `audit_runs_shared_recipient_active_unique` partial index is, and it
+    // is what makes recomputing here safe under concurrency. The counter only
+    // decides whether admission is even attempted; repairing it can therefore
+    // never admit a second live run, it can only stop a phantom hold from
+    // refusing one the index would have allowed.
+    //
+    // Written before the predicates rather than after, deliberately: a repair
+    // that lands after the check would leave THIS call rejected on numbers the
+    // transaction already knew were wrong. If a later predicate in this
+    // transaction throws, the repair rolls back with it — correct, because the
+    // rejection is then a real one and the next admission attempt recomputes
+    // from the same surviving rows.
+    const [held] = await tx.select({
+      heldUsd: sql<string>`COALESCE(SUM(${llmSharedAuditReservations.reservedCostUsd}), 0)::text`,
+      heldCount: sql<number>`COUNT(*)::int`,
+    }).from(llmSharedAuditReservations).where(and(
+      eq(llmSharedAuditReservations.recipientUserId, input.recipientUserId),
+      eq(llmSharedAuditReservations.monthStart, monthStart),
+      eq(llmSharedAuditReservations.state, 'reserved'),
+    ));
+    const heldUsd = Number(held?.heldUsd ?? 0);
+    const heldCount = Number(held?.heldCount ?? 0);
+    let liveReservedUsd = Number(usage.reservedCostUsd);
+    let liveActiveAudits = usage.activeAuditCount;
+    if (liveReservedUsd !== heldUsd || liveActiveAudits !== heldCount) {
+      await tx.update(llmSharedUsage).set({
+        reservedCostUsd: heldUsd.toFixed(6),
+        activeAuditCount: heldCount,
+        updatedAt: new Date(),
+      }).where(and(
+        eq(llmSharedUsage.recipientUserId, input.recipientUserId),
+        eq(llmSharedUsage.monthStart, monthStart),
+      ));
+      liveReservedUsd = heldUsd;
+      liveActiveAudits = heldCount;
+    }
+
     // Key and consent locks follow the grant/usage order consistently.
     const [key] = await tx.select().from(llmApiKeys).where(and(
       eq(llmApiKeys.userId, input.credentialOwnerId),
@@ -523,8 +662,8 @@ export async function reserveSharedAudit(input: SharedAuditReservationInput): Pr
       eq(llmSharedConsents.policyVersion, SHARED_LLM_POLICY_VERSION),
     )).for('update');
     if (!consent) throw new SharedLlmError('shared_llm_consent_required');
-    if (usage.activeAuditCount >= MAX_SHARED_CONCURRENT_AUDITS) throw new SharedLlmError('shared_audit_in_progress');
-    if (Number(usage.settledCostUsd) + Number(usage.reservedCostUsd) + Number(reservedUsd) > env().sharedLlmMonthlyCostUsd) {
+    if (liveActiveAudits >= MAX_SHARED_CONCURRENT_AUDITS) throw new SharedLlmError('shared_audit_in_progress');
+    if (Number(usage.settledCostUsd) + liveReservedUsd + Number(reservedUsd) > env().sharedLlmMonthlyCostUsd) {
       throw new SharedLlmError('shared_monthly_limit_exceeded');
     }
 
@@ -630,10 +769,19 @@ export async function settleSharedAuditReservation(
  * path would overwrite the recorded cost with 0 — erasing the only record of
  * what the provider actually billed for that run.
  *
- * The accounting is identical to a `released` settlement: the hold comes off
- * `reserved_cost_usd`, the concurrency slot is returned, and nothing is
- * charged. Idempotent by the same predicate — a reservation that is no longer
- * `reserved` is left alone.
+ * It does NOT imply "nothing is charged", and the docblock that used to say so
+ * was a review finding: this function settles at `actualCostUsd` under
+ * `terminalState`, so a `succeeded`/`failed` recovery DOES debit
+ * `settled_cost_usd` and bump the completed/failed counters — that is the
+ * whole point of `releaseStrandedSharedReservations` settling a terminal run
+ * at its recorded cost rather than forgiving it. Only the `released` terminal
+ * state charges nothing, and `releaseSharedReservation` below is the caller
+ * that asks for it. A comment that misstates money handling is worse than no
+ * comment, because the next reader trusts it instead of the code.
+ *
+ * What is always true: the hold comes off `reserved_cost_usd` and the
+ * concurrency slot is returned. Idempotent by the same predicate as the normal
+ * settlement — a reservation that is no longer `reserved` is left alone.
  */
 async function finalizeReservationWithoutRun(
   auditRunId: string,
@@ -685,6 +833,20 @@ async function finalizeReservationWithoutRun(
   });
 }
 
+/**
+ * Gives a reservation's hold back and charges NOTHING.
+ *
+ * This is the function the "nothing is charged" reasoning actually describes:
+ * the hold comes off `reserved_cost_usd`, the concurrency slot is returned,
+ * `settled_cost_usd` is untouched and neither the completed nor the failed
+ * counter moves. Used when the run produced no result the recipient can use —
+ * a process death mid-run, an admission that was rolled back — because
+ * billing an administrator for that is the wrong way to be wrong.
+ *
+ * `settledCostUsd` on the reservation row is set to 0 and the state becomes
+ * `released`, which is what distinguishes it in the ledger from a `settled`
+ * row that happened to cost 0.
+ */
 export async function releaseSharedReservation(auditRunId: string): Promise<void> {
   await finalizeReservationWithoutRun(auditRunId, 'released', 0);
 }
@@ -759,10 +921,17 @@ export async function releaseStrandedSharedReservations(): Promise<number> {
  * locked out of shared audits for the rest of the UTC month, which is the
  * exact outcome all of this machinery exists to prevent.
  *
- * Boot-only, and safe there for the same reason the sweep is: the orphan pass
- * has already force-failed every pending/running run, so any reservation still
- * `reserved` is settled or released before this runs, and the recomputed
+ * Called at boot, and safe there for the same reason the sweep is: the orphan
+ * pass has already force-failed every pending/running run, so any reservation
+ * still `reserved` is settled or released before this runs, and the recomputed
  * totals cannot race a live audit.
+ *
+ * Boot is NOT the only repair, and treating it as one was a review finding: a
+ * hosted instance restarts rarely, so a single universe deletion could hold a
+ * recipient out for the rest of the UTC month. `reserveSharedAudit` recomputes
+ * the same totals for the one recipient-month it is admitting, under that
+ * row's FOR UPDATE lock. This function stays for the recipients who never
+ * attempt another audit, and because a whole-table pass at boot is cheap.
  *
  * Deliberately does NOT touch settled/completed/failed counters — those are
  * cumulative history, not a live hold, and nothing can orphan them.

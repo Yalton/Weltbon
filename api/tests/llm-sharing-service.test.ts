@@ -634,6 +634,108 @@ describe('shared LLM grants', () => {
     })).rejects.toMatchObject({ code: 'shared_monthly_limit_exceeded' });
   });
 
+  /**
+   * Reviewer-reproduced strand, #50 final review Important 1.
+   *
+   * `llm_shared_audit_reservations.audit_run_id` cascades from `audit_runs`,
+   * and `audit_runs.universe_id` cascades from `universes`; `llm_shared_usage`
+   * references only `users` and so cascades from nothing. Deleting a universe
+   * with a shared audit in flight therefore removes the run AND the
+   * reservation while leaving `active_audit_count = 1` and
+   * `reserved_cost_usd = 0.2` behind, with nothing left for the engine, the
+   * stranded-reservation sweep (keyed on a reservation row) or orphan recovery
+   * (keyed on a run row) to find. Every later `reserveSharedAudit` for that
+   * recipient then threw `shared_audit_in_progress` until the process was
+   * restarted, and part of their monthly allowance stayed held — a durable,
+   * user-triggerable denial of the whole feature with no self-service remedy.
+   *
+   * The assertions are deliberately ordered as evidence, not as a check that a
+   * bad state is merely absent: the block after the delete PROVES the strand
+   * exists (no run, no reservation, counter still holding), so a later
+   * regression that stops producing the strand cannot make this test vacuous —
+   * it would fail on those lines instead of silently passing. The second
+   * reservation is then compared against the first rather than just asserted
+   * non-throwing, and the held total is pinned to ONE reservation's worth so a
+   * fix that merely bumped the concurrency ceiling would not pass.
+   */
+  it('self-heals a usage counter stranded by a universe deleted mid-audit', async () => {
+    const owner = await createTestUser(handle, { email: 'owner-strand@test.dev', password: 'long-enough-password' });
+    const recipient = await createTestUser(handle, { email: 'recipient-strand@test.dev', password: 'long-enough-password' });
+    await handle.db.update(users).set({ isAdmin: true }).where(eq(users.id, owner.id));
+    const encrypted = encryptKey('sk-ant-strand-test-key', ENCRYPTION_KEY);
+    await handle.db.insert(llmApiKeys).values({
+      userId: owner.id, provider: 'anthropic', ciphertext: encrypted.ciphertext, iv: encrypted.iv,
+      authTag: encrypted.authTag, encryptedKeyVersion: encrypted.version, bodySuffix: encrypted.bodySuffix,
+    });
+    const grant = await createSharedGrant(owner.id, recipient.id, 'anthropic');
+    await consentSharedGrant(recipient.id, grant.id);
+    const [doomedUniverse] = await handle.db.insert(universes)
+      .values({ userId: recipient.id, name: 'Deleted mid-audit' }).returning();
+
+    const stranded = await reserveSharedAudit({
+      recipientUserId: recipient.id, universeId: doomedUniverse.id, scope: 'universe', scopeEntryId: null,
+      provider: 'anthropic', model: 'claude-haiku-4-5-20251001', grantId: grant.id,
+      credentialOwnerId: owner.id, reservationUsd: 0.2,
+    });
+
+    // The user-triggerable action: DELETE /universes/:id permits this while a
+    // shared audit is running.
+    await handle.db.delete(universes).where(eq(universes.id, doomedUniverse.id));
+
+    // Preconditions — the strand actually happened. Without these the test
+    // could pass on a build where the cascade never fired.
+    const survivingRuns = await handle.db.select({ id: auditRuns.id })
+      .from(auditRuns).where(eq(auditRuns.id, stranded.runId));
+    expect(survivingRuns).toHaveLength(0);
+    const survivingReservations = await handle.db.select({ id: llmSharedAuditReservations.id })
+      .from(llmSharedAuditReservations).where(eq(llmSharedAuditReservations.id, stranded.reservationId));
+    expect(survivingReservations).toHaveLength(0);
+    const [strandedUsage] = await handle.db.select({
+      reservedCostUsd: llmSharedUsage.reservedCostUsd,
+      activeAuditCount: llmSharedUsage.activeAuditCount,
+    }).from(llmSharedUsage).where(and(
+      eq(llmSharedUsage.recipientUserId, recipient.id),
+      eq(llmSharedUsage.monthStart, stranded.monthStart),
+    ));
+    expect(strandedUsage).toMatchObject({ reservedCostUsd: '0.200000', activeAuditCount: 1 });
+
+    // The recipient's next attempt must be admitted, not refused by a hold
+    // that has no run behind it.
+    const [freshUniverse] = await handle.db.insert(universes)
+      .values({ userId: recipient.id, name: 'After the strand' }).returning();
+    const recovered = await reserveSharedAudit({
+      recipientUserId: recipient.id, universeId: freshUniverse.id, scope: 'universe', scopeEntryId: null,
+      provider: 'anthropic', model: 'claude-haiku-4-5-20251001', grantId: grant.id,
+      credentialOwnerId: owner.id, reservationUsd: 0.2,
+    });
+    expect(recovered.runId).not.toBe(stranded.runId);
+
+    // Exactly one live reservation is held, not two — the phantom charge was
+    // recomputed away rather than added to.
+    const live = await handle.db.select({ id: llmSharedAuditReservations.id })
+      .from(llmSharedAuditReservations).where(and(
+        eq(llmSharedAuditReservations.recipientUserId, recipient.id),
+        eq(llmSharedAuditReservations.state, 'reserved'),
+      ));
+    expect(live.map((row) => row.id)).toEqual([recovered.reservationId]);
+    expect(await getSharedQuotaSnapshot(recipient.id)).toMatchObject({
+      reservedUsd: '0.2000', activeAudits: 1, maxConcurrentAudits: 1,
+    });
+
+    // Final review Important 4: the admin listing now reads llm_shared_usage
+    // through a join instead of a per-grant getSharedQuotaSnapshot call. A
+    // wrong join predicate (most plausibly the month boundary) would leave
+    // every usage column NULL and coalesce to a tidy all-zero snapshot that no
+    // existing assertion would notice, so the two producers are compared to
+    // EACH OTHER on a recipient who actually holds a live reservation, rather
+    // than each being checked against zero.
+    const [adminRow] = await listAdminSharedGrants();
+    expect(adminRow.usage).toEqual(await getSharedQuotaSnapshot(recipient.id));
+    expect(adminRow.usage).toMatchObject({ reservedUsd: '0.2000', activeAudits: 1 });
+
+    await settleSharedAuditReservation(recovered.runId, 'released', 0);
+  });
+
   it('admits exactly one concurrent shared reservation and returns a typed result when revocation races admission', async () => {
     const owner = await createTestUser(handle, { email: 'owner-race@test.dev', password: 'long-enough-password' });
     const recipient = await createTestUser(handle, { email: 'recipient-race@test.dev', password: 'long-enough-password' });

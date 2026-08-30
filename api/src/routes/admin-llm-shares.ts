@@ -2,6 +2,7 @@ import { OpenAPIHono, createRoute, z } from '@hono/zod-openapi';
 import { requireAdmin, type AuthVariables } from '../middleware/auth.js';
 import {
   createSharedGrant,
+  getAdminSharedGrant,
   listAdminSharedGrants,
   revokeSharedGrant,
   SHARED_PROVIDER_NAMES,
@@ -161,7 +162,11 @@ export const adminLlmShareRoutes = new OpenAPIHono<AppEnv>({
     try {
       const body = c.req.valid('json');
       const created = await createSharedGrant(c.var.userId, body.recipientUserId, body.provider);
-      const view = (await listAdminSharedGrants()).find((grant) => grant.id === created.id);
+      // Projects the one row just inserted. This used to call
+      // listAdminSharedGrants() and .find() the created id — the whole
+      // instance's grant listing to answer a 201 about a single grant — which
+      // was a review finding once that listing fanned out per grant.
+      const view = await getAdminSharedGrant(created.id);
       if (!view) return c.json({ error: 'Shared connection is temporarily unavailable', code: 'shared_connection_unavailable' }, 503);
       return c.json(adminGrant(view), 201);
     } catch (error) {
