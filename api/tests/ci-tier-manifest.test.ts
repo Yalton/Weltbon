@@ -19,3 +19,7 @@ test('four shards are disjoint and reconstruct the merge tier', () => {
   expect(new Set(shards.flat())).toEqual(new Set(INTEGRATION_TIERS.merge));
   expect(shards.flat()).toHaveLength(INTEGRATION_TIERS.merge.length);
 });
+
+test('rejects shards with no selected files', () => {
+  expect(() => shardFiles(['tests/example.test.ts'], 2, 2)).toThrow('Empty shard');
+});
