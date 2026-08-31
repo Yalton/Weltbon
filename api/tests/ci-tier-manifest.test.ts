@@ -7,6 +7,9 @@ import { shardFiles } from '../scripts/run-integration-tier.mjs';
 
 const runnerPath = fileURLToPath(new URL('../scripts/run-integration-tier.mjs', import.meta.url));
 const ciWorkflow = readFileSync(new URL('../../.github/workflows/ci.yml', import.meta.url), 'utf8');
+const nightlyWorkflow = readFileSync(new URL('../../.github/workflows/nightly-integration.yml', import.meta.url), 'utf8');
+const releaseWorkflow = readFileSync(new URL('../../.github/workflows/release.yml', import.meta.url), 'utf8');
+const publishWorkflow = readFileSync(new URL('../../.github/workflows/publish-ghcr.yml', import.meta.url), 'utf8');
 function workflowJob(name: string) {
   const match = new RegExp(`^  ${name}:\\n([\\s\\S]*?)(?=^  \\S|(?![\\s\\S]))`, 'm').exec(ciWorkflow);
   expect(match).not.toBeNull();
@@ -39,6 +42,14 @@ test('CI routes integration tiers to isolated runners and dynamic ports', () => 
   expect(smoke).toContain(`env:\n          DATABASE_URL: ${dynamicDatabaseUrl}\n        run: cd api && pnpm test:integration:smoke`);
   expect(merge).toContain("shard: ['1/4', '2/4', '3/4', '4/4']");
   expect(merge).toContain(mergeCommand);
+});
+
+test('trusted workflows use isolated labels and nightly coverage is scheduled', () => {
+  expect(releaseWorkflow).toContain('[self-hosted, weltbon-release]');
+  expect(publishWorkflow).toContain('[self-hosted, weltbon-publish]');
+  expect(publishWorkflow).toContain('group: publish-ghcr');
+  expect(nightlyWorkflow).toContain("cron: '30 6 * * *'");
+  expect(nightlyWorkflow).toContain('pnpm test:integration:nightly');
 });
 
 test('nightly contains every DB-gated file exactly once', () => {

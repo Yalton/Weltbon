@@ -36,6 +36,10 @@ permissions:
   contents: read
   packages: write
 
+concurrency:
+  group: publish-ghcr
+  cancel-in-progress: false
+
 jobs:
   build-and-push:
     # Self-hosted, NOT ubuntu-latest — see the same note in release.yml. The
@@ -56,7 +60,7 @@ jobs:
     #     self-hosted runner on a public repo executes any fork's pull-request
     #     code; making this repo public without moving these jobs back to
     #     hosted runners would hand that code the Docker socket.
-    runs-on: [self-hosted, citreum]
+    runs-on: [self-hosted, weltbon-publish]
     steps:
       - name: Checkout
         uses: actions/checkout@v4
