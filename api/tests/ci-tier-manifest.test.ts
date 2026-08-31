@@ -19,21 +19,26 @@ test('CI routes integration tiers to isolated runners and dynamic ports', () => 
   const merge = workflowJob('integration-merge');
   const dynamicDatabaseUrl = 'postgresql://weltbon:weltbon@localhost:${{ job.services.postgres.ports[5432] }}/weltbon';
   const migrationStep = `env:\n          DATABASE_URL: ${dynamicDatabaseUrl}\n        run: cd api && pnpm db:migrate`;
+  const mergeCommand = 'env:\n          DATABASE_URL: ' + dynamicDatabaseUrl + '\n        run: cd api && pnpm test:integration:merge -- ${{ matrix.shard }}';
+  const runnerLabels = [...ciWorkflow.matchAll(/^    runs-on: (\[[^\n]+\])$/gm)].map(([, labels]) => labels);
 
   expect(unit).toContain('runs-on: [self-hosted, weltbon-ci-unit]');
   expect(smoke).toContain('runs-on: [self-hosted, weltbon-ci-integration]');
   expect(merge).toContain('runs-on: [self-hosted, weltbon-ci-integration]');
-  expect(ciWorkflow).not.toMatch(/runs-on:\s*\[self-hosted,\s*citreum\]/);
+  expect(runnerLabels).toEqual([
+    '[self-hosted, weltbon-ci-unit]',
+    '[self-hosted, weltbon-ci-integration]',
+    '[self-hosted, weltbon-ci-integration]',
+  ]);
 
   for (const integrationJob of [smoke, merge]) {
-    expect(integrationJob).toMatch(/^        ports:\n          - 5432$/m);
+    expect(integrationJob).toMatch(/^        ports:\n          - 5432\n        options:/m);
     expect(integrationJob).toContain(migrationStep);
-    expect(integrationJob).toContain(`env:\n          DATABASE_URL: ${dynamicDatabaseUrl}\n        run:`);
   }
 
-  expect(smoke).toContain('run: cd api && pnpm test:integration:smoke');
+  expect(smoke).toContain(`env:\n          DATABASE_URL: ${dynamicDatabaseUrl}\n        run: cd api && pnpm test:integration:smoke`);
   expect(merge).toContain("shard: ['1/4', '2/4', '3/4', '4/4']");
-  expect(merge).toContain('run: cd api && pnpm test:integration:merge -- ${{ matrix.shard }}');
+  expect(merge).toContain(mergeCommand);
 });
 
 test('nightly contains every DB-gated file exactly once', () => {
