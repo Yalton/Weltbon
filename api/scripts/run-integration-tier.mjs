@@ -8,9 +8,7 @@ export function shardFiles(files, index, count) {
   if (!Number.isInteger(index) || !Number.isInteger(count) || count < 1 || index < 1 || index > count) {
     throw new Error('Invalid shard');
   }
-  const selected = files.filter((_, position) => position % count === index - 1);
-  if (selected.length === 0) throw new Error('Empty shard');
-  return selected;
+  return files.filter((_, position) => position % count === index - 1);
 }
 
 function parseShard(value) {
@@ -40,6 +38,11 @@ function main(args) {
     }
   } catch {
     return fail();
+  }
+
+  if (files.length === 0) {
+    console.log(`No integration tests selected for tier "${positional[0]}" shard "${positional[1]}".`);
+    return;
   }
 
   if (list) {
