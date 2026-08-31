@@ -84,6 +84,14 @@ jobs:
           fetch-depth: 0
           token: ${{ secrets.RELEASE_TOKEN || secrets.GITHUB_TOKEN }}
 
+      # The self-hosted runner image provides Node 10, but this repository and
+      # scripts/next-version.mjs require Node 22 (native ESM support included).
+      # Pin it here instead of relying on whichever runtime a runner image has.
+      - name: Set up Node.js
+        uses: actions/setup-node@v4
+        with:
+          node-version: 22
+
       - name: Warn when the release token is missing
         if: env.HAS_RELEASE_TOKEN != 'true'
         run: |

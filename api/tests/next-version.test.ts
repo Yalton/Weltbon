@@ -11,10 +11,26 @@
  *
  * No DB, no network — do NOT add this file to DB_GATED_TESTS.
  */
+import fs from 'node:fs';
+import path from 'node:path';
+import { fileURLToPath } from 'node:url';
 import { describe, expect, test } from 'vitest';
 import { computeBump, nextVersion, computeNextVersion, parseGitLog, GIT_LOG_FORMAT } from '../../scripts/next-version.mjs';
 
 const c = (subject: string, body = '') => ({ subject, body });
+const repoRoot = path.resolve(path.dirname(fileURLToPath(import.meta.url)), '../..');
+const releaseWorkflow = fs.readFileSync(path.join(repoRoot, '.github/workflows/release.yml'), 'utf8');
+
+describe('release workflow runtime', () => {
+  test('installs the repository Node 22 runtime before executing the ESM version script', () => {
+    const setupNode = releaseWorkflow.indexOf('uses: actions/setup-node@v4');
+    const computeVersion = releaseWorkflow.indexOf('node scripts/next-version.mjs');
+
+    expect(setupNode).toBeGreaterThan(-1);
+    expect(releaseWorkflow.slice(setupNode, computeVersion)).toMatch(/node-version:\s*22/);
+    expect(computeVersion).toBeGreaterThan(setupNode);
+  });
+});
 
 describe('computeBump', () => {
   test('a feat commit is a minor bump', () => {
