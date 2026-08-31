@@ -2,6 +2,7 @@ import { expect, test } from 'vitest';
 import { DB_GATED_TESTS, INTEGRATION_TIERS } from '../ci/integration-tiers.mjs';
 
 test('nightly contains every DB-gated file exactly once', () => {
+  expect(new Set(DB_GATED_TESTS).size).toBe(DB_GATED_TESTS.length);
   expect(new Set(INTEGRATION_TIERS.nightly)).toEqual(new Set(DB_GATED_TESTS));
   expect(INTEGRATION_TIERS.nightly).toHaveLength(DB_GATED_TESTS.length);
 });
