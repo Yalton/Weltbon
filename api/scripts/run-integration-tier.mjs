@@ -41,6 +41,7 @@ function main(args) {
   }
 
   if (files.length === 0) {
+    if (list) return;
     console.log(`No integration tests selected for tier "${positional[0]}" shard "${positional[1]}".`);
     return;
   }

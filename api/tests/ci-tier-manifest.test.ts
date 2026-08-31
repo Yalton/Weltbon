@@ -1,6 +1,10 @@
+import { spawnSync } from 'node:child_process';
+import { fileURLToPath } from 'node:url';
 import { expect, test } from 'vitest';
 import { DB_GATED_TESTS, INTEGRATION_TIERS } from '../ci/integration-tiers.mjs';
 import { shardFiles } from '../scripts/run-integration-tier.mjs';
+
+const runnerPath = fileURLToPath(new URL('../scripts/run-integration-tier.mjs', import.meta.url));
 
 test('nightly contains every DB-gated file exactly once', () => {
   expect(new Set(DB_GATED_TESTS).size).toBe(DB_GATED_TESTS.length);
@@ -22,4 +26,11 @@ test('four shards are disjoint and reconstruct the merge tier', () => {
 
 test('returns an empty selection for shards with no files', () => {
   expect(shardFiles(['tests/example.test.ts'], 2, 2)).toEqual([]);
+});
+
+test('list mode emits no output for an empty shard', () => {
+  const result = spawnSync(process.execPath, [runnerPath, 'smoke', '8/8', '--list'], { encoding: 'utf8' });
+  expect(result.status).toBe(0);
+  expect(result.stdout).toBe('');
+  expect(result.stderr).toBe('');
 });
