@@ -6,41 +6,33 @@
 #     sub-second, and root `pnpm install` already installs its deps, so it
 #     rides in this lane rather than adding a job (a new job would need its
 #     own install AND a new required-status-check entry under D-16).
-#   - Lane 2 (integration, ~3 min): postgres:16-alpine service container; runs
-#     drizzle migrations then `pnpm test:integration` (the DB-gated suites
-#     registered in api/vitest.config.ts DB_GATED_TESTS, including the 8
-#     suites named in Phase 27 SC3).
+#   - Lane 2 (integration, ~3 min): postgres:16-alpine service containers; runs
+#     drizzle migrations, the smoke tier, and four sharded merge jobs (the
+#     DB-gated suites registered in api/ci/integration-tiers.mjs).
 #
 # Triggers per D-15: every pull_request (any base) + every push to master.
 # No path filter — see CONTEXT.md <deferred> for rationale.
 #
 # Branch protection (D-16) is an operator action: GitHub -> Repo Settings ->
 # Branches -> master -> Branch protection rules -> Require status checks to
-# pass before merging -> mark `ci / unit` AND `ci / integration` as required.
+# pass before merging -> mark `ci / unit`, `ci / integration-smoke`, and
+# `ci / integration-merge (...)` as required.
 # Documented in the phase SUMMARY.
 #
-# Runner: `[self-hosted, citreum]` — the `llcbox-citreum` runner registered to
-# this repository, not a GitHub-hosted one. GitHub-hosted minutes stopped being
-# billable on the org account, and every job failed before checkout with "The
-# job was not started because recent account payments have failed"; self-hosted
-# minutes are free. The repository is PRIVATE, which is what makes this safe:
-# a self-hosted runner on a public repo executes code from any fork's pull
-# request. Do not make this repository public without moving CI back to hosted
-# runners or gating the workflow on `pull_request_target` review.
+# Runner labels separate the unit and integration workloads so they can be
+# routed to runners with the right capacity. The repository is PRIVATE, which
+# is what makes self-hosted execution safe: a self-hosted runner on a public
+# repo executes code from any fork's pull request. Do not make this repository
+# public without moving CI back to hosted runners or gating the workflow on
+# `pull_request_target` review.
 #
-# The runner is one machine, so the two lanes below run sequentially rather
-# than in parallel. It also shares a host with the production deployment, which
-# is why the integration lane's postgres service publishes host port 5441 and
-# not 5432. 5432 is the port `docker compose up -d db` — the DEV database this
-# repo's project documentation tells everyone to start on their box — binds, and the port a
-# production compose stack would publish if it ever stopped being
-# container-network-only. Sharing it cost both directions at once: a dev DB
-# already up made every CI run fail to bind, a CI run in flight blocked that
-# container from restarting, and in the worst version DATABASE_URL below would
-# have addressed a real database while the suite's per-file schema teardown
-# ran. 5441 is claimed by nothing on this host and is one off from the 5440 the
-# local integration DB uses, so the two cannot collide either. Change it only
-# together with DATABASE_URL below — they are one setting written twice.
+# GitHub assigns each service container's host port dynamically. The workflow
+# uses `${{ job.services.postgres.ports[5432] }}` in each database step, so CI
+# never assumes a host port and can coexist with local or production services.
+#
+# The repository uses self-hosted runners because GitHub-hosted minutes stopped
+# being billable on the org account, and every job failed before checkout with
+# "The job was not started because recent account payments have failed".
 #
 # Test-only postgres creds (weltbon/weltbon/weltbon) are scoped to the
 # ephemeral service container and mirror docker-compose.yml verbatim per D-14.
@@ -66,7 +58,7 @@ concurrency:
 jobs:
   unit:
     name: unit
-    runs-on: [self-hosted, citreum]
+    runs-on: [self-hosted, weltbon-ci-unit]
     steps:
       - name: Checkout
         uses: actions/checkout@v4
@@ -103,9 +95,9 @@ jobs:
       - name: Run desktop tests
         run: cd desktop && pnpm test
 
-  integration:
-    name: integration
-    runs-on: [self-hosted, citreum]
+  integration-smoke:
+    name: integration-smoke
+    runs-on: [self-hosted, weltbon-ci-integration]
     services:
       postgres:
         image: postgres:16-alpine
@@ -114,16 +106,12 @@ jobs:
           POSTGRES_USER: weltbon
           POSTGRES_PASSWORD: weltbon
         ports:
-          # Host 5441, container 5432. See the header: 5432 on this runner
-          # belongs to the dev/production compose stack, not to CI.
-          - 5441:5432
+          - 5432
         options: >-
           --health-cmd "pg_isready -U weltbon -d weltbon"
           --health-interval 10s
           --health-timeout 5s
           --health-retries 5
-    env:
-      DATABASE_URL: postgresql://weltbon:weltbon@localhost:5441/weltbon
     steps:
       - name: Checkout
         uses: actions/checkout@v4
@@ -141,7 +129,58 @@ jobs:
         run: pnpm install --frozen-lockfile
 
       - name: Apply database migrations
+        env:
+          DATABASE_URL: postgresql://weltbon:weltbon@localhost:${{ job.services.postgres.ports[5432] }}/weltbon
         run: cd api && pnpm db:migrate
 
-      - name: Run api integration tests
-        run: cd api && pnpm test:integration
+      - name: Run api integration smoke tests
+        env:
+          DATABASE_URL: postgresql://weltbon:weltbon@localhost:${{ job.services.postgres.ports[5432] }}/weltbon
+        run: cd api && pnpm test:integration:smoke
+
+  integration-merge:
+    name: integration-merge (${{ matrix.shard }})
+    runs-on: [self-hosted, weltbon-ci-integration]
+    strategy:
+      fail-fast: false
+      matrix:
+        shard: ['1/4', '2/4', '3/4', '4/4']
+    services:
+      postgres:
+        image: postgres:16-alpine
+        env:
+          POSTGRES_DB: weltbon
+          POSTGRES_USER: weltbon
+          POSTGRES_PASSWORD: weltbon
+        ports:
+          - 5432
+        options: >-
+          --health-cmd "pg_isready -U weltbon -d weltbon"
+          --health-interval 10s
+          --health-timeout 5s
+          --health-retries 5
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Set up pnpm
+        uses: pnpm/action-setup@v4
+
+      - name: Set up Node.js
+        uses: actions/setup-node@v4
+        with:
+          node-version: 22
+          cache: pnpm
+
+      - name: Install dependencies
+        run: pnpm install --frozen-lockfile
+
+      - name: Apply database migrations
+        env:
+          DATABASE_URL: postgresql://weltbon:weltbon@localhost:${{ job.services.postgres.ports[5432] }}/weltbon
+        run: cd api && pnpm db:migrate
+
+      - name: Run api integration merge shard
+        env:
+          DATABASE_URL: postgresql://weltbon:weltbon@localhost:${{ job.services.postgres.ports[5432] }}/weltbon
+        run: cd api && pnpm test:integration:merge -- ${{ matrix.shard }}

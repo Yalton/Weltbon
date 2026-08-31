@@ -1,10 +1,20 @@
 import { spawnSync } from 'node:child_process';
+import { readFileSync } from 'node:fs';
 import { fileURLToPath } from 'node:url';
 import { expect, test } from 'vitest';
 import { DB_GATED_TESTS, INTEGRATION_TIERS } from '../ci/integration-tiers.mjs';
 import { shardFiles } from '../scripts/run-integration-tier.mjs';
 
 const runnerPath = fileURLToPath(new URL('../scripts/run-integration-tier.mjs', import.meta.url));
+const ciWorkflow = readFileSync(new URL('../../.github/workflows/ci.yml', import.meta.url), 'utf8');
+
+test('CI routes integration tiers to isolated runners and dynamic ports', () => {
+  expect(ciWorkflow).toContain('weltbon-ci-unit');
+  expect(ciWorkflow).toContain('weltbon-ci-integration');
+  expect(ciWorkflow).toContain('ports:\n          - 5432');
+  expect(ciWorkflow).toContain('job.services.postgres.ports[5432]');
+  expect(ciWorkflow).toContain("shard: ['1/4', '2/4', '3/4', '4/4']");
+});
 
 test('nightly contains every DB-gated file exactly once', () => {
   expect(new Set(DB_GATED_TESTS).size).toBe(DB_GATED_TESTS.length);
