@@ -38,7 +38,25 @@ permissions:
 
 jobs:
   build-and-push:
-    runs-on: ubuntu-latest
+    # Self-hosted, NOT ubuntu-latest — see the same note in release.yml. The
+    # org billing block stops GitHub-hosted runners from starting at all, so a
+    # tag would otherwise ship nothing.
+    #
+    # This job DOES build and push an image, which makes it heavier than the
+    # release job in three ways worth knowing before touching it:
+    #
+    #   - It builds on the box that also runs production. Disk is the real
+    #     constraint (~19 GB free when this was written, against a ~20 GB image
+    #     store); a `docker system prune` may become part of routine care here.
+    #   - buildx and the Docker socket come from the runner container's mounted
+    #     /var/run/docker.sock, so builds land in the HOST daemon and outlive
+    #     the job.
+    #   - It authenticates to GHCR with GITHUB_TOKEN, which is fine on a
+    #     self-hosted runner only because this repository is private. A
+    #     self-hosted runner on a public repo executes any fork's pull-request
+    #     code; making this repo public without moving these jobs back to
+    #     hosted runners would hand that code the Docker socket.
+    runs-on: [self-hosted, citreum]
     steps:
       - name: Checkout
         uses: actions/checkout@v4

@@ -46,6 +46,21 @@ on:
         type: boolean
         default: false
 
+# ── STILL ON GITHUB-HOSTED RUNNERS, AND CURRENTLY BLOCKED ───────────────────
+# release.yml and publish-ghcr.yml moved to the self-hosted citreum runner on
+# 2026-08-30, because the org billing block stops GitHub-hosted runners from
+# starting at all. This workflow did NOT move, and the reason is structural
+# rather than a decision left half-made: the Windows and macOS targets need
+# Windows and macOS runners, which the self-hosted Linux box cannot provide.
+#
+# The Linux target could technically move, but electron-builder's AppImage and
+# .deb outputs need packaging tools (fpm, fuse, dpkg-deb) the runner image does
+# not carry, so moving it would trade a blocked build for a broken one.
+#
+# Consequence while the billing block lasts: a tag ships the container image and
+# NO desktop artifacts. That is a real gap, not a quiet one — the release job's
+# verify step only checks publish-ghcr, so nothing else will tell you.
+
 permissions:
   contents: write   # required to upload assets onto the Release (both jobs)
 
