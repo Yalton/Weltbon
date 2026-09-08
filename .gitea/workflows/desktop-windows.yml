@@ -51,7 +51,9 @@ jobs:
           ./node_modules/.bin/electron-builder --win --x64 \
             --config electron-builder.yml --config.extraMetadata.version="$ver"
       - name: Upload Windows artifact
-        uses: actions/upload-artifact@v4
+        # act_runner 0.6 uses the Gitea v1 artifact service; this fork keeps
+        # the v4 protocol but accepts Gitea instead of rejecting it as GHES.
+        uses: ChristopherHX/gitea-upload-artifact@v4
         with:
           name: weltbon-windows-x64
           path: desktop/release/*.exe
