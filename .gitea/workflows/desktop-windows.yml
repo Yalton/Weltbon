@@ -1,0 +1,59 @@
+name: desktop-windows
+
+on:
+  workflow_dispatch:
+  push:
+    branches:
+      - fix/release-ci-vm
+    paths:
+      - '.gitea/workflows/desktop-windows.yml'
+      - 'desktop/**'
+      - 'api/**'
+      - 'web/**'
+      - 'package.json'
+      - 'pnpm-lock.yaml'
+
+jobs:
+  windows:
+    name: windows-x64
+    runs-on: wine-latest
+    env:
+      HOME: /tmp
+      PNPM_HOME: /tmp/pnpm
+      WINEDEBUG: -all
+      WINEPREFIX: /tmp/wine
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 22
+      - uses: pnpm/action-setup@v4
+      - name: Install dependencies
+        run: pnpm install --frozen-lockfile
+      - name: Stage the API for Windows packaging
+        shell: bash
+        run: |
+          set -euo pipefail
+          base=$(node -p "require('./package.json').version")
+          export WELTBON_VERSION="${base}-dev.$(git rev-parse --short HEAD)"
+          export WELTBON_COMMIT="$(git rev-parse --short HEAD)"
+          export WELTBON_TARGET_PLATFORM=win32
+          export WELTBON_TARGET_ARCH=x64
+          cd desktop
+          pnpm run build
+          pnpm run stage
+      - name: Build Windows desktop package
+        shell: bash
+        run: |
+          set -euo pipefail
+          ver=$(node -p "require('./desktop/.stage/api/version.json').version")
+          cd desktop
+          ./node_modules/.bin/electron-builder --win --x64 \
+            --config electron-builder.yml --config.extraMetadata.version="$ver"
+      - name: Upload Windows artifact
+        uses: actions/upload-artifact@v4
+        with:
+          name: weltbon-windows-x64
+          path: desktop/release/*.exe
+          if-no-files-found: error
+          retention-days: 14
