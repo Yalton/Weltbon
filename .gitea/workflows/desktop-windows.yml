@@ -16,7 +16,7 @@ on:
 jobs:
   windows:
     name: windows-x64
-    runs-on: wine-latest
+    runs-on: wine-node22
     env:
       HOME: /tmp
       PNPM_HOME: /tmp/pnpm
