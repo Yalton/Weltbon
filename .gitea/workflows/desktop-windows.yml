@@ -26,7 +26,7 @@ jobs:
       - name: Stage the API for Windows packaging
         shell: bash
         env:
-          WELTBON_TAG_VERSION: ${{ startsWith(github.ref, 'refs/tags/v') && github.ref_name || '' }}
+          WELTBON_TAG_VERSION: ${{ github.event_name == 'push' && startsWith(github.ref, 'refs/tags/v') && github.ref_name || '' }}
         run: |
           set -euo pipefail
           if [ -n "${WELTBON_TAG_VERSION}" ]; then
