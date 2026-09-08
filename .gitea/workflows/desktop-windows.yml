@@ -6,6 +6,10 @@ on:
     tags:
       - 'v[0-9]+.[0-9]+.[0-9]+'
 
+permissions:
+  contents: read
+  releases: write
+
 jobs:
   windows:
     name: windows-x64
@@ -49,6 +53,52 @@ jobs:
           cd desktop
           ./node_modules/.bin/electron-builder --win --x64 \
             --config electron-builder.yml --config.extraMetadata.version="$ver"
+      - name: Publish Gitea release
+        if: github.event_name == 'push' && startsWith(github.ref, 'refs/tags/v')
+        shell: bash
+        env:
+          GITEA_TOKEN: ${{ secrets.GITEA_TOKEN }}
+          GITEA_SERVER_URL: ${{ github.server_url }}
+          GITEA_REPOSITORY: ${{ github.repository }}
+          GITEA_REF_NAME: ${{ github.ref_name }}
+        run: |
+          set -euo pipefail
+          asset=$(find desktop/release -maxdepth 1 -type f -name '*.exe' -print -quit)
+          test -n "$asset"
+          api="${GITEA_SERVER_URL}/api/v1/repos/${GITEA_REPOSITORY}"
+          response=$(curl --silent --show-error --write-out $'\n%{http_code}' \
+            --header "Authorization: token ${GITEA_TOKEN}" \
+            "${api}/releases/tags/${GITEA_REF_NAME}")
+          status=${response##*$'\n'}
+          release=${response%$'\n'*}
+          if [ "$status" = 404 ]; then
+            release=$(curl --fail-with-body --silent --show-error \
+              --request POST \
+              --header "Authorization: token ${GITEA_TOKEN}" \
+              --header 'Content-Type: application/json' \
+              --data "$(jq -nc --arg tag "$GITEA_REF_NAME" --arg name "Weltbon $GITEA_REF_NAME" '{tag_name: $tag, name: $name, target_commitish: env.GITHUB_SHA, draft: false, prerelease: false}')" \
+              "${api}/releases")
+          elif [ "$status" != 200 ]; then
+            printf 'could not look up release %s (HTTP %s)\n' "$GITEA_REF_NAME" "$status" >&2
+            exit 1
+          fi
+          release_id=$(jq -er '.id' <<<"$release")
+          asset_name=$(basename "$asset")
+          old_asset=$(curl --fail-with-body --silent --show-error \
+            --header "Authorization: token ${GITEA_TOKEN}" \
+            "${api}/releases/${release_id}/assets" | jq -r --arg name "$asset_name" '.[] | select(.name == $name) | .id' | head -n 1)
+          if [ -n "$old_asset" ]; then
+            curl --fail-with-body --silent --show-error \
+              --request DELETE \
+              --header "Authorization: token ${GITEA_TOKEN}" \
+              "${api}/releases/${release_id}/assets/${old_asset}"
+          fi
+          asset_name_uri=$(jq -rn --arg name "$asset_name" '$name | @uri')
+          curl --fail-with-body --silent --show-error \
+            --request POST \
+            --header "Authorization: token ${GITEA_TOKEN}" \
+            --form "attachment=@${asset}" \
+            "${api}/releases/${release_id}/assets?name=${asset_name_uri}"
       - name: Upload Windows artifact
         # act_runner 0.6 uses the Gitea v1 artifact service; this fork keeps
         # the v4 protocol but accepts Gitea instead of rejecting it as GHES.
