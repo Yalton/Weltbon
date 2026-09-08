@@ -42,6 +42,8 @@ test('CI routes integration tiers to isolated runners and dynamic ports', () => 
   }
 
   expect(smoke).toContain(`env:\n          DATABASE_URL: ${dynamicDatabaseUrl}\n        run: cd api && pnpm test:integration:smoke`);
+  expect(merge).toContain('needs: [unit, integration-smoke]');
+  expect(merge).toContain('max-parallel: 2');
   expect(merge).toContain("shard: ['1/4', '2/4', '3/4', '4/4']");
   expect(merge).toContain(mergeCommand);
   expect(merge).toContain("if: github.event_name == 'push'");
