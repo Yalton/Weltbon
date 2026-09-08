@@ -131,8 +131,12 @@ jobs:
           api="${GITEA_SERVER_URL}/api/v1/repos/${GITEA_REPOSITORY}"
           artifacts=$(curl --fail --silent --show-error --header "Authorization: token ${GITEA_TOKEN}" "${api}/actions/runs/${GITEA_RUN_ID}/artifacts")
           for name in weltbon-windows-x64 weltbon-linux-x64; do
-            url=$(node -e 'const [json, name] = process.argv.slice(1); const artifact = JSON.parse(json).artifacts.find(item => item.name === name); if (!artifact) process.exit(1); process.stdout.write(artifact.archive_download_url);' "$artifacts" "$name")
-            curl --fail --silent --show-error --header "Authorization: token ${GITEA_TOKEN}" --output "${name}.zip" "$url"
+            artifact_id=$(node -e 'const [json, name] = process.argv.slice(1); const artifact = JSON.parse(json).artifacts.find(item => item.name === name); if (!artifact) process.exit(1); process.stdout.write(String(artifact.id));' "$artifacts" "$name")
+            # Gitea 1.25's archive_download_url is a web route which can return
+            # HTML to Actions tokens. The API ZIP endpoint is authenticated and
+            # always returns the archive bytes.
+            url="${api}/actions/artifacts/${artifact_id}/zip"
+            curl --fail --location --silent --show-error --header "Authorization: token ${GITEA_TOKEN}" --output "${name}.zip" "$url"
             unzip -q "${name}.zip" -d release-assets
           done
           test "$(find release-assets -maxdepth 1 -name '*.exe' | wc -l)" -eq 1

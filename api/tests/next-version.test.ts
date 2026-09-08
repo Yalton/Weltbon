@@ -39,6 +39,13 @@ describe('Gitea release workflow safety', () => {
     expect(giteaReleaseWorkflow).toMatch(/^\s+ref: master$/m);
     expect(giteaReleaseWorkflow).toContain('git push --atomic origin HEAD:master "v${VERSION}"');
   });
+
+  test('uses Gitea\'s authenticated artifact ZIP endpoint for the final publisher', () => {
+    const desktopRelease = fs.readFileSync(path.join(repoRoot, '.gitea/workflows/desktop-windows.yml'), 'utf8');
+    expect(desktopRelease).toContain('actions/artifacts/${artifact_id}/zip');
+    expect(desktopRelease).toContain('curl --fail --location --silent --show-error');
+    expect(desktopRelease).not.toContain('process.stdout.write(artifact.archive_download_url)');
+  });
 });
 
 describe('computeBump', () => {
