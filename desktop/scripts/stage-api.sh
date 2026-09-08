@@ -52,6 +52,8 @@ REPO="$(cd "$(dirname "${BASH_SOURCE[0]}")/../.." && pwd)"
 STAGE_ROOT="$REPO/desktop/.stage"
 STAGE="$STAGE_ROOT/api"
 ESBUILD="$REPO/desktop/node_modules/.bin/esbuild"
+TARGET_PLATFORM="${WELTBON_TARGET_PLATFORM:-linux}"
+TARGET_ARCH="${WELTBON_TARGET_ARCH:-x64}"
 
 # Packages that must NOT be bundled, and why each one resists it:
 #   bcrypt, sharp            native .node binaries, rebuilt against Electron's ABI
@@ -62,6 +64,11 @@ EXTERNALS=(bcrypt sharp @electric-sql/pglite pg)
 
 echo "[stage] repo:  $REPO"
 echo "[stage] stage: $STAGE"
+case "$TARGET_PLATFORM/$TARGET_ARCH" in
+  linux/x64|darwin/x64|darwin/arm64|win32/x64) ;;
+  *) echo "[stage] FATAL: unsupported target $TARGET_PLATFORM/$TARGET_ARCH" >&2; exit 2 ;;
+esac
+echo "[stage] target: $TARGET_PLATFORM/$TARGET_ARCH"
 
 rm -rf "$STAGE_ROOT"
 mkdir -p "$STAGE/dist"
@@ -90,7 +97,11 @@ echo "[stage] 3/6 installing the unbundlable externals as a flat tree"
 # versions come from the api's own installed tree so the staged copies match the
 # lockfile exactly rather than whatever the registry resolves today.
 node "$REPO/desktop/scripts/write-stage-manifest.mjs" "$REPO" "$STAGE" "${EXTERNALS[@]}"
-(cd "$STAGE" && npm install --omit=dev --no-audit --no-fund --loglevel=error)
+if [ "$TARGET_PLATFORM" = win32 ]; then
+  (cd "$STAGE" && npm install --omit=dev --include=optional --ignore-scripts --os=win32 --cpu="$TARGET_ARCH" --no-audit --no-fund --loglevel=error)
+else
+  (cd "$STAGE" && npm install --omit=dev --no-audit --no-fund --loglevel=error)
+fi
 
 echo "[stage] 4/6 copying what the bundle cannot carry"
 # Migrations and the SPA are read from disk at runtime. Fonts join them now: the
@@ -125,14 +136,21 @@ node -e '
 ' "$STAGE_VERSION" "$STAGE_COMMIT" "$STAGE_BUILT_AT" "$STAGE/version.json"
 echo "[stage]     build identity: $STAGE_VERSION${STAGE_COMMIT:+ ($STAGE_COMMIT)}"
 
-echo "[stage] 5/6 rebuilding native modules for Electron's ABI, in the staged tree"
+echo "[stage] 5/6 preparing native modules for Electron's ABI, in the staged tree"
 # bcrypt and sharp are compiled against Node's ABI by default. They IMPORT fine
 # either way and fail at the first real call, so this step failing silently is
 # the difference between a working app and one that dies creating its first user.
-(cd "$REPO/desktop" && ./node_modules/.bin/electron-rebuild -f -w bcrypt,sharp -m "$STAGE")
+if [ "$TARGET_PLATFORM" = win32 ]; then
+  # npm selected bcrypt's Node-API Windows prebuild and sharp's Windows optional
+  # package above. Rebuilding here would compile Linux binaries into the .exe.
+  echo "[stage]     keeping Windows x64 prebuilt native modules"
+else
+  (cd "$REPO/desktop" && ./node_modules/.bin/electron-rebuild -f -w bcrypt,sharp -m "$STAGE")
+fi
 
 echo "[stage] 6/6 asserting the properties that only fail on Windows"
-node "$REPO/desktop/scripts/assert-staged-tree.mjs" "$STAGE" "${EXTERNALS[@]}"
+WELTBON_TARGET_PLATFORM="$TARGET_PLATFORM" WELTBON_TARGET_ARCH="$TARGET_ARCH" \
+  node "$REPO/desktop/scripts/assert-staged-tree.mjs" "$STAGE" "${EXTERNALS[@]}"
 
 echo "[stage] done: $STAGE"
 du -sh "$STAGE"

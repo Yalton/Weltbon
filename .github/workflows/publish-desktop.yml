@@ -46,20 +46,12 @@ on:
         type: boolean
         default: false
 
-# ── STILL ON GITHUB-HOSTED RUNNERS, AND CURRENTLY BLOCKED ───────────────────
-# release.yml and publish-ghcr.yml moved to the self-hosted citreum runner on
-# 2026-08-30, because the org billing block stops GitHub-hosted runners from
-# starting at all. This workflow did NOT move, and the reason is structural
-# rather than a decision left half-made: the Windows and macOS targets need
-# Windows and macOS runners, which the self-hosted Linux box cannot provide.
-#
-# The Linux target could technically move, but electron-builder's AppImage and
-# .deb outputs need packaging tools (fpm, fuse, dpkg-deb) the runner image does
-# not carry, so moving it would trade a blocked build for a broken one.
-#
-# Consequence while the billing block lasts: a tag ships the container image and
-# NO desktop artifacts. That is a real gap, not a quiet one — the release job's
-# verify step only checks publish-ghcr, so nothing else will tell you.
+# ── DEDICATED CI VM ─────────────────────────────────────────────────────────
+# The CI VM is Linux-only, so both release targets run in electron-builder's
+# Wine image. It supplies the Windows cross-build toolchain as well as the
+# Linux packaging tools while the runner's Docker socket supplies the container
+# runtime. macOS remains manual/experimental below because it cannot be built
+# or signed on Linux.
 
 permissions:
   contents: write   # required to upload assets onto the Release (both jobs)
@@ -67,7 +59,7 @@ permissions:
 jobs:
   release:
     name: ${{ matrix.name }}
-    runs-on: ${{ matrix.os }}
+    runs-on: [self-hosted, weltbon-ci-integration]
     strategy:
       # A Windows failure must NOT cancel the Linux build. Linux is the verified
       # platform and the one that has to ship no matter what.
@@ -75,8 +67,9 @@ jobs:
       matrix:
         include:
           - name: linux
-            os: ubuntu-latest
-            builder_flag: '--linux'
+            target_platform: linux
+            target_arch: x64
+            builder_flag: '--linux --x64'
             # Space-separated globs, expanded by bash in the delivery steps.
             globs: 'desktop/release/*.AppImage desktop/release/*.deb'
             # Newline-separated, which is what upload-artifact's `path` wants.
@@ -86,8 +79,9 @@ jobs:
           # windows-2022 pinned deliberately: Electron's bundled node-gyp does
           # not recognize the Visual Studio 2026 image behind windows-latest.
           - name: windows
-            os: windows-2022
-            builder_flag: '--win'
+            target_platform: win32
+            target_arch: x64
+            builder_flag: '--win --x64'
             globs: 'desktop/release/*.exe'
             artifact_path: 'desktop/release/*.exe'
 
@@ -103,6 +97,17 @@ jobs:
         with:
           node-version: 22
           cache: pnpm
+
+      - name: Install pinned GitHub CLI
+        shell: bash
+        run: |
+          set -euo pipefail
+          archive=gh_2.100.0_linux_amd64.tar.gz
+          curl -fsSLO "https://github.com/cli/cli/releases/download/v2.100.0/$archive"
+          echo 'e4d4bb4498e8d007abe545b6568926793ace1b6447da598294a610018cb164be  '"$archive" | sha256sum -c -
+          tar -xzf "$archive"
+          echo "$PWD/gh_2.100.0_linux_amd64/bin" >> "$GITHUB_PATH"
+          "$PWD/gh_2.100.0_linux_amd64/bin/gh" --version
 
       # `shell: bash` on EVERY run step from here down. The Windows runner
       # defaults to PowerShell, where `set -euo pipefail`, `shopt` and the array
@@ -123,6 +128,8 @@ jobs:
         shell: bash
         env:
           WELTBON_VERSION: ${{ startsWith(github.ref, 'refs/tags/v') && github.ref_name || '' }}
+          WELTBON_TARGET_PLATFORM: ${{ matrix.target_platform }}
+          WELTBON_TARGET_ARCH: ${{ matrix.target_arch }}
         run: |
           set -euo pipefail
           if [ -n "${WELTBON_VERSION}" ]; then
