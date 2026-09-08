@@ -16,10 +16,12 @@ import path from 'node:path';
 import { fileURLToPath } from 'node:url';
 import { describe, expect, test } from 'vitest';
 import { computeBump, nextVersion, computeNextVersion, parseGitLog, GIT_LOG_FORMAT } from '../../scripts/next-version.mjs';
+import { nextReleaseVersion } from '../../scripts/next-release-version.mjs';
 
 const c = (subject: string, body = '') => ({ subject, body });
 const repoRoot = path.resolve(path.dirname(fileURLToPath(import.meta.url)), '../..');
 const releaseWorkflow = fs.readFileSync(path.join(repoRoot, '.github/workflows/release.yml'), 'utf8');
+const giteaReleaseWorkflow = fs.readFileSync(path.join(repoRoot, '.gitea/workflows/release.yml'), 'utf8');
 
 describe('release workflow runtime', () => {
   test('installs the repository Node 22 runtime before executing the ESM version script', () => {
@@ -29,6 +31,13 @@ describe('release workflow runtime', () => {
     expect(setupNode).toBeGreaterThan(-1);
     expect(releaseWorkflow.slice(setupNode, computeVersion)).toMatch(/node-version:\s*22/);
     expect(computeVersion).toBeGreaterThan(setupNode);
+  });
+});
+
+describe('Gitea release workflow safety', () => {
+  test('always releases master and atomically pushes its commit with the tag', () => {
+    expect(giteaReleaseWorkflow).toMatch(/^\s+ref: master$/m);
+    expect(giteaReleaseWorkflow).toContain('git push --atomic origin HEAD:master "v${VERSION}"');
   });
 });
 
@@ -127,6 +136,24 @@ describe('nextVersion', () => {
   test('an unknown bump kind is rejected rather than silently ignored', () => {
     // @ts-expect-error deliberately wrong, this is the guard being tested
     expect(() => nextVersion('1.2.3', 'huge')).toThrow(/unknown bump/i);
+  });
+});
+
+describe('nextReleaseVersion', () => {
+  test('moves one decimal minor rung at a time', () => {
+    expect(nextReleaseVersion('0.8.0')).toBe('0.9.0');
+    expect(nextReleaseVersion('1.0.0')).toBe('1.1.0');
+  });
+
+  test('rolls 0.9.0 to 1.0.0 instead of 0.10.0', () => {
+    expect(nextReleaseVersion('0.9.0')).toBe('1.0.0');
+    expect(nextReleaseVersion('1.9.0')).toBe('2.0.0');
+  });
+
+  test('rejects pre-release, patch, and malformed source versions', () => {
+    expect(() => nextReleaseVersion('0.8.1')).toThrow(/release-ladder/i);
+    expect(() => nextReleaseVersion('0.8.0-dev.1')).toThrow(/release-ladder/i);
+    expect(() => nextReleaseVersion('v0.8.0')).toThrow(/release-ladder/i);
   });
 });
 

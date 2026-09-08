@@ -21,6 +21,7 @@ Weltbon's API, web client, sync contracts, and downloadable desktop app form the
 - [Contributing](CONTRIBUTING.md)
 - [Security Reports](SECURITY.md)
 - [Release Testing Matrix](docs/release-testing-matrix-v1.md)
+- [Gitea release process](docs/gitea-releases.md)
 - [License](#license)
 
 ## Tech Stack

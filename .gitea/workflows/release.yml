@@ -1,0 +1,77 @@
+# Cut the next public release from Gitea Actions.
+#
+# The source version is the release authority. Each manual run advances one
+# ladder rung: 0.8.0 -> 0.9.0 -> 1.0.0 -> 1.1.0. Pushing the annotated tag then
+# triggers desktop-release, which publishes Windows, AppImage, and .deb assets.
+name: cut-release
+
+on:
+  workflow_dispatch:
+
+permissions:
+  contents: write
+
+concurrency:
+  group: cut-release
+  cancel-in-progress: false
+
+jobs:
+  cut:
+    runs-on: ubuntu-latest
+    env:
+      HOME: /tmp
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          # A manual dispatch can select another ref in the UI. Releases must
+          # always be based on, and update, the canonical branch.
+          ref: master
+          fetch-depth: 0
+          token: ${{ secrets.GITEA_TOKEN }}
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 22
+      - name: Calculate the next release version
+        id: version
+        shell: bash
+        run: |
+          set -euo pipefail
+          current=$(node -p "require('./package.json').version")
+          next=$(node scripts/next-release-version.mjs "$current")
+          echo "current=$current"
+          echo "version=$next" >> "$GITHUB_OUTPUT"
+      - name: Set every package version
+        shell: bash
+        env:
+          VERSION: ${{ steps.version.outputs.version }}
+        run: |
+          set -euo pipefail
+          for file in package.json api/package.json web/package.json desktop/package.json; do
+            node -e '
+              const fs = require("node:fs");
+              const [file, version] = process.argv.slice(1);
+              const pkg = JSON.parse(fs.readFileSync(file, "utf8"));
+              pkg.version = version;
+              fs.writeFileSync(file, JSON.stringify(pkg, null, 2) + "\n");
+            ' "$file" "$VERSION"
+          done
+          git diff --check
+          test "$(node -p "require('./package.json').version")" = "$VERSION"
+          test "$(node -p "require('./api/package.json').version")" = "$VERSION"
+          test "$(node -p "require('./web/package.json').version")" = "$VERSION"
+          test "$(node -p "require('./desktop/package.json').version")" = "$VERSION"
+      - name: Commit and push the release tag
+        shell: bash
+        env:
+          VERSION: ${{ steps.version.outputs.version }}
+        run: |
+          set -euo pipefail
+          git config user.name 'gitea-actions[bot]'
+          git config user.email 'gitea-actions[bot]@repo.billbert.co'
+          git add package.json api/package.json web/package.json desktop/package.json
+          git commit -m "chore(release): v${VERSION}" \
+            -m 'Automated by Gitea Actions using Weltbon minor-only release policy.'
+          git tag -a "v${VERSION}" -m "v${VERSION}"
+          # Never leave master with a version bump but no release tag. Gitea
+          # accepts both ref updates as one all-or-nothing transaction.
+          git push --atomic origin HEAD:master "v${VERSION}"
