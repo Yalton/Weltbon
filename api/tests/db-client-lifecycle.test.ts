@@ -50,6 +50,10 @@ describe('db/client lifecycle under concurrent close', () => {
     }
   });
 
+  // PGlite initialization took 7.5s even in the lightly loaded PR lane and
+  // exceeded Vitest's 10s default while master ran the four merge shards.
+  // This test exercises real disk-backed engines, so give that I/O a bounded
+  // per-test budget without weakening the rest of the unit suite.
   it('closeDb() during an in-flight initDb() closes that engine instead of orphaning it', async () => {
     vi.resetModules();
     // @ts-expect-error query-suffix import is unresolvable to tsc but fine at runtime
@@ -71,7 +75,7 @@ describe('db/client lifecycle under concurrent close', () => {
     const again = await initDb();
     expect(again).toBeDefined();
     await closeDb();
-  });
+  }, 30_000);
 
   it('a stale initDb() finally cannot clear a NEWER in-flight promise', async () => {
     // Routing this interleaving through the real closeDb()/initDb() public API
