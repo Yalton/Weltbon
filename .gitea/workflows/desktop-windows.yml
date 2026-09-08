@@ -72,7 +72,7 @@ jobs:
           status=${response##*$'\n'}
           release=${response%$'\n'*}
           if [ "$status" = 404 ]; then
-            release=$(curl --fail-with-body --silent --show-error \
+            release=$(curl --fail --silent --show-error \
               --request POST \
               --header "Authorization: token ${GITEA_TOKEN}" \
               --header 'Content-Type: application/json' \
@@ -84,17 +84,17 @@ jobs:
           fi
           release_id=$(jq -er '.id' <<<"$release")
           asset_name=$(basename "$asset")
-          old_asset=$(curl --fail-with-body --silent --show-error \
+          old_asset=$(curl --fail --silent --show-error \
             --header "Authorization: token ${GITEA_TOKEN}" \
             "${api}/releases/${release_id}/assets" | jq -r --arg name "$asset_name" '.[] | select(.name == $name) | .id' | head -n 1)
           if [ -n "$old_asset" ]; then
-            curl --fail-with-body --silent --show-error \
+            curl --fail --silent --show-error \
               --request DELETE \
               --header "Authorization: token ${GITEA_TOKEN}" \
               "${api}/releases/${release_id}/assets/${old_asset}"
           fi
           asset_name_uri=$(jq -rn --arg name "$asset_name" '$name | @uri')
-          curl --fail-with-body --silent --show-error \
+          curl --fail --silent --show-error \
             --request POST \
             --header "Authorization: token ${GITEA_TOKEN}" \
             --form "attachment=@${asset}" \
