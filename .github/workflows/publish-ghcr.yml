@@ -60,7 +60,9 @@ jobs:
     #     self-hosted runner on a public repo executes any fork's pull-request
     #     code; making this repo public without moving these jobs back to
     #     hosted runners would hand that code the Docker socket.
-    runs-on: [self-hosted, weltbon-publish]
+    # The dedicated trusted publishing runner is not provisioned yet. Keep
+    # publishing on the existing production host until its replacement is online.
+    runs-on: [self-hosted, citreum]
     steps:
       - name: Checkout
         uses: actions/checkout@v4

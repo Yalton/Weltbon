@@ -10,6 +10,7 @@ const ciWorkflow = readFileSync(new URL('../../.github/workflows/ci.yml', import
 const nightlyWorkflow = readFileSync(new URL('../../.github/workflows/nightly-integration.yml', import.meta.url), 'utf8');
 const releaseWorkflow = readFileSync(new URL('../../.github/workflows/release.yml', import.meta.url), 'utf8');
 const publishWorkflow = readFileSync(new URL('../../.github/workflows/publish-ghcr.yml', import.meta.url), 'utf8');
+const runnerRunbook = readFileSync(new URL('../../docs/operations/shared-ci-runner.md', import.meta.url), 'utf8');
 function workflowJob(name: string) {
   const match = new RegExp(`^  ${name}:\\n([\\s\\S]*?)(?=^  \\S|(?![\\s\\S]))`, 'm').exec(ciWorkflow);
   expect(match).not.toBeNull();
@@ -22,7 +23,7 @@ test('CI routes integration tiers to isolated runners and dynamic ports', () => 
   const merge = workflowJob('integration-merge');
   const dynamicDatabaseUrl = 'postgresql://weltbon:weltbon@localhost:${{ job.services.postgres.ports[5432] }}/weltbon';
   const migrationStep = `env:\n          DATABASE_URL: ${dynamicDatabaseUrl}\n        run: cd api && pnpm db:migrate`;
-  const mergeCommand = 'env:\n          DATABASE_URL: ' + dynamicDatabaseUrl + '\n        run: cd api && pnpm test:integration:merge -- ${{ matrix.shard }}';
+  const mergeCommand = 'env:\n          DATABASE_URL: ' + dynamicDatabaseUrl + '\n        run: cd api && pnpm test:integration:merge ${{ matrix.shard }}';
   const runnerLabels = [...ciWorkflow.matchAll(/^    runs-on: (\[[^\n]+\])$/gm)].map(([, labels]) => labels);
 
   expect(unit).toContain('runs-on: [self-hosted, weltbon-ci-unit]');
@@ -42,14 +43,24 @@ test('CI routes integration tiers to isolated runners and dynamic ports', () => 
   expect(smoke).toContain(`env:\n          DATABASE_URL: ${dynamicDatabaseUrl}\n        run: cd api && pnpm test:integration:smoke`);
   expect(merge).toContain("shard: ['1/4', '2/4', '3/4', '4/4']");
   expect(merge).toContain(mergeCommand);
+  expect(merge).toContain("if: github.event_name == 'push'");
 });
 
-test('trusted workflows use isolated labels and nightly coverage is scheduled', () => {
-  expect(releaseWorkflow).toContain('[self-hosted, weltbon-release]');
-  expect(publishWorkflow).toContain('[self-hosted, weltbon-publish]');
+test('nightly coverage is scheduled while release labels stay on provisioned runners', () => {
+  expect(releaseWorkflow).toContain('[self-hosted, citreum]');
+  expect(publishWorkflow).toContain('[self-hosted, citreum]');
   expect(publishWorkflow).toContain('group: publish-ghcr');
   expect(nightlyWorkflow).toContain("cron: '30 6 * * *'");
   expect(nightlyWorkflow).toContain('pnpm test:integration:nightly');
+});
+
+test('runner runbook permits only the CI VM Docker socket for service containers', () => {
+  expect(runnerRunbook).toContain('/var/run/docker.sock:/var/run/docker.sock');
+  expect(runnerRunbook).toContain('CI VM Docker socket only');
+  expect(runnerRunbook).toContain('Never mount an LLCBox Docker socket');
+  expect(runnerRunbook).toContain('All private Citreum-LLC repositories; public repositories excluded');
+  expect(runnerRunbook).toMatch(/trusted to run arbitrary\s+workflow code on the CI VM/);
+  expect(runnerRunbook).toMatch(/current workflows continue to\s+target `citreum`/);
 });
 
 test('nightly contains every DB-gated file exactly once', () => {

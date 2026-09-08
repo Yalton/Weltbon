@@ -140,6 +140,7 @@ jobs:
 
   integration-merge:
     name: integration-merge (${{ matrix.shard }})
+    if: github.event_name == 'push'
     runs-on: [self-hosted, weltbon-ci-integration]
     strategy:
       fail-fast: false
@@ -183,4 +184,4 @@ jobs:
       - name: Run api integration merge shard
         env:
           DATABASE_URL: postgresql://weltbon:weltbon@localhost:${{ job.services.postgres.ports[5432] }}/weltbon
-        run: cd api && pnpm test:integration:merge -- ${{ matrix.shard }}
+        run: cd api && pnpm test:integration:merge ${{ matrix.shard }}
