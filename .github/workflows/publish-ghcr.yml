@@ -36,6 +36,10 @@ permissions:
   contents: read
   packages: write
 
+concurrency:
+  group: publish-ghcr
+  cancel-in-progress: false
+
 jobs:
   build-and-push:
     # Self-hosted, NOT ubuntu-latest — see the same note in release.yml. The
@@ -56,6 +60,8 @@ jobs:
     #     self-hosted runner on a public repo executes any fork's pull-request
     #     code; making this repo public without moving these jobs back to
     #     hosted runners would hand that code the Docker socket.
+    # The dedicated trusted publishing runner is not provisioned yet. Keep
+    # publishing on the existing production host until its replacement is online.
     runs-on: [self-hosted, citreum]
     steps:
       - name: Checkout

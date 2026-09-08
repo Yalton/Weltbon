@@ -62,6 +62,8 @@ jobs:
     # Move this back to ubuntu-latest once billing is restored: a release job
     # holds RELEASE_TOKEN, and a hosted runner is a cleaner place for a
     # repo-writing credential than a box that also runs production.
+    # The dedicated trusted release runner is not provisioned yet. Keep this
+    # on the existing trusted host until its replacement is online.
     runs-on: [self-hosted, citreum]
     # The release commit is itself a push to master. Without this guard the
     # workflow re-enters, finds `chore(release):` in range (no bump, since chore
