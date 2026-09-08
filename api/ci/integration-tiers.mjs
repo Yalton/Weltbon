@@ -12,6 +12,7 @@ export const DB_GATED_TESTS = [
   'tests/auth.test.ts',
   'tests/auth-refresh-concurrency.test.ts',
   'tests/categories.test.ts',
+  'tests/ci-entry-smoke.test.ts',
   'tests/entries.test.ts',
   'tests/entry-search.test.ts',
   'tests/export-docx.test.ts',
@@ -99,12 +100,11 @@ const NIGHTLY_ONLY = new Set([
 
 const smokeFiles = [
   'tests/auth.test.ts',
-  'tests/entries.test.ts',
   'tests/requireAuth-pat.test.ts',
   'tests/sync-run.test.ts',
-  'tests/sync-apply.test.ts',
   'tests/llm-sharing-migration.test.ts',
   'tests/updated-at-bump.test.ts',
+  'tests/ci-entry-smoke.test.ts',
 ];
 
 export const INTEGRATION_TIERS = {

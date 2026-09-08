@@ -70,6 +70,14 @@ test('nightly contains every DB-gated file exactly once', () => {
 });
 
 test('smoke is a strict subset of merge, and merge is a subset of nightly', () => {
+  expect(INTEGRATION_TIERS.smoke).toEqual([
+    'tests/auth.test.ts',
+    'tests/requireAuth-pat.test.ts',
+    'tests/sync-run.test.ts',
+    'tests/llm-sharing-migration.test.ts',
+    'tests/updated-at-bump.test.ts',
+    'tests/ci-entry-smoke.test.ts',
+  ]);
   expect(INTEGRATION_TIERS.smoke.every((file) => INTEGRATION_TIERS.merge.includes(file))).toBe(true);
   expect(INTEGRATION_TIERS.merge.every((file) => INTEGRATION_TIERS.nightly.includes(file))).toBe(true);
   expect(INTEGRATION_TIERS.smoke.length).toBeLessThan(INTEGRATION_TIERS.merge.length);
