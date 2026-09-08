@@ -27,6 +27,7 @@ test('CI routes integration tiers to isolated runners and dynamic ports', () => 
   const runnerLabels = [...ciWorkflow.matchAll(/^    runs-on: (\[[^\n]+\])$/gm)].map(([, labels]) => labels);
 
   expect(unit).toContain('runs-on: [self-hosted, weltbon-ci-unit]');
+  expect(unit).toContain('run: cd api && pnpm test -- --maxWorkers=1');
   expect(smoke).toContain('runs-on: [self-hosted, weltbon-ci-integration]');
   expect(merge).toContain('runs-on: [self-hosted, weltbon-ci-integration]');
   expect(runnerLabels).toEqual([
