@@ -3,15 +3,8 @@ name: desktop-windows
 on:
   workflow_dispatch:
   push:
-    branches:
-      - fix/release-ci-vm
-    paths:
-      - '.gitea/workflows/desktop-windows.yml'
-      - 'desktop/**'
-      - 'api/**'
-      - 'web/**'
-      - 'package.json'
-      - 'pnpm-lock.yaml'
+    tags:
+      - 'v[0-9]+.[0-9]+.[0-9]+'
 
 jobs:
   windows:
@@ -53,7 +46,7 @@ jobs:
       - name: Upload Windows artifact
         # act_runner 0.6 uses the Gitea v1 artifact service; this fork keeps
         # the v4 protocol but accepts Gitea instead of rejecting it as GHES.
-        uses: ChristopherHX/gitea-upload-artifact@v4
+        uses: ChristopherHX/gitea-upload-artifact@81f940d004763f986ba3582c007fd842dd5cb0d7
         with:
           name: weltbon-windows-x64
           path: desktop/release/*.exe
