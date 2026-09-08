@@ -6,9 +6,9 @@
 #     sub-second, and root `pnpm install` already installs its deps, so it
 #     rides in this lane rather than adding a job (a new job would need its
 #     own install AND a new required-status-check entry under D-16).
-#   - Lane 2 (integration, ~3 min): postgres:16-alpine service containers; runs
-#     drizzle migrations, the smoke tier, and four sharded merge jobs (the
-#     DB-gated suites registered in api/ci/integration-tiers.mjs).
+#   - Lane 2 (integration): postgres:16-alpine service containers; runs
+#     drizzle migrations and the smoke tier, then four sharded merge jobs (the
+#     DB-gated suites registered in api/ci/integration-tiers.mjs) two at a time.
 #
 # Triggers per D-15: every pull_request (any base) + every push to master.
 # No path filter — see CONTEXT.md <deferred> for rationale.
@@ -140,9 +140,14 @@ jobs:
   integration-merge:
     name: integration-merge (${{ matrix.shard }})
     if: github.event_name == 'push'
+    # An 8-core host cannot reliably run smoke plus four disk-backed database
+    # lanes at once. Wait for the PR-equivalent gates, then run two shards at
+    # a time so unrelated database setup hooks do not starve each other.
+    needs: [unit, integration-smoke]
     runs-on: [self-hosted, weltbon-ci-integration]
     strategy:
       fail-fast: false
+      max-parallel: 2
       matrix:
         shard: ['1/4', '2/4', '3/4', '4/4']
     services:
