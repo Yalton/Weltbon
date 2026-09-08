@@ -99,6 +99,7 @@ jobs:
     runs-on: [self-hosted, weltbon-ci-integration]
     services:
       postgres:
+        # Disposable CI data: cap each memory-backed filesystem at 1 GiB.
         image: postgres:16-alpine
         env:
           POSTGRES_DB: weltbon
@@ -107,6 +108,7 @@ jobs:
         ports:
           - 5432
         options: >-
+          --tmpfs /var/lib/postgresql/data:rw,size=1g
           --health-cmd "pg_isready -U weltbon -d weltbon"
           --health-interval 10s
           --health-timeout 5s
@@ -152,6 +154,7 @@ jobs:
         shard: ['1/4', '2/4', '3/4', '4/4']
     services:
       postgres:
+        # Disposable CI data: cap each memory-backed filesystem at 1 GiB.
         image: postgres:16-alpine
         env:
           POSTGRES_DB: weltbon
@@ -160,6 +163,7 @@ jobs:
         ports:
           - 5432
         options: >-
+          --tmpfs /var/lib/postgresql/data:rw,size=1g
           --health-cmd "pg_isready -U weltbon -d weltbon"
           --health-interval 10s
           --health-timeout 5s

@@ -49,6 +49,19 @@ test('CI routes integration tiers to isolated runners and dynamic ports', () => 
   expect(merge).toContain("if: github.event_name == 'push'");
 });
 
+test.each(['integration-smoke', 'integration-merge'])('%s keeps disposable PostgreSQL data on bounded tmpfs', (name) => {
+  const job = workflowJob(name);
+  const postgres = /^      postgres:\n([\s\S]*?)(?=^    steps:)/m.exec(job)?.[1];
+  expect(postgres).toBeDefined();
+  expect(postgres).toContain('image: postgres:16-alpine');
+  const options = /^        options: >-\n((?:          .+\n)+)/m.exec(postgres ?? '')?.[1];
+  expect(options).toContain('--tmpfs /var/lib/postgresql/data:rw,size=1g');
+  expect(options).toContain('--health-cmd "pg_isready -U weltbon -d weltbon"');
+  expect(options).toContain('--health-interval 10s');
+  expect(options).toContain('--health-timeout 5s');
+  expect(options).toContain('--health-retries 5');
+});
+
 test('nightly coverage is scheduled while release labels stay on provisioned runners', () => {
   expect(releaseWorkflow).toContain('[self-hosted, citreum]');
   expect(publishWorkflow).toContain('[self-hosted, citreum]');
