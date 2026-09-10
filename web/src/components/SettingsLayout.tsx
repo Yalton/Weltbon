@@ -36,7 +36,7 @@ export function SettingsLayout() {
               Visual
             </NavLink>
           </li>
-          {authMode === 'server' && isAdmin && (
+          {authMode === 'server' && (
             <>
               <li>
                 <NavLink
@@ -54,6 +54,10 @@ export function SettingsLayout() {
                   API tokens
                 </NavLink>
               </li>
+            </>
+          )}
+          {authMode === 'server' && isAdmin && (
+            <>
               <li>
                 <NavLink
                   to="/settings/users"
