@@ -139,6 +139,31 @@ describe('WikilinkText — Phase 45 XREF-04 resolution', () => {
     expect(link.getAttribute('href')).toBe('/universes/universe-1/entries/entry-aliased-id');
   });
 
+  // ── #60: source-path aliases from a Markdown import ──────────────────────
+
+  it('resolves a path-form wikilink through the source-path alias an import stored', () => {
+    const wikis = makeWikis({
+      entryTitles: new Map([['ayin pockets', 'entry-ayin-id']]), // H1-derived title
+      entryAliases: new Map([['lore/ayin_pockets', 'entry-ayin-id']]),
+    });
+    renderWikilink('see [[lore/ayin_pockets|Ayin pocket]]', wikis);
+
+    const link = screen.getByRole('link', { name: 'Ayin pocket' });
+    expect(link.getAttribute('href')).toBe('/universes/universe-1/entries/entry-ayin-id');
+  });
+
+  it('resolves a vault-absolute ref to the same alias, label untouched', () => {
+    const wikis = makeWikis({
+      entryTitles: new Map(),
+      entryAliases: new Map([['lore/ayin_pockets', 'entry-ayin-id']]),
+    });
+    renderWikilink('see [[/lore/ayin_pockets]]', wikis);
+
+    // The label keeps the slash the author typed; only the lookup is normalized.
+    const link = screen.getByRole('link', { name: '/lore/ayin_pockets' });
+    expect(link.getAttribute('href')).toBe('/universes/universe-1/entries/entry-ayin-id');
+  });
+
   // ── D-01 precedence: title beats alias ────────────────────────────────────
 
   it('title match beats alias when same token matches both (D-01 title > alias)', () => {

@@ -36,6 +36,7 @@ import {
   links as linksTable,
   categories as categoriesTable,
 } from '../db/schema.js';
+import { sourcePathDisplayForms } from './ingest-markdown.js';
 
 // ─── Constants (D-24) ────────────────────────────────────────────────────────
 
@@ -121,6 +122,82 @@ export type CommitResult = {
   linksCreated: number;
   categoriesCreated: number;
 };
+
+/**
+ * Per-alias character cap, mirroring the entries route's alias schema so an
+ * ingested entry can still be PATCHed without the client having to prune what
+ * the importer wrote.
+ */
+const MAX_ALIAS_LENGTH = 100;
+
+/**
+ * Issue #60 — decide which source-path aliases each accepted entry keeps.
+ *
+ * An Obsidian vault addresses notes by file (`[[lore/ayin_pockets]]`,
+ * `[[ayin_pockets]]`), not by the H1 the importer turns into a title. Preview
+ * now resolves those refs, but the *rendered* entry re-resolves them through
+ * WikilinkText's title → alias → dictionary ladder, so the path forms have to
+ * survive the commit or every such link falls into the dictionary
+ * missing-term flow the moment the import finishes.
+ *
+ * Four candidates are dropped, all for the same reason: an alias that can
+ * never win a lookup is not a mapping, it is a wrong label on the entry.
+ *   - equal to the entry's own title — the title tier already answers it;
+ *   - equal to another accepted entry's title, or an existing universe title —
+ *     title outranks alias in both resolvers, so the alias is unreachable and
+ *     names an entry that isn't its owner;
+ *   - a basename two accepted files share — whichever entry got it would
+ *     capture links meant for the other, and nothing downstream reviews that;
+ *   - over MAX_ALIAS_LENGTH.
+ *
+ * Returned parallel to `accepted`, one array per entry, path form before
+ * basename form.
+ *
+ * @param accepted        Accepted entries with their batch-relative path and *effective* title.
+ * @param existingTitles  Titles already in the universe (any case).
+ */
+export function planSourceAliases(
+  accepted: Array<{ path: string; title: string }>,
+  existingTitles: string[],
+): string[][] {
+  const takenTitles = new Set<string>();
+  for (const t of existingTitles) takenTitles.add(t.trim().toLowerCase());
+  for (const e of accepted) takenTitles.add(e.title.trim().toLowerCase());
+
+  // Count basename claims across the batch so ambiguous ones can be dropped.
+  const baseClaims = new Map<string, number>();
+  for (const e of accepted) {
+    const forms = sourcePathDisplayForms(e.path);
+    const base = forms[forms.length - 1].toLowerCase();
+    baseClaims.set(base, (baseClaims.get(base) ?? 0) + 1);
+  }
+
+  return accepted.map((e) => {
+    const ownTitle = e.title.trim().toLowerCase();
+    const forms = sourcePathDisplayForms(e.path);
+    const kept: string[] = [];
+    const seen = new Set<string>();
+
+    for (let i = 0; i < forms.length; i++) {
+      const form = forms[i];
+      const key = form.toLowerCase();
+      const isBasename = i === forms.length - 1 && forms.length > 1;
+
+      if (form.length === 0 || form.length > MAX_ALIAS_LENGTH) continue;
+      if (seen.has(key)) continue;
+      // An alias equal to any title — including this entry's own — loses to the
+      // title tier, so it is never reachable.
+      if (takenTitles.has(key) && key !== ownTitle) continue;
+      if (key === ownTitle) continue;
+      if (isBasename && (baseClaims.get(key) ?? 0) > 1) continue;
+
+      seen.add(key);
+      kept.push(form);
+    }
+
+    return kept;
+  });
+}
 
 // ─── Service ─────────────────────────────────────────────────────────────────
 
@@ -219,6 +296,13 @@ export async function commitIngest(
     }
   }
 
+  // 7c. #60: source-path aliases, so filename links keep resolving after the
+  //     import. Computed here because it needs the existing titles just read.
+  const sourceAliases = planSourceAliases(
+    accepted.map((e, idx) => ({ path: e.path, title: effectiveTitles[idx] })),
+    existingTitleRows.map((r) => r.title),
+  );
+
   // 8. Compute the LOGICAL row cap. This is defense-in-depth, NOT an OOM guard:
   //    it runs after the whole body is already parsed into memory. The pre-parse
   //    raw-body OOM guard is the commit route's bodyLimit (INGEST_MAX_BODY_BYTES).
@@ -312,6 +396,7 @@ export async function commitIngest(
         entryType: e.entryType,
         body: e.body,
         tags: e.tags,
+        aliases: sourceAliases[idx],
         meta: e.meta,
         categoryId,
       };
