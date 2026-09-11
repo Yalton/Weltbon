@@ -41,7 +41,7 @@ import type { MiddlewareHandler } from 'hono';
 import { eq } from 'drizzle-orm';
 import { ZodError } from 'zod';
 import { db } from '../db/client.js';
-import { universes, entries, categories } from '../db/schema.js';
+import { universes, entries, categories, links } from '../db/schema.js';
 import { requireUniverse } from '../utils/ownership.js';
 import {
   parseBatch,
@@ -61,6 +61,7 @@ import {
   CommitSizeError,
 } from '../services/ingest-commit.js';
 import { convertDocx, DocxFormatError, type DocxConversion } from '../services/ingest-docx/index.js';
+import { planWikilinkRepair } from '../services/repair-wikilinks.js';
 import {
   DOCX_LIMITS,
   createDocxWorkBudget,
@@ -534,6 +535,64 @@ const commitRoute = createRoute({
   },
 });
 
+const repairResultDocSchema = z.object({
+  applied: z.boolean(),
+  entriesScanned: z.number().int().nonnegative(),
+  aliasesAdded: z.number().int().nonnegative(),
+  linksCreated: z.number().int().nonnegative(),
+  entriesUpdated: z.number().int().nonnegative(),
+  unresolved: z.array(
+    z.object({
+      entryId: z.string().uuid(),
+      target: z.string(),
+      reason: z.enum(['ambiguous', 'no_match']),
+    }),
+  ),
+});
+
+const repairRoute = createRoute({
+  method: 'post',
+  path: '/repair-links',
+  tags: ['Ingest'],
+  summary: 'Backfill source-path aliases and native links for an imported universe (#60)',
+  description:
+    'Reconstructs the filename aliases an Obsidian vault imported before #60 never recorded, and writes the link rows that import skipped. Defaults to a dry run: pass { "apply": true } to write. The dry run returns exactly what apply would do.',
+  security: [{ bearerAuth: [] }],
+  request: {
+    params: uidParams,
+    body: {
+      content: {
+        'application/json': {
+          schema: z.object({ apply: z.boolean().optional() }),
+        },
+      },
+      required: false,
+    },
+  },
+  responses: {
+    200: {
+      content: { 'application/json': { schema: repairResultDocSchema } },
+      description: 'Repair plan (dry run) or the result of applying it.',
+    },
+    401: {
+      content: { 'application/json': { schema: errorSchema } },
+      description: 'Missing or invalid bearer token.',
+    },
+    403: {
+      content: { 'application/json': { schema: errorSchema } },
+      description: 'Universe is owned by another user.',
+    },
+    404: {
+      content: { 'application/json': { schema: errorSchema } },
+      description: 'Universe not found.',
+    },
+    500: {
+      content: { 'application/json': { schema: errorSchema } },
+      description: 'Internal repair error.',
+    },
+  },
+});
+
 // ─── Router ──────────────────────────────────────────────────────────────────
 
 export const ingestRoutes = new OpenAPIHono<AppEnv>()
@@ -759,11 +818,13 @@ export const ingestRoutes = new OpenAPIHono<AppEnv>()
       );
     }
 
-    // 5. Read parser context — ONE query for entries (id+title only, T-11-04
-    //    bound), one for categories. parseBatch is IO-free; the endpoint owns
-    //    these reads per the 11-02 SUMMARY contract.
+    // 5. Read parser context — ONE query for entries (id+title+aliases,
+    //    T-11-04 bound), one for categories. parseBatch is IO-free; the
+    //    endpoint owns these reads per the 11-02 SUMMARY contract.
+    //    #60: aliases carry the source paths of an earlier import of the same
+    //    vault, so a second upload resolves `[[lore/note]]` into it.
     const existingEntries = await db()
-      .select({ id: entries.id, title: entries.title })
+      .select({ id: entries.id, title: entries.title, aliases: entries.aliases })
       .from(entries)
       .where(eq(entries.universeId, uid));
 
@@ -901,6 +962,104 @@ export const ingestRoutes = new OpenAPIHono<AppEnv>()
         }
         // T-12-04 / T-11-04: log internals, return neutral.
         console.error('[ingest-commit] unexpected error', err);
+        return c.json({ error: 'Internal error' }, 500);
+      }
+    },
+  )
+  .openapi(
+    repairRoute,
+    // eslint-disable-next-line @typescript-eslint/no-explicit-any
+    async (c): Promise<any> => {
+      const userId = c.var.userId;
+      const { uid } = c.req.valid('param');
+
+      // Ownership first: requireUniverse throws 404/403, handled by app.onError().
+      await requireUniverse(uid, userId);
+
+      // The body is optional, and an absent or unparseable one means "dry run" —
+      // the safe reading. Only an explicit `apply: true` writes.
+      let apply = false;
+      try {
+        const raw = (await c.req.json()) as unknown;
+        apply = typeof raw === 'object' && raw !== null && (raw as { apply?: unknown }).apply === true;
+      } catch {
+        apply = false;
+      }
+
+      try {
+        const entryRows = await db()
+          .select({
+            id: entries.id,
+            title: entries.title,
+            aliases: entries.aliases,
+            body: entries.body,
+          })
+          .from(entries)
+          .where(eq(entries.universeId, uid));
+
+        const linkRows = await db()
+          .select({
+            sourceEntryId: links.sourceEntryId,
+            targetEntryId: links.targetEntryId,
+          })
+          .from(links)
+          .where(eq(links.universeId, uid));
+
+        const plan = planWikilinkRepair(entryRows, linkRows);
+        const aliasesAdded = plan.aliasAdditions.reduce((n, a) => n + a.aliases.length, 0);
+
+        if (!apply) {
+          return c.json(
+            {
+              applied: false,
+              entriesScanned: entryRows.length,
+              aliasesAdded,
+              linksCreated: plan.linkAdditions.length,
+              entriesUpdated: plan.aliasAdditions.length,
+              unresolved: plan.unresolved,
+            },
+            200,
+          );
+        }
+
+        // One transaction: an entry that gained an alias without its link row,
+        // or the reverse, would leave the universe in a state no second run
+        // could distinguish from a partially-repaired one.
+        const aliasByEntry = new Map(entryRows.map((e) => [e.id, e.aliases ?? []]));
+        await db().transaction(async (tx) => {
+          for (const addition of plan.aliasAdditions) {
+            const current = aliasByEntry.get(addition.entryId) ?? [];
+            await tx
+              .update(entries)
+              .set({ aliases: [...current, ...addition.aliases] })
+              .where(eq(entries.id, addition.entryId));
+          }
+          if (plan.linkAdditions.length > 0) {
+            await tx.insert(links).values(
+              plan.linkAdditions.map((l) => ({
+                universeId: uid,
+                sourceEntryId: l.sourceEntryId,
+                targetEntryId: l.targetEntryId,
+                label: l.label,
+                direction: 'directed' as const,
+              })),
+            );
+          }
+        });
+
+        return c.json(
+          {
+            applied: true,
+            entriesScanned: entryRows.length,
+            aliasesAdded,
+            linksCreated: plan.linkAdditions.length,
+            entriesUpdated: plan.aliasAdditions.length,
+            unresolved: plan.unresolved,
+          },
+          200,
+        );
+      } catch (err) {
+        console.error('[ingest-repair] unexpected error', err);
         return c.json({ error: 'Internal error' }, 500);
       }
     },

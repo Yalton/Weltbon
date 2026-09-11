@@ -621,6 +621,35 @@ describe('POST /api/universes/:uid/ingest/commit (Phase 12-01)', () => {
 
   // ─── OpenAPI doc presence (T-OPENAPI-01) ────────────────────────────────
 
+
+  // ─── Source-path aliases (#60) ───────────────────────────────────────────
+
+  it('#60: stores source-path aliases so filename wikilinks still resolve after import', async () => {
+    const { userId, jwt } = await createUserAndJwt('aliases-60@commit.test');
+    const u = await createUniverse(userId);
+
+    const res = await commitRequest(
+      u.id,
+      makeBody([
+        makeEntry({ title: 'Ayin Pockets', path: 'lore/ayin_pockets.md', entryType: 'concept' }),
+        makeEntry({ title: 'Glossary', path: 'Glossary.md', entryType: 'concept' }),
+      ]),
+      `Bearer ${jwt}`,
+    );
+    expect(res.status).toBe(200);
+
+    const rows = await handle.db
+      .select({ title: entries.title, aliases: entries.aliases })
+      .from(entries)
+      .where(eq(entries.universeId, u.id));
+    const byTitle = new Map(rows.map((r) => [r.title, r.aliases]));
+
+    // Both Obsidian address forms, path first.
+    expect(byTitle.get('Ayin Pockets')).toEqual(['lore/ayin_pockets', 'ayin_pockets']);
+    // Root-level file whose only form equals its own title keeps no alias.
+    expect(byTitle.get('Glossary')).toEqual([]);
+  });
+
   it('T-OPENAPI-01: GET /api/openapi.json includes /universes/{uid}/ingest/commit with bearerAuth and full response set', async () => {
     const res = await app.fetch(new Request('http://localhost/api/openapi.json'));
     expect(res.status).toBe(200);

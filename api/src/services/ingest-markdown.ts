@@ -551,6 +551,58 @@ export function scanWikilinks(body: string): Wikilink[] {
 }
 
 // ---------------------------------------------------------------------------
+// Source-path resolution forms — issue #60
+// ---------------------------------------------------------------------------
+
+/**
+ * The two names an Obsidian vault can use to address a file, derived from its
+ * batch-relative path.
+ *
+ * Obsidian links by *file*, not by H1 heading: a note at `lore/ayin_pockets.md`
+ * is addressed as `[[lore/ayin_pockets]]` or, when the basename is unique in
+ * the vault, `[[ayin_pockets]]`. Neither form matches the entry title the
+ * importer derives from the H1 ("Ayin Pockets"), which is why title-only
+ * resolution reported same-batch notes as missing.
+ *
+ * Both forms are returned lowercased because every resolution tier here is
+ * case-insensitive. `path` is already normalized and traversal-checked by the
+ * zip reader, so no `..` handling is needed beyond the cosmetic `./` strip.
+ *
+ * @param filePath  Batch-relative, forward-slash path, e.g. "lore/ayin_pockets.md".
+ */
+export function sourcePathForms(filePath: string): { pathForm: string; baseForm: string } {
+  const withoutPrefix = filePath.replace(/^\.?\//, '');
+  const withoutExt = withoutPrefix.replace(/\.md$/i, '');
+  const baseForm = withoutExt.split('/').pop() ?? withoutExt;
+  return { pathForm: withoutExt.toLowerCase(), baseForm: baseForm.toLowerCase() };
+}
+
+/**
+ * The same two forms, case-preserved, for storing on the entry as aliases.
+ * Resolution is case-insensitive everywhere, so the lowercased keys above and
+ * these display forms address the same files; only the reader sees the
+ * difference, on the entry's alias list.
+ *
+ * Returns the path form first, then the basename form, deduped — a note at the
+ * vault root has only one.
+ */
+export function sourcePathDisplayForms(filePath: string): string[] {
+  const withoutExt = filePath.replace(/^\.?\//, '').replace(/\.md$/i, '');
+  const base = withoutExt.split('/').pop() ?? withoutExt;
+  return withoutExt === base ? [withoutExt] : [withoutExt, base];
+}
+
+/**
+ * Normalize a wikilink target into the shape `sourcePathForms` produces, so a
+ * ref can be compared against either form. `scanWikilinks` has already stripped
+ * `|alias`, `#heading` and a trailing `.md`; this only removes a leading `./`
+ * or `/` (Obsidian writes vault-absolute links that way) and case-folds.
+ */
+export function normalizeLinkTarget(target: string): string {
+  return target.replace(/^\.?\//, '').toLowerCase();
+}
+
+// ---------------------------------------------------------------------------
 // ParseBatchContext + parseBatch — D-17a two-pass orchestrator
 // ---------------------------------------------------------------------------
 
@@ -568,7 +620,18 @@ export type ParseBatchContext = {
    * resolution: a `[[Target]]` that doesn't match a same-batch title falls
    * through to this list (case-insensitive title match). (D-06)
    */
-  existingEntries: Array<{ id: string; title: string }>;
+  existingEntries: Array<{
+    id: string;
+    title: string;
+    /**
+     * Issue #60. Alternate resolution names, including the source-path aliases
+     * a previous import stored (`lore/ayin_pockets`, `ayin_pockets`). Without
+     * these, a vault imported in two uploads never links across the seam.
+     * Optional so callers predating #60 keep compiling; absent means "no alias
+     * tier for this entry", not "no aliases exist".
+     */
+    aliases?: string[];
+  }>;
   /**
    * Existing category names in the target universe. Used to flag new
    * categories on parsed entries (D-07a). Case-sensitive comparison.
@@ -695,12 +758,44 @@ export function parseBatch(files: FileInput[], ctx: ParseBatchContext): IngestPr
   }
 
   // -------------------------------------------------------------------------
+  // Step B2 — source-path indexes (#60)
+  //
+  // pathMap is unique by construction (two files cannot share a path). baseMap
+  // is not: `a/notes.md` and `b/notes.md` both claim `notes`. Obsidian itself
+  // refuses to shorten an ambiguous link, so an ambiguous basename resolves to
+  // nothing here rather than to whichever file happened to be unpacked first —
+  // a silent first-match would wire prose to the wrong entry, and the commit
+  // that follows is atomic and unreviewed at link level.
+  // -------------------------------------------------------------------------
+  const pathMap = new Map<string, ParsedRecord>();
+  const baseMap = new Map<string, ParsedRecord[]>();
+  for (const rec of parsedRecords) {
+    const { pathForm, baseForm } = sourcePathForms(rec.file.path);
+    pathMap.set(pathForm, rec);
+    const bucket = baseMap.get(baseForm);
+    if (bucket) bucket.push(rec);
+    else baseMap.set(baseForm, [rec]);
+  }
+
+  // -------------------------------------------------------------------------
   // Step C — Pass 2 (wikilink resolution per file)
   // -------------------------------------------------------------------------
-  // Build existing-universe lookup (case-insensitive)
-  const existingByTitle = new Map<string, { id: string; title: string }>();
+  // Build existing-universe lookups (case-insensitive)
+  type ExistingEntry = ParseBatchContext['existingEntries'][number];
+  const existingByTitle = new Map<string, ExistingEntry>();
   for (const entry of ctx.existingEntries) {
     existingByTitle.set(entry.title.toLowerCase(), entry);
+  }
+  // #60: alias tier. First writer wins, and a title always outranks an alias,
+  // so an alias can never steal a link from the entry actually named that.
+  const existingByAlias = new Map<string, ExistingEntry>();
+  for (const entry of ctx.existingEntries) {
+    for (const alias of entry.aliases ?? []) {
+      const key = normalizeLinkTarget(alias.trim());
+      if (key.length === 0) continue;
+      if (existingByTitle.has(key)) continue;
+      if (!existingByAlias.has(key)) existingByAlias.set(key, entry);
+    }
   }
 
   type EntryWithLinks = ParsedFile & {
@@ -724,8 +819,12 @@ export function parseBatch(files: FileInput[], ctx: ParseBatchContext): IngestPr
 
     const linksOut = links.map(link => {
       const key = link.target.toLowerCase();
+      // #60: path form of the same ref, for the two source-path tiers.
+      const pathKey = normalizeLinkTarget(link.target);
 
-      // 1. Same-batch resolution (D-01)
+      // 1. Same-batch title (D-01). Deliberately above the path tiers: once
+      //    imported, an entry is addressed by title, and a file whose basename
+      //    happens to equal another file's title must not outrank that title.
       const batchHit = titleMap.get(key);
       if (batchHit) {
         return {
@@ -736,7 +835,41 @@ export function parseBatch(files: FileInput[], ctx: ParseBatchContext): IngestPr
         };
       }
 
-      // 2. Existing-universe resolution (D-06)
+      // 2. Same-batch exact source path (#60) — `[[lore/ayin_pockets]]`.
+      const pathHit = pathMap.get(pathKey);
+      if (pathHit) {
+        return {
+          target: link.target,
+          target_path: pathHit.file.path,
+          label: link.label,
+          resolved: true as const,
+        };
+      }
+
+      // 3. Same-batch unique basename (#60) — `[[ayin_pockets]]`. Only when the
+      //    basename names exactly one file; see the baseMap comment above.
+      const baseHits = pathKey.includes('/') ? undefined : baseMap.get(pathKey);
+      if (baseHits && baseHits.length === 1) {
+        return {
+          target: link.target,
+          target_path: baseHits[0].file.path,
+          label: link.label,
+          resolved: true as const,
+        };
+      }
+      if (baseHits && baseHits.length > 1) {
+        unresolvedCount++;
+        return {
+          target: link.target,
+          label: link.label,
+          resolved: false as const,
+          warning:
+            `Target '${link.target}' matches ${baseHits.length} files in this batch ` +
+            `(${baseHits.map(r => r.file.path).join(', ')}); link it by full path to disambiguate`,
+        };
+      }
+
+      // 4. Existing-universe title (D-06)
       const existingHit = existingByTitle.get(key);
       if (existingHit) {
         return {
@@ -747,7 +880,19 @@ export function parseBatch(files: FileInput[], ctx: ParseBatchContext): IngestPr
         };
       }
 
-      // 3. Unresolved (D-06)
+      // 5. Existing-universe alias (#60) — the source-path aliases a previous
+      //    import of this vault stored, so a second upload links across.
+      const aliasHit = existingByAlias.get(pathKey);
+      if (aliasHit) {
+        return {
+          target: link.target,
+          target_id: aliasHit.id,
+          label: link.label,
+          resolved: true as const,
+        };
+      }
+
+      // 6. Unresolved (D-06)
       unresolvedCount++;
       return {
         target: link.target,

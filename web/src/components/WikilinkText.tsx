@@ -89,6 +89,16 @@ export interface WikilinkResolutionData {
 // plain text — the regex requires `!` to be adjacent to `[[` to capture it.
 const WIKILINK_RE = /(!?)\[\[([^\]\n]+?)\]\]/g;
 
+/**
+ * Issue #60 — fold a wikilink target into the form the importer stores aliases
+ * in: case-folded, trimmed, and without the leading `./` or `/` that a
+ * vault-absolute or relative Obsidian ref carries. Applied to the lookup key
+ * only, never to the label, so the reader still sees what the author typed.
+ */
+function resolutionKey(target: string): string {
+  return target.toLowerCase().trim().replace(/^\.?\//, '');
+}
+
 interface ParsedToken {
   /** The target reference (pipe-split, heading-stripped, .md-stripped). */
   target: string;
@@ -227,7 +237,9 @@ export function WikilinkText({ children, wikis }: WikilinkTextProps) {
     }
 
     // Phase 45 D-03: compute lowerTarget ONCE for all case-insensitive lookups.
-    const lowerTarget = target.toLowerCase().trim();
+    // #60 folds a leading slash in too; no entry title starts with one, so the
+    // title tier is unaffected.
+    const lowerTarget = resolutionKey(target);
 
     // D-01: entry-title FIRST (case-insensitive — D-03 aligns render with ingest).
     // Callers build entryTitles with lower(title.trim()) keys from Phase 45 onward.
@@ -355,7 +367,7 @@ export function WikilinkText({ children, wikis }: WikilinkTextProps) {
           // Phase 46 Plan 03: handle embed segments produced by the 46-01 tokenizer.
           if (seg.kind === 'embed') {
             const parsed = parseWikilink(seg.inner);
-            const lowerTarget = parsed.target.toLowerCase().trim();
+            const lowerTarget = resolutionKey(parsed.target);
 
             // D-05 flatten: when already inside an embedded body (embedDepth === 1),
             // render the ![[...]] as a normal wikilink/hover-card link — NOT a recursive
