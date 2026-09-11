@@ -2,11 +2,14 @@ import { useMemo, useState } from 'react';
 import {
   useUpdateWord,
   useDeleteWord,
+  previewTermRename,
   type DictionaryWord,
   type CreateWordInput,
+  type TermRenamePreview,
 } from '../hooks/useDictionary';
 import { DictionaryRowEditor } from './DictionaryRowEditor';
 import { ConfirmDialog } from './ConfirmDialog';
+import { TermRenameReviewDialog } from './TermRenameReviewDialog';
 import { EmptyState } from './EmptyState';
 import { DICTIONARY_TERMS } from './dictionaryTerms';
 
@@ -85,6 +88,12 @@ export function DictionaryTable({
   // ── Edit saving state ─────────────────────────────────────────────────────
   const [savingId, setSavingId] = useState<string | null>(null);
 
+  // ── Term-rename propagation (#59) ─────────────────────────────────────────
+  // Held together: the preview drives the dialog, and the draft is the save
+  // that was interrupted to show it.
+  const [renamePreview, setRenamePreview] = useState<TermRenamePreview | null>(null);
+  const [pendingDraft, setPendingDraft] = useState<CreateWordInput | null>(null);
+
   // ── Mutations ─────────────────────────────────────────────────────────────
   const updateWord = useUpdateWord(universeId, editingId ?? '');
   const deleteWord = useDeleteWord(universeId, deletingWord?.id ?? '');
@@ -132,13 +141,55 @@ export function DictionaryTable({
   }, [data, sortKey, sortDir, posFilter, tagFilter]);
 
   // ── Inline save existing word ─────────────────────────────────────────────
+  /**
+   * Issue #59 — two-phase save, mirroring EntryEditor's rename propagation.
+   *
+   * A spelling change first asks the server what it would rewrite. Only when
+   * there is something to rewrite does the review dialog open; a rename nobody
+   * references saves in one step, as before. The write itself never happens
+   * without the user having seen the list.
+   */
   async function handleSaveEdit(draft: CreateWordInput) {
+    if (!editingId) return;
+    const current = data?.find((w) => w.id === editingId);
+    const spellingChanged =
+      !!current && draft.word.trim() !== current.word.trim();
+
+    if (spellingChanged) {
+      try {
+        const preview = await previewTermRename(universeId, editingId, draft.word.trim());
+        if (preview.totalOccurrences > 0) {
+          setPendingDraft(draft);
+          setRenamePreview(preview);
+          return;
+        }
+      } catch {
+        // A failed preview must not block the rename itself: fall through to
+        // the plain save, which is exactly what this did before #59.
+      }
+    }
+
+    await commitEdit(draft);
+  }
+
+  async function commitEdit(draft: CreateWordInput, entryIds?: string[]) {
     if (!editingId) return;
     setSavingId(editingId);
     try {
-      await updateWord.mutateAsync(draft);
+      const result = await updateWord.mutateAsync(
+        entryIds && entryIds.length > 0 ? { ...draft, propagate: { entryIds } } : draft,
+      );
+      setRenamePreview(null);
+      setPendingDraft(null);
       onEditDone();
-      onToast({ message: 'Word saved', variant: 'success' });
+      const rewritten = (result as { rewriteCount?: number }).rewriteCount ?? 0;
+      onToast({
+        message:
+          rewritten > 0
+            ? `Word saved, ${rewritten} reference${rewritten === 1 ? '' : 's'} rewritten`
+            : 'Word saved',
+        variant: 'success',
+      });
     } catch {
       onToast({ message: 'Could not save word. Try again.', variant: 'error' });
     } finally {
@@ -438,6 +489,27 @@ export function DictionaryTable({
         confirmLabel="Delete word"
         destructive={true}
         onConfirm={handleDeleteConfirm}
+      />
+
+      {/* ── Term-rename propagation review (#59) ──────────────────────────── */}
+      <TermRenameReviewDialog
+        open={!!renamePreview}
+        onOpenChange={(open) => {
+          if (!open) {
+            // Cancelling abandons the whole save, not just the propagation:
+            // the row stays in edit mode with the user's text intact.
+            setRenamePreview(null);
+            setPendingDraft(null);
+          }
+        }}
+        preview={renamePreview}
+        isSaving={savingId !== null}
+        onConfirm={(entryIds) => {
+          if (pendingDraft) void commitEdit(pendingDraft, entryIds);
+        }}
+        onRenameOnly={() => {
+          if (pendingDraft) void commitEdit(pendingDraft);
+        }}
       />
     </>
   );

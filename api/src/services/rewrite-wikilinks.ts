@@ -37,7 +37,45 @@ import type { Root } from 'mdast';
  * WikilinkText.tsx WIKILINK_RE but without the leading `(!?)` embed group that
  * WikilinkText needs for `![[embed]]` detection. The rewriter only touches [[ ]].
  */
-const WIKILINK_RE = /\[\[([^\]\n]+?)\]\]/g;
+export const WIKILINK_RE = /\[\[([^\]\n]+?)\]\]/g;
+
+// ---------------------------------------------------------------------------
+// codeRanges — the one code-exclusion dialect (T-48-01)
+// ---------------------------------------------------------------------------
+
+/**
+ * Byte ranges of fenced code blocks and inline code spans in `body`, as
+ * `[start, end)` pairs read from remark node offsets.
+ *
+ * Exported because every rewriter that splices into a body needs exactly this
+ * and must not grow its own version: a regex approximation of "inside code"
+ * disagrees with the parser on indented blocks, nested fences and `` `` ``
+ * spans, and the disagreement shows up as a body silently rewritten inside an
+ * example the author wrote to *show* the old spelling.
+ */
+export function codeRanges(body: string): Array<[number, number]> {
+  const tree = unified().use(remarkParse).parse(body) as Root;
+  const ranges: Array<[number, number]> = [];
+  visit(tree, (node) => {
+    if (node.type === 'code' || node.type === 'inlineCode') {
+      const start = node.position?.start?.offset;
+      const end = node.position?.end?.offset;
+      if (start !== undefined && end !== undefined) {
+        ranges.push([start, end]);
+      }
+      return 'skip';
+    }
+  });
+  return ranges;
+}
+
+/** True when `offset` falls inside any `[start, end)` range. */
+export function isInRange(offset: number, ranges: Array<[number, number]>): boolean {
+  for (const [s, e] of ranges) {
+    if (offset >= s && offset < e) return true;
+  }
+  return false;
+}
 
 // ---------------------------------------------------------------------------
 // parseWikilink — reproduces WikilinkText.parseWikilink exactly (D-07)
@@ -122,27 +160,11 @@ export function rewriteWikilinks(
   // positional splices. Sharing the remark PARSE (not the value-only visitor)
   // is what satisfies the "no third dialect" constraint.
   // ---------------------------------------------------------------------------
-  const tree = unified().use(remarkParse).parse(body) as Root;
-
-  const protectedRanges: [number, number][] = [];
-
-  visit(tree, (node) => {
-    if (node.type === 'code' || node.type === 'inlineCode') {
-      const start = node.position?.start?.offset;
-      const end = node.position?.end?.offset;
-      if (start !== undefined && end !== undefined) {
-        protectedRanges.push([start, end]);
-      }
-      return 'skip';
-    }
-  });
+  const protectedRanges = codeRanges(body);
 
   // Helper: is a byte offset inside any protected range?
   function isProtected(offset: number): boolean {
-    for (const [s, e] of protectedRanges) {
-      if (offset >= s && offset < e) return true;
-    }
-    return false;
+    return isInRange(offset, protectedRanges);
   }
 
   // ---------------------------------------------------------------------------
@@ -211,7 +233,7 @@ export function rewriteWikilinks(
  * prevent a `|`-containing `newCanonicalTitle` from creating a spurious
  * second pipe segment (T-48-02).
  */
-function buildReplacement(inner: string, newCanonicalTitle: string): string {
+export function buildReplacement(inner: string, newCanonicalTitle: string): string {
   // a. Split on first `|` — if present, tail is the display label.
   const pipeIdx = inner.indexOf('|');
   let refPart: string;       // everything before the first pipe (or all of inner)
