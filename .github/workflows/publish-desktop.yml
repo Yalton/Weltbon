@@ -21,10 +21,14 @@
 # of thing that gets forgotten, and forgetting it leaves Windows users on a
 # stale version with no signal that anything is missing.
 #
-# Windows is STILL UNVERIFIED in the sense that matters: a green build proves an
-# artifact was produced, not that it launches. The whole point of issue #7 was a
-# crash that only appeared when the packaged app was actually run. `fail-fast:
-# false` keeps a Windows failure from taking the Linux release down with it.
+# Windows is now verified in the sense that matters — the installer has been
+# run on a real Windows machine and launches (issue #28, closed 2026-09-11).
+# That sentence is the whole reason this block exists: a green build proves an
+# artifact was produced, not that it launches, and the crash behind issue #7
+# appeared only when the packaged app was actually run. Treat any future change
+# to the staging or bundling path as unverified on Windows until someone has
+# installed the .exe again. `fail-fast: false` keeps a Windows failure from
+# taking the Linux release down with it.
 #
 name: publish-desktop
 
