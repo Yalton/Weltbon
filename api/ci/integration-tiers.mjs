@@ -56,6 +56,7 @@ export const DB_GATED_TESTS = [
   'tests/share-views.test.ts',
   'tests/diagrams.test.ts',
   'tests/dictionary-routes.test.ts',
+  'tests/dictionary-rename-propagation.test.ts',
   'tests/dictionary-fts.test.ts',
   'tests/dictionary-import.test.ts',
   'tests/stats.test.ts',

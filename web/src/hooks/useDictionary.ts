@@ -38,7 +38,37 @@ export interface CreateWordInput {
   languageEntryId: string | null;
 }
 
-export type UpdateWordInput = Partial<Omit<CreateWordInput, 'languageEntryId'>>;
+export type UpdateWordInput = Partial<Omit<CreateWordInput, 'languageEntryId'>> & {
+  /**
+   * Issue #59 — the entries whose Markdown the user accepted for rewriting.
+   * Omitted means "rename the glossary row only", which stays the default.
+   */
+  propagate?: { entryIds: string[] };
+};
+
+/** Issue #59 — one entry the rename would rewrite. */
+export interface TermRenameTarget {
+  entryId: string;
+  title: string;
+  wikilinkCount: number;
+  textCount: number;
+}
+
+/** Issue #59 — an occurrence the rename refuses to change, and why. */
+export interface TermRenameSkip {
+  entryId: string;
+  title: string;
+  reason: 'out_of_scope' | 'case_mismatch';
+  count: number;
+}
+
+export interface TermRenamePreview {
+  word: string;
+  newWord: string;
+  totalOccurrences: number;
+  entries: TermRenameTarget[];
+  skipped: TermRenameSkip[];
+}
 
 // ─── Hooks ───────────────────────────────────────────────────────────────────
 
@@ -109,6 +139,25 @@ export function useUpdateWord(universeId: string, wordId: string) {
       qc.invalidateQueries({ queryKey: ['dictionary', universeId] });
     },
   });
+}
+
+/**
+ * Issue #59 — ask the server what renaming `wordId` to `newWord` would rewrite.
+ *
+ * A plain function rather than a hook: the caller runs it inside the save
+ * handler and needs the answer before deciding whether to open the review
+ * dialog, which is the same two-phase shape EntryEditor uses for entry renames
+ * (`previewEntryUpdate`).
+ */
+export function previewTermRename(
+  universeId: string,
+  wordId: string,
+  newWord: string,
+): Promise<TermRenamePreview> {
+  return api<TermRenamePreview>(
+    `/universes/${universeId}/dictionary/${wordId}/rename-preview`,
+    { method: 'POST', body: JSON.stringify({ word: newWord }) },
+  );
 }
 
 /**
