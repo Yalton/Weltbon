@@ -79,12 +79,24 @@ describe('SettingsLayout', () => {
     expect(nav.querySelectorAll('a').length).toBe(8);
   });
 
+  // "Administrator-only" is Users and Invite codes, not API tokens. A PAT is a
+  // credential for the caller's own account: /settings/tokens is not admin-gated
+  // and `GET|POST|DELETE /api/auth/tokens` is behind `requireJwtAuth`, which
+  // scopes every row to the caller. Hiding the link from non-admins made the
+  // feature reachable only by typing the URL.
   it('hides administrator-only settings links for a non-administrator', () => {
     useAuthStore.setState({ user: { id: 'member-1', email: 'member@test.dev', displayName: 'Member', isAdmin: false } });
     renderAt('/settings');
-    expect(screen.queryByRole('link', { name: 'API tokens' })).not.toBeInTheDocument();
     expect(screen.queryByRole('link', { name: 'Invite codes' })).not.toBeInTheDocument();
     expect(screen.queryByRole('link', { name: 'Users' })).not.toBeInTheDocument();
+  });
+
+  it('shows "API tokens" to a non-administrator in server mode', () => {
+    useAuthStore.setState({ user: { id: 'member-1', email: 'member@test.dev', displayName: 'Member', isAdmin: false } });
+    renderAt('/settings');
+    const apiTokens = screen.getByRole('link', { name: 'API tokens' });
+    expect(apiTokens).toBeInTheDocument();
+    expect(apiTokens.getAttribute('href')).toBe('/settings/tokens');
   });
 
   it('applies active classes to the "Visual" link when route is /settings', () => {

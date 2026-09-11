@@ -36,24 +36,34 @@ export function SettingsLayout() {
               Visual
             </NavLink>
           </li>
+          {/*
+            Personal access tokens are a per-user credential, not an operator
+            control: `/settings/tokens` is not admin-gated and the API routes sit
+            behind `requireJwtAuth`, which scopes every token to its caller. So
+            this item gates on server mode alone. Folding it back into the
+            `isAdmin` block below (as 1dbffc2a did) leaves the page reachable
+            only by typing the URL.
+          */}
+          {authMode === 'server' && (
+            <li>
+              <NavLink
+                to="/settings/tokens"
+                end
+                className={({ isActive }) =>
+                  [
+                    'block rounded px-2 py-1.5 text-sm',
+                    isActive
+                      ? 'bg-[color:var(--color-accent)]/10 text-[color:var(--color-accent)] font-medium'
+                      : 'text-neutral-700 dark:text-neutral-200 hover:bg-neutral-100 dark:hover:bg-neutral-900',
+                  ].join(' ')
+                }
+              >
+                API tokens
+              </NavLink>
+            </li>
+          )}
           {authMode === 'server' && isAdmin && (
             <>
-              <li>
-                <NavLink
-                  to="/settings/tokens"
-                  end
-                  className={({ isActive }) =>
-                    [
-                      'block rounded px-2 py-1.5 text-sm',
-                      isActive
-                        ? 'bg-[color:var(--color-accent)]/10 text-[color:var(--color-accent)] font-medium'
-                        : 'text-neutral-700 dark:text-neutral-200 hover:bg-neutral-100 dark:hover:bg-neutral-900',
-                    ].join(' ')
-                  }
-                >
-                  API tokens
-                </NavLink>
-              </li>
               <li>
                 <NavLink
                   to="/settings/users"
