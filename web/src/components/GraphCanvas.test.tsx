@@ -225,7 +225,7 @@ describe('GraphCanvas', () => {
     }
   });
 
-  it('renders edge labels for edges that have a label', () => {
+  it('renders edge labels for edges that have a label, hidden at overview scale', () => {
     const { nodes, edges, positions } = tinyGraph();
     const { container } = render(
       <GraphCanvas
@@ -243,6 +243,7 @@ describe('GraphCanvas', () => {
     const labels = Array.from(container.querySelectorAll('text.edge-label'));
     expect(labels.map((n) => n.textContent)).toContain('lives-in');
     expect(labels).toHaveLength(1);
+    expect(labels[0].getAttribute('opacity')).toBe('0');
     expect(labels[0].getAttribute('paint-order')).toBe('stroke');
     expect(labels[0].getAttribute('stroke-width')).toBe('5');
   });
@@ -966,12 +967,13 @@ describe('GraphCanvas', () => {
       expect(container.querySelector('clipPath#medallion-clip-graph-A')).toBeTruthy();
     });
 
-    it('renders an always-visible title label beneath every node', () => {
+    it('renders a title label beneath every node, hidden at overview scale', () => {
       const { container } = renderGraph();
       const labels = Array.from(container.querySelectorAll('text.node-label')).map((t) => t.textContent);
       expect(labels).toHaveLength(3);
       expect(labels).toContain('Node A');
       expect(labels).toContain('Node B');
+      expect(container.querySelector('text.node-label')?.getAttribute('opacity')).toBe('0');
     });
 
     it('keeps the label after a re-render — appendMedallionNode must not purge it', () => {
@@ -1009,24 +1011,27 @@ describe('GraphCanvas', () => {
       expect(haloR).toBeGreaterThan(discR);
     });
 
-    it('fades labels below zoom 0.5 and restores them above it', () => {
+    it('shows node and edge labels only after zooming in', () => {
       // Driven through a REAL wheel gesture on the component's own zoom behavior. Calling
       // `zoom().transform` from a fresh behavior would stamp __zoom but never invoke the
       // component's 'zoom' listener — the fade would be untested and the test would pass on
       // a no-op implementation.
       const { container } = renderGraph();
       const svg = container.querySelector('svg') as SVGSVGElement;
-      const labelOpacity = () =>
-        container.querySelector('text.node-label')!.getAttribute('opacity');
+      const labelOpacity = (selector: string) =>
+        container.querySelector(selector)!.getAttribute('opacity');
 
-      expect(labelOpacity()).toBe('1');
-      wheel(svg, 1000); // k = 2^(-1000/500) = 0.25 → below LABEL_FADE_ZOOM
-      expect(labelOpacity()).toBe('0');
-      wheel(svg, -1000); // back to k = 1
-      expect(labelOpacity()).toBe('1');
+      expect(labelOpacity('text.node-label')).toBe('0');
+      expect(labelOpacity('text.edge-label')).toBe('0');
+      wheel(svg, -500); // k = 2 → above LABEL_VISIBLE_ZOOM
+      expect(labelOpacity('text.node-label')).toBe('1');
+      expect(labelOpacity('text.edge-label')).toBe('1');
+      wheel(svg, 500); // back to k = 1
+      expect(labelOpacity('text.node-label')).toBe('0');
+      expect(labelOpacity('text.edge-label')).toBe('0');
     });
 
-    it('enters new labels already faded when the canvas is zoomed out', () => {
+    it('enters new labels hidden when the canvas is at overview scale', () => {
       // Labels are otherwise only ever repainted by the zoom handler, so a node arriving
       // while zoomed out would paint at full opacity beside its faded neighbours.
       const { nodes, edges, positions } = tinyGraph();
@@ -1042,8 +1047,7 @@ describe('GraphCanvas', () => {
         onLinkDragEnd: () => {},
       };
       const { container, rerender } = render(<GraphCanvas {...props} />);
-      wheel(container.querySelector('svg') as SVGSVGElement, 1000);
-      // A re-run of the effect (here: a pin) rebuilds the joins while still zoomed out.
+      // A re-run of the effect (here: a pin) rebuilds the joins while still at overview scale.
       rerender(<GraphCanvas {...props} positions={[{ entryId: 'A', x: 10, y: 20 }]} />);
       for (const label of Array.from(container.querySelectorAll('text.node-label'))) {
         expect(label.getAttribute('opacity')).toBe('0');

@@ -101,8 +101,8 @@ function radiusForDegree(degree: number): number {
   return Math.min(26, Math.max(NODE_RADIUS, NODE_RADIUS + 2 * degree));
 }
 
-/** Below this zoom, labels fade out — on a large graph every label is on screen at once. */
-const LABEL_FADE_ZOOM = 0.5;
+/** Keep the overview a map of relationships, not a wall of text. */
+const LABEL_VISIBLE_ZOOM = 1.2;
 
 /** Baseline distance from the disc's edge down to the title label. */
 const LABEL_OFFSET = 13;
@@ -227,6 +227,8 @@ export function GraphCanvas({
         (exit) => exit.remove(),
       );
 
+    const labelsHidden = zoomTransform(svgRef.current).k < LABEL_VISIBLE_ZOOM;
+
     // Only render labels for edges whose label is non-empty. Uses a separate
     // .data() filter.
     const labelSel = g
@@ -252,7 +254,8 @@ export function GraphCanvas({
             .text((d) => d.label),
         (update) => update.text((d) => d.label),
         (exit) => exit.remove(),
-      );
+      )
+      .attr('opacity', labelsHidden ? 0 : 1);
 
     // Halo JOIN — populated only when editMode is true; empty array otherwise
     // so the <g class="halos"> group renders empty (no structural mount/unmount
@@ -298,10 +301,8 @@ export function GraphCanvas({
         (exit) => exit.remove(),
       );
 
-    // Labels are only ever repainted by the zoom handler, so a node ENTERING while the user
-    // is zoomed out would paint its label at full opacity beside its faded neighbours. Seed
-    // from the live transform instead of assuming k === 1.
-    const labelsFaded = zoomTransform(svgRef.current).k < LABEL_FADE_ZOOM;
+    // Labels are only ever repainted by the zoom handler, so a node ENTERING at overview
+    // scale would paint its label beside hidden neighbours. Seed from the live transform.
 
     // Label sub-join — one <text> per node, inside the node's own <g>, so the tick handler's
     // single transform moves the disc, the art AND the label together. Written BEFORE the
@@ -329,7 +330,7 @@ export function GraphCanvas({
         (exit) => exit.remove(),
       )
       .attr('y', (d) => radiusOf(d.id) + LABEL_OFFSET)
-      .attr('opacity', labelsFaded ? 0 : 1)
+      .attr('opacity', labelsHidden ? 0 : 1)
       .text((d) => d.title);
 
     nodeSel.each(function (d) {
@@ -465,11 +466,9 @@ export function GraphCanvas({
       .scaleExtent([0.1, 4])
       .on('zoom', (evt) => {
         g.attr('transform', evt.transform.toString());
-        // Spec §4: fade labels below ~0.5 zoom so a large graph doesn't become label soup.
-        // Keep panning and zooming independent from the force layout.
-        g.select('g.nodes')
-          .selectAll<SVGTextElement, unknown>('text.node-label')
-          .attr('opacity', evt.transform.k < LABEL_FADE_ZOOM ? 0 : 1);
+        // Keep overview text-free; titles and relationships appear only after zoom-in.
+        g.selectAll<SVGTextElement, unknown>('text.node-label, text.edge-label')
+          .attr('opacity', evt.transform.k < LABEL_VISIBLE_ZOOM ? 0 : 1);
       });
     // Swallow clicks-inside-zoom via the default; d3-zoom suppresses click
     // after a drag of > 3px automatically.
