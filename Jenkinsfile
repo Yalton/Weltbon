@@ -28,6 +28,7 @@ pipeline {
           sh '''#!/usr/bin/env bash
             set -euo pipefail
             ssh -o BatchMode=yes -o StrictHostKeyChecking=yes \
+              -o UserKnownHostsFile=/var/jenkins_home/.ssh/known_hosts \
               yalt@192.168.50.41 \
               "cd /home/yalt/Projects/Tech/web/Weltbon && ./scripts/deploy.sh && test \$(git rev-parse HEAD) = '${WELTBON_REVISION}'"
           '''
