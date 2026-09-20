@@ -9,7 +9,11 @@ vi.mock('../api/client', () => ({
 import { api } from '../api/client';
 import { LinkEditor } from './LinkEditor';
 
-function renderEditor(universeId = 'U1', entryId = 'E1') {
+function renderEditor(
+  universeId = 'U1',
+  entryId = 'E1',
+  editLink?: { id: string; label: string | null; linkType: string | null; direction: string },
+) {
   const qc = new QueryClient({
     defaultOptions: { queries: { retry: false }, mutations: { retry: false } },
   });
@@ -20,6 +24,7 @@ function renderEditor(universeId = 'U1', entryId = 'E1') {
         universeId={universeId}
         entryId={entryId}
         onLinkCreated={onLinkCreated}
+        editLink={editLink}
       >
         <button type="button">Open link editor</button>
       </LinkEditor>
@@ -38,7 +43,7 @@ const RELATIONS = [
   { label: 'allies of', count: 9 },
 ];
 
-function setupApiMock(opts: { onCreate?: (body: unknown) => void; failCreate?: boolean } = {}) {
+function setupApiMock(opts: { onCreate?: (body: unknown) => void; onPatch?: (path: string, body: unknown) => void; failCreate?: boolean } = {}) {
   vi.mocked(api).mockImplementation(async (path: string, init?: RequestInit) => {
     if (opts.failCreate && path.includes('/links') && init?.method === 'POST') {
       throw new Error('Bad Request');
@@ -64,6 +69,10 @@ function setupApiMock(opts: { onCreate?: (body: unknown) => void; failCreate?: b
         direction: 'directed',
         createdAt: '',
       } as unknown as never;
+    }
+    if (path.includes('/links/') && init?.method === 'PATCH') {
+      opts.onPatch?.(path, JSON.parse(String(init.body)));
+      return {} as never;
     }
     return null as unknown as never;
   });
@@ -242,5 +251,40 @@ describe('LinkEditor', () => {
       expect(createdBody).not.toBeNull();
     });
     expect((createdBody as { label?: unknown }).label).toBeNull();
+  });
+
+  it('edits existing link fields and sends their changed values to its PATCH endpoint', async () => {
+    let patchedBody: { label?: string | null; linkType?: string | null; direction?: string } | null = null;
+    let patchedPath = '';
+    setupApiMock({ onPatch: (path, body) => {
+      patchedPath = path;
+      patchedBody = body as typeof patchedBody;
+    } });
+    const user = userEvent.setup();
+    const { onLinkCreated, qc } = renderEditor('U1', 'E1', {
+      id: 'L1', label: 'created by', linkType: 'parent', direction: 'undirected',
+    });
+
+    await user.click(screen.getByRole('button', { name: /open link editor/i }));
+    expect(screen.queryByPlaceholderText(/search entries/i)).toBeNull();
+    expect(screen.getByPlaceholderText(/sworn shield/i)).toHaveValue('created by');
+    expect(screen.getByRole('button', { name: /^save changes$/i })).toBeInTheDocument();
+
+    const labelInput = screen.getByPlaceholderText(/sworn shield/i);
+    await user.clear(labelInput);
+    await user.type(labelInput, 'foster parent');
+    const typeInput = screen.getByPlaceholderText(/search or enter a type/i);
+    await user.clear(typeInput);
+    await user.type(typeInput, 'guardian');
+    await user.click(screen.getByRole('button', { name: /a → b/i }));
+    const invalidateSpy = vi.spyOn(qc, 'invalidateQueries');
+    await user.click(screen.getByRole('button', { name: /^save changes$/i }));
+    await waitFor(() => expect(patchedBody).not.toBeNull());
+    expect(patchedPath).toBe('/universes/U1/links/L1');
+    expect(patchedBody).toEqual({ label: 'foster parent', linkType: 'guardian', direction: 'directed' });
+    expect(onLinkCreated).toHaveBeenCalledOnce();
+    const invalidated = invalidateSpy.mock.calls
+      .map((call) => (call[0] as { queryKey?: unknown[] })?.queryKey?.[0]);
+    expect(invalidated).toEqual(expect.arrayContaining(['entry', 'graph-data', 'relations', 'link-types']));
   });
 });

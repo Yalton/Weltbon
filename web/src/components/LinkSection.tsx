@@ -112,16 +112,32 @@ export function LinkSection({
                         {link.targetIcon && <span>{link.targetIcon}</span>}
                         {link.targetTitle}
                       </Link>
-                      {/* Phase 29 D-18 — per-link delete is owner-only. */}
+                      {/* Link corrections and delete are both owner-only. */}
                       {!isShareMode && (
-                        <button
-                          type="button"
-                          onClick={() => setDeletingLinkId(link.id)}
-                          className="text-neutral-500 hover:text-red-500 text-xs opacity-0 group-hover:opacity-100 transition-opacity"
-                          aria-label="Remove link"
-                        >
-                          &times;
-                        </button>
+                        <>
+                          <LinkEditor
+                            universeId={universeId}
+                            entryId={entryId}
+                            onLinkCreated={onLinkCreated}
+                            editLink={link}
+                          >
+                            <button
+                              type="button"
+                              className="text-neutral-500 hover:text-[color:var(--color-accent)] text-xs opacity-0 group-hover:opacity-100 transition-opacity"
+                              aria-label={`Edit link to ${link.targetTitle}`}
+                            >
+                              Edit
+                            </button>
+                          </LinkEditor>
+                          <button
+                            type="button"
+                            onClick={() => setDeletingLinkId(link.id)}
+                            className="text-neutral-500 hover:text-red-500 text-xs opacity-0 group-hover:opacity-100 transition-opacity"
+                            aria-label="Remove link"
+                          >
+                            &times;
+                          </button>
+                        </>
                       )}
                     </li>
                   ))}

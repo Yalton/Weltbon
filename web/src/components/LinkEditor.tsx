@@ -1,7 +1,7 @@
 import { useState, useRef, type ReactNode } from 'react';
 import * as Popover from '@radix-ui/react-popover';
 import { useEntries, type Entry } from '../hooks/useEntries';
-import { useCreateLink } from '../hooks/useLinks';
+import { useCreateLink, usePatchLink } from '../hooks/useLinks';
 import { TypeBadge } from './TypeBadge';
 import { RelationCombobox } from './RelationCombobox';
 import { LinkTypeSelect } from './LinkTypeSelect';
@@ -11,9 +11,15 @@ interface Props {
   entryId: string;
   onLinkCreated: () => void;
   children: ReactNode;
+  editLink?: {
+    id: string;
+    label: string | null;
+    linkType: string | null;
+    direction: string;
+  };
 }
 
-export function LinkEditor({ universeId, entryId, onLinkCreated, children }: Props) {
+export function LinkEditor({ universeId, entryId, onLinkCreated, children, editLink }: Props) {
   const [open, setOpen] = useState(false);
   const [search, setSearch] = useState('');
   const [selectedEntry, setSelectedEntry] = useState<Entry | null>(null);
@@ -26,6 +32,8 @@ export function LinkEditor({ universeId, entryId, onLinkCreated, children }: Pro
 
   const { data: entries } = useEntries(universeId);
   const createLink = useCreateLink(universeId);
+  const patchLink = usePatchLink(universeId);
+  const isEditing = editLink !== undefined;
 
   // Filter entries client-side, exclude self
   const filtered = (entries ?? [])
@@ -34,14 +42,14 @@ export function LinkEditor({ universeId, entryId, onLinkCreated, children }: Pro
     .slice(0, 8);
 
   // canSubmit: only requires a target entry (label and type are optional per D-04)
-  const canSubmit = selectedEntry !== null;
+  const canSubmit = isEditing || selectedEntry !== null;
 
   const reset = () => {
     setSearch('');
     setSelectedEntry(null);
-    setLabel('');
-    setLinkType('');
-    setDirection('directed');
+    setLabel(editLink?.label ?? '');
+    setLinkType(editLink?.linkType ?? '');
+    setDirection(editLink?.direction === 'undirected' ? 'undirected' : 'directed');
     setShowDropdown(false);
     // Cleared here too, so reopening the popover after a failure does not
     // greet the user with a stale error about a create they have moved on from.
@@ -58,13 +66,22 @@ export function LinkEditor({ universeId, entryId, onLinkCreated, children }: Pro
     // second convention for the same failure.
     try {
       setError(null);
-      await createLink.mutateAsync({
-        sourceEntryId: entryId,
-        targetEntryId: selectedEntry.id,
-        label: label.trim() || null,
-        linkType: linkType || null,
-        direction,
-      });
+      if (editLink) {
+        await patchLink.mutateAsync({
+          linkId: editLink.id,
+          label: label.trim() || null,
+          linkType: linkType || null,
+          direction,
+        });
+      } else if (selectedEntry) {
+        await createLink.mutateAsync({
+          sourceEntryId: entryId,
+          targetEntryId: selectedEntry.id,
+          label: label.trim() || null,
+          linkType: linkType || null,
+          direction,
+        });
+      }
     } catch (err) {
       setError(err);
       return;
@@ -76,7 +93,7 @@ export function LinkEditor({ universeId, entryId, onLinkCreated, children }: Pro
 
   const handleOpenChange = (nextOpen: boolean) => {
     setOpen(nextOpen);
-    if (!nextOpen) reset();
+    reset();
   };
 
   const handleSelect = (entry: Entry) => {
@@ -95,8 +112,8 @@ export function LinkEditor({ universeId, entryId, onLinkCreated, children }: Pro
           align="start"
         >
           <div className="space-y-3">
-            {/* Target entry search */}
-            <div>
+            {/* Endpoints are immutable while editing: a different target is a new relationship. */}
+            {!isEditing && <div>
               <label className="block text-sm text-neutral-400 mb-1">Link to entry</label>
               <input
                 ref={inputRef}
@@ -128,7 +145,7 @@ export function LinkEditor({ universeId, entryId, onLinkCreated, children }: Pro
                   ))}
                 </ul>
               )}
-            </div>
+            </div>}
 
             {/* Link type selection */}
             <div>
@@ -188,7 +205,7 @@ export function LinkEditor({ universeId, entryId, onLinkCreated, children }: Pro
 
             {error != null && (
               <p className="text-xs text-red-500">
-                Couldn&apos;t create link. Try again.
+                Couldn&apos;t {isEditing ? 'save changes to' : 'create'} link. Try again.
               </p>
             )}
 
@@ -204,10 +221,12 @@ export function LinkEditor({ universeId, entryId, onLinkCreated, children }: Pro
               <button
                 type="button"
                 onClick={handleSubmit}
-                disabled={!canSubmit || createLink.isPending}
+                disabled={!canSubmit || createLink.isPending || patchLink.isPending}
                 className="rounded-md bg-[color:var(--color-accent)] text-white text-sm px-3 py-1.5 disabled:opacity-50 disabled:cursor-not-allowed"
               >
-                {createLink.isPending ? 'Adding...' : 'Add link'}
+                {createLink.isPending || patchLink.isPending
+                  ? (isEditing ? 'Saving...' : 'Adding...')
+                  : (isEditing ? 'Save changes' : 'Add link')}
               </button>
             </div>
           </div>

@@ -86,10 +86,12 @@ export function usePatchLink(universeId: string) {
         method: 'PATCH',
         body: JSON.stringify(body),
       }),
-    onSuccess: () => {
-      qc.invalidateQueries({ queryKey: ['entry', universeId] });
-      qc.invalidateQueries({ queryKey: ['graph-data', universeId] });
-    },
+  onSuccess: () => {
+    qc.invalidateQueries({ queryKey: ['entry', universeId] });
+    qc.invalidateQueries({ queryKey: ['graph-data', universeId] });
+    qc.invalidateQueries({ queryKey: ['relations', universeId] });
+    qc.invalidateQueries({ queryKey: ['link-types', universeId] });
+  },
   });
 }
 
