@@ -1,4 +1,3 @@
--- Phase 40 MAPS-04/05 (D-09, D-01, D-02): map_regions table + style columns.
 --
 -- map_regions: polygon regions with normalized 0..1 vertex coords (D-09). entryId
 --   is nullable (D-05 — standalone territory with no entry link). ON DELETE CASCADE

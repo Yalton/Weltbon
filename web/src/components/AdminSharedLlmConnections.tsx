@@ -1,8 +1,6 @@
 /**
- * #50 Task 9 — administrator panel for granting/revoking shared LLM access.
  *
  * Mounted on AdminUsers.tsx (Administration page). This is the OTHER side of
- * SharedLlmConnections.tsx (Task 8, the recipient's view): where that
  * component's whole design is "reveal nothing about the owner", this one's
  * whole design is the opposite — an administrator legitimately needs to see
  * WHO a grant is between (owner and recipient identity) to manage it, and
@@ -43,7 +41,6 @@ function statusMessage(err: unknown): string {
 }
 
 // Shared access is anthropic/openai only — Ollama is local/desktop-only and
-// must never appear as a shared/managed provider option (global constraint).
 const PROVIDERS: { value: SharedProvider; label: string }[] = [
   { value: 'anthropic', label: 'Anthropic' },
   { value: 'openai', label: 'OpenAI' },
@@ -52,9 +49,6 @@ const PROVIDERS: { value: SharedProvider; label: string }[] = [
 export function AdminSharedLlmConnections() {
   const { data: usersRaw } = useAdminUsers();
   const users = Array.isArray(usersRaw) ? usersRaw : [];
-  // Sharing access with a disabled account makes no sense (the server itself
-  // rejects it as `shared_recipient_unavailable`) — filter here so the
-  // select never even offers the choice.
   const activeUsers = users.filter((u) => u.disabledAt === null);
 
   const { data: grantsRaw, isPending, error } = useAdminSharedLlmGrants();
@@ -145,12 +139,7 @@ export function AdminSharedLlmConnections() {
           {statusMessage(create.error)}
         </p>
       )}
-      {/* Review finding: a failed revoke (403/409/network) previously left
-          the row in place with NO message at all — for a security-relevant
-          action ("recipient immediately loses the ability to run audits")
-          that is the worst direction to fail silently: the administrator
-          sees nothing and reasonably concludes access was cut when it was
-          not. Rendered the same way as `create.error` above. */}
+
       {revoke.error && (
         <p className="mt-1 text-sm text-red-500" role="alert">
           {statusMessage(revoke.error)}

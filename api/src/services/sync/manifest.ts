@@ -1,32 +1,11 @@
-/**
- * Plan B: the merge engine's model of the manifest (sync spec S-01..S-05).
- * SyncManifest rows are the manifest JSON shape — ISO strings, snake_case
- * link_type quirk and all. Descriptors give the engine identity + natural-key
- * knowledge; they are the ONLY place per-collection IDENTITY facts live.
- *
- * The field-name sets below are deliberately global and may name a field that
- * exists on a single collection (`usedAsCoverByEntryId`, C-06, is on assets
- * only). They are keyed by field name rather than by collection because the
- * comparison they drive is field-wise: a name in the set is excluded wherever
- * it appears, and a name that appears nowhere costs nothing. Adding a
- * per-descriptor override would buy nothing today — but if a name in these
- * sets ever becomes ambiguous across collections (the same key meaning
- * different things), THAT is the point to move it onto the descriptor.
- */
 import type { SyncManifestShape } from '../export/json.js';
 
 export type SyncManifest = SyncManifestShape;
 export type ManifestRow = Record<string, unknown>;
 
 export interface CollectionDescriptor {
-  /** manifest key, e.g. 'mapPins' */
   name: string;
-  /** row identity within the collection (id, or entryId for graphPositions) */
   key: (row: ManifestRow) => string;
-  /**
-   * DB-level natural key that must stay unique after merge, or null.
-   * Colliding created-created rows dedupe by LWW (B-05).
-   */
   naturalKey: ((row: ManifestRow) => string) | null;
 }
 
@@ -53,39 +32,18 @@ export const COLLECTIONS: CollectionDescriptor[] = [
   { name: 'shareTokens',     key: id, naturalKey: (r) => String(r.hash) },       // UNIQUE(hash)
 ];
 
-/**
- * Fields excluded from content comparison (B-02).
- *
- * `usedAsCoverByEntryId` (C-06) is DERIVED from entries.cover_image_id, not an
- * assets column, so it is not applicable — and comparing it would manufacture
- * asset ops out of an entries-side change. One side moves a cover: a spurious
- * asset UPSERT that apply cannot execute (no such column to write). Both sides
- * move it: a phantom asset CONFLICT on top. The one-sided case is the common
- * one. The real state merges on the entries row.
- */
 export const NON_CONTENT_FIELDS = new Set([
   'updatedAt',
   'createdAt',
   'usedAsCoverByEntryId',
   // F0-04: each instance re-derives its own thumbnail under its own SHARP_OPTS,
   // so this is per-instance state rather than content — the same argument the
-  // docstring above makes for usedAsCoverByEntryId. While it counted, a
-  // transferred asset was a delta member on the run AFTER its transfer: a
   // spurious round-trip per asset per link, and conflict-ledger rows for a field
-  // no user ever touched. It feeds no quota (both checks sum size_bytes).
-  //
-  // Note this stops the field DRIVING sync — no spurious deltas, no phantom
   // conflicts — but it does NOT stop it crossing: apply-tables.ts still writes
   // thumbSizeBytes on every asset upsert, so a peer-side edit to any other field
-  // (a rename, an altText change) still ships its value over, and
-  // planAssetMaterialization short-circuits on exists(id) so nothing re-derives
+
   // it afterwards. F0-06 is what makes each instance repair its own value.
-  //
-  // This is also where the usedAsCoverByEntryId analogy breaks: that field is
-  // excluded from comparison AND absent from the asset toValues, so it genuinely
-  // never crosses.
   'thumbSizeBytes',
 ]);
 
-/** Array fields compared order-insensitively (B-02). */
 export const UNORDERED_ARRAY_FIELDS = new Set(['entryIds']);

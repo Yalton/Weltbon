@@ -8,12 +8,10 @@ import type { AuthVariables } from '../middleware/auth.js';
 
 type AppEnv = { Variables: AuthVariables };
 
-// ─── Path param schemas ──────────────────────────────────────────────────────
 
 const uidParams = z.object({ uid: z.string().uuid() });
 const uidAndIdParams = z.object({ uid: z.string().uuid(), id: z.string().uuid() });
 
-// ─── Zod schemas ────────────────────────────────────────────────────────────
 
 const createSchema = z.object({
   label: z.string().min(1).max(80),
@@ -52,7 +50,6 @@ const listResponseSchema = z.object({
 
 const errorSchema = z.object({ error: z.string() });
 
-// ─── Route definitions ───────────────────────────────────────────────────────
 
 const listRoute = createRoute({
   method: 'get',
@@ -253,7 +250,6 @@ const deleteRoute = createRoute({
   },
 });
 
-// ─── Router ──────────────────────────────────────────────────────────────────
 
 export const categoryRoutes = new OpenAPIHono<AppEnv>()
 
@@ -286,7 +282,6 @@ export const categoryRoutes = new OpenAPIHono<AppEnv>()
   })
 
   // POST / -- create category; sort_order = max(existing) + 1
-  // IMPORTANT: register before /:id routes so "reorder" doesn't match :id
   .openapi(createRoute_, async (c) => {
     const { uid } = c.req.valid('param');
     const userId = c.var.userId;
@@ -312,14 +307,12 @@ export const categoryRoutes = new OpenAPIHono<AppEnv>()
   })
 
   // PUT /reorder -- rewrite sort_order by index of orderedIds
-  // IMPORTANT: register before /:id route so "reorder" doesn't match :id
   .openapi(reorderRoute, async (c) => {
     const { uid } = c.req.valid('param');
     const userId = c.var.userId;
     await requireUniverse(uid, userId);
     const { orderedIds } = c.req.valid('json');
 
-    // Validate all ids belong to this universe
     const existing = await db()
       .select({ id: categories.id })
       .from(categories)

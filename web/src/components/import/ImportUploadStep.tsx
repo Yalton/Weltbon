@@ -14,39 +14,14 @@ import type { IngestPreview } from '../../types/ingestReview';
 import { ImportDropZone } from './ImportDropZone';
 import { ImportProgressBar } from './ImportProgressBar';
 
-/**
- * Phase 12 ingest flow — first step at /universes/:uid/import.
- *
- * Owns a 4-state internal state machine (idle | selected | uploading |
- * error) and on 200 calls back the parsed IngestPreview to the parent.
- * The parent owns review-state persistence (D-20: NO localStorage write
- * here) and any transitions into review/commit/success.
- *
- * Three responsibilities:
- *   1. Upload state machine (idle | selected | uploading | error).
- *   2. Defense-in-depth batch-limit pre-check using BATCH_LIMIT_* constants
- *      from web/src/lib/ingestLimits.ts (file count, per-file size, ZIP
- *      size). Pre-check rejection never issues a network request.
- *   3. Multipart POST to /api/universes/:uid/ingest using the FormData-aware
- *      api() helper from Plan 12-02. Folder uploads append each file as
- *      `('files', f, f.webkitRelativePath || f.name)` so the Phase 11 parser
- *      can derive categories from folder structure (ING-02).
- */
 export interface ImportUploadStepProps {
   universeId: string;
-  /**
-   * #37: the SOURCE is handed up alongside the preview because the review
-   * screen can re-request the preview at a different split level, and the
-   * files only ever live here — this component unmounts as soon as review
-   * takes over. Without the source the reviewer would have nothing to re-POST.
-   */
   onParsed: (preview: IngestPreview, source: UploadSource) => void;
   onCancel: () => void;
 }
 
 export type UploadKind = 'zip' | 'folder' | 'md';
 
-/** The upload as posted, retained so the preview can be re-requested (#37). */
 export type UploadSource = { files: File[]; kind: UploadKind };
 
 type UploadState =
@@ -81,16 +56,13 @@ export function classifyAndDetectKind(
   | { kind: UploadKind }
   | { error: string } {
   if (files.length === 0) return { error: COPY_INVALID_FILE_TYPE };
-  // Single .zip → kind=zip.
   if (files.length === 1 && files[0]!.name.toLowerCase().endsWith('.zip')) {
     return { kind: 'zip' };
   }
-  // Every file must be markdown or docx.
   for (const f of files) {
     if (!isMarkdown(f.name) && !isDocx(f.name)) return { error: COPY_INVALID_FILE_TYPE };
   }
   // Folder pick when any file has a non-empty webkitRelativePath; otherwise
-  // bare file drop(s).
   const hasRelativePath = files.some((f) => Boolean(f.webkitRelativePath));
   return { kind: hasRelativePath ? 'folder' : 'md' };
 }
@@ -102,13 +74,8 @@ export function enforceBatchLimits(files: File[], kind: UploadKind): string | nu
     }
     return null;
   }
-  // folder | md
-  //
   // .docx caps are checked separately from, and BEFORE, the markdown per-file
-  // loop below — DOCX_MB (25) and the markdown FILE_SIZE_MB (1) cap are two
-  // orders of magnitude apart, and a docx part must never be measured against
   // the markdown cap or a valid multi-MB Word file gets rejected with a
-  // message about the wrong format.
   const docxFiles = files.filter((f) => isDocx(f.name));
   if (docxFiles.length > BATCH_LIMIT_DOCX_FILES) {
     return `Too many Word documents (max ${BATCH_LIMIT_DOCX_FILES}). Try splitting your upload.`;
@@ -129,7 +96,6 @@ export function enforceBatchLimits(files: File[], kind: UploadKind): string | nu
   }
   // Total-uncompressed cap is a server-only concern (we can't reliably
   // predict zip-expanded size client-side; for folders the per-file × count
-  // caps already bound it). The constant is referenced here so a future
   // pre-check has a place to land.
   void BATCH_LIMIT_TOTAL_UNCOMPRESSED_MB;
   return null;
@@ -143,14 +109,10 @@ function buildFormData(
 ): FormData {
   const fd = new FormData();
   // #37 SP-04: three states on the wire. Omitted = auto-detect; the literal
-  // string "null" = do not split; "1".."6" = an explicit override. Multipart
-  // carries text, so the level is stringified rather than sent as JSON.
   if (splitLevel !== undefined) {
     fd.append('split_level', splitLevel === null ? 'null' : String(splitLevel));
   }
   // #35 DOCX-09/DOCX-10: every selected upload index is sent as a repeated
-  // multipart field. Numeric sorting makes otherwise unordered Set values
-  // stable on the wire and in diagnostics.
   for (const index of [...(promotedDocxIndices ?? [])].sort(
     (a, b) => a - b,
   )) {
@@ -160,8 +122,6 @@ function buildFormData(
     fd.append('zip', files[0]!);
   } else {
     for (const f of files) {
-      // The third arg preserves the relative path so the server can derive
-      // folder structure (Phase 11 ING-02). Without it, only the bare
       // filename is sent and category-from-folder derivation breaks.
       const name = f.webkitRelativePath || f.name;
       fd.append('files', f, name);
@@ -170,12 +130,6 @@ function buildFormData(
   return fd;
 }
 
-/**
- * The ONE preview request path (#37). Both the first upload and the reviewer's
- * split-level re-request go through here, so the multipart contract — the
- * relative-path third argument, the zip part, the split_level encoding — has a
- * single definition rather than a copy per call site.
- */
 export function requestPreview(
   universeId: string,
   files: File[],
@@ -198,9 +152,6 @@ function describeSelection(files: File[], kind: UploadKind): string {
 }
 
 // #35: a lone .docx classifies as kind='md' (DOCX-08 -- .docx joins the
-// files[] part, it is not a distinct UploadKind), so this cannot infer the
-// summary copy from `kind` alone or a Word document gets described as a
-// ".md file". It counts actual extensions instead.
 export function describeKind(kind: UploadKind, files: File[]): string {
   if (kind === 'zip') return 'ZIP archive';
   if (kind === 'folder') return `Folder (${files.length} files)`;
@@ -280,7 +231,6 @@ export function ImportUploadStep({
     setState({ step: 'uploading', files, kind, pct: 0 });
 
     // Deterministic-fill timer — same recipe as UI-SPEC §6.6 commit progress.
-    // 50 ms per file baseline, capped at 90 % until response arrives.
     const estimatedMs = Math.max(500, files.length * 50);
     const startedAt = performance.now();
     const tick = () => {
@@ -301,10 +251,6 @@ export function ImportUploadStep({
         window.clearTimeout(timerRef.current);
         timerRef.current = null;
       }
-      // Reset to idle as a defensive fallback. The parent's onParsed
-      // typically transitions to a new view (component unmounts), but if
-      // it does not, we land in a clean idle state without the progress
-      // bar lingering.
       setState({ step: 'idle' });
       onParsed(preview, { files, kind });
     } catch (err) {

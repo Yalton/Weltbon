@@ -1,15 +1,3 @@
-/**
- * Phase 32 Plan 03 — useDictionary hook tests (Wave 0 target file).
- *
- * Per-file mock of api/client — prevents blast radius onto sibling tests.
- * (project memory: react-query-key-change-blast-radius)
- *
- * Asserts:
- *   (a) useFilteredDictionary builds the right URL and query key for {q},
- *       {lid}, and {q+lid}.
- *   (b) Each mutation calls the correct method + path.
- *   (c) Mutations invalidate the ['dictionary', universeId] prefix.
- */
 
 import { describe, it, expect, beforeEach, vi } from 'vitest';
 import { renderHook, act } from '@testing-library/react';

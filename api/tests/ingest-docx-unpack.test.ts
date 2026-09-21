@@ -38,7 +38,7 @@ describe('unpackDocx — happy path', () => {
       relsXml: '<Relationships/>',
       corePropsXml: '<cp:coreProperties/>',
       contentTypesXml: '<Types/>',
-      // makeDocx has no endnotesXml field by design (Task 2); extraEntries is
+
       // the only way to add it, and endnotes had zero coverage until this
       // review round (unpack.ts:209's mapping was copy-paste-shaped).
       extraEntries: [{ name: 'word/endnotes.xml', content: '<w:endnotes/>' }],

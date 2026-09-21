@@ -14,19 +14,6 @@ import { fromBuffer, type ZipFile, type Entry } from 'yauzl';
 import type { Root } from 'mdast';
 import { mdastToDocx } from '../src/services/export/docx/walker.js';
 
-/**
- * Plan 04-04 — mdast→docx walker unit coverage.
- *
- * The walker emits docx.Paragraph / docx.Table instances whose internal
- * shape is private. The reliable way to assert behavior is to wrap the
- * walker output in a minimal docx.Document, run Packer.toBuffer (which
- * produces a real .docx ZIP), unzip and read word/document.xml, and
- * grep for the expected XML signatures (w:b for bold, w:i for italics,
- * w:pStyle val="Heading3" for downshifted H1, etc.).
- *
- * This is the same access pattern the integration test (export-docx.test.ts)
- * uses — keeping a single XML-grep style means both suites read identically.
- */
 
 function parse(md: string): Root {
   return unified().use(remarkParse).use(remarkGfm).parse(md) as Root;

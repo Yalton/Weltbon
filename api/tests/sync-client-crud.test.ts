@@ -1,6 +1,3 @@
-/**
- * Plan D Task 5 — sync_remotes / sync_links CRUD (D-04, D-10).
- */
 import { describe, it, expect, beforeAll, afterAll, beforeEach, afterEach, vi } from 'vitest';
 
 // CRITICAL — must be set BEFORE the *first* env() call in the process. config.ts
@@ -31,7 +28,7 @@ import { join } from 'node:path';
 import { eq } from 'drizzle-orm';
 import { createTestDb, cleanDb, createTestUser, authHeader, type TestDbHandle } from './helpers.js';
 
-describe('sync client CRUD (Plan D)', () => {
+describe('sync client CRUD', () => {
   const hostFetch = globalThis.fetch;
   let handle: TestDbHandle;
   // eslint-disable-next-line @typescript-eslint/no-explicit-any
@@ -320,7 +317,7 @@ describe('sync client CRUD (Plan D)', () => {
   });
 
   it('404s a link whose remoteId belongs to another user, rather than linking to it', async () => {
-    // This is the boundary Task 7's drive loop trusts when deciding whose PAT
+
     // to decrypt and which URL to dial. If ownedRemote's check were dropped,
     // a caller could link their own universe to another user's registered
     // remote and trigger an outbound sync using that other user's stored PAT.

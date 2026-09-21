@@ -1,17 +1,3 @@
-/**
- * Phase 33 Plan 02 Task 2 — WordPopover share-mode behavioral tests.
- *
- * T-33-07 / CONLANG-04: In share mode, clicking the WordPopover trigger must
- * NOT navigate to /universes/share/dictionary (a protected route that would
- * redirect to /login). Hover-only gloss+IPA popover remains functional.
- *
- * Coverage:
- *   S1. Share mode: trigger has no button role (no navigation affordance).
- *   S2. Share mode: clicking the trigger does NOT call navigate.
- *   S3. Authenticated mode: trigger has role=button and clicking it navigates
- *       to /universes/:uid/dictionary?highlight=<word>.
- *   S4. Authenticated mode: keyboard Enter on trigger also navigates (unchanged).
- */
 
 import { describe, it, expect, vi } from 'vitest';
 import { render, screen, fireEvent } from '@testing-library/react';

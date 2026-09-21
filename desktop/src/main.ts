@@ -6,14 +6,10 @@ import { loadOrCreateSecrets, secretsPath } from './secrets.js';
 import { exportBuildInfoEnv } from './build-info.js';
 
 // DV-15: two processes over one PGlite directory is the corruption case.
-// Must run before anything touches the data dir.
 if (!app.requestSingleInstanceLock()) {
   app.quit();
 } else {
   let mainWindow: BrowserWindow | null = null;
-  // How long a quit waits for the database to close before giving up (#15).
-  // Long enough for a normal PGlite flush, short enough that a user is never
-  // left staring at no window while the process is still alive.
   const SHUTDOWN_TIMEOUT_MS = 5_000;
 
 
@@ -29,22 +25,13 @@ if (!app.requestSingleInstanceLock()) {
     ?? join(app.getAppPath(), '..', 'api', 'dist', 'index.js');
   const webDist = process.env.WELTBON_WEB_DIST_OVERRIDE
     ?? join(app.getAppPath(), '..', 'api', 'web-dist');
-  // apiEntry is always <apiRoot>/dist/index.js (the WELTBON_API_ENTRY escape
-  // hatch included — see the DRIZZLE_DIR comment below), so apiRoot is two
-  // directories up.
   const apiRoot = dirname(dirname(apiEntry));
 
-  // Review round 2, Finding 3: this handler is PROCESS-WIDE, so once
-  // startServer() has imported the API module in-process, it also catches
-  // rejections from the API's own background work (audit runs, sync jobs) —
+  // This handler is process-wide. Once startServer() imports the API module
+  // in-process, it also catches
   // not just this file's own post-startup failures. A synchronous dialog
   // here would block the main process on an API-internal promise rejection
-  // that the API's own error handling may already be managing, and would
   // suppress Node's default crash-on-unhandled-rejection behavior for that
-  // code without actually fixing anything. Log only; do not dialog, do not
-  // quit — a background rejection here is not evidence the app is unusable,
-  // unlike a startup failure or a renderer crash (both handled below with
-  // an actual dialog, because those genuinely do mean the window is dead).
   process.on('unhandledRejection', (err) => {
     console.error('[weltbon] unhandled rejection:', err);
   });
@@ -55,8 +42,6 @@ if (!app.requestSingleInstanceLock()) {
     const userData = app.getPath('userData');
     const secrets = await loadOrCreateSecrets(secretsPath(userData));
 
-    // MUST be set before the API module is imported: api/src/index.ts calls
-    // env() at module scope, so a static import would capture an empty config.
     process.env.WELTBON_DB_DRIVER = 'pglite';
     process.env.WELTBON_DATA_DIR = join(userData, 'db');
     process.env.UPLOADS_DIR = join(userData, 'uploads');
@@ -65,57 +50,20 @@ if (!app.requestSingleInstanceLock()) {
     process.env.JWT_SECRET = secrets.jwtSecret;
     process.env.LLM_KEY_ENCRYPTION_KEY = secrets.llmKeyEncryptionKey;
     process.env.PORT = '0';                   // kernel picks; startServer reports it
-    // Task 3 security review: with no hostname, @hono/node-server binds ALL
-    // interfaces. That is fine for the Docker container (its published port
-    // must be reachable from the host) but unacceptable here — this API mints
+    // With no hostname, @hono/node-server binds all interfaces. That is fine for the Docker container (its published port
     // credential-free local sessions and must never be reachable from the LAN.
     process.env.WELTBON_BIND_HOST = '127.0.0.1';
-    // Review round 1, Finding 1 (SECURITY): with WELTBON_PUBLIC_ORIGIN unset,
-    // index.ts's cors() reflects ANY Origin with credentials: true. The
-    // loopback bind above does not stop this — the attacker page runs in the
-    // user's OWN browser, which is already loopback. A page at evil.example
     // can POST /api/auth/local-session, read the token cross-origin out of
     // the response body (it is not cookie-only), and use it as a bearer
-    // token against every route.
-    //
-    // Review round 2, Finding 1: the round-1 fix used 'http://127.0.0.1' (no
-    // port) as the sentinel, reasoning that a real browser Origin always
-    // carries the port. True for THIS app's own window — but not universally:
-    // it is EXACTLY the Origin a page served from loopback port 80 sends
     // (browsers omit the default port), so any other locally-hosted app on
-    // port 80 with an XSS could still get the token. Use an origin no page
-    // can EVER be served from instead: '.invalid' is reserved by RFC 2606
-    // and guaranteed to never resolve, so no origin header a real browser
-    // sends can ever equal this string, port included or not. Do not
-    // "simplify" this back to a loopback address — that is the bug this
-    // comment exists to prevent someone from reintroducing.
     process.env.WELTBON_PUBLIC_ORIGIN = 'http://weltbon.invalid';
-    // Review round 1, Finding 3: api/src/db/migrate.ts's migrationsFolder
-    // and services/sync/handshake.ts's migrationHead() both resolve
-    // './drizzle' against process.cwd() by default — fine in Docker, where
-    // WORKDIR /app happens to be the api root, but Electron's cwd has no
-    // such guarantee. DRIZZLE_DIR is the override mechanism handshake.ts
-    // already defines; migrate.ts now reads it too (both call sites fixed
-    // by one env var, no process.chdir() needed — chdir cannot enter a
     // future asar-packaged app/ and, unlike this var, would have silently
-    // tracked apiEntry's directory even when WELTBON_API_ENTRY points
-    // somewhere not shaped <root>/dist/index.js).
     process.env.DRIZZLE_DIR = join(apiRoot, 'drizzle');
-    // Same class of problem, same remedy (#8). pdf/fonts.ts derives its font
-    // directory by walking a fixed `../../../../` from `import.meta.url`, which
-    // relies on src/ and dist/ sitting at equal depth below api/. Bundling the
-    // API collapses that depth, so the walk lands outside the packaged tree.
-    // Unlike DRIZZLE_DIR this one fails late — the path is only touched during a
-    // PDF export — which is precisely why it is set here rather than discovered
-    // by a user whose export silently lost its fonts.
     process.env.WELTBON_FONT_DIR = join(apiRoot, 'assets', 'fonts');
     delete process.env.DATABASE_URL;          // must never reach a real Postgres
 
-    // Build identity, published as env BEFORE the API is imported. Staging
     // writes <apiRoot>/version.json; see build-info.ts for why this is a file
     // read at boot rather than an esbuild --define at stage time. A dev run has
-    // no staged tree, so a null here is normal and the API falls back to
-    // api/package.json.
     const buildInfo = exportBuildInfoEnv(apiRoot);
     if (buildInfo) {
       console.log(`[weltbon] build ${buildInfo.version}${buildInfo.commit ? ` (${buildInfo.commit})` : ''}`);
@@ -124,18 +72,8 @@ if (!app.requestSingleInstanceLock()) {
     const { startServer, closeDb } = await import(pathToFileURL(apiEntry).href);
     const { port } = await startServer();
 
-    // FIX 2 (final whole-branch review): without this, every quit is a crash
-    // from PGlite's point of view — Electron does not SIGTERM itself on quit,
     // so `wireSigtermDrain` (api/src/services/audit-shutdown.ts) never fires,
-    // and nothing else in this process ever called closeDb() either. That is
-    // exactly the failure class Stage 2's initDb()/closeDb() lifecycle
-    // hardening (Task 1) exists to rule out — this handler is what actually
-    // wires it into a real desktop quit.
-    //
-    // `closeDb` is destructured off THIS SAME dynamic import (see index.ts's
-    // `export { closeDb }` for why a second, independent import would not
     // do), so it closes the module-scope PGlite handle this process's own
-    // startServer() actually opened.
     let closing: Promise<void> | null = null;
     app.on('before-quit', (event) => {
       if (closing) return; // already closing (or closed) — do not double-close
@@ -143,17 +81,7 @@ if (!app.requestSingleInstanceLock()) {
       closing = (async () => {
         let timer: ReturnType<typeof setTimeout> | undefined;
         try {
-          // Bounded, not just try/caught. A REJECTION was already handled; a
           // HANG was not — and closeDb() first awaits any in-flight initDb()
-          // and then PGlite's own close(), either of which could fail to
-          // settle. Because this handler calls preventDefault(), an unsettled
-          // close leaves the quit permanently blocked: the window is gone and
-          // the process is still alive with no UI, which a user cannot recover
-          // from except by killing it (#15).
-          //
-          // A clean close is preferable — it lets PGlite flush rather than
-          // recover from its WAL on the next boot — but a stuck process is
-          // worse than an unclean one, so the timeout wins.
           await Promise.race([
             closeDb(),
             new Promise<void>((resolve) => {
@@ -164,20 +92,12 @@ if (!app.requestSingleInstanceLock()) {
                 );
                 resolve();
               }, SHUTDOWN_TIMEOUT_MS);
-              // Do not let the timer itself hold the process open.
               timer.unref?.();
             }),
           ]);
         } catch (err) {
-          // A failure to close must never hang the app open — log and let
-          // the quit proceed regardless.
           console.error('[weltbon] closeDb() failed during shutdown:', err);
         } finally {
-          // Cancel the deadline whichever way the race went. Without this, a
-          // SUCCESSFUL close still leaves the timer armed and it later logs
-          // "did not settle" — a false alarm about the shutdown that just
-          // worked, which is exactly the kind of misleading log that costs
-          // someone an afternoon.
           if (timer) clearTimeout(timer);
           app.quit();
         }
@@ -190,13 +110,8 @@ if (!app.requestSingleInstanceLock()) {
       webPreferences: { nodeIntegration: false, contextIsolation: true },
     });
     mainWindow.webContents.on('did-fail-load', (_event, errorCode, errorDescription, validatedURL, isMainFrame) => {
-      // Review round 2, Finding 2: unfiltered, this fired a blocking native
-      // modal on ordinary events — any subframe load failure (isMainFrame
-      // false; iframes, trackers blocked, whatever) and every ERR_ABORTED
+      // Restrict the blocking native modal to meaningful main-frame failures.
       // (-3), which Chromium fires routinely for a navigation superseded by
-      // another before it finished (exactly what a fast SPA redirect looks
-      // like). Only a MAIN FRAME failure that is not a mere abort means the
-      // window is actually stuck with nothing loaded.
       if (!isMainFrame || errorCode === -3) return;
       console.error('[weltbon] did-fail-load:', errorCode, errorDescription, validatedURL);
       dialog.showErrorBox(
@@ -213,21 +128,13 @@ if (!app.requestSingleInstanceLock()) {
     });
     await mainWindow.loadURL(`http://127.0.0.1:${port}`);
 
-    // Task 7 — close the visual-evidence gap left by Task 6. That task could
-    // only infer "the UI rendered" from the API's own request log: this
     // sandboxed Wayland session has no working OS-level screenshot path (X11
     // `import` fails; the GNOME D-Bus screenshot portal returns
-    // AccessDenied). webContents.capturePage()/executeJavaScript() run
     // entirely IN-PROCESS over Electron's own compositor and CDP — no
-    // portal, no external compositor call — so they work unconditionally
     // here. Opt-in only, via env vars an ordinary user never sets, so none
-    // of this runs (or costs anything) for a real launch.
     if (process.env.WELTBON_DESKTOP_CAPTURE || process.env.WELTBON_DESKTOP_CAPTURE_TEXT) {
-      // capturePage() and executeJavaScript() would both happily fire the
       // instant loadURL() resolves — which is 'did-finish-load', i.e. the
-      // document is parsed, not that React has mounted, authenticated, and
       // painted anything. Poll for a steady, logged-in state (no login form
-      // present, some real body text) instead of guessing a fixed delay.
       const steadyDeadline = Date.now() + 15_000;
       let steadyState: { hasLoginForm: boolean; text: string } | null = null;
       for (;;) {
@@ -235,9 +142,7 @@ if (!app.requestSingleInstanceLock()) {
           `({ hasLoginForm: !!document.querySelector('#email'), text: document.body.innerText.slice(0, 300) })`
         );
         // "Loading..." is real non-empty body text too (the isLoading branch
-        // in e.g. UniverseList.tsx renders nothing else), so it satisfies a
         // bare non-empty check while telling us nothing about whether the
-        // app actually finished authenticating and rendering its real UI.
         const trimmed = state.text.trim();
         if (!state.hasLoginForm && trimmed.length > 0 && !/^Loading/i.test(trimmed)) {
           steadyState = state;
@@ -265,16 +170,7 @@ if (!app.requestSingleInstanceLock()) {
   }
 
   main().catch((err) => {
-    // In Docker a boot failure prints to stderr and the container dies loudly.
-    // In Electron it produces a BLANK WINDOW and no explanation, which is the
     // most likely first-run failure and the least self-explanatory. Say what
-    // happened and where the data lives.
-    //
-    // console.error too, not just the dialog: twice during this task's own
-    // development, a failure here surfaced as an unresponsive modal with no
-    // visible content in this sandbox's display server, and nothing in the
-    // terminal explained why — a log line is the only thing that actually
-    // told us what had gone wrong.
     console.error('[weltbon] startup failed:', err);
     dialog.showErrorBox(
       'Weltbon could not start',

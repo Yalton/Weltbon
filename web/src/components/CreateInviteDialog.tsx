@@ -1,15 +1,3 @@
-/**
- * CreateInviteDialog — single Radix Dialog with two internal phases:
- *   'form'   — react-hook-form + Zod to mint a new invite code (UI-SPEC §8.1)
- *   'reveal' — copy-once plaintext display (UI-SPEC §8.3)
- *
- * INV-01 mitigation: plaintext lives only in component state during the reveal
- * phase; cleared on close so it is never persisted beyond the modal lifetime.
- *
- * Structurally identical to CreateTokenDialog — same Tailwind recipe (UI-SPEC §0),
- * same two-phase state machine, same focus/copy contract. Only the locked copy
- * strings differ.
- */
 
 import { useState, useEffect, useRef } from 'react';
 import * as Dialog from '@radix-ui/react-dialog';
@@ -61,7 +49,7 @@ export function CreateInviteDialog({ open, onOpenChange }: Props) {
     onOpenChange(nextOpen);
   };
 
-  // Focus the Copy button when phase transitions to 'reveal' (UI-SPEC §8.3)
+
   useEffect(() => {
     if (phase === 'reveal') {
       copyButtonRef.current?.focus();
@@ -74,7 +62,6 @@ export function CreateInviteDialog({ open, onOpenChange }: Props) {
       setTokenData(result);
       setPhase('reveal');
     } catch {
-      // mutation error already exposed via createInvite.error; the inline error
       // below renders it. react-hook-form keeps the form intact for retry.
     }
   };

@@ -21,27 +21,21 @@
   --font-display: 'Spectral', Georgia, 'Times New Roman', serif;
   --color-accent: oklch(0.6 0.18 270);
   --color-accent-soft: oklch(0.6 0.18 270 / 0.18);
-  /* ── Accent derivations (theming spec §2.1) — overridden per-universe by ThemeScope ── */
   --color-accent-strong: #818cf8;  /* indigo-400 — gradients, icons, emphasis */
   --color-accent-deep:   #4f46e5;  /* indigo-600 — CTA gradient end (exact old to-indigo-600) */
   --color-accent-ink:    #c7d2fe;  /* indigo-200 — accent-tinted text */
   --color-accent-ring:   rgb(165 180 252 / 0.18);  /* inset rings on active pills */
 
-  /* ── Cosmic Observatory tokens (visual overhaul spec §1) ── */
-  /* canvas gradient stops */
   --color-canvas-hi:  #151b31;
   --color-canvas-mid: #0b0e1c;
   --color-canvas-lo:  #070912;
-  /* surface tiers */
   --color-chrome:       rgb(12 16 31 / 0.85);
   --color-glass:        rgb(255 255 255 / 0.04);
   --color-glass-border: rgb(255 255 255 / 0.08);
   --color-overlay:      rgb(16 21 43 / 0.95);
-  /* text */
   --color-ink:           #eef2ff;
   --color-ink-secondary: #94a3c8;
   --color-ink-muted:     #5d688a;
-  /* glow shadows */
   --shadow-glow-accent: 0 0 20px rgb(99 102 241 / 0.30);
   --shadow-glow-soft:   0 0 18px rgb(129 140 248 / 0.12);
   --shadow-ambient:     0 4px 24px rgb(0 0 0 / 0.25);
@@ -58,13 +52,9 @@
   --sim-line-opacity-dark:        0.18;
   --sim-line-opacity-light:       0.22;
 
-  /* ── Map pin chrome design tokens (D-03, Phase 50) ── */
-  /* These drive the SVG filter attributes in MapCanvas PinCircle (see feDropShadow / feGaussianBlur). */
   --pin-shadow-color:             rgba(0, 0, 0, 0.45);
   --pin-glow-color:               oklch(0.65 0.22 270);  /* accent-adjacent violet glow */
 
-  /* ── Map grid overlay token (D-05, Phase 50 Task 1) ── */
-  /* Used by the optional image-space grid overlay in MapCanvas. */
   --map-grid-color:               rgba(120, 120, 120, 0.18);
 
   --animate-overlay-in:  fade-in   var(--motion-dialog-enter-duration) var(--motion-ease-out) both;
@@ -73,10 +63,6 @@
   --animate-dialog-out:  dialog-out var(--motion-dialog-exit-duration) var(--motion-ease-in)  both;
   --animate-popover-in:  popover-in  var(--motion-popover-duration) var(--motion-ease-out) both;
   --animate-popover-out: popover-out var(--motion-popover-duration) var(--motion-ease-in)  both;
-  /* Loading indicator (#32). Linear, not eased: a spinner that accelerates and
-     decelerates every cycle reads as stuttering. The reduced-motion block below
-     parks it after one iteration, which is why the ring is drawn as a complete
-     circle with a single accent quadrant — stopped, it still looks deliberate. */
   --animate-spinner: spinner 0.8s linear infinite;
 }
 
@@ -104,9 +90,6 @@ body {
   color: transparent;
 }
 
-/* Accent-gradient primary button surface. A CSS class (not per-stop Tailwind
-   utilities) so ThemeScope's --color-accent* overrides retheme it. The deep
-   end-stop reproduces the old to-indigo-600 exactly. */
 .btn-accent {
   background: linear-gradient(135deg, var(--color-accent-strong), var(--color-accent-deep));
 }
@@ -115,7 +98,6 @@ body {
 .prose a { color: var(--color-accent); }
 .prose a:hover { text-decoration: underline; }
 
-/* §2.2 prose overrides — editorial typography for entry markdown bodies */
 .prose {
   font-size: 16px;
   line-height: 1.7;
@@ -168,15 +150,8 @@ body {
 .prose blockquote.markdown-callout > :first-child { margin-top: 0; }
 .prose blockquote.markdown-callout > :last-child { margin-bottom: 0; }
 
-/* §8.2 dialog/popover keyframes */
 @keyframes fade-in   { from { opacity: 0 } to { opacity: 1 } }
 @keyframes fade-out  { from { opacity: 1 } to { opacity: 0 } }
-/* Tailwind v4 emits `-translate-x-1/2 -translate-y-1/2` as the CSS `translate:`
-   shorthand. The dialog Content already centers via those static classes, so
-   the keyframes must NOT redo `translate(-50%, -50%)` in `transform:` — the
-   two properties compose and double-translate the dialog above-left of the
-   viewport. Keyframes only animate the entry-offset + scale; the static
-   `translate:` keeps the dialog centered. */
 @keyframes dialog-in {
   from { opacity: 0; transform: translateY(var(--motion-translate-dialog)) scale(0.98); }
   to   { opacity: 1; transform: translateY(0) scale(1); }

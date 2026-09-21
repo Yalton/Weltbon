@@ -1,25 +1,3 @@
-/**
- * SyncSettings — /settings/sync (Plan F, Task 2).
- *
- * WHY THIS LIVES IN ACCOUNT SETTINGS, NOT UNIVERSE SETTINGS. `sync_remotes`
- * has no universe column: one saved remote is reused by every universe you
- * link to that peer. The universe-scoped half of sync (links, runs, conflicts)
- * lives in the Sync tab of universe settings instead. Keeping the two apart is
- * not cosmetic — deleting a remote here cascades to links in universes that
- * are not on screen, which is why the delete confirmation says so out loud.
- *
- * MASKING (mirrors LlmKeys' LLMKEY-03 treatment). `SyncRemote` carries no
- * plaintext token, and this view renders `••••{patSuffix}` and nothing else
- * for a saved one. A PAT exists only inside the form component the user is
- * typing into (components/SyncRemoteForm.tsx), which unmounts when they switch
- * rows or finish.
- *
- * ERROR COPY. Every failure rendered here goes through `syncErrorMessage` and
- * out via `SyncErrorNotice` — no error prose is written in this file. That
- * includes the list-load failure: a server that is down and one that refuses
- * the request look identical from this page unless the server's own message
- * survives.
- */
 
 import { useState } from 'react';
 import {
@@ -37,17 +15,6 @@ import { AddSyncRemoteForm, EditSyncRemoteForm } from '../components/SyncRemoteF
 import { RemoteUniverseList } from '../components/RemoteUniverseList';
 import { formatRelative } from '../utils/formatRelative';
 
-/**
- * The outcome of one row's "Test connection", plus the address it was run
- * against.
- *
- * `baseUrl` is what keeps the result honest over time. A handshake result is
- * only ever a statement about the address that was contacted, so when the row
- * changes address — the user edits it, or a refetch brings a new value — the
- * stored result stops applying and must disappear. Keying by id alone is
- * enough to keep rows from stealing each other's results, but not to stop a
- * green "Connected" line sitting under a host that was never reached.
- */
 type TestState = {
   baseUrl: string;
   pending?: true;
@@ -55,7 +22,6 @@ type TestState = {
   error?: SyncCopy;
 };
 
-/** How a row names itself in an accessible label. */
 function remoteName(remote: SyncRemote): string {
   return remote.label || remote.baseUrl;
 }
@@ -74,8 +40,6 @@ export default function SyncSettings() {
   const handleTest = async (remote: SyncRemote) => {
     // A handshake crosses the network to a user-supplied address, so an
     // unbounded wait is the ORDINARY case here — `remote-unreachable` is the
-    // timeout path. The pending marker is what stops a user facing a dead peer
-    // from queueing handshakes with no feedback until each one times out.
     setTestState((prev) => ({ ...prev, [remote.id]: { baseUrl: remote.baseUrl, pending: true } }));
     try {
       const res = await testRemote.mutateAsync({ id: remote.id });
@@ -161,7 +125,6 @@ export default function SyncSettings() {
             <tbody>
               {data.map((remote) => {
                 const stored = testState[remote.id];
-                // Drop a result that was produced against a different address.
                 const state = stored && stored.baseUrl === remote.baseUrl ? stored : undefined;
                 const name = remoteName(remote);
                 return [
@@ -287,10 +250,7 @@ export default function SyncSettings() {
           if (!o) setDeleteTarget(null);
         }}
         title="Delete remote"
-        // `sync_links.remote_id` is `onDelete: 'cascade'` (api/src/db/schema.ts:775):
-        // the server drops every link to this remote, across the whole account.
         // The user is on an account-scoped page and cannot see those links, so
-        // the confirmation has to name the blast radius.
         body={
           deleteTarget
             ? `Deleting ${deleteTarget.label ? `"${deleteTarget.label}"` : 'this remote'} also removes every sync link that used it, in every universe on this account. Your universes and their contents are untouched, but you would have to set those links up again.`
@@ -300,23 +260,13 @@ export default function SyncSettings() {
         cancelLabel="Cancel"
         destructive
         onConfirm={async () => {
-          // `isPending` guards a double confirm: ConfirmDialog only closes
-          // AFTER onConfirm resolves, so its button stays live for the whole
-          // request, and a second click would fire a second DELETE. This
-          // delete cascades to every link that used this remote, across every
-          // universe on the account (schema.ts:775, `onDelete: 'cascade'`) —
-          // the most destructive action this surface offers — so the request
           // it could double-fire is a 404 reporting failure for a removal
-          // that already succeeded on data whose blast radius is already
           // large. Mirrors SyncTab.tsx's remove-link guard.
           if (!deleteTarget || deleteRemote.isPending) return;
           const id = deleteTarget.id;
           setDeleteError(null);
           try {
             await deleteRemote.mutateAsync({ id });
-            // Drop this row's local UI state along with the row itself, so no
-            // stale handshake result or open editor outlives the remote it
-            // described.
             if (editingId === id) setEditingId(null);
             if (browsingId === id) setBrowsingId(null);
             setTestState((prev) => {

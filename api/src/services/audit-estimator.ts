@@ -1,14 +1,11 @@
 /**
- * Phase 26 Plan 02 — audit-estimator.ts: pure-function cost-range estimator.
  *
  * Implements the LLMUI-04 cost-range formula and returns the flat
  * AuditEstimate wire shape (api/src/types/audit-suggestion.ts) that both:
  *
  *   - the existing `triggerAuditRoute` (today inlines a single-point estimate
  *     at api/src/routes/audits.ts:226-249), and
- *   - the NEW pre-run estimate endpoint (Plan 26-03 / D-16),
  *
- * will call. Plan 03 will REPLACE the inline single-point estimate with a
  * call to `estimateAudit()` so the dialog disclosure (D-01) and the route
  * share a single source of truth.
  *
@@ -60,13 +57,9 @@ import type {
 // Heuristic constants (LLMUI-04 formula inputs — see file JSDoc)
 // ---------------------------------------------------------------------------
 
-/** Small successful run, 1-3 suggestions returned. */
 const MIN_OUTPUT_TOKENS = 200;
-/** Large successful run hitting AUDIT-07's typical max suggestion count. */
 const MAX_OUTPUT_TOKENS = 4_000;
-/** Per-tool-call input: cached digest replay + tool-call context. */
 const PER_CALL_INPUT_TOKENS = 1_500;
-/** Per-tool-call output: next tool call decision + small chunk. */
 const PER_CALL_OUTPUT_TOKENS = 400;
 
 // ---------------------------------------------------------------------------
@@ -89,13 +82,11 @@ function zeroBreakdown(scopeEntryCount: number, maxToolCalls: number): AuditEsti
 }
 
 // ---------------------------------------------------------------------------
-// Public API
 // ---------------------------------------------------------------------------
 
 export interface EstimateInput {
   universeId: string;
   scope: 'universe' | 'entry';
-  /** Required when scope='entry'. */
   entryId?: string;
   provider: LlmProvider;
   model: string;
@@ -104,7 +95,6 @@ export interface EstimateInput {
    * providers, a base URL (+ optional proxy bearer) for an endpoint-based one.
    * NEVER logged, either limb.
    *
-   * Fix round 2 (#48 whole-branch review, Critical 1): this was `apiKey:
    * string`, which forced every caller to resolve a KEY — and no `llm_api_keys`
    * row can ever exist for 'ollama' (see KEY_PROVIDER_NAMES), so the estimate
    * route 400'd permanently for Ollama universes and the dialog's Run button,
@@ -115,12 +105,6 @@ export interface EstimateInput {
   credential: ProviderCredential;
   /** Used by the caller's auth path; not consumed by the estimator itself. */
   userId: string;
-  /**
-   * Dependency injection seam for unit testing. NEVER set this from a route;
-   * defaults to the real `db` client. The leading underscore signals the
-   * intent: this is private surface, only the test file and the inline-routes
-   * caller boundary touches it.
-   */
   _db?: typeof realDb;
 }
 
@@ -142,16 +126,10 @@ export async function estimateAudit(input: EstimateInput): Promise<AuditEstimate
 
   // -------------------------------------------------------------------------
   // Step 1: entries count for scope (T-26-02-04: scoped SELECT, no leak)
-  //
-  // For scope='universe' — total entries in the universe.
   // For scope='entry'  — caller is expected to pass `entryId`; the 1-hop
-  //   neighbourhood size matches the engine's narrowed digest (Phase 24 BL-03
   //   / 24-09). For the cost-range estimate we deliberately use the FULL
   //   universe count here as an upper-bound for `scopeEntryCount` rendering
   //   in the dialog — the digest narrowing happens engine-side and reduces
-  //   actual token usage at run time (which only makes the estimate more
-  //   conservative, never less).
-  //   A future revision (Plan 03+) may swap this for an exact neighbourhood
   //   count once the digest API exposes a cheap size-only query.
   // -------------------------------------------------------------------------
   let scopeEntryCount = 0;
@@ -162,12 +140,10 @@ export async function estimateAudit(input: EstimateInput): Promise<AuditEstimate
       .where(eq(entries.universeId, input.universeId));
     scopeEntryCount = Array.isArray(rows) ? rows.length : 0;
   } catch {
-    // Estimate must not fail loudly — fall through to 0 entry count.
     scopeEntryCount = 0;
   }
 
   // -------------------------------------------------------------------------
-  // Step 2: pricing lookup. Unknown model → defensive zero return.
   // -------------------------------------------------------------------------
   const providerPricing = (PRICING as Record<string, Record<string, {
     inputUsdPer1M: number;
@@ -186,41 +162,19 @@ export async function estimateAudit(input: EstimateInput): Promise<AuditEstimate
   }
 
   // -------------------------------------------------------------------------
-  // Step 3: basePromptTokens via getProvider().estimate() — local/offline
   // PROVIDER-07 surface (Anthropic countTokens / OpenAI tiktoken). The
-  // placeholder message is intentionally small — engine's real digest will
-  // tokenize to a different number; the estimator documents this in the
-  // dialog as a range, never a point estimate.
   // -------------------------------------------------------------------------
-  // Provider failure PROPAGATES — it is deliberately NOT swallowed here. Each
-  // caller owns its own failure policy, and both have already chosen one:
-  //
   //   - GET /audits/estimate (routes/audits.ts) catches and returns 502 with
   //     generic copy — the T-26-08-02 invariant. The user is told we could not
-  //     reach their provider BEFORE they commit to a billed run, rather than
   //     being shown a confident-looking cost range built on a silent failure.
   //   - POST /audits (trigger) catches and degrades to a {0,0} placeholder —
-  //     "estimate failure must NOT block the run".
-  //
-  // Swallowing here would rob both callers of that choice: it made the estimate
-  // route's 502 branch dead code (it could never observe a provider error), and
-  // it was redundant for the trigger route, which catches regardless.
-  //
   // T-24-04-09 / T-26-02-01 (never leak raw provider error text) is preserved by
-  // the callers: both discard the error object and emit only generic copy — the
-  // provider's message and stack never reach the client or a log sink.
   const basePromptTokens = await getProvider(input.provider).estimate({
-    // #48 Task 3 / fix round 2: EstimateInput now carries the same
-    // ProviderCredential shape LLMProvider.estimate() takes, so it passes
     // straight through — no re-wrapping, nothing for a call site to assemble
     // wrongly. Note that an endpoint-based provider never reaches this line:
-    // Step 2's PRICING miss returns the zero estimate first (Ollama has no
-    // PRICING entries at all). Kept correct anyway rather than relying on
-    // that ordering, which is not this function's to guarantee forever.
     credential: input.credential,
     messages: [
       // T-26-02-01: apiKey is the only sensitive value in this call — it
-      // travels into the provider's tokenizer surface, never into a log.
       {
         role: 'user',
         content:
@@ -232,14 +186,6 @@ export async function estimateAudit(input: EstimateInput): Promise<AuditEstimate
 
   // -------------------------------------------------------------------------
   // Step 4: LLMUI-04 formula
-  //
-  //   lower = basePromptTokens × inputRate + minOutputTokens × outputRate
-  //
-  //   upper = basePromptTokens × inputRate
-  //         + AUDIT_MAX_TOOL_CALLS × (perCallInputTokens × cachedReadRate
-  //                                   + perCallOutputTokens × outputRate)
-  //         + maxOutputTokens × outputRate
-  //
   // PRICING units: USD-per-1M-tokens — divide by 1_000_000 to convert.
   // -------------------------------------------------------------------------
   const inputCost = (basePromptTokens / 1_000_000) * rate.inputUsdPer1M;

@@ -1,5 +1,4 @@
 /**
- * Phase 24-02 — structural-digest.ts: structural digest serializer for the audit engine.
  *
  * Builds a compact JSON digest of a universe's structure for the LLM prompt.
  * Bodies are NEVER included in any projection (AUDIT-04, T-24-02-03).
@@ -30,7 +29,6 @@
  *     - timelinePins block: pins where entryId is in excludeSet are dropped
  *   excludeEntryIds is applied AFTER scope narrowing in both scope modes.
  *
- * Scope narrowing (BL-03 / Phase 24-09):
  *   When opts.scope === 'entry' AND opts.scopeEntryId is provided, the digest
  *   is narrowed to the scoped entry + 1-hop link neighbourhood + timeline pins
  *   on any neighbourhood entry.
@@ -68,23 +66,11 @@ import { db } from '../db/client.js';
 import { entries, links, timelinePins } from '../db/schema.js';
 
 // ---------------------------------------------------------------------------
-// Types
 // ---------------------------------------------------------------------------
 
 export interface StructuralDigestOpts {
   excludeEntryIds?: string[];
-  /**
-   * BL-03 (Phase 24-09): When 'entry', narrow the digest + validEntryIds to
-   * scopeEntryId + 1-hop link neighbourhood + their timeline pins.
-   * Default 'universe' — full-universe behavior, byte-identical to the pre-fix path.
-   */
   scope?: 'universe' | 'entry';
-  /**
-   * Required when scope='entry'; the entry that anchors the neighbourhood.
-   * If missing while scope='entry', the function falls back to universe-wide
-   * behavior with a console.warn (defense in depth — route-level validation
-   * already rejects scope='entry' without entryId).
-   */
   scopeEntryId?: string | null;
 }
 
@@ -94,34 +80,8 @@ export interface StructuralDigestResult {
 }
 
 // ---------------------------------------------------------------------------
-// buildStructuralDigest
 // ---------------------------------------------------------------------------
 
-/**
- * Build a compact structural digest for the given universe.
- *
- * Uses two parallel db() queries + one conditional query for minimal latency:
- *   1. entries — select id, title, entryType, summary, tags (NEVER body — AUDIT-04)
- *   2. links   — select sourceEntryId, label, targetEntryId
- *   3. timelinePins (conditional) — select entryId, position
- *
- * Scope narrowing (BL-03):
- *   When opts.scope === 'entry' AND opts.scopeEntryId is a non-null string in the
- *   universe's entry set, the digest is narrowed to the 1-hop neighbourhood:
- *     N = { scopeEntryId } ∪ outbound-targets ∪ inbound-sources
- *   where outbound/inbound are derived from the already-fetched linkRows (no extra
- *   DB query — the neighbourhood is computed in JS).
- *
- *   If scope='entry' but scopeEntryId is absent → falls back to universe scope
- *   with a console.warn.
- *   If scope='entry' and scopeEntryId is not in the universe → narrows to an
- *   empty digest with a console.warn (cross-universe leak prevention — T-24-09-04).
- *
- *   When scope='universe' (default) or no scope opt, the function output is
- *   byte-identical to the pre-fix path (regression guarantee).
- *
- * Each query uses db() inline — not a captured reference.
- */
 export async function buildStructuralDigest(
   universeId: string,
   opts?: StructuralDigestOpts,
@@ -153,8 +113,6 @@ export async function buildStructuralDigest(
   const validEntryIds = entryRows.map((e) => e.id);
 
   // ---------------------------------------------------------------------------
-  // BL-03 (Phase 24-09): Scope narrowing — computed from already-fetched rows
-  // No new DB queries are introduced; the neighbourhood is derived in JS.
   // ---------------------------------------------------------------------------
 
   const isEntryScoped =
@@ -186,7 +144,6 @@ export async function buildStructuralDigest(
     }
   }
 
-  // Apply scope narrowing to row sets and validEntryIds
   const scopedEntries = neighbourhood ? entryRows.filter((e) => neighbourhood!.has(e.id)) : entryRows;
   const scopedLinks = neighbourhood
     ? linkRows.filter(
@@ -194,12 +151,8 @@ export async function buildStructuralDigest(
       )
     : linkRows;
   // scopedValidEntryIds is the load-bearing trust-boundary change for BL-03:
-  // When scope='entry', the LLM only sees neighbourhood IDs in its allowlist.
   const scopedValidEntryIds = neighbourhood ? Array.from(neighbourhood) : validEntryIds;
 
-  // Step 2: Get timeline pins scoped to this universe's (narrowed) entry IDs.
-  // timelinePins has no universeId column; we use inArray on the scoped entry IDs.
-  // Empty neighbourhood → skip query and return empty pins.
   const universePins =
     scopedValidEntryIds.length > 0
       ? await db()
@@ -211,8 +164,6 @@ export async function buildStructuralDigest(
           .where(inArray(timelinePins.entryId, scopedValidEntryIds))
       : [];
 
-  // The pin query already returns only pins for entries in the scoped set.
-  // When neighbourhood is active, universePins is already narrowed by the inArray.
   const scopedPins = universePins;
 
   // Apply excludeEntryIds filtering (D-06) AFTER scope narrowing in both modes
@@ -233,9 +184,6 @@ export async function buildStructuralDigest(
       ? scopedPins.filter((p) => !excludeSet.has(p.entryId))
       : scopedPins;
 
-  // Serialize as compact JSON
-  // Link tuples: [sourceEntryId, label, targetEntryId]
-  // Pin tuples: [entryId, position]
   const digestObj = {
     universeId,
     entries: filteredEntries,

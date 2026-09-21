@@ -1,7 +1,5 @@
 /**
- * Phase 32 CONLANG-01 / CONLANG-02 — Dictionary CRUD + FTS + CSV import routes.
  *
- * Mounted under apiR at /universes/:uid/dictionary (Task 1) so it sits behind
  * the apiR.use('/universes/*', requireAuth) gate — PAT parity and the
  * share-boundary (T-32-07) come for free.
  *
@@ -21,22 +19,18 @@
 import { OpenAPIHono, createRoute, z } from '@hono/zod-openapi';
 import { and, asc, eq, isNull, sql, type SQL } from 'drizzle-orm';
 import { db } from '../db/client.js';
-import { dictionaryWords, entries, links } from '../db/schema.js';
+import { dictionaryWords, entries } from '../db/schema.js';
 import { requireUniverse } from '../utils/ownership.js';
 import type { AuthVariables } from '../middleware/auth.js';
 import { importDictionaryCsv } from '../services/dictionary-import.js';
 import { isUniqueViolation } from '../db/pg-error.js';
-import { planTermRename, type TermRenamePlan } from '../services/rename-term.js';
-import { resolveEntryLanguages, wordIsInScope } from '../services/dictionary-scope.js';
 
 type AppEnv = { Variables: AuthVariables };
 
-// ─── Path param schemas ──────────────────────────────────────────────────────
 
 const uidParams = z.object({ uid: z.string().uuid() });
 const uidAndWordParams = z.object({ uid: z.string().uuid(), wid: z.string().uuid() });
 
-// ─── Zod schemas ─────────────────────────────────────────────────────────────
 
 const createWordSchema = z.object({
   word: z.string().min(1).max(200),
@@ -56,44 +50,8 @@ const patchWordSchema = z.object({
   etymology: z.string().optional(),
   tags: z.array(z.string().max(50)).max(20).optional(),
   languageEntryId: z.string().uuid().nullable().optional(),
-  /**
-   * Issue #59 — opt-in corpus rewrite. Absent means "rename the glossary row
-   * only", which is what this endpoint has always done and stays the default:
-   * a rename that silently edits prose is not something a user can undo.
-   * `entryIds` is the subset the user accepted in the preview, so the review is
-   * binding rather than advisory.
-   */
-  propagate: z
-    .object({ entryIds: z.array(z.string().uuid()).max(5000) })
-    .optional(),
 }).refine((v) => Object.values(v).some((val) => val !== undefined), {
   message: 'At least one field is required',
-});
-
-const renamePreviewSchema = z.object({
-  word: z.string().min(1).max(200),
-});
-
-const renamePreviewResultSchema = z.object({
-  word: z.string(),
-  newWord: z.string(),
-  totalOccurrences: z.number().int().nonnegative(),
-  entries: z.array(
-    z.object({
-      entryId: z.string(),
-      title: z.string(),
-      wikilinkCount: z.number().int().nonnegative(),
-      textCount: z.number().int().nonnegative(),
-    }),
-  ),
-  skipped: z.array(
-    z.object({
-      entryId: z.string(),
-      title: z.string(),
-      reason: z.enum(['out_of_scope', 'case_mismatch']),
-      count: z.number().int().nonnegative(),
-    }),
-  ),
 });
 
 const wordSchema = z.object({
@@ -112,7 +70,6 @@ const wordSchema = z.object({
 
 const errorSchema = z.object({ error: z.string() });
 
-// CSV upload body — documentary schema (runtime validation in the handler, not Zod)
 const csvUploadSchema = z.object({
   file: z.any().openapi({ type: 'string', format: 'binary', description: 'CSV file (.csv)' }),
 });
@@ -123,7 +80,6 @@ const importResultSchema = z.object({
   rowErrors: z.array(z.object({ row: z.number(), message: z.string() })),
 });
 
-// ─── Route definitions ───────────────────────────────────────────────────────
 
 const listRoute = createRoute({
   method: 'get',
@@ -203,74 +159,6 @@ const patchWordRoute = createRoute({
   },
 });
 
-/**
- * Issue #59 — build the rewrite plan for renaming `wordRow` to `newWord`.
- *
- * Reference discovery uses the word's CURRENT language scope, not the one a
- * simultaneous patch might be moving it to: the references in the corpus were
- * written against the scope the term has now, and that is where they resolve.
- */
-async function buildRenamePlan(
-  uid: string,
-  wordRow: { word: string; languageEntryId: string | null },
-  newWord: string,
-): Promise<TermRenamePlan> {
-  const entryRows = await db()
-    .select({
-      id: entries.id,
-      title: entries.title,
-      body: entries.body,
-      entryType: entries.entryType,
-    })
-    .from(entries)
-    .where(eq(entries.universeId, uid));
-
-  const linkRows = await db()
-    .select({ sourceEntryId: links.sourceEntryId, targetEntryId: links.targetEntryId })
-    .from(links)
-    .where(eq(links.universeId, uid));
-
-  const languageByEntry = resolveEntryLanguages(entryRows, linkRows);
-
-  return planTermRename(
-    entryRows.map((e) => ({
-      id: e.id,
-      title: e.title,
-      body: e.body,
-      inScope: wordIsInScope(wordRow.languageEntryId, languageByEntry.get(e.id) ?? null),
-    })),
-    wordRow.word,
-    newWord,
-  );
-}
-
-const renamePreviewRoute = createRoute({
-  method: 'post',
-  path: '/{wid}/rename-preview',
-  tags: ['Dictionary'],
-  summary: 'Preview which entries a term rename would rewrite (#59)',
-  description:
-    'Write-free. Reports, per entry, how many wikilink targets and how many prose occurrences a rename to `word` would replace, plus the occurrences it refuses to touch and why. The entryIds returned here are what PATCH /{wid} accepts in `propagate.entryIds`.',
-  security: [{ bearerAuth: [] }],
-  request: {
-    params: uidAndWordParams,
-    body: {
-      content: { 'application/json': { schema: renamePreviewSchema } },
-      required: true,
-    },
-  },
-  responses: {
-    200: {
-      content: { 'application/json': { schema: renamePreviewResultSchema } },
-      description: 'The rewrite this rename would perform.',
-    },
-    400: { content: { 'application/json': { schema: errorSchema } }, description: 'Validation error' },
-    401: { content: { 'application/json': { schema: errorSchema } }, description: 'Unauthorized' },
-    403: { content: { 'application/json': { schema: errorSchema } }, description: 'Forbidden' },
-    404: { content: { 'application/json': { schema: errorSchema } }, description: 'Word or universe not found' },
-  },
-});
-
 const deleteWordRoute = createRoute({
   method: 'delete',
   path: '/{wid}',
@@ -317,7 +205,6 @@ const importRoute = createRoute({
   },
 });
 
-// ─── Router ──────────────────────────────────────────────────────────────────
 
 export const dictionaryRoutes = new OpenAPIHono<AppEnv>()
 
@@ -396,7 +283,6 @@ export const dictionaryRoutes = new OpenAPIHono<AppEnv>()
     const lid = c.req.query('lid')?.trim() || undefined;
 
     // WR-04: validate that the provided lid belongs to this universe (cross-tenant check).
-    // Without this, a user who owns universe A but knows an entry UUID from universe B
     // could import words scoped to B's entry by passing ?lid=<entry-from-B>.
     if (lid) {
       const [langEntry] = await db()
@@ -423,7 +309,6 @@ export const dictionaryRoutes = new OpenAPIHono<AppEnv>()
     return c.json(result, 200);
   })
 
-  // POST / — create word
   .openapi(createWordRoute, async (c) => {
     const { uid } = c.req.valid('param');
     const userId = c.var.userId;
@@ -433,7 +318,6 @@ export const dictionaryRoutes = new OpenAPIHono<AppEnv>()
 
     // T-32-06: if languageEntryId is provided, validate it belongs to this universe
     // WR-01: also confirm the entry is of type 'language' — non-language entries must not
-    // be used as a language pointer (downstream UI checks entryType === 'language').
     if (body.languageEntryId) {
       const [langEntry] = await db()
         .select({ id: entries.id, entryType: entries.entryType })
@@ -478,7 +362,6 @@ export const dictionaryRoutes = new OpenAPIHono<AppEnv>()
     }
   })
 
-  // PATCH /:wid — update word
   .openapi(patchWordRoute, async (c) => {
     const { uid, wid } = c.req.valid('param');
     const userId = c.var.userId;
@@ -502,7 +385,6 @@ export const dictionaryRoutes = new OpenAPIHono<AppEnv>()
       }
     }
 
-    // Build update set — only include provided fields
     const updateSet: Record<string, unknown> = { updatedAt: sql`now()` };
     if (body.word !== undefined) updateSet.word = body.word;
     if (body.gloss !== undefined) updateSet.gloss = body.gloss;
@@ -512,81 +394,22 @@ export const dictionaryRoutes = new OpenAPIHono<AppEnv>()
     if (body.tags !== undefined) updateSet.tags = body.tags;
     if ('languageEntryId' in body) updateSet.languageEntryId = body.languageEntryId;
 
-    // #59: the corpus rewrite is opt-in and only meaningful when the spelling
-    // changes. `propagate` without a `word` change is accepted and does nothing
-    // rather than erroring — a client that always sends the accepted ids should
-    // not have to special-case the no-rename save.
-    const [currentWord] = await db()
-      .select({ word: dictionaryWords.word, languageEntryId: dictionaryWords.languageEntryId })
-      .from(dictionaryWords)
-      .where(and(eq(dictionaryWords.id, wid), eq(dictionaryWords.universeId, uid)));
-
-    if (!currentWord) {
-      return c.json({ error: 'Word not found' }, 404);
-    }
-
-    const wantsPropagation =
-      body.propagate !== undefined &&
-      body.propagate.entryIds.length > 0 &&
-      body.word !== undefined &&
-      body.word.trim() !== currentWord.word.trim();
-
-    let plan: TermRenamePlan | null = null;
-    if (wantsPropagation) {
-      plan = await buildRenamePlan(uid, currentWord, body.word!);
-    }
-
     try {
-      // One transaction for the row and the bodies: a renamed glossary entry
-      // whose corpus was half-rewritten is worse than either outcome alone,
-      // because nothing in the data says which entries were done.
-      const updated = await db().transaction(async (tx) => {
-        const [row] = await tx
-          .update(dictionaryWords)
-          .set(updateSet as any)
-          .where(and(eq(dictionaryWords.id, wid), eq(dictionaryWords.universeId, uid)))
-          .returning();
-
-        if (!row) return null;
-
-        if (plan) {
-          // Only the entries the user accepted in the preview. An entry that
-          // gained an occurrence between preview and commit is NOT rewritten —
-          // the review is binding on exactly what was shown.
-          const accepted = new Set(body.propagate!.entryIds);
-          for (const target of plan.entries) {
-            if (!accepted.has(target.entryId)) continue;
-            await tx
-              .update(entries)
-              .set({ body: target.newBody, updatedAt: new Date() })
-              .where(and(eq(entries.id, target.entryId), eq(entries.universeId, uid)));
-          }
-        }
-
-        return row;
-      });
+      const [updated] = await db()
+        .update(dictionaryWords)
+        .set(updateSet as any)
+        .where(and(eq(dictionaryWords.id, wid), eq(dictionaryWords.universeId, uid)))
+        .returning();
 
       if (!updated) {
         return c.json({ error: 'Word not found' }, 404);
       }
-
-      const rewrittenEntries = plan
-        ? plan.entries.filter((e) => body.propagate!.entryIds.includes(e.entryId))
-        : [];
-      const rewriteCount = rewrittenEntries.reduce(
-        (n, e) => n + e.wikilinkCount + e.textCount,
-        0,
-      );
 
       return c.json(
         {
           ...updated,
           createdAt: updated.createdAt.toISOString(),
           updatedAt: updated.updatedAt.toISOString(),
-          // #59: always present so a client can report the outcome without
-          // having to remember whether it asked for propagation.
-          rewriteCount,
-          entriesRewritten: rewrittenEntries.length,
         } as any,
         200,
       );
@@ -598,46 +421,6 @@ export const dictionaryRoutes = new OpenAPIHono<AppEnv>()
     }
   })
 
-  // POST /:wid/rename-preview — #59 write-free propagation preview
-  .openapi(renamePreviewRoute, async (c) => {
-    const { uid, wid } = c.req.valid('param');
-    const userId = c.var.userId;
-    await requireUniverse(uid, userId);
-
-    const { word: newWord } = c.req.valid('json');
-
-    const [current] = await db()
-      .select({ word: dictionaryWords.word, languageEntryId: dictionaryWords.languageEntryId })
-      .from(dictionaryWords)
-      .where(and(eq(dictionaryWords.id, wid), eq(dictionaryWords.universeId, uid)));
-
-    if (!current) {
-      return c.json({ error: 'Word not found' }, 404);
-    }
-
-    const plan = await buildRenamePlan(uid, current, newWord);
-
-    return c.json(
-      {
-        word: current.word,
-        newWord,
-        totalOccurrences: plan.totalOccurrences,
-        // Bodies stay server-side: the client needs counts to review, and
-        // shipping every rewritten body would make the preview response scale
-        // with the corpus.
-        entries: plan.entries.map((e) => ({
-          entryId: e.entryId,
-          title: e.title,
-          wikilinkCount: e.wikilinkCount,
-          textCount: e.textCount,
-        })),
-        skipped: plan.skipped,
-      } as any,
-      200,
-    );
-  })
-
-  // DELETE /:wid — delete word
   .openapi(deleteWordRoute, async (c) => {
     const { uid, wid } = c.req.valid('param');
     const userId = c.var.userId;

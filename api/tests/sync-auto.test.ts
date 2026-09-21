@@ -1,16 +1,3 @@
-/**
- * Issue #44 Task 6 — the auto-sync scheduler, driven against a real peer.
- *
- * Same two-instance shape as tests/sync-run.test.ts (A and B are two
- * INSTANCES: two databases, two users, two blob stores, one shared universe
- * id), because the only interesting question about the scheduler is what it
- * does to a REAL sync run — a mocked runSync would prove nothing about
- * coalescing, backoff or convergence.
- *
- * NO TIMERS. `tick(now)` is public precisely so a test can advance the
- * scheduler one step at a time and assert in between; nothing here sleeps,
- * and the clock is a plain mutable Date the scheduler is handed.
- */
 import { describe, it, expect, beforeAll, afterAll, beforeEach, vi } from 'vitest';
 
 // CRITICAL — must be set BEFORE the *first* env() call in the process. See

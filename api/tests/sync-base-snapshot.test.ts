@@ -8,7 +8,7 @@ import {
 
 const LINK_ID = '7d9a1f7e-0000-4000-8000-000000000abc';
 
-describe('sync base-snapshot store (Plan A)', () => {
+describe('sync base-snapshot store', () => {
   let dir: string;
   let prevUploads: string | undefined;
 

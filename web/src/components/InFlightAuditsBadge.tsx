@@ -2,26 +2,6 @@ import * as Popover from '@radix-ui/react-popover';
 import { Link } from 'react-router-dom';
 import { useInFlightAudits } from '../hooks/useAudits';
 
-/**
- * Phase 26 — Top-nav corner badge that rolls up in-flight audit runs across
- * universes. Implements **D-04** (persistent corner indicator) and the
- * minimum-viable surface of **D-17** (in-flight rollup) per the W-3 scope
- * deviation documented in 26-05-PLAN.md `<scope_deviation>`:
- *
- *   - Badge is HIDDEN when `inFlight.length === 0`.
- *   - NO localStorage `lastCompletedAudits` tracking (the UI-SPEC's 30-min
- *     "recently completed" tail is deferred to v3.1+; see CONTEXT.md
- *     `<deferred>`). Long-term lookback already lives on the audit-history
- *     settings tab (D-09).
- *
- * Uses Radix Popover (NOT DropdownMenu) per UI-SPEC §State Inventory. Trigger
- * className matches UserMenu.tsx verbatim so the badge sits visually flush
- * with the rest of the top-nav controls.
- *
- * Elapsed-time inside the popover is computed once per render. Auto-tick is
- * deliberately omitted — `useInFlightAudits` polls every 2s while runs are in
- * flight, so the dropdown refreshes naturally on the next refetch.
- */
 
 export function InFlightAuditsBadge() {
   const { data: inFlight = [] } = useInFlightAudits();

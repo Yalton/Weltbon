@@ -1,16 +1,3 @@
-/**
- * Phase 46 Plan 02 — EntryHoverCard behavioral tests.
- *
- * Coverage:
- *   D-01: Click on the resolved entry Link navigates — card never intercepts.
- *   D-04: ⓘ caret is present in the DOM (shown under coarse-pointer); clicking
- *         it opens the card content (not just DOM presence).
- *   D-12/D-13: Cover banner renders when coverImageId is set; omitted when null.
- *   D-13 fallback: empty-summary entry shows a body-derived excerpt after the
- *         lazy useEntry fetch resolves.
- *   Share mode: card wraps the share-subtree Link (ShareModeProvider wired).
- *   XSS: no dangerouslySetInnerHTML (structural assertion via grep, not rendered).
- */
 
 import { describe, it, expect, vi, beforeEach } from 'vitest';
 import { render, screen, fireEvent, act } from '@testing-library/react';

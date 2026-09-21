@@ -1,15 +1,3 @@
-/**
- * Tests for api/src/services/rewrite-wikilinks.ts
- *
- * Covers D-01..D-07 from Phase 48 Link Integrity context.
- *
- * D-01  rewrite only links whose target would otherwise stop resolving
- * D-02  bare link follows rename (target updated, no display freeze)
- * D-03  explicit display text preserved when target is rewritten
- * D-04  dropped-alias links rewrite to new canonical title
- * D-05  surviving-alias links untouched (staleNames does not contain the alias)
- * D-07  case-insensitive matching; heading anchors preserved; .md stripped; code-span exclusion
- */
 
 import { describe, it, expect } from 'vitest';
 import {

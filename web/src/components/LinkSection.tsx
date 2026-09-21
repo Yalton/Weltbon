@@ -15,11 +15,6 @@ interface Props {
   universeId: string;
   entryId: string;
   onLinkCreated: () => void;
-  /**
-   * Per-universe link type registry for color/inverse overrides.
-   * Passed as {} when the universe data is not yet loaded — preset
-   * inverses from PRESET_LINK_TYPES are still applied (safe default).
-   */
   linkTypeRegistry?: LinkTypeRegistry;
 }
 
@@ -33,12 +28,7 @@ export function LinkSection({
 }: Props) {
   const deleteLink = useDeleteLink(universeId);
   const [deletingLinkId, setDeletingLinkId] = useState<string | null>(null);
-  // Phase 29 — read share-mode flag + share token from route params so the
-  // inline navigation `<Link>`s for outbound links and backlinks resolve
-  // into the /share/:token/entries/:id subtree instead of the authenticated
-  // /universes/:uid/entries/:id surface. Without this, every backlink/
   // outbound-link click would attempt to mount the authenticated
-  // ProtectedRoute and bounce the unauthenticated visitor to /login.
   const isShareMode = useShareMode();
   const { token } = useParams<{ token: string }>();
   const buildEntryPath = (targetId: string) =>
@@ -46,7 +36,6 @@ export function LinkSection({
       ? `/share/${token ?? ''}/entries/${targetId}`
       : `/universes/${universeId}/entries/${targetId}`;
 
-  // Group outbound links by linkType, falling back to label, then 'untyped'
   const grouped = outboundLinks.reduce<Record<string, OutboundLink[]>>((acc, link) => {
     const key = link.linkType ?? link.label ?? 'untyped';
     if (!acc[key]) acc[key] = [];
@@ -54,8 +43,6 @@ export function LinkSection({
     return acc;
   }, {});
 
-  // Filter out backlinks for undirected links that already appear in outbound
-  // (an undirected link appears on both sides; dedup by id to avoid duplicate display)
   const outboundIds = new Set(outboundLinks.map((l) => l.id));
   const filteredBacklinks = backlinks.filter(
     (bl) => !(bl.direction === 'undirected' && outboundIds.has(bl.id)),
@@ -112,16 +99,32 @@ export function LinkSection({
                         {link.targetIcon && <span>{link.targetIcon}</span>}
                         {link.targetTitle}
                       </Link>
-                      {/* Phase 29 D-18 — per-link delete is owner-only. */}
+                      {/* Link corrections and delete are both owner-only. */}
                       {!isShareMode && (
-                        <button
-                          type="button"
-                          onClick={() => setDeletingLinkId(link.id)}
-                          className="text-neutral-500 hover:text-red-500 text-xs opacity-0 group-hover:opacity-100 transition-opacity"
-                          aria-label="Remove link"
-                        >
-                          &times;
-                        </button>
+                        <>
+                          <LinkEditor
+                            universeId={universeId}
+                            entryId={entryId}
+                            onLinkCreated={onLinkCreated}
+                            editLink={link}
+                          >
+                            <button
+                              type="button"
+                              className="text-neutral-500 hover:text-[color:var(--color-accent)] text-xs opacity-0 group-hover:opacity-100 transition-opacity"
+                              aria-label={`Edit link to ${link.targetTitle}`}
+                            >
+                              Edit
+                            </button>
+                          </LinkEditor>
+                          <button
+                            type="button"
+                            onClick={() => setDeletingLinkId(link.id)}
+                            className="text-neutral-500 hover:text-red-500 text-xs opacity-0 group-hover:opacity-100 transition-opacity"
+                            aria-label="Remove link"
+                          >
+                            &times;
+                          </button>
+                        </>
                       )}
                     </li>
                   ))}
@@ -133,7 +136,6 @@ export function LinkSection({
           // Share-mode empty state: no "Add link" CTA — the visitor has no
           // mutation surface. A short read-only message is more honest than
           // re-using the authenticated EmptyState copy ("Link this entry to
-          // others to build your world's connections") which implies action.
           <p className="text-sm text-neutral-500 mt-2">No links from this entry.</p>
         ) : (
           <EmptyState

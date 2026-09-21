@@ -1,6 +1,3 @@
-/**
- * Plan C Tasks 4-6 — the /api/sync HTTP surface.
- */
 import { describe, it, expect, beforeAll, afterAll, beforeEach, vi } from 'vitest';
 import { mkdtemp } from 'node:fs/promises';
 import { tmpdir } from 'node:os';
@@ -8,7 +5,7 @@ import { join } from 'node:path';
 import { createHash } from 'node:crypto';
 import { createTestDb, cleanDb, createTestUser, authHeader, type TestDbHandle } from './helpers.js';
 
-describe('/api/sync surface (Plan C)', () => {
+describe('/api/sync surface', () => {
   let handle: TestDbHandle;
   // eslint-disable-next-line @typescript-eslint/no-explicit-any
   let app: any;
@@ -474,7 +471,7 @@ describe('/api/sync surface (Plan C)', () => {
     }).png().toBuffer();
     const pngHash = createHash('sha256').update(png).digest('hex');
 
-    // The Plan D casualty, in THIS universe: the row is committed, the original
+
     // bytes are gone, the thumbnail survives.
     const repairId = '19191919-1919-4191-8191-191919191919';
     await handle.db.insert(assets).values({
@@ -510,7 +507,7 @@ describe('/api/sync surface (Plan C)', () => {
     expect(await storageBackend.exists(`${repairId}_thumb`)).toBe(true);
   });
 
-  // ── C-09 ahead of the byte write (Plan E security fix) ────────────────────
+
   //
   // Moving writeAssetBytes ahead of the transaction also moved it ahead of the
   // C-09 foreign-id pre-flight, which lives INSIDE applyManifestOps. Storage
@@ -530,7 +527,7 @@ describe('/api/sync surface (Plan C)', () => {
     const sharp = (await import('sharp')).default;
 
     // The victim: a row in another user's universe whose ORIGINAL bytes are gone
-    // (the Plan D casualty this whole plan is about) but whose thumbnail lives.
+
     const victim = await createTestUser(handle, { email: 'victim@sync.dev', password: 'password123' });
     const [victimUniverse] = await handle.db
       .insert(universes)

@@ -1,31 +1,9 @@
-/**
- * Phase 26 — custom on/off toggle (button role="switch") for the AI Gap
- * Auditor opt-in row in UniverseSettings (Plan 06).
- *
- * Not a native checkbox because the visual design is a sliding-thumb pill
- * (UI-SPEC §Interaction States Toggle pattern) and styling a checkbox to
- * match would require either appearance:none hackery or an icon swap. A
- * `<button role="switch" aria-checked>` carries the same accessibility
- * semantics with simpler markup.
- *
- * Motion: thumb slide uses `transition-transform duration-150` paired with
- * `motion-reduce:transition-none` so users with prefers-reduced-motion get
- * an instant flip (UI-SPEC §Motion).
- */
 
 export interface ToggleProps {
   checked: boolean;
   onChange: (next: boolean) => void;
   disabled?: boolean;
-  /** ID of the visible label element (aria-labelledby target). */
   labelId: string;
-  /**
-   * Optional native tooltip — Phase 29 UI-SPEC §B requires a contextual
-   * `title` attribute on the Public toggle that swaps between off/on
-   * states ("Make this entry visible in shared views" vs "This entry is
-   * visible in shared views"). Pre-existing AI Gap Auditor toggle does
-   * not set this, preserving its current no-tooltip behavior.
-   */
   title?: string;
 }
 

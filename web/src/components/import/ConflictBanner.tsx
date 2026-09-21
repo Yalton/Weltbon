@@ -2,35 +2,19 @@ import { useId } from 'react';
 import type { CommitDecision } from '../../types/ingestReview';
 
 interface ConflictBannerProps {
-  /** Existing-universe title that this entry collides with. */
   matchedTitle: string;
-  /** Universe display name — used in the heading copy. */
   universeName: string;
-  /** Current disposition (skip or rename). */
   decision: Extract<
     CommitDecision,
     { disposition: 'skip' } | { disposition: 'rename' }
   >;
-  /**
-   * Current rename suffix value (used in banner body when disposition=rename).
-   * For skip-mode this can be the original title or anything — only read in
-   * rename-mode.
-   */
   effectiveTitle: string;
-  /** Toggles skip <-> rename. Suffix-generation logic lives here. */
   onUpdateDecision: (decision: CommitDecision) => void;
-  /** The parsed title before any rename — used to compute next free `(N)`. */
   originalTitle: string;
-  /** Lowercased existing-universe titles for collision-avoidance. */
   existingTitlesLower: Set<string>;
-  /** Stable per-entry id used for the radio group `name`. */
   entryPath: string;
 }
 
-/**
- * Returns the next free `${original} (N)` suffix not present in
- * existingTitlesLower. Loop is bounded at 99 defensively (T-12-21).
- */
 function nextFreeSuffix(
   original: string,
   existingTitlesLower: Set<string>,
@@ -42,13 +26,6 @@ function nextFreeSuffix(
   return `${original} (copy)`;
 }
 
-/**
- * Full-width amber banner above the title row in the import detail pane.
- * Shows skip (default) / rename radios only per D-23 — never a destructive
- * "replace existing entry" affordance (CREATE-only commit semantics).
- *
- * UI-SPEC §3.4 + §4.5 + §10. ARIA: role="region" + aria-labelledby per §9.2.
- */
 export function ConflictBanner({
   matchedTitle,
   universeName,

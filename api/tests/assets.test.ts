@@ -1,21 +1,3 @@
-/**
- * Phase 38 MEDIA-01/02/03/04 route-level integration tests.
- *
- * Covers:
- *   - MEDIA-01: upload a valid PNG → 201 with id/rawUrl/thumbUrl; GET /raw returns
- *     the stored bytes with the correct Content-Type; the thumbnail key exists.
- *   - MEDIA-02: SVG (magic-number mismatch) → 415; over-quota upload → 413 (both
- *     before any bytes are written); thumbnail generated on a valid upload.
- *   - MEDIA-03: list returns the asset (bare array); rename changes filename;
- *     delete of a referenced asset surfaces the usage warning and nulls the entry
- *     cover ref (D-12) while leaving the inline asset:// body ref intact.
- *   - MEDIA-04: entries.coverImageId persists when set to an uploaded asset.
- *
- * NOTE: UPLOADS_DIR is set to a throwaway temp dir BEFORE importing createApp,
- * because the storageBackend singleton (services/storage/local.ts) reads the env
- * var at module-load time. Importing createApp first would bind storage to
- * `/uploads` (not writable in CI). The env mutation MUST precede the import.
- */
 
 import { mkdtempSync, rmSync } from 'node:fs';
 import { createHash, randomBytes } from 'node:crypto';
@@ -158,7 +140,7 @@ describe('asset routes (MEDIA-01/02/03/04)', () => {
     expect(asset.filename).toBe('hero.png');
     expect(asset.sizeBytes).toBeGreaterThan(0);
     expect(asset.thumbSizeBytes).toBeGreaterThan(0);
-    // Phase 38 UAT-fix: rawUrl/thumbUrl now include HMAC-signed ?e=&s= query params.
+
     expect(asset.rawUrl).toContain(`/api/universes/${universe.id}/assets/${asset.id}/raw`);
     expect(asset.rawUrl).toContain('?e=');
     expect(asset.rawUrl).toContain('&s=');
@@ -173,7 +155,7 @@ describe('asset routes (MEDIA-01/02/03/04)', () => {
     const rawBytes = Buffer.from(await rawRes.arrayBuffer());
     expect(rawBytes.length).toBe(asset.sizeBytes);
 
-    // Plan C (S-10, C-03): the upload records the SHA-256 of the ORIGINAL stored
+
     // bytes — the post-sharp re-encode served by /raw — not of the thumbnail.
     expect(asset.contentHash).toBe(createHash('sha256').update(rawBytes).digest('hex'));
 
@@ -383,7 +365,7 @@ describe('asset routes (MEDIA-01/02/03/04)', () => {
     expect(res.status).toBe(401);
   });
 
-  // ─── Phase 38 UAT-fix: HMAC-signed URL regression (signed-asset-url) ────────
+
 
   it('GET /raw with NO Authorization header but a VALID signature → 200 + correct Content-Type', async () => {
     const { hdrs } = await userWithToken('signed-url-a@test.com');

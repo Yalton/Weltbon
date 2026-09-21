@@ -4,7 +4,6 @@
  *
  * Before this module, every credential-taking call site had to know for
  * itself whether a given provider is key-based (Anthropic, OpenAI —
- * `getDecryptedKey`) or endpoint-based (Ollama — Task 1's `getConnection`).
  * `resolveCredential` collapses that branch into one function so callers
  * (the audit engine, and eventually the BYOK routes) never re-derive it.
  *
@@ -94,7 +93,6 @@ async function isActiveAdministrator(userId: string): Promise<boolean> {
  * Exported because callers outside the credential resolution itself have to
  * branch on it: a route that must produce a DIFFERENT error message, or skip a
  * key lookup entirely, cannot get that from `resolveCredential`'s deliberately
- * collapsed null. Fix round 2 (#48 whole-branch review, Critical 1) made this
  * shared rather than re-derived: `routes/llm-models.ts` had its own copy and
  * `routes/audits.ts` had none at all, which is exactly how the estimate route
  * came to resolve an API key for a provider that can never have one — a
@@ -108,7 +106,6 @@ export function isEndpointProvider(provider: LlmProvider): boolean {
  * The single place the key table and the connection table meet.
  *
  * Returns null for "no usable credential", preserving getDecryptedKey's
- * four-case null contract (Phase 22 D-11) — the engine maps null to
  * markFailed(PROVIDER_ERROR), so null must keep meaning exactly that. For
  * ollama, "no connection row" is the analogous fifth case: same meaning
  * ("nothing this run can authenticate with"), same null return, so the

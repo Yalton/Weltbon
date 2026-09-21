@@ -1,11 +1,3 @@
-/**
- * In-tree relative-time formatter.
- * Per UI-SPEC §10.5 default §12.4 — no date-fns dependency.
- *
- * @param iso  ISO-8601 date string
- * @param now  Reference point (defaults to current time). Injectable for testing.
- * @returns    Human-readable relative time string.
- */
 export function formatRelative(iso: string, now: Date = new Date()): string {
   const then = new Date(iso).getTime();
   const deltaMs = Math.max(0, now.getTime() - then);

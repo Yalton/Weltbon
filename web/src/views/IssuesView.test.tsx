@@ -80,13 +80,7 @@ describe('IssuesView', () => {
   it('re-fetches with ?severity=critical when the severity filter changes', async () => {
     const apiFn = vi.mocked(api);
 
-    /**
-     * Match on the parsed query, NOT on exact string equality: the view has
-     * added params over time (Phase 25's `includeDismissed`) and an
-     * exact-match mock silently falls through to `[]` every time that
-     * happens, rendering the empty state and failing for the wrong reason.
-     */
-    const parse = (path?: string) => {
+        const parse = (path?: string) => {
       const [pathname, qs = ''] = (path ?? '').split('?');
       return { pathname, params: new URLSearchParams(qs) };
     };

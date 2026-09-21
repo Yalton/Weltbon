@@ -1,14 +1,9 @@
-/**
- * Plan D Task 1 — the conflict ledger's row_id is a MERGE key, not a UUID (D-03).
- * Plan D Task 6 — recordConflicts idempotency (D-13/D-14) and the /conflicts
- * endpoints (S-03: the LWW loser is never silently discarded).
- */
 import { describe, it, expect, beforeAll, afterAll, beforeEach } from 'vitest';
 import { eq } from 'drizzle-orm';
 import { createTestDb, cleanDb, createTestUser, authHeader, type TestDbHandle } from './helpers.js';
 import type { RowConflict } from '../src/services/sync/merge.js';
 
-describe('sync_conflicts ledger (Plan D, D-03)', () => {
+describe('sync_conflicts ledger', () => {
   let handle: TestDbHandle;
   // eslint-disable-next-line @typescript-eslint/no-explicit-any
   let app: any;
@@ -193,7 +188,7 @@ describe('sync_conflicts ledger (Plan D, D-03)', () => {
     it('records a batch of 3 DISTINCT conflicts in one call, each landing with its own tableName/rowId/winner/payload', async () => {
       // Every other multi-item test above uses duplicates of the SAME key, so
       // the multi-row insert().values(toInsert) path for genuinely distinct
-      // rows (the normal case Task 7's drive loop actually calls) was
+
       // unexercised. A batch-building bug that transposed fields across rows
       // would still pass a bare count assertion, so this checks each row's
       // full identity, not just how many landed.

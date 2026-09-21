@@ -3,11 +3,6 @@ export type GraphPoint = {
   y: number;
 };
 
-/**
- * Give unpinned nodes deterministic starting points distributed over the
- * available canvas. d3-force can then refine the arrangement without its
- * default phyllotaxis seed leaving a small graph in the upper-left corner.
- */
 export function seededGraphPosition(
   index: number,
   count: number,
@@ -31,7 +26,6 @@ export function seededGraphPosition(
   };
 }
 
-/** Place a label on a small perpendicular lane instead of directly on its edge. */
 export function edgeLabelPosition(
   source: GraphPoint,
   target: GraphPoint,

@@ -54,49 +54,35 @@ export function EntryEditor() {
   const { data: existingEntry, isLoading: entryLoading } = useEntry(uid!, entryId ?? '');
   const createEntry = useCreateEntry(uid!);
   const updateEntry = useUpdateEntry(uid!, entryId ?? '');
-  // Phase 47 XREF-01 — warm the ['entries', uid] cache so the picker has data the
   // instant `[[` is typed, closing the async-empty window CR-01 flagged. The picker
   // owns its own useEntries subscription AND the active selection (CR-01); this call
-  // is prefetch only — its result is intentionally not bound or used for ranking.
   const { data: allEntries = [] } = useEntries(uid ?? '');
   const { data: assets } = useAssets(uid ?? '');
 
   const [tags, setTags] = useState<string[]>([]);
-  // Phase 45 XREF-04 (D-09) — alias chips placed immediately after Tags field.
   const [aliases, setAliases] = useState<string[]>([]);
   const [meta, setMeta] = useState<Record<string, string>>({});
   const [categoryId, setCategoryId] = useState<string | null>(null);
   const [metaValid, setMetaValid] = useState(true);
   const [saveAsOpen, setSaveAsOpen] = useState(false);
   const [toast, setToast] = useState<{ message: string; variant: 'success' | 'error' } | null>(null);
-  // Phase 48 XREF-05 (D-08/D-09/D-10) — two-phase save state.
-  // When a rename/alias change would affect N>0 links, the preview count is
-  // stored here and the confirm dialog opens. On Proceed the pending payload
-  // is committed; on Cancel the dialog closes with no write.
   const [propagateConfirmOpen, setPropagateConfirmOpen] = useState(false);
   const [propagateAffectedLinks, setPropagateAffectedLinks] = useState(0);
   const [propagateAffectedEntries, setPropagateAffectedEntries] = useState(0);
   const [propagatePendingPayload, setPropagatePendingPayload] = useState<Record<string, unknown> | null>(null);
-  // Phase 48 XREF-05 (D-10) — deferred navigation path after a toast is shown.
   // When rewriteCount > 0, we show the after-summary toast and then navigate
-  // when the user dismisses it (better UX than navigating before the toast is seen).
   const [pendingNavigationPath, setPendingNavigationPath] = useState<string | null>(null);
-  // Phase 29 SHARE-04 / UI-SPEC §B / D-10 — Public toggle state. Default TRUE on
   // new entries (0023 share-public-by-default); seeded from existingEntry.isPublic on edit.
   const [isPublic, setIsPublic] = useState(true);
-  // Phase 36 DATA-03 — WIP/draft toggle state. Default false on new entries;
   // seeded from existingEntry.wip on edit. Independent of isPublic (T-36-06-01).
   const [wip, setWip] = useState(false);
-  // Phase 38 MEDIA-04/05 — cover image + insert-embed picker state.
   const [coverImageId, setCoverImageId] = useState<string | null>(null);
   const [pickerOpen, setPickerOpen] = useState(false);
   const [pickerMode, setPickerMode] = useState<'insert-embed' | 'set-cover'>('insert-embed');
   const markdownEditorRef = useRef<MarkdownAuthoringEditorHandle>(null);
   const [assetReplacementSelection, setAssetReplacementSelection] = useState<MarkdownAssetRecoverySelection | null>(null);
   // CR-03: gate the create-mode template prefill so it runs at most once per
-  // navigation. Without this, every refetch of `universe` (window focus,
   // stale-time expiry) re-runs the prefill effect and silently wipes any
-  // content the user has typed into the form.
   const prefilledRef = useRef(false);
 
   const {
@@ -118,8 +104,6 @@ export function EntryEditor() {
     },
   });
 
-  // Content-Forward Views §5 (Task 10) — the editor hero previews exactly what the
-  // detail page will render, so the author sees the result before saving. Derived
   // from watch() (not getValues()) so the medallion re-resolves on every keystroke —
   // the DRAFT, not the last-saved entry, drives the preview.
   const watchedTitle = watch('title');
@@ -146,19 +130,14 @@ export function EntryEditor() {
       setAliases(existingEntry.aliases ?? []);
       setMeta((existingEntry.meta as Record<string, string>) ?? {});
       setCategoryId(existingEntry.categoryId ?? null);
-      // Phase 29 SHARE-04 — seed the Public toggle from the loaded entry.
       // Fallback true (0023 share-public-by-default) for the no-value edge case.
       setIsPublic(existingEntry.isPublic ?? true);
-      // Phase 36 DATA-03 — seed the WIP toggle from the loaded entry.
       setWip(existingEntry.wip ?? false);
-      // Phase 38 MEDIA-04 — seed coverImageId from the loaded entry.
       setCoverImageId((existingEntry as Entry & { coverImageId?: string | null }).coverImageId ?? null);
       return;
     }
-    // Create mode: prefill from location.state.template ONCE per navigation.
     // CR-03 fix — prefilledRef gates re-runs so a TanStack Query refetch of
     // `universe` (window focus, stale-time expiry) does NOT silently wipe
-    // the user's typed content. `universe?.entryTypes` stays in the deps so the
     // effect re-fires once universe loads — the entryType <select>'s options
     // must be mounted before react-hook-form's reset() can apply the templated
     // value to the DOM; the ref-guard then makes every subsequent refetch a
@@ -187,8 +166,6 @@ export function EntryEditor() {
     return <Loading />;
   }
 
-  // Phase 48 XREF-05 (D-10) — commit the pending payload after confirm.
-  // Called from the ConfirmDialog's onConfirm prop (Proceed button).
   const handlePropagateConfirm = async () => {
     if (!propagatePendingPayload) return;
     const result = await updateEntry.mutateAsync(propagatePendingPayload as Parameters<typeof updateEntry.mutateAsync>[0]);
@@ -197,7 +174,6 @@ export function EntryEditor() {
     setPropagateConfirmOpen(false);
     const destPath = `/universes/${uid}/entries/${entryId}`;
     // D-10: show after-summary "N links rewritten" via the existing toast mechanism.
-    // Defer navigation until the user dismisses the toast so they can read it.
     if (typeof rewriteCount === 'number' && rewriteCount > 0) {
       setToast({ message: `${rewriteCount} link${rewriteCount === 1 ? '' : 's'} rewritten`, variant: 'success' });
       setPendingNavigationPath(destPath);
@@ -208,7 +184,6 @@ export function EntryEditor() {
 
   const onSubmit = handleSubmit(async (values) => {
     // D-16: read templateId from location.state and forward to POST /entries
-    // Treated as opaque — no shape parsing/branching
     const stateTemplateId = (
       location.state as { template?: EntryTemplate; templateId?: string } | null
     )?.templateId ?? null;
@@ -223,25 +198,19 @@ export function EntryEditor() {
       aliases,
       meta,
       categoryId,
-      // Phase 29 SHARE-04 — Plan 03 surface accepts isPublic on POST + PATCH.
       isPublic,
-      // Phase 36 DATA-03 — Plan 03 surface accepts wip on POST + PATCH.
       wip,
-      // Phase 38 MEDIA-04 — forward coverImageId through the entries submit.
       coverImageId,
       ...(stateTemplateId ? { templateId: stateTemplateId } : {}),
     };
 
     if (isEditMode) {
-      // Phase 48 XREF-05 (D-08/D-09) — two-phase save for rename/alias changes.
-      // Determine if the title or aliases changed in a way that could break links
       // (D-06 trigger set: title rename, alias rename, alias removal).
       const oldTitle = existingEntry?.title ?? '';
       const oldAliases = existingEntry?.aliases ?? [];
       const newTitle = values.title;
       const newAliases = aliases;
       const titleChanged = oldTitle !== newTitle;
-      // Propagation triggers when title changes or any old alias is no longer
       // in the new alias set (D-06: title rename, alias rename, alias removal).
       // Adding a new alias never triggers (D-06: add-only contributes nothing).
       const newNamesSet = new Set([newTitle.toLowerCase(), ...newAliases.map((a) => a.toLowerCase())]);
@@ -259,7 +228,6 @@ export function EntryEditor() {
           setPropagateAffectedLinks(affected);
           setPropagateAffectedEntries(preview.affectedEntries ?? 0);
           setPropagateConfirmOpen(true);
-          // Return early — the actual commit will happen in handlePropagateConfirm.
           return;
         }
       }
@@ -281,8 +249,6 @@ export function EntryEditor() {
   const entryTypes = universe?.entryTypes ?? [];
   const isPending = createEntry.isPending || updateEntry.isPending;
 
-  // Asset selection remains in the existing modal. The authoring editor owns
-  // insertion so the form continues to receive one canonical Markdown string.
   const handlePickerSelect = (assetId: string) => {
     if (assetReplacementSelection) {
       markdownEditorRef.current?.replaceSelection(
@@ -460,23 +426,11 @@ export function EntryEditor() {
           </div>
         </div>
 
-        {/* Hero (Content-Forward Views §5, Task 10) — the editor previews exactly what
-            EntryDetail's hero will render, so the author sees the result before saving.
-            It renders the SAME EntryHero shell the detail page does, which is what stops
-            the height model (absolute visual layer, in-flow children) from drifting
-            between the two surfaces — a drift whose failure mode is silent and visual.
 
-            The cover buttons are always visible rather than hover-revealed: this is a
-            form, not a display surface, so the ONLY way to attach/replace/remove a cover
-            should not depend on a mouse hovering the hero — that would need extra
-            focus-visible plumbing to stay keyboard-reachable for no benefit here.
-            They sit in the shell's in-flow slot, so an onError'd cover (signed URLs
-            expire) can never collapse the box and take the affordance with it. */}
         <div>
           <label className="block text-sm mb-1">Cover image</label>
           <EntryHero
             testId="editor-hero"
-            // The editor's draft carries only coverImageId — there is no signed cover URL
             // on it — so the src is built directly. Authenticated-only surface: no share path.
             coverSrc={coverImageId ? `/api/universes/${uid}/assets/${coverImageId}/thumb` : null}
             coverAlt={`Cover image for ${watchedTitle || 'this entry'}`}
@@ -527,7 +481,7 @@ export function EntryEditor() {
           </div>
         </div>
 
-        {/* Aliases (Phase 45 XREF-04 / D-09) */}
+
         <div>
           <label className="block text-sm mb-1">Aliases</label>
           <div className="rounded-md border border-neutral-300 dark:border-neutral-700 px-3 py-2">
@@ -547,11 +501,7 @@ export function EntryEditor() {
           />
         </div>
 
-        {/* Form actions.
-            Phase 29 UI-SPEC §B order (left-to-right):
-              [Discard / Cancel] ... [Kebab] [Public toggle + label] [Save]
-            flex-wrap on the parent lets the right cluster wrap below the
-            Discard/Cancel link on narrow viewports (< 480px). */}
+
         <div className="flex flex-wrap justify-between items-center gap-y-2 mt-8 pt-6 border-t border-neutral-200 dark:border-neutral-800">
           <Link
             to={
@@ -605,9 +555,7 @@ export function EntryEditor() {
             </DropdownMenu.Portal>
           </DropdownMenu.Root>
 
-          {/* Phase 29 UI-SPEC §B — Public toggle group BETWEEN kebab and
-              Save. Toggle + visible "Public" label, flex items-center
-              gap-2. Tooltip text swaps per UI-SPEC §B states. */}
+
           <div className="flex items-center gap-2">
             <Toggle
               checked={isPublic}
@@ -631,10 +579,7 @@ export function EntryEditor() {
             </span>
           </div>
 
-          {/* Phase 36 DATA-03 — WIP/draft toggle. Independent of the Public
-              toggle (T-36-06-01): its own useState + payload key, neither
-              references the other. Interactive WipPill (button role="switch")
-              with a visible "Mark as WIP" label. */}
+
           <div className="flex items-center gap-2">
             <WipPill wip={wip} onToggle={() => setWip(!wip)} />
             <span
@@ -664,7 +609,7 @@ export function EntryEditor() {
         </div>
       </form>
 
-      {/* Asset picker modal — Phase 38 MEDIA-04/05 (D-05) */}
+
       {uid && (
         <AssetPickerModal
           open={pickerOpen}
@@ -684,7 +629,6 @@ export function EntryEditor() {
           summary: getValues('summary'),
           body: getValues('body'),
           // D-15 write-path: Record<string,string> → Array<{name, default_value}>
-          // Object.entries is correct because meta is Record (NOT tuple array)
           meta: Object.entries(meta).map(([name, default_value]) => ({ name, default_value })),
         })}
         onSuccess={() => setToast({ message: 'Template saved.', variant: 'success' })}
@@ -700,7 +644,6 @@ export function EntryEditor() {
           variant={toast.variant}
           onDismiss={() => {
             setToast(null);
-            // Phase 48 XREF-05 (D-10): navigate after the user sees the rewrite summary.
             if (pendingNavigationPath) {
               const dest = pendingNavigationPath;
               setPendingNavigationPath(null);
@@ -710,10 +653,7 @@ export function EntryEditor() {
         />
       )}
 
-      {/* Phase 48 XREF-05 (D-08/D-09) — rename-propagation confirm dialog.
-          Only opens in edit mode when the preview returns affectedLinks > 0.
-          Offers ONLY Proceed (rename + propagate) and Cancel (no write at all)
-          per D-09. No "rename without propagating" option. */}
+
       <ConfirmDialog
         open={propagateConfirmOpen}
         onOpenChange={(open) => {

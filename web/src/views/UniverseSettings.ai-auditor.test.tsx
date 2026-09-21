@@ -1,29 +1,3 @@
-/**
- * Phase 27 Plan 04 Task 2 — UniverseSettings AI-auditor tab tests.
- *
- * Pins (Phase 27 D-05 + D-08):
- *   - Test 1: live-driven options — when useListModels returns a 2-model list
- *     (one priced, one unpriced), the dropdown renders both as <option>
- *     elements and the unpriced one's text ends with ` ⚠ no pricing`.
- *   - Test 2: D-08 fallback chain — when RECOMMENDED_CHEAP_MODEL is NOT in
- *     the live list, the default selection is the first live entry.
- *   - Test 3: empty live list — when models is `[]`, the dropdown is
- *     replaced by "No models available for the selected provider." inline
- *     copy (CONTEXT D-08 chain step 3).
- *   - Test 4: PRICING fallback path — when source='pricing_fallback' but
- *     models are populated and all hasPricing=true, the dropdown still
- *     renders and no warning suffix appears.
- *
- * #50 Task 9 adds a second describe block below: shared-connection provider
- * availability. A hosted provider (anthropic/openai) is now enabled by
- * EITHER a personal key OR a consented shared grant; an unconsented grant
- * must not enable the option and must not let `useListModels` probe
- * `/llm/models` for it (Task 6 already 403s that request server-side, but
- * the point is the UI must never even try — see the brief's global
- * constraint that an unconsented grant "does not load models"). Ollama stays
- * driven only by `localMode` + the local connection query, independent of
- * any shared grant.
- */
 
 import { describe, it, expect, beforeEach, vi } from 'vitest';
 import { render, screen, waitFor } from '@testing-library/react';
@@ -66,21 +40,6 @@ const LLM_KEYS = [
   },
 ];
 
-/**
- * #50 Task 9 — extra opts beyond the original two params. All optional and
- * additive, so every pre-existing call site above (which passes only the
- * first two args) is unaffected:
- *   - `sharedGrants` backs GET /llm-shares (defaults to none, matching the
- *     pre-Task-9 behavior where the endpoint was never even mocked).
- *   - `llmKeys` overrides the default single-Anthropic-key fixture, so the
- *     shared-availability tests can render a universe with NO personal key
- *     at all and isolate what the shared grant alone contributes.
- *   - `localMode` / `ollamaConnection` back GET /config and
- *     GET /llm-connections/ollama for the Ollama-local case. `/config`
- *     itself is only reachable behind a session (useInstanceConfig's own
- *     `enabled: user !== null` gate), so a test that needs `localMode: true`
- *     to actually resolve must also set `useAuthStore` — see that test.
- */
 function renderAiTab(
   modelsResponse: unknown,
   universePatch: Partial<typeof UNIVERSE> = {},
@@ -124,7 +83,7 @@ function renderAiTab(
   );
 }
 
-describe('UniverseSettings AI-auditor — Phase 27 D-05 + D-08 live model dropdown', () => {
+describe('UniverseSettings AI-auditor — D-05 + D-08 live model dropdown', () => {
   beforeEach(() => {
     vi.mocked(api).mockReset();
   });
@@ -327,7 +286,7 @@ const OLLAMA_CONNECTION = {
   lastValidatedAt: '2026-08-20T00:00:00.000Z',
 };
 
-describe('UniverseSettings AI-auditor — shared connection provider availability (#50 Task 9)', () => {
+describe('UniverseSettings AI-auditor — shared connection provider availability', () => {
   beforeEach(() => {
     vi.mocked(api).mockReset();
   });

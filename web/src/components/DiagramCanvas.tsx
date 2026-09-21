@@ -6,15 +6,9 @@ import { entryTypeHexColor } from '../lib/entryTypeColor';
 import { snapToGrid, DEFAULT_GRID_SIZE } from '../lib/diagramAlign';
 import type { DiagramNode, DiagramEdge } from '../hooks/useDiagram';
 
-// Canvas geometry constants — mirrors GraphCanvas.tsx
 const NODE_RADIUS = 14;
 const HALO_RADIUS = NODE_RADIUS + 4; // 18
 
-/**
- * Richer node record accepted by the canvas — extends DiagramNode with the
- * display fields (title, entryType) that the editor joins from universe entries.
- * The editor (Plan 06) owns the join; the canvas is purely presentational.
- */
 export interface CanvasNode extends DiagramNode {
   title: string;
   entryType: string;
@@ -34,7 +28,6 @@ function dashArrayFor(lineStyle: 'solid' | 'dashed' | 'dotted' | null): string {
   }
 }
 
-// Mutable node record used only inside the d3 effect (mirrors SimNode in GraphCanvas).
 interface LayoutNode extends CanvasNode {
   x: number;
   y: number;
@@ -46,53 +39,20 @@ export interface DropCoords {
 }
 
 export interface DiagramCanvasProps {
-  /** Diagram nodes with persisted x/y positions + display fields (title, entryType). */
   nodes: CanvasNode[];
-  /** Diagram edges with lineStyle + color. */
   edges: DiagramEdge[];
-  /** Currently selected node ids. */
   selection: Set<string>;
-  /** Selected edge id, if any. */
   selectedEdgeId: string | null;
-  /** When true: drag from node to node shows a preview edge and emits draw-edge intent. */
   editMode: boolean;
-  /**
-   * When true, node positions are snapped to the grid at drag-end before persisting.
-   * Defaults to false — existing callers compile unchanged.
-   */
   snapEnabled?: boolean;
-  /**
-   * Grid cell size in pixels for snap-to-grid.
-   * Defaults to DEFAULT_GRID_SIZE (16px) when snapEnabled is true.
-   */
   gridSize?: number;
-  /**
-   * Called when a node-to-node edit-mode drag succeeds (different nodes).
-   * dropCoords are container-relative so the editor can anchor DrawEdgePopover.
-   */
   onDrawEdge: (sourceEntryId: string, targetEntryId: string, dropCoords: DropCoords) => void;
-  /** Called when a drag is released on the source node (self-drop). */
   onSelfDrop: () => void;
-  /**
-   * Called after a node drag ends with both the pre-drag and final canvas-space
-   * positions so the editor can record an accurate undo op without consulting
-   * the potentially-stale React-Query cache (CR-02 fix).
-   */
   onMoveNode: (entryId: string, prevX: number, prevY: number, x: number, y: number) => void;
-  /** Called when a node is clicked (single select; undefined to clear). */
   onSelectNode: (id: string | null, addToSelection?: boolean) => void;
-  /** Called when an edge is clicked. */
   onSelectEdge: (id: string | null) => void;
-  /** Surfaces the drag source id so the editor can gate its own Esc handler. */
   onDragSourceChange?: (sourceEntryId: string | null) => void;
-  /**
-   * Called when the user triggers the edit affordance on a selected edge.
-   * dropCoords are container-relative for the editor to position DrawEdgePopover in edit mode.
-   */
   onEditEdge?: (edgeId: string, dropCoords: DropCoords) => void;
-  /**
-   * Called when the user triggers the edit affordance on a selected node (rename intent).
-   */
   onEditNode?: (nodeId: string) => void;
 }
 
@@ -108,7 +68,6 @@ export interface DiagramCanvasProps {
  * strokeDasharray switch (T-31-11 mitigate).
  */
 // WR-07: Widen the handle type to SVGSVGElement | null so the cast-free
-// useImperativeHandle factory compiles and callers' null guards remain accurate.
 export const DiagramCanvas = forwardRef<SVGSVGElement | null, DiagramCanvasProps>(function DiagramCanvas({
   nodes,
   edges,
@@ -128,11 +87,7 @@ export const DiagramCanvas = forwardRef<SVGSVGElement | null, DiagramCanvasProps
 }, forwardedRef) {
   const svgRef = useRef<SVGSVGElement>(null);
 
-  // Expose the internal svgRef to the parent via forwardRef so DiagramEditor
-  // can read the live <svg> element for image export (Plan 10).
   // WR-07: add [] deps so this only runs once (not on every render). The
-  // DiagramCanvas ref type is widened to SVGSVGElement | null so callers'
-  // null guards (canvasSvgRef.current) retain their type contract.
   useImperativeHandle<SVGSVGElement | null, SVGSVGElement | null>(forwardedRef, () => svgRef.current, []);
 
   // Stable callback refs so the d3 useEffect doesn't re-run on every render.
@@ -171,11 +126,8 @@ export const DiagramCanvas = forwardRef<SVGSVGElement | null, DiagramCanvasProps
   const [dragSource, setDragSource] = useState<LayoutNode | null>(null);
   const [pointer, setPointer] = useState<{ x: number; y: number } | null>(null);
 
-  // Alignment guide lines — shown while dragging in view mode when a node aligns
-  // with another node's x or y within GUIDE_THRESHOLD pixels.
   const [guides, setGuides] = useState<{ axis: 'x' | 'y'; value: number }[]>([]);
 
-  // Snap the live drag position to the grid if enabled (optional live preview).
   // We apply snap on drag-end definitively; this provides visual feedback during drag.
   const [liveSnapPos, setLiveSnapPos] = useState<{ x: number; y: number } | null>(null);
 
@@ -185,7 +137,6 @@ export const DiagramCanvas = forwardRef<SVGSVGElement | null, DiagramCanvasProps
     const svg = select(svgRef.current);
     const g = svg.select<SVGGElement>('g.viewport');
 
-    // Build mutable layout copies — drag handler mutates x/y directly on these.
     const layoutNodes: LayoutNode[] = nodes.map((n) => ({ ...n }));
     layoutNodesRef.current = layoutNodes;
 
@@ -209,7 +160,6 @@ export const DiagramCanvas = forwardRef<SVGSVGElement | null, DiagramCanvasProps
       .attr('stroke-dasharray', (d) => dashArrayFor(d.lineStyle))
       .attr('stroke-width', (d) => (d.id === selectedEdgeId ? 2.5 : 1.5));
 
-    // Edge click handler — select edge, deselect nodes.
     edgeSel.on('click', (evt: MouseEvent, d) => {
       evt.stopPropagation();
       onSelectEdgeRef.current(d.id);
@@ -312,7 +262,6 @@ export const DiagramCanvas = forwardRef<SVGSVGElement | null, DiagramCanvasProps
       );
 
     // Update circle fill and node label text on every re-join.
-    // LayoutNode extends CanvasNode which has .entryType and .title.
     nodeSel.select<SVGCircleElement>('circle')
       .attr('fill', (d) => entryTypeHexColor(d.entryType))
       .attr('stroke', '#111827')
@@ -338,7 +287,6 @@ export const DiagramCanvas = forwardRef<SVGSVGElement | null, DiagramCanvasProps
 
     // --- Position writer (synchronous — no simulation tick needed) ---
     const writePositions = () => {
-      // Edges: source/target by entryId.
       const nodeMap = new Map(layoutNodes.map((n) => [n.entryId, n]));
       edgeSel
         .attr('x1', (d) => nodeMap.get(d.sourceEntryId)?.x ?? 0)
@@ -363,7 +311,6 @@ export const DiagramCanvas = forwardRef<SVGSVGElement | null, DiagramCanvasProps
 
     writePositions();
 
-    // Threshold (in canvas pixels) within which an alignment guide line appears.
     const GUIDE_THRESHOLD = 8;
 
     // CR-02: Record the authoritative pre-drag position at drag-start, keyed by
@@ -382,18 +329,14 @@ export const DiagramCanvas = forwardRef<SVGSVGElement | null, DiagramCanvasProps
         } else {
           // Record position at drag-start (before d.x/d.y are mutated by drag events).
           dragStartPos.set(d.entryId, { x: d.x, y: d.y });
-          // Clear any lingering guides on new drag
           setGuides([]);
           setLiveSnapPos(null);
         }
       })
       .on('drag', (evt, d) => {
         if (editModeRef.current) {
-          // Preview edge tracks pointer in canvas space.
           setPointer({ x: evt.x, y: evt.y });
         } else {
-          // Reposition node live (synchronously — Animation Contract: no JS animation).
-          // If snap is enabled, show snapped position during drag (visual feedback).
           let liveX = evt.x;
           let liveY = evt.y;
           if (snapEnabledRef.current) {
@@ -405,7 +348,6 @@ export const DiagramCanvas = forwardRef<SVGSVGElement | null, DiagramCanvasProps
           d.y = liveY;
           writePositions();
 
-          // Compute alignment guides: check if this node's x or y aligns with others.
           const draggingId = d.entryId;
           const newGuides: { axis: 'x' | 'y'; value: number }[] = [];
           for (const other of layoutNodesRef.current) {
@@ -429,7 +371,6 @@ export const DiagramCanvas = forwardRef<SVGSVGElement | null, DiagramCanvasProps
           const dropClientY = typeof se?.clientY === 'number' ? se.clientY : 0;
           const target = hitTestNode(se, layoutNodesRef.current);
           if (target === null) {
-            // Drop on empty canvas — silent cancel.
           } else if (target.entryId === d.entryId) {
             onSelfDropRef.current();
           } else {
@@ -457,12 +398,9 @@ export const DiagramCanvas = forwardRef<SVGSVGElement | null, DiagramCanvasProps
             d.y = finalY;
             writePositions();
           }
-          // Clear guides on drag end
           setGuides([]);
           setLiveSnapPos(null);
-          // Persist final position via onMoveNode callback.
           // Pass the pre-drag position captured at drag-start (CR-02 fix) so the
-          // editor records an accurate undo op without querying the stale cache.
           const startPos = dragStartPos.get(d.entryId);
           const prevX = startPos?.x ?? finalX;
           const prevY = startPos?.y ?? finalY;
@@ -485,9 +423,7 @@ export const DiagramCanvas = forwardRef<SVGSVGElement | null, DiagramCanvasProps
     // canvas (31-08 checkpoint). Pan + wheel-zoom remain active.
     svg.on('dblclick.zoom', null);
 
-    // Click on empty canvas clears selection.
     svg.on('click.canvas', (evt: MouseEvent) => {
-      // Only clear when the click landed directly on the SVG, not on a node/edge.
       if (evt.target === svgRef.current || (evt.target as Element).closest('g.viewport') === g.node()) {
         const closest = (evt.target as Element).closest('[data-node-id],[data-edge-id]');
         if (!closest) {
@@ -539,8 +475,7 @@ export const DiagramCanvas = forwardRef<SVGSVGElement | null, DiagramCanvasProps
         .join(' ')}
       data-testid="diagram-canvas"
     >
-      {/* SVG layer order (UI-SPEC): edges, edge-labels, preview-edge, selection-rings, halos, nodes.
-          align-guides is added above nodes as a pointer-events:none layer (per plan spec). */}
+
       <g className="viewport">
         <g className="edges" />
         <g className="edge-labels" />
@@ -603,12 +538,6 @@ export const DiagramCanvas = forwardRef<SVGSVGElement | null, DiagramCanvasProps
   );
 });
 
-/**
- * Hit-test the layout node under the pointer at drag-end. Uses
- * document.elementFromPoint — halos/selection-rings/preview-edge are
- * pointer-events:none so the underlying node circle is the hit target.
- * Reads data-node-id from the closest circle ancestor.
- */
 function hitTestNode(
   sourceEvent: Event | undefined,
   layoutNodes: LayoutNode[],

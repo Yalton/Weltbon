@@ -1,17 +1,10 @@
-/**
- * Plan C Task 3 — applyManifestOps against a real database.
- *
- * DB-gated: registered in vitest.config.ts's DB_GATED_TESTS. Runs on live
- * Postgres and, unchanged, on PGlite (WELTBON_TEST_DRIVER=pglite) — the
- * advisory lock and every predicate here are supported by both.
- */
 import { describe, it, expect, beforeAll, afterAll, beforeEach } from 'vitest';
 import { eq } from 'drizzle-orm';
 import { createTestDb, cleanDb, createTestUser, type TestDbHandle } from './helpers.js';
 
 const ISO = (s: string) => new Date(s).toISOString();
 
-describe('applyManifestOps (Plan C, C-07/C-09/C-10/C-15)', () => {
+describe('applyManifestOps', () => {
   let handle: TestDbHandle;
   let ownerId: string;
   let otherId: string;

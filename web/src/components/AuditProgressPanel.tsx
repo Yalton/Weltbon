@@ -4,24 +4,6 @@ import { AuditStatusPill } from './AuditStatusPill';
 import { AuditCompletionBanner } from './AuditCompletionBanner';
 import { formatRelative } from '../utils/formatRelative';
 
-/**
- * Phase 26 — Inline audit progress panel (UI-SPEC §State Inventory
- * "AuditProgressPanel"). Pure render — polling cadence is owned by
- * useAuditRun (Plan 04 / D-05). The panel is consumed in two contexts:
- *
- *   variant='dialog'     — embedded inside AuditCostDialog (no extra border).
- *   variant='standalone' — used outside the dialog (card-style with border).
- *
- * Lifecycle:
- *   pending / running     → header + status pill + elapsed + tool calls + cost
- *   succeeded / failed    → delegates to AuditCompletionBanner (single render,
- *                           no animation — per UI-SPEC §Motion lock).
- *   stale (succeeded > 30 min ago at re-open) → banner persists with a small
- *                           muted "Run finished {relative} ago" line.
- *
- * Accessibility — the live cost cell wraps in `<span aria-live="polite"
- * aria-atomic="true">` so screen readers announce cost transitions during a run.
- */
 
 export interface AuditProgressPanelProps {
   universeId: string;
@@ -36,8 +18,6 @@ export function AuditProgressPanel({
 }: AuditProgressPanelProps) {
   const { data: run, isPending, error } = useAuditRun(universeId, runId);
 
-  // Tick every 1s while the run is pending/running so the elapsed cell updates
-  // live. Clear immediately on unmount or once we know it's terminal.
   const [now, setNow] = useState<number>(() => Date.now());
   const inFlight =
     run?.status === 'pending' || run?.status === 'running' || (!run && !error);
@@ -95,7 +75,6 @@ export function AuditProgressPanel({
     );
   }
 
-  // pending / running — live progress block.
   const startedAtMs = new Date(run.startedAt).getTime();
   const elapsedSec = Math.max(0, Math.floor((now - startedAtMs) / 1000));
 

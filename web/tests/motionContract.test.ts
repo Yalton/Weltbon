@@ -2,9 +2,9 @@ import { describe, it, expect } from 'vitest';
 import { readFileSync } from 'node:fs';
 import { resolve } from 'node:path';
 
-// POL-04 Task 3 — motion utility classes (Tailwind data-[state=open]:animate-*)
+
 // must be present on the dialog/popover/overlay surfaces enumerated in
-// UI-SPEC §8.3 + the 08-04 task SUMMARY.
+
 const SRC = resolve(__dirname, '..', 'src');
 const read = (rel: string) => readFileSync(resolve(SRC, rel), 'utf8');
 
@@ -23,7 +23,7 @@ const POPOVER_CANDIDATES = [
   'components/Sidebar.tsx',
 ];
 
-describe('motion contract (POL-04 Task 3)', () => {
+describe('motion contract', () => {
   it('at least 4 of 6 dialog surfaces apply animate-dialog-in', () => {
     const hits = DIALOG_CANDIDATES.filter((rel) => read(rel).includes('animate-dialog-in'));
     expect(

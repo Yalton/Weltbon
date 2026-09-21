@@ -26,7 +26,6 @@ function extractBearer(c: { req: { header: (name: string) => string | undefined 
 }
 
 /**
- * Phase 38 UAT-fix: signed-asset bypass guard.
  *
  * Returns true ONLY when ALL conditions hold:
  *   - Method is GET
@@ -57,9 +56,7 @@ function isSignedAssetBypass(
 // requireAuth: JWT verify first (fast, in-memory), then PAT fallback (DB lookup) — per D-11
 export const requireAuth = createMiddleware<{ Variables: AuthVariables }>(
   async (c, next) => {
-    // Phase 38 UAT-fix: allow signed GET asset requests through without a bearer token.
     // The signature IS the capability — the route handler re-verifies and scopes the row.
-    // This bypass is intentionally narrow: only GET + matching path + valid sig passes.
     if (isSignedAssetBypass(c.req.method, c.req.path, (k) => c.req.query(k))) {
       await next();
       return;
@@ -76,9 +73,7 @@ export const requireAuth = createMiddleware<{ Variables: AuthVariables }>(
       await next();
       return;
     } catch {
-      // fall through to PAT lookup
     }
-    // 2. PAT path (new) — only attempt if token has the wbn_pat_ prefix
     if (token.startsWith(PAT_PREFIX)) {
       const pat = await lookupPat(token);
       if (pat) {
@@ -96,7 +91,6 @@ export const requireAuth = createMiddleware<{ Variables: AuthVariables }>(
 );
 
 // requireJwtAuth: JWT-only — used by PAT meta-API routes per D-13
-// A PAT bearer token is rejected here — prevents stolen PAT from minting more PATs.
 export const requireJwtAuth = createMiddleware<{ Variables: AuthVariables }>(
   async (c, next) => {
     const token = extractBearer(c);
@@ -114,7 +108,6 @@ export const requireJwtAuth = createMiddleware<{ Variables: AuthVariables }>(
   }
 );
 
-/** JWT-only administrator boundary for production operator routes. */
 export const requireAdmin = createMiddleware<{ Variables: AuthVariables }>(
   async (c, next) => {
     const token = extractBearer(c);

@@ -16,7 +16,6 @@ const COPY = {
   saveFailed: "Couldn't create diagram. Try again.",
 } as const;
 
-// ─────────────────────────────────────────────────────────────────────────────
 
 interface Props {
   open: boolean;
@@ -37,7 +36,6 @@ export function NewDiagramDialog({ open, onOpenChange, universeId }: Props) {
   const [errorField, setErrorField] = useState<FieldError>(null);
   const [errorCopy, setErrorCopy] = useState<string | null>(null);
 
-  // Reset form state whenever the dialog opens.
   useEffect(() => {
     if (open) {
       setNameInput('');

@@ -29,7 +29,6 @@ const COPY = {
     `${n} ${n === 1 ? 'entry references' : 'entries reference'} this image. Inline embeds will show a broken placeholder; cover image references will be cleared automatically. This cannot be undone.`,
   deleteConfirmLabel: 'Delete',
 } as const;
-// ─────────────────────────────────────────────────────────────────────────────
 
 function AssetCard({
   asset,

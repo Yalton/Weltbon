@@ -3,20 +3,6 @@ import { mkdtemp, rm } from 'node:fs/promises';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 
-/**
- * The closeDb()/initDb() lifecycle, which Task 6's main process is the first
- * caller able to exercise: an app quitting while it is still booting.
- *
- * Each test imports client.js under a distinct `?life-N` query string and
- * calls `vi.resetModules()` first. The query string busts the ESM cache for
- * client.js itself; `resetModules()` additionally clears config.ts's
- * module-level `_env` singleton, which client.js reaches via a STABLE
- * `../config.js` specifier — without the reset, only the first test in this
- * file to call `env()` would ever see its own `WELTBON_DATA_DIR`, and every
- * later test would silently reuse that first test's (by-then-deleted) tmp
- * dir. Same fix already used in tests/db-client-driver.test.ts and
- * tests/cors.test.ts for the identical bleed.
- */
 describe('db/client lifecycle under concurrent close', () => {
   let dir: string;
   const OLD_ENV = { ...process.env };

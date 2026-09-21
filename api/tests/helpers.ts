@@ -21,7 +21,7 @@ export async function createTestDb(): Promise<TestDbHandle> {
   // juggling, no DATABASE_URL needed. Types are cast: PgliteDatabase and
   // NodePgDatabase share the PgDatabase query API; the pool shim covers the
   // only two members tests use (query/end). Productionizing this seam happens
-  // in the desktop-app plan, not the spike.
+
   if (process.env.WELTBON_TEST_DRIVER === 'pglite') {
     const { PGlite } = await import('@electric-sql/pglite');
     const { drizzle: drizzlePglite } = await import('drizzle-orm/pglite');

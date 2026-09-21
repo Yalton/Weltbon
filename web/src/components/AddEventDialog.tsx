@@ -23,19 +23,12 @@ const COPY = {
   saveFailed: "Couldn't save event. Try again.",
 } as const;
 
-// ─────────────────────────────────────────────────────────────────────────────
 
 interface Props {
   open: boolean;
   onOpenChange: (open: boolean) => void;
   universeId: string;
-  /**
-   * 'create' — blank dialog for adding a brand-new event (default).
-   * 'promote' — dialog prefilled with an existing pin's position so the user
-   *             can "name" it and convert it to a first-class event entry.
-   */
   mode?: 'create' | 'promote';
-  /** Initial position value (used in 'promote' mode to prefill the field). */
   initialPosition?: number;
 }
 
@@ -61,7 +54,6 @@ export function AddEventDialog({
   const [errorField, setErrorField] = useState<FieldError>(null);
   const [errorCopy, setErrorCopy] = useState<string | null>(null);
 
-  // Reset / prefill form state whenever the dialog opens.
   useEffect(() => {
     if (open) {
       setTitleInput('');
@@ -72,10 +64,8 @@ export function AddEventDialog({
     }
   }, [open, initialPosition]);
 
-  // Live position parse for hint.
   const livePosition = parsePosition(positionInput);
 
-  // Compute position hint: "This sets the event's date. {formattedDate | raw}"
   const positionHint = (() => {
     if (!livePosition.ok || positionInput.trim() === '') return COPY.positionHintBase;
     const formatted = formatCalendar(livePosition.value, calendar);

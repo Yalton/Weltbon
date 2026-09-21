@@ -57,7 +57,7 @@ describe('classifyError — legacy JSON-import branches (preserved)', () => {
   });
 });
 
-describe('classifyError — Phase 12 status-code branches', () => {
+describe('classifyError — status-code branches', () => {
   it('403 → permission-denied copy', () => {
     const err = new ApiError(403, { error: 'forbidden' }, 'forbidden');
     expect(classifyError(err)).toBe(
@@ -141,7 +141,7 @@ describe('classifyError — Phase 12 status-code branches', () => {
   });
 });
 
-describe('classifyError — TD-03 ingest-commit text-match branches (Phase 16)', () => {
+describe('classifyError — TD-03 ingest-commit text-match branches', () => {
   it('matches "title still collides" (case-insensitive) → title-collision copy', () => {
     const err = new ApiError(
       409,
@@ -187,7 +187,7 @@ describe('classifyError — TD-03 ingest-commit text-match branches (Phase 16)',
   });
 });
 
-describe('classifyError — Phase 12-05 parse-time 413/limit branches', () => {
+describe('classifyError — parse-time 413/limit branches', () => {
   it('413 with limit="file_count" → too-many-files copy', () => {
     const err = new ApiError(
       413,

@@ -1,15 +1,3 @@
-/**
- * Phase 41 — SC4 maps export→reimport round-trip integration test.
- *
- * Covers:
- *   - SC4: upload asset → create map using that asset → place pin → create region
- *     → export JSON ZIP → import into clean universe → verify map + pin + asset
- *     reference + entry link all resolve with new UUIDs.
- *   - Backward-compat: existing export/import (version 2.0.0) without maps still
- *     imports successfully (maps defaults to []).
- *
- * NOTE: UPLOADS_DIR must be set BEFORE importing createApp (same as import-export-assets.test.ts).
- */
 
 import { mkdtempSync, rmSync } from 'node:fs';
 import { tmpdir } from 'node:os';
@@ -183,7 +171,6 @@ describe('import-export-maps (SC4)', () => {
     return json(res);
   }
 
-  /** Phase 44 GEOSHARE-02: Create a map layer. Returns the layer object. */
   async function createLayer(
     uid: string,
     hdrs: Record<string, string>,
@@ -200,7 +187,6 @@ describe('import-export-maps (SC4)', () => {
     return json(res);
   }
 
-  /** Phase 44 GEOSHARE-02: Create a terrain type on a layer. Returns the terrain type object. */
   async function createTerrainType(
     uid: string,
     layerId: string,
@@ -320,7 +306,7 @@ describe('import-export-maps (SC4)', () => {
     expect(rawRes.status, 'map asset bytes not retrievable after import').toBe(200);
   });
 
-  // ─── Phase 44 GEOSHARE-02: Terrain palette round-trip test ─────────────────
+
 
   it('exports ZIP + reimports: terrain layer + type + painted region all round-trip with remapped UUIDs', async () => {
     const { hdrs } = await userWithToken('sc4-terrain-rt@test.com');
@@ -397,7 +383,7 @@ describe('import-export-maps (SC4)', () => {
     expect(newLayers[0].terrainTypes[0].id).not.toBe(terrainType.id);
   });
 
-  // ─── Phase 44 GEOSHARE-02: Orphaned terrain ref null-out test (D-44-06) ────
+
 
   it('imports a payload with orphaned terrainTypeId: region degrades to plain, no throw', async () => {
     const { hdrs } = await userWithToken('sc4-terrain-orphan@test.com');
@@ -458,9 +444,8 @@ describe('import-export-maps (SC4)', () => {
     expect(mapDetail.regions[0].terrainTypeId, 'orphaned terrain ref must null out').toBeNull();
   });
 
-  // ─── Phase 51 ROUTE-03: Route helpers ──────────────────────────────────────
 
-  /** Phase 51 ROUTE-03: Create a route on a map. Returns the route object. */
+
   async function createRoute(
     uid: string,
     mapId: string,
@@ -495,7 +480,7 @@ describe('import-export-maps (SC4)', () => {
     return json(res);
   }
 
-  // ─── Phase 51 ROUTE-03: Route round-trip test ───────────────────────────────
+
 
   it('exports ZIP + reimports: routes round-trip with style fields and remapped entryId (ROUTE-03)', async () => {
     const { hdrs } = await userWithToken('sc4-routes-rt@test.com');
@@ -579,7 +564,7 @@ describe('import-export-maps (SC4)', () => {
     expect(newStandaloneRoute.showArrow, 'standalone showArrow must be false').toBe(false);
   });
 
-  // ─── Phase 51 ROUTE-03: Route backward-compat test (pre-v5.3) ───────────────
+
 
   it('imports a payload without mapRoutes field succeeds — backward-compat pre-v5.3', async () => {
     const { hdrs } = await userWithToken('sc4-routes-compat@test.com');
@@ -664,10 +649,10 @@ describe('import-export-maps (SC4)', () => {
     expect(result.mapCount ?? 0).toBe(0);
     expect(result.mapPinCount ?? 0).toBe(0);
     expect(result.mapRegionCount ?? 0).toBe(0);
-    // Phase 44 GEOSHARE-02 SC2: pre-v5.1 exports (no terrain keys) must yield zero terrain counts.
+
     expect(result.mapLayerCount ?? 0, 'pre-v5.1 export must have mapLayerCount=0').toBe(0);
     expect(result.terrainTypeCount ?? 0, 'pre-v5.1 export must have terrainTypeCount=0').toBe(0);
-    // Phase 51 ROUTE-03: pre-maps export also has no routes.
+
     expect(result.mapRouteCount ?? 0, 'pre-maps export must have mapRouteCount=0').toBe(0);
 
     // No maps should appear in the imported universe.
@@ -679,7 +664,7 @@ describe('import-export-maps (SC4)', () => {
     expect(maps).toHaveLength(0);
   });
 
-  // ─── Phase 53 NEST-01: targetMapId round-trip tests ──────────────────────────
+
 
   /**
    * SC-NEST-RT: A pin targeting another map in the export remaps its targetMapId

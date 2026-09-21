@@ -19,9 +19,7 @@ type MarkdownBacklinksProps = {
   backlinks: Backlink[];
   draftMarkdown: string;
   savedMarkdown: string;
-  /** Retained for the renderer's signed-URL data; existence comes from assets. */
   savedAssetUrls?: Record<string, string>;
-  /** The existing asset query is the authority for whether an asset still exists. */
   assets?: AssetSummary[];
   entries: Entry[];
   onRevealSelection: (selection: MarkdownRecoverySelection) => void;
@@ -62,7 +60,6 @@ function markdownCodeRanges(markdown: string): MarkdownRange[] {
     visit(fromMarkdown(markdown));
     return ranges;
   } catch {
-    // Recovery must fail closed when parsing or source positions are unavailable.
     return [{ start: 0, end: markdown.length }];
   }
 }
@@ -181,7 +178,6 @@ function missingSavedAssets(
   savedAssetUrls: Record<string, string>,
   assets: AssetSummary[] | undefined,
 ): MarkdownAssetRecoverySelection[] {
-  // Until the existing asset query resolves, there is no authoritative answer.
   if (!assets) return [];
   void savedAssetUrls;
   const existingAssetIds = new Set(assets.map((asset) => asset.id));

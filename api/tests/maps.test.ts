@@ -1,22 +1,3 @@
-/**
- * Phase 40 MAPS-04/05 route-level integration tests.
- *
- * Covers:
- *   - MAPS-04: Region CRUD endpoints (POST/PATCH/DELETE .../regions)
- *     - Create region with/without entryId; 201 with row
- *     - Create with cross-universe entryId → 404
- *     - PATCH region updates name/color/entryId; entryId can be set to null (unlink)
- *     - PATCH with cross-universe entryId → 404
- *     - DELETE region → 204; unknown regionId → 404
- *     - Deleting a region does NOT delete the linked entry
- *   - MAPS-05: Pin style PATCH endpoint
- *     - PATCH /pins/:pinId/style sets nullable color + icon → 200
- *   - Regions included in GET detail payload alongside pins
- *   - Auth + IDOR: requireUniverse gates all mutation routes; cross-tenant uid → 404
- *
- * Uses the Phase 39 maps + Phase 38 asset infrastructure to seed map fixtures.
- * Follows the diagrams.test.ts / assets.test.ts integration-test pattern exactly.
- */
 
 import { mkdtempSync, rmSync } from 'node:fs';
 import { tmpdir } from 'node:os';
@@ -506,7 +487,7 @@ describe('map routes (MAPS-04/05 regions + pin style)', () => {
     expect(res.status).toBe(401);
   });
 
-  // ─── Phase 43 TERRAIN-01/02: terrainTypeId on region create/update/read ───
+
 
   /** Create a layer + terrain type for the given universe; returns the terrainTypeId */
   async function createTerrainType(
@@ -750,7 +731,7 @@ describe('map routes (MAPS-04/05 regions + pin style)', () => {
     expect(patchRes.status).toBe(404);
   });
 
-  // ─── Phase 51 ROUTE-01/02: Route CRUD + IDOR ──────────────────────────────
+
 
   it('POST /routes creates a standalone route (no entryId) and returns 201 with defaults', async () => {
     const { hdrs, uid, mid } = await seedMap();
@@ -961,7 +942,7 @@ describe('map routes (MAPS-04/05 regions + pin style)', () => {
     expect(detail.routes[0].lineStyle).toBe('solid');
   });
 
-  // ─── Phase 51 ROUTE-02: IDOR guard (wrong mid → 404) ──────────────────────
+
 
   it('PATCH /routes/:routeId via a foreign mid returns 404 (IDOR guard)', async () => {
     const { hdrs, uid, mid } = await seedMap();
@@ -1006,7 +987,7 @@ describe('map routes (MAPS-04/05 regions + pin style)', () => {
     expect(delRes.status).toBe(404);
   });
 
-  // ─── Phase 52 SECRET-01: secret toggle on pin / region / route ────────────
+
 
   it('PATCH /pins/:pinId/style with {secret:true} sets secret on a pin and returns 200', async () => {
     const { hdrs, uid, mid } = await seedMap();
@@ -1092,12 +1073,12 @@ describe('map routes (MAPS-04/05 regions + pin style)', () => {
     expect(updated.secret).toBe(true);
   });
 
-  // ─── NEST-01: targetMapId schema widening (Task 1 RED) ────────────────────
+
 
   it('NEST-01 (T1-schema): POST /pins with targetMapId and no entryId creates a map-only pin (201)', async () => {
-    // RED before Task 1: createPinSchema requires entryId → body rejected with 400.
-    // GREEN after Task 1 schema: entryId is optional, body accepted.
-    // GREEN after Task 2 handler: targetMapId is persisted in the row.
+
+
+
     const { hdrs, uid, mid, assetId } = await seedMap('nest01-t1a@test.com');
     const targetMapId = await createMap(uid, hdrs, assetId);
 
@@ -1110,12 +1091,12 @@ describe('map routes (MAPS-04/05 regions + pin style)', () => {
     const pin = await json(res);
     expect(pin.id).toBeDefined();
     expect(pin.entryId).toBeNull();
-    // targetMapId persisted by Task 2 handler:
+
     expect(pin.targetMapId).toBe(targetMapId);
   });
 
   it('NEST-01 (T1-schema): PATCH /pins/:pinId/style with only targetMapId passes the refine guard (200)', async () => {
-    // RED before Task 1: pinStyleSchema refine requires at least color/icon/secret →
+
     // a targetMapId-only body returns 400.
     const { hdrs, uid, mid, assetId } = await seedMap('nest01-t1b@test.com');
     const entryId = await createEntry(uid, hdrs);
@@ -1136,7 +1117,7 @@ describe('map routes (MAPS-04/05 regions + pin style)', () => {
   });
 
   it('NEST-01 (T1-schema): PATCH /regions/:regionId with only targetMapId passes the refine guard (200)', async () => {
-    // RED before Task 1: updateRegionSchema refine requires at least name/color/entryId/
+
     // terrainTypeId/secret → a targetMapId-only body returns 400.
     const { hdrs, uid, mid, assetId } = await seedMap('nest01-t1c@test.com');
     const targetMapId = await createMap(uid, hdrs, assetId);
@@ -1156,9 +1137,9 @@ describe('map routes (MAPS-04/05 regions + pin style)', () => {
     expect(patchRes.status).toBe(200);
   });
 
-  // ─── NEST-01: target_map_id universe validation (Task 2 RED) ──────────────
-  // These tests are RED after Task 1 (schema accepts targetMapId) but before
-  // Task 2 (handler validates universe membership and self-target).
+
+
+
 
   it('NEST-01 (T2-handler): PATCH /pins/:pinId/style in-universe targetMapId → 200 with targetMapId set', async () => {
     const { hdrs, uid, mid, assetId } = await seedMap('nest01-t2a@test.com');

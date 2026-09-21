@@ -8,12 +8,10 @@ import type { AuthVariables } from '../middleware/auth.js';
 
 type AppEnv = { Variables: AuthVariables };
 
-// ─── Path param schemas ──────────────────────────────────────────────────────
 
 const uidParams = z.object({ uid: z.string().uuid() });
 const uidAndIdParams = z.object({ uid: z.string().uuid(), id: z.string().uuid() });
 
-// ─── Zod schemas ─────────────────────────────────────────────────────────────
 
 const SEVERITIES = ['critical', 'major', 'moderate', 'minor'] as const;
 
@@ -65,12 +63,7 @@ const issueSchema = z.object({
 
 const errorSchema = z.object({ error: z.string() });
 
-// ─── Phase 25 dismiss body schema (D-01 two-step discriminated union) ────────
 
-/**
- * T-25-02-03: z.discriminatedUnion() rejects unknown `reason` values AND any
- * extra fields (including `dismissalSnapshot`) — the snapshot is server-side only.
- */
 const dismissBodySchema = z.discriminatedUnion('reason', [
   z.object({ reason: z.literal('intentional') }),
   z.object({ reason: z.literal('inaccurate'), notes: z.string().max(2000).optional() }),
@@ -81,9 +74,6 @@ const dismissBodySchema = z.discriminatedUnion('reason', [
   z.object({ reason: z.literal('duplicate_of_human_issue'), linkedIssueId: z.string().uuid() }),
 ]);
 
-// Loose Zod shape for OpenAPI doc generation on the AI issue response.
-// Runtime returns `as any` (mirrors existing handlers); this schema drives the
-// OpenAPI spec only.
 const aiIssueResponseSchema = issueSchema.extend({
   source: z.string().optional(),
   model: z.string().optional(),
@@ -107,12 +97,7 @@ const aiIssueResponseSchema = issueSchema.extend({
   linkedByAiIssueIds: z.array(z.string()).optional(),
 });
 
-// ─── Helpers ─────────────────────────────────────────────────────────────────
 
-/**
- * Assert every entryId belongs to the given universe. Uses a transactional reader
- * when passed `tx`, otherwise falls back to the default db() handle.
- */
 async function assertEntriesInUniverse(
   reader: { select: typeof db extends never ? never : any } | any,
   universeId: string,
@@ -128,7 +113,6 @@ async function assertEntriesInUniverse(
   }
 }
 
-/** Fetch associated entries for a set of issue IDs, grouped by issueId. */
 async function fetchAssociationsByIssue(issueIds: string[]): Promise<Map<string, Array<{ id: string; title: string; icon: string }>>> {
   const grouped = new Map<string, Array<{ id: string; title: string; icon: string }>>();
   if (issueIds.length === 0) return grouped;
@@ -151,19 +135,11 @@ async function fetchAssociationsByIssue(issueIds: string[]): Promise<Map<string,
   return grouped;
 }
 
-/**
- * Phase 25 AISSUE-02: Batch-fetch AI projection data for a set of issues.
- *
- * Returns a Map<issueId, { model, costUsd, consultedEntries[] }> for
- * all AI-sourced rows that have an auditRunId. Uses two batched queries
- * (one on audit_runs, one on entries) to avoid N+1.
- */
 async function projectAiFields(
   issueRows: Array<{ id: string; source: string | null; auditRunId: string | null }>
 ): Promise<Map<string, { model: string; costUsd: string; consultedEntries: Array<{ id: string; title: string; icon: string; updatedAt: string }> }>> {
   const result = new Map<string, { model: string; costUsd: string; consultedEntries: Array<{ id: string; title: string; icon: string; updatedAt: string }> }>();
 
-  // Collect the distinct auditRunIds for AI rows
   const aiRunIds = Array.from(
     new Set(
       issueRows
@@ -185,7 +161,6 @@ async function projectAiFields(
     .from(auditRuns)
     .where(inArray(auditRuns.id, aiRunIds));
 
-  // Collect all consulted entry IDs across all runs
   const allConsultedIds = Array.from(
     new Set(runRows.flatMap((r) => r.consultedEntryIds ?? []))
   );
@@ -202,7 +177,6 @@ async function projectAiFields(
     }
   }
 
-  // Build runId → projection map
   const runProjectionMap = new Map<string, { model: string; costUsd: string; consultedEntries: Array<{ id: string; title: string; icon: string; updatedAt: string }> }>();
   for (const run of runRows) {
     const consultedEntries = (run.consultedEntryIds ?? [])
@@ -219,7 +193,6 @@ async function projectAiFields(
     });
   }
 
-  // Map issueId → projection
   for (const issue of issueRows) {
     if (issue.source === 'ai' && issue.auditRunId != null) {
       const proj = runProjectionMap.get(issue.auditRunId);
@@ -232,13 +205,6 @@ async function projectAiFields(
   return result;
 }
 
-/**
- * Phase 25 D-03 bidirectional: compute linkedByAiIssueIds for human rows.
- *
- * Returns a Map<humanIssueId, string[]> where each value is the list of AI
- * issue IDs that are dismissed as duplicate_of_human_issue and point to that
- * human row. Used only for human-source rows.
- */
 async function computeLinkedByAiIssueIds(
   humanIssueIds: string[]
 ): Promise<Map<string, string[]>> {
@@ -273,7 +239,6 @@ async function computeLinkedByAiIssueIds(
   return result;
 }
 
-// ─── Route definitions ───────────────────────────────────────────────────────
 
 const listIssuesRoute = createRoute({
   method: 'get',
@@ -285,8 +250,6 @@ const listIssuesRoute = createRoute({
   request: {
     params: uidParams,
     // CR-02: extended query schema to accept source, category[], and includeDismissed
-    // OpenAPIHono coerces single ?category=X to string, repeated ?category=X&category=Y to array —
-    // z.union([z.array(...), z.enum(...)]) handles both coercion forms.
     query: z.object({
       severity: z.enum(SEVERITIES).optional(),
       resolved: z.enum(['true', 'false']).optional(),
@@ -296,7 +259,6 @@ const listIssuesRoute = createRoute({
         z.enum(AUDIT_CATEGORIES),
       ]).optional(),
       includeDismissed: z.enum(['true', 'false']).optional(),
-      // Phase 26 Plan 08 Task 2 (D-10) — deep-link filter from the audit
       // completion banner. T-26-08-03: UUID validation at the Zod layer;
       // non-UUID returns 400 BEFORE the handler runs (no silent no-op).
       audit_run_id: z.string().uuid().optional(),
@@ -467,7 +429,6 @@ const deleteIssueRoute = createRoute({
   },
 });
 
-// ─── Phase 25 dismiss / undismiss route definitions ──────────────────────────
 
 /**
  * POST /{id}/dismiss
@@ -522,12 +483,6 @@ const dismissRoute = createRoute({
   },
 });
 
-/**
- * POST /{id}/undismiss
- *
- * Clears all dismissal columns, restoring the issue to the active pool (D-13).
- * Returns 422 if issue is not AI-sourced or not currently dismissed.
- */
 const undismissRoute = createRoute({
   method: 'post',
   path: '/{id}/undismiss',
@@ -565,7 +520,6 @@ const undismissRoute = createRoute({
   },
 });
 
-// ─── Router ──────────────────────────────────────────────────────────────────
 
 export const issueRoutes = new OpenAPIHono<AppEnv>()
 
@@ -581,8 +535,6 @@ export const issueRoutes = new OpenAPIHono<AppEnv>()
     const sourceParam = c.req.query('source')?.trim();
     const categoryParam = c.req.queries('category'); // repeatable param → string[]
     const includeDismissedParam = c.req.query('includeDismissed')?.trim();
-    // Phase 26 Plan 08 Task 2 (D-10) — audit_run_id deep-link filter.
-    // Zod already validated as UUID (or omitted); reading the raw query is safe.
     const auditRunIdParam = c.req.query('audit_run_id')?.trim();
 
     const conditions: SQL[] = [eq(issues.universeId, uid)];
@@ -611,10 +563,7 @@ export const issueRoutes = new OpenAPIHono<AppEnv>()
     if (includeDismissedParam !== 'true') {
       conditions.push(isNull(issues.dismissedAt));
     }
-    // Phase 26 Plan 08 Task 2 (D-10) — push audit_run_id filter (UUID already
-    // validated at the Zod layer). Universe filter (line above) still wins
     // for cross-universe IDs — T-26-08-04 disposition: accept (no leakage,
-    // no enumeration enabled).
     if (auditRunIdParam) {
       conditions.push(eq(issues.auditRunId, auditRunIdParam));
     }
@@ -627,10 +576,8 @@ export const issueRoutes = new OpenAPIHono<AppEnv>()
 
     const grouped = await fetchAssociationsByIssue(issueRows.map((i) => i.id));
 
-    // Phase 25 AISSUE-02: batch-fetch AI projection fields
     const aiProjectionMap = await projectAiFields(issueRows);
 
-    // Phase 25 D-03: compute linkedByAiIssueIds for human rows
     const humanIssueIds = issueRows.filter((r) => r.source === 'human').map((r) => r.id);
     const linkedByAiMap = await computeLinkedByAiIssueIds(humanIssueIds);
 
@@ -700,7 +647,6 @@ export const issueRoutes = new OpenAPIHono<AppEnv>()
 
     const grouped = await fetchAssociationsByIssue([row.id]);
 
-    // Phase 25 AISSUE-02: AI projection for single issue
     const aiProjectionMap = await projectAiFields([row]);
     const base = { ...row, entries: grouped.get(row.id) ?? [] };
 
@@ -731,7 +677,6 @@ export const issueRoutes = new OpenAPIHono<AppEnv>()
     const patch = c.req.valid('json');
 
     const updated = await db().transaction(async (tx) => {
-      // Verify the issue exists in this universe
       const [existing] = await tx
         .select({ id: issues.id })
         .from(issues)
@@ -742,7 +687,6 @@ export const issueRoutes = new OpenAPIHono<AppEnv>()
 
       const { entryIds, ...scalarFields } = patch;
 
-      // Build update set (only fields that were provided)
       const setPayload: Record<string, unknown> = { updatedAt: new Date() };
       if (scalarFields.title !== undefined) setPayload.title = scalarFields.title;
       if (scalarFields.description !== undefined) setPayload.description = scalarFields.description;
@@ -787,7 +731,6 @@ export const issueRoutes = new OpenAPIHono<AppEnv>()
     return c.body(null, 204);
   })
 
-  // POST /:id/dismiss — Phase 25 AISSUE-03/04 structured dismissal
   .openapi(dismissRoute, async (c) => {
     const { uid, id: issueId } = c.req.valid('param');
     const userId = c.var.userId;
@@ -798,7 +741,6 @@ export const issueRoutes = new OpenAPIHono<AppEnv>()
     const now = new Date();
 
     const row = await db().transaction(async (tx) => {
-      // Fetch the issue with all columns needed for validation
       const [issue] = await tx
         .select()
         .from(issues)
@@ -811,7 +753,6 @@ export const issueRoutes = new OpenAPIHono<AppEnv>()
       if (issue.source !== 'ai') {
         throw new HTTPException(422, { message: 'Only AI-sourced issues can be dismissed with a reason' });
       }
-      // Idempotency guard
       if (issue.dismissedAt != null) {
         throw new HTTPException(422, { message: 'Issue is already dismissed; un-dismiss first' });
       }
@@ -843,11 +784,8 @@ export const issueRoutes = new OpenAPIHono<AppEnv>()
           .where(eq(auditRuns.id, issue.auditRunId));
 
         if (run && run.consultedEntryIds && run.consultedEntryIds.length > 0) {
-          // Phase 25 D-12 / Rule 1 fix: fetch updatedAt as a microsecond-precision
-          // ISO string directly from Postgres using to_char(). JS Date truncates to
           // milliseconds (3 decimal places), so Drizzle column mapping loses sub-ms
           // precision. Without this, the auto-stale predicate falsely fires right after
-          // dismissal because the DB's microsecond value > the snapshot's ms value.
           const entryRows = await tx
             .select({
               id: entries.id,
@@ -871,7 +809,6 @@ export const issueRoutes = new OpenAPIHono<AppEnv>()
         }
       }
 
-      // Build update payload based on reason
       const setPayload: Record<string, unknown> = {
         dismissedAt: now,
         dismissalReason: payload.reason,
@@ -898,7 +835,6 @@ export const issueRoutes = new OpenAPIHono<AppEnv>()
       return updated;
     });
 
-    // Project AI fields for the response
     const grouped = await fetchAssociationsByIssue([row.id]);
     const aiProjectionMap = await projectAiFields([row]);
     const aiProj = aiProjectionMap.get(row.id);
@@ -912,7 +848,6 @@ export const issueRoutes = new OpenAPIHono<AppEnv>()
     } as any, 200);
   })
 
-  // POST /:id/undismiss — Phase 25 AISSUE-06 restore dismissed AI issue
   .openapi(undismissRoute, async (c) => {
     const { uid, id: issueId } = c.req.valid('param');
     const userId = c.var.userId;
@@ -934,12 +869,10 @@ export const issueRoutes = new OpenAPIHono<AppEnv>()
       if (issue.source !== 'ai') {
         throw new HTTPException(422, { message: 'Only AI-sourced issues can be un-dismissed' });
       }
-      // Idempotency guard
       if (issue.dismissedAt == null) {
         throw new HTTPException(422, { message: 'Issue is not dismissed' });
       }
 
-      // Clear all dismissal columns
       const [updated] = await tx
         .update(issues)
         .set({
@@ -957,7 +890,6 @@ export const issueRoutes = new OpenAPIHono<AppEnv>()
       return updated;
     });
 
-    // Project AI fields for the response
     const grouped = await fetchAssociationsByIssue([row.id]);
     const aiProjectionMap = await projectAiFields([row]);
     const aiProj = aiProjectionMap.get(row.id);

@@ -2,16 +2,16 @@ import { describe, it, expect } from 'vitest';
 import { readFileSync } from 'node:fs';
 import { resolve } from 'node:path';
 
-// POL-04 Task 4 — empty-state copy strings from UI-SPEC §9.2. Static-literal
+
 // audit: each string must live in the file that owns the empty state. These
 // are user-facing copy and should never silently change.
 const SRC = resolve(__dirname, '..', 'src');
 const read = (rel: string) => readFileSync(resolve(SRC, rel), 'utf8');
 
-// Phase 20 Plan 06 — the prior `views/TimelineView.tsx` empty-state copy
+
 // ("Pin a moment to your timeline") was removed when the vertical grouped-list
 // rendering path was replaced by the horizontal canvas + configure-range gate
-// (Phase 20 D-02). The Phase 20 timeline's empty-state surface lives in two
+
 // other places: TimelineRangeDialog (first-visit prompt) and
 // TimelineEntryPanel (right-hand list with locked "No entries" copy). Neither
 // needs a static-literal audit here — TimelineRangeDialog's locked copy is
@@ -27,7 +27,7 @@ const CASES: Array<{ rel: string; copy: string }> = [
   { rel: 'views/UniverseList.tsx', copy: 'Start a universe' },
 ];
 
-describe('empty-state copy (POL-04 Task 4)', () => {
+describe('empty-state copy', () => {
   for (const { rel, copy } of CASES) {
     it(`${rel} contains the canonical empty-state title "${copy}"`, () => {
       const src = read(rel);

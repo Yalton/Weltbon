@@ -8,22 +8,15 @@ import type { AuthVariables } from '../middleware/auth.js';
 
 type AppEnv = { Variables: AuthVariables };
 
-// ─── Path param schemas ──────────────────────────────────────────────────────
 
 const uidParams = z.object({ uid: z.string().uuid() });
 const uidAndIdParams = z.object({ uid: z.string().uuid(), id: z.string().uuid() });
 
-// ─── Zod schemas ─────────────────────────────────────────────────────────────
 
 const createLinkSchema = z.object({
   sourceEntryId: z.string().uuid(),
   targetEntryId: z.string().uuid(),
   // `.nullable()` is load-bearing, not tidiness (#28). The display label is
-  // optional in the UI, and both callers send an explicit `null` when it is
-  // left blank rather than omitting the key — so `.optional()` alone rejected
-  // the ordinary case and made link creation impossible from every surface.
-  // Matches `linkType` below and `label` in patchLinkSchema; this field was the
-  // only one in the file missing it.
   label: z.string().max(100).nullable().optional(),
   linkType: z.string().max(100).nullable().optional(),
   direction: z.enum(['directed', 'undirected']).optional().default('directed'),
@@ -58,7 +51,6 @@ const relationSchema = z.object({
 
 const errorSchema = z.object({ error: z.string() });
 
-// ─── linkRoutes route definitions ────────────────────────────────────────────
 
 const createLinkRoute = createRoute({
   method: 'post',
@@ -199,7 +191,6 @@ const patchLinkRoute = createRoute({
   },
 });
 
-// ─── linkRoutes router ────────────────────────────────────────────────────────
 
 export const linkRoutes = new OpenAPIHono<AppEnv>()
 
@@ -215,7 +206,6 @@ export const linkRoutes = new OpenAPIHono<AppEnv>()
       return c.json({ error: 'Cannot link an entry to itself' }, 400);
     }
 
-    // Verify both entries belong to this universe
     const sourceEntry = await db()
       .select({ id: entries.id })
       .from(entries)
@@ -304,15 +294,7 @@ export const linkRoutes = new OpenAPIHono<AppEnv>()
     return c.json(updated[0] as any, 200);
   });
 
-// ─── relationRoutes route definitions ────────────────────────────────────────
 
-/**
- * POL-03 backend: relation labels with usage counts
- * Mounted at /universes/:uid/relations
- * Returns [{ label, count }] sorted by count DESC, then label ASC for deterministic tiebreak.
- * Note: label is now nullable (D-04 — optional display override); null-label rows are grouped
- * together, yielding a null-label bucket if any unlabeled links exist.
- */
 const listRelationsRoute = createRoute({
   method: 'get',
   path: '/',
@@ -344,7 +326,6 @@ const listRelationsRoute = createRoute({
   },
 });
 
-// ─── relationRoutes router ────────────────────────────────────────────────────
 
 export const relationRoutes = new OpenAPIHono<AppEnv>()
   .openapi(listRelationsRoute, async (c) => {
@@ -362,14 +343,7 @@ export const relationRoutes = new OpenAPIHono<AppEnv>()
     return c.json(rows as any, 200);
   });
 
-// ─── linkTypeRoutes route definitions ────────────────────────────────────────
 
-/**
- * Phase 35 REL-01: link-type autocomplete
- * Mounted at /universes/:uid/link-types
- * Returns [{ linkType, count }] for distinct non-null in-use link types,
- * sorted by count DESC, then linkType ASC for deterministic tiebreak.
- */
 const listLinkTypesRoute = createRoute({
   method: 'get',
   path: '/',
@@ -401,7 +375,6 @@ const listLinkTypesRoute = createRoute({
   },
 });
 
-// ─── linkTypeRoutes router ────────────────────────────────────────────────────
 
 export const linkTypeRoutes = new OpenAPIHono<AppEnv>()
   .openapi(listLinkTypesRoute, async (c) => {

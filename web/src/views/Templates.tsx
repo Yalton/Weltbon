@@ -1,14 +1,3 @@
-/**
- * Templates view — /settings/templates (Phase 28-07)
- *
- * Two sections: "Default templates" (in-tree defaults, read-only) and
- * "Your templates" (user DB rows with kebab Rename/Delete per row).
- *
- * Per UI-SPEC §D: no "Create template" button — creation flows exclusively
- * from EntryEditor's kebab (Save as template…).
- *
- * Analog: web/src/views/Tokens.tsx (page header, skeleton, table, ConfirmDialog wiring).
- */
 
 import { useState } from 'react';
 import * as DropdownMenu from '@radix-ui/react-dropdown-menu';
@@ -25,7 +14,6 @@ import { Toast } from '../components/Toast';
 import { formatRelative } from '../utils/formatRelative';
 import { ApiError } from '../api/client';
 
-/** Renders a horizontal chip list of the first 4 meta field names + "+N more" chip. */
 function MetaChips({ meta }: { meta: Array<{ name: string; default_value: string }> }) {
   const shown = meta.slice(0, 4);
   const overflow = meta.length - 4;
@@ -323,8 +311,6 @@ export default function Templates() {
                           align="end"
                           sideOffset={4}
                           // FU-01: Radix restores focus to the kebab trigger on close, which
-                          // immediately fires onBlur={cancelRename} on the inline rename input
-                          // that just mounted — flashing the input invisibly. Suppress the
                           // auto-restore so the input keeps focus until the user explicitly
                           // cancels (Esc or click-away).
                           onCloseAutoFocus={(e) => e.preventDefault()}
@@ -334,13 +320,7 @@ export default function Templates() {
                             onSelect={() => {
                               // FU-01: defer the state update by one animation frame so
                               // Radix finishes its menu-close + focus-dance before the
-                              // inline <input> mounts. Without the defer, Radix briefly
                               // focuses the just-selected menu item AFTER our autoFocus,
-                              // blurring the input → onBlur={cancelRename} fires →
-                              // renameTargetId resets → the input unmounts before the
-                              // user sees it. Plain console.log traces confirm the
-                              // input mounts (isEditing: true) then immediately unmounts
-                              // (isEditing: false) inside a single click.
                               requestAnimationFrame(() => {
                                 setRenameTargetId(t.id);
                                 setRenameDraft(t.name);

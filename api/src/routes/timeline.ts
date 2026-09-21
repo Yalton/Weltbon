@@ -8,12 +8,10 @@ import type { AuthVariables } from '../middleware/auth.js';
 
 type AppEnv = { Variables: AuthVariables };
 
-// ─── Path param schemas ──────────────────────────────────────────────────────
 
 const uidAndEntryIdParams = z.object({ uid: z.string().uuid(), id: z.string().uuid() });
 const uidParams = z.object({ uid: z.string().uuid() });
 
-// ─── Zod schemas ────────────────────────────────────────────────────────────
 
 const pinSchema = z.object({
   label: z.string().max(200),
@@ -42,7 +40,6 @@ const timelineItemSchema = z.object({
 
 const errorSchema = z.object({ error: z.string() });
 
-// ─── Route definitions — timelinePinRoutes ───────────────────────────────────
 
 const upsertPinRoute = createRoute({
   method: 'post',
@@ -114,7 +111,6 @@ const deletePinRoute = createRoute({
   },
 });
 
-// ─── Route definitions — timelineListRoutes ──────────────────────────────────
 
 const listTimelineRoute = createRoute({
   method: 'get',
@@ -159,7 +155,6 @@ const listTimelineRoute = createRoute({
   },
 });
 
-// ─── Route definitions — eventsRoutes ───────────────────────────────────────
 
 const addEventBodySchema = z.object({
   // T-30-14: title bounded .max(200), description .max(50000), position z.number().finite()
@@ -225,9 +220,7 @@ const addEventRoute = createRoute({
   },
 });
 
-// ─── Routers ─────────────────────────────────────────────────────────────────
 
-/** Per-entry pin actions. Mount at /universes/:uid/entries */
 export const timelinePinRoutes = new OpenAPIHono<AppEnv>()
 
   // POST /universes/:uid/entries/:id/pin -- upsert pin for an entry
@@ -236,7 +229,6 @@ export const timelinePinRoutes = new OpenAPIHono<AppEnv>()
     const userId = c.var.userId;
     await requireUniverse(uid, userId);
 
-    // Validate entry belongs to universe (404 otherwise)
     const [entry] = await db()
       .select({ id: entries.id })
       .from(entries)
@@ -261,7 +253,6 @@ export const timelinePinRoutes = new OpenAPIHono<AppEnv>()
     const userId = c.var.userId;
     await requireUniverse(uid, userId);
 
-    // Defense in depth: verify entry belongs to universe before delete
     const [entry] = await db()
       .select({ id: entries.id })
       .from(entries)
@@ -276,7 +267,6 @@ export const timelinePinRoutes = new OpenAPIHono<AppEnv>()
     return c.body(null, 204);
   });
 
-/** Universe-wide sorted timeline + events. Mount at /universes/:uid */
 export const timelineListRoutes = new OpenAPIHono<AppEnv>()
 
   // GET /universes/:uid/timeline -- filtered pin ⋈ entry list (EVENTS-03/D-02/D-12)
@@ -299,10 +289,7 @@ export const timelineListRoutes = new OpenAPIHono<AppEnv>()
     }
 
     if (participantId !== undefined) {
-      // Restrict to pins whose entry participates with the given participant entry
-      // via the links table, in EITHER direction (source→target or target→source).
       // Constrained to links.universeId = uid to prevent cross-universe enumeration (T-30-16).
-      // Uses EXISTS subquery for correct NULL semantics and avoids duplicates from multiple links.
       conditions.push(
         sql`EXISTS (
           SELECT 1 FROM ${links}
@@ -347,9 +334,6 @@ export const timelineListRoutes = new OpenAPIHono<AppEnv>()
     const data = c.req.valid('json');
 
     const result = await db().transaction(async (tx) => {
-      // Step 1: Insert the event entry with entryType='event'.
-      // Mirrors entries.ts create handler defaults (summary='', body=description,
-      // tags=[], meta={}, icon='', isPublic=false — safer-default per Phase 29 D-10 precedent).
       const [newEntry] = await tx
         .insert(entries)
         .values({
@@ -366,9 +350,7 @@ export const timelineListRoutes = new OpenAPIHono<AppEnv>()
         })
         .returning();
 
-      // Step 2: Upsert the pin for the new entry.
       // Uses the same onConflictDoUpdate shape as upsertPinRoute (L165-169 pattern).
-      // The pin label defaults to the event title when not explicitly provided.
       const pinLabel = data.label ?? data.title;
       const [newPin] = await tx
         .insert(timelinePins)

@@ -1,8 +1,7 @@
 /**
- * Shared plumbing for the two-instance sync e2e run (Plan F, Task 5).
  *
  * Unlike `seed.ts` (which talks to the single production stack on :3000), this
- * addresses the TWO-INSTANCE dev rig from docs/sync-dev-rig.md:
+ * addresses the two-instance sync dev rig:
  *
  *   - Instance A — the instance under test. API on :3000 (a host `tsx watch`),
  *     UI on :5173 (Vite). Database `db-a`, published on localhost:5441.

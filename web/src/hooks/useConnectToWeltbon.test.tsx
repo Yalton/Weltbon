@@ -102,7 +102,7 @@ describe('useConnectToWeltbon', () => {
     expect(result.current.universes).toHaveLength(1);
     expect(result.current.universes[0].localState).toBe('present');
     // Pins the absence of the adopt call, not just its effect: exactly the
-    // two discovery-phase calls, no third call for POST /sync/adopt.
+
     expect(mockApi).toHaveBeenCalledTimes(2);
   });
 
@@ -215,7 +215,7 @@ describe('useConnectToWeltbon', () => {
     expect(result.current.universeId).toBe('u1');
     expect(result.current.linkId).toBe('link-1');
     // Regression: `step` must agree with `failedStep`, not revert to 'idle'.
-    // Task 5's credential-form pane is selected on "step is idle OR
+
     // failedStep is authenticating" — a stale 'idle' here would send the user
     // back to the credentials form after the universe was already adopted,
     // exactly the bounce-back this feature exists to eliminate.

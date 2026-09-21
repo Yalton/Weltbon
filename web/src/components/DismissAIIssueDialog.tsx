@@ -57,7 +57,6 @@ export function DismissAIIssueDialog({ universeId, issue, open, onOpenChange, on
 
   const dismiss = useDismissIssue(universeId);
 
-  // Reset all local state when the dialog closes
   useEffect(() => {
     if (!open) {
       setStep('step1');
@@ -132,7 +131,6 @@ export function DismissAIIssueDialog({ universeId, issue, open, onOpenChange, on
 
           <div className="mt-4">
             {step === 'step1' ? (
-              /* ─── Step 1: reason picker ─── */
               <fieldset>
                 <legend className="sr-only">Dismissal reason</legend>
                 <div className="space-y-2">
@@ -169,7 +167,6 @@ export function DismissAIIssueDialog({ universeId, issue, open, onOpenChange, on
                 </div>
               </fieldset>
             ) : (
-              /* ─── Step 2: reason-conditional content ─── */
               <div>
                 {reason === 'intentional' && (
                   <p className="text-sm text-neutral-600 dark:text-neutral-400">

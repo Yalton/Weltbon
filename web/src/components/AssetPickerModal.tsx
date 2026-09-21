@@ -18,16 +18,12 @@ const COPY = {
   empty: 'No images uploaded yet.',
   uploadFailed: "Couldn't upload image. Try again.",
 } as const;
-// ─────────────────────────────────────────────────────────────────────────────
 
 interface Props {
   open: boolean;
   onOpenChange: (open: boolean) => void;
   universeId: string;
   mode: 'insert-embed' | 'set-cover' | 'set-backdrop';
-  /** Second arg is the full asset row (when found) so callers can e.g. show
-      an immediate thumb preview without refetching. Additive — single-param
-      handlers remain valid. */
   onSelect: (assetId: string, asset?: AssetSummary) => void;
 }
 
@@ -45,7 +41,6 @@ export function AssetPickerModal({
   const [selected, setSelected] = useState<string | null>(null);
   const [uploadError, setUploadError] = useState<string | null>(null);
 
-  // Reset state when dialog opens
   useEffect(() => {
     if (open) {
       setSelected(null);

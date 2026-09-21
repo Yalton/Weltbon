@@ -55,7 +55,7 @@ describe('CreateTokenDialog', () => {
     vi.mocked(api).mockReset();
   });
 
-  // Test 1: Form phase renders with correct title and buttons
+
   it('renders form phase by default with correct title and buttons', () => {
     const qc = makeClient();
     render(<DialogHarness qc={qc} />);

@@ -1,21 +1,3 @@
-/**
- * Plan D Task 8 — unit-lane coverage for run-sync.ts branches that are
- * IMPOSSIBLE to reach through the two-instance harness (tests/sync-run.test.ts)
- * because no genuine two-peer condition can produce them:
- *
- *   15. safeRelease swallowing a failure after a SUCCESSFUL drive. No real
- *       two-peer condition makes a healthy release UPDATE fail — this needs
- *       releaseLink itself to throw, which only a mock can force.
- *   16. SyncVersionMismatchError → SyncIncompatibleError (defense in depth).
- *       Two real peers built from the SAME codebase always agree on the
- *       manifest version (the handshake is the primary gate) — reaching
- *       mergeManifests with mismatched versions needs a local+remote pair
- *       manufactured by hand.
- *
- * NOT registered in vitest.config.ts's DB_GATED_TESTS — this file touches no
- * database at all; every dependency of run-sync.ts that would otherwise open
- * one is replaced with a vi.mock stub.
- */
 import { describe, it, expect, vi, beforeEach, type Mock } from 'vitest';
 
 vi.mock('../src/db/client.js', () => ({ db: vi.fn() }));
@@ -117,7 +99,7 @@ function emptyManifest(version: string) {
   return out;
 }
 
-describe('run-sync unit-lane coverage (Plan D Task 8, scenarios 15/16)', () => {
+describe('run-sync unit-lane coverage', () => {
   beforeEach(() => {
     vi.clearAllMocks();
     (db as unknown as Mock).mockReturnValue(

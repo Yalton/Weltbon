@@ -1,30 +1,3 @@
-/**
- * Phase 12-01 — POST /api/universes/:uid/ingest/commit endpoint tests.
- *
- * The atomic-commit endpoint that takes a reviewed IngestPreview body (with
- * per-entry decisions and edits) and inserts the entire accepted batch
- * (entries + resolved links + new categories) inside ONE Postgres transaction
- * (D-24 atomicity).
- *
- * Coverage (per plan behavior table):
- *   - T-AUTH-01..04 — auth gating (401 missing/invalid; 403 cross-tenant; 404 missing)
- *   - T-HAPPY-01    — 3 accepted entries + 1 in-batch wikilink + 1 new category → 200
- *   - T-HAPPY-02    — collision → user picked rename → new title honored
- *   - T-HAPPY-03    — collision → user picked skip → collider not inserted, others land
- *   - T-HAPPY-04    — silent merge: case-insensitive newName matches existing category
- *   - T-ATOM-01     — failure mid-commit → ZERO new rows in entries/links/categories
- *   - T-PAT-01      — PAT bearer parity with JWT bearer
- *   - T-VALID-01    — Zod 400 on missing entries field
- *   - T-VALID-02    — entry.entryType not in universe.entryTypes → 400 (D-26)
- *   - T-VALID-03    — entry.path = "../escape.md" → 400 (T-11-05 inherited)
- *   - T-VALID-04    — all entries decision=skip → 400 commit_empty (D-29)
- *   - T-COLLIDE-01  — two accepted entries with same final title → 409
- *   - T-SIZE-01     — body has > CHUNK_SIZE * MAX_CHUNKS_PER_TABLE entries → 413 commit_size
- *   - T-OPENAPI-01  — /universes/{uid}/ingest/commit present with bearerAuth + 200/400/401/403/404/409/413/500
- *
- * Skip pattern: tests skip if DATABASE_URL is unreachable (matches the project-wide
- * pattern; the suite registers and skips cleanly when no DB is available).
- */
 
 import { describe, it, expect, beforeAll, afterAll, beforeEach } from 'vitest';
 import { eq, sql } from 'drizzle-orm';
@@ -39,7 +12,7 @@ import { CHUNK_SIZE, MAX_CHUNKS_PER_TABLE } from '../src/services/ingest-commit.
 
 // ─── Test scaffolding ──────────────────────────────────────────────────────
 
-describe('POST /api/universes/:uid/ingest/commit (Phase 12-01)', () => {
+describe('POST /api/universes/:uid/ingest/commit', () => {
   let handle: TestDbHandle;
   // eslint-disable-next-line @typescript-eslint/no-explicit-any
   let app: any;
@@ -620,35 +593,6 @@ describe('POST /api/universes/:uid/ingest/commit (Phase 12-01)', () => {
   });
 
   // ─── OpenAPI doc presence (T-OPENAPI-01) ────────────────────────────────
-
-
-  // ─── Source-path aliases (#60) ───────────────────────────────────────────
-
-  it('#60: stores source-path aliases so filename wikilinks still resolve after import', async () => {
-    const { userId, jwt } = await createUserAndJwt('aliases-60@commit.test');
-    const u = await createUniverse(userId);
-
-    const res = await commitRequest(
-      u.id,
-      makeBody([
-        makeEntry({ title: 'Ayin Pockets', path: 'lore/ayin_pockets.md', entryType: 'concept' }),
-        makeEntry({ title: 'Glossary', path: 'Glossary.md', entryType: 'concept' }),
-      ]),
-      `Bearer ${jwt}`,
-    );
-    expect(res.status).toBe(200);
-
-    const rows = await handle.db
-      .select({ title: entries.title, aliases: entries.aliases })
-      .from(entries)
-      .where(eq(entries.universeId, u.id));
-    const byTitle = new Map(rows.map((r) => [r.title, r.aliases]));
-
-    // Both Obsidian address forms, path first.
-    expect(byTitle.get('Ayin Pockets')).toEqual(['lore/ayin_pockets', 'ayin_pockets']);
-    // Root-level file whose only form equals its own title keeps no alias.
-    expect(byTitle.get('Glossary')).toEqual([]);
-  });
 
   it('T-OPENAPI-01: GET /api/openapi.json includes /universes/{uid}/ingest/commit with bearerAuth and full response set', async () => {
     const res = await app.fetch(new Request('http://localhost/api/openapi.json'));

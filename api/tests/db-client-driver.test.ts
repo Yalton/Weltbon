@@ -145,7 +145,7 @@ describe('db/client driver seam', () => {
     await runMigrations(first);
 
     // Persistence-through-the-seam as a real regression test, not just a
-    // manual boot procedure (Task 4): write a row through the FIRST handle,
+
     // close, reopen over the same dir, and read it back through the SECOND
     // handle.
     const email = 'seam-persist@example.com';

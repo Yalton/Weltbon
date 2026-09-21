@@ -1,20 +1,4 @@
-/**
- * MapCompass — static glassy compass rose, bottom-left corner (D-06, Phase 50 Plan 02).
- *
- * Purely decorative north indicator. No callbacks, no d3, no refs, no interactive props.
- * Rendered in BOTH editor and share mode — do NOT gate on isShare (D-09 parity).
- *
- * Glass tokens match MapToolbar.tsx:62 and MapZoomControls.tsx.
- * Inline SVG convention follows GlyphIcon (mapGlyphs.tsx:83-99) and TerrainAreaPolygon
- * (aria-hidden="true" / role="none" decorative usage).
- *
- * The distance/scale ruler is deferred (D-06) — this component is a static visual only.
- */
 
-/**
- * MapCompass renders a static compass rose in the bottom-left corner.
- * It is decorative only and is excluded from the accessibility tree.
- */
 export function MapCompass() {
   return (
     <div

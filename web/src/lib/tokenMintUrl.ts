@@ -1,5 +1,4 @@
 /**
- * Plan F (Task 2) — build a link to the OTHER instance's token page.
  *
  * This is a security boundary, not a formatting helper. Its input is raw text
  * a user typed into the "Base URL" field, and its output becomes an `href` in
@@ -33,9 +32,7 @@ export function tokenMintUrl(raw: string): string | null {
 
   if (parsed.protocol !== 'http:' && parsed.protocol !== 'https:') return null;
 
-  // `origin + pathname` rather than `href`: href would carry the query and
   // fragment along. The trailing-slash strip keeps a bare origin (whose
-  // pathname normalises to "/") from producing a doubled slash.
   const base = `${parsed.origin}${parsed.pathname}`.replace(/\/+$/, '');
   return `${base}/settings/tokens`;
 }

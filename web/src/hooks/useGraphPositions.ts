@@ -1,15 +1,6 @@
 import { useMutation, useQueryClient } from '@tanstack/react-query';
 import { api } from '../api/client';
 
-/**
- * Mutations for graph position persistence.
- *
- * POST /universes/:uid/graph-positions — upsert a pin for a single entry.
- * DELETE /universes/:uid/graph-positions — clear every pin in the universe.
- *
- * Both invalidate the ['graph-data', universeId] query so the next render
- * pulls the fresh positions array alongside the nodes + edges.
- */
 
 export interface PinNodeInput {
   entryId: string;

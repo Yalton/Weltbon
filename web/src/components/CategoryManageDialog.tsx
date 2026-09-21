@@ -6,14 +6,9 @@ interface Props {
   universeId: string;
   open: boolean;
   onOpenChange: (open: boolean) => void;
-  /** Non-null → edit mode. Null → create mode. */
   initialCategory: Category | null;
 }
 
-/**
- * Create / rename category dialog. Small Radix Dialog with label + icon text
- * inputs. Uses useCreateCategory / useUpdateCategory — closes on success.
- */
 export function CategoryManageDialog({ universeId, open, onOpenChange, initialCategory }: Props) {
   const [label, setLabel] = useState('');
   const [icon, setIcon] = useState('');

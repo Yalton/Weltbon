@@ -1,22 +1,3 @@
-/**
- * One-shot diagnostic: list the model IDs the provider's API actually accepts
- * for a given user's BYOK key. Compares the live list against the in-repo
- * PRICING constant and reports missing/extra entries.
- *
- * Usage:
- *   pnpm tsx --env-file=../.env src/scripts/list-provider-models.ts <email> [provider]
- *
- * Where:
- *   email     — user whose BYOK key to use
- *   provider  — 'anthropic' (default) | 'openai'
- *
- * Reads:
- *   - LLM_KEY_ENCRYPTION_KEY from env (decrypts the stored key)
- *   - llm_api_keys row for (user, provider)
- *   - PRICING constant for reconciliation
- *
- * Does not write anything. Pure diagnostic.
- */
 
 import Anthropic from '@anthropic-ai/sdk';
 import OpenAI from 'openai';
@@ -27,10 +8,6 @@ import { getDecryptedKey, type LlmProvider } from '../services/llm-key.js';
 import { PRICING } from '../providers/llm/pricing.js';
 
 // This script only knows how to list models for the two BYOK-key providers
-// (it drives their SDKs directly, and PRICING has no 'ollama' entry — see
-// pricing.ts). LlmProvider is the canonical type regardless (issue #48); the
-// runtime guard below rejects 'ollama' explicitly rather than letting the
-// PRICING[provider] lookup fail with a confusing message.
 type ProviderName = LlmProvider;
 
 async function listAnthropicModels(apiKey: string): Promise<string[]> {
@@ -60,9 +37,7 @@ async function main() {
     process.exit(1);
   }
   if (provider !== 'anthropic' && provider !== 'openai') {
-    // 'ollama' is a valid LlmProvider (issue #48) but not a valid argument
     // HERE — it has no BYOK key row / SDK model-listing call, and PRICING
-    // has no 'ollama' entry to reconcile against. Say so explicitly instead
     // of letting the guard read as a stale two-provider check.
     console.error(
       `Unsupported provider '${provider}' — this script only lists 'anthropic' or 'openai' models (ollama has no BYOK key / PRICING entry to reconcile)`

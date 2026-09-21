@@ -1,20 +1,3 @@
-/**
- * Plan F (Task 2) — the two forms behind /settings/sync.
- *
- * Two exported components in one file, deliberately NOT one component with a
- * `mode` flag. They differ in required-vs-optional PAT, first-time guidance vs
- * replace hint, chrome (a titled section vs an inline row expansion), submit
- * label, and the presence of a Cancel — threading a flag through six branches
- * to save the ~40 shared lines would make both harder to read than either is
- * now. What they genuinely share (`PatGuidance`, `TokenMintLink`) is factored
- * out below; the PAT lifetime rule is stated once, on the state itself.
- *
- * PAT LIFETIME. Each form holds the plaintext token in its own local state,
- * and only while mounted. `EditSyncRemoteForm` mounts per row, so switching
- * rows unmounts it and destroys the typed token — it is not parent state keyed
- * by id, which would survive the switch and leak a token typed for one remote
- * into the form for another.
- */
 
 import { useId, useState } from 'react';
 import { useCreateSyncRemote, useUpdateSyncRemote, type SyncRemote } from '../hooks/useSyncRemotes';
@@ -24,7 +7,6 @@ import { SyncErrorNotice } from './SyncErrorNotice';
 import { Input } from './ui/Input';
 import { Button } from './ui/Button';
 
-/** The F-05 wall: every new user pastes a token minted on the WRONG instance. */
 function PatGuidance() {
   return (
     <p data-testid="sync-pat-guidance" className="mt-2 text-sm leading-[1.55] text-ink-secondary">
@@ -36,11 +18,6 @@ function PatGuidance() {
   );
 }
 
-/**
- * Deep link to the peer's token page. Renders nothing unless `tokenMintUrl`
- * returns a safe absolute http(s) URL — see that module for why a parsed URL
- * is not by itself a safe one.
- */
 function TokenMintLink({ baseUrl }: { baseUrl: string }) {
   const href = tokenMintUrl(baseUrl);
   if (!href) return null;
@@ -56,7 +33,6 @@ function TokenMintLink({ baseUrl }: { baseUrl: string }) {
   );
 }
 
-// ─── Add ────────────────────────────────────────────────────────────────────
 
 export function AddSyncRemoteForm() {
   const create = useCreateSyncRemote();
@@ -145,14 +121,7 @@ export function AddSyncRemoteForm() {
   );
 }
 
-// ─── Edit ───────────────────────────────────────────────────────────────────
 
-/**
- * Editing exists because it is the prescribed remedy for two of the twelve
- * error codes: `remote-unauthorized` and `remote-key-undecryptable` both tell
- * the user to re-save the token on the remote. Without this form the app would
- * name a fix it gave no way to perform.
- */
 export function EditSyncRemoteForm({
   remote,
   onDone,
@@ -165,8 +134,6 @@ export function EditSyncRemoteForm({
 
   const [label, setLabel] = useState(remote.label);
   const [baseUrl, setBaseUrl] = useState(remote.baseUrl);
-  // Blank means "keep the stored token" — the hook omits `pat` from the PATCH
-  // body entirely in that case, because the server rejects an empty one.
   const [pat, setPat] = useState('');
   const [error, setError] = useState<SyncCopy | null>(null);
 

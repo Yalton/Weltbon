@@ -1,12 +1,3 @@
-/**
- * Phase 32 Plan 03 — DictionaryTable + DictionaryImportDialog smoke tests
- * (Wave 0 target file).
- *
- * Task 2: sort/filter smoke tests for DictionaryTable.
- * Task 3: DictionaryImportDialog smoke tests appended below.
- *
- * Pattern: RTL + jsdom render-smoke (mirrors AuditHistoryTable.test.tsx).
- */
 
 import { describe, it, expect, vi, beforeEach } from 'vitest';
 import { render, screen, fireEvent } from '@testing-library/react';
@@ -220,7 +211,7 @@ describe('DictionaryTable — empty state', () => {
   });
 });
 
-// ─── DictionaryImportDialog smoke tests (Task 3 extension) ───────────────────
+
 
 import { DictionaryImportDialog } from './DictionaryImportDialog';
 

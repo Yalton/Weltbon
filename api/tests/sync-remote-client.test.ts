@@ -1,6 +1,3 @@
-/**
- * Plan D Task 3 — the outbound sync client. Pure: no DB; fetch is injected (D-05).
- */
 import { describe, it, expect, vi } from 'vitest';
 import { SyncRemoteClient } from '../src/services/sync/remote-client.js';
 import {
@@ -223,7 +220,7 @@ describe('SyncRemoteClient status mapping', () => {
 
     expect(err).toBeInstanceOf(SyncApplyRejectedError);
     expect(err.detail.collisions).toEqual([{ collection: 'entries', count: 2 }]);
-    // Anything not on Plan C's sanitized contract is dropped, and the operator
+
     // summary that lands in sync_links.last_error must not carry it either.
     expect(JSON.stringify(err.detail)).not.toContain('a-foreign-universe-uuid-leaked-here');
     expect(safeErrorSummary(err)).not.toContain('a-foreign-universe-uuid-leaked-here');
@@ -249,13 +246,7 @@ describe('SyncRemoteClient status mapping', () => {
     expect(seen).toEqual([5000, 1]);
   });
 
-  /**
-   * The `missing` array is peer-controlled and nothing downstream re-checks it:
-   * it reaches storage keys via syncBlobKey and reconcile.ts's `unrepairable`,
-   * which the Plan E UI renders. Validated exactly as sanitizeApplyDetail
-   * validates its own hash array (C-21).
-   */
-  it('drops anything that is not a sha256 hex digest from a missing-assets reply', async () => {
+    it('drops anything that is not a sha256 hex digest from a missing-assets reply', async () => {
     const hash = 'a'.repeat(64);
     const { fetchImpl } = stub(() =>
       json({

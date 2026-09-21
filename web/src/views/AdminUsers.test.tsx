@@ -1,12 +1,3 @@
-/**
- * #50 Task 9 — first test coverage for AdminUsers.tsx (none existed before
- * this task). Covers the pre-existing admin gate + user table at a basic
- * level, plus the one thing this task actually changes: mounting
- * `AdminSharedLlmConnections` on the page. The grant/revoke/redaction
- * behavior of that component itself is exhaustively covered in
- * AdminSharedLlmConnections.test.tsx — this file only proves it is actually
- * on the page an administrator visits.
- */
 
 import { describe, it, expect, vi, beforeEach } from 'vitest';
 import { render, screen } from '@testing-library/react';

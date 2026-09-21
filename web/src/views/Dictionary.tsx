@@ -13,32 +13,15 @@ import { DictionaryTable } from '../components/DictionaryTable';
 import { DictionaryImportDialog } from '../components/DictionaryImportDialog';
 import { Toast } from '../components/Toast';
 
-// ─── Types ───────────────────────────────────────────────────────────────────
 
 type ToastState = { message: string; variant: 'success' | 'error' } | null;
 
-// ─── Dictionary View ─────────────────────────────────────────────────────────
 
-/**
- * Phase 32 Plan 03 — Dictionary page view.
- *
- * Mounts at:
- *   /universes/:uid/dictionary          (universe-level dictionary)
- *   /universes/:uid/languages/:lid/dictionary  (language-scoped dictionary)
- *
- * Toolbar: language switcher + FTS search box (300ms debounce → ?q=) +
- * "Add word" primary + "Import CSV" secondary + POS/tag facet chips.
- *
- * Server refetch: ?q= (FTS) and ?lid= (language scope) — both change the
- * React Query key. Client-side sort + facets live in DictionaryTable.
- */
 export function Dictionary() {
   const { uid, lid: lidParam } = useParams<{ uid: string; lid?: string }>();
   const navigate = useNavigate();
   const [searchParams, setSearchParams] = useSearchParams();
 
-  // ── Filter state ────────────────────────────────────────────────────────
-  // q from URL ?q=; lid from route param or URL ?lid=
   const [q, setQ] = useState(searchParams.get('q') ?? '');
   const lid = lidParam ?? null; // route-driven language scope
 
@@ -46,16 +29,11 @@ export function Dictionary() {
   const [posFilter, setPosFilter] = useState('');
   const [tagFilter, setTagFilter] = useState('');
 
-  // Active word being added (blank editable row at bottom)
   const [addingNew, setAddingNew] = useState(false);
-  // Active row being edited (inline)
   const [editingId, setEditingId] = useState<string | null>(null);
-  // Import dialog
   const [importOpen, setImportOpen] = useState(false);
-  // Toast
   const [toast, setToast] = useState<ToastState>(null);
 
-  // ── Debounced q → URL sync ──────────────────────────────────────────────
   const syncQ = useDebouncedCallback((value: string) => {
     setSearchParams(
       (prev) => {
@@ -76,14 +54,12 @@ export function Dictionary() {
     [syncQ],
   );
 
-  // Resync q from URL when navigating back/forward
   useEffect(() => {
     const urlQ = searchParams.get('q') ?? '';
     if (urlQ !== q) setQ(urlQ);
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [searchParams]);
 
-  // ── Data ────────────────────────────────────────────────────────────────
   const urlQ = searchParams.get('q') ?? '';
   const filters: DictionaryFilters = { q: urlQ, lid };
 
@@ -91,20 +67,16 @@ export function Dictionary() {
   const { data: langEntries } = useLanguageEntries(uid!);
   const createWord = useCreateWord(uid!);
 
-  // ── Derived state ────────────────────────────────────────────────────────
   const hasActiveFilters = !!urlQ || !!lid || !!posFilter || !!tagFilter;
 
-  // Distinct POS values from the current result set for the POS filter
   const posOptions = Array.from(
     new Set((data ?? []).map((w) => w.partOfSpeech).filter(Boolean)),
   ).sort();
 
-  // Distinct tags from the current result set for the tag filter
   const tagOptions = Array.from(
     new Set((data ?? []).flatMap((w) => w.tags)),
   ).sort();
 
-  // ── Language switcher ────────────────────────────────────────────────────
   function handleLangSwitch(newLid: string | null) {
     if (newLid) {
       navigate(`/universes/${uid}/languages/${newLid}/dictionary`);
@@ -113,7 +85,6 @@ export function Dictionary() {
     }
   }
 
-  // ── Add word (inline row at bottom) ─────────────────────────────────────
   function handleAddWord() {
     setEditingId(null);
     setAddingNew(true);
@@ -133,13 +104,11 @@ export function Dictionary() {
     setAddingNew(false);
   }
 
-  // ── Import ───────────────────────────────────────────────────────────────
   function handleImported(result: { inserted: number; updated: number }) {
     const n = result.inserted + result.updated;
     setToast({ message: `Imported ${n} word(s)`, variant: 'success' });
   }
 
-  // ── Clear facets ─────────────────────────────────────────────────────────
   function clearAllFilters() {
     setQ('');
     setPosFilter('');

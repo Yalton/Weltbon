@@ -4,7 +4,7 @@ import { encryptSecret, decryptSecret, type EncryptedSecret } from '../src/servi
 
 const KEY = randomBytes(32).toString('hex');
 
-describe('crypto: AES-256-GCM secret envelope (Plan A)', () => {
+describe('crypto: AES-256-GCM secret envelope', () => {
   it('round-trips a secret', () => {
     const enc = encryptSecret('wbn_pat_super-secret-token-body', KEY);
     expect(enc.version).toBe(1);

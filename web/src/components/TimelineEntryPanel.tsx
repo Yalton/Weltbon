@@ -7,50 +7,20 @@ import { EntryIdentity } from './EntryIdentity';
 import { TypeBadge } from './TypeBadge';
 import { Loading } from './ui/Loading';
 
-/**
- * TimelineEntryPanel — the right-hand list of every universe entry in the
- * timeline view (TIMELINE-04, Phase 20 D-10).
- *
- * Drag source ONLY. The drop target lives at the parent (TimelineView,
- * wired in Plan 20-06). This panel does not mount its own drag context so
- * it can be reused inside any drag-context-providing parent.
- *
- * Filter state is LOCAL useState — deliberately decoupled from the URL
- * (RESEARCH §Pitfall 3 / §Q7). The sibling entry-list view uses URL-bound
- * filter params for shareable filter state; timeline filtering is a
- * sub-view of the timeline, not a routable surface.
- *
- * Pinned entries (those with an existing TimelinePin) display a non-draggable
- * "Pinned" badge per D-10. Repositioning an existing pin is done on the
- * canvas (drag the pin itself, TIMELINE-06), not via the panel.
- *
- * Desktop-only (D-12): the activationConstraint distance=5 sensor lives at
- * the parent drag context; touch users see the panel but drag gestures
- * effectively no-op. Matches Phase 19 D-04 defer-touch.
- *
- * Filter shape mirrors the URL-bound entry-filter interface; we inline the
- * type here rather than importing it so the panel has zero coupling to the
- * URL-bound module (intentionally avoided per §Pitfall 3).
- */
 
 interface PanelFilters {
   q: string;
   type: string | null;
   tags: string[];
   category: string | null;
-  // Phase 36 DATA-04 — useFilteredEntries' EntryFilters now requires the
   // three-state wip + fieldFilters keys. The timeline panel does not surface
-  // those controls, so they stay inert (null / {}) here; we keep the local
   // PanelFilters shape (zero coupling to the URL-bound EntryFilters module per
-  // §Pitfall 3) but mirror its structural contract so the call typechecks.
   wip: boolean | null;
   fieldFilters: Record<string, string>;
 }
 
 export interface TimelineEntryPanelProps {
-  /** Universe id — feeds useFilteredEntries. */
   universeId: string;
-  /** Pins from the parent's useTimelinePins query — used to compute isPinned. */
   pins: TimelinePin[];
 }
 
@@ -72,12 +42,6 @@ interface CardProps {
   isPinned: boolean;
 }
 
-/**
- * Card subcomponent. Splits the pinned vs. unpinned rendering so we only
- * call useDraggable on cards that should actually be drag sources — calling
- * a hook conditionally would violate React's rules-of-hooks, so the parent
- * decides which subcomponent to mount.
- */
 function PinnedEntryCard({ entry }: CardProps) {
   return (
     <div

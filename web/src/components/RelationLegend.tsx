@@ -12,15 +12,9 @@ export interface RelationLegendProps {
   registry: LinkTypeRegistry;
   visible: boolean;
   onToggle: () => void;
-  /** Called when the user edits a color swatch for a type. Persists via useUpdateUniverse in parent. */
   onColorChange?: (linkType: string, color: string) => void;
 }
 
-/**
- * Derives the distinct link types present in the current view.
- * Returns an array of { type: string | null, color: string, label: string }.
- * null means "Untyped" (edges without a linkType).
- */
 function deriveRows(
   edges: GraphEdge[],
   registry: LinkTypeRegistry,
@@ -44,7 +38,6 @@ function deriveRows(
     }
   }
 
-  // Sort: typed rows first (alpha), null/Untyped last
   return rows.sort((a, b) => {
     if (a.type === null) return 1;
     if (b.type === null) return -1;
@@ -52,17 +45,6 @@ function deriveRows(
   });
 }
 
-/**
- * Toggle-able legend panel rendered as an absolute overlay inside GraphView's
- * relative container — same pattern as GraphTooltip.
- *
- * - Wrapper uses pointer-events-none so d3-zoom pan/drag on the SVG is not
- *   intercepted (RESEARCH Pitfall 6).
- * - Interactive children (toggle button, panel, swatch edit controls) have
- *   pointer-events-auto.
- * - Visibility state is owned by the parent (GraphView) and persisted to
- *   localStorage key 'weltbon.legendVisible'.
- */
 export function RelationLegend({
   edges,
   registry,
@@ -73,7 +55,6 @@ export function RelationLegend({
   const rows = deriveRows(edges, registry);
   const hasTypedEdges = rows.length > 0;
 
-  // Track which row has its inline color picker open.
   const [editingType, setEditingType] = useState<string | null | 'none'>('none');
   const colorInputRef = useRef<HTMLInputElement>(null);
 
@@ -81,7 +62,6 @@ export function RelationLegend({
     (type: string | null, currentColor: string) => {
       if (!onColorChange || type === null) return; // Untyped cannot be overridden
       setEditingType(type);
-      // Trigger the hidden color input
       setTimeout(() => {
         if (colorInputRef.current) {
           colorInputRef.current.value = currentColor;

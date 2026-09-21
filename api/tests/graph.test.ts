@@ -110,7 +110,7 @@ describe('graph-data route (GRAPH-01)', () => {
     expect(data.positions).toEqual([]);
   });
 
-  // Phase 35 REL-01: typed link surfaces in graph-data with correct linkType + direction
+
   it('GET graph-data: typed link has linkType + direction, no bidirectional', async () => {
     const { hdrs } = await userWithToken('g-typed@test.com');
     const universe = await createUniverse(hdrs);

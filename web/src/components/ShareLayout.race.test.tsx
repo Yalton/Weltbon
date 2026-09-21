@@ -1,25 +1,3 @@
-/**
- * StrictMode race regression test for the share-token-readiness fix (Gap 1).
- *
- * Asserts the OBSERVABLE outcome: on a cold StrictMode mount of /share/:token,
- * the FIRST share fetch carries the share-token header AND the rendered output
- * shows the public entries/categories — never "Failed to load" and never an
- * empty list when public entries exist.
- *
- * The fix under test (29-08-PLAN.md Task 1):
- *  - Half (a): ShareLayout calls setShareToken(token) synchronously in the
- *    render body before any descendant queries fire.
- *  - Half (b): The share-subtree read hooks (useFilteredEntries, useCategories,
- *    useUniverse) gate on getShareToken() != null AND include the token in
- *    their React Query key, so a transient null-token 404 cannot be read back
- *    as the ready-token result.
- *
- * Test strategy: mock the `api` function but re-export the real
- * setShareToken/getShareToken/clearShareToken so ShareLayout's render-body
- * call propagates to the real module-level seam that the hooks read from.
- * Record the share token at the time each `api` call is dispatched — any call
- * observed with a null token would be the bug (the race window).
- */
 import React from 'react';
 import { describe, it, expect, beforeEach, vi } from 'vitest';
 import { render, screen, waitFor } from '@testing-library/react';

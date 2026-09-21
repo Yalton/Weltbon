@@ -1,27 +1,3 @@
-/**
- * SyncConflictList tests — Plan F (Task 4), the LWW-loser review surface.
- *
- * Pins the two decisions this component implements:
- *   - F-03: show the LOSING version plus a deep link, never a diff. The ledger
- *     stores only `loserPayload`; there is no winner payload to diff against,
- *     so a "diff" here could only be fabricated.
- *   - F-04: one flat list, newest first, exactly as the server returned it.
- *     The order test asserts POSITION, not presence — a presence assertion
- *     passes against a component that sorts by anything at all.
- *
- * Error prose is asserted against SYNC_ERROR_COPY, never retyped. A retyped
- * string would pass against a component that hardcoded its own copy, and break
- * on every deliberate copy edit.
- *
- * NEGATIVE ASSERTIONS USE APOSTROPHE-FREE PHRASES. The sync UI renders
- * typographic apostrophes (U+2019), so `queryByText(/doesn't/)` with a straight
- * quote can never match and would pass no matter what the component did.
- *
- * `tableName` and `rowId` are opaque TEXT, not uuids: the merge engine keys the
- * universe singleton on the literal string 'universe' (D-14), and `tableName`
- * is a manifest COLLECTION name. The fixtures below include that singleton so
- * no uuid assumption can creep in unnoticed.
- */
 
 import { describe, it, expect, beforeEach, vi } from 'vitest';
 import { render, screen, waitFor, within } from '@testing-library/react';

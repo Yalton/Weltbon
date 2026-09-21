@@ -1,21 +1,3 @@
-/**
- * Issue #48 Task 7 — proves the real path a user follows to run an audit on
- * their own Ollama server: UniverseSettings' AI Gap Auditor tab → the
- * "Ollama" provider option → useListModels('ollama') → GET
- * /llm/models?provider=ollama → a selectable model → Save persists it.
- *
- * This is deliberately an end-to-end interaction test, not a render smoke
- * test — it exists because a prior review found `useListModels`
- * (useAudits.ts) typed its `provider` param as `'anthropic' | 'openai'`
- * only, which meant the frontend could never even FORM a request for
- * 'ollama' even though the backend (llm-models.ts) had served it since
- * Task 6: "looks finished, does not work". A test that only renders the
- * component and checks it doesn't crash cannot catch that class of bug —
- * this one drives the actual selection and asserts on the actual network
- * call and the actual PATCH body, so removing any one of: the Ollama
- * <option>, its wiring to useListModels, or auditProvider flowing
- * unmodified into the Save patch, breaks a concrete assertion below.
- */
 import { describe, it, expect, beforeEach, afterEach, vi } from 'vitest';
 import { render, screen, waitFor } from '@testing-library/react';
 import userEvent from '@testing-library/user-event';
@@ -89,11 +71,11 @@ function renderAiTab() {
   );
 }
 
-describe('UniverseSettings AI-auditor — Ollama end-to-end (Issue #48 Task 7)', () => {
+describe('UniverseSettings AI-auditor — Ollama end-to-end', () => {
   beforeEach(() => {
     vi.mocked(api).mockReset();
     // useInstanceConfig gates its /config fetch on an authenticated session
-    // (Task 6 made /config require auth) — without this, localMode stays
+
     // `undefined`, the Ollama <option> never renders, and the test would
     // fail for the wrong reason (no session) rather than the one it's
     // actually pinning.
@@ -158,12 +140,12 @@ describe('UniverseSettings AI-auditor — Ollama end-to-end (Issue #48 Task 7)',
       // The load-bearing assertion: 'ollama' survives, unmodified, all the
       // way from the <select>'s onChange through to the PATCH body.
       //
-      // Fix round 1 (Task 7 review): a first pass at this comment claimed
+
       // the deleted `toDisplayableAuditProvider` shim would have rewritten
       // this value to `null` here. Traced — wrong on two counts: (1) that
       // shim was never in this value's path at all, since `apFinal` is
       // derived straight from live local state, never passed through it;
-      // (2) before this task the 'Ollama' <option> did not exist in the
+
       // dropdown in the first place, so this flow would have failed much
       // earlier, at the `findByRole('option', { name: 'Ollama' })` above —
       // there would have been no selected 'ollama' value left to reach a

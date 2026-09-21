@@ -10,6 +10,6 @@ Include the affected version or commit, deployment mode (web, self-hosted, or de
 
 ## Scope
 
-Reports about the public API, web client, desktop app, sync protocol, import/export behavior, release artifacts, and self-hosted deployment belong here. Vulnerabilities specific to Citreum's hosted infrastructure, billing, customer data, or private operator systems must remain in the private hosted-production process described by [ADR 0001](docs/adr/0001-open-core-and-hosted-boundary.md).
+Reports about the public API, web client, desktop app, sync protocol, import/export behavior, release artifacts, and self-hosted deployment belong here. Vulnerabilities specific to Citreum's hosted infrastructure, billing, customer data, or private operator systems belong in a private report to the relevant operator.
 
 Supported versions will be listed in release notes once public versioned releases begin. Until then, fixes target the latest `master` revision and the most recent release where practical.

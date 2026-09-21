@@ -27,7 +27,6 @@ export function Register() {
       await registerMut.mutateAsync(values);
       navigate('/universes', { replace: true });
     } catch {
-      // Error rendered via registerMut.error
     }
   });
 

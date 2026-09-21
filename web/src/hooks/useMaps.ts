@@ -2,7 +2,6 @@ import { useQuery, useMutation, useQueryClient } from '@tanstack/react-query';
 import { api } from '../api/client';
 
 // Query key: ['maps', universeId] — deliberately isolated per react-query-key-change-blast-radius.
-// Do NOT reuse or extend any other domain's query key.
 
 export interface MapSummary {
   id: string;
@@ -11,7 +10,6 @@ export interface MapSummary {
   imageAssetId: string | null;
   createdAt: string;
   // Pre-signed serving URLs injected by the maps router (same pattern as assets).
-  // null when imageAssetId is null (map has no image).
   thumbUrl: string | null;
   rawUrl: string | null;
 }

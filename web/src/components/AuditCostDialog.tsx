@@ -9,30 +9,6 @@ import {
 } from '../hooks/useAudits';
 import { AuditProgressPanel } from './AuditProgressPanel';
 
-/**
- * Phase 26 — Pre-run AuditCostDialog (D-01 + LLMUI-04 + LLMUI-05 + D-04).
- *
- * Three-phase body MORPH (UI-SPEC §Motion locked rule): the Dialog.Root stays
- * MOUNTED across the lifecycle; only the children swap. The phase state lives
- * in the dialog (estimate → progress → banner) and the same Dialog.Content
- * envelope is reused.
- *
- *   estimate  → useEstimateAudit; primary headline `$X.XX – $Y.YY` (en-dash);
- *               scope + model lines; collapsible breakdown disclosure; Cancel +
- *               Run audit CTAs (Run audit NEVER includes a $ amount — D-03).
- *   progress  → AuditProgressPanel (variant='dialog'); Close + Open-in-history.
- *   banner    → AuditProgressPanel auto-renders banner on terminal status; we
- *               watch run?.status here and flip phase to 'banner'.
- *
- * Accessibility:
- *   - Initial focus = Cancel button (UI-SPEC §Accessibility) — divergence from
- *     IssueEditor's first-field autofocus is intentional. The destructive
- *     action is on the right; left-default-focus matches the "are you sure?"
- *     UX of a cost-bearing confirmation.
- *   - Cmd/Ctrl+Enter submits Run audit when enabled.
- *   - Cost headline carries `tabular-nums` so the digits don't reflow when the
- *     estimate refreshes.
- */
 
 type Phase = 'estimate' | 'progress' | 'banner';
 
@@ -60,7 +36,7 @@ export function AuditCostDialog({
   const cancelButtonRef = useRef<HTMLButtonElement | null>(null);
   const navigate = useNavigate();
 
-  // Reset phase / runId / errors every time the dialog opens (mirror
+
   // IssueEditor open-reset effect at IssueEditor.tsx:57-64).
   useEffect(() => {
     if (open) {
@@ -71,14 +47,11 @@ export function AuditCostDialog({
     }
   }, [open]);
 
-  // Estimate is always needed in the estimate phase — W-7 only applies to the
+
   // banner's partial-coverage fallback fetch (see AuditCompletionBanner).
   const estimateQuery = useEstimateAudit(universeId, scope, entryId);
   const startAudit = useStartAudit(universeId);
 
-  // Watch the live run state so we can flip estimate → progress → banner when
-  // the run reaches a terminal status. Sibling useAuditRun read alongside the
-  // panel's own useAuditRun — TanStack Query dedupes on the shared key.
   const { data: run } = useAuditRun(universeId, runId);
   useEffect(() => {
     if (run?.status === 'succeeded' || run?.status === 'failed') {
@@ -86,12 +59,9 @@ export function AuditCostDialog({
     }
   }, [run?.status]);
 
-  // Initial focus → Cancel button (deliberate divergence from autofocus form
-  // patterns — UI-SPEC §Accessibility). Triggered when dialog opens or phase
-  // returns to 'estimate'.
+
   useEffect(() => {
     if (open && phase === 'estimate') {
-      // Defer one frame so Radix has rendered the content.
       const t = window.setTimeout(() => cancelButtonRef.current?.focus(), 0);
       return () => window.clearTimeout(t);
     }

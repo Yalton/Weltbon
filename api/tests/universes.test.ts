@@ -189,7 +189,7 @@ describe('universe routes (UNIV-01..06)', () => {
     expect(row).toBeTruthy();
   });
 
-  // ─── Phase 36 DATA-02 / INT-04: fieldRegistry CRUD + validation ───────────────
+
   // Reconciled from 9b82f27:api/tests/universes.test.ts onto v3.2's PATCH-based
   // CRUD (full-array replace through the existing PATCH; no sub-resource route).
 

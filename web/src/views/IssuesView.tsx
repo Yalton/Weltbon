@@ -25,38 +25,14 @@ import { Toast } from '../components/Toast';
 import { AuditCompletionBanner } from '../components/AuditCompletionBanner';
 import { Loading } from '../components/ui/Loading';
 
-/**
- * UUID v4-shape regex (Phase 26 D-10). Belt-and-suspenders alongside the
- * server-side Zod guard added in Plan 08 — a non-UUID `?audit_run_id=` value
- * is silently dropped so we never send garbage to the server.
- */
 const AUDIT_RUN_ID_UUID_RE =
   /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i;
 
 type ResolutionFilter = 'open' | 'resolved' | 'dismissed' | 'all';
 
-/**
- * Global issue triage route. Lists all issues across the universe with
- * severity + resolution filters, inline Resolve/Reopen toggle, and
- * Edit/Delete actions. Opens IssueEditor for create + edit.
- *
- * State choice: filters are local state (not URL) — URL-sync is a nice-to-have
- * but the ISS-05 contract only requires the filter surface itself. Keeping
- * state local keeps this plan tight; wire to useFilterParams in a follow-up
- * if operators ask to bookmark filtered triage views.
- *
- * Phase 25 additions (AISSUE-01..03, AISSUE-06):
- * - AI rows render with badge + category emoji + category-derived left-edge stripe (D-06/D-07/D-08)
- * - Source filter (Human/AI/Both), Category multi-select (5 AI categories, D-10),
- *   Status extended with Dismissed + All (D-09)
- * - "Why?" toggle expands ReasoningPanel inline per row (D-04); multiple simultaneously
- * - Dismiss button opens DismissAIIssueDialog (D-01); Restore button calls useUndismissIssue (D-13)
- * - Human rows with linkedByAiIssueIds > 0 show "AI flagged this too" chip (D-03 bidirectional)
- */
 export function IssuesView() {
   const { uid } = useParams<{ uid: string }>();
 
-  // ── Phase 26 D-10: audit_run_id deep-link filter ─────────────────────────
   // URL-only filter (no UI control); set by completion-banner CTA + audit-
   // history row click. UUID guard is defense-in-depth alongside server Zod.
   const [searchParams, setSearchParams] = useSearchParams();
@@ -71,17 +47,14 @@ export function IssuesView() {
     setSearchParams(next, { replace: true });
   }, [searchParams, setSearchParams]);
 
-  // ── Phase 26 D-13: empty-state nudge depends on universe opt-in ──────────
   const { data: universe } = useUniverse(uid);
   const auditEnabled = universe?.auditEnabled === true;
 
-  // ── Filter state ──────────────────────────────────────────────────────────
   const [severity, setSeverity] = useState<Severity | ''>('');
   const [resolutionFilter, setResolutionFilter] = useState<ResolutionFilter>('open');
   const [sourceFilter, setSourceFilter] = useState<'both' | 'human' | 'ai'>('both');
   const [categoryFilter, setCategoryFilter] = useState<Set<AuditCategory>>(new Set());
 
-  // ── AI accordion + dismissal state ───────────────────────────────────────
   const [expandedReasoning, setExpandedReasoning] = useState<Map<string, boolean>>(new Map());
   const [dismissingIssue, setDismissingIssue] = useState<Issue | null>(null);
   const [toast, setToast] = useState<{ message: string; variant: 'success' | 'error' } | null>(null);
@@ -97,23 +70,19 @@ export function IssuesView() {
     } else if (resolutionFilter === 'resolved') {
       f.resolved = true;
     }
-    // 'dismissed' and 'all': omit resolved so server returns both; client filters below
     if (categoryFilter.size > 0) {
       f.category = Array.from(categoryFilter);
     }
-    // Phase 26 D-10: scope to a specific audit run when deep-linked.
     if (safeAuditRunId) f.auditRunId = safeAuditRunId;
     return f;
   }, [severity, resolutionFilter, sourceFilter, categoryFilter, safeAuditRunId]);
 
   const { data: issues, isLoading } = useIssues(uid!, serverFilters);
 
-  // ── Mutations ─────────────────────────────────────────────────────────────
   const updateIssue = useUpdateIssue(uid!);
   const deleteIssue = useDeleteIssue(uid!);
   const undismissIssue = useUndismissIssue(uid!);
 
-  // ── Editor / delete dialog state ──────────────────────────────────────────
   const [editor, setEditor] = useState<{ open: boolean; initial: Issue | null }>({
     open: false,
     initial: null,
@@ -129,7 +98,6 @@ export function IssuesView() {
       if (resolutionFilter === 'open' && i.dismissedAt) return false;
       if (resolutionFilter === 'dismissed' && (!i.dismissedAt || i.source !== 'ai')) return false;
       // CR-04: was `(i.source === 'ai' || !i.resolved)` which unconditionally hid all AI
-      // rows from the Resolved tab even when resolved=true. Fix: let resolved boolean alone
       // determine eligibility for both human and AI sources (D-09: Resolved = resolved===true).
       if (resolutionFilter === 'resolved' && !i.resolved) return false;
       if (
@@ -147,7 +115,6 @@ export function IssuesView() {
     sourceFilter !== 'both' ||
     categoryFilter.size > 0;
 
-  // ── Helpers ───────────────────────────────────────────────────────────────
   const handleToggleResolved = (issue: Issue) => {
     updateIssue.mutate({ id: issue.id, patch: { resolved: !issue.resolved } });
   };
@@ -183,9 +150,7 @@ export function IssuesView() {
     });
   };
 
-  // ── Phase 26 D-10: Esc clears the audit_run_id filter (a11y parity with
   // the "✕ Clear filter" button per UI-SPEC §Accessibility). Listener is
-  // installed only while the filter is active so it never interferes with
   // dialogs or other Esc-bound surfaces.
   useEffect(() => {
     if (!safeAuditRunId) return;
@@ -196,7 +161,6 @@ export function IssuesView() {
     return () => window.removeEventListener('keydown', onKeyDown);
   }, [safeAuditRunId, clearAuditFilter]);
 
-  // ── Render ────────────────────────────────────────────────────────────────
   return (
     <div className="max-w-3xl mx-auto">
       {/* Header */}
@@ -293,9 +257,7 @@ export function IssuesView() {
         </div>
       </div>
 
-      {/* Phase 26 D-10: completion-banner header when ?audit_run_id= filter active.
-          Renders above the list (and above the empty-state branches) so users
-          always see the run telemetry alongside the filtered rows. */}
+
       {safeAuditRunId && uid && (
         <div className="mt-6">
           <AuditCompletionBanner
@@ -313,7 +275,6 @@ export function IssuesView() {
           <Loading />
         ) : !displayedIssues || displayedIssues.length === 0 ? (
           safeAuditRunId ? (
-            // Phase 26 D-10: zero-rows-when-filtered branch with Clear filter CTA.
             <EmptyState
               title="No suggestions from this run"
               body="Try clearing the run filter to see all suggestions."
@@ -352,9 +313,7 @@ export function IssuesView() {
               }
             />
           ) : (
-            // Phase 26 D-13: append a secondary "Or let AI surface gaps for you"
             // nudge below the empty-state — only when the universe has NOT
-            // opted in to the AI Gap Auditor. Suppressed once auditEnabled=true
             // so already-opted-in users don't see a redundant prompt.
             <>
               <EmptyState
@@ -446,7 +405,6 @@ export function IssuesView() {
                     {/* Action group */}
                     <div className="flex items-center gap-2 text-xs shrink-0">
                       {isAI ? (
-                        /* AI row actions: Why? | Dismiss | Restore */
                         <>
                           <button
                             type="button"
@@ -475,7 +433,6 @@ export function IssuesView() {
                           )}
                         </>
                       ) : (
-                        /* Human row actions: Reopen/Resolve | Edit | Delete */
                         <>
                           <button
                             type="button"

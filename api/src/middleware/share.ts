@@ -2,19 +2,9 @@ import { createMiddleware } from 'hono/factory';
 import { HTTPException } from 'hono/http-exception';
 import { lookupShareToken, SHARE_TOKEN_PREFIX } from '../services/share-token.js';
 
-/**
- * Phase 29 D-02/D-09: per-request scope variables set by `requireShareToken`.
- *
- * - `shareUniverseId` is the universe the resolved token grants read access to.
- *   Share handlers read this instead of a path `:uid` param (D-03 — visitor
- *   never sees the internal universe UUID).
- * - `shareTokenId` is the share-token row id (NOT the plaintext) — handlers
- *   can correlate access-log entries with the token row without re-querying.
- */
 export type ShareVariables = { shareUniverseId: string; shareTokenId: string };
 
 /**
- * Phase 29 D-02/D-05/D-06: gates the `/api/share/*` namespace.
  *
  * Security boundary (T-29-04): reads ONLY the `share-token` header. NEVER
  * inspects the bearer / Authz header — fall-through to JWT/PAT would let a

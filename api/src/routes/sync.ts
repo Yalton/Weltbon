@@ -1,18 +1,3 @@
-/**
- * Plan C: the /api/sync surface (sync spec "Protocol").
- *
- *   POST /api/sync/handshake                          compatibility gate (S-08)
- *   GET  /api/sync/universes/:uid/snapshot            current manifest (S-10)
- *   POST /api/sync/universes/:uid/assets/missing      which blobs are absent
- *   GET  /api/sync/universes/:uid/assets/:hash        blob bytes
- *   PUT  /api/sync/universes/:uid/assets/:hash        stage a blob
- *   POST /api/sync/universes/:uid/apply               transactional delta apply
- *   GET  /api/sync/universes                          universes this owner holds (A-04)
- *
- * Every route is PAT-or-JWT authenticated by the apiR.use('/sync/*') gate in
- * index.ts. Universe scoping is per-handler via requireUniverse, EXCEPT apply,
- * which must also handle the bootstrap case (C-11).
- */
 import { OpenAPIHono, createRoute, z } from '@hono/zod-openapi';
 import { HTTPException } from 'hono/http-exception';
 import { eq, sql } from 'drizzle-orm';
@@ -24,8 +9,6 @@ import { requireUniverse } from '../utils/ownership.js';
 import { buildUniverseManifestRow } from '../services/export/json.js';
 import { storageBackend } from '../services/storage/local.js';
 // Shared with routes/assets.ts and services/sync/remote-client.ts so both size
-// limits are one definition, not two — and this route module no longer needs
-// to be the canonical home just because it was the first consumer.
 import { maxFileBytes, maxUniverseQuota } from '../services/media/limits.js';
 import { buildSyncManifest } from '../services/sync/snapshot.js';
 import { universeFingerprint } from '../services/sync/fingerprint.js';
@@ -58,7 +41,6 @@ const err401 = { content: { 'application/json': { schema: errorSchema } }, descr
 const err403 = { content: { 'application/json': { schema: errorSchema } }, description: 'Forbidden' };
 const err404 = { content: { 'application/json': { schema: errorSchema } }, description: 'Not found' };
 
-// ── handshake ────────────────────────────────────────────────────────────────
 
 const identitySchema = z.object({
   instanceId: z.string().uuid(),
@@ -105,7 +87,6 @@ const handshakeRoute = createRoute({
   },
 });
 
-// ── snapshot ─────────────────────────────────────────────────────────────────
 
 const snapshotRoute = createRoute({
   method: 'get',
@@ -169,12 +150,6 @@ const listUniversesRoute = createRoute({
 
 // ── asset transfer (S-10, C-12) ──────────────────────────────────────────────
 
-/**
- * Per-blob size cap. Same lazily-rebuilt bodyLimit idiom as the upload route
- * (assets.ts:119-123) so MEDIA_MAX_FILE_BYTES overrides set after module load
- * are honored, and the SAME limit — a peer push is not privileged over a
- * browser upload.
- */
 const blobSizeLimit: MiddlewareHandler = (c, next) =>
   bodyLimit({
     maxSize: maxFileBytes(),
@@ -272,11 +247,8 @@ const applyRoute = createRoute({
             deleted: z.record(z.string(), z.number()),
             materializedAssets: z.number(),
             // E-07: byte-less rows this apply healed from state this instance
-            // was ALREADY holding (a staged blob from a refused earlier apply, a
             // C-20 sibling), as opposed to the ones the caller's own delta
-            // supplied. Kept separate from materializedAssets precisely so the
             // two are separable — a non-zero sweptAssets means something was
-            // broken here and got fixed, which is a different fact.
             sweptAssets: z.number(),
           }),
         },
@@ -347,7 +319,6 @@ export const syncRoutes = new OpenAPIHono<AppEnv>()
     // NB: this GET is not read-only on first call. buildSyncManifest runs
     // ensureAssetHashes (C-05), which backfills assets.content_hash for a
     // pre-2.2.0 universe — a write, though an idempotent one. A read-replica or
-    // caching layer in front of /snapshot must account for that.
     const manifest = await buildSyncManifest(uid);
     return c.json(manifest as any, 200);
   })
@@ -356,25 +327,17 @@ export const syncRoutes = new OpenAPIHono<AppEnv>()
     const { uid } = c.req.valid('param');
     await requireUniverse(uid, c.var.userId);
     // Unlike /snapshot, this really is read-only: no ensureAssetHashes, no
-    // backfill. It is polled on an interval by every linked client, so it must
-    // stay that way — a write here would multiply across the whole fleet.
     return c.json({ fingerprint: await universeFingerprint(uid) }, 200);
   })
 
   .openapi(listUniversesRoute, async (c) => {
     // A-11: the WHERE clause is the security boundary here. Every other peer
-    // route scopes by calling requireUniverse on a uid from the path; this one
-    // has no uid, so the owner filter IS the check. Do not relax it to "all
-    // universes, the client filters" — a PAT would then enumerate every
     // universe on a multi-tenant instance.
     const rows = await db()
       .select()
       .from(universes)
       .where(eq(universes.userId, c.var.userId))
       .orderBy(universes.name);
-    // buildUniverseManifestRow, not a bespoke projection: `userId` is not a
-    // manifest field, so it cannot leak, and the row is exactly what
-    // adoptUniverse will feed to applyManifestOps.
     return c.json({ universes: rows.map(buildUniverseManifestRow) } as any, 200);
   })
 
@@ -383,9 +346,6 @@ export const syncRoutes = new OpenAPIHono<AppEnv>()
     await requireUniverse(uid, c.var.userId);
     const { hashes } = c.req.valid('json');
 
-    // Present means either an existing asset row's bytes OR a staged blob from an
-    // earlier PUT in this same sync. One inArray query resolves ownership for the
-    // whole batch (Task 5 review N+1 fix), then the storage existence checks fan
     // out in parallel rather than up to 5000 serial round-trips.
     const owned = await findOwnedAssetsByHash(uid, hashes);
     const results = await Promise.all(
@@ -404,9 +364,7 @@ export const syncRoutes = new OpenAPIHono<AppEnv>()
     const { uid, hash } = c.req.valid('param');
     await requireUniverse(uid, c.var.userId);
 
-    // Scoped by universe on BOTH paths: the committed lookup filters on
     // universeId, and the staged fallthrough key is universe-scoped (C-12), so a
-    // caller can only pull bytes for assets/blobs belonging to this universe. A
     // bare content-addressed GET would be an oracle over every user's blobs.
     const owned = await findOwnedAssetByHash(uid, hash);
     const key = owned ? owned.id : syncBlobKey(uid, hash);
@@ -423,19 +381,13 @@ export const syncRoutes = new OpenAPIHono<AppEnv>()
     await requireUniverse(uid, c.var.userId);
 
     const bytes = Buffer.from(await c.req.arrayBuffer());
-    // The hash is the name; a mismatch means the transfer is corrupt or a
     // caller is trying to poison the content-addressed namespace.
     if (sha256Hex(bytes) !== hash) {
       return c.json({ error: 'Bytes do not match the given content hash' }, 400);
     }
 
-    // Same quota rule as upload: the universe's COMMITTED asset bytes plus this
     // blob must fit. Staged-but-unapplied blobs are deliberately NOT counted —
-    // so this bounds committed storage, not staged storage. Task 6's apply
-    // deletes each staged blob once it materializes it; a sync that stages blobs
-    // and never applies leaks them until the universe is deleted (a known limit,
-    // see "Not in this plan" — a staging sweeper belongs with Plan D). The floor
-    // that keeps that from being unbounded per request is blobSizeLimit; there
+
     // is no cap on the NUMBER of distinct blobs an owner may stage pre-apply.
     const [{ total }] = await db()
       .select({ total: sql<number>`COALESCE(SUM(${assets.sizeBytes}), 0)` })
@@ -455,7 +407,6 @@ export const syncRoutes = new OpenAPIHono<AppEnv>()
     const userId = c.var.userId;
 
     // C-14 defense in depth: the handshake is the primary gate, but an apply
-    // that slipped past it must not write a foreign manifest shape.
     const local = await localIdentity();
     if (body.weltbonVersion !== local.weltbonVersion) {
       return c.json(
@@ -482,10 +433,7 @@ export const syncRoutes = new OpenAPIHono<AppEnv>()
     }
 
     // ── C-12 blob pre-check: every asset being upserted must have its bytes
-    // available BEFORE any row is written. Availability is answered by HASH —
-    // including committed siblings — so a client that `missing` told "you
     // already have this hash" is never refused here (C-20). See
-    // services/sync/materialize.ts.
     const plan = await planAssetMaterialization(uid, body.ops.assets?.upserts ?? []);
     if (plan.missingHashes.length > 0) {
       return c.json(
@@ -494,20 +442,9 @@ export const syncRoutes = new OpenAPIHono<AppEnv>()
       );
     }
 
-    // E-04/E-07: bytes BEFORE the rows. planAssetMaterialization above already
-    // proved every hash is sourceable, so this cannot fail for want of bytes —
-    // and a crash between here and the commit leaves orphan bytes under an asset
-    // id whose row never committed, which is collectable and idempotent on
-    // retry, rather than a committed row whose bytes are absent, which nothing
-    // can see and nothing can repair.
-    //
+
     // INSIDE the try, because writeAssetBytes now runs its own C-09 guard (the
-    // real one lives inside applyManifestOps' transaction, which this write no
-    // longer precedes) and throws CrossUniverseCollisionError for a foreign
-    // asset id. That is a SyncApplyError and must reach the mapper below, or it
-    // becomes an unhandled 500 whose default body would echo the very foreign
     // ids C-21 exists to withhold. It throws before writing anything, so
-    // `written` is still [] when the discard runs.
     let written: WrittenAsset[] = [];
     let result;
     try {
@@ -518,39 +455,19 @@ export const syncRoutes = new OpenAPIHono<AppEnv>()
       );
     } catch (err) {
       // E-05: the apply did not happen, so neither did the bytes. Staged blobs
-      // are deliberately left intact — the peer's retry then costs no
       // re-transfer. Best-effort, and deliberately BEFORE the error mapping so
-      // a cleanup failure cannot change which error the caller sees.
-      //
       // ORPHANS only, exactly as run-sync.ts does it — an earlier revision
-      // discarded all of `written` on the argument that the sweep below makes it
       // a deferral rather than a re-breakage. That argument covers the original
-      // bytes and nothing else, and it was wrong twice over:
-      //
       //   - The THUMBNAIL is not recoverable that way. A repair target can have a
-      //     surviving `_thumb` and a lost original; writeAssetBytes overwrites
-      //     the thumb, so discarding it destroys an artifact that PREDATES this
       //     apply. The sweep only brings it back if it later re-materializes the
       //     original, and D-06 never asked for that file to be touched at all.
       //   - The sweep only runs on the SUCCESS path. If this instance's applies
       //     fail persistently — a cross-universe collision, a raw FK violation
       //     from an inconsistent peer manifest (B-10), an ownership change — the
-      //     deferral never arrives and the repair is undone on every attempt,
-      //     forever, with the source sitting right there. That the refusal is our
-      //     own engine's rather than a peer's changes nothing about the outcome.
-      //
-      // `preexisting` is resolved in writeAssetBytes against the DB at write
-      // time, so both apply paths partition on one definition (see WrittenAsset).
       await discardWrittenAssets(written.filter((w) => !w.preexisting));
-      // Every engine error derives from SyncApplyError and carries its own
       // `status` (C-19). What each error is safe to put in the BODY (C-21 —
-      // CrossUniverseCollisionError's `.message` embeds another universe's row
-      // ids and must never be echoed) is centralized in mapSyncApplyError so
       // this route cannot re-diverge from routes/sync-client.ts's two call
-      // sites into the same engine. Anything NOT a SyncApplyError — notably a
-      // raw 23503 — is a genuine 500: apply does not repair referential
       // integrity (B-10), so an FK violation means the peer sent an
-      // inconsistent manifest, not a describable request.
       if (err instanceof SyncApplyError) {
         const mapped = mapSyncApplyError(err, 'sync/apply');
         return c.json(mapped.body, mapped.status as 400 | 403 | 409);
@@ -558,28 +475,17 @@ export const syncRoutes = new OpenAPIHono<AppEnv>()
       throw err;
     }
 
-    // Rows are committed; NOW record the derived thumbnail sizes and consume the
-    // staged blobs (storage writes never happen inside the transaction).
     const materializedAssets = await finalizeMaterialization(uid, written);
 
     // E-07: and then heal whatever this instance was already sitting on — a
     // staged blob whose apply was refused or dropped, or a byte-less row whose
     // C-20 sibling holds the bytes. Runs AFTER finalize so this apply's own work
     // is done and its rows short-circuit on exists(id). See
-    // sweepUnmaterializedAssets for why the peer has to be the one to do this.
-    //
     // Best-effort: the rows are committed and their bytes are on disk, so the
-    // apply has ALREADY succeeded by the time we get here. Failing it now would
-    // report a successful sync as an error and tell the initiator to retry
-    // something that does not need retrying. writeAssetBytes unwinds its own
-    // partial writes, so a throw here leaves nothing behind — but a swallowed
-    // error must still be diagnosable, which is the whole lesson of the bug this
-    // sweep exists to fix.
     let sweptAssets = 0;
     try {
       sweptAssets = await sweepUnmaterializedAssets(uid);
       if (sweptAssets > 0) {
-        // The visibility half of this task, and the only one that reaches anyone
         // on THIS instance: under S-02 the sweeping instance is prod, which
         // initiates no runs and whose HTTP responses nobody reads. A non-zero
         // count means assets here were silently byte-less and have just been
@@ -591,16 +497,11 @@ export const syncRoutes = new OpenAPIHono<AppEnv>()
     }
 
     // F0-06: the receiving instance drifts too — a refused apply on a repair
-    // target keeps its bytes and skips finalize, no crash required — and this
     // sweep was its only self-healing. Best-effort, exactly like the sweep:
-    // a metadata repair must never fail an apply that already committed.
     try {
       const repaired = await repairThumbSizes(uid);
       if (repaired > 0) {
-        // Same visibility argument as the sweep's console.info above: under
         // S-02 this instance is prod, which initiates no runs and whose HTTP
-        // responses nobody reads, so a log line is the only way a repair here
-        // reaches a human.
         console.info(`[sync-apply] repaired thumbSizeBytes on ${repaired} asset(s) for universe ${uid}`);
       }
     } catch (err) {

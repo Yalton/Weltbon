@@ -1,31 +1,8 @@
-/**
- * MapZoomControls — bottom-right glassy zoom/fit cluster (D-04, Phase 50 Plan 02).
- *
- * A vertical cluster of three icon buttons anchored bottom-right:
- *   +  Zoom in  (onZoomIn)
- *   −  Zoom out (onZoomOut)
- *   ⊞  Fit/reset (onFitReset)
- *
- * Optional grid toggle button (D-05): when onToggleGrid is provided, a fourth button
- * renders below the separator with accent-fill active / border-only inactive treatment.
- *
- * Glass tokens are copied verbatim from MapToolbar.tsx:62 (same design language);
- * only the anchor position changes (bottom-right instead of top-left) and the
- * layout is vertical (flex-col) rather than horizontal.
- *
- * All buttons have aria-label attributes. No d3, no refs, no callbacks beyond the
- * four props. Component renders in BOTH editor and share mode — do NOT gate on isShare.
- */
 export interface MapZoomControlsProps {
-  /** Zoom in by one step. */
   onZoomIn: () => void;
-  /** Zoom out by one step. */
   onZoomOut: () => void;
-  /** Fit/reset the viewport to the image. */
   onFitReset: () => void;
-  /** Whether the grid overlay is currently visible (controls active/inactive style). */
   gridVisible?: boolean;
-  /** Toggle the grid overlay. When undefined, the grid button is not rendered. */
   onToggleGrid?: () => void;
 }
 

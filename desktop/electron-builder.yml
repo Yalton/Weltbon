@@ -1,4 +1,3 @@
-# Packaging config for the Weltbon desktop app (issue #6, #7).
 #
 # LAYOUT — the whole point of this file:
 #   <resources>/app.asar        desktop's own main process only
@@ -35,7 +34,6 @@ extraResources:
   - from: .stage/api
     to: api
 
-# Unsigned for now — signing and notarization are tracked separately (issue #11).
 linux:
   target:
     - AppImage

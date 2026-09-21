@@ -1,33 +1,3 @@
-/**
- * api/tests/share-maps-boundary.test.ts — Phase 40 MAPS-06 / D-13 boundary and
- * privacy tests for the /api/share/maps and /api/share/maps/:mid read surface.
- *
- * Covers two concerns:
- *
- * A. MAPS-06: share map privacy filtering (T-40-05)
- *    - GET /api/share/maps/:mid drops pins linked to private entries (isPublic=false).
- *    - GET /api/share/maps/:mid drops regions linked to private entries; standalone
- *      regions (entryId IS NULL) are kept (D-11: no privacy owner to gate on).
- *    - GET /api/share/maps body is a bare array (Array.isArray === true, not a wrapper).
- *
- * B. MAPS-06 / D-13: share mutation boundary (T-40-04)
- *    - map mutation routes (POST/PATCH/DELETE /api/universes/:uid/maps/*) reject a
- *      share-token-only caller with 401 or 403.
- *    - pin and region mutation routes are similarly rejected.
- *
- * The mutation assertions duplicate coverage from share-boundary.test.ts SHARE-03
- * (which enumerates ALL non-share routes via OpenAPI introspection), but provide
- * explicit named regression anchors for the new map surface so a future plan that
- * accidentally mounts a mutation under /share/* is caught at the closest scope.
- *
- * Phase 41.1-01: MAPS-06 regression test — serve a real map background image
- *   via the share seam. CRITICAL: process.env.UPLOADS_DIR must be set before
- *   the schema.js static import below, because schema.js loads the storageBackend
- *   singleton at module-load time (same pattern as share-assets.test.ts lines 31-37).
- *
- * Lane: DB-gated (integration). Uses createTestDb + cleanDb for isolation.
- * appRequest helper mirrors share-views.test.ts (no body for GET).
- */
 
 import { mkdtempSync, rmSync } from 'node:fs';
 import { join } from 'node:path';
@@ -35,7 +5,7 @@ import { tmpdir } from 'node:os';
 
 // Bind storage to a temp dir BEFORE any import pulls in the storageBackend singleton.
 // schema.js at the next import line transitively loads storageBackend which reads
-// process.env.UPLOADS_DIR at module-load time — must be set here (Phase 41.1 MAPS-06).
+
 const UPLOADS_TMP = mkdtempSync(join(tmpdir(), 'weltbon-share-maps-'));
 process.env.UPLOADS_DIR = UPLOADS_TMP;
 
@@ -184,11 +154,6 @@ async function seedTerrainType(layerId: string, name = 'Test Type', color = '#ff
   return row!.id;
 }
 
-/**
- * Phase 41.1-01: seedMapWithImage — seed a real PNG asset backed by a map in
- * the given universe and store raw+thumb bytes in the storageBackend.
- * Returns the assetId (used in GET /api/share/assets/:id/raw).
- */
 async function seedMapWithImage(targetUniverseId: string): Promise<string> {
   const { storageBackend } = await import('../src/services/storage/local.js');
   const pngBytes = await sharp({
@@ -220,11 +185,11 @@ async function seedMapWithImage(targetUniverseId: string): Promise<string> {
 
 // ─── MAPS-06 regression: serve real map background image via share seam ────────
 //
-// Phase 41.1-01: these tests prove that getPublicAsset's new map channel (Step 3)
+
 // correctly authorizes serving a map-backing asset and correctly denies cross-universe
 // assets. Without the Task-1 fix, both tests would fail (200 → 404, 404 still 404).
 
-describe('MAPS-06: share serves map background image (Phase 41.1 regression)', () => {
+describe('MAPS-06: share serves map background image', () => {
   it('GET /api/share/assets/:mapImageId/raw returns 200 for a map image in the token universe', async () => {
     const assetId = await seedMapWithImage(universeId);
 
@@ -339,7 +304,7 @@ describe('MAPS-06: share map privacy filtering', () => {
 // The existing share-boundary.test.ts SHARE-03 enumeration already guards the
 // full non-share route set via OpenAPI introspection. This describe block adds
 // explicit named assertions for the map/pin/region mutation routes — providing
-// readable regression anchors close to the Phase 40 code surface.
+
 
 describe('MAPS-06 / D-13: share mutation boundary (T-40-04)', () => {
   it('POST /api/universes/:uid/maps (create map) rejects share-token-only caller', async () => {

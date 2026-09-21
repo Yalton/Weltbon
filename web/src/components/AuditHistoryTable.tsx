@@ -7,28 +7,6 @@ import { EmptyState } from './EmptyState';
 import { formatRelative } from '../utils/formatRelative';
 import type { AuditCategory } from '../hooks/useIssues';
 
-/**
- * Phase 26 — Per-universe audit-history table (D-09). Mounted on the universe
- * Settings "Audit History" tab and reused as the standalone audit-history view
- * in Plan 06.
- *
- * Rows are interactive — keyboard users navigate by Tab + Enter/Space:
- *   - `<tr role="link" tabIndex={0}>` per UI-SPEC §State Inventory.
- *   - Enter or Space triggers navigation to
- *     `/universes/:uid/issues?audit_run_id=<id>` (Plan 07 filter consumer).
- *
- * Sortable columns (Date · Cost · Status) toggle asc/desc via small ↑/↓
- * arrows; Scope · Model · Findings are not sortable in v1.
- *
- * `highlightRunId` applies a subtle bg-neutral-100 to the matching row — used
- * when the table is opened via a deep-link to a specific run.
- *
- * **Pagination scope note:** v1 ships the first 100 rows only. The
- * `useAuditHistory` hook supports offset/limit but the "Load more" button is
- * deferred — adding it requires concatenating chunks across separate query
- * keys, which is out of scope for Phase 26 (D-09 surfaces the long-term
- * lookback; deeper history is a follow-up).
- */
 
 type SortKey = 'startedAt' | 'cost' | 'status';
 type SortDir = 'asc' | 'desc';
@@ -79,7 +57,6 @@ export function AuditHistoryTable({
     navigate(`/universes/${universeId}/issues?audit_run_id=${runId}`);
   }
 
-  // ─── Loading state ──────────────────────────────────────────────────────
   if (isPending) {
     return (
       <div
@@ -97,7 +74,6 @@ export function AuditHistoryTable({
     );
   }
 
-  // ─── Error state ────────────────────────────────────────────────────────
   if (error) {
     return (
       <div
@@ -109,7 +85,6 @@ export function AuditHistoryTable({
     );
   }
 
-  // ─── Empty state ────────────────────────────────────────────────────────
   if (!data || data.rows.length === 0) {
     return (
       <EmptyState
@@ -119,7 +94,6 @@ export function AuditHistoryTable({
     );
   }
 
-  // ─── Populated state ────────────────────────────────────────────────────
   function sortArrow(key: SortKey) {
     if (sortKey !== key) return '';
     return sortDir === 'desc' ? '↓' : '↑';
@@ -243,13 +217,7 @@ export function AuditHistoryTable({
                 </td>
                 <td className="py-3 pr-4 text-sm leading-[1.5] text-neutral-700 dark:text-neutral-300">
                   {row.provider} / {row.model}
-                  {/* #50 Task 9 — the ENTIRE provenance the server discloses
-                      is `credentialSource: 'own' | 'shared'` (routes/audits.ts):
-                      no owner id, no grant id, no key label. Render nothing
-                      beyond this compact label, and render nothing at all for
-                      'own' or for an older cached row where the field is
-                      absent — that is the pre-Task-9 behavior and stays the
-                      default. */}
+
                   {row.credentialSource === 'shared' && (
                     <span className="ml-2 inline-block text-xs text-neutral-500 dark:text-neutral-400 border border-neutral-300 dark:border-neutral-700 rounded px-1.5 py-0.5 align-middle">
                       Shared connection
@@ -257,9 +225,7 @@ export function AuditHistoryTable({
                   )}
                 </td>
                 <td className="py-3 pr-4 text-sm leading-[1.5] tabular-nums text-right">
-                  {/* Phase 27 D-06 — three-branch conditional with the
-                      cost-unknown branch FIRST (amber chip). Failed-zero
-                      em-dash and priced render are unchanged. */}
+
                   {row.costUnknown ? (
                     <span
                       className="text-xs text-amber-700 dark:text-amber-400 bg-amber-50 dark:bg-amber-950/30 border border-amber-300 dark:border-amber-800 rounded px-2 py-1"

@@ -1,5 +1,3 @@
--- Phase 27 D-06: additive column tracking audit runs that used an unpriced model.
--- Hand-written migration (NOT drizzle-kit generated) matching the Phase 24/25/26
 -- additive convention (see 0008_phase24_audit_runs.sql, 0010_phase25_issues_dismissal.sql,
 -- 0011_phase26_audit_runs_analyzed_entries.sql). drizzle-kit would regenerate the full
 -- schema diff rather than a surgical ADD COLUMN block.
@@ -15,7 +13,6 @@
 -- ("plus N runs with unknown pricing").
 --
 -- Journal registration: api/drizzle/meta/_journal.json idx=12 entry MUST land in the
--- same commit (Phase 24 CR-01 lesson — drizzle migrator silently skips unregistered
 -- entries).
 ALTER TABLE "audit_runs" ADD COLUMN "cost_unknown" boolean DEFAULT false NOT NULL;
 --> statement-breakpoint

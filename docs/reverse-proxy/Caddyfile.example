@@ -1,0 +1,40 @@
+# Weltbon — Caddy reverse-proxy snippet.
+#
+# Drop into your Caddyfile, replace welt.example.com with your domain,
+# and reload Caddy. Caddy will obtain a Let's Encrypt cert automatically.
+#
+# Verify the stack with:
+#   WELTBON_PROXY_URL=https://welt.example.com PROXY_SMOKE_PAT=wbn_pat_xxx \
+#     ./scripts/proxy-smoke.sh
+#
+# Adjust the upstream target if Weltbon runs in a different network:
+#   docker-compose host-mode:   reverse_proxy localhost:3000
+#   docker-compose service net: reverse_proxy app:3000
+#   bare Node + pnpm dev:       reverse_proxy localhost:3000
+
+welt.example.com {
+    # Single upstream — Weltbon's API also serves the SPA via the catch-all in api/src/index.ts.
+    reverse_proxy localhost:3000 {
+        # Trusted-proxy contract: Caddy is the only writer of X-Forwarded-*.
+        # `header_up` operates on the request going UPSTREAM (the request to Weltbon).
+        # `header_up -NAME` REMOVES any client-supplied value first; the subsequent
+        # `header_up NAME {placeholder}` line then SETS the trusted value. This
+        # delete-then-set pattern is the canonical Caddyfile idiom for resetting
+        # a request header — a single `header_up NAME {placeholder}` would append
+        # to any client-supplied value for headers that allow multiple values
+        # (X-Forwarded-For chiefly). Do NOT use `header_down`; that operates on
+        # the RESPONSE going back to the client, not the upstream request.
+        header_up -X-Forwarded-Proto
+        header_up -X-Forwarded-Host
+        header_up -X-Forwarded-For
+        header_up X-Forwarded-Proto {scheme}
+        header_up X-Forwarded-Host  {host}
+        header_up X-Forwarded-For   {remote_host}
+    }
+
+    # Operator concerns out of scope for this snippet:
+    #   - Rate limiting       (Caddy plugins / your CDN)
+    #   - WAF rules           (Caddy plugins / your CDN)
+    #   - Access logging      (`log` directive — add to taste)
+    #   - Custom error pages  (`handle_errors` block)
+}

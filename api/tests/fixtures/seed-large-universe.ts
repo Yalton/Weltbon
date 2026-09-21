@@ -2,8 +2,8 @@ import type { TestDbHandle } from '../helpers.js';
 import { universes, categories, entries, timelinePins } from '../../src/db/schema.js';
 
 /**
- * Seeds a "large" universe for Phase 3 tests that exercise filtering + FTS perf
- * at meaningful scale. Uses a fixed-seed PRNG (mulberry32) so test runs are
+ * Seeds a large universe for filtering and full-text-search tests at meaningful
+ * scale. Uses a fixed-seed PRNG (mulberry32) so test runs are
  * deterministic — the same seed always produces the same corpus.
  */
 export interface SeedLargeUniverseOptions {
@@ -178,7 +178,6 @@ export async function seedLargeUniverse(
     for (const row of inserted) entryIds.push(row.id);
   }
 
-  // Phase-5: optional timeline pin seeding for Plan 02 perf tests.
   const pinIds: string[] = [];
   const pinCount = opts.pinCount ?? 0;
   if (pinCount > 0) {

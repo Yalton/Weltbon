@@ -71,7 +71,7 @@ describe('forwarded middleware + buildPublicUrl (PROXY-02)', () => {
 
   describe('forwarded middleware mounted in createApp() — does not break existing routes', () => {
     it('Test 8: GET /health still returns 200 with X-Forwarded-* headers set', async () => {
-      // NOTE: This test will pass once Plan 14-05 mounts the forwarded middleware.
+
       // Pre-14-05, the middleware exists but is not yet mounted; the route still
       // returns 200 because GET /health is independent of the middleware chain.
       const res = await app.fetch(new Request('http://localhost/health', {

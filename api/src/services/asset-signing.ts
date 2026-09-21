@@ -1,5 +1,4 @@
 /**
- * Phase 38 UAT-fix — HMAC-signed asset URLs.
  *
  * Allows browsers to fetch asset raw/thumb bytes via <img src> without needing
  * an Authorization: Bearer header (which browser image tags cannot attach).
@@ -45,15 +44,6 @@ function computeHmac(uid: string, id: string, variant: 'raw' | 'thumb', exp: num
   return createHmac('sha256', signingSecret()).update(msg).digest('hex');
 }
 
-/**
- * Generate a signed query suffix for an authed asset URL.
- *
- * @param uid       Universe UUID
- * @param id        Asset UUID
- * @param variant   'raw' | 'thumb'
- * @param ttlSec    Validity window in seconds (default 86400 = 24 h)
- * @returns         Query string suffix including leading '?', e.g. `?e=1234567890&s=abc…`
- */
 export function signAssetUrl(
   uid: string,
   id: string,
@@ -65,16 +55,6 @@ export function signAssetUrl(
   return `?e=${exp}&s=${sig}`;
 }
 
-/**
- * Verify an asset URL signature (for authed routes where uid comes from the URL path).
- *
- * @param uid     Universe UUID (from path)
- * @param id      Asset UUID (from path)
- * @param variant 'raw' | 'thumb' (from path segment)
- * @param e       Expiry epoch seconds (from query param, as string)
- * @param s       Hex HMAC signature (from query param)
- * @returns       true iff the signature is valid and not expired; false on any error
- */
 export function verifyAssetSig(
   uid: string,
   id: string,
@@ -86,7 +66,6 @@ export function verifyAssetSig(
     if (!e || !s) return false;
     const exp = Number(e);
     if (!Number.isFinite(exp)) return false;
-    // Reject expired signatures.
     if (exp <= Math.floor(Date.now() / 1000)) return false;
     const expected = computeHmac(uid, id, variant, exp);
     // Timing-safe comparison (prevents timing oracle attacks on the hex string).
@@ -99,20 +78,6 @@ export function verifyAssetSig(
   }
 }
 
-/**
- * Generate a signed query suffix for a share-mode asset URL.
- *
- * Share asset routes have no :uid path param (D-03 — visitor never sees the
- * internal universe UUID), so the universe ID is embedded in the query as `?u=`.
- * The HMAC message is the same `${uid}:${id}:${variant}:${exp}` — the `u` param
- * is verified server-side by extracting it from the query and recomputing the sig.
- *
- * @param uid       Universe UUID (embedded in query, not path)
- * @param id        Asset UUID
- * @param variant   'raw' | 'thumb'
- * @param ttlSec    Validity window in seconds (default 86400 = 24 h)
- * @returns         Query string suffix, e.g. `?u=<uid>&e=<exp>&s=<sig>`
- */
 export function signShareAssetUrl(
   uid: string,
   id: string,
@@ -124,21 +89,6 @@ export function signShareAssetUrl(
   return `?u=${uid}&e=${exp}&s=${sig}`;
 }
 
-/**
- * Verify a share-mode asset URL signature.
- *
- * The `u` (universe id) query param is trusted ONLY insofar as it was signed —
- * the HMAC binds uid + id + variant + exp, so a forged/substituted `u` value
- * will produce a signature mismatch. The caller must STILL enforce the
- * `is_public` gate via `getPublicAsset(uid, id)` after this call passes.
- *
- * @param id      Asset UUID (from path)
- * @param variant 'raw' | 'thumb' (from path segment)
- * @param u       Universe UUID (from query param)
- * @param e       Expiry epoch seconds (from query param)
- * @param s       Hex HMAC signature (from query param)
- * @returns       `{ valid: true, uid }` or `{ valid: false }`
- */
 export function verifyShareAssetSig(
   id: string,
   variant: 'raw' | 'thumb',
@@ -162,25 +112,6 @@ export function verifyShareAssetSig(
   }
 }
 
-/**
- * Batched asset-ownership lookup shared by the LIST resolvers
- * (entries.ts withCoverThumbUrls, share-views.ts getPublicEntries) and by
- * share-views.ts getPublicUniverseMeta.
- *
- * Returns the subset of `ids` that exist AND belong to `universeId`. Callers gate on it
- * to decide whether to mint a signed URL: an id that is missing (dangling FK) or owned by
- * another universe resolves to null, never to a URL. Deliberately NOT a URL builder —
- * the authed and share paths differ in URL shape and signer, and unifying those would need
- * a config object nobody wants to read.
- *
- * NOTE — not universal: the DETAIL resolvers (share-views.ts getPublicEntryById,
- * entries.ts detail handler) and the map-image resolvers currently sign cover/image ids
- * WITHOUT this check, relying on the asset route's own universe gate to 404 them at serve
- * time. That is a broken-<img>, not a leak — but it is inconsistent with the list path.
- * Captured in project documentation
- *
- * One query for the whole page; an empty `ids` issues no query at all.
- */
 export async function assetOwners(
   reader: NodePgDatabase<Schema>,
   ids: string[],

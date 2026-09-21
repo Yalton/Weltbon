@@ -9,20 +9,16 @@ import type { AuthVariables } from '../middleware/auth.js';
 
 type AppEnv = { Variables: AuthVariables };
 
-// ─── Path param schemas ──────────────────────────────────────────────────────
 
 const idParams = z.object({ id: z.string().uuid() });
 const idNameParams = z.object({ id: z.string().uuid(), name: z.string().min(1) });
 
-// ─── Zod schemas ────────────────────────────────────────────────────────────
 
 const createSchema = z.object({
   name: z.string().min(1).max(80),
   description: z.string().max(500).optional(),
 });
 
-// Phase 20 D-01: shared schema for the per-universe timeline window.
-// `null` (literal) is accepted and explicitly clears the window; `Infinity` /
 // `-Infinity` / `NaN` are rejected by `z.number().finite()` per threat T-20-01.
 export const timelineWindowSchema = z
   .object({
@@ -31,10 +27,7 @@ export const timelineWindowSchema = z
   })
   .nullable();
 
-// Phase 36 DATA-02 / T-36-02-01: per-universe typed custom-field registry entry.
-// Ported verbatim from 9b82f27:api/src/routes/universes.ts (lines 36–59).
 // .strict() rejects unknown keys; the type enum allowlist prevents free-form
-// injection; name max 50 + hint max 200 + array .max(50) bound jsonb growth (DoS).
 // The case-insensitive duplicate-name refine (D-04) prevents confusingly similar
 // fields so the MetaEditor collision-merge has exactly one row per case-folded name.
 const fieldRegistryEntrySchema = z
@@ -61,7 +54,6 @@ const fieldRegistrySchema = z
     { message: 'field registry names must be unique (case-insensitive)' },
   );
 
-// Phase 30 CALENDAR-01: strict Zod schema for the per-universe fictional calendar.
 // Uses `.strict()` on every nested object to reject undeclared keys (T-30-01).
 // `.max()` bounds on all arrays block pathological payloads (T-30-01).
 // `.refine` guards prevent division-by-zero / empty-month yearLen (T-30-02)
@@ -137,14 +129,11 @@ export const patchSchema = z
     name: z.string().min(1).max(80).optional(),
     description: z.string().max(500).optional(),
     timelineWindow: timelineWindowSchema.optional(),
-    // Phase 24 AUDIT-03: per-universe audit opt-in fields (additive).
     // auditEnabled=true requires auditProvider and auditModel to be non-null.
     auditEnabled: z.boolean().optional(),
     auditProvider: z.enum(PROVIDER_NAMES).nullable().optional(),
     auditModel: z.string().nullable().optional(),
-    // Phase 30 CALENDAR-01: per-universe fictional calendar (nullable = clear).
     calendar: calendarSchema.optional(),
-    // Phase 36 DATA-02: per-universe typed custom-field registry (full-array replace).
     fieldRegistry: fieldRegistrySchema.optional(),
     // Universe theming (2026-07-10 spec): whole-object replace; null resets to default.
     theme: themeSchema.nullable().optional(),
@@ -188,13 +177,10 @@ const universeSchema = z.object({
   name: z.string(),
   description: z.string(),
   entryTypes: z.array(z.string()),
-  // Phase 20 D-01: nullable per-universe horizontal-timeline window.
   timelineWindow: z
     .object({ start: z.number(), end: z.number() })
     .nullable(),
-  // Phase 30 CALENDAR-01: nullable per-universe fictional calendar.
   calendar: calendarSchema,
-  // Phase 36 DATA-02: per-universe typed custom-field registry (returned on GET).
   fieldRegistry: z.array(fieldRegistryEntrySchema),
   // Universe theming (2026-07-10 spec): raw theme + resolved backdrop URLs.
   theme: themeSchema.nullable(),
@@ -206,7 +192,6 @@ const universeSchema = z.object({
 
 const errorSchema = z.object({ error: z.string() });
 
-// ─── Route definitions ───────────────────────────────────────────────────────
 
 const listRoute = createRoute({
   method: 'get',
@@ -475,12 +460,6 @@ const deleteEntryTypeRoute = createRoute({
   },
 });
 
-/**
- * Resolve signed backdrop URLs for universe rows. Tolerates dangling
- * backdropAssetId (asset deleted): verifies the asset exists AND belongs to
- * the row's universe in one batched query; otherwise both URLs are null so
- * the client can never render a broken backdrop (spec §1.2).
- */
 async function withBackdropUrls<T extends { id: string; theme: UniverseTheme | null }>(
   rows: T[],
 ): Promise<(T & { backdropUrl: string | null; backdropThumbUrl: string | null })[]> {
@@ -511,7 +490,6 @@ async function withBackdropUrls<T extends { id: string; theme: UniverseTheme | n
   });
 }
 
-// ─── Router ──────────────────────────────────────────────────────────────────
 
 export const universeRoutes = new OpenAPIHono<AppEnv>()
 
@@ -536,7 +514,6 @@ export const universeRoutes = new OpenAPIHono<AppEnv>()
         userId,
         name,
         description: description ?? '',
-        // entryTypes defaults to the standard list via schema
       })
       .returning();
     return c.json((await withBackdropUrls([created]))[0] as any, 201);
@@ -575,7 +552,6 @@ export const universeRoutes = new OpenAPIHono<AppEnv>()
     return c.json((await withBackdropUrls([updated]))[0] as any, 200);
   })
 
-  // DELETE /universes/:id -- delete (cascades to children in Phase 2+ via schema)
   .openapi(deleteRoute, async (c) => {
     const userId = c.var.userId;
     const { id } = c.req.valid('param');
@@ -587,8 +563,6 @@ export const universeRoutes = new OpenAPIHono<AppEnv>()
   })
 
   // POL-02: PATCH /universes/:id/entry-types
-  //  action=add: append name to universes.entry_types if not present (409 duplicate_type)
-  //  action=rename: array_replace + cascade entries.entry_type in single tx
   .openapi(patchEntryTypesRoute, async (c) => {
     const userId = c.var.userId;
     const { id } = c.req.valid('param');
@@ -610,7 +584,6 @@ export const universeRoutes = new OpenAPIHono<AppEnv>()
       return c.json((await withBackdropUrls([updated]))[0] as any, 200);
     }
 
-    // rename
     if (!universe.entryTypes.includes(body.oldName)) {
       return c.json({ error: 'unknown_type' }, 400);
     }
@@ -623,14 +596,12 @@ export const universeRoutes = new OpenAPIHono<AppEnv>()
     }
 
     const updated = await db().transaction(async (tx) => {
-      // 1. array_replace on universe.entry_types (atomic at the array level)
       await tx.execute(sql`
         UPDATE universes
         SET entry_types = array_replace(entry_types, ${body.oldName}, ${body.newName}),
             updated_at = NOW()
         WHERE id = ${id}
       `);
-      // 2. Cascade entry rows
       await tx
         .update(entries)
         .set({ entryType: body.newName, updatedAt: new Date() })
@@ -643,8 +614,6 @@ export const universeRoutes = new OpenAPIHono<AppEnv>()
   })
 
   // POL-02: DELETE /universes/:id/entry-types/:name
-  //  Without ?fallback: returns 409 + { error, count, type } if any entries use the type
-  //  With ?fallback: cascades entries.entry_type then array_remove from universes.entry_types
   .openapi(deleteEntryTypeRoute, async (c) => {
     const userId = c.var.userId;
     const { id, name: rawName } = c.req.valid('param');

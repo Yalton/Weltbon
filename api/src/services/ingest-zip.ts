@@ -1,7 +1,6 @@
 /**
  * api/src/services/ingest-zip.ts
  *
- * Phase 11-03 — streaming ZIP unpacker with batch-limit enforcement.
  *
  * Decisions implemented:
  *   D-15   Hard caps: maxFiles, maxFileSize, maxTotalUncompressed.
@@ -33,8 +32,6 @@ export type BatchLimit =
   | 'file_size'
   | 'total_uncompressed_size'
   // #35 (DOCX-11). Reusing BatchLimitError rather than inventing a parallel
-  // error keeps the route's existing 413 branch and the client's existing
-  // message parsing working unchanged.
   | 'docx_size'
   | 'docx_count'
   | 'docx_entry_count'
@@ -42,13 +39,6 @@ export type BatchLimit =
   | 'docx_total_uncompressed'
   | 'docx_batch_block_count';
 
-/**
- * Thrown when any cap in the `BatchLimit` union above is breached. The union is
- * the authority; keeping a numeric total in prose would go stale as caps evolve.
- *
- * The endpoint maps this to a 413 response with body
- *   `{ error: "Batch limit exceeded: <limit> (max <max>)" }`.
- */
 export class BatchLimitError extends Error {
   public readonly limit: BatchLimit;
   public readonly max: number;
@@ -62,25 +52,16 @@ export class BatchLimitError extends Error {
 }
 
 export interface UnpackZipLimits {
-  /** Max number of file entries (D-15: 1000). */
   maxFiles: number;
-  /** Max uncompressed size of any single entry, in bytes (D-15: 1 MB for .md). */
   maxFileSize: number;
-  /** Max cumulative uncompressed size, in bytes (D-15b: 100 MB). */
   maxTotalUncompressed: number;
 }
 
 export interface UnpackedEntry {
-  /** Entry path as encoded in the ZIP, forward-slash separated. */
   path: string;
-  /** Best-effort UTF-8 decode of the entry contents. */
   content: string;
 }
 
-/**
- * Open a ZIP buffer with yauzl in lazy-entry mode and resolve a structured
- * handle. We promisify here so the caller can use async/await.
- */
 function openZipFromBuffer(buffer: Buffer): Promise<yauzl.ZipFile> {
   return new Promise((resolve, reject) => {
     yauzl.fromBuffer(buffer, { lazyEntries: true }, (err, zipfile) => {
@@ -93,25 +74,6 @@ function openZipFromBuffer(buffer: Buffer): Promise<yauzl.ZipFile> {
   });
 }
 
-/**
- * Streaming ZIP unpacker.
- *
- * Iterates each entry in lazy mode, enforces the three caps:
- *
- *   1. file_count             — checked BEFORE reading the next entry.
- *   2. file_size              — checked against entry.uncompressedSize header,
- *                                AND enforced live as bytes accumulate (in case
- *                                the header lies — defense in depth).
- *   3. total_uncompressed_size — accumulated PER CHUNK across all entries; the
- *                                stream is destroyed and BatchLimitError thrown
- *                                BEFORE the bomb fully expands (D-15b).
- *
- * Symlinks and directory entries are skipped silently.
- *
- * Returns one `{ path, content }` per non-directory entry, in the order yauzl
- * emits them (which is the central-directory order). Caller is responsible for
- * hidden-dir filtering and non-md filtering.
- */
 export async function unpackZip(
   buffer: Buffer,
   limits: UnpackZipLimits
@@ -129,7 +91,6 @@ export async function unpackZip(
       try {
         zipfile.close();
       } catch {
-        // ignore
       }
       fn();
     };
@@ -139,20 +100,17 @@ export async function unpackZip(
     zipfile.on('end', () => settle(() => resolve(entries)));
 
     zipfile.on('entry', (entry: yauzl.Entry) => {
-      // Skip directory entries (yauzl convention: name ends with '/').
       if (/\/$/.test(entry.fileName)) {
         zipfile.readEntry();
         return;
       }
 
-      // file_count cap — count BEFORE we materialise this entry.
       entryCount += 1;
       if (entryCount > limits.maxFiles) {
         settle(() => reject(new BatchLimitError('file_count', limits.maxFiles)));
         return;
       }
 
-      // file_size cap — preflight via uncompressedSize header.
       // (yauzl exposes this from the central directory; we still re-check live.)
       if (
         typeof entry.uncompressedSize === 'number' &&
@@ -216,7 +174,6 @@ export async function unpackZip(
       });
     });
 
-    // Begin lazy iteration.
     zipfile.readEntry();
   });
 }

@@ -1,6 +1,3 @@
-/**
- * Plan D Task 2 — remote base-URL validation (D-04). Pure: no DB, no I/O.
- */
 import { describe, it, expect, afterEach } from 'vitest';
 import {
   normalizeRemoteUrl,

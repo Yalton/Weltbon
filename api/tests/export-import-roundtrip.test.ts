@@ -1,22 +1,3 @@
-/**
- * Phase 52 Plan 04 — SECRET-02 export→import round-trip integration tests.
- *
- * Covers:
- *   - T-52-09: secret=true items preserve their flag through export+import fidelity.
- *   - T-52-10: pre-v5.4 export (no `secret` key) imports cleanly with secret=false.
- *
- * Task 1 RED: Test that manifest.json in the exported ZIP includes `secret` on all
- *   four item types (pins, regions, routes, layers) — fails before payload.ts select
- *   blocks include `secret: mapPins.secret / mapRegions.secret / mapRoutes.secret`
- *   and json.ts manifest mappings include `secret: p.secret / r.secret / l.secret`.
- *
- * Task 2 RED: Tests that import preserves secret flags (round-trip) and handles
- *   missing secret keys gracefully (backward-compat). Both fail before import-json.ts
- *   gains `secret: z.boolean().optional().default(false)` in all four Zod schemas and
- *   `secret: item.secret` in all four insert loops.
- *
- * NOTE: UPLOADS_DIR must be set BEFORE importing createApp (same as other map tests).
- */
 
 import { mkdtempSync, rmSync } from 'node:fs';
 import { tmpdir } from 'node:os';
@@ -269,7 +250,7 @@ describe('export-import-roundtrip (SECRET-02)', () => {
     return { status: res.status, body: await json(res) };
   }
 
-  // ─── Task 1 RED: manifest JSON includes `secret` on all four item types ──────
+
   // This test fails before payload.ts select blocks include secret: mapPins.secret /
   // mapRegions.secret / mapRoutes.secret and json.ts manifest mappings include
   // secret: p.secret / r.secret / l.secret.
@@ -331,7 +312,7 @@ describe('export-import-roundtrip (SECRET-02)', () => {
     expect(mLayer.secret, 'secret layer must have secret=true in manifest').toBe(true);
   });
 
-  // ─── Task 2 RED: round-trip preserves secret flags ──────────────────────────
+
   // This test fails before import-json.ts gains:
   //   secret: z.boolean().optional().default(false) in all four Zod schemas
   //   secret: item.secret in all four insert loops.
@@ -432,7 +413,7 @@ describe('export-import-roundtrip (SECRET-02)', () => {
     expect(importedPublicLayer.secret, 'imported public layer must have secret=false').toBe(false);
   });
 
-  // ─── Task 2 RED: backward-compat — pre-v5.4 export (no secret key) ──────────
+
   // Asserts that a hand-crafted payload without `secret` keys on any item imports
   // cleanly with secret=false for all items and does not crash (T-52-10).
 

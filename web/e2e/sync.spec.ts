@@ -1,22 +1,3 @@
-/**
- * Plan F, Task 5 — the sync UI in a real browser, against two real instances.
- *
- * WHY THIS FILE EXISTS. Tasks 1–4 shipped with 1355 passing jsdom tests, and
- * jsdom does no layout and no hit-testing: clipping, overlap, collapsed
- * containers, pointer-events, z-index and focus are all invisible to it. It
- * also cannot run a real cross-instance sync, so every assertion those tests
- * make about a run is an assertion about a mock. `share.spec.ts` exists for the
- * same reason — every share-surface bug in Phase 33 was invisible to the unit
- * suite and only a real browser surfaced them.
- *
- * The rig is docs/sync-dev-rig.md. Instance A (this UI) is Vite on :5173 over a
- * host API on :3000; instance B (the peer) is the container on :3001. Fixture
- * DATA is created over the API because that is faster and less brittle; every
- * sync ACTION is driven through A's UI, because the UI is what is under test.
- *
- * Run with:
- *   pnpm exec playwright test -c playwright.sync.config.ts
- */
 
 import { test, expect, type Browser, type BrowserContext, type Page, type Locator } from '@playwright/test';
 import { mkdirSync } from 'node:fs';
@@ -73,11 +54,6 @@ async function shot(name: string) {
   });
 }
 
-/**
- * The single layout assertion jsdom structurally cannot make: does the document
- * scroll sideways? Every clipped-long-error and overflowing-badge defect this
- * task was told to hunt for shows up here or in `assertReadable` below.
- */
 async function assertNoPageOverflow(where: string) {
   const overflow = await page.evaluate(
     () => document.documentElement.scrollWidth - document.documentElement.clientWidth,
@@ -140,22 +116,6 @@ async function login() {
   await expect(page).not.toHaveURL(/\/login/, { timeout: 15_000 });
 }
 
-/**
- * Navigate, and log back in if the app bounced us to /login.
- *
- * NOT DEFENSIVE PADDING — it works around a real, reproducible defect this run
- * surfaced, which is recorded in the spec doc: `ProtectedRoute.tsx` calls
- * `/api/auth/refresh` with a raw `fetch`, bypassing the in-flight dedupe in
- * `api/client.ts` (`attemptRefresh`). On a cold load both fire, the refresh
- * token is single-use and rotated inside a transaction, and the loser gets a
- * 401 — which the client reads as "signed out". It is intermittent, it is
- * outside Plan F's diff (nothing under `api/`, and neither of those two files,
- * is touched by this branch), and it is invisible to jsdom, which never
- * performs a cold page load at all.
- *
- * Scenario 5 hits it because navigating away mid-run is a cold load by
- * definition — which is exactly the user action the scenario is about.
- */
 async function gotoAuthed(path: string) {
   await page.goto(path);
   // The bounce is asynchronous — ProtectedRoute refreshes first and only then
@@ -378,7 +338,7 @@ test('3. first sync copies a universe with an image, end to end', async () => {
   // is delayed. Without this the rig's own universe finishes in well under a
   // second and the counter never gets a chance to leave `0s`, so a genuinely
   // frozen counter would pass unnoticed — which is the exact defect class this
-  // task exists to catch.
+
   const HOLD_MS = 5_000;
   await page.route('**/api/sync/links/*/run*', async (route) => {
     const response = await route.fetch({ timeout: 180_000 });
@@ -469,7 +429,7 @@ test('3. first sync copies a universe with an image, end to end', async () => {
   expect(bAsset, 'asset row did not arrive on B').toBeTruthy();
 
   // …and, crucially, the BYTES, not just the row. An asset row without its file
-  // is the failure mode Plan F0 was written for.
+
   const raw = await fetch(`${B_API}/universes/${seed.universeId}/assets/${seed.assetId}/raw`, {
     headers: { Authorization: `Bearer ${bAuth}` },
   });

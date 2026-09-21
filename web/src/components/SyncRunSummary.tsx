@@ -1,26 +1,6 @@
-/**
- * SyncRunSummary — what one completed sync run did (Plan F, Task 3).
- *
- * Split out of SyncTab.tsx because this block owns the HONEST-REPORTING rules,
- * and they are rules about rendering, not about the tab's state machine. Pure
- * props-in / JSX-out, so each rule can be asserted directly instead of by
- * driving a click through the whole tab:
- *
- *   - `assetsUnrepairable > 0` is stated WITH ITS COUNT. The run SUCCEEDED —
- *     this is a warning, not a failure — but "some files" would leave the user
- *     unable to tell one lost file from two hundred.
- *   - `assetsRepairedLocally` is NEVER given a figure. It counts PLANNED
- *     restores and is known to undercount, so any precise number would be one
- *     the user could disprove. It is used as a `> 0` gate and nothing else.
- *   - `thumbSizeBytes` appears nowhere. It is no longer comparable across
- *     instances, so showing it would invite a false conclusion.
- *
- * Failures never reach this component: they render as a SyncErrorNotice.
- */
 
 import type { SyncRunResult, SyncRunCounts } from '../hooks/useSyncLinks';
 
-/** Total rows across every collection in one direction of a run. */
 function totalRows(counts: SyncRunCounts) {
   const sum = (rec: Record<string, number>) => Object.values(rec).reduce((a, b) => a + b, 0);
   return sum(counts.upserted) + sum(counts.deleted);

@@ -18,16 +18,6 @@ import {
   issueEntries as issueEntriesTable,
 } from '../src/db/schema.js';
 
-/**
- * Plan 04-04 EXP-04 + EXP-05 (DOCX) integration coverage.
- *
- * Builds a small fixture universe, exports as ?format=docx, unzips the
- * resulting .docx (which is a ZIP), and asserts on word/document.xml for
- * the required style references (Title / Heading1 / Heading2), the
- * TableOfContents field code, features.updateFields, bold/italic
- * formatting from the markdown body, and the absence of resolved-issue
- * content.
- */
 
 describe('EXP-04: DOCX exporter — full integration', () => {
   let handle: TestDbHandle;
@@ -153,7 +143,7 @@ describe('EXP-04: DOCX exporter — full integration', () => {
         sourceEntryId: entryA.id,
         targetEntryId: entryC.id,
         label: 'knows',
-        // Phase 35 REL-01: direction replaces bidirectional
+
         direction: 'directed',
       });
 

@@ -1,10 +1,8 @@
 /**
- * Phase 28 Plan 03 — /api/templates/* route table.
  *
  * Four OpenAPI routes (GET list, POST create, PUT rename, DELETE delete):
  *   GET    /                    list the caller's templates (user-scoped)
  *   POST   /                    create a new user template
- *   PUT    /{id}                rename a template (Phase 28 rename-only; future plans can extend)
  *   DELETE /{id}                delete a template
  *
  * Auth: ALL routes use requireAuth (PAT-or-JWT) per D-13. Templates are user-scoped
@@ -12,8 +10,6 @@
  *
  * 23505 collision: POST + PUT catch Postgres unique-violation code '23505' (from the
  * UNIQUE(user_id, entry_type, name) constraint) and return 409 with the exact
- * UI-SPEC §C error string that SaveAsTemplateDialog.tsx (Plan 06) and
- * Templates.tsx inline-rename (Plan 07) surface under the name input.
  *
  * Cross-tenant access: DELETE and PUT against a foreign templateId hit zero rows in
  * the composite WHERE(id, userId) and return 404 — NOT 403. This matches the
@@ -29,7 +25,6 @@ import { isUniqueViolation } from '../db/pg-error.js';
 
 type AppEnv = { Variables: AuthVariables };
 
-// ─── Zod schemas ────────────────────────────────────────────────────────────
 
 const errorSchema = z.object({
   error: z.string(),
@@ -70,7 +65,6 @@ const idParamSchema = z.object({
   id: z.string().uuid(),
 });
 
-// ─── Row mapper ──────────────────────────────────────────────────────────────
 
 type EntryTemplateRow = typeof entryTemplates.$inferSelect;
 
@@ -83,7 +77,6 @@ function toResponseShape(row: EntryTemplateRow) {
     body: row.body,
     // D-09: meta is stored as the ordered array [{name, default_value}]; pass through as-is.
     // WR-04: Array.isArray guard against corrupt rows (manual SQL UPDATE, prior bug, migration
-    // drift) — falls back to [] so frontend MetaChips.slice() and metaArrayToRecord for/of
     // never crash on a non-array meta value.
     meta: Array.isArray(row.meta)
       ? (row.meta as { name: string; default_value: string }[])
@@ -95,7 +88,6 @@ function toResponseShape(row: EntryTemplateRow) {
   };
 }
 
-// ─── Routes ─────────────────────────────────────────────────────────────────
 
 const listRoute = createRoute({
   method: 'get',
@@ -239,7 +231,6 @@ const deleteRoute = createRoute({
   },
 });
 
-// ─── Router ──────────────────────────────────────────────────────────────────
 
 export const templates = new OpenAPIHono<AppEnv>()
 
@@ -288,7 +279,6 @@ export const templates = new OpenAPIHono<AppEnv>()
     const { name } = c.req.valid('json');
 
     // Ownership pre-check — also retrieves entryType for the 409 error message.
-    // The entryType is NOT in the rename payload (rename-only in Phase 28).
     const existingRows = await getDb()
       .select()
       .from(entryTemplates)
@@ -312,9 +302,7 @@ export const templates = new OpenAPIHono<AppEnv>()
       return c.json(toResponseShape(row), 200);
     } catch (e: unknown) {
       // Drizzle wraps the PG error: the '23505' code may be on the top-level
-      // error (e.code) or on the cause (e.cause.code) depending on the Drizzle version.
       if (isUniqueViolation(e)) {
-        // Use existing.entryType (not the payload — entryType not in rename body)
         return c.json(
           {
             error: `A template named "${name}" already exists for the ${existing.entryType} entry type. Pick a different name.`,

@@ -1,6 +1,5 @@
 import type { ReactNode } from 'react';
 
-/** Small constellation motif above empty-state headings (spec §2). */
 function ConstellationMotif() {
   return (
     <svg

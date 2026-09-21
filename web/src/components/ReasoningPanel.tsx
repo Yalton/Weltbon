@@ -7,15 +7,6 @@ interface Props {
   uid: string;
 }
 
-/**
- * Inline accordion panel rendered below an AI issue row in IssuesView (D-04).
- *
- * When expanded=false, renders null (no DOM node — parent controls toggle).
- * When expanded=true, shows: Model, Cost, consulted-entries chip grid, rationale.
- *
- * Threat model T-25-05-01: all interpolated content (rationale, entry titles,
- * model name) is rendered as React text nodes (never innerHTML) — XSS-safe.
- */
 export function ReasoningPanel({ issue, expanded, uid }: Props) {
   if (!expanded) return null;
 

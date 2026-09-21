@@ -9,19 +9,7 @@ import { isUniqueViolation } from '../db/pg-error.js';
 
 type AppEnv = { Variables: AuthVariables };
 
-// ─── Zod schemas ────────────────────────────────────────────────────────────
 
-/**
- * Phase 29 D-15: v1 router locks `scope` to the string literal `'universe'` via
- * `z.literal('universe').default('universe')`. zod parses any other value as
- * a 400 (OpenAPIHono surfaces it). The `share_tokens.scope` CHECK constraint
- * (migration 0015) further restricts to 'universe' | 'entry' so the column
- * is forward-compatible with v3.3 single-entry sharing without a schema change.
- *
- * Phase 29 D-05 / UI-SPEC §E: `expiresInDays` is restricted to a fixed set
- * {7, 30, 90, 180, 365} ∪ {null}. The handler resolves null → no expiry,
- * any number → `now() + N * 86400s`.
- */
 const createSchema = z.object({
   universeId:    z.string().uuid(),
   label:         z.string().trim().max(100).default(''),
@@ -33,7 +21,6 @@ const createSchema = z.object({
 });
 
 /**
- * Phase 29 D-08 / T-29-09: The mint response carries `shareUrl` (full absolute
  * URL with the plaintext token embedded) exactly ONCE. The plaintext is never
  * persisted server-side after the INSERT — `share_tokens.hash` is SHA-256 only.
  * The response schema deliberately OMITS a `plaintext` field; only `shareUrl`
@@ -48,13 +35,6 @@ const shareCreateResponseSchema = z.object({
   shareUrl:   z.string(),
 });
 
-/**
- * Phase 29 T-29-09 + UI-SPEC §F: The list response carries metadata for the
- * /settings/shares table (Universe, Label, Status, Preview, Created, Last
- * accessed, Expiry, Access count, Actions). It NEVER carries `shareUrl` or
- * any plaintext-derived field — a stolen list response cannot be used to
- * visit a share link. The plaintext exists ONLY on the mint response.
- */
 const shareListItemSchema = z.object({
   id:             z.string(),
   universeId:     z.string(),
@@ -71,7 +51,6 @@ const shareListItemSchema = z.object({
 
 const errorSchema = z.object({ error: z.string() });
 
-// ─── Routes ─────────────────────────────────────────────────────────────────
 
 const postRoute = createRoute({
   method: 'post',
@@ -215,7 +194,6 @@ const deleteRoute = createRoute({
   },
 });
 
-// ─── Router ──────────────────────────────────────────────────────────────────
 
 export const shareCrudRoutes = new OpenAPIHono<AppEnv>()
 
@@ -224,7 +202,6 @@ export const shareCrudRoutes = new OpenAPIHono<AppEnv>()
     const body = c.req.valid('json');
 
     // T-29-08 ownership check: verify the universe exists AND belongs to the caller.
-    // Returns 404 (not 403) on miss so a probing attacker cannot enumerate other
     // users' universe IDs by observing 403-vs-404 differentials.
     const [u] = await getDb()
       .select({ id: universes.id, userId: universes.userId })
@@ -265,9 +242,6 @@ export const shareCrudRoutes = new OpenAPIHono<AppEnv>()
         });
 
       // D-08: surface plaintext exactly once, embedded in the absolute share URL.
-      // The plaintext leaves memory after this response returns; it is never
-      // re-derivable from the DB (hash-only at rest). scrubLogLine (Plan 01
-      // Task 4) is defense-in-depth in case any log accidentally interpolates it.
       const shareUrl = buildPublicUrl(c) + '/share/' + plaintext;
 
       return c.json(
@@ -283,8 +257,6 @@ export const shareCrudRoutes = new OpenAPIHono<AppEnv>()
       );
     } catch (err: any) {
       // T-29-09 mirror tokens.ts L184-205: 23505 = unique-constraint violation on
-      // share_tokens_hash_unique. Surface literal collision string so the
-      // caller can retry with a freshly generated token.
       if (isUniqueViolation(err)) {
         return c.json({ error: 'Token collision, please retry' }, 409);
       }
@@ -296,7 +268,6 @@ export const shareCrudRoutes = new OpenAPIHono<AppEnv>()
     const userId = c.var.userId;
 
     // D-20 / UI-SPEC §F: list ALL the caller's tokens across ALL their universes
-    // (revoked + active + expired). The /settings/shares table renders status
     // chips per row; UniverseSettings filters revoked client-side.
     // innerJoin universes for the universeName column (UI-SPEC §F Universe column).
     const rows = await getDb()
@@ -319,7 +290,6 @@ export const shareCrudRoutes = new OpenAPIHono<AppEnv>()
       .orderBy(desc(shareTokens.createdAt));
 
     // Project timestamps to ISO strings; the response schema (T-29-09) carries
-    // NO shareUrl / plaintext fields — a stolen list response cannot mint a hit.
     return c.json(
       {
         shares: rows.map((r) => ({
@@ -371,12 +341,8 @@ export const shareCrudRoutes = new OpenAPIHono<AppEnv>()
     const id = c.req.valid('param').id;
 
     // D-06 + T-29-10: soft-revoke by setting revoked_at = now(). The row
-    // stays in the DB so last_accessed_at + access_count + label remain for
     // the owner's audit trail. Per D-15 there is no scope/scope_entry_id
     // mutation endpoint — scope is mint-time-only in v1.
-    //
-    // Idempotency: the `isNull(revokedAt)` guard makes a second DELETE on the
-    // same id return 404 (already revoked).
     const updated = await getDb()
       .update(shareTokens)
       .set({ revokedAt: new Date() })

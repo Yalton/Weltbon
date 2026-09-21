@@ -24,8 +24,6 @@ if (!STAGE) {
 
 const problems = [];
 const note = (msg) => console.log(`[assert-stage] ${msg}`);
-const targetPlatform = process.env.WELTBON_TARGET_PLATFORM ?? 'linux';
-const targetArch = process.env.WELTBON_TARGET_ARCH ?? 'x64';
 
 // ── 1. the entry point the packaged app actually imports ────────────────────
 const entry = join(STAGE, 'dist', 'index.js');
@@ -77,15 +75,6 @@ for (const name of externals) {
   }
   const { version } = JSON.parse(readFileSync(pkgJson, 'utf8'));
   note(`external ${name}@${version}`);
-}
-
-if (targetPlatform === 'win32') {
-  const bcryptPrebuild = join(STAGE, 'node_modules', 'bcrypt', 'prebuilds', `win32-${targetArch}`, 'bcrypt.node');
-  const sharpWinPackage = join(STAGE, 'node_modules', '@img', `sharp-win32-${targetArch}`, 'package.json');
-  const bcryptHostBuild = join(STAGE, 'node_modules', 'bcrypt', 'build', 'Release', 'bcrypt.node');
-  if (!existsSync(bcryptPrebuild)) problems.push(`missing Windows bcrypt prebuild: ${bcryptPrebuild}`);
-  if (!existsSync(sharpWinPackage)) problems.push(`missing Windows sharp package: ${sharpWinPackage}`);
-  if (existsSync(bcryptHostBuild)) problems.push(`host-native bcrypt build overrides Windows prebuild: ${bcryptHostBuild}`);
 }
 
 // ── 4. runtime assets the bundle cannot carry ───────────────────────────────

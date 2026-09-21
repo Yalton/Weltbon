@@ -17,13 +17,9 @@ function newRowId(): string {
 }
 
 // ---------------------------------------------------------------------------
-// Type-specific inputs (Phase 36 DATA-02)
-//
-// Exported (D-07) so Plan 08's AddFilterChip can reuse the same typed value
 // inputs instead of re-implementing them inline.
 // ---------------------------------------------------------------------------
 
-/** Validates whether a string value matches the registered field type. */
 export function isMismatch(type: FieldRegistryEntry['type'], val: string): boolean {
   if (!val) return false;
   switch (type) {
@@ -43,7 +39,6 @@ export function isMismatch(type: FieldRegistryEntry['type'], val: string): boole
 }
 
 // T-29-02-XSS / T-36-05-01 mitigation: url field renders value as a React text
-// node + <a href> only after new URL() validation; never dangerouslySetInnerHTML.
 export function UrlInput({
   inputId,
   value,
@@ -151,19 +146,15 @@ export function EntryRefInput({
   const [query, setQuery] = useState('');
   const inputRef = useRef<HTMLInputElement>(null);
 
-  // If stored value is a UUID (entry id), find the matching entry to display its title.
   const storedEntry = useMemo(
     () => entries.find((e) => e.id === value),
     [entries, value],
   );
 
   // D-02: a stored UUID with no matching entry is a dangling reference (target
-  // deleted). Gate on `isFetched` so a valid ref does NOT flash the placeholder
   // while useEntries is still loading (entries defaults to [] mid-fetch); only
-  // treat it as dangling once the entry list has actually resolved.
   const isDangling = !!value && !storedEntry && isFetched;
 
-  // Sync query when value is cleared externally (e.g. from form reset).
   useEffect(() => {
     if (!value) {
       setQuery('');
@@ -185,14 +176,12 @@ export function EntryRefInput({
   const handleChange = (newQuery: string) => {
     setQuery(newQuery);
     if (!open) setOpen(true);
-    // If user clears the input, remove the stored UUID.
     if (!newQuery) onChange('');
   };
 
   const suggestionListId = `${inputId}-suggestions`;
 
   // D-02: when the stored UUID resolves to no entry, show a clear placeholder
-  // (NOT the source's blank `query` fallback). The stored UUID is preserved on
   // `value`, so re-creating the target entry recovers the reference; the user
   // can also re-pick or clear it via the input below.
   return (
@@ -265,7 +254,6 @@ export function EntryRefInput({
 }
 
 // ---------------------------------------------------------------------------
-// Main MetaEditor
 // ---------------------------------------------------------------------------
 
 export function MetaEditor({
@@ -278,9 +266,7 @@ export function MetaEditor({
   value: Record<string, string>;
   onChange: (meta: Record<string, string>) => void;
   onValidityChange?: (valid: boolean) => void;
-  /** Phase 36 DATA-02: optional registered typed fields rendered above freeform rows. */
   registeredFields?: FieldRegistryEntry[];
-  /** Phase 36 DATA-02: universe ID for entry-ref typeahead suggestion source. */
   universeId?: string;
 }) {
   const hasRegistered = !!registeredFields && registeredFields.length > 0;
@@ -288,7 +274,6 @@ export function MetaEditor({
   // D-04: collision matching is CASE-INSENSITIVE. We map each registered field
   // to the actual meta key it should own — preferring the entry's pre-existing
   // free-form key of the same case-folded name (so a registry field 'Status'
-  // adopts an entry's existing 'status' value), falling back to the field name.
   const valueKeyByLower = useMemo(() => {
     const m = new Map<string, string>();
     for (const k of Object.keys(value)) {
@@ -298,13 +283,9 @@ export function MetaEditor({
     return m;
   }, [value]);
 
-  // Resolve each registered field to its meta key ONCE and remember it (sticky).
   // D-04: the first time we see a field we adopt the entry's pre-existing
   // free-form key of the same case-folded name (e.g. 'status' for 'Status').
-  // Subsequent edits — including clearing the value, which removes the key from
-  // `value` — keep writing under that original key rather than reverting to the
   // field name. Without this, clearing an adopted 'status' value would re-key it
-  // to 'Status' on the next keystroke.
   const fieldMetaKeyRef = useRef(new Map<string, string>());
   const fieldMetaKey = useMemo(() => {
     const m = fieldMetaKeyRef.current;
@@ -313,7 +294,6 @@ export function MetaEditor({
         m.set(f.name, valueKeyByLower.get(f.name.toLowerCase()) ?? f.name);
       }
     }
-    // Drop entries for fields no longer registered.
     const live = new Set((registeredFields ?? []).map((f) => f.name));
     for (const k of Array.from(m.keys())) {
       if (!live.has(k)) m.delete(k);
@@ -329,9 +309,7 @@ export function MetaEditor({
     [registeredFields],
   );
 
-  // Initialise rows from value once. Subsequent value changes from the parent
   // (e.g. template prefill) are handled by a ref-tracked sync only when rows
-  // is empty (avoids clobbering live edits).
   // Filter out registered-field keys (case-insensitive) from freeform rows.
   const [rows, setRows] = useState<Row[]>(() =>
     Object.entries(value)
@@ -349,8 +327,6 @@ export function MetaEditor({
       initRef.current = false;
       return;
     }
-    // If rows is empty and the parent supplies new entries (e.g. template
-    // prefill in EntryEditor), reseed rows. Ongoing edits are not clobbered.
     // Exclude registered-field keys (case-insensitive) from freeform rows.
     const freeformEntries = Object.entries(value).filter(
       ([k]) => !registeredLowerKeys.has(k.toLowerCase()),
@@ -377,7 +353,6 @@ export function MetaEditor({
 
   const hasDups = Object.values(keyCount).some((c) => c > 1);
 
-  // Build the merged meta object from registered values + freeform rows.
   const buildMeta = (
     currentRows: Row[],
     currentValue: Record<string, string>,
@@ -385,7 +360,6 @@ export function MetaEditor({
     const obj: Record<string, string> = {};
     // Carry over registered-field values from current value under their resolved
     // (case-folded) meta key. Registered rows manage their own state via the
-    // parent value object.
     for (const f of registeredFields ?? []) {
       const metaKey = fieldMetaKey.get(f.name) ?? f.name;
       const v = currentValue[metaKey];
@@ -393,7 +367,6 @@ export function MetaEditor({
         obj[metaKey] = v;
       }
     }
-    // Then freeform rows.
     for (const r of currentRows) {
       if (r.key) obj[r.key] = r.val;
     }
@@ -421,7 +394,6 @@ export function MetaEditor({
   const addRow = () =>
     setRows((rs) => [...rs, { rowId: newRowId(), key: '', val: '' }]);
 
-  // Handle changes to a registered field's value (writes to the parent value
   // object under the resolved case-folded meta key, D-04).
   const updateRegisteredVal = (fieldName: string, newVal: string) => {
     const metaKey = fieldMetaKey.get(fieldName) ?? fieldName;

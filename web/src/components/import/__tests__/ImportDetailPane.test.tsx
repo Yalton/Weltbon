@@ -216,7 +216,7 @@ describe('ImportDetailPane', () => {
     expect(props.onRestore).toHaveBeenCalledTimes(1);
   });
 
-  it('IngestCategoryPicker is rendered (smoke test — its behavior covered by Task 1 tests)', () => {
+  it('IngestCategoryPicker is rendered', () => {
     renderPane();
     // The picker renders a select; for an empty categories list the
     // first option is "Uncategorized"

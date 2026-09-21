@@ -1,31 +1,6 @@
 import { useEffect, useRef, useState } from 'react';
 import { BATCH_LIMIT_FILES, BATCH_LIMIT_MB } from '../../lib/ingestLimits';
 
-/**
- * Drop-zone widget for the Phase 12 import flow.
- *
- * Two responsibilities:
- *   1. Render a drag-and-drop target plus explicit Markdown-file, folder, and
- *      ZIP pickers. Keeping these as separate inputs is important: applying
- *      `webkitdirectory` to the ordinary file picker makes supported browsers
- *      refuse standalone files.
- *   2. Feature-detect `webkitdirectory` and apply it to the folder input via
- *      DOM ref API (NOT
- *      a JSX prop) per UI-SPEC §13.7. React 18+ warns on unknown DOM
- *      properties; webkitdirectory is non-standard, so setting it after
- *      mount via ref.setAttribute() bypasses React's prop reconciliation
- *      entirely. When unsupported (Firefox, older Safari), an inline amber
- *      fallback notice tells the user to ZIP their folder instead.
- *
- * Pure presentational — calls `onSelect(files)` when the user picks via
- * file dialog or drag-and-drop. The parent owns the upload state machine
- * and any validation; this component does NOT inspect file contents.
- *
- * The `fallbackHint` prop is reserved for the parent to override the auto
- * fallback notice text in future plans; today it is unused (folder-support
- * detection happens locally so the parent doesn't need to thread it
- * through).
- */
 interface ImportDropZoneProps {
   onSelect: (files: File[]) => void;
   disabled: boolean;
@@ -44,15 +19,11 @@ export function ImportDropZone({ onSelect, disabled }: ImportDropZoneProps) {
     if (!input) return;
     // Feature-detect: webkitdirectory presence on the prototype chain.
     // Chromium-based browsers (Chrome, Edge, Brave) AND Safari 14.4+ expose
-    // this property; Firefox does NOT. jsdom does not expose it either, so
     // tests assume the fallback-notice branch by default.
     const supported = 'webkitdirectory' in HTMLInputElement.prototype;
     if (supported) {
       // CRITICAL (UI-SPEC §13.7): set via DOM API, NOT JSX prop. React 18+
       // warns on unknown DOM properties; webkitdirectory is non-standard
-      // and would emit "Unknown DOM property webkitdirectory. Did you mean
-      // webkitDirectory?". Setting via setAttribute() after mount bypasses
-      // React's prop reconciliation entirely.
       input.setAttribute('webkitdirectory', '');
     }
     setFolderSupported(supported);
@@ -62,8 +33,6 @@ export function ImportDropZone({ onSelect, disabled }: ImportDropZoneProps) {
     const fileList = e.target.files;
     if (!fileList || fileList.length === 0) return;
     onSelect(Array.from(fileList));
-    // Reset the input so picking the same folder twice in a row still
-    // triggers onChange. Without this, change does not fire on identical
     // re-selection (e.g., to retry after an error).
     e.currentTarget.value = '';
   };

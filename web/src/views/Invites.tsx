@@ -1,17 +1,3 @@
-/**
- * Invites view — /settings/invites
- *
- * Invite-code self-service page (INV-02).
- * Three states: loading (skeleton rows), empty state, populated table.
- * Per UI-SPEC §5, copywriting locked to §13. Mirrors Tokens.tsx structure
- * with the six-column shape (Label | Preview | Created | Status | Used by | Action).
- *
- * Status is derived inline from the timestamp pair (revokedAt/usedAt) per UI-SPEC §7.1.
- * Status chip uses three SEPARATE static JSX branches (Phase 2 class-string lock —
- * no dynamic class concatenation that would defeat Tailwind JIT, see T-13-04-03).
- *
- * Route: /settings/invites (nested inside SettingsLayout — wired by plan 13-06).
- */
 
 import { useState } from 'react';
 import { useInvites, useRevokeInvite, type Invite } from '../hooks/useInvites';
@@ -209,7 +195,7 @@ export default function Invites() {
         </div>
       )}
 
-      {/* Create invite dialog — single Dialog, two phases (form → reveal) — built by plan 13-05 */}
+
       <CreateInviteDialog open={createOpen} onOpenChange={setCreateOpen} />
 
       {/* Revoke confirmation — ConfirmDialog with destructive=true */}
@@ -226,7 +212,6 @@ export default function Invites() {
             try {
               await revokeInvite.mutateAsync(revokeTarget.id);
             } catch {
-              // Silent invalidate on 404 race — useRevokeInvite's onError handles it.
             }
           }
         }}

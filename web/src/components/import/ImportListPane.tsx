@@ -1,16 +1,3 @@
-/**
- * Scrollable master-list pane for the import-review screen (UI-SPEC §4.4).
- *
- * Thin presentational wrapper: parent (Plan 12-06 ImportReview) supplies the
- * already-filtered entries + the decisions map + the focused-row path; this
- * component maps each entry to an <ImportListRow> and computes per-row props
- * (effectiveTitle, conflictTitle, isFocused).
- *
- * Empty state: when `entries.length === 0` AND `hasActiveFilters` is true,
- * renders an EmptyState with a "Clear filters" action (UI-SPEC §7.2). When
- * the list is empty AND no filters are active, renders nothing — the parent's
- * auto-focus-on-first-row contract means this case is normally unreachable.
- */
 
 import type {
   PreviewEntry,
@@ -21,15 +8,9 @@ import { EmptyState } from '../EmptyState';
 import { ImportListRow } from './ImportListRow';
 
 interface ImportListPaneProps {
-  /** Already-filtered entries from the parent. */
   entries: PreviewEntry[];
   decisions: ReviewDecisions;
   focusedPath: string | null;
-  /**
-   * Map keyed by `existingTitle.toLowerCase()` whose VALUE is the original-cased
-   * existing TITLE (NOT entry id). Drives the conflict-chip aria-label
-   * `matches "<title>" already in universe`.
-   */
   existingEntriesByLowerTitle: Map<string, string>;
   onFocus: (path: string) => void;
   onClearFilters: () => void;
@@ -75,7 +56,6 @@ export function ImportListPane({
           const decision: CommitDecision =
             decisionRecord?.decision ?? DEFAULT_DECISION;
 
-          // Effective title: rename → newTitle, otherwise edits.title || entry.title.
           const effectiveTitle =
             decision.disposition === 'rename'
               ? decision.newTitle

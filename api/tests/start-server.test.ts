@@ -57,7 +57,7 @@ describe('startServer()', () => {
     };
 
     // PORT=0 means "any free port" — a returned 0 would mean the caller has no
-    // way to build the URL to load, which is Task 6's entire dependency here.
+
     expect(port).toBeGreaterThan(0);
 
     const res = await fetch(`http://127.0.0.1:${port}/health`);
@@ -126,7 +126,7 @@ describe('startServer()', () => {
     expect(Number(rows[0].n)).toBe(expected);
   }, 30_000);
 
-  // Task 6 addendum (Task 3 security review): api/src/index.ts's startServer()
+
   // now passes cfg.bindHost through to serve() as `hostname`. Left unset it's
   // the pre-existing all-interfaces default the Docker container needs — see
   // the OTHER two tests in this file, neither of which sets WELTBON_BIND_HOST

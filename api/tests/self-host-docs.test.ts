@@ -1,14 +1,3 @@
-/**
- * Phase 15 Nyquist locks — self-host documentation and CI workflow file-shape assertions.
- *
- * These tests guard CONT-05, OPS-05, OPS-06, OPS-07, and OPS-08 against accidental deletion
- * or modification of the key operator-facing artefacts (README sections, workflow YAML, and
- * api/package.json dev script). No Postgres connection required — all assertions are
- * file-system reads.
- *
- * Companion to: project documentation
- * Do NOT extend this file with unrelated requirements. Phase 15 gaps only.
- */
 
 import { describe, it, expect } from 'vitest';
 import fs from 'node:fs';
@@ -98,21 +87,7 @@ describe('CONT-05 — GHCR publish workflow (.github/workflows/publish-ghcr.yml)
     expect(fs.existsSync(workflowPath)).toBe(true);
   });
 
-  /**
-   * This used to assert the literal string `- 'v*'`. That broke the moment the
-   * trigger was legitimately narrowed to three-part semver, and it broke in the
-   * least useful way: the assertion said nothing about WHY a tag trigger has to
-   * exist, so a reader hitting the red could not tell whether the workflow had
-   * regressed or the test had simply gone stale.
-   *
-   * CONT-05 is about the workflow shipping an image when a release is cut. What
-   * matters is that a tag push trigger exists and covers release tags. What it
-   * must NOT be is the bare `v*` it started as: this repo also carries
-   * milestone-archive tags (v1.0 ... v5.3, `chore: archive v5.3 milestone
-   * files`), and `v*` matched those too — v5.0, v5.1 and v5.2 each built and
-   * pushed an image tagged `latest` from a project-phase marker.
-   */
-  it('triggers on a release tag push', () => {
+    it('triggers on a release tag push', () => {
     // Pinned exactly. Every assertion below reads this list, and an empty list
     // would make the negative assertions pass while checking nothing.
     expect(tagTriggerPatterns(workflowContent)).toEqual(['v[0-9]+.[0-9]+.[0-9]+']);
@@ -337,17 +312,9 @@ describe('local builds stamp the build identity', () => {
 });
 
 // ─────────────────────────────────────────────────────────────────────────────
-// OPS-09: README Shared LLM Connections documentation (issue #50, Task 10)
+
 // ─────────────────────────────────────────────────────────────────────────────
 
-/**
- * The exact operator guidance text the plan mandates verbatim. Copied here as
- * one string with the plan's own line breaks so the assertion below is
- * genuinely exact rather than a paraphrase check — a rewritten README that
- * drops "finite" or "UTC calendar month" would still read fine to a human
- * but would silently misinform an operator about the actual boot-time
- * validation in `api/src/config.ts`.
- */
 const SHARED_LLM_OPERATOR_GUIDANCE = [
   'SHARED_LLM_MONTHLY_COST_USD controls the per-recipient shared hosted-LLM',
   'budget for the current UTC calendar month. It defaults to 1.00 USD and must',
@@ -391,20 +358,7 @@ describe('OPS-09 — README Shared LLM Connections documentation', () => {
     expect(section).toContain('LLM_KEY_ENCRYPTION_KEY');
   });
 
-  /**
-   * Task 10 review finding 2: the original version of this test used a
-   * whole-document `/s` regex (`SHARED_LLM_MONTHLY_COST_USD.*finite.*positive`),
-   * so the MANDATED GUIDANCE BLOCK's own "must be a finite positive number"
-   * satisfied it regardless of whether either table row said anything at all,
-   * and nothing anywhere asserted the `1.00` default. Confirmed by execution
-   * (see the fix report): rewriting both table rows to strip every one of
-   * "finite", "positive" and "1.00" left all 5 OPS-09 tests green. This
-   * version selects each table row LINE by its literal cell prefix and
-   * asserts on that line alone, so a table row that regresses to vague
-   * "Budget knob" text fails here even though the guidance block elsewhere
-   * in the README still carries the real rule.
-   */
-  it('documents the SHARED_LLM_MONTHLY_COST_USD default and boot validation in both env tables', () => {
+    it('documents the SHARED_LLM_MONTHLY_COST_USD default and boot validation in both env tables', () => {
     const rows = readme.split('\n').filter((line) => line.startsWith('| `SHARED_LLM_MONTHLY_COST_USD` |'));
     expect(
       rows.length,

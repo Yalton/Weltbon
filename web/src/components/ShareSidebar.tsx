@@ -17,7 +17,6 @@ import { Loading } from './ui/Loading';
  *    table: Issues is hidden in share mode entirely).
  *
  * Category data flows through `useCategories(token)` — but inside ShareLayout
- * the `setShareToken` seam from Task 1 routes the request through
  * `/api/share/categories`, so the `token` value passed here is incidental
  * (it satisfies the hook's `enabled` guard and serves as the React Query
  * cache key). The hook fetches `/universes/<token>/categories` and the
@@ -74,7 +73,7 @@ export function ShareSidebar({ token }: { token: string }) {
         >
           Timeline
         </NavLink>
-        {/* Phase 40 Plan 04 — share-mode maps nav link */}
+
         <NavLink
           to={`/share/${token}/maps`}
           className={({ isActive }) =>

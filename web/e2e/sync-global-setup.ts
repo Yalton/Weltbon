@@ -1,5 +1,4 @@
 /**
- * Global setup for the sync e2e run (Plan F, Task 5).
  *
  * Creates the fixture data both instances need, via their APIs, and writes it
  * to `e2e/sync-seed.json`. The sync ACTIONS themselves are deliberately NOT
@@ -35,7 +34,7 @@ async function reachable(url: string, hint: string) {
 export default async function syncGlobalSetup() {
   await reachable(
     `${A_API.replace(/\/api$/, '')}/health`,
-    "Start instance A's API — see docs/sync-dev-rig.md.",
+    "Start instance A's API: cd api && pnpm dev.",
   );
   await reachable(A_UI, "Start instance A's Vite dev server: cd web && pnpm dev");
   await reachable(
@@ -66,7 +65,7 @@ export default async function syncGlobalSetup() {
   });
 
   // The image is not optional garnish: the asset-carrying first-sync path is
-  // the one that used to deadlock, and is the specific reason Plan F0 exists.
+
   const assetFilename = `gate-${stamp}.png`;
   const form = new FormData();
   form.append('file', new Blob([TINY_PNG], { type: 'image/png' }), assetFilename);

@@ -1,29 +1,3 @@
-/**
- * Phase 27 Plan 03 Task 3 — DB-gated integration test for /api/llm/models.
- *
- * Exercises the FULL stack: route → DB-lookup-of-key → decrypt → mocked SDK
- * → cache module → response. The unit-lane assertions on cache mechanics
- * (hit/TTL/isolation/stale/PRICING-fallback/unpriced-presence/apiKey-not-
- * leaked) live in `llm-models-cache.unit.test.ts`; this file rounds out the
- * coverage by hitting the wire shape and the route's auth/no-key envelopes.
- *
- * Coverage (Plan 27-03 Task 3 — Tests 1-5 from <behavior>):
- *   1. Cache hit through endpoint: two sequential authenticated calls within
- *      30 min return identical `fetchedAt` (only ONE underlying SDK call).
- *   2. Cache key isolation: User A's call and User B's call (each with their
- *      own llm_api_keys row) produce two distinct SDK calls; cache entries
- *      reflect each user's keyId.
- *   3. Stale fallback: After populating cache, force SDK throw; next call
- *      returns cached entries with source='cache_stale'.
- *   4. PRICING fallback: With cache empty, force SDK throw immediately; call
- *      returns Object.keys(PRICING.anthropic) shape with source='pricing_fallback'.
- *   5. 404 on no key: Authenticated user with no anthropic key → 404
- *      { error: 'no_key_for_provider' }.
- *
- * Marker: imports `createTestDb` / `setTestDb` — the canonical DB-gated test
- * tag per Phase 17 D-17-02; auto-routed to the integration lane via
- * api/vitest.config.ts DB_GATED_TESTS.
- */
 
 import { describe, it, expect, beforeAll, afterAll, beforeEach, afterEach, vi } from 'vitest';
 import { eq } from 'drizzle-orm';
@@ -107,7 +81,7 @@ const ENCRYPTION_KEY = '0'.repeat(64);
 const OWNER_SECRET = 'sk-ant-shared-model-owner-secret';
 const RECIPIENT_SECRET = 'sk-ant-personal-model-recipient-secret';
 
-// #48 Task 6 Fix round 1 (Finding 2) — Ollama fixtures, mirroring the
+
 // tests/llm-ollama.test.ts / tests/llm-connections-routes.test.ts fakeFetch
 // (not exported anywhere; each file that needs it defines its own copy).
 const here = dirname(fileURLToPath(import.meta.url));
@@ -146,7 +120,7 @@ function asAsyncIterable<T>(items: T[]): AsyncIterable<T> {
   };
 }
 
-describe('GET /api/llm/models (Phase 27 Plan 03 Task 2 — endpoint integration)', () => {
+describe('GET /api/llm/models', () => {
   let handle: TestDbHandle;
   let app: ReturnType<typeof createApp>;
 
@@ -398,9 +372,9 @@ describe('GET /api/llm/models (Phase 27 Plan 03 Task 2 — endpoint integration)
     expect(res.status).toBe(401);
   });
 
-  // ── #48 Task 6 Fix round 1 (Finding 2) ─────────────────────────────────────
+
   // The universe-settings dropdown calls THIS route, not getModels() directly.
-  // Task 6's original Step 5 fixed getModels() but nothing ever routed
+
   // provider=ollama here — the Zod enum rejected it before the handler ran.
   // These tests exercise the actual dropdown path end-to-end.
 

@@ -1,21 +1,3 @@
-/**
- * Phase 17-01 regression guard for the multipart ingest schema.
- *
- * Locks `api/src/routes/ingest.ts` multipartBodySchema to accept File-typed
- * parts. If a future change reverts the schema to z.array(z.string()) /
- * z.string(), the @hono/zod-openapi validator will reject File bodies with
- * a 400 ZodError BEFORE the auth gate runs, and these tests turn red.
- *
- * Runs in the `unit` lane: no DB-helper imports, no live Postgres
- * connection required. Pattern mirrors openapi-schema.test.ts.
- *
- * Soft-status assertion strategy: the test's job is to prove the request
- * passed schema validation, not to verify the specific downstream status
- * code. Any of 401/403/404/500 proves the schema accepted the multipart
- * body; what MUST NOT happen is a 400 ZodError envelope.
- *
- * Requirements covered: INGEST-01, INGEST-02, INGEST-03.
- */
 import { describe, it, expect } from 'vitest';
 import { createApp } from '../src/index.js';
 
@@ -34,7 +16,7 @@ function makeZipFile(name: string): File {
 // the multipart validator rejected the body (the regression we are guarding).
 const POST_SCHEMA_STATUSES = [401, 403, 404, 500] as const;
 
-describe('Phase 17 — multipart ingest schema shape (no DB)', () => {
+describe('multipart ingest schema shape (no DB)', () => {
   const app = createApp();
   const FAKE_UID = '00000000-0000-0000-0000-000000000000';
 

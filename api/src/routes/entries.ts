@@ -10,12 +10,10 @@ import type { AuthVariables } from '../middleware/auth.js';
 
 type AppEnv = { Variables: AuthVariables };
 
-// ─── Path param schemas ──────────────────────────────────────────────────────
 
 const uidParams = z.object({ uid: z.string().uuid() });
 const uidAndIdParams = z.object({ uid: z.string().uuid(), id: z.string().uuid() });
 
-// ─── Zod schemas ────────────────────────────────────────────────────────────
 
 const createEntrySchema = z.object({
   title: z.string().min(1).max(200),
@@ -23,21 +21,17 @@ const createEntrySchema = z.object({
   summary: z.string().max(500).optional().default(''),
   body: z.string().optional().default(''),
   tags: z.array(z.string().max(50)).max(20).optional().default([]),
-  // Phase 45 XREF-04 (D-07/D-08): alternate wikilink resolution names.
   // Cap: 20 aliases × 100 chars each (mirrors tags but wider per-item cap for entry names).
   // Normalization (trim, drop empties, case-fold de-dupe within list) is done in the handler.
   aliases: z.array(z.string().max(100)).max(20).optional().default([]),
   meta: z.record(z.string(), z.unknown()).optional().default({}),
   icon: z.string().max(10).optional().default(''),
   categoryId: z.string().uuid().nullable().optional(),
-  // Phase 29 D-10 / SHARE-04: per-entry public flag for share-link visibility.
   // `.default(false)` ensures omitting on POST yields `false` server-side (default-private).
   isPublic: z.boolean().optional().default(false),
-  // Phase 36 DATA-03: WIP/draft flag. `.default(false)` mirrors isPublic — omitting on POST
   // yields a finished (non-WIP) entry server-side.
   wip: z.boolean().optional().default(false),
   templateId: z.string().uuid().nullable().optional(),   // D-16 — optional best-effort stamp target
-  // Phase 38 MEDIA-04 (D-06): cover image for the entry. Nullable so `null` clears the FK.
   // No default — omitting on POST yields null server-side via the ?? null guard in .values().
   coverImageId: z.string().uuid().nullable().optional(),
 });
@@ -48,20 +42,15 @@ const patchEntrySchema = z.object({
   summary: z.string().max(500).optional(),
   body: z.string().optional(),
   tags: z.array(z.string().max(50)).max(20).optional(),
-  // Phase 45 XREF-04 (D-07/D-08): NO .default([]) — omitting on PATCH must NOT wipe
   // existing aliases (PATCH is non-destructive). Normalization done in handler.
   aliases: z.array(z.string().max(100)).max(20).optional(),
   meta: z.record(z.string(), z.unknown()).optional(),
   icon: z.string().max(10).optional(),
   categoryId: z.string().uuid().nullable().optional(),
-  // Phase 29 SHARE-04: optional with NO default — omitting on PATCH must NOT flip the
   // existing column value (PATCH is non-destructive for unset fields).
   isPublic: z.boolean().optional(),
-  // Phase 36 DATA-03: optional with NO default — omitting on PATCH must NOT flip the
   // existing wip column value (PATCH non-destructive, mirrors isPublic).
   wip: z.boolean().optional(),
-  // Phase 38 MEDIA-04 (D-06): optional with NO default — omitting on PATCH must NOT clear
-  // an existing cover ref. Explicit null clears the FK (Drizzle skips undefined keys).
   coverImageId: z.string().uuid().nullable().optional(),
 }).refine((v) => Object.values(v).some((val) => val !== undefined), {
   message: 'At least one field is required',
@@ -76,35 +65,21 @@ const entrySchema = z.object({
   entryType: z.string(),
   summary: z.string(),
   tags: z.array(z.string()),
-  // Phase 45 XREF-04 (D-08): alternate wikilink resolution names returned on every read.
   aliases: z.array(z.string()),
   meta: z.record(z.string(), z.unknown()),
   icon: z.string(),
   categoryId: z.string().nullable(),
-  // Phase 29 D-10 / SHARE-04: surfaces the per-entry public flag so EntryEditor + EntryDetail
   // can render the toggle + chip (UI-SPEC §B/§C); owner sees this on every read.
   isPublic: z.boolean(),
-  // Phase 36 DATA-03: surfaces the per-entry WIP flag so EntryEditor + EntryCard can render
-  // the WipPill toggle/badge (Plan 06 wiring). Owner sees this on every read.
   wip: z.boolean(),
   createdAt: z.string(),
   updatedAt: z.string(),
-  // Phase 45 XREF-04 (D-06): present only on create/patch when an alias matches an existing
   // entry's canonical title. The canonical title still wins at resolution (D-01).
   aliasWarnings: z.array(z.string()).optional(),
   // Content-Forward Views §1.1 — cover surface on every entry read.
-  // coverImageId was projected since Phase 38 but never declared. Honest on every
-  // endpoint that uses this schema: create/patch `.returning()` and the detail select
-  // all include the column.
   coverImageId: z.string().nullable(),
 });
 
-/**
- * Content-Forward Views §1.1 — LIST-only. coverThumbUrl is a LIST-projection
- * concern: only the list handler resolves it (via withCoverThumbUrls). Declaring
- * it on the shared entrySchema would promise the field on create/patch/detail,
- * which do not emit it — the projection-drift trap this repo has hit twice.
- */
 const entryListItemSchema = entrySchema.extend({
   coverThumbUrl: z.string().nullable(),
 });
@@ -134,14 +109,10 @@ const entryDetailSchema = entrySchema.extend({
     title: z.string(),
     severity: z.string(),
   })),
-  // Phase 38 UAT-fix: pre-signed image URLs so web <img> tags can render without bearer.
-  // coverImageUrl: signed /raw URL for the cover image, or null if no cover.
-  // assetUrls: map of asset UUID → signed /raw URL for every asset:// embed in body.
   coverImageUrl: z.string().nullable().optional(),
   assetUrls: z.record(z.string(), z.string()).optional(),
 });
 
-// ─── Helpers ─────────────────────────────────────────────────────────────────
 
 async function categoryBelongsToUniverse(categoryId: string, universeId: string): Promise<boolean> {
   const [cat] = await db()
@@ -151,17 +122,6 @@ async function categoryBelongsToUniverse(categoryId: string, universeId: string)
   return !!cat;
 }
 
-/**
- * Phase 38 MEDIA-04 (D-06) write-time ownership gate for `coverImageId`.
- *
- * The FK `entries_cover_image_id_assets_id_fk` only requires the asset to exist
- * SOMEWHERE — it does NOT constrain the asset to the entry's universe. Without this
- * check, POST/PATCH persist a cover owned by a different universe: an invalid row that
- * later mints a signed asset URL the entry's universe does not own (broken <img>, and
- * the byte-serving scope checks in routes/assets.ts become the sole defense).
- *
- * Mirrors categoryBelongsToUniverse — same shape, same 400 contract.
- */
 async function assetBelongsToUniverse(assetId: string, universeId: string): Promise<boolean> {
   const [asset] = await db()
     .select({ id: assets.id })
@@ -171,12 +131,6 @@ async function assetBelongsToUniverse(assetId: string, universeId: string): Prom
   return !!asset;
 }
 
-/**
- * Phase 45 XREF-04 (D-07): Normalize an alias array.
- * - Trim whitespace from each item
- * - Drop empty strings
- * - De-dupe case-foldedly within the entry's own list (first occurrence wins)
- */
 function normalizeAliases(raw: string[]): string[] {
   const seen = new Set<string>();
   const result: string[] = [];
@@ -192,18 +146,6 @@ function normalizeAliases(raw: string[]): string[] {
   return result;
 }
 
-/**
- * Phase 45 XREF-04 (D-05/D-06): Validate aliases against existing universe entries.
- *
- * D-05: An alias may not duplicate (case-foldedly) any alias owned by a DIFFERENT entry
- *       in the same universe. Returns an error string if a collision is found.
- *
- * D-06: An alias may equal (case-foldedly) some entry's canonical title — soft warn only.
- *       Returns the list of warning strings for aliases that match a title.
- *
- * T-45-02: Uniqueness query is ALWAYS scoped to universe_id = uid (never cross-universe).
- * T-45-03: Uses parameterized Drizzle sql`` template; lower() applied in SQL — no injection.
- */
 async function validateAliasUniqueness(
   aliases: string[],
   universeId: string,
@@ -211,8 +153,6 @@ async function validateAliasUniqueness(
 ): Promise<{ error: string | null; warnings: string[] }> {
   if (aliases.length === 0) return { error: null, warnings: [] };
 
-  // Fetch sibling entries' title + aliases within the same universe.
-  // "Sibling" excludes the current entry (for PATCH — the entry being updated).
   // T-45-02: always scoped to universe_id = universeId — never cross-universe.
   const conditions = [eq(entries.universeId, universeId)];
   if (excludeEntryId) {
@@ -260,7 +200,6 @@ async function validateAliasUniqueness(
   return { error: null, warnings };
 }
 
-// ─── Route definitions ───────────────────────────────────────────────────────
 
 const listRoute = createRoute({
   method: 'get',
@@ -276,7 +215,6 @@ const listRoute = createRoute({
       tag: z.union([z.string(), z.array(z.string())]).optional(),
       category: z.string().optional(),
       q: z.string().optional(),
-      // Phase 36 DATA-03: three-state WIP filter (true = WIP only, false = finished only,
       // absent = all). field.* dot-keys are read raw in the handler, not declared here.
       wip: z.enum(['true', 'false']).optional(),
     }),
@@ -397,8 +335,6 @@ const patchRoute = createRoute({
   request: {
     params: uidAndIdParams,
     query: z.object({
-      // Phase 48 XREF-05 (D-08): dry-run flag. When ?preview=true, returns
-      // { affectedLinks, affectedEntries } WITHOUT writing any change.
       preview: z.string().optional(),
     }),
     body: {
@@ -466,15 +402,6 @@ const deleteRoute = createRoute({
   },
 });
 
-/**
- * Content-Forward Views §1.1 — resolve a signed thumb URL per row.
- *
- * One batched `assetOwners` query per response (never N+1). The LIST route is
- * already universe-scoped (`eq(entries.universeId, uid)` is conditions[0]), so
- * every row shares one universeId — passed explicitly rather than read per-row.
- * Dangling-tolerant: an id with no surviving (or owned) asset row yields null,
- * never a broken <img> src or a signed URL leaking into another universe.
- */
 async function withCoverThumbUrls<T extends { coverImageId: string | null }>(
   rows: T[],
   uid: string,
@@ -493,7 +420,6 @@ async function withCoverThumbUrls<T extends { coverImageId: string | null }>(
   }));
 }
 
-// ─── Router ──────────────────────────────────────────────────────────────────
 
 export const entryRoutes = new OpenAPIHono<AppEnv>()
 
@@ -508,7 +434,6 @@ export const entryRoutes = new OpenAPIHono<AppEnv>()
     const category = c.req.query('category')?.trim() || undefined;
     const rawQ = c.req.query('q')?.trim() || '';
     const q = rawQ.length > 0 ? rawQ : undefined;
-    // Phase 36 DATA-03: three-state WIP filter — 'true'/'false' filter, absent = all (D-08).
     const wip = c.req.query('wip');
 
     if (category && category !== 'uncategorized' && !/^[0-9a-f-]{36}$/i.test(category)) {
@@ -521,11 +446,9 @@ export const entryRoutes = new OpenAPIHono<AppEnv>()
     if (category === 'uncategorized') conditions.push(isNull(entries.categoryId));
     else if (category) conditions.push(eq(entries.categoryId, category));
     if (q) conditions.push(sql`search_vector @@ websearch_to_tsquery('english', ${q})`);
-    // Phase 36 DATA-03: three-state wip filter (absent = all, true/false = filter).
     if (wip === 'true') conditions.push(eq(entries.wip, true));
     else if (wip === 'false') conditions.push(eq(entries.wip, false));
 
-    // Phase 36 DATA-04: per-field exact-match meta filter. Scan raw ?field.{name}={value} params
     // (dot-notation keys aren't first-class in zod-openapi). T-36-03-01: the meta key and value are
     // bound as drizzle `sql` template params (->> operator), NEVER string-concatenated into the SQL
     // text — so a value like `' OR '1'='1` is matched literally (normal no-match, no injection).
@@ -545,17 +468,12 @@ export const entryRoutes = new OpenAPIHono<AppEnv>()
       entryType: entries.entryType,
       summary: entries.summary,
       tags: entries.tags,
-      // Phase 45 XREF-04 (D-08): surface aliases on list responses for wikilink resolution.
       aliases: entries.aliases,
       meta: entries.meta,
       icon: entries.icon,
       categoryId: entries.categoryId,
-      // Phase 29 SHARE-04: projected so list responses surface isPublic for the EntryEditor
-      // toggle + EntryDetail chip (Plan 07 wiring). Owner sees every entry's flag.
       isPublic: entries.isPublic,
-      // Phase 36 DATA-03: projected so list responses surface wip for the WipPill badge.
       wip: entries.wip,
-      // Phase 38 MEDIA-04 (D-06): surface coverImageId so the UI can render cover images
       // on list cards and so the import round-trip test can verify remapping.
       coverImageId: entries.coverImageId,
       createdAt: entries.createdAt,
@@ -601,17 +519,14 @@ export const entryRoutes = new OpenAPIHono<AppEnv>()
     }
 
     // Cross-universe cover guard: the FK alone accepts an asset from ANY universe.
-    // `null`/omitted means "no cover" and skips the check (nothing to own).
     if (data.coverImageId) {
       if (!(await assetBelongsToUniverse(data.coverImageId, uid))) {
         return c.json({ error: 'Cover image not found in universe' }, 400);
       }
     }
 
-    // Phase 45 XREF-04 (D-07): Normalize aliases — trim, drop empties, case-fold de-dupe.
     const normalizedAliases = normalizeAliases(data.aliases ?? []);
 
-    // Phase 45 XREF-04 (D-05/D-06): Validate alias uniqueness within the universe.
     const { error: aliasError, warnings: aliasWarnings } = await validateAliasUniqueness(
       normalizedAliases,
       uid,
@@ -629,26 +544,19 @@ export const entryRoutes = new OpenAPIHono<AppEnv>()
         summary: data.summary,
         body: data.body,
         tags: data.tags,
-        // Phase 45 XREF-04 (D-08): persist normalized aliases.
         aliases: normalizedAliases,
         meta: data.meta,
         icon: data.icon,
         categoryId: data.categoryId ?? null,
-        // Phase 29 D-10 / SHARE-04: zod default already converts undefined → false,
         // so omitting on POST yields private (safer-default).
         isPublic: data.isPublic,
-        // Phase 36 DATA-03: persist the WIP flag. zod default converts undefined → false,
         // and the ?? false is a belt-and-suspenders guard, so omitting on POST yields finished.
         wip: data.wip ?? false,
-        // Phase 38 MEDIA-04 (D-06): persist cover image ref. ?? null ensures omission
-        // yields null (no cover) rather than undefined (Drizzle would skip the column).
         coverImageId: data.coverImageId ?? null,
       })
       .returning();
 
     // D-16: best-effort last_used_at stamp on the referenced template.
-    // Runs AFTER the entry insert resolves, in its own implicit autocommit.
-    // Failure does NOT roll back the entry create — the entry is the source of truth.
     if (data.templateId) {
       try {
         await db()
@@ -660,7 +568,6 @@ export const entryRoutes = new OpenAPIHono<AppEnv>()
       }
     }
 
-    // Phase 45 XREF-04 (D-06): include aliasWarnings if any alias matches an existing title.
     const response = aliasWarnings.length > 0
       ? { ...created, aliasWarnings }
       : created;
@@ -721,13 +628,11 @@ export const entryRoutes = new OpenAPIHono<AppEnv>()
       .where(and(eq(issueEntries.entryId, entryId), eq(issues.resolved, false)))
       .orderBy(issues.createdAt);
 
-    // Phase 38 UAT-fix: compute pre-signed URLs so web <img> tags can render
     // cover images and inline embeds without needing an Authorization: Bearer header.
     const coverImageUrl = entry.coverImageId
       ? `/api/universes/${uid}/assets/${entry.coverImageId}/raw${signAssetUrl(uid, entry.coverImageId, 'raw')}`
       : null;
 
-    // Extract every distinct asset:// UUID from the entry body and sign each one.
     const assetUuidRe = /asset:\/\/([0-9a-fA-F-]{36})/g;
     const assetUrls: Record<string, string> = {};
     if (entry.body) {
@@ -749,7 +654,6 @@ export const entryRoutes = new OpenAPIHono<AppEnv>()
     const universe = await requireUniverse(uid, userId);
     const patch = c.req.valid('json');
 
-    // Phase 48 XREF-05 (D-08): ?preview=true returns affected-link counts WITHOUT writing.
     const preview = c.req.query('preview') === 'true';
 
     if (patch.entryType && !universe.entryTypes.includes(patch.entryType)) {
@@ -763,19 +667,15 @@ export const entryRoutes = new OpenAPIHono<AppEnv>()
     }
 
     // Cross-universe cover guard (PATCH semantics): only validate when the caller
-    // actually supplies an asset id. `undefined` = field untouched (skip), `null` =
-    // clear the cover (nothing to own) — both must remain allowed.
     if (typeof patch.coverImageId === 'string') {
       if (!(await assetBelongsToUniverse(patch.coverImageId, uid))) {
         return c.json({ error: 'Cover image not found in universe' }, 400);
       }
     }
 
-    // Phase 45 XREF-04 (D-07): Normalize aliases if provided (PATCH non-destructive — undefined = skip).
     let patchAliasWarnings: string[] = [];
     if (patch.aliases !== undefined) {
       const normalizedAliases = normalizeAliases(patch.aliases);
-      // Phase 45 XREF-04 (D-05/D-06): validate against sibling entries, excluding self.
       const { error: aliasError, warnings } = await validateAliasUniqueness(
         normalizedAliases,
         uid,
@@ -785,12 +685,9 @@ export const entryRoutes = new OpenAPIHono<AppEnv>()
         return c.json({ error: aliasError }, 400);
       }
       patchAliasWarnings = warnings;
-      // Replace the patch aliases with the normalized version.
       patch.aliases = normalizedAliases;
     }
 
-    // Phase 48 XREF-05 (D-06): Detect propagation trigger.
-    // Fetch the CURRENT entry row to diff old vs new title+aliases.
     const [currentEntry] = await db()
       .select({ title: entries.title, aliases: entries.aliases })
       .from(entries)
@@ -800,7 +697,6 @@ export const entryRoutes = new OpenAPIHono<AppEnv>()
       throw new HTTPException(404, { message: 'Entry not found' });
     }
 
-    // Compute staleNames = lowercased (oldTitle ∪ oldAliases) MINUS lowercased (newTitle ∪ newAliases).
     // D-05: surviving names excluded; D-06: alias add-only contributes nothing (no stale names).
     const oldTitle = currentEntry.title;
     const oldAliases = currentEntry.aliases ?? [];
@@ -835,14 +731,12 @@ export const entryRoutes = new OpenAPIHono<AppEnv>()
         throw new HTTPException(404, { message: 'Entry not found' });
       }
 
-      // Phase 45 XREF-04 (D-06): include aliasWarnings if any alias matches an existing title.
       const response = patchAliasWarnings.length > 0
         ? { ...updated, aliasWarnings: patchAliasWarnings, rewriteCount: 0 }
         : { ...updated, rewriteCount: 0 };
       return c.json(response as any, 200);
     }
 
-    // Phase 48 XREF-05: staleNames is non-empty — propagation needed.
     // Fetch all sibling bodies (universe-scoped, excludes self — T-48-04).
     const siblings = await db()
       .select({ id: entries.id, body: entries.body })
@@ -865,7 +759,6 @@ export const entryRoutes = new OpenAPIHono<AppEnv>()
 
     // Commit mode: wrap entry update + all sibling rewrites in a single transaction (SC2, T-48-05).
     const { updated, rewriteCount } = await db().transaction(async (tx) => {
-      // 1. Update the entry itself.
       const [updatedEntry] = await tx
         .update(entries)
         .set({ ...patch, updatedAt: new Date() })

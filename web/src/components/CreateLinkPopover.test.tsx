@@ -79,7 +79,7 @@ describe('CreateLinkPopover', () => {
     expect(screen.getByText('Alpha')).toBeInTheDocument();
     expect(screen.getByText('Beta')).toBeInTheDocument();
 
-    // Phase 35 REL-01: two comboboxes now exist (LinkTypeSelect + RelationCombobox).
+
     // Assert both by their distinctive placeholders.
     expect(screen.getByPlaceholderText('Search or enter a type...')).toBeInTheDocument();
     const labelInput = screen.getByPlaceholderText(
@@ -90,7 +90,7 @@ describe('CreateLinkPopover', () => {
 
   it('renders both LinkTypeSelect and RelationCombobox inside the popover content (GRAPH-03)', async () => {
     renderPopover();
-    // Phase 35 REL-01: LinkTypeSelect (type) + RelationCombobox (display label) — both role=combobox
+
     await screen.findByRole('heading', { name: 'Create link' });
     const comboboxes = screen.getAllByRole('combobox');
     expect(comboboxes).toHaveLength(2);
@@ -109,7 +109,7 @@ describe('CreateLinkPopover', () => {
     const user = userEvent.setup();
     const { onOpenChange } = renderPopover();
 
-    // Phase 35 REL-01: two comboboxes; type the label into the RelationCombobox (display label).
+
     await screen.findByRole('heading', { name: 'Create link' });
     const input = screen.getByPlaceholderText('e.g. sworn shield since the Sundering');
     await user.click(input);
@@ -141,7 +141,7 @@ describe('CreateLinkPopover', () => {
 
   it('existingLabelHint becomes the initial label value (D-03d)', async () => {
     renderPopover({ existingLabelHint: 'rival of' });
-    // Phase 35 REL-01: existingLabelHint hydrates the RelationCombobox (display label).
+
     // Disambiguate from LinkTypeSelect by placeholder.
     await screen.findByRole('heading', { name: 'Create link' });
     const input = screen.getByPlaceholderText(
@@ -164,7 +164,7 @@ describe('CreateLinkPopover', () => {
     const onErrorSpy = vi.fn();
     const { onOpenChange } = renderPopover({ onError: onErrorSpy });
 
-    // Phase 35 REL-01: two comboboxes; target the display label (RelationCombobox) by placeholder
+
     await screen.findByRole('heading', { name: 'Create link' });
     const input = screen.getByPlaceholderText('e.g. sworn shield since the Sundering');
     await user.click(input);
@@ -228,7 +228,7 @@ describe('CreateLinkPopover', () => {
     const user = userEvent.setup();
     renderPopover();
 
-    // Phase 35 REL-01: two comboboxes; target the display label (RelationCombobox) by placeholder
+
     await screen.findByRole('heading', { name: 'Create link' });
     const input = screen.getByPlaceholderText('e.g. sworn shield since the Sundering');
     await user.click(input);
@@ -245,7 +245,7 @@ describe('CreateLinkPopover', () => {
     const user = userEvent.setup();
     const { onOpenChange } = renderPopover();
 
-    // Phase 35 REL-01: cancel/discard button uses aria-label="Discard link" (renders × symbol)
+
     const cancelBtn = await screen.findByRole('button', { name: 'Discard link' });
     await user.click(cancelBtn);
 

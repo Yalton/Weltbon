@@ -1,10 +1,6 @@
 import type { HTMLAttributes } from 'react';
 import { cx } from './cx';
 
-/**
- * Glass surface (spec §1.1 --surface-glass). `hover` adds the interactive
- * glow treatment used by cards that navigate somewhere.
- */
 export function Panel({
   hover = false,
   className = '',

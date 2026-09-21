@@ -1,5 +1,4 @@
 /**
- * #50 Task 8 — TanStack Query hooks for /api/llm-shares/*.
  *
  * Wire shape (api/src/routes/llm-shares.ts):
  *   GET    /api/llm-shares                 → { grants: SharedGrant[] }
@@ -45,9 +44,7 @@ import { llmModelsKey } from './useAudits';
 export type SharedProvider = 'anthropic' | 'openai';
 
 export interface SharedUsage {
-  /** First of the current UTC month, `YYYY-MM-01`. */
   monthStart: string;
-  /** Four-decimal USD strings, as the server formats them. */
   settledUsd: string;
   reservedUsd: string;
   limitUsd: string;
@@ -58,7 +55,6 @@ export interface SharedUsage {
 }
 
 export interface SharedDisclosure {
-  /** 'Anthropic' | 'OpenAI' — display form, from the server. */
   providerName: string;
   credentialOwner: 'administrator-managed';
   contentLeavesThisInstance: true;
@@ -69,7 +65,6 @@ export interface SharedGrant {
   provider: SharedProvider;
   status: 'active';
   createdAt: string;
-  /** null until the recipient accepts the current disclosure. */
   consentedAt: string | null;
   policyVersion: string;
   disclosure: SharedDisclosure;
@@ -82,13 +77,6 @@ export interface SharedConsent {
   policyVersion: string;
 }
 
-/**
- * The administrator-side view, used by the admin screen in Task 9.
- *
- * It names both parties because an administrator granting access legitimately
- * needs to know who they are granting it to — the asymmetry with SharedGrant
- * above is deliberate, not an oversight.
- */
 export interface AdminSharedGrant {
   id: string;
   owner: { id: string; displayName: string; email: string };
@@ -107,7 +95,6 @@ export const ADMIN_LLM_SHARES_QUERY_KEY = ['admin-llm-shares'] as const;
 
 /**
  * Consent is the thing that decides whether `/llm/models` answers with the
- * owner's catalog or a 403 (Task 6 routed model listing through the effective
  * credential), so accepting or withdrawing changes an answer cached elsewhere
  * under a different key — with a 30-minute staleTime, which is how long a
  * newly-accepted recipient would otherwise keep seeing an empty model picker.
@@ -122,7 +109,6 @@ function invalidateProviderModels(qc: QueryClient, grantId: string) {
   if (provider) qc.invalidateQueries({ queryKey: llmModelsKey(provider) });
 }
 
-/** List the caller's active shared connections, consented or not. */
 export function useSharedLlmGrants(): UseQueryResult<{ grants: SharedGrant[] }> {
   return useQuery({
     queryKey: LLM_SHARES_QUERY_KEY,
@@ -130,14 +116,6 @@ export function useSharedLlmGrants(): UseQueryResult<{ grants: SharedGrant[] }> 
   });
 }
 
-/**
- * Accept the disclosure for one grant.
- *
- * No request body: the server rejects a non-empty one, and there is nothing
- * the client could usefully say. Invalidating the list rather than writing
- * the response into the cache is deliberate — consent changes `usage` and
- * `consentedAt` together, and only the server knows the new pair.
- */
 export function useConsentSharedLlmGrant(): UseMutationResult<
   SharedConsent,
   Error,
@@ -154,14 +132,6 @@ export function useConsentSharedLlmGrant(): UseMutationResult<
   });
 }
 
-/**
- * Withdraw consent for one grant.
- *
- * Idempotent server-side, including when consent was already absent, so a
- * double-click cannot produce a confusing 404. Invalidate on error as well as
- * on success: a failure here usually means the grant changed underneath us,
- * and the list is the thing that says how.
- */
 export function useWithdrawSharedLlmConsent(): UseMutationResult<
   void,
   Error,
@@ -181,26 +151,14 @@ export function useWithdrawSharedLlmConsent(): UseMutationResult<
   });
 }
 
-// ─── Administrator hooks (Task 9) ───────────────────────────────────────────
-//
 // Wire shape (api/src/routes/admin-llm-shares.ts, mounted at /api/admin/llm-shares):
 //   GET    /api/admin/llm-shares       → AdminSharedGrant[]  (bare array, unlike
-//                                          the recipient's `{ grants: [...] }`)
 //   POST   /api/admin/llm-shares       → AdminSharedGrant (201), body EXACTLY
-//                                          `{ recipientUserId, provider }` — the
-//                                          server's `createBody` schema is
-//                                          `.strict()` and rejects a third field.
 //   DELETE /api/admin/llm-shares/:id   → 204 (void)
-//
 // Every mutation here invalidates BOTH this list and the admin operator-log
 // (`['admin-audit-log']`, see useAdminUsers.ts) because granting or revoking
-// shared access is itself an administrative action the audit log records
 // (admin-llm-shares.ts calls into the same operator-action logging every
-// other admin mutation does) — leaving the log stale would show every OTHER
-// admin action instantly but a grant/revoke only after some unrelated
-// invalidation happened to run.
 
-/** List every shared grant system-wide (active and revoked), admin-only. */
 export function useAdminSharedLlmGrants(): UseQueryResult<AdminSharedGrant[]> {
   return useQuery({
     queryKey: ADMIN_LLM_SHARES_QUERY_KEY,
@@ -236,11 +194,6 @@ export function useCreateAdminSharedLlmGrant(): UseMutationResult<
   });
 }
 
-/**
- * Revoke a shared connection by grant id. Idempotent server-side (revoking
- * an already-revoked grant still returns 204 — see admin-llm-shares.ts),
- * same reasoning as `useWithdrawSharedLlmConsent`'s double-click safety.
- */
 export function useRevokeAdminSharedLlmGrant(): UseMutationResult<
   void,
   Error,

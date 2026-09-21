@@ -1,43 +1,3 @@
-/**
- * SyncTab — the universe-scoped half of sync (Plan F, Task 3).
- *
- * WHY HERE AND NOT /settings/sync (F-01). `sync_remotes` has no universe
- * column: one saved remote is reused by every universe linked to that peer, so
- * it is managed once per account. `sync_links` and `sync_conflicts` DO carry a
- * universe id, so they belong to the universe they describe. The split mirrors
- * the data model rather than a layout preference — which is also why a user
- * with no remotes is sent to the other surface instead of being offered a form
- * that would create an account-scoped row from inside one universe.
- *
- * F-02 — "SYNC NOW" BLOCKS INLINE. The mutation is awaited and the outcome
- * rendered in place: a result summary, or the mapped error. A `busy` failure
- * offers "Run anyway" (`?force=true`), the recovery path for a claim left stuck
- * by a closed tab, since the server lease is 30 minutes.
- *
- * F-06 — ELAPSED TIME, NEVER SYNTHETIC PROGRESS. A run has no progress signal
- * on the wire, so the only honest thing to show is how long it has been going.
- * A first sync also copies image bytes and can legitimately take minutes, so a
- * link that has never completed one says so — a correct slow run must not look
- * like a hang.
- *
- * HONEST REPORTING.
- *   - `assetsUnrepairable > 0` is stated with its count. The run SUCCEEDED;
- *     this is a warning, not a failure, and hiding the number would leave the
- *     user unable to tell one lost file from two hundred.
- *   - `assetsRepairedLocally` is never shown as a figure. It counts PLANNED
- *     restores and is known to undercount, so a precise number would be one the
- *     user could disprove.
- *   - `thumbSizeBytes` appears nowhere: it is no longer comparable across
- *     instances.
- *
- * ERROR COPY. Every failure here goes through `syncErrorMessage` (a thrown run
- * error) or `lastErrorMessage` (the persisted `sync_links.last_error` column)
- * and out via the shared `SyncErrorNotice`. No error prose is written in this
- * file, and the notice is imported rather than reimplemented — it suppresses
- * the "show details" disclosure when `raw` already contains `detail`, which is
- * exactly the `lastErrorMessage` shape, and a hand-rolled copy would print the
- * same sentence twice.
- */
 
 import { useEffect, useState } from 'react';
 import { Link } from 'react-router-dom';
@@ -63,27 +23,11 @@ import { SyncRunSummary } from './SyncRunSummary';
 import { SyncConflictList } from './SyncConflictList';
 import { ConfirmDialog } from './ConfirmDialog';
 
-/**
- * One link's in-flight / just-finished run, as this session saw it.
- *
- * A discriminated union rather than a bag of optionals, so the impossible
- * states cannot be written. `{pending: true}` without `startedAt` used to
- * typecheck, and the `startedAt ?? Date.now()` fallback it forced would have
- * handed `ElapsedTime` a FRESH value on every render — resetting the clock
- * each tick, so the counter could never leave `0s`. Making `startedAt`
- * mandatory on the running variant removes both the bug and the fallback.
- *
- * `neverSynced` is captured when the run STARTS rather than read from the live
- * row: links share one query key, so another link's run settling refetches this
- * row mid-run, and a server that has already recorded this run would flip the
- * first-sync warning off underneath the user still waiting for it.
- */
 type RunState =
   | { phase: 'running'; startedAt: number; neverSynced: boolean }
   | { phase: 'done'; result: SyncRunResult }
   | { phase: 'failed'; error: SyncCopy };
 
-/** Seconds since `since`, ticking. The only progress signal a run actually has. */
 function ElapsedTime({ since, testId }: { since: number; testId: string }) {
   const [now, setNow] = useState(() => Date.now());
   useEffect(() => {
@@ -95,8 +39,6 @@ function ElapsedTime({ since, testId }: { since: number; testId: string }) {
   // aria-live="polite" AND aria-atomic="true". Mutating text inside it once a
   // second makes a screen reader re-announce the WHOLE block — "Syncing, 1s
   // elapsed, keep this tab open…", plus the first-sync paragraph — every second,
-  // for a run this component's own copy says may take minutes. Hidden here, the
-  // region announces one stable sentence and the visual display is untouched.
   return (
     <span data-testid={testId} aria-hidden="true">
       {Math.max(0, Math.floor((now - since) / 1000))}s
@@ -104,7 +46,6 @@ function ElapsedTime({ since, testId }: { since: number; testId: string }) {
   );
 }
 
-/** Tailwind color classes for each `syncStatusCopy` tone. */
 const STATUS_TONE_CLASS: Record<SyncStatusTone, string> = {
   ok: 'text-ink-secondary',
   busy: 'text-[color:var(--color-accent)]',
@@ -112,7 +53,6 @@ const STATUS_TONE_CLASS: Record<SyncStatusTone, string> = {
   paused: 'text-rose-500 dark:text-rose-400',
 };
 
-/** One linked remote: its state, its run controls, and this run's outcome. */
 function SyncLinkRow({
   link,
   state,
@@ -126,30 +66,15 @@ function SyncLinkRow({
   onRun: (link: SyncLink, force?: boolean) => void;
   onRemove: (link: SyncLink) => void;
   onSetAutoSync: (link: SyncLink, autoSync: boolean) => void;
-  /** True while THIS link's own auto-sync toggle mutation is in flight. */
   autoSyncPending: boolean;
 }) {
-  // A run this session FAILED gets `combineRunError`, which either folds the
-  // refetched column into the thrown copy (same code) or hands it back to be
-  // shown alongside (different code, or no code — the generic "Failed to fetch"
   // case, which is the likeliest failure of a multi-minute request and the one
-  // where the column holds the only real diagnosis).
-  //
-  // Suppressing the column outright whenever ANY run state existed was the
-  // original bug here: the `onSettled` refetch fired, the cache updated, and
-  // the user was shown "Something went wrong while talking to the server" while
-  // the answer sat unread one field away.
   const combined = state?.phase === 'failed' ? combineRunError(state.error, link.lastError) : null;
   const runError = combined?.copy ?? null;
-  // On a run that has not failed (in flight, or succeeded) the column describes
-  // something already superseded, so it stays hidden.
   const persisted = state ? (combined?.unmergedPersisted ?? null) : lastErrorMessage(link.lastError);
 
   // #44 (AS-10): driven by the SERVER's `link.status`/`pausedReason`/
-  // `autoSync`/`failureCount`/`nextPollAt`, not by `state` above. `state` only
-  // exists for a run THIS session started by pressing "Sync now" — an
   // auto-sync run started by the scheduler has no such local origin, so this
-  // line is the only place it becomes visible at all.
   const status = syncStatusCopy(link, new Date());
 
   return (
@@ -196,17 +121,7 @@ function SyncLinkRow({
               status.text
             )}
           </span>
-          {/* AS-08: "Sync now" stays enabled on a paused link — a successful
-              manual run is one of the three ways a user clears a pause, and
-              disabling it here would trap them. Only a run THIS button
-              started (`state?.phase === 'running'`) disables it.
 
-              The clear itself lives in `releaseLink`
-              (api/src/services/sync/link-state.ts), on the success path every
-              run flows through. It genuinely did not exist until the #44
-              whole-branch review: the button was enabled, the run succeeded,
-              and the row stayed paused — so an enabled button here is only
-              half the remedy, and this comment is the other half's pointer. */}
           <button
             type="button"
             onClick={() => onRun(link)}
@@ -276,11 +191,6 @@ function SyncLinkRow({
 }
 
 // #44 (AS-10): modest poll while the tab is mounted, so a run the SCHEDULER
-// started (no "Sync now" click, so no local `state` transition) becomes
-// visible without the user manually refreshing. The scheduler itself ticks
-// every 5s and polls a due link at most once a minute (api/src/services/sync
-// /scheduler.ts); 15s keeps this comfortably more frequent than that poll
-// cadence without hammering the server on every render.
 const LINKS_REFETCH_INTERVAL_MS = 15_000;
 
 export function SyncTab({ universeId }: { universeId: string }) {
@@ -296,11 +206,6 @@ export function SyncTab({ universeId }: { universeId: string }) {
   const [runs, setRuns] = useState<Record<string, RunState>>({});
   const [chosenRemote, setChosenRemote] = useState('');
   const [removeTarget, setRemoveTarget] = useState<SyncLink | null>(null);
-  // `formError` belongs to the ADD form and is rendered beneath it. A failed
-  // removal used to borrow it, so the dialog closed (reading as success) and
-  // the explanation appeared under "Remote to link", labelled as a create
-  // error and possibly below the fold. An error has to appear where the action
-  // was taken.
   const [formError, setFormError] = useState<SyncCopy | null>(null);
   const [removeError, setRemoveError] = useState<SyncCopy | null>(null);
 
@@ -314,7 +219,6 @@ export function SyncTab({ universeId }: { universeId: string }) {
     }));
     try {
       // F-02: awaited, not fired and forgotten. The user stays on this row and
-      // is shown what actually happened.
       const result = await runLink.mutateAsync({ id: link.id, force });
       setRuns((prev) => ({ ...prev, [link.id]: { phase: 'done', result } }));
     } catch (err) {
@@ -325,8 +229,6 @@ export function SyncTab({ universeId }: { universeId: string }) {
   // Errors are silently absorbed here on purpose: `setAutoSync` is a fire-and
   // -forget checkbox toggle, not a form submission, and the mutation's own
   // cache (still holding the pre-toggle value on failure) is what makes the
-  // checkbox visibly snap back — no separate error banner is needed for a
-  // single boolean the user can just click again.
   const handleSetAutoSync = (link: SyncLink, autoSync: boolean) => {
     setAutoSync.mutate({ linkId: link.id, autoSync });
   };
@@ -472,9 +374,7 @@ export function SyncTab({ universeId }: { universeId: string }) {
         {formError && <SyncErrorNotice copy={formError} testId="sync-link-create-error" />}
       </div>
 
-      {/* F-03/F-04: the LWW losers this universe's runs recorded, flat and in
-          the server's order. Below the links, because it is the review surface
-          for what those runs already did. */}
+
       <SyncConflictList universeId={universeId} />
 
       <ConfirmDialog
@@ -484,7 +384,6 @@ export function SyncTab({ universeId }: { universeId: string }) {
         }}
         title="Remove sync link"
         // The stored base snapshot goes with the row, so a re-linked pair has
-        // no shared history to merge against and starts from a full bootstrap.
         body={
           removeTarget
             ? `This universe will stop syncing with ${removeTarget.remoteLabel || removeTarget.remoteBaseUrl}. Nothing is deleted on either instance, but linking them again would start from a fresh full sync.`
@@ -494,16 +393,11 @@ export function SyncTab({ universeId }: { universeId: string }) {
         cancelLabel="Cancel"
         destructive
         onConfirm={async () => {
-          // `isPending` guards a double confirm: ConfirmDialog only closes
-          // AFTER onConfirm resolves, so its button stays live for the whole
-          // request and a second click would fire a second DELETE — whose 404
-          // would then report a failure for a removal that worked.
           if (!removeTarget || deleteLink.isPending) return;
           const id = removeTarget.id;
           setRemoveError(null);
           try {
             await deleteLink.mutateAsync({ id });
-            // Drop the row's local run state with the row itself.
             setRuns((prev) => {
               if (!(id in prev)) return prev;
               const next = { ...prev };

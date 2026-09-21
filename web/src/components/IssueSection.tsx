@@ -14,33 +14,10 @@ import type { AuditCategory, Issue } from '../hooks/useIssues';
 interface Props {
   universeId: string;
   entryId: string;
-  /** Open issues attached to this entry (from EntryDetail response, ISS-06). */
   issues: EntryIssueRef[];
   onChanged?: () => void;
 }
 
-/**
- * Per-entry issue list rendered on EntryDetail below LinkSection.
- *
- * Shows SeverityPill + title + Resolve quick-action for each open human issue.
- * A "Flag issue" button opens IssueEditor pre-populated with { entryIds:
- * [entryId] } so the user can raise a concern without leaving the entry.
- *
- * Phase 25 (D-05) — Minimal AI treatment:
- * AI rows show badge + category emoji + category-derived left-edge stripe + title
- * + Dismiss action (or Restore when dismissedAt != null, defense-in-depth) +
- * "View reasoning" link to global IssuesView. No ReasoningPanel embedded — the
- * reasoning UX is centralized on the global IssuesView.
- *
- * TODO: EntryIssueRef does not yet carry source/category/dismissedAt fields from
- * the API's EntryDetail projection. These are accessed via `(issue as any)` casts
- * until EntryIssueRef is extended to include Phase 25 AI fields (follow-up task).
- * The casts are safe at runtime as long as the API returns the AI fields in the
- * EntryDetail issues array (which it does per Plan 25-02's projection).
- *
- * Uses one useUpdateIssue instance with per-click { id, patch } — same
- * pattern as useUpdateCategory in CategoryManageDialog.
- */
 export function IssueSection({ universeId, entryId, issues, onChanged }: Props) {
   const [editorOpen, setEditorOpen] = useState(false);
   const [auditDialogOpen, setAuditDialogOpen] = useState(false);
@@ -117,7 +94,6 @@ export function IssueSection({ universeId, entryId, issues, onChanged }: Props) 
                 </span>
 
                 {isAI ? (
-                  /* AI row actions — defense-in-depth: Restore when already dismissed */
                   <span className="flex items-center gap-2">
                     {isDismissed ? (
                       <button
@@ -146,7 +122,6 @@ export function IssueSection({ universeId, entryId, issues, onChanged }: Props) 
                     </Link>
                   </span>
                 ) : (
-                  /* Human row — byte-identical to pre-Phase-25 Resolve action */
                   <button
                     type="button"
                     onClick={() => handleResolve(issue.id)}
@@ -169,10 +144,7 @@ export function IssueSection({ universeId, entryId, issues, onChanged }: Props) 
         onSaved={() => onChanged?.()}
       />
 
-      {/* Audit cost / progress dialog — opened by ⚖ Audit this entry button (D-12).
-          Mount only when the audit feature is enabled on this universe so the
-          dialog's useEstimateAudit query never fires for opted-out universes
-          (defense-in-depth: server is canonical guard via Plan 08 /estimate). */}
+
       {universe?.auditEnabled === true && (
         <AuditCostDialog
           open={auditDialogOpen}

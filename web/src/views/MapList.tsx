@@ -21,12 +21,8 @@ const COPY = {
   deleteConfirmLabel: 'Delete map',
 } as const;
 
-// ─────────────────────────────────────────────────────────────────────────────
 
 export function MapList() {
-  // Phase 40 Plan 04 — share-mode awareness.
-  // In share mode there is no :uid param; substitute 'share' so useMaps
-  // fetches /universes/share/maps → /api/share/maps via api/client.ts seam.
   const { uid: paramUid } = useParams<{ uid: string }>();
   const isShare = useShareMode();
   const shareToken = useShareToken();

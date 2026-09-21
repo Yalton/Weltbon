@@ -10,43 +10,6 @@ import type {
   ExportPayloadIssue,
 } from './payload.js';
 
-/**
- * Markdown ZIP exporter (EXP-02 + EXP-05 ZIP streaming).
- *
- * Produces a ZIP whose root is `{universe-slug}/`, containing:
- *   - `_index.md` — TOC with H1, counts paragraph, per-category sections
- *     (in user sortOrder), and Uncategorized last.
- *   - `{Category Folder}/{entry-slug}.md` per entry — YAML frontmatter,
- *     H1 title, summary blockquote (if any), body, then ## Links,
- *     ## Backlinks, ## Open Issues sections (each omitted when empty).
- *
- * Streaming: archiver is a Node Readable; we bridge to a web
- * ReadableStream<Uint8Array> via Readable.toWeb() so Hono's `c.body()`
- * can flush bytes to the client without ever buffering the whole ZIP.
- *
- * Slug source-of-truth: `payload.entrySlugMap` is the ONLY place the
- * exporter looks up filenames — that's how the link writer and the file
- * writer agree (RESEARCH Pitfall 7). Outbound link rendering AND backlink
- * rendering both use the same map.
- *
- * Bidirectional link convention: a single bidirectional link record
- * shows up as an outbound link on BOTH endpoints. Backlinks NEVER
- * duplicate a bidirectional link — readers see "the link goes both ways"
- * by virtue of seeing the same target listed under outbound on each side,
- * not by seeing it as a backlink to itself.
- *
- * Resolved issues are absent: we read from `payload.openIssues`, which
- * the loader has already filtered to `resolved=false`.
- */
-/**
- * Rewrite `asset://uuid` refs in an entry body to relative paths within the ZIP.
- *
- * Pattern D-08: `![alt](asset://<uuid>)` → `![alt](../../assets/<uuid>.<ext>)`
- * (entries live at `{universe}/{folder}/{slug}.md`; assets live at `assets/<uuid>.<ext>`
- * at the ZIP root alongside the universe folder — hence two levels of `..`).
- *
- * Missing assets (bytes not in payload) get a `"missing"` title attribute.
- */
 function rewriteAssetRefs(body: string, assetMap: Map<string, ExportPayloadAsset>): string {
   return body.replace(/!\[([^\]]*)\]\(asset:\/\/([a-f0-9-]+)\)/gi, (_, alt, uuid) => {
     const asset = assetMap.get(uuid);
@@ -58,9 +21,6 @@ function rewriteAssetRefs(body: string, assetMap: Map<string, ExportPayloadAsset
 export function buildMarkdownZip(payload: ExportPayload): ReadableStream<Uint8Array> {
   const archive = archiver('zip', { zlib: { level: 6 } });
 
-  // Critical: attach error listener BEFORE finalize so an internal archiver
-  // failure surfaces as a stream error rather than an unhandled emit (see
-  // RESEARCH Pitfall 2). Readable.toWeb() propagates this to the web stream.
   archive.on('error', (err) => {
     archive.destroy(err);
   });
@@ -69,7 +29,6 @@ export function buildMarkdownZip(payload: ExportPayload): ReadableStream<Uint8Ar
   const slugMap = payload.entrySlugMap;
   const categoryById = new Map(payload.categories.map((c) => [c.id, c] as const));
   const entryById = new Map(payload.entries.map((e) => [e.id, e] as const));
-  // Phase 38 MEDIA-06 (D-08): asset map for rewriting inline refs.
   const assetMap = new Map(payload.assets.map((a) => [a.id, a] as const));
 
   const folderForCategoryId = (catId: string | null): string => {
@@ -79,18 +38,15 @@ export function buildMarkdownZip(payload: ExportPayload): ReadableStream<Uint8Ar
   };
 
   // Outbound index: source -> [{ relation, otherEntryId }]
-  // Bidirectional links contribute to BOTH endpoints' outbound lists.
   const outboundBySource = new Map<
     string,
     Array<{ relation: string; otherEntryId: string }>
   >();
   for (const l of payload.links) {
     push(outboundBySource, l.sourceEntryId, {
-      // Phase 35 REL-01: label is now nullable; fall back to linkType then 'related'
       relation: l.label ?? l.linkType ?? 'related',
       otherEntryId: l.targetEntryId,
     });
-    // Phase 35 REL-01: was `if (l.bidirectional)` — undirected links appear on both sides
     if (l.direction === 'undirected') {
       push(outboundBySource, l.targetEntryId, {
         relation: l.label ?? l.linkType ?? 'related',
@@ -100,17 +56,13 @@ export function buildMarkdownZip(payload: ExportPayload): ReadableStream<Uint8Ar
   }
 
   // Backlinks index: target -> [sourceId]. Undirected links are NOT
-  // mirrored here — they already show up on both sides as outbound, and
-  // doubling them as backlinks would clutter the file with redundant info.
   const backlinksByTarget = new Map<string, string[]>();
   for (const l of payload.links) {
-    // Phase 35 REL-01: was `if (l.bidirectional) continue`
     if (l.direction === 'undirected') continue;
     push(backlinksByTarget, l.targetEntryId, l.sourceEntryId);
   }
 
   // Open issues index: entry -> [issue]. We iterate over openIssues only,
-  // so resolved ones can never leak in.
   const openIssuesByEntry = new Map<string, ExportPayloadIssue[]>();
   for (const issue of payload.openIssues) {
     for (const eid of issue.entryIds) {
@@ -118,13 +70,11 @@ export function buildMarkdownZip(payload: ExportPayload): ReadableStream<Uint8Ar
     }
   }
 
-  // 1. _index.md
   archive.append(
     buildIndexMd(payload, slugMap, folderForCategoryId),
     { name: `${universeFolder}/_index.md` },
   );
 
-  // 2. one .md per entry
   for (const entry of payload.entries) {
     const folder = folderForCategoryId(entry.categoryId);
     const slug = slugMap.get(entry.id) ?? asciiSlug(entry.title);
@@ -141,8 +91,6 @@ export function buildMarkdownZip(payload: ExportPayload): ReadableStream<Uint8Ar
     archive.append(md, { name: `${universeFolder}/${folder}/${slug}.md` });
   }
 
-  // Phase 38 MEDIA-06 (D-08): append asset bytes into the ZIP under assets/ at root.
-  // Use async IIFE so we can await storageBackend.get; finalize after all appends.
   (async () => {
     for (const asset of payload.assets) {
       const bytes = await storageBackend.get(asset.id);
@@ -164,12 +112,6 @@ function push<K, V>(m: Map<K, V[]>, k: K, v: V): void {
   else m.set(k, [v]);
 }
 
-/**
- * Filesystem-safe folder name: replace path separators with `-`, trim,
- * fall back to "Uncategorized" if empty after sanitization. Used for
- * BOTH the on-disk folder name AND the relative-link path so links
- * always resolve back to the right file.
- */
 function sanitizeFolderName(label: string): string {
   const cleaned = label.replace(/[\/\\]/g, '-').trim();
   return cleaned || 'Uncategorized';
@@ -179,13 +121,6 @@ function todayYYYYMMDD(): string {
   return new Date().toISOString().slice(0, 10);
 }
 
-/**
- * Build the relative link from one entry's .md file to another's.
- * Same folder → `./other-slug.md`; different folder → `../OtherFolder/other-slug.md`.
- * (The ZIP root is `{universe-slug}/`; entries live two levels deep at
- * `{universe-slug}/{folder}/{slug}.md`, so cross-folder hops are always
- * one `..` then into the target folder.)
- */
 function relPathToEntry(thisFolder: string, otherFolder: string, otherSlug: string): string {
   if (thisFolder === otherFolder) return `./${otherSlug}.md`;
   return `../${otherFolder}/${otherSlug}.md`;
@@ -254,17 +189,14 @@ interface EntryRenderIndex {
   backlinksByTarget: Map<string, string[]>;
   openIssuesByEntry: Map<string, ExportPayloadIssue[]>;
   thisFolder: string;
-  /** Phase 38 MEDIA-06 (D-08): used to rewrite asset:// refs to relative paths. */
   assetMap: Map<string, ExportPayloadAsset>;
 }
 
 function buildEntryMd(entry: ExportPayloadEntry, idx: EntryRenderIndex): string {
   const parts: string[] = [];
 
-  // Frontmatter — body is NOT in here (lives below the H1).
   // yaml.stringify with lineWidth: 0 disables auto-wrapping; multi-line
   // strings get block scalars and colons-in-strings get quoted (RESEARCH
-  // Pitfall 6).
   const frontmatter = yaml.stringify(
     {
       type: entry.entryType,
@@ -286,7 +218,6 @@ function buildEntryMd(entry: ExportPayloadEntry, idx: EntryRenderIndex): string 
     parts.push('');
   }
 
-  // Phase 38 MEDIA-06 (D-08): rewrite asset://uuid refs to relative paths.
   const rawBody = entry.body?.trimEnd() ?? '';
   const body = rawBody ? rewriteAssetRefs(rawBody, idx.assetMap) : '';
   if (body) {
@@ -294,7 +225,6 @@ function buildEntryMd(entry: ExportPayloadEntry, idx: EntryRenderIndex): string 
     parts.push('');
   }
 
-  // ## Links — outbound, grouped by relation label.
   const outbound = idx.outboundBySource.get(entry.id);
   if (outbound && outbound.length > 0) {
     const byRelation = new Map<string, Set<string>>();
@@ -327,7 +257,6 @@ function buildEntryMd(entry: ExportPayloadEntry, idx: EntryRenderIndex): string 
     }
   }
 
-  // ## Backlinks — entries that link TO this one (deduplicated).
   const backlinkSourceIds = idx.backlinksByTarget.get(entry.id);
   if (backlinkSourceIds && backlinkSourceIds.length > 0) {
     const seen = new Set<string>();
@@ -352,7 +281,6 @@ function buildEntryMd(entry: ExportPayloadEntry, idx: EntryRenderIndex): string 
     }
   }
 
-  // ## Open Issues — only entries with at least one open (resolved=false) issue.
   const issues = idx.openIssuesByEntry.get(entry.id);
   if (issues && issues.length > 0) {
     parts.push('## Open Issues');
@@ -362,7 +290,6 @@ function buildEntryMd(entry: ExportPayloadEntry, idx: EntryRenderIndex): string 
       const desc = issue.description?.trim() ?? '';
       if (desc) {
         // Two-space indent so markdown treats the description as a
-        // continuation of the bullet rather than a new list item.
         parts.push(`  ${desc}`);
       }
     }

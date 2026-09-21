@@ -1,18 +1,3 @@
-/**
- * Linear progress bar for the Phase 12 import flow.
- *
- * Per UI-SPEC §6.6 — h-1 neutral track with accent fill, transition-all
- * duration-150 on the inner fill so a smooth animation carries the bar from
- * its current width to the next one. The locked done-override semantics:
- * when `done` is true, the inner fill jumps to 100% width regardless of pct
- * ("if response arrives before progress bar fills, jump to 100% immediately
- * and skip remaining ease"). Because the parent stops issuing pct updates at
- * the same moment it sets done=true, the only outstanding transition is the
- * one to 100%.
- *
- * Pure presentational — no internal state, no effects. Used by both the
- * upload-step (parse progress) and the integration view (commit progress).
- */
 export interface ImportProgressBarProps {
   pct: number;
   done: boolean;

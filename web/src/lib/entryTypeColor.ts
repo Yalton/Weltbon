@@ -1,11 +1,3 @@
-/**
- * Shared entry-type color palette.
- *
- * Centralises the type → color mapping used by TypeBadge (Tailwind classes
- * for the list/detail UI) and, in Plan 08, the graph view (hex colors for
- * SVG node fills). Keeping both flavors in one module means a single source
- * of truth whenever a new entry type is added.
- */
 
 export const ENTRY_TYPE_NAMES = [
   'concept',
@@ -57,18 +49,10 @@ const ENTRY_TYPE_HEX: Record<string, string> = {
 
 const ENTRY_TYPE_HEX_FALLBACK = '#6b7280'; // neutral-500
 
-/**
- * Tailwind class string for a typed pill/badge. Case-insensitive; falls back
- * to a neutral gray when the type is unknown.
- */
 export function entryTypeColor(type: string): string {
   return TYPE_CLASSES[type.toLowerCase()] ?? TYPE_CLASSES_FALLBACK;
 }
 
-/**
- * Hex color for SVG fills (used by the graph view). Case-insensitive; falls
- * back to neutral-500 when the type is unknown.
- */
 export function entryTypeHexColor(type: string): string {
   return ENTRY_TYPE_HEX[type.toLowerCase()] ?? ENTRY_TYPE_HEX_FALLBACK;
 }

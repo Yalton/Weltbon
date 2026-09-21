@@ -29,8 +29,6 @@ type AppEnv = { Variables: AuthVariables };
 // surface that accepts the `share-token` credential. Public routes like
 // /auth/register and /auth/login do NOT require bearer auth, so Hono's Zod
 // body validator would otherwise fire BEFORE any auth check and return 400 on
-// an empty body. Adding this middleware (which fires BEFORE body validation via
-// the `createRoute({ middleware })` slot) ensures that any request carrying a
 // share-token header but no Authorization bearer is rejected with 401 —
 // matching the boundary contract the SHARE-03 integration test enforces.
 const rejectShareToken = createMiddleware(async (c, next) => {
@@ -42,7 +40,6 @@ const rejectShareToken = createMiddleware(async (c, next) => {
   await next();
 });
 
-// ─── Zod schemas ────────────────────────────────────────────────────────────
 
 const registerSchema = z.object({
   email: z.string().email().max(254),
@@ -67,7 +64,6 @@ const userSchema = z.object({
 // accepts PAT bearers). LLMKEY-06 / D-13 mirror requires that PATs cannot read
 // the consent state — GET /api/llm-keys/consent is JWT-only and is the single
 // source of truth. The web client calls /api/llm-keys/consent (via
-// useLlmConsent) so dropping the field from /me has no client impact.
 const meResponseSchema = z.object({
   id: z.string(),
   email: z.string(),
@@ -93,7 +89,6 @@ const REFRESH_TTL_SECONDS = Math.floor(REFRESH_TTL_MS / 1000);
 // Cookie path must prefix the URL where the cookie is sent back. The auth
 // router is mounted at /api/auth in index.ts, so the cookie path must be
 // /api/auth — not /auth — or the browser will silently drop it on every
-// refresh attempt and the user will appear logged out on every page reload.
 const REFRESH_COOKIE_PATH = '/api/auth';
 
 function setRefreshCookie(c: any, token: string) {
@@ -106,7 +101,6 @@ function setRefreshCookie(c: any, token: string) {
   });
 }
 
-// ─── Route definitions ───────────────────────────────────────────────────────
 
 const registerRoute = createRoute({
   method: 'post',
@@ -290,29 +284,18 @@ const localSessionRoute = createRoute({
   },
 });
 
-// ─── Router ──────────────────────────────────────────────────────────────────
-//
-// DV-11 / Finding 2: authRoutes is built by a FUNCTION, not a module-level
+
 // const, so that the local-session route's registration can depend on
-// env().localMode evaluated fresh at call time (index.ts's createApp() calls
 // this on every invocation). A module-level const would freeze the decision
-// at whatever env().localMode happened to be the first time this module was
-// ever imported in the process — wrong for tests that flip the flag between
 // createApp() calls, and conceptually wrong for the security property this
 // route depends on: a server deployment must have NO local-session handler
-// in its route table, not merely a handler that always says no.
 export function buildAuthRoutes(): OpenAPIHono<AppEnv> {
   const router = new OpenAPIHono<AppEnv>()
 
   .openapi(registerRoute, async (c) => {
     const { email, password, displayName, inviteCode } = c.req.valid('json');
 
-    // Consume invite + create user + link in one transaction. Any failure
-    // (invalid invite, duplicate email, transient DB error) rolls back the
-    // invite consumption so retries with a valid email still succeed.
     // D-INV-11: invalid/used/revoked invite AND duplicate email collapse to
-    // the same 400 message so an attacker cannot probe registered emails
-    // even when they hold a valid invite.
     const inputHash = hashInviteToken(inviteCode);
     const InvalidInvite = Symbol('InvalidInvite');
 
@@ -339,12 +322,7 @@ export function buildAuthRoutes(): OpenAPIHono<AppEnv> {
             .values({ email, displayName, passwordHash })
             .returning({ id: users.id, email: users.email, displayName: users.displayName, isAdmin: users.isAdmin });
         } catch (err: unknown) {
-          // Duplicate email: collapse to InvalidInvite so the consumption rolls
           // back and the response never confirms email existence (D-INV-11).
-          // isUniqueViolation, not `err.code` — Drizzle wraps the driver error,
-          // so reading the code off the top level made this branch unreachable
-          // and turned a duplicate email into a 500 an attacker could tell apart
-          // from the 400 an unregistered one gets.
           if (isUniqueViolation(err)) {
             throw InvalidInvite;
           }
@@ -411,9 +389,6 @@ export function buildAuthRoutes(): OpenAPIHono<AppEnv> {
     }
     const accessToken = await issueAccessToken(rotated.userId);
     // newToken === null is the benign-replay path (a concurrent tab already
-    // rotated this cookie moments ago). Issue the access token, but set NO
-    // cookie: the browser already holds the winner's value, and minting a
-    // second refresh token here is exactly the bug the claim guard closes.
     if (rotated.newToken !== null) {
       setRefreshCookie(c, rotated.newToken);
     }
@@ -452,34 +427,25 @@ export function buildAuthRoutes(): OpenAPIHono<AppEnv> {
     );
   });
 
-  // DV-11 / Finding 2: only register the local-session route when local mode
+
   // is actually on. `env().localMode` is re-checked HERE, live, each time
-  // buildAuthRoutes() runs — see the docblock above the function. When this
-  // branch does not run, the router simply has no handler and no OpenAPI
   // path for /local-session: GET /api/openapi.json and /api/docs never
-  // mention it (Finding 2), and a probing POST 404s through Hono's ordinary
+
   // no-route-matched path — byte-identical to any other unmounted path
-  // (Finding 3) — rather than through a JSON handler that confirms the route
-  // exists and is merely refusing.
+
   if (env().localMode) {
     router.openapi(localSessionRoute, async (c) => {
-      // Defence in depth (Finding 2's own instruction): re-check localMode
-      // even though this handler exists at all only because it was true at
+
       // router-construction time above.
       if (!env().localMode) return c.notFound();
 
-      // Finding 1: the presence of X-Forwarded-For AT ALL is itself evidence
-      // this is not the desktop app's topology — nothing should ever be
-      // proxying a request to this route. Refuse outright rather than parse
+
       // or trust client-supplied header content, which any caller who can
       // reach this port can omit, forge, or list-prefix at will.
       if (c.req.header('x-forwarded-for') !== undefined) return c.notFound();
 
       // DNS-rebinding defence. A page at evil.example rebound to 127.0.0.1 makes
       // requests the browser treats as SAME-ORIGIN, so CORS is never consulted and
-      // the socket peer really is loopback — every other control here passes. The
-      // Host header is the one thing the attacker cannot forge, because the browser
-      // sets it from the URL it was given.
       const hostHeader = c.req.header('host') ?? '';
       const hostname = hostHeader.replace(/:\d+$/, '').toLowerCase();
       const hostIsLoopback =
@@ -487,21 +453,13 @@ export function buildAuthRoutes(): OpenAPIHono<AppEnv> {
       if (!hostIsLoopback) return c.notFound();
 
       // The real TCP peer, read off the Node socket via @hono/node-server —
-      // unlike a header, the client cannot set this. Fail CLOSED: an address
-      // this check does not recognise is refused, never allowed, because on
       // a route that mints a session with no credential, "we could not tell"
-      // must never mean "allow".
       const remote = getConnInfo(c).remote.address;
       const isLoopback =
         remote === '127.0.0.1' || remote === '::1' || remote === '::ffff:127.0.0.1';
       if (!isLoopback) return c.notFound();
 
-      // c.notFound() on every refusal path above (never c.json 404): a
-      // caller who reaches this handler but fails a check must see the exact
-      // same response shape as a request to a route that was never mounted
-      // (Finding 3) — status, body, and content-type all byte-identical to
-      // Hono's default "no route matched" response, since nothing here
-      // overrides the app's notFoundHandler.
+
       const user = await ensureLocalUser(getDb());
       const accessToken = await issueAccessToken(user.id);
       const refreshToken = await issueRefreshToken(user.id);

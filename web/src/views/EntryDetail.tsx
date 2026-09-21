@@ -21,10 +21,7 @@ import { Panel } from '../components/ui/Panel';
 import { Loading } from '../components/ui/Loading';
 
 export function EntryDetail() {
-  // Phase 29 — share-mode awareness. In share mode the route is
-  // `/share/:token/entries/:entryId` (no `uid` param), so substitute
   // 'share' for the universe id; the api-client seam swaps the path to
-  // /api/share/entries/:entryId.
   const { uid: paramUid, token, entryId } = useParams<{
     uid: string;
     token: string;
@@ -37,29 +34,17 @@ export function EntryDetail() {
   const deleteEntry = useDeleteEntry(uid!);
   const [confirmOpen, setConfirmOpen] = useState(false);
 
-  // Phase 30 — calendar date + "View on timeline →" (EVENTS-02 / D-11).
-  // useTimelinePins is already cached if the user visited /timeline; no extra
-  // fetch in the common case. useCalendar is a thin wrapper over useUniverse
-  // (same cache key) — also zero extra fetches.
-  // Phase 33 INT-BLOCKER-1 fix: in share mode useUniverse('share') 404s, so
-  // calendar from useCalendar is null. Use the share calendar from context
   // (threaded from the share-meta endpoint via ShareLayout) as the effective
-  // calendar when rendering inside the share subtree.
   const { data: pins } = useTimelinePins(uid!);
   const { calendar: authCalendar } = useCalendar(uid!);
   const shareCalendar = useShareCalendar();
   const calendar = isShareMode ? shareCalendar : authCalendar;
 
-  // ── Resolution data for [[word]] wikilinks ───────────────────────────────
   // useEntries works in both authenticated and share mode: the api-client seam
-  // rewrites /universes/<uid>/entries → /api/share/entries automatically when
   // shareTokenPlaintext is set. Public-only entries flow through the share path
   // (T-32-11: no private entry titles enter the share-mode resolution map).
   const { data: allEntries } = useEntries(uid!);
 
-  // Build entryTitles map: lower(title.trim()) → entryId.
-  // Phase 45 D-03: keyed on lowercase so [[empire]] resolves to "Empire".
-  // Phase 45 D-04: API list is ordered by updatedAt DESC, so we sort by
   // created_at ASC before iterating — first-inserted entry (oldest created_at)
   // wins the slot when two titles collide on case-fold.
   const entryTitles = useMemo<Map<string, string>>(() => {
@@ -74,10 +59,7 @@ export function EntryDetail() {
     return map;
   }, [allEntries]);
 
-  // Phase 46 Plan 01 (D-11/D-12/D-13 hover-card content source).
-  // Full entry objects keyed by id — built from the same useEntries(uid!) cache
   // already in use below. No new query, no re-key (memory: react-query-key-change-blast-radius).
-  // In share mode useEntries flows through /api/share/entries which drops is_public=false rows
   // server-side (T-46-02 mitigate: private entries never enter the map in share mode).
   const entriesById = useMemo<Map<string, Entry>>(() => {
     const map = new Map<string, Entry>();
@@ -85,7 +67,6 @@ export function EntryDetail() {
     return map;
   }, [allEntries]);
 
-  // Phase 45 XREF-04 (D-01 slot 2): alias → entryId map. Case-insensitive keys.
   // Same created_at ASC sort ensures first-inserted alias wins on collision (D-04/D-05).
   const entryAliases = useMemo<Map<string, string>>(() => {
     const sorted = [...(allEntries ?? [])].sort((a, b) =>
@@ -104,9 +85,6 @@ export function EntryDetail() {
   // Determine the linked language entry (D-02 scope): find an outbound link
   // whose targetEntryId resolves to a 'language'-type entry in the entries list.
   // We cross-reference outboundLinks (has targetEntryId) with allEntries (has
-  // entryType). The `entry` object is not yet in scope here (early return above
-  // is absent), so we guard against undefined.
-  // NOTE: this useMemo runs after `entry` is loaded (see early return below).
   const linkedLanguageEntryId = useMemo<string | null>(() => {
     if (!entry || !allEntries) return null;
     const entryMap = new Map(allEntries.map((e) => [e.id, e]));
@@ -120,7 +98,6 @@ export function EntryDetail() {
   }, [entry, allEntries]);
 
   // D-02 language-scoped dictionary (when entry links a language entry).
-  // Always called (hooks can't be conditional); disabled when no linked lang.
   const { data: langScopedWords } = useFilteredDictionary(
     uid!,
     { q: '', lid: linkedLanguageEntryId },
@@ -128,11 +105,9 @@ export function EntryDetail() {
 
   // D-02 universe-wide dictionary UNION (when entry links NO language entry).
   // Fetches null-scope fallback + every language dict and merges them.
-  // In share mode the seam translates each fetch to /api/share/dictionary?lid=...
   const { words: universeWords } = useUniverseDictionary(uid!);
 
   // Build dictionaryWords map per D-02 scope rule:
-  //   linked language entry → use langScopedWords only
   //   no linked language entry → use the universe-wide union (universeWords)
   const dictionaryWords = useMemo<Map<string, DictionaryWord>>(() => {
     const map = new Map<string, DictionaryWord>();
@@ -146,7 +121,6 @@ export function EntryDetail() {
 
   if (isLoading || !entry) return <Loading />;
 
-  // Resolve the pin for THIS entry (may be undefined if not pinned).
   const entryPin = pins?.find((p) => p.entryId === entryId);
   // Compute calendar date from pin position (D-11).
   const calendarDate = entryPin ? formatCalendar(entryPin.position, calendar) : null;
@@ -158,14 +132,10 @@ export function EntryDetail() {
 
   const metaEntries = Object.entries(entry.meta as Record<string, string>);
 
-  // ── wikis resolution data ─────────────────────────────────────────────────
-  // Authenticated branch: pass onAddWord → navigates to dictionary with
-  //   ?prefill=<token> so the user can add the missing word.
   // Share branch (isShareMode): no onAddWord (T-32-11 — no mutation surface
-  //   for visitors; amber affordance rendered without "+" button per WikilinkText).
   const wikis: WikilinkResolutionData = {
     entryTitles,
-    entryAliases, // Phase 45 XREF-04 — alias tier, covers both auth + share paths (EntryDetail reuse)
+    entryAliases,
     dictionaryWords,
     universeId: uid!,
     languageEntryId: linkedLanguageEntryId,
@@ -175,32 +145,19 @@ export function EntryDetail() {
           const params = new URLSearchParams({ prefill: token });
           navigate(`/universes/${uid}/dictionary?${params.toString()}`);
         },
-    // Phase 33 INT-BLOCKER-2 fix: thread share-mode flag + token so
-    // WikilinkText can build /share/:token/entries/:id targets instead of
-    // /universes/:uid/entries/:id (which lands on ProtectedRoute → /login
-    // for unauthenticated share visitors).
     isShareMode,
     shareToken: token ?? null,
-    // Phase 46 Plan 01 (D-11/D-12/D-13): full entry objects for hover-card content.
     // Built from the already-cached useEntries list (no new query, no re-key).
     entriesById,
-    // Phase 46 Plan 01 (D-06 guard source): the route id of the entry currently
-    // being viewed — Plan 03's EntryEmbed compares embed target id against this
     // to detect and render the circular/self-embed affordance instead of expanding.
-    // This is the SOLE wiring site for currentEntryId; Plan 03 only consumes it.
     currentEntryId: entryId,
-    // embedDepth is intentionally omitted at the top level — undefined = depth 0
     // = embeds expand (D-05 flatten: depth-1 is set by EntryEmbed's recursive call).
   };
 
   // Content-Forward Views §5 — every entry gets a hero. A cover becomes a scrimmed banner; a
-  // bare entry gets a slim band in its type hue with a watermark monogram, so the page reads
-  // as an article either way rather than as a form with a title stuck on top.
-  //
   // The hero draws entry.coverImageUrl — the DETAIL endpoint's pre-signed RAW url. It is NOT
   // coverThumbUrl (list-only), so the hero is NOT a Medallion; resolveMedallion supplies only the
   // no-cover identity (monogram + type hue), keeping that fallback consistent with every other
-  // surface that draws this entry.
   const hero = resolveMedallion({
     title: entry.title,
     entryType: entry.entryType,
@@ -252,20 +209,9 @@ export function EntryDetail() {
             </h1>
             <div className="mt-2 flex items-center gap-2">
               <TypeBadge type={entry.entryType} />
-              {/* Phase 36 DATA-03 — non-interactive WIP badge next to the
-                  TypeBadge / Public chip when entry.wip === true. */}
+
               {entry.wip && <WipPill wip />}
-              {/*
-                Phase 29 SHARE-04 / UI-SPEC §C / D-16 — accent-tint Public chip
-                rendered next to TypeBadge ONLY when entry.isPublic === true.
-                Visible in BOTH authenticated and share-view contexts per
-                UI-SPEC §A Kept-affordances + T-29-34 (accept): the chip helps
-                the visitor understand they're viewing a public entry, and
-                helps the owner see which entries are marked public from the
-                detail view. Eye icon (10×10 SVG) is aria-hidden="true"
-                (decorative); the <span>Public</span> text remains readable
-                by screen readers (Accessibility Checklist §C).
-              */}
+
               {entry.isPublic && (
                 <span className="inline-flex items-center gap-1 rounded px-2 py-1 text-sm font-semibold bg-[color:var(--color-accent)]/10 text-[color:var(--color-accent)]">
                   <svg
@@ -284,13 +230,7 @@ export function EntryDetail() {
           </div>
         </EntryHero>
 
-        {/*
-          Phase 29 D-18 / UI-SPEC §A Kept-affordances — in share mode the
-          Edit and Delete buttons are hidden entirely. The visitor has no
-          authenticated session and the share read namespace exposes no
-          mutation surface; surfacing these controls would mislead.
-          §5: they now sit BELOW the hero, not inside the old header block.
-        */}
+
         {!isShareMode && (
           <div className="flex gap-2 mt-3">
             <Link
@@ -309,13 +249,7 @@ export function EntryDetail() {
           </div>
         )}
 
-        {/*
-          Phase 30 EVENTS-02 / D-11 — Calendar date + "View on timeline →".
-          Rendered when this entry has a timeline pin AND (for calendar date)
-          the universe has a calendar. When no calendar → falls back to the
-          raw position (CALENDAR-03). When no pin → section is omitted.
-          Read-only-safe: no edit chrome; works identically in share mode.
-        */}
+
         {entryPin && (
           <div className="mt-4 flex flex-col gap-1">
             {/* Calendar date (full form) or raw position fallback */}
@@ -377,14 +311,7 @@ export function EntryDetail() {
         {/* The cover image is no longer rendered here — §5 promoted it into the hero above.
             Rendering it in both places would show the same image twice. */}
 
-        {/* Body (Markdown) — Phase 32 Plan 04 D-01/D-02/D-03/D-04 [[word]] resolution.
-            wikis is always provided: authenticated branch includes onAddWord;
-            share branch omits onAddWord (T-32-11 read-only, no mutation surface).
-            entryTitles + dictionaryWords are derived from public-scoped data in
-            share mode (via the api-client seam → /api/share/entries + /api/share/dictionary).
-            Phase 38 MEDIA-05: assets prop threads universeId + shareToken + assetUrls so the
-            components.img resolver uses pre-signed URLs from the API response (UAT-fix) and
-            can build the correct authed/share raw URL as fallback. */}
+
         {entry.body && (
           <div className="mt-6">
             <MarkdownRenderer
@@ -404,15 +331,7 @@ export function EntryDetail() {
           onLinkCreated={() => refetch()}
         />
 
-        {/*
-          Phase 29 D-18 / UI-SPEC §A Kept-affordances — IssueSection is
-          hidden in share mode (issues are an owner workflow surface;
-          visitor must not see or affect them). TimelinePinSection on the
-          detail view exposes the pin label + a manage control to upsert
-          the pin position; the entire mutation surface is removed, so we
-          omit the section. The visitor still sees timeline pin context on
-          the dedicated TimelineView (pin click navigates to entry).
-        */}
+
         {!isShareMode && (
           <>
             <IssueSection
@@ -422,8 +341,7 @@ export function EntryDetail() {
               onChanged={() => refetch()}
             />
             <TimelinePinSection universeId={uid!} entryId={entryId!} />
-            {/* Phase 48 XREF-06 (D-11/D-12): unlinked mentions panel — authoring-only.
-                Scans the cached useEntries corpus; no new query key. */}
+
             <UnlinkedMentionsPanel
               universeId={uid!}
               entry={entry}

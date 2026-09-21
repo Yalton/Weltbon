@@ -2,14 +2,11 @@ import { useMemo, useState } from 'react';
 import {
   useUpdateWord,
   useDeleteWord,
-  previewTermRename,
   type DictionaryWord,
   type CreateWordInput,
-  type TermRenamePreview,
 } from '../hooks/useDictionary';
 import { DictionaryRowEditor } from './DictionaryRowEditor';
 import { ConfirmDialog } from './ConfirmDialog';
-import { TermRenameReviewDialog } from './TermRenameReviewDialog';
 import { EmptyState } from './EmptyState';
 import { DICTIONARY_TERMS } from './dictionaryTerms';
 
@@ -17,7 +14,6 @@ import { DICTIONARY_TERMS } from './dictionaryTerms';
 const TERM_HINT =
   'cursor-help underline decoration-dotted decoration-neutral-400 dark:decoration-neutral-600 underline-offset-2';
 
-// ─── Types ───────────────────────────────────────────────────────────────────
 
 type SortKey = 'word' | 'partOfSpeech';
 type SortDir = 'asc' | 'desc';
@@ -42,26 +38,7 @@ export interface DictionaryTableProps {
   onToast: (toast: ToastState) => void;
 }
 
-// ─── DictionaryTable ─────────────────────────────────────────────────────────
 
-/**
- * Phase 32 Plan 03 — Client-side sortable/filterable dictionary table.
- *
- * Mirrors AuditHistoryTable.tsx pattern (copy wholesale per plan spec).
- *
- * Sort: word (default asc) + partOfSpeech; client-side via useMemo (D-12).
- * Facets: posFilter + tagFilter; client-side over server-returned rows (D-13).
- * Empty states: "No words yet" / "No words match" per filter state.
- * Inline edit: DictionaryRowEditor renders in place when editingId===row.id.
- * Delete: ConfirmDialog (destructive=true, confirmLabel="Delete word").
- *
- * UI-SPEC compliance:
- *   - Sentence-cased column headers (exception to all-caps audit table pattern)
- *   - Exactly 2 font weights: 400 (body) / 600 (semibold headers)
- *   - py-3 cells, text-sm leading-[1.5]
- *   - Accent color for active sort arrow
- *   - Edit/Delete buttons with proper aria-labels
- */
 export function DictionaryTable({
   universeId,
   data,
@@ -78,27 +55,16 @@ export function DictionaryTable({
   onDiscardNew,
   onToast,
 }: DictionaryTableProps) {
-  // ── Sort state ────────────────────────────────────────────────────────────
   const [sortKey, setSortKey] = useState<SortKey>('word');
   const [sortDir, setSortDir] = useState<SortDir>('asc'); // D-12: default word asc
 
-  // ── Delete confirm ────────────────────────────────────────────────────────
   const [deletingWord, setDeletingWord] = useState<DictionaryWord | null>(null);
 
-  // ── Edit saving state ─────────────────────────────────────────────────────
   const [savingId, setSavingId] = useState<string | null>(null);
 
-  // ── Term-rename propagation (#59) ─────────────────────────────────────────
-  // Held together: the preview drives the dialog, and the draft is the save
-  // that was interrupted to show it.
-  const [renamePreview, setRenamePreview] = useState<TermRenamePreview | null>(null);
-  const [pendingDraft, setPendingDraft] = useState<CreateWordInput | null>(null);
-
-  // ── Mutations ─────────────────────────────────────────────────────────────
   const updateWord = useUpdateWord(universeId, editingId ?? '');
   const deleteWord = useDeleteWord(universeId, deletingWord?.id ?? '');
 
-  // ── Sort toggle ───────────────────────────────────────────────────────────
   function toggleSort(key: SortKey) {
     if (key === sortKey) {
       setSortDir(sortDir === 'desc' ? 'asc' : 'desc');
@@ -140,56 +106,13 @@ export function DictionaryTable({
     return rows;
   }, [data, sortKey, sortDir, posFilter, tagFilter]);
 
-  // ── Inline save existing word ─────────────────────────────────────────────
-  /**
-   * Issue #59 — two-phase save, mirroring EntryEditor's rename propagation.
-   *
-   * A spelling change first asks the server what it would rewrite. Only when
-   * there is something to rewrite does the review dialog open; a rename nobody
-   * references saves in one step, as before. The write itself never happens
-   * without the user having seen the list.
-   */
   async function handleSaveEdit(draft: CreateWordInput) {
-    if (!editingId) return;
-    const current = data?.find((w) => w.id === editingId);
-    const spellingChanged =
-      !!current && draft.word.trim() !== current.word.trim();
-
-    if (spellingChanged) {
-      try {
-        const preview = await previewTermRename(universeId, editingId, draft.word.trim());
-        if (preview.totalOccurrences > 0) {
-          setPendingDraft(draft);
-          setRenamePreview(preview);
-          return;
-        }
-      } catch {
-        // A failed preview must not block the rename itself: fall through to
-        // the plain save, which is exactly what this did before #59.
-      }
-    }
-
-    await commitEdit(draft);
-  }
-
-  async function commitEdit(draft: CreateWordInput, entryIds?: string[]) {
     if (!editingId) return;
     setSavingId(editingId);
     try {
-      const result = await updateWord.mutateAsync(
-        entryIds && entryIds.length > 0 ? { ...draft, propagate: { entryIds } } : draft,
-      );
-      setRenamePreview(null);
-      setPendingDraft(null);
+      await updateWord.mutateAsync(draft);
       onEditDone();
-      const rewritten = (result as { rewriteCount?: number }).rewriteCount ?? 0;
-      onToast({
-        message:
-          rewritten > 0
-            ? `Word saved, ${rewritten} reference${rewritten === 1 ? '' : 's'} rewritten`
-            : 'Word saved',
-        variant: 'success',
-      });
+      onToast({ message: 'Word saved', variant: 'success' });
     } catch {
       onToast({ message: 'Could not save word. Try again.', variant: 'error' });
     } finally {
@@ -197,7 +120,6 @@ export function DictionaryTable({
     }
   }
 
-  // ── Delete word ───────────────────────────────────────────────────────────
   async function handleDeleteConfirm() {
     if (!deletingWord) return;
     try {
@@ -213,7 +135,6 @@ export function DictionaryTable({
     }
   }
 
-  // ── Loading state ─────────────────────────────────────────────────────────
   if (isPending) {
     return (
       <div
@@ -231,7 +152,6 @@ export function DictionaryTable({
     );
   }
 
-  // ── Error state ───────────────────────────────────────────────────────────
   if (error) {
     return (
       <div
@@ -243,9 +163,6 @@ export function DictionaryTable({
     );
   }
 
-  // ── Empty state — no words at all ─────────────────────────────────────────
-  // When addingNew is active, fall through to the table so the blank editor
-  // row renders — otherwise "Add word" on an empty dictionary does nothing.
   const hasFilters = !!posFilter || !!tagFilter;
   if ((!data || data.length === 0) && !addingNew) {
     return (
@@ -256,7 +173,6 @@ export function DictionaryTable({
     );
   }
 
-  // ── Empty state — filters match nothing ──────────────────────────────────
   if (sortedRows.length === 0 && hasFilters && !addingNew) {
     return (
       <EmptyState
@@ -266,7 +182,6 @@ export function DictionaryTable({
     );
   }
 
-  // ── Populated state ────────────────────────────────────────────────────────
   return (
     <>
       <div className="mt-6 overflow-x-auto">
@@ -363,7 +278,6 @@ export function DictionaryTable({
           </thead>
           <tbody>
             {sortedRows.map((row) => {
-              // Inline editor replaces the read row when this row is being edited
               if (editingId === row.id) {
                 return (
                   <DictionaryRowEditor
@@ -489,27 +403,6 @@ export function DictionaryTable({
         confirmLabel="Delete word"
         destructive={true}
         onConfirm={handleDeleteConfirm}
-      />
-
-      {/* ── Term-rename propagation review (#59) ──────────────────────────── */}
-      <TermRenameReviewDialog
-        open={!!renamePreview}
-        onOpenChange={(open) => {
-          if (!open) {
-            // Cancelling abandons the whole save, not just the propagation:
-            // the row stays in edit mode with the user's text intact.
-            setRenamePreview(null);
-            setPendingDraft(null);
-          }
-        }}
-        preview={renamePreview}
-        isSaving={savingId !== null}
-        onConfirm={(entryIds) => {
-          if (pendingDraft) void commitEdit(pendingDraft, entryIds);
-        }}
-        onRenameOnly={() => {
-          if (pendingDraft) void commitEdit(pendingDraft);
-        }}
       />
     </>
   );

@@ -1,25 +1,3 @@
-/**
- * Phase 26 Plan 02 Task 1 — audit-estimator.ts unit tests (no DB).
- *
- * Pure-function estimator under test:
- *   - Implements the LLMUI-04 cost-range formula.
- *   - Calls getProvider(provider).estimate() for basePromptTokens.
- *   - Reads PRICING for rate lookups.
- *   - MUST NOT mutate any DB row (defensive — estimator is read-only).
- *   - MUST NOT log raw apiKey (T-24-04-05 / T-26-02-01 preservation).
- *
- * Nine invariants enforced (per Plan 26-02 Task 1 behaviors):
- *   1. anthropic provider: returns lower < upper, both > 0.
- *   2. openai provider:    returns lower < upper, both > 0.
- *   3. lower bound math is exact per formula.
- *   4. upper bound math is exact per formula.
- *   5. breakdown.maxToolCalls equals configured AUDIT_MAX_TOOL_CALLS (default 20).
- *   6. breakdown.scopeEntryCount equals the entry count returned by the db read.
- *   7. unknown model returns lower=0 + upper=0 with zeroed breakdown
- *      (defensive — pricing.ts invariant 2).
- *   8. estimator never invokes db.update / db.insert / db.delete.
- *   9. estimator never logs the apiKey substring.
- */
 
 import { describe, it, expect, vi, beforeEach } from 'vitest';
 
@@ -138,7 +116,7 @@ beforeEach(() => {
 // Test suite
 // ---------------------------------------------------------------------------
 
-describe('estimateAudit (Phase 26-02 Task 1, LLMUI-04 formula)', () => {
+describe('estimateAudit', () => {
   // =========================================================================
   // Test 1: anthropic — lower < upper, both > 0
   // =========================================================================

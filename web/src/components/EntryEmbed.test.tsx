@@ -1,17 +1,3 @@
-/**
- * Phase 46 Plan 03 — EntryEmbed behavioral tests (D-05, D-06, D-09, D-10).
- *
- * Coverage:
- *   D-06: self/circular embed (currentEntryId === targetId) renders the circular-notice
- *         affordance and renders NEITHER the body MarkdownRenderer NOR the callout.
- *         No fetch fires (useEntry called with '' disabling the gate).
- *   D-10: null targetId renders the unavailable affordance (no callout, no body).
- *   D-09: resolved body renders the attribution Link + body via MarkdownRenderer.
- *   D-10 (fetch error): fetch error renders the unavailable affordance (non-fatal).
- *   Share mode: entryTo uses share URL prefix.
- *   Loading: loading state renders without throwing.
- *   XSS gate: no dangerouslySetInnerHTML (structural — see acceptance criteria in PLAN.md).
- */
 
 import { describe, it, expect, vi, beforeEach } from 'vitest';
 import { render, screen } from '@testing-library/react';

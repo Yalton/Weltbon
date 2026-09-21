@@ -1,4 +1,3 @@
--- Phase 38 MEDIA-01 (D-01, D-02): assets table + entries.cover_image_id FK.
 --
 -- Creates the per-universe image asset registry with UUID primary key, stable
 -- universe-scoped FK (CASCADE on universe delete), and all metadata columns.

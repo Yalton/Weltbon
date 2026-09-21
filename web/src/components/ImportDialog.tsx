@@ -53,7 +53,6 @@ export function ImportDialog({ open, onOpenChange }: Props) {
 
     try {
       const text = await file.text();
-      // Validate it's parseable JSON before sending
       JSON.parse(text);
 
       const result = await api<ImportResult>('/universes/import', {

@@ -18,18 +18,6 @@ import {
   issueEntries as issueEntriesTable,
 } from '../src/db/schema.js';
 
-/**
- * Plan 04-03 EXP-03 + EXP-05 (PDF) integration coverage.
- *
- * Skip guard: PDF tests need a Chromium binary on disk. CI without
- * Chromium installed should NOT fail — the suite skips entirely until
- * the operator sets `CHROMIUM_PATH=$(which chromium)` and re-runs.
- *
- * `d` is `describe` when Chromium is present, `describe.skip` otherwise.
- * vitest's `skipIf` API differs across versions; the conditional ternary
- * is the portable form (matches what plan 04-04 will use for DOCX-Word
- * smoke tests).
- */
 const CHROMIUM_PATH = process.env.CHROMIUM_PATH;
 const HAS_CHROMIUM = Boolean(CHROMIUM_PATH && fs.existsSync(CHROMIUM_PATH));
 const d = HAS_CHROMIUM ? describe : describe.skip;

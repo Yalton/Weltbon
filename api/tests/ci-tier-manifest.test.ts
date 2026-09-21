@@ -10,8 +10,6 @@ const ciWorkflow = readFileSync(new URL('../../.github/workflows/ci.yml', import
 const nightlyWorkflow = readFileSync(new URL('../../.github/workflows/nightly-integration.yml', import.meta.url), 'utf8');
 const releaseWorkflow = readFileSync(new URL('../../.github/workflows/release.yml', import.meta.url), 'utf8');
 const publishWorkflow = readFileSync(new URL('../../.github/workflows/publish-ghcr.yml', import.meta.url), 'utf8');
-const desktopPublishWorkflow = readFileSync(new URL('../../.github/workflows/publish-desktop.yml', import.meta.url), 'utf8');
-const runnerRunbook = readFileSync(new URL('../../docs/operations/shared-ci-runner.md', import.meta.url), 'utf8');
 function workflowJob(name: string) {
   const match = new RegExp(`^  ${name}:\\n([\\s\\S]*?)(?=^  \\S|(?![\\s\\S]))`, 'm').exec(ciWorkflow);
   expect(match).not.toBeNull();
@@ -63,27 +61,12 @@ test.each(['integration-smoke', 'integration-merge'])('%s keeps disposable Postg
   expect(options).toContain('--health-retries 5');
 });
 
-test('release chain routes credentialed jobs to dedicated CI runners and retains Windows publishing', () => {
-  expect(releaseWorkflow).toContain('runs-on: [self-hosted, weltbon-ci-unit]');
-  expect(publishWorkflow).toContain('runs-on: [self-hosted, weltbon-ci-integration]');
-  expect(desktopPublishWorkflow).toContain('runs-on: [self-hosted, weltbon-ci-integration]');
-  expect(desktopPublishWorkflow).not.toContain('\n    container:');
-  expect(desktopPublishWorkflow).toContain('target_platform: win32');
-  expect(desktopPublishWorkflow).toContain('Install pinned GitHub CLI');
-  expect(desktopPublishWorkflow).toContain('- name: windows');
-  expect(desktopPublishWorkflow).toContain("builder_flag: '--win --x64'");
+test('nightly coverage is scheduled while release labels stay on provisioned runners', () => {
+  expect(releaseWorkflow).toContain('[self-hosted, citreum]');
+  expect(publishWorkflow).toContain('[self-hosted, citreum]');
   expect(publishWorkflow).toContain('group: publish-ghcr');
   expect(nightlyWorkflow).toContain("cron: '30 6 * * *'");
   expect(nightlyWorkflow).toContain('pnpm test:integration:nightly');
-});
-
-test('runner runbook permits only the CI VM Docker socket for service containers', () => {
-  expect(runnerRunbook).toContain('/var/run/docker.sock:/var/run/docker.sock');
-  expect(runnerRunbook).toContain('CI VM Docker socket only');
-  expect(runnerRunbook).toContain('Never mount an LLCBox Docker socket');
-  expect(runnerRunbook).toContain('All private Citreum-LLC repositories; public repositories excluded');
-  expect(runnerRunbook).toMatch(/trusted to run arbitrary\s+workflow code on the CI VM/);
-  expect(runnerRunbook).toContain('operator explicitly accepts `RELEASE_TOKEN`, GHCR write');
 });
 
 test('nightly contains every DB-gated file exactly once', () => {

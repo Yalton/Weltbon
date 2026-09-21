@@ -1,18 +1,3 @@
-/**
- * SyncSettings view tests — Plan F (Task 2), /settings/sync.
- *
- * Pins:
- *   - The masked list (label / base URL / patSuffix), including a REGRESSION
- *     guard that survives the server growing a plaintext field.
- *   - The F-05 PAT guidance: the token belongs to the OTHER instance.
- *   - The "mint a token there" deep link, and the two ways it must refuse to
- *     render (non-http(s) scheme, unparseable text).
- *   - Test connection: identity on success, syncErrorCopy's copy on failure.
- *   - Edit: the PATCH that re-saves a label without disturbing the PAT.
- *
- * Error prose is asserted against SYNC_ERROR_COPY, never retyped — a test that
- * retyped it would pass against a view that hardcoded its own string.
- */
 
 import { describe, it, expect, beforeEach, vi } from 'vitest';
 import { render, screen, waitFor, within } from '@testing-library/react';

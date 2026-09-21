@@ -1,6 +1,3 @@
-/**
- * Plan C Task 2 — the apply registry. Pure: no DB, no I/O.
- */
 import { describe, it, expect } from 'vitest';
 import { getTableColumns } from 'drizzle-orm';
 import { PgDialect, getTableConfig } from 'drizzle-orm/pg-core';
@@ -41,7 +38,7 @@ const KITCHEN_SINK_ROW = {
   createdAt: '2026-01-01T00:00:00.000Z', updatedAt: '2026-01-01T00:00:00.000Z',
 };
 
-describe('apply registry (Plan C, C-07/C-13)', () => {
+describe('apply registry', () => {
   it('covers exactly the merge engine collections — no drift', () => {
     expect([...APPLY_ORDER.map((d) => d.collection)].sort())
       .toEqual([...COLLECTIONS.map((c) => c.name)].sort());
@@ -278,16 +275,7 @@ describe('apply registry (Plan C, C-07/C-13)', () => {
     expect(universeSet.userId).toBe('owner-1');
   });
 
-  /**
-   * Regression insurance for a registry whose SQL predicates stay unexecuted
-   * until Task 3 wires up a DB: every key `toValues` emits must be a real
-   * column (the `link_type` class — a mapper writing a key that isn't a
-   * column, silently ignored by nothing but caught here), and every NOT NULL
-   * column with no DB default must be emitted (the `assets.thumb_size_bytes`
-   * class — a NOT NULL column the mapper forgot, which only ever surfaced as
-   * a live INSERT failure).
-   */
-  it('every toValues() output matches real columns, and covers every required one', () => {
+    it('every toValues() output matches real columns, and covers every required one', () => {
     for (const desc of [...APPLY_ORDER, UNIVERSE_APPLY]) {
       const values = desc.toValues(KITCHEN_SINK_ROW, CTX);
       const columns = getTableColumns(desc.table);

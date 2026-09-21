@@ -1,12 +1,3 @@
-/**
- * SyncErrorNotice tests — Plan F.
- *
- * The copy is built by the REAL producers (`syncErrorMessage` /
- * `lastErrorMessage`) rather than by hand-written `SyncCopy` literals: the
- * whole point of this component is that those two producers disagree about
- * whether `raw` repeats `detail`, and a hand-built fixture would let a wrong
- * assumption about that shape sit in the test as well as the component.
- */
 
 import { describe, it, expect } from 'vitest';
 import { render, screen } from '@testing-library/react';

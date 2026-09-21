@@ -1,13 +1,6 @@
 import * as Select from '@radix-ui/react-select';
 
-// ─── Layout mode ──────────────────────────────────────────────────────────────
 
-/**
- * Supported auto-layout modes.
- * - 'family-tree': BFS top-down layout driven by PARENT_TERMS edges (Plan 02).
- * - 'org-chart':   BFS top-down single-parent layout driven by MANAGER_TERMS edges (Plan 07).
- * - null: no layout mode selected; Auto-layout button is hidden.
- */
 export type LayoutMode = 'family-tree' | 'org-chart' | null;
 
 // Locked copy block (UI-SPEC "Diagram Editor" copy table — toolbar section).
@@ -33,7 +26,6 @@ const COPY = {
   orgChartHint: 'Reporting-line edges drive the top-down layout.',
   layoutModeLabel: 'Layout mode',
   layoutModeNone: 'None',
-  // Snap + align/distribute copy (Plan 09)
   snapToGrid: 'Snap to grid',
   alignLeft: 'Align left',
   alignRight: 'Align right',
@@ -50,32 +42,22 @@ const COPY = {
 export interface DiagramToolbarProps {
   nodeCount: number;
   edgeCount: number;
-  /** Whether the Add Entries picker is open (controls button appearance). */
   pickerOpen: boolean;
   onTogglePicker: () => void;
-  /** Whether the canvas is in draw-edge edit mode. */
   editMode: boolean;
   onToggleEditMode: () => void;
-  /** Currently active auto-layout mode. null = no layout mode active. */
   layoutMode: LayoutMode;
   onSetLayoutMode: (mode: LayoutMode) => void;
   onAutoLayout: () => void;
-  /** Whether there are items on the undo stack. */
   canUndo: boolean;
   onUndo: () => void;
-  /** Whether there are items on the redo stack. */
   canRedo: boolean;
   onRedo: () => void;
   onExportJson: () => void;
   onExportSvg: () => void;
   onExportPng: () => void;
-  /** Whether snap-to-grid is currently enabled. */
   snapEnabled: boolean;
   onToggleSnap: () => void;
-  /**
-   * Number of currently selected nodes. Used to enable/disable align/distribute
-   * controls: align requires >= 2, distribute requires >= 3.
-   */
   selectionCount: number;
   onAlignLeft: () => void;
   onAlignRight: () => void;
@@ -87,23 +69,6 @@ export interface DiagramToolbarProps {
   onDistributeV: () => void;
 }
 
-/**
- * Floating toolbar overlay for the DiagramEditor.
- *
- * Structure:
- *   - pointer-events-none absolute container (inset-x-0 top-3 z-10)
- *   - left: stat text "{N} nodes · {M} edges"
- *   - right: action cluster (Add entries, Layout mode selector, Edit/Editing,
- *            Auto-layout (when a mode is active), Undo, Redo, Export JSON)
- *
- * Mirrors GraphView toolbar layout exactly (pointer-events-none outer container,
- * pointer-events-auto children).
- *
- * Layout mode selector: Radix Select offering "None", "Family tree mode", "Org chart".
- * Replaces Plan 06's family-tree checkbox toggle with a generalised mode picker.
- * The Auto-layout button is shown whenever layoutMode is non-null; the hint text
- * adapts to the selected mode.
- */
 export function DiagramToolbar({
   nodeCount,
   edgeCount,
@@ -133,7 +98,6 @@ export function DiagramToolbar({
   onDistributeH,
   onDistributeV,
 }: DiagramToolbarProps) {
-  // Determine hint text for the active layout mode
   const layoutHint =
     layoutMode === 'org-chart'
       ? COPY.orgChartHint
@@ -141,7 +105,6 @@ export function DiagramToolbar({
         ? COPY.familyTreeHint
         : null;
 
-  // Map LayoutMode to select value string
   const selectValue: string = layoutMode ?? 'none';
 
   const handleSelectChange = (value: string) => {

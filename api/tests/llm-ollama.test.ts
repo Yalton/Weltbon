@@ -15,7 +15,6 @@ afterEach(() => {
  * `/api/show` is a POST whose body names the model (`{"model": "..."}`) — the
  * same URL serves every model, so a fake that dispatches on URL alone cannot
  * tell `qwen3:32b` from `llava:latest` and would let both resolve to
- * whichever single `/api/show` fixture happened to be registered (fix round 1:
  * that was exactly this file's original bug — see git history). Routes for
  * `/api/show` are therefore keyed `'/api/show:<model>'` and matched against
  * the parsed request body's `model` field; every other route (just `/api/tags`
@@ -73,7 +72,7 @@ describe('listOllamaModels', () => {
   });
 
   it('sends the proxy bearer on both /api/tags and /api/show when the connection has one', async () => {
-    // Fix round 2 (#48 whole-branch review, Important 3). This function used
+
     // to take a bare base URL and send no Authorization header, while
     // `validate()` sent one. Behind an authenticating reverse proxy that made
     // the "Save and test" green "Reachable" indicator actively misleading: the
@@ -247,7 +246,7 @@ describe('OllamaProvider.runAudit', () => {
     // context on any audit whose prompt exceeds that default — this is the
     // one place that failure mode is caught.
     //
-    // Fix round 2 (Minor 6): this used to assert only `typeof === 'number'`
+
     // and `> 0`, which a hardcoded `num_ctx: 1` would satisfy just as well as
     // the real sizing. Pinned to the exact derived value instead:
     //   'short prompt'          = 12 chars
@@ -260,7 +259,7 @@ describe('OllamaProvider.runAudit', () => {
   });
 
   it('pads the sizing estimate above the raw chars/4 heuristic, which undercounts a UUID-dense digest', async () => {
-    // Fix round 2 (#48 whole-branch review, Critical 2). The real audit prompt
+
     // is the structural digest, which serializes every entry UUID three times,
     // and a UUID tokenizes at ~1.7 chars/token — not 4. Measured on a
     // digest-shaped payload (200 entries / 300 links / 50 pins) with
@@ -331,7 +330,7 @@ describe('OllamaProvider.runAudit', () => {
     await expect(promise).rejects.toThrow(/2054/);
   });
 
-  it('accounts for a large tool schema in num_ctx sizing, not just the prompt (fix round 1)', async () => {
+  it('accounts for a large tool schema in num_ctx sizing, not just the prompt', async () => {
     // A regression that sizes num_ctx from opts.messages alone (ignoring
     // opts.tools) would pass every assertion in the test above — tools ARE
     // serialized onto the wire (see that test) but were NOT counted toward

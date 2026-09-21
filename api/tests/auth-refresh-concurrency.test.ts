@@ -252,8 +252,7 @@ describe('concurrent refresh-token rotation', () => {
   it('an unknown token is still refused', async () => {
     // A well-formed but unknown id. NOT a malformed one: a non-UUID id reaches
     // a uuid column and the route currently 500s instead of 401ing. That is a
-    // real pre-existing robustness bug, but it is not this fix's subject, so it
-    // is recorded in docs/open-items/ rather than folded in here.
+    // real pre-existing robustness bug, but it is not this test's subject.
     const bad = await appRequest('POST', '/api/auth/refresh', {
       headers: { Cookie: 'refresh=00000000-0000-4000-8000-000000000000.nosuchsecret' },
     });

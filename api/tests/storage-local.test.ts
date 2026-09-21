@@ -1,15 +1,3 @@
-/**
- * Plan F0 Task 1 — LocalStorageBackend atomicity (F0-03) and size() (F0-05).
- *
- * UNIT LANE. Touches a real temp directory, never a database. Do NOT add this
- * file to DB_GATED_TESTS in vitest.config.ts.
- *
- * The load-bearing test here is `preserves the prior value when a write fails
- * partway`. A put-then-read-back test passes under a plain writeFile and is
- * exactly the kind of coverage that cannot fail; this one dies under it,
- * because writeFile opens the destination with 'w' and truncates it before
- * writing any byte.
- */
 import { describe, it, expect, beforeEach, afterEach, vi } from 'vitest';
 import { mkdtemp, rm, readdir } from 'node:fs/promises';
 import { tmpdir } from 'node:os';

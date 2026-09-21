@@ -9,21 +9,6 @@ interface Props {
   universe: Universe;
 }
 
-/**
- * Chip list of universe.entryTypes with rename / remove affordances + an "Add
- * type" input below. Renders inside UniverseSettings.
- *
- * Remove flow:
- *  1. ConfirmDialog (no destructive content shown if user backs out)
- *  2. DELETE without fallback
- *     - 204 → optimistic invalidation removes the chip
- *     - 409 entries_using_type → TypeDeleteDialog opens with the fallback
- *       select; user picks a remaining type and confirms
- *
- * Rename flow:
- *  - Click the rename pencil → chip swaps to an inline <input>
- *  - Enter or blur calls PATCH action=rename; Escape cancels
- */
 export function EntryTypesSection({ universe }: Props) {
   const addType = useAddEntryType(universe.id);
   const renameType = useRenameEntryType(universe.id);

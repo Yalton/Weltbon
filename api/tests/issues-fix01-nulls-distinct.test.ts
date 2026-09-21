@@ -5,7 +5,7 @@ import { issueAccessToken } from '../src/services/auth.js';
 import { setTestDb } from '../src/db/client.js';
 import { issues } from '../src/db/schema.js';
 
-// FIX-01 (Phase 34): the issues_universe_gap_key_unique index was recreated in
+
 // migration 0019 WITHOUT the equal-nulls clause (Postgres default = NULLs distinct).
 // This locks both halves of the dedup-integrity invariant:
 //   (a) unlimited gap_key = NULL (human-authored) issues per universe, and

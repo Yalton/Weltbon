@@ -1,15 +1,3 @@
-/**
- * Issue #48 Task 7 — OllamaConnectionSection.
- *
- * Pins:
- *   - renders nothing off local mode (presentation only — the server enforces
- *     desktop-only independently, twice; see llm-connections.ts file header).
- *   - a tool-incapable model is listed WITH the reason, never hidden (a
- *     hidden model reads as "where did it go?").
- *   - a tools-capable model is listed plainly, with no such caveat.
- *   - the installed-model display is not an interactive control (fix round 2,
- *     Minor 8): it used to be a `<select>` with no `value` and no `onChange`.
- */
 import { describe, it, expect, vi } from 'vitest';
 import { render, screen } from '@testing-library/react';
 import { OllamaConnectionSection } from './OllamaConnectionSection';
@@ -60,7 +48,6 @@ describe('OllamaConnectionSection', () => {
   });
 
   it('renders installed models as a list, not as a control that does nothing', () => {
-    // Fix round 2 (#48 whole-branch review, Minor 8). The section used to
     // render a real `<select>` here with neither `value` nor `onChange` — it
     // looked like it chose the audit model and chose nothing; the actual
     // choice is made per universe. Asserting the absence of a combobox is

@@ -1,43 +1,15 @@
-/**
- * Sticky top bar for the import-review screen (UI-SPEC §4.2).
- *
- * Three-group flex header:
- *   [← Back to {universe}]   Reviewing N entries · M warnings · K conflicts   [Discard][Commit P]
- *
- * Commit button is disabled when:
- *   - acceptedCount === 0 (D-29 empty-batch guard), OR
- *   - isCommitting (in-flight), OR
- *   - isPreviewPending (a replacement preview is in flight), OR
- *   - metaInvalid (any entry has invalid metadata).
- *
- * Disabled-state hover hint per D-29 / UI-SPEC §5.6 (native title attr).
- *
- * Status line wrapped in aria-live="polite" so count changes announce
- * (UI-SPEC §9.2).
- *
- * Back-link target: `/universes/${universeId}/entries` — there is no bare
- * `/universes/:uid` route; the entries page IS the universe landing
- * (App.tsx:38).
- */
 
 import { Link } from 'react-router-dom';
 
 interface ImportStickyBarProps {
   universeId: string;
   universeName: string;
-  /** N — total entries in batch. */
   totalEntries: number;
-  /** M — entries with at least one parser warning. */
   warningCount: number;
-  /** K — entries that began as conflicts (still counted toward "K conflicts"
-   * even after the user resolved via rename, until commit). */
   conflictCount: number;
-  /** P — live count of accept | rename dispositions. */
   acceptedCount: number;
   isCommitting: boolean;
-  /** A split/promotion replacement must settle before this preview can commit. */
   isPreviewPending: boolean;
-  /** Any entry's metaValid === false. */
   metaInvalid: boolean;
   onDiscard: () => void;
   onCommit: () => void;

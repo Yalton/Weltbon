@@ -1,23 +1,3 @@
-/**
- * Phase 26 Plan 08 Task 2 — GET /api/universes/:uid/issues?audit_run_id={uuid}.
- *
- * D-10 deep-link filter: when the IssuesView is opened from the audit-history
- * completion banner with `?audit_run_id=...`, the server filters the result
- * set to that single run's findings. UUID validation lives at the Zod layer
- * (T-26-08-03 — non-UUID returns 400 BEFORE the handler runs).
- *
- * Coverage matrix:
- *   1. valid audit_run_id → returns only that run's issues
- *   2. non-UUID audit_run_id → 400 (Zod refusal)
- *   3. valid-shape unknown audit_run_id → 200 with []
- *   4. cross-universe audit_run_id → 200 with [] (universe filter wins;
- *      T-26-08-04 disposition: accept — no enumeration enabled)
- *   5. combined filter (audit_run_id + category) → intersection only
- *
- * Phase 25 CR-02 lesson: schema AND handler must be updated together — if
- * either is missing, test #1 fails (handler ignores filter) or test #2 fails
- * (Zod doesn't reject) — both branches covered.
- */
 
 import { describe, it, expect, beforeAll, afterAll, beforeEach } from 'vitest';
 import { eq } from 'drizzle-orm';
@@ -27,7 +7,7 @@ import { setTestDb } from '../src/db/client.js';
 import { createApp } from '../src/index.js';
 import { auditRuns, issues } from '../src/db/schema.js';
 
-describe('GET /api/universes/:uid/issues?audit_run_id= (Phase 26 Plan 08 Task 2 / D-10)', () => {
+describe('GET /api/universes/:uid/issues?audit_run_id=', () => {
   let handle: TestDbHandle;
   let app: ReturnType<typeof createApp>;
 

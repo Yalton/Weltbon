@@ -1,15 +1,3 @@
-/**
- * Phase 27 Plan 04 Task 3 — AuditHistoryTable cost-unknown chip tests.
- *
- * Pins:
- *   - Test 3: a row with `costUnknown===true` renders the amber `cost
- *     unknown` chip in the cost cell — neither `$0.0000` nor `—`.
- *   - Test 4: a row with `costUnknown===false, status==='failed',
- *     costUsd==='0.0000'` still renders the `—` placeholder (existing
- *     failed-zero branch preserved).
- *   - Test 5: a row with `costUnknown===false, costUsd==='0.0123'`
- *     renders `$0.0123`.
- */
 
 import { describe, it, expect, vi, beforeEach } from 'vitest';
 import { render, screen } from '@testing-library/react';
@@ -69,12 +57,12 @@ function renderWithRows(rows: AuditHistoryRow[]) {
   return render(<AuditHistoryTable universeId="U1" />, { wrapper: Wrapper });
 }
 
-describe('AuditHistoryTable — Phase 27 D-06 cost_unknown chip in cost cell', () => {
+describe('AuditHistoryTable — D-06 cost_unknown chip in cost cell', () => {
   beforeEach(() => {
     vi.mocked(useAuditHistory).mockReset();
   });
 
-  it('Test 3 — costUnknown=true renders amber chip, NOT $0.0000 or —', () => {
+  it('Test 3 — costUnknown=true renders amber chip, NOT $0.0000 or', () => {
     renderWithRows([
       baseRow({
         id: 'aaaaaaaa-0000-0000-0000-000000000001',
@@ -124,15 +112,6 @@ describe('AuditHistoryTable — Phase 27 D-06 cost_unknown chip in cost cell', (
   });
 });
 
-/**
- * #50 Task 9 (review fix) — scans BOTH text content and every element's
- * attribute values, not just `document.body.textContent`. A text-only scan
- * cannot detect the attribute-leak class the standing rule exists for
- * (`document.body.textContent` never contains attribute values — that is a
- * DOM fact, not a maybe), and this component already builds an aria-label
- * from row fields right above the new badge, so that path is live here.
- * Mirrors AdminSharedLlmConnections.test.tsx's `expectNoKeyMaterial`.
- */
 function expectNoOwnerOrKeyMaterial(poisonValues: string[]) {
   const text = document.body.textContent ?? '';
   const attributeValues: string[] = [];
@@ -145,7 +124,7 @@ function expectNoOwnerOrKeyMaterial(poisonValues: string[]) {
   }
 }
 
-describe('AuditHistoryTable — #50 Task 9 credentialSource display', () => {
+describe('AuditHistoryTable — credentialSource display', () => {
   beforeEach(() => {
     vi.mocked(useAuditHistory).mockReset();
   });

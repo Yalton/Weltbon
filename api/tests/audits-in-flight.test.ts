@@ -1,23 +1,3 @@
-/**
- * Phase 26 Plan 03 Task 1 — GET /api/audits/in-flight integration tests.
- *
- * Endpoint contract (D-06 / D-16):
- *   - Cross-universe rollup of the authed user's pending+running audit runs.
- *   - NO requireUniverse (this is a user-scoped endpoint, not universe-scoped).
- *   - Mount point: /api/audits/in-flight (root /api prefix, NOT under /universes/:uid).
- *   - Response: InFlightAuditSummary[] (see api/src/types/audit-suggestion.ts).
- *   - Filter: status IN ('pending','running') AND user_id = c.var.userId.
- *   - Order: startedAt DESC.
- *   - No pagination (in-flight count is small).
- *   - 401 if unauthenticated.
- *   - Empty result returns [] (NOT 404).
- *
- * Security invariants tested (Plan 26-03 threat-model):
- *   T-26-03-01 — Information disclosure: user B's in-flight runs NEVER returned to user A.
- *
- * DB is REAL (createTestDb with isolated schema). audit_runs rows are inserted directly
- * (no need to mock the audit engine — we're testing the read route only).
- */
 
 import { describe, it, expect, beforeAll, afterAll, beforeEach, vi } from 'vitest';
 
@@ -39,7 +19,7 @@ import { setTestDb } from '../src/db/client.js';
 import { createApp } from '../src/index.js';
 import { auditRuns, universes, entries } from '../src/db/schema.js';
 
-describe('GET /api/audits/in-flight (Phase 26 Plan 03 Task 1 — D-06 cross-universe rollup)', () => {
+describe('GET /api/audits/in-flight', () => {
   let handle: TestDbHandle;
   let app: ReturnType<typeof createApp>;
 

@@ -48,7 +48,7 @@ describe('PDF export in local mode (DV-14)', () => {
 
     // 501 Not Implemented: the feature is absent from this build, not broken
     // and not forbidden. The message must name the reason — an unexplained
-    // failure here is the thing this task exists to prevent.
+
     expect(res.status).toBe(501);
     const body = (await res.json()) as { error: string };
     expect(body.error).toMatch(/desktop app/i);

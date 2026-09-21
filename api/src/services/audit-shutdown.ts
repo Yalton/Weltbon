@@ -7,29 +7,14 @@
  */
 const inFlight = new Set<string>();
 
-/** Register a run as in-flight. Called at the status='running' transition. */
 export function trackRun(runId: string): void { inFlight.add(runId); }
 
-/** Remove a run from the in-flight set. Called at every terminal transition. */
 export function releaseRun(runId: string): void { inFlight.delete(runId); }
 
-/** Returns the current count of in-flight runs. Visible for tests. */
 export function inFlightCount(): number { return inFlight.size; }
 
-/** Reset the in-flight Set. DO NOT call from production — test isolation only. */
 export function _resetInFlightForTest(): void { inFlight.clear(); }
 
-/**
- * Wire SIGTERM handler that stops accepting new connections, waits up to graceMs
- * for in-flight runs to complete, then exits. Anything still running at expiry
- * becomes a process_restarted orphan on next boot via recoverOrphanAuditRuns (AUDIT-12).
- *
- * Default graceMs = cfg.auditShutdownGraceMs (15000ms per CONTEXT D-04).
- * Comfortably under typical k8s terminationGracePeriodSeconds=30.
- *
- * T-24-06-03 (mitigated): the hard deadline ensures SIGTERM never hangs forever.
- * T-24-06-02 (accepted): per-process Set; multi-replica drain is out of scope for v3.0.
- */
 export function wireSigtermDrain(
   server: { close: (cb?: (err?: Error) => void) => void },
   graceMs: number,

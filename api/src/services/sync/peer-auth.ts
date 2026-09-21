@@ -28,7 +28,6 @@ export type PeerAuthCode =
   | 'peer_not_weltbon';
 
 /**
- * WHY `peer_credentials_rejected` IS 422 AND NOT 401 (fix wave, finding I6).
  *
  * The peer rejecting the user's email/password is not "you are unauthenticated
  * with THIS server" — the caller's own JWT was valid, or `requireJwtAuth`
@@ -90,9 +89,6 @@ export async function mintPatFromCredentials(args: {
     try {
       return await doFetch(`${args.baseUrl}${path}`, init);
     } catch {
-      // Deliberately does not include the caught error: a transport error can
-      // carry the request in its message on some runtimes, and the request
-      // body here holds the password.
       throw new PeerAuthError(
         'could not reach a Weltbon instance at that address',
         'peer_unreachable',

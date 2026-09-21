@@ -1,15 +1,3 @@
-/**
- * Scalar API reference HTML page for /api/docs.
- *
- * D-06: Uses Scalar (MIT-licensed) served via CDN at:
- *   https://cdn.jsdelivr.net/npm/@scalar/api-reference
- * T-10-03 (accepted risk): CDN script is operator-facing only, same trust level as other
- *   CDN-loaded assets in the project. Operators who want supply-chain isolation can
- *   self-host by downloading @scalar/api-reference and updating the src URL here.
- *
- * D-07: Mounted as a Hono GET route — NOT via SPA static fallback — so /api/docs
- *   resolves consistently regardless of React Router state.
- */
 export const scalarHtml = `<!doctype html>
 <html lang="en">
   <head>

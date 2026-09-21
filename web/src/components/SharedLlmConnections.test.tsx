@@ -1,28 +1,3 @@
-/**
- * #50 Task 8 — recipient shared-connection panel.
- *
- * The security-relevant assertions here are the negative ones, and the first
- * version of them was worthless. It searched the DOM for literals no fixture
- * contained and for FIELD NAMES ('ownerUserId') when a real leak renders a
- * VALUE — so a reviewer could widen the type, render "Shared by Alice Admin"
- * with the administrator's email in a title attribute, and watch all eight
- * tests pass. That is the second negative assertion on this branch to pass
- * for reasons unrelated to what it guarded (the first matched 'iv' inside
- * `"source":"live"`).
- *
- * So the rule this file now follows: a negative assertion must be shown to
- * fail against a simulated leak. Two mechanisms make that possible here.
- *
- *   1. The fixtures carry POISON — plausible owner identity and key material
- *      attached as extra properties the component's type does not declare.
- *      Nothing renders them today; anything that starts to, will.
- *   2. The check walks text AND every attribute value of the rendered card,
- *      because the leak that got past the old version was in a `title`.
- *
- * Assertions on what the card DOES render are exact-text rather than
- * substring, so a field added to the card is a test failure that has to be
- * looked at rather than silently absorbed.
- */
 
 import { describe, it, expect, vi, beforeEach } from 'vitest';
 import { render, screen, waitFor } from '@testing-library/react';

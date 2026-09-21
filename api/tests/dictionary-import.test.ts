@@ -1,17 +1,3 @@
-/**
- * api/tests/dictionary-import.test.ts
- *
- * Integration tests for CSV dictionary import (Task 2).
- * DB-gated: requires a live Postgres database.
- *
- * Covers:
- * - D-09: Upsert on collision OVERWRITES (not skip/rename)
- * - D-10: Bad row reported without aborting good rows
- * - D-10: Lenient headers (extra/reordered columns tolerated)
- * - D-10: Missing required headers error (import-level error, not row-level)
- * - D-10: Semicolon tag split ("noun;archaic" → ['noun','archaic'])
- * - T-32-04: 5 MB file size cap via multipart route
- */
 
 import { describe, it, expect, beforeAll, afterAll, beforeEach } from 'vitest';
 import { createApp } from '../src/index.js';

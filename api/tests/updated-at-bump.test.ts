@@ -3,12 +3,7 @@ import { sql, eq } from 'drizzle-orm';
 import { createTestDb, createTestUser, type TestDbHandle } from './helpers.js';
 import { universes, maps, mapPins, entries } from '../src/db/schema.js';
 
-/**
- * Plan A (sync foundation): every synced table's updatedAt must
- *  (a) exist as timestamptz, and (b) bump automatically on ORM .update()
- * via $onUpdate — sync LWW (S-03) depends on both.
- */
-describe('updatedAt: timestamptz + $onUpdate bump (Plan A)', () => {
+describe('updatedAt: timestamptz + $onUpdate bump', () => {
   let handle: TestDbHandle;
   let userId: string;
 

@@ -1,6 +1,4 @@
 /**
- * Issue #48 Task 7 — TanStack Query hooks for /api/llm-connections/*
- * (Task 6's endpoint-based provider CRUD; Ollama is the only member today).
  *
  * Wire shape (api/src/routes/llm-connections.ts, JWT-only via requireJwtAuth
  * — mirrors llm-keys.ts's mutation routes, which also exclude PATs because a
@@ -30,8 +28,6 @@
 import { useMutation, useQuery, useQueryClient } from '@tanstack/react-query';
 import { api } from '../api/client';
 
-/** The one endpoint-based provider today. Widen alongside CONNECTION_PROVIDER_NAMES
- *  in api/src/routes/llm-connections.ts if a second one ever ships. */
 export type ConnectionProvider = 'ollama';
 
 export interface LlmConnection {
@@ -47,7 +43,6 @@ export interface LlmConnection {
 export interface OllamaModelInfo {
   name: string;
   supportsTools: boolean;
-  /** The model's architectural maximum context — see api/src/providers/llm/ollama.ts. */
   contextLength: number | null;
 }
 
@@ -59,21 +54,6 @@ function modelsKey(provider: ConnectionProvider) {
   return ['llm-connection-models', provider] as const;
 }
 
-/**
- * Read the caller's stored connection for a provider.
- *
- * 404 (no row yet) surfaces as a query `error`, not a special "empty" data
- * shape — `OllamaConnectionSection` treats "no data" and "404" the same way
- * (an unconfigured connection), so it does not need to special-case the
- * error object; it only reads `data`.
- *
- * `options.enabled` (default true) lets a caller suppress the fetch. The one
- * consumer, `OllamaConnectionSection`, passes `localMode === true` here: the
- * component's own early return already renders nothing off local mode, but
- * hooks fire before that return (rules of hooks), so without this gate a
- * hosted instance would still issue a request the server can only 403 —
- * harmless, but noisy, and it would fire from every settings-page mount.
- */
 export function useLlmConnection(provider: ConnectionProvider, options?: { enabled?: boolean }) {
   return useQuery({
     queryKey: connectionKey(provider),
@@ -83,12 +63,6 @@ export function useLlmConnection(provider: ConnectionProvider, options?: { enabl
   });
 }
 
-/**
- * Create or replace the stored connection (plain upsert — the server does
- * NOT contact Ollama here; see llm-connections.ts's "PUT does not validate"
- * comment). Invalidates both the connection row and the model list, since a
- * changed `baseUrl` points the models query at a different server entirely.
- */
 export function useSaveLlmConnection(provider: ConnectionProvider) {
   const qc = useQueryClient();
   return useMutation({
@@ -104,7 +78,6 @@ export function useSaveLlmConnection(provider: ConnectionProvider) {
   });
 }
 
-/** Delete the stored connection. */
 export function useDeleteLlmConnection(provider: ConnectionProvider) {
   const qc = useQueryClient();
   return useMutation({
@@ -116,12 +89,6 @@ export function useDeleteLlmConnection(provider: ConnectionProvider) {
   });
 }
 
-/**
- * Reachability check against the STORED connection (not a form draft — the
- * server reads the DB row, see llm-connections.ts's testRoute). On success
- * the server advances `lastValidatedAt`, so invalidate the connection query
- * to pick that up.
- */
 export function useTestLlmConnection(provider: ConnectionProvider) {
   const qc = useQueryClient();
   return useMutation({
@@ -134,27 +101,11 @@ export function useTestLlmConnection(provider: ConnectionProvider) {
   });
 }
 
-/**
- * Installed models on the caller's stored connection — the FULL list,
- * including tool-incapable ones (`supportsTools: false`). Unlike
- * `useListModels('ollama')` in useAudits.ts (which the universe audit
- * picker uses and which the backend pre-filters to tools-only, since a
- * tool-incapable model cannot run an audit at all), this hook backs the
- * settings picker, which must show a filtered-out model as disabled WITH
- * the reason rather than hide it — a user who pulled `llava` should see why
- * it is unavailable, not wonder where it went.
- *
- * `options.enabled` — see useLlmConnection's doc for why this exists.
- */
 export function useOllamaModels(provider: ConnectionProvider, options?: { enabled?: boolean }) {
   return useQuery({
     queryKey: modelsKey(provider),
     queryFn: () => api<OllamaModelInfo[]>(`/llm-connections/${provider}/models`),
     enabled: options?.enabled ?? true,
-    // A 404 (no connection row) or 503 (unreachable server) both resolve to
-    // "nothing to list" from the UI's point of view — neither is transient
-    // in the way a dropped packet is, so retrying wastes a round trip
-    // against a server the user has, e.g., not started yet.
     retry: false,
   });
 }

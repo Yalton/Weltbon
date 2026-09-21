@@ -1,19 +1,3 @@
-/**
- * Plan C (C-14): instance identity for the sync handshake (sync spec S-08).
- *
- * Three values describe compatibility:
- *   weltbonVersion — the manifest format. Merging across versions is refused by
- *                    the engine itself (B-09); the handshake catches it first.
- *   migrationHead  — the last tag in drizzle/meta/_journal.json. Two instances
- *                    at different schema heads can produce manifests that apply
- *                    cleanly and still lose data.
- *   appVersion     — package.json version. Reported for humans; never gates.
- *
- * The journal is read from disk (Dockerfile:61 copies api/drizzle into the
- * runtime image at ./drizzle, relative to cwd) and cached after the first
- * successful read. If it cannot be read the handshake fails LOUDLY — a
- * permissive default would let mismatched instances corrupt each other.
- */
 import { readFile } from 'node:fs/promises';
 import { join } from 'node:path';
 import { eq } from 'drizzle-orm';
@@ -59,18 +43,10 @@ export async function migrationHead(): Promise<string> {
   return cachedHead;
 }
 
-/**
- * Clears the memoized migration head so a subsequent migrationHead() re-reads
- * disk. Exists SOLELY for the 503 journal-unavailable test (sync-handshake.test.ts):
- * cachedHead is process-global, so a test that points DRIZZLE_DIR at a broken
- * journal must be able to force a cold read and then un-poison the cache for any
- * sibling test sharing the worker. Not part of the runtime contract.
- */
 export function resetMigrationHeadCache(): void {
   cachedHead = null;
 }
 
-/** The manifest version this build emits — kept in lockstep with json.ts. */
 export const WELTBON_MANIFEST_VERSION = '2.2.0';
 
 const UUID_RE = /^[0-9a-f]{8}-[0-9a-f]{4}-[1-5][0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$/i;
@@ -95,7 +71,6 @@ export async function localIdentity(): Promise<InstanceIdentity> {
   return {
     instanceId: rows[0].instanceId,
     weltbonVersion: WELTBON_MANIFEST_VERSION,
-    // Read lazily so a bundler/packager change cannot break module load.
     appVersion: process.env.npm_package_version ?? '0.1.0',
     migrationHead: head,
   };

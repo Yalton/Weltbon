@@ -10,7 +10,6 @@ export interface AssetSummary {
   sizeBytes: number;
   thumbSizeBytes: number;
   altText: string | null;
-  // Phase 38 UAT-fix: pre-signed serving URLs from the API (include ?e=&s= HMAC params
   // so <img src> can load without Authorization: Bearer header).
   rawUrl: string;
   thumbUrl: string;
@@ -23,13 +22,6 @@ export interface AssetUsage {
   references: Array<{ entryId: string; title: string; kind: 'cover' | 'inline' }>;
 }
 
-/**
- * Phase 38 MEDIA-03: TanStack Query hooks for per-universe asset library.
- *
- * Query key: ['assets', universeId] — deliberately isolated; never shares a
- * key segment with ['diagrams', ...], ['entries', ...], etc.
- * [CITED: memory/react-query-key-change-blast-radius.md]
- */
 
 export function useAssets(universeId: string) {
   return useQuery({

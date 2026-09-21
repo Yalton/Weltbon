@@ -15,41 +15,27 @@ const FIELD_TYPE_OPTIONS: { value: FieldRegistryEntry['type']; label: string }[]
   { value: 'entry-ref', label: 'Entry reference' },
 ];
 
-/**
- * Phase 36 DATA-02: field registry CRUD list in the UniverseSettings Fields tab.
- *
- * Modeled on EntryTypesSection (full-array PATCH replace + ConfirmDialog + inline
- * saveStatus). Registry edits are non-destructive to entries.meta (D-03): a
- * deleted/renamed/retyped field never mutates stored values — removed-field
- * values simply render as freeform rows in MetaEditor. The delete dialog states
- * this explicitly.
- */
 export function FieldRegistrySection({ universe }: Props) {
   const update = useUpdateUniverse(universe.id);
 
-  // ─── Add form state ────────────────────────────────────────────────────
   const [newName, setNewName] = useState('');
   const [newType, setNewType] = useState<FieldRegistryEntry['type'] | ''>('');
   const [newHint, setNewHint] = useState('');
   const [addError, setAddError] = useState<string | null>(null);
 
-  // ─── Edit state ────────────────────────────────────────────────────────
   const [editingName, setEditingName] = useState<string | null>(null);
   const [editName, setEditName] = useState('');
   const [editType, setEditType] = useState<FieldRegistryEntry['type'] | ''>('');
   const [editHint, setEditHint] = useState('');
   const [editError, setEditError] = useState<string | null>(null);
 
-  // ─── Delete state ──────────────────────────────────────────────────────
   const [confirmDeleteName, setConfirmDeleteName] = useState<string | null>(null);
   const [deleteError, setDeleteError] = useState<string | null>(null);
 
-  // ─── Save status ───────────────────────────────────────────────────────
   const [saveStatus, setSaveStatus] = useState<'idle' | 'success' | 'error'>('idle');
 
   const registry = universe.fieldRegistry ?? [];
 
-  // ─── Add ────────────────────────────────────────────────────────────────
   const submitAdd = async () => {
     const trimmedName = newName.trim();
     setAddError(null);
@@ -92,7 +78,6 @@ export function FieldRegistrySection({ universe }: Props) {
     }
   };
 
-  // ─── Edit ────────────────────────────────────────────────────────────────
   const startEdit = (field: FieldRegistryEntry) => {
     setEditingName(field.name);
     setEditName(field.name);
@@ -148,7 +133,6 @@ export function FieldRegistrySection({ universe }: Props) {
     }
   };
 
-  // ─── Delete ─────────────────────────────────────────────────────────────
   const performDelete = async () => {
     if (!confirmDeleteName) return;
     setDeleteError(null);
@@ -183,7 +167,6 @@ export function FieldRegistrySection({ universe }: Props) {
         <ul className="space-y-2 mt-2">
           {registry.map((field) =>
             editingName === field.name ? (
-              // Inline edit row
               <li
                 key={field.name}
                 className="rounded-md border border-neutral-200 dark:border-neutral-800 p-3 space-y-2"
@@ -254,7 +237,6 @@ export function FieldRegistrySection({ universe }: Props) {
                 </div>
               </li>
             ) : (
-              // Display row
               <li
                 key={field.name}
                 className="group flex items-center gap-3 rounded-md border border-neutral-200 dark:border-neutral-800 px-3 py-2"

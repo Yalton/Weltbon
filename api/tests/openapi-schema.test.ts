@@ -1,25 +1,8 @@
-/**
- * Behavioral tests for the OpenAPI schema endpoint and Scalar docs page.
- *
- * Gap 1 — Plan 10-01 T1+T2 / Plan 10-02 T2 / Plan 10-03 T3:
- *   GET /api/openapi.json returns 200 with a valid OpenAPI 3.x doc; both
- *   security schemes present; all 11 router path groups represented.
- *
- * Gap 2 — Plan 10-01 T2 / T-10-04 spoofing mitigation:
- *   tokens.ts routes (POST /auth/tokens, GET /auth/tokens, DELETE /auth/tokens/{id})
- *   declare security:[{ bearerJwtAuth: [] }] and NOT bearerAuth.
- *
- * Gap 3 — Plan 10-04 T1:
- *   GET /api/docs returns 200 HTML containing id="api-reference",
- *   data-url="/api/openapi.json", and the Scalar CDN script.
- *
- * NO database setup — these endpoints are pure schema/HTML and do not touch DB.
- */
 
 import { describe, it, expect } from 'vitest';
 import { app } from '../src/index.js';
 
-describe('OpenAPI schema and Scalar docs (Phase 10 — DB-independent)', () => {
+describe('OpenAPI schema and Scalar docs', () => {
   it('declares the shared LLM recipient and admin route contracts without credential-shaped inputs', async () => {
     const res = await app.fetch(new Request('http://localhost/api/openapi.json'));
     expect(res.status).toBe(200);
@@ -92,18 +75,7 @@ describe('OpenAPI schema and Scalar docs (Phase 10 — DB-independent)', () => {
       ?.required).toEqual(['id', 'owner', 'recipient', 'provider', 'status', 'createdAt', 'revokedAt', 'revokedReason', 'consentedAt', 'usage']);
   });
 
-  /**
-   * Task 10 final boundary check. The forbidden-property loop above only
-   * covers POST /admin/llm-shares's requestBody. This generalises it across
-   * EVERY shared-route path/method that declares a JSON request body, so a
-   * future request field on any shared route (e.g. a PATCH added to
-   * /llm-shares/{id}) is caught by construction rather than needing a new
-   * hand-written block here. `checkedAtLeastOneSchema` exists because a loop
-   * over zero schemas passes vacuously — the same trap this branch's standing
-   * rule exists to catch, just at the schema-discovery step instead of the
-   * assertion step.
-   */
-  it('scans every new shared-route request schema for forbidden property names', async () => {
+    it('scans every new shared-route request schema for forbidden property names', async () => {
     const res = await app.fetch(new Request('http://localhost/api/openapi.json'));
     expect(res.status).toBe(200);
     const doc = await res.json() as any;

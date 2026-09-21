@@ -1,19 +1,3 @@
-/**
- * Phase 38 MEDIA-05: MarkdownRenderer asset:// img resolver tests.
- *
- * Asserts:
- * 1. Authenticated URL (no assetUrls map): asset://uuid → /api/universes/u1/assets/uuid/raw
- * 2. Share URL (no assetUrls map): asset://uuid + shareToken → /api/share/assets/uuid/raw
- * 3. Pre-signed assetUrls map (authed): asset://uuid resolved from provided map (UAT-fix)
- * 4. Pre-signed assetUrls map (share): asset://uuid resolved from provided map (UAT-fix)
- * 5. Non-asset src passes through unchanged
- * 6. img onError hides the element (sets display:none) — no /missing-image.svg
- *
- * T-38-20: uuid is concatenated into a URL path, never dangerouslySetInnerHTML.
- * T-38-21: share mode uses /api/share/assets/:id/raw explicitly (Pitfall 4).
- * T-38-22: onError hides the broken img (no /missing-image.svg exists).
- * Phase 38 UAT-fix: when assetUrls map is provided, use the pre-signed URL directly.
- */
 
 import { describe, it, expect } from 'vitest';
 import { render, screen, fireEvent } from '@testing-library/react';
@@ -60,7 +44,7 @@ describe('MarkdownRenderer — asset:// img resolver (MEDIA-05)', () => {
     expect(img.getAttribute('src')).not.toContain('/universes/');
   });
 
-  // ─── Pre-signed assetUrls map paths (Phase 38 UAT-fix) ──────────────────────
+
 
   it('uses pre-signed URL from assetUrls map (authed path)', () => {
     const signedUrl = `/api/universes/${UNIVERSE_ID}/assets/${ASSET_UUID}/raw?e=9999999999&s=deadbeef`;

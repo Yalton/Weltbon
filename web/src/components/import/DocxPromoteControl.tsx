@@ -1,28 +1,9 @@
 import type { DocxFileInfo } from '../../types/ingestReview';
 
-/**
- * Unstyled-heading promotion control for the import-review screen
- * (issue #35, DOCX-09).
- *
- * Shown above the entry list when the preview reports at least one .docx
- * part whose heuristic pass found candidates (`unstyledCandidates > 0`).
- * Each eligible upload has its own reversible control because names are not
- * unique and the server identifies uploads by their stable multipart index.
- *
- * The eligibility check is deliberately just `unstyledCandidates > 0`.
- * That count already reflects the server's eligibility rule: it can be
- * positive for either a zero-styled document or an eligible mixed document,
- * and is zero below the mixed ratio-or-absolute threshold. Re-deriving the
- * rule here would duplicate server policy and can drift from it.
- *
- * Presentational + prop-driven; the parent owns the re-request, exactly as
- * SplitLevelControl does for `split_level`.
- */
 
 interface DocxPromoteControlProps {
   files: DocxFileInfo[];
   onChange: (uploadIndex: number, promoted: boolean) => void;
-  /** True while a re-preview is in flight, so a double click cannot race two requests. */
   disabled?: boolean;
 }
 

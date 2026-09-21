@@ -1,33 +1,22 @@
 /**
  * diagramImageExport — SVG serialization + browser SVG/PNG download helpers.
  *
- * DIAGRAM-03 requirement (image export extension alongside JSON export from Plan 06).
  *
  * Security notes:
  *   T-31-25: serialization uses XMLSerializer on the app's own DOM nodes — text
- *   labels are already escaped by React/SVG <text> per Plan 05 (T-31-10). We
  *   never string-concatenate raw label text into markup.
  *   T-31-26: the canvas SVG contains no external image references (only vector
  *   shapes + text), so canvas.toBlob stays untainted.
  *
  * Zero new dependencies — uses only browser SVG/Image/canvas APIs.
  * The download mechanism (URL.createObjectURL + transient <a download>) is
- * reused verbatim from the Plan 02/06 Export JSON wiring.
  */
 
-// ─── Constants ─────────────────────────────────────────────────────────────────
 
-/** Default pixel-ratio scale factor applied when rasterizing to PNG. */
 export const DEFAULT_SCALE = 2;
 
-/**
- * Maximum canvas dimension (width or height) in pixels.
- * Most browsers cap canvas size at 16384 px (some at 32767). We use a
- * conservative 8192 to stay well within all targets (WR-02 fix).
- */
 export const MAX_CANVAS_DIMENSION = 8192;
 
-// SVG attributes that carry presentation information and should be inlined
 // into the clone so the PNG raster matches the on-screen render.
 const INLINE_STYLE_PROPS: readonly string[] = [
   'fill',
@@ -44,22 +33,11 @@ const INLINE_STYLE_PROPS: readonly string[] = [
   'dominant-baseline',
 ];
 
-// ─── Helpers ──────────────────────────────────────────────────────────────────
 
-/**
- * Sanitize a diagram name for use as a filename.
- * Replaces any character that is not alphanumeric, hyphen, dot, or underscore
- * with an underscore and lowercases the result.
- */
 function sanitizeFilename(name: string): string {
   return name.replace(/[^a-z0-9.\-]/gi, '_').toLowerCase();
 }
 
-/**
- * Inline computed styles from the original element tree onto the cloned element tree.
- * We zip the original and clone trees together so getComputedStyle reads from the
- * live DOM original (which has computed values), while setAttribute writes to the clone.
- */
 function inlineStylesFromOriginal(original: Element, clone: Element): void {
   const computedStyle = window.getComputedStyle(original);
 
@@ -67,14 +45,11 @@ function inlineStylesFromOriginal(original: Element, clone: Element): void {
     const value = computedStyle.getPropertyValue(prop);
     // WR-04: only skip empty string — do NOT filter 'none', 'normal', or '0px'
     // blanket-wide, since those are legitimate SVG presentation values.
-    // e.g. fill="none" on selection rings / halos must be preserved so they
-    // don't render as solid black discs in the exported PNG/SVG.
     if (value !== '') {
       clone.setAttribute(prop, value);
     }
   }
 
-  // Recurse paired children (original and clone have the same structure)
   const origChildren = Array.from(original.children);
   const cloneChildren = Array.from(clone.children);
   const len = Math.min(origChildren.length, cloneChildren.length);
@@ -83,53 +58,19 @@ function inlineStylesFromOriginal(original: Element, clone: Element): void {
   }
 }
 
-// ─── serializeSvgElement ──────────────────────────────────────────────────────
 
 export interface SerializeSvgOptions {
-  /**
-   * When true (default), walk the original element tree and inline computed
-   * fill/stroke/font styles onto the clone so CSS-variable colors are resolved
-   * to concrete values in the output.
-   */
   inlineComputedStyles?: boolean;
 }
 
-/**
- * Clones an SVG element and returns a standalone, self-contained SVG string.
- *
- * The output:
- *   - Has `xmlns="http://www.w3.org/2000/svg"` on the root.
- *   - Has width/height + viewBox derived from the *content* bounding box
- *     (getBBox on g.viewport, or getBBox on the whole SVG as fallback) so
- *     panned/zoomed nodes are never cropped (WR-03 fix).
- *   - Has the live pan/zoom transform neutralized (reset to identity) so the
- *     export shows the whole diagram, not just the viewport window.
- *   - Has computed fill/stroke/font styles inlined onto all descendants so the
- *     rasterized PNG matches the on-screen render even without external stylesheets.
- *   - Is produced by XMLSerializer — never by string concatenation (T-31-25).
- */
 export function serializeSvgElement(
   svgEl: SVGSVGElement,
   opts: SerializeSvgOptions = {},
 ): string {
   const { inlineComputedStyles = true } = opts;
 
-  // Clone the node so we can mutate it without affecting the live DOM.
   const clone = svgEl.cloneNode(true) as SVGSVGElement;
 
-  // Ensure the SVG namespace is present (required for standalone SVG files).
-  // Note: XMLSerializer already adds xmlns="http://www.w3.org/2000/svg" for
-  // SVG elements created with createElementNS. We avoid setting it again via
-  // setAttribute because that produces a duplicate xmlns attribute (invalid XML).
-  // We only set it explicitly when it is genuinely absent from the serialized form
-  // — which happens if the SVG was created without a namespace. In practice,
-  // XMLSerializer handles namespace injection; we just make sure it's present
-  // by doing nothing here for namespaced elements (the serializer will add it).
-  // For safety we still set it on the clone's attribute map, accepting that
-  // some environments will deduplicate while others will produce the string
-  // twice (the latter is invalid XML but valid SVG for browsers).
-  //
-  // Portable fix: use getAttributeNS to check, and skip if already present.
   const hasXmlns = clone.hasAttribute('xmlns') || clone.namespaceURI === 'http://www.w3.org/2000/svg';
   if (!hasXmlns) {
     clone.setAttribute('xmlns', 'http://www.w3.org/2000/svg');
@@ -137,9 +78,7 @@ export function serializeSvgElement(
 
   // WR-03: Compute content bounding box from the live element tree.
   // The SVG uses a <g class="viewport"> that carries the d3-zoom pan/zoom
-  // transform. We read getBBox() on that group (which gives coordinates in
   // the un-transformed SVG coordinate space), not the viewport dimensions.
-  // This ensures nodes panned outside the visible window are still exported.
   const EXPORT_PADDING = 24; // px padding around the content bbox
   let bboxX = 0;
   let bboxY = 0;
@@ -147,7 +86,6 @@ export function serializeSvgElement(
   let bboxH = 0;
 
   try {
-    // Try g.viewport first (DiagramCanvas structure).
     const viewportG = svgEl.querySelector<SVGGElement>('g.viewport');
     const rawBBox = viewportG ? viewportG.getBBox() : svgEl.getBBox();
     if (rawBBox && rawBBox.width > 0 && rawBBox.height > 0) {
@@ -157,12 +95,10 @@ export function serializeSvgElement(
       bboxH = rawBBox.height + EXPORT_PADDING * 2;
     }
   } catch {
-    // getBBox() throws in jsdom (not attached to a rendering context).
     // Fall through to viewport-size fallback below.
   }
 
   if (bboxW === 0 || bboxH === 0) {
-    // Fallback: use the SVG element's rendered viewport dimensions.
     const srcWidth = svgEl.getAttribute('width');
     const srcHeight = svgEl.getAttribute('height');
     bboxW =
@@ -179,15 +115,11 @@ export function serializeSvgElement(
   clone.setAttribute('height', String(Math.round(bboxH)));
   clone.setAttribute('viewBox', `${bboxX} ${bboxY} ${bboxW} ${bboxH}`);
 
-  // Neutralize the live pan/zoom transform on g.viewport so the export shows
-  // the whole diagram centred on the content bbox, not the panned/zoomed window.
   const cloneViewportG = clone.querySelector<SVGGElement>('g.viewport');
   if (cloneViewportG) {
     cloneViewportG.removeAttribute('transform');
   }
 
-  // Inline computed presentation styles so fills/strokes/fonts that rely on
-  // CSS variables or external classes are resolved to concrete values.
   if (inlineComputedStyles) {
     inlineStylesFromOriginal(svgEl, clone);
   }
@@ -197,12 +129,7 @@ export function serializeSvgElement(
   return serializer.serializeToString(clone);
 }
 
-// ─── Download helper (shared with exportSvg + exportPng) ─────────────────────
 
-/**
- * Triggers a browser file download.
- * Reuses the URL.createObjectURL + transient <a download> mechanism from Plan 02/06.
- */
 function triggerDownload(blob: Blob, filename: string): void {
   const url = URL.createObjectURL(blob);
   const a = document.createElement('a');
@@ -214,19 +141,7 @@ function triggerDownload(blob: Blob, filename: string): void {
   URL.revokeObjectURL(url);
 }
 
-// ─── exportSvg ───────────────────────────────────────────────────────────────
 
-/**
- * Downloads the rendered diagram as a standalone SVG file.
- *
- * Serializes `svgEl` via `serializeSvgElement` (inlining computed styles),
- * wraps it in a Blob of type `image/svg+xml`, and triggers a browser download
- * using the Plan 02/06 URL.createObjectURL + transient <a download> mechanism.
- *
- * @param svgEl    The live canvas <svg> element to export.
- * @param name     The desired base name (without extension). Will be sanitized.
- * @param onError  Optional callback invoked if export fails (e.g. serialization throws).
- */
 export function exportSvg(svgEl: SVGSVGElement, name: string, onError?: (err: unknown) => void): void {
   try {
     const svgString = serializeSvgElement(svgEl);
@@ -237,18 +152,9 @@ export function exportSvg(svgEl: SVGSVGElement, name: string, onError?: (err: un
   }
 }
 
-// ─── exportPng ───────────────────────────────────────────────────────────────
 
 export interface ExportPngOptions {
-  /**
-   * Scale factor for the raster output.
-   * @default DEFAULT_SCALE (2)
-   */
   scale?: number;
-  /**
-   * Called when rasterization fails — img.onerror, null ctx, or null blob
-   * (WR-01 fix). If not provided, failures are silently swallowed.
-   */
   onError?: (err: unknown) => void;
 }
 
@@ -292,9 +198,6 @@ export function exportPng(
   }
 
   // WR-03: resolve dimensions from the serialized SVG's width/height attributes
-  // (set by serializeSvgElement to the content bbox), not from the live element
-  // whose viewport may be smaller than the diagram content.
-  // Parse via DOMParser to extract the attributes without regex.
   let w = 400;
   let h = 300;
   try {
@@ -306,11 +209,9 @@ export function exportPng(
     if (pw > 0) w = pw;
     if (ph > 0) h = ph;
   } catch {
-    // DOMParser not available in some environments — keep defaults.
   }
   const sanitized = sanitizeFilename(name);
 
-  // Encode to data URL (more reliable than object URL for Image loading in some contexts).
   const encoded = encodeURIComponent(svgString);
   const dataUrl = `data:image/svg+xml;charset=utf-8,${encoded}`;
 

@@ -1,32 +1,3 @@
-/**
- * api/tests/share-assets.test.ts — Phase 38 D-13 boundary + privacy test
- * (T-38-30 / T-38-31 / T-38-32 regression gate).
- *
- * D-13 security contract: the share asset seam is READ-ONLY and token-scoped.
- *
- * Asserts four invariants:
- *
- *   1. PUBLIC: GET /api/share/assets/:id/raw with a valid share-token returns
- *      200 + image bytes + correct Content-Type for an asset referenced by
- *      an is_public=true entry (cover_image_id path + inline body path).
- *
- *   2. PRIVATE: GET /api/share/assets/:id/raw returns 404 for an asset that
- *      is ONLY referenced by is_public=false entries (no existence leak,
- *      T-38-30).
- *
- *   3. NO-TOKEN: GET /api/share/assets/:id/raw with no or invalid share-token
- *      returns 401/404 (requireShareToken gate fires before handler, T-38-32).
- *
- *   4. NO-MUTATION: a share-token-only caller cannot reach any asset mutation
- *      route — POST/DELETE /api/share/assets return 404/405 (no mutation
- *      route exists under /share/*) AND the authenticated mutation routes
- *      /api/universes/:uid/assets reject a share-token-only caller with 401
- *      (T-38-31).
- *
- * Lane: DB-gated (integration). Uses createTestDb + cleanDb. UPLOADS_DIR is
- * bound to a temp dir BEFORE createApp is imported (storageBackend singleton
- * reads the env var at module-load time — same pattern as assets.test.ts).
- */
 
 import { mkdtempSync, rmSync } from 'node:fs';
 import { join } from 'node:path';
@@ -340,7 +311,7 @@ describe('D-13 share asset boundary (T-38-30 / T-38-31 / T-38-32)', () => {
     expect(Array.isArray(body)).toBe(true);
   });
 
-  // ─── Phase 38 UAT-fix: signed share asset URL regression ─────────────────
+
 
   it('GET /api/share/assets/:id/raw with valid signed URL (?u&e&s) → 200 (no share-token header)', async () => {
     // Mint a signed URL for the public asset the same way the server does.

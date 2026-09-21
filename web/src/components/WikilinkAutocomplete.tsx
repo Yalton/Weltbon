@@ -1,22 +1,11 @@
-/**
- * WikilinkAutocomplete — Phase 47 XREF-01
- *
- * Caret-anchored inline picker that surfaces universe entries (by title + alias)
- * when authoring a `[[` wikilink in the entry editor.
- *
- * Pure helpers are exported so Plan 47-02 (EntryEditor wiring) can compute the
- * same result list deterministically.
- */
 
 import { useState, useEffect, useMemo } from 'react';
 import * as Popover from '@radix-ui/react-popover';
 import { useEntries, type Entry } from '../hooks/useEntries';
 
-/** D-08: maximum number of result rows the picker surfaces. */
 const MAX_RESULTS = 8;
 
 // ---------------------------------------------------------------------------
-// Props interface — stable contract for Plan 47-02
 // ---------------------------------------------------------------------------
 
 export interface WikilinkAutocompleteProps {
@@ -30,36 +19,17 @@ export interface WikilinkAutocompleteProps {
   onResultCountChange: (count: number) => void;
   onSelect: (insertText: string) => void;
   onDismiss: () => void;
-  /**
-   * CR-01: report the canonical insert string for the currently-active row so the
-   * parent's Enter handler inserts exactly what is highlighted — null when there
-   * is no active result. The component owns the result list, so this is the only
-   * desync-free source for keyboard selection.
-   */
   onActiveInsertChange: (insertText: string | null) => void;
 }
 
 // ---------------------------------------------------------------------------
-// Pure helpers (exported for parent use — Plan 47-02 consumes these)
 // ---------------------------------------------------------------------------
 
-/**
- * Rank entries against a query string using a four-tier system:
- *   1. Title prefix (case-insensitive)
- *   2. Alias prefix (case-insensitive)
- *   3. Title substring
- *   4. Alias substring
- *
- * Empty query returns entries sorted by updatedAt descending (recency, D-09).
- * Strips any `|display` pipe suffix from the query before matching (D-05).
- * Self is excluded (D-13). Results capped at 8 (D-08).
- */
 export function rankEntries(
   entries: Entry[],
   query: string,
   currentEntryId: string | null,
 ): Entry[] {
-  // Strip pipe suffix — typing [[Title|display should rank on "Title" part only
   const pipeIdx = query.indexOf('|');
   const q = pipeIdx === -1 ? query : query.slice(0, pipeIdx);
   const lower = q.toLowerCase();
@@ -103,17 +73,7 @@ export function rankEntries(
   return [...titlePrefix, ...aliasPrefix, ...titleSub, ...aliasSub].slice(0, MAX_RESULTS);
 }
 
-/**
- * Returns the alias that matched the query, or undefined when:
- *   - the match was by title (not alias)
- *   - the query is empty
- *   - the entry has no aliases
- *
- * Strips pipe suffix from the query before checking (D-05).
- * Used to render the "— alias: <alias>" annotation on result rows (D-07).
- */
 export function getMatchedAlias(entry: Entry, query: string): string | undefined {
-  // Strip pipe suffix
   const pipeIdx = query.indexOf('|');
   const q = pipeIdx === -1 ? query : query.slice(0, pipeIdx);
   const lower = q.toLowerCase();
@@ -121,42 +81,21 @@ export function getMatchedAlias(entry: Entry, query: string): string | undefined
   return (entry.aliases ?? []).find((a) => a.toLowerCase().includes(lower));
 }
 
-/**
- * Build the canonical wikilink insert string for a selected entry.
- *
- * - No pipe in query → `[[<entry.title>]]`
- * - Pipe in query → `[[<entry.title><query from | onward>]]` (SC3 / D-05)
- *
- * Always uses the canonical entry title (D-03), regardless of which alias matched.
- */
 export function buildInsertString(entry: Entry, query: string): string {
   const pipeIdx = query.indexOf('|');
   if (pipeIdx === -1) {
     return `[[${entry.title}]]`;
   }
-  // Preserve everything from the first `|` onward verbatim
   const displaySuffix = query.slice(pipeIdx); // includes the '|' char
   return `[[${entry.title}${displaySuffix}]]`;
 }
 
-/**
- * Returns true when the cursor position is inside a fenced or inline code span.
- *
- * Uses an odd-count heuristic:
- *   - If an odd number of ``` markers precede the cursor → inside a fenced block.
- *   - After removing ``` markers, if an odd number of ` precede the cursor →
- *     inside an inline code span.
- *
- * Mirrors the render-side code-span exclusion in WikilinkText.tsx (D-11).
- */
 export function isInsideCodeSpan(text: string, cursorPos: number): boolean {
   const before = text.slice(0, cursorPos);
 
-  // Check for fenced code block (``` markers)
   const fenceMatches = before.match(/```/g) ?? [];
   if (fenceMatches.length % 2 !== 0) return true;
 
-  // Check for inline backtick after stripping fence markers
   const withoutFences = before.replace(/```/g, '');
   const backtickMatches = withoutFences.match(/`/g) ?? [];
   return backtickMatches.length % 2 !== 0;
@@ -171,16 +110,6 @@ interface CaretCoords {
   left: number;
 }
 
-/**
- * Compute the `{ top, left }` pixel offset of a character position in a textarea,
- * relative to the textarea's offset parent.
- *
- * Uses the mirror-div technique: clones the textarea's font/spacing CSS onto a
- * hidden absolutely-positioned `<div>`, inserts text up to `position`, appends a
- * zero-width `<span>` marker, reads the span's offsetTop/offsetLeft.
- *
- * No `textarea-caret` npm package is used or required.
- */
 function getCaretCoordinates(
   textarea: HTMLTextAreaElement,
   position: number,
@@ -194,7 +123,6 @@ function getCaretCoordinates(
   div.style.wordWrap = 'break-word';
   div.style.overflow = 'hidden';
 
-  // Copy all relevant computed styles
   const properties = [
     'font-family',
     'font-size',
@@ -218,21 +146,17 @@ function getCaretCoordinates(
     div.style.setProperty(prop, computed.getPropertyValue(prop));
   }
 
-  // Match textarea width
   const textareaRect = textarea.getBoundingClientRect();
   div.style.width = `${textareaRect.width}px`;
 
-  // Insert text content up to cursor position
   div.textContent = textarea.value.slice(0, position);
 
-  // Append a marker span
   const span = document.createElement('span');
   span.textContent = '​'; // zero-width space
   div.appendChild(span);
 
   // Append to body to measure, then clean up. WR-04: removeChild runs in a
   // `finally` so a throw mid-measure (e.g. detached-node offset read in an edge
-  // jsdom/SSR path) never leaks the mirror div onto document.body.
   document.body.appendChild(div);
   try {
     return {
@@ -245,7 +169,6 @@ function getCaretCoordinates(
 }
 
 // ---------------------------------------------------------------------------
-// WikilinkAutocomplete component
 // ---------------------------------------------------------------------------
 
 export function WikilinkAutocomplete({
@@ -269,7 +192,6 @@ export function WikilinkAutocomplete({
     [entries, query, currentEntryId],
   );
 
-  // Caret coordinates state — updated whenever triggerStart or query changes
   const [caretCoords, setCaretCoords] = useState<CaretCoords>({ top: 0, left: 0 });
 
   useEffect(() => {
@@ -279,14 +201,11 @@ export function WikilinkAutocomplete({
     setCaretCoords(coords);
   }, [textareaRef, triggerStart, query]);
 
-  // Report result count to parent (for ArrowKey clamp)
   useEffect(() => {
     onResultCountChange(results.length);
   }, [results.length, onResultCountChange]);
 
   // CR-01: the component owns the authoritative result list, so it (not the
-  // parent) resolves which entry the active row maps to. Report the active row's
-  // canonical insert string up so the parent's Enter handler inserts exactly what
   // is highlighted — never a stale re-rank from a second useEntries subscription
   // that may be mid-fetch (empty list → silent no-op, or desync → wrong entry).
   useEffect(() => {
@@ -335,8 +254,6 @@ export function WikilinkAutocomplete({
                         isActive ? 'bg-neutral-100 dark:bg-neutral-800' : ''
                       }`}
                       onMouseDown={(e) => {
-                        // Use onMouseDown (not onClick) so selection fires before
-                        // textarea blur, which would close the popover first
                         e.preventDefault();
                         onSelect(buildInsertString(entry, query));
                       }}

@@ -31,13 +31,6 @@ import { Loading } from '../components/ui/Loading';
 
 type ToastState = { message: string; variant: 'success' | 'error' } | null;
 
-/**
- * Plan 06 popoverState — drives the conditional <PinPopover> render when a
- * panel-card drop lands on the canvas. dropX/dropY are container-relative
- * pixel coords for the popover anchor; position is the timeline-space value
- * computed by inverting the live d3-zoom transform and feeding the result
- * through `xToPos`.
- */
 type PopoverState = {
   entryId: string;
   position: number;
@@ -47,48 +40,15 @@ type PopoverState = {
 
 const TOAST_ERROR_COPY = "Couldn't save pin. Try again.";
 
-/**
- * /universes/:uid/timeline — horizontal canvas with parallax era layer,
- * drag-from-panel pin creation, and pin-drag reposition (TIMELINE-01..06).
- *
- * Orchestration seams:
- *  - useTimelineWindow → gates the canvas behind TimelineRangeDialog on the
- *    first visit (D-02). When `window === null`, the dialog is mounted open
- *    and the canvas is not rendered.
- *  - useTimelinePins → feeds both the canvas (render) and the entry panel
- *    (Pinned-badge derivation).
- *  - useUpsertTimelinePin → unifies create (drop-from-panel via PinPopover)
- *    and reposition (canvas pin drag end). No new endpoint (D-08).
- *  - DndContext (top-level) → PointerSensor with activationConstraint
- *    distance=5 + KeyboardSensor. handleDragEnd inverts the live d3-zoom
- *    transform stored in `currentTransformRef` (mutated by TimelineCanvas
- *    via the onTransformChange callback — RESEARCH §Q3).
- *  - cancelledRef + per-drag keydown listener → Esc mid-drag sets a flag so
- *    handleDragEnd is a no-op (D-08a parity with the d3-drag Esc-cancel).
- *  - Toast → per-view bridge for popover save failures AND canvas pin-drag
- *    save failures (belt-and-suspenders parity with GraphView).
- *
- * Removed in Plan 06: the vertical grouped-list rendering path (no more
- * groupByEra-based section headers) and the local precisionDotClass helper
- * (lifted to PrecisionBadge in Plan 04).
- */
 export function TimelineView() {
-  // Phase 29 — share-mode awareness. In share mode the route is
-  // `/share/:token/timeline` (no `uid` param); substitute 'share' so
   // useTimelinePins / useTimelineWindow build paths the api-client seam
-  // can translate to /api/share/timeline. The `token` drives navigation
-  // back into the share subtree on pin click.
   const { uid: paramUid, token } = useParams<{ uid: string; token: string }>();
   const isShareMode = useShareMode();
   const uid = paramUid ?? (isShareMode ? 'share' : undefined);
   const universeId = uid ?? '';
   const navigate = useNavigate();
 
-  // Phase 33 SHARE-02: in share mode useTimelineWindow → useUniverse('share')
-  // 404s, so authWindow is null and the timeline renders empty. Use the
   // timelineWindow threaded from the share-meta endpoint via ShareModeContext
-  // as the effective window when inside the share subtree (mirrors the calendar
-  // fix below). windowLoading is irrelevant in share mode (no query in flight).
   const { window: authWindow, isLoading: windowLoadingAuth } =
     useTimelineWindow(universeId);
   const shareWindow = useShareTimelineWindow();
@@ -96,27 +56,17 @@ export function TimelineView() {
   const windowLoading = isShareMode ? false : windowLoadingAuth;
   const { data: pins = [], isLoading: pinsLoading } = useTimelinePins(universeId);
   const upsert = useUpsertTimelinePin(universeId);
-  // Phase 30 CALENDAR-02: source the per-universe calendar for date formatting.
-  // In authenticated mode, useCalendar reads from useUniverse (/universes/:uid).
-  // In share mode, useUniverse 404s for the 'share' sentinel uid and calendar is
   // null — but ShareModeContext now carries the calendar from the share-meta
-  // endpoint (Phase 33 INT-BLOCKER-1 fix). Select the effective calendar:
-  // share calendar when isShareMode, else the authenticated useCalendar value.
   const { calendar: authCalendar } = useCalendar(universeId);
   const shareCalendar = useShareCalendar();
   const calendar = isShareMode ? shareCalendar : authCalendar;
   // Content-Forward Views §6 — pin medallions. The /timeline/pins projection carries no
-  // cover, so the canvas resolves identity art from the entries LIST cache (share mode
   // included: the api-client seam rewrites the path).
   const medallions = useEntryMedallions(universeId);
 
   const [toast, setToast] = useState<ToastState>(null);
   const [popoverState, setPopoverState] = useState<PopoverState>(null);
   const [rangeDialogOpen, setRangeDialogOpen] = useState(false);
-  // Separate from rangeDialogOpen (which the toolbar button drives and which
-  // therefore starts closed): the first visit opens this one automatically to
-  // guide the user into configuring a range. It is real state rather than a
-  // hardcoded `open` so the dialog can actually be dismissed — see #30.
   const [firstVisitDialogOpen, setFirstVisitDialogOpen] = useState(true);
   const [isDndDragActive, setIsDndDragActive] = useState(false);
 
@@ -136,8 +86,6 @@ export function TimelineView() {
   const dragKeydownRef = useRef<((e: KeyboardEvent) => void) | null>(null);
 
   // Responsive canvas sizing — verbatim ResizeObserver-with-jsdom-fallback
-  // from GraphView.tsx so the SVG fills the outlet while keeping unit tests
-  // (jsdom has no ResizeObserver) deterministic.
   const [size, setSize] = useState({ width: 800, height: 600 });
   useEffect(() => {
     if (!canvasContainerRef.current) return;
@@ -162,7 +110,6 @@ export function TimelineView() {
   }, [timelineWindow]);
 
   // Canvas pin-drag reposition — preserves existing label and precision per
-  // RESEARCH §Pitfall 6. On rejection, surfaces an error Toast; TanStack
   // invalidation handles the post-success re-render.
   const handlePinDragEnd = useCallback(
     async (pin: TimelinePin, newPosition: number) => {
@@ -180,9 +127,7 @@ export function TimelineView() {
     [upsert],
   );
 
-  // @dnd-kit sensors (per plan): PointerSensor with activationConstraint
-  // distance=5 (RESEARCH §Q3 — disambiguates click vs drag) + KeyboardSensor
-  // for accessibility.
+
   const sensors = useSensors(
     useSensor(PointerSensor, { activationConstraint: { distance: 5 } }),
     useSensor(KeyboardSensor),
@@ -199,7 +144,6 @@ export function TimelineView() {
     cancelledRef.current = false;
     setIsDndDragActive(true);
     // Esc mid-@dnd-kit-drag → set the cancel flag so handleDragEnd is a no-op.
-    // Mirrors the Phase 19 cancelledRef pattern (RESEARCH §Q3 §Esc-cancel).
     removeDragKeydown();
     const handler = (e: KeyboardEvent) => {
       if (e.key !== 'Escape') return;
@@ -226,8 +170,6 @@ export function TimelineView() {
       if (!event.active) return;
 
       // Compute drop client coords from @dnd-kit's activatorEvent + delta.
-      // activatorEvent is the original PointerDown event; delta is the
-      // translation from drag start to drag end in client space.
       const activator = event.activatorEvent as
         | { clientX?: number; clientY?: number }
         | undefined;
@@ -241,7 +183,6 @@ export function TimelineView() {
       const canvasX = clientX - rect.left;
       const canvasY = clientY - rect.top;
       // Invert the live d3-zoom transform: pinLayer.attr('transform',
-      // `translate(${t.x}, ${t.y}) scale(${t.k})`), so the inverse mapping is
       // svgX = (canvasX - t.x) / t.k.
       const t = currentTransformRef.current;
       const svgX = (canvasX - t.x) / t.k;
@@ -274,13 +215,8 @@ export function TimelineView() {
   }
 
   // First-visit gate (D-02): no window persisted → mount the configure-range
-  // dialog open; the canvas is NOT rendered behind it. Closing without saving
   // leaves window=null and the dialog re-mounts on the next visit (no nagging
   // mid-session because onOpenChange is a no-op here).
-  //
-  // Phase 29 — share-mode visitors never see the configure dialog (D-18
-  // mutation surface). Instead, render a friendly empty state explaining
-  // the owner hasn't configured a timeline yet.
   if (!timelineWindow) {
     if (isShareMode) {
       return (
@@ -292,10 +228,6 @@ export function TimelineView() {
         </div>
       );
     }
-    // The empty state renders unconditionally, sitting behind the dialog's
-    // overlay while it is open. That way dismissing reveals somewhere usable
-    // instead of a blank screen, and the canvas stays gated until a range
-    // exists — which was the point of the gate, without trapping anyone in it.
     return (
       <div ref={containerRef} className="flex h-full flex-col">
         <div className="max-w-3xl mx-auto p-6">
@@ -334,7 +266,7 @@ export function TimelineView() {
       >
         <header className="flex items-center justify-between px-6 pt-6 pb-3">
           <h1 className="text-2xl font-semibold">Timeline</h1>
-          {/* Phase 29 D-18 — Configure range is owner-only. */}
+
           {!isShareMode && (
             <button
               type="button"
@@ -355,11 +287,8 @@ export function TimelineView() {
               height={size.height}
               calendar={calendar}
               medallions={medallions}
-              // Phase 33 — in share mode pins are read-only and must NOT be
               // draggable: attaching d3-drag suppresses the trailing click and
-              // breaks the visitor's "CLICK TO OPEN" → entry navigation.
               pinsDraggable={!isShareMode}
-              // Phase 29 — share-mode pin drag is suppressed (no save
               // mutation); pass a no-op handler so the canvas-level
               // d3-drag does not call the upsert mutation.
               onPinDragEnd={
@@ -378,12 +307,7 @@ export function TimelineView() {
               isDndDragActive={isDndDragActive}
             />
           </div>
-          {/*
-            Phase 29 — TimelineEntryPanel is the drag-from-list source for
-            new pin creation (visitor must not have it). The pin list is
-            still visible inside the timeline canvas itself; the panel is
-            a creation surface, not a reading surface.
-          */}
+
           {!isShareMode && (
             <TimelineEntryPanel universeId={universeId} pins={pins} />
           )}

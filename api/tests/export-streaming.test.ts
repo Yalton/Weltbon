@@ -15,7 +15,7 @@ const CHROMIUM_PATH = process.env.CHROMIUM_PATH;
 const HAS_CHROMIUM = Boolean(CHROMIUM_PATH && fs.existsSync(CHROMIUM_PATH));
 const dPdf = HAS_CHROMIUM ? describe : describe.skip;
 
-// Plan 04-02: streaming-only assertions for the markdown ZIP branch.
+
 // PDF / DOCX / "all formats" suites stay describe.skip until plans 04-03..05 land.
 
 describe('EXP-05: markdown ZIP response is streamed (Transfer-Encoding chunked OR no Content-Length)', () => {

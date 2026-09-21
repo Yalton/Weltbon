@@ -6,16 +6,10 @@ interface Props {
   onOpenChange: (open: boolean) => void;
   typeName: string;
   count: number;
-  /** Remaining entry-types (already excludes typeName). */
   candidates: string[];
   onConfirm: (fallback: string) => Promise<void>;
 }
 
-/**
- * Shown after a DELETE entry-type returns 409 entries_using_type. The user
- * must pick a fallback type for the existing entries before deletion can
- * proceed.
- */
 export function TypeDeleteDialog({
   open,
   onOpenChange,
@@ -27,7 +21,6 @@ export function TypeDeleteDialog({
   const [fallback, setFallback] = useState(candidates[0] ?? '');
   const [pending, setPending] = useState(false);
 
-  // Reset selection when dialog reopens with new candidates.
   useEffect(() => {
     if (open) {
       setFallback(candidates[0] ?? '');

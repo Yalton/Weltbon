@@ -9,19 +9,6 @@ interface Props {
   placeholder?: string;
 }
 
-/**
- * Standalone relation-label combobox. Custom Radix Popover (~80 LOC; cmdk
- * intentionally NOT installed per research §7).
- *
- * Behavior:
- *  - Shows up to 8 suggestions filtered by case-insensitive substring of `value`
- *  - Each row renders the label and a small dim usage count
- *  - Clicking a suggestion calls onChange with that label and closes the popover
- *  - Pressing Enter on a typed value (with or without a match) closes the
- *    popover and keeps the typed string — preserves free-entry semantics
- *  - Empty filtered list shows a hint that pressing Enter will use the typed
- *    label as-is
- */
 export function RelationCombobox({ universeId, value, onChange, placeholder }: Props) {
   const { data: relations = [] } = useRelations(universeId);
   const [open, setOpen] = useState(false);
@@ -35,7 +22,6 @@ export function RelationCombobox({ universeId, value, onChange, placeholder }: P
   const handleSelect = (label: string) => {
     onChange(label);
     setOpen(false);
-    // refocus input so the user can keep typing or hit Submit
     setTimeout(() => inputRef.current?.focus(), 0);
   };
 

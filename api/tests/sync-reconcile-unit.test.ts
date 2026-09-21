@@ -1,24 +1,3 @@
-/**
- * Plan E Task 3 — the reconciliation policy in isolation (E-03/E-06).
- *
- * Unit lane by construction: the peer is a stub object and the local byte-store
- * questions are answered by mocking materialize.ts. No database, no HTTP.
- *
- * The materialize mock is a faithful MINIATURE of the real module rather than a
- * bag of canned return values, and that is load-bearing. This module is built
- * around one state transition — a pull stages bytes, and a plan that was
- * unresolvable becomes resolvable — and a mock that returns the same object on
- * every call cannot express it. A canned mock kept the suite green with the
- * post-pull re-plan deleted entirely, which turns every pulled delta hash into a
- * `blob-unavailable` throw moments after its bytes arrive intact. So the fake
- * computes from `state.bytes`, exactly as materialize.ts computes from the real
- * byte store, and the staged blob the pull writes lands in that same map.
- *
- * `ownedByHash` mirrors findOwnedAssetsByHash AFTER the C1 fix: when several rows
- * share a hash, the one whose bytes exist wins. The real function's behavior is
- * pinned on Postgres in sync-materialize.test.ts; what the C1 tests here pin is
- * that reconcile's policy is correct GIVEN that contract.
- */
 import { createHash } from 'node:crypto';
 import { describe, it, expect, vi, beforeEach } from 'vitest';
 
@@ -110,7 +89,7 @@ function stubClient(missing: string[], blobs: Map<string, Buffer> = new Map()) {
 const assetRow = (id: string, hash: string) => ({ id, contentHash: hash });
 const planner = async () => (await import('../src/services/sync/materialize.js')).planAssetMaterialization;
 
-describe('reconcileAssets (Plan E Task 3)', () => {
+describe('reconcileAssets', () => {
   beforeEach(() => {
     state.owned = [];
     state.bytes = new Map();
@@ -205,7 +184,7 @@ describe('reconcileAssets (Plan E Task 3)', () => {
     expect(result.blobsPulled).toBe(1);
     expect(state.bytes.get(`sync-blob-${UID}-${HASH_B}`)?.equals(BYTES_B)).toBe(true);
 
-    // The re-plan is the point of the pull: without it the freshly-staged hash
+
     // stays in `stillMissing` and comes back as unrepairable — or, for a delta
     // hash, as a throw — immediately after its bytes arrived intact.
     expect(await planner()).toHaveBeenCalledTimes(2);
@@ -215,20 +194,7 @@ describe('reconcileAssets (Plan E Task 3)', () => {
     ]);
   });
 
-  /**
-   * The pull direction must verify what the peer SERVED, not merely that it
-   * answered — the mirror of the PUT route's own check (routes/sync.ts 400s
-   * bytes that do not hash to the given name).
-   *
-   * The asymmetry predates Plan E; what Plan E changed is the blast radius. The
-   * pull set used to be localOps.assets.upserts — assets the user was actively
-   * editing — and is now L \ M over the whole MERGED set, so wrong bytes land on
-   * assets nobody has touched in months. And once they are under the asset id
-   * there is no second chance: exists(id) reads true forever, the row never
-   * re-enters a materialization plan, the sweep skips it, and content-hash merge
-   * cannot see that a row's hash and its bytes disagree.
-   */
-  it('refuses bytes that do not hash to the hash it asked for, and stages nothing', async () => {
+    it('refuses bytes that do not hash to the hash it asked for, and stages nothing', async () => {
     const { reconcileAssets } = await import('../src/services/sync/reconcile.js');
     const { SyncBlobUnavailableError } = await import('../src/services/sync/run-errors.js');
 
@@ -353,12 +319,7 @@ describe('reconcileAssets (Plan E Task 3)', () => {
     expect(result.toMaterialize).toEqual([]);
   });
 
-  /**
-   * I2: `missing` is a peer-controlled array. It flows into `unrepairable`, which
-   * the Plan E UI renders, and it bounds the push loop's work. Well-formedness is
-   * not relevance — a perfectly-shaped hash we never asked about must not survive.
-   */
-  it('ignores a hash the peer volunteers that we never asked about (I2)', async () => {
+    it('ignores a hash the peer volunteers that we never asked about (I2)', async () => {
     const { reconcileAssets } = await import('../src/services/sync/reconcile.js');
     const UNASKED = 'd'.repeat(64);
     state.owned.push({ id: 'asset-a', mimeType: 'image/png', contentHash: HASH_A });

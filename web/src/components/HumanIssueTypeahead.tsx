@@ -9,18 +9,6 @@ interface Props {
   onSelect: (issue: { id: string; title: string }) => void;
 }
 
-/**
- * Combobox typeahead for picking a human issue — used in DismissAIIssueDialog
- * Step 2 for the `duplicate_of_human_issue` reason.
- *
- * Mirrors RelationCombobox.tsx structurally (Radix Popover + client-side filter).
- * Data source: useIssues(universeId, { source: 'human' }) — all human issues
- * for the universe. Filters client-side (issue counts are bounded; no server
- * search endpoint needed per CONTEXT §Specific Ideas).
- *
- * Threat T-25-05-05: scoped to the current universe; linkedIssueId re-validated
- * server-side.
- */
 export function HumanIssueTypeahead({ universeId, value, onChange, onSelect }: Props) {
   const { data: issues, isLoading } = useIssues(universeId, { source: 'human' });
   const [open, setOpen] = useState(false);

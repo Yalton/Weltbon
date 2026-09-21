@@ -5,12 +5,7 @@ import { SEED_FILE, type Seed } from './seed';
 const seed: Seed = JSON.parse(readFileSync(SEED_FILE, 'utf8'));
 const share = (sub = '') => `/share/${seed.shareToken}${sub}`;
 
-/**
- * Each test maps to a share-surface bug that shipped undetected (jsdom unit
- * tests couldn't catch any of them) and was fixed in Phase 33. If one regresses,
- * the corresponding test fails in a real browser.
- */
-test.describe('public share surface (Phase 33 regressions)', () => {
+test.describe('public share surface', () => {
   test('renders the universe without the ErrorBoundary crash (bare-array contract)', async ({
     page,
   }) => {

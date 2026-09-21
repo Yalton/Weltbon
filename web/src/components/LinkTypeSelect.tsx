@@ -8,27 +8,9 @@ interface Props {
   value: string;
   onChange: (next: string) => void;
   placeholder?: string;
-  /**
-   * Called when a preset type is selected. The preset's known direction is
-   * passed so the parent can auto-set the direction toggle (UI-SPEC Surface 1).
-   */
   onDirectionChange?: (direction: 'directed' | 'undirected') => void;
 }
 
-/**
- * Combobox for selecting a link type (preset or custom).
- *
- * Mirrors RelationCombobox pattern: Radix Popover + text input + filtered
- * suggestion list + free-entry support.
- *
- * Data source: PRESET_LINK_TYPES (always shown first) merged with previously-
- * used custom types from GET /universes/:uid/link-types. Each row shows a
- * color swatch using getLinkTypeColor.
- *
- * When a preset is selected, onDirectionChange fires with the preset's
- * canonical direction (e.g. parent_of → directed). For custom types the
- * caller's direction state is unchanged.
- */
 export function LinkTypeSelect({
   universeId,
   value,
@@ -37,15 +19,12 @@ export function LinkTypeSelect({
   onDirectionChange,
 }: Props) {
   const { data } = useLinkTypes(universeId);
-  // Defensive: useLinkTypes resolves to LinkTypeCount[] in production, but guard
   // against undefined (loading) and any non-array shape so a transient/odd
-  // response can never crash the combobox with `.filter is not a function`.
   const usedTypes = Array.isArray(data) ? data : [];
   const [open, setOpen] = useState(false);
   const inputRef = useRef<HTMLInputElement>(null);
 
   // Build merged suggestion list: presets first, then in-use custom types
-  // (exclude types already covered by presets)
   const presetKeys = Object.keys(PRESET_LINK_TYPES);
   const customTypes = usedTypes
     .filter((t) => !presetKeys.includes(t.linkType))

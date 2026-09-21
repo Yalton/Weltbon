@@ -1,5 +1,4 @@
 /**
- * Plan C: the one base class every sync-apply failure derives from.
  *
  * It lives in its own module rather than in apply.ts because `apply-tables.ts`
  * throws one of these (InvalidSyncTimestampError) and apply.ts imports
@@ -12,7 +11,6 @@
  *   if (err instanceof SyncApplyError) return c.json({ error: err.message, ...}, err.status);
  *
  * rather than a chain of `instanceof` tests that silently misses whichever
- * error a later task adds. Specific subclasses may still be caught EARLIER to
  * reshape their body (e.g. the sync-apply route special-cases
  * UniverseOwnershipError and CrossUniverseCollisionError before this catch-all,
  * because their fields/message name other users' rows and must not be echoed) —
@@ -28,6 +26,5 @@
  * module's — some of them name rows in other users' universes.
  */
 export abstract class SyncApplyError extends Error {
-  /** HTTP status the route should map this to. */
   abstract readonly status: number;
 }

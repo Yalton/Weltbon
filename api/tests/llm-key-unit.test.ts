@@ -1,20 +1,3 @@
-/**
- * Phase 22 Plan 02 — Unit tests for api/src/services/llm-key.ts (crypto helpers).
- *
- * Phase 23-06 D-03 / D-03b migration: the `validateAtProvider` + `ProviderValidationError`
- * tests that previously lived here were removed when the SUT was deleted from
- * services/llm-key.ts. Provider validation behavior is now covered by the
- * LLMProvider contract test (Plan 23-05) and per-provider unit tests
- * (Plans 23-03 / 23-04). This file retains the encryptKey + getDecryptedKey
- * coverage — the kept Phase 22 surface per D-03b.
- *
- * Lives under api/tests/ (NOT api/src/services/) and is NOT in the
- * DB_GATED_TESTS list in api/vitest.config.ts — therefore it auto-joins the
- * `unit` project. No live DB; the drizzle client is mocked.
- *
- * The "tampered authTag → null" + IV-randomness tests are load-bearing — they
- * catch the setAuthTag-before-update footgun and IV reuse respectively.
- */
 
 import { describe, it, expect, beforeEach, vi } from 'vitest';
 import { randomBytes } from 'node:crypto';

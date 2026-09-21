@@ -1,17 +1,3 @@
-/**
- * Phase 52 Plan 05 — Task 1 TDD RED tests.
- *
- * Tests for the four secret-toggle mutations:
- *   - useTogglePinSecret     → PATCH /pins/:pinId/style { secret }   invalidates ['map', uid, mid]
- *   - useToggleRegionSecret  → PATCH /regions/:regionId { secret }   invalidates ['map', uid, mid]
- *   - useToggleRouteSecret   → PATCH /routes/:routeId  { secret }    invalidates ['map', uid, mid]
- *   - useToggleLayerSecret   → PATCH /map-layers/:lid  { secret }    invalidates ['map-layers', uid]
- *
- * RED: importing these names before implementation causes a vitest module-resolution error
- * (named exports do not exist yet) → ALL tests in this file fail.
- * GREEN: after implementation, each mutation calls the correct endpoint, passes the right body,
- * and invalidates the existing query key verbatim (no new segments — react-query-key-change-blast-radius).
- */
 
 import { describe, it, expect, beforeEach, vi } from 'vitest';
 import { renderHook, act } from '@testing-library/react';

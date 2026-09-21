@@ -45,13 +45,7 @@ import { MAP_COLOR_PALETTE, MAP_GLYPH_KEYS, getGlyphPath } from '../lib/mapGlyph
 import { entryTypeHexColor } from '../lib/entryTypeColor';
 import { useShareMode, useShareToken } from '../contexts/ShareModeContext';
 
-// ─── Constants ────────────────────────────────────────────────────────────────
 
-/**
- * Natural dimensions of the map image.
- * We pre-load the image to get its intrinsic width/height for coordinate
- * conversion. 1200×800 is the default until loaded.
- */
 const DEFAULT_IMAGE_WIDTH = 1200;
 const DEFAULT_IMAGE_HEIGHT = 800;
 
@@ -102,21 +96,16 @@ const COPY = {
   routeContextMenuColor: 'Change color...',
   routeContextMenuLineStyle: (current: string) => current === 'dashed' ? 'Solid line' : 'Dashed line',
   routeContextMenuArrow: (on: boolean) => on ? 'Remove arrow' : 'Add arrow',
-  // Phase 52 SECRET-01: context-menu items for toggling secret status on pins/regions/routes/layers.
   contextMenuMarkSecret: 'Mark secret',
   contextMenuUnmarkSecret: 'Unmark secret',
-  // Phase 53 NEST-01 D-01: map-link context menu items (UI-SPEC Copywriting Contract).
   linkToMap: 'Link to map…',    // 'Link to map…' — literal ellipsis character
   unlinkMap: 'Unlink map',
   linkMapError: "Couldn't link the map. Try again.",
 } as const;
 
-// ─── Types ────────────────────────────────────────────────────────────────────
 
 type ToastState = { message: string; variant: 'error' | 'success' } | null;
 
-// Phase 52 SEARCH-01: client-side search result type (D-06).
-// Each result carries the item type, its database id, a display label, and the
 // normalized (0..1) image-space coordinates for panZoomTo.
 type SearchResult = {
   type: 'pin' | 'region' | 'route';
@@ -126,91 +115,44 @@ type SearchResult = {
   ny: number;
 };
 
-/** State for the positioned pin context menu. */
 type ContextMenuState = {
   pin: MapPin;
   clientX: number;
   clientY: number;
 } | null;
 
-/** State for the positioned region context menu. */
 type RegionContextMenuState = {
   region: MapRegion;
   clientX: number;
   clientY: number;
 } | null;
 
-/** State for the positioned terrain area context menu. */
 type TerrainContextMenuState = {
   region: TerrainAreaRegion;
   clientX: number;
   clientY: number;
 } | null;
 
-/** State for the positioned route context menu (ROUTE-02, Plan 07). */
 type RouteContextMenuState = {
   route: MapRoute;
   clientX: number;
   clientY: number;
 } | null;
 
-// ─── MapEditor ────────────────────────────────────────────────────────────────
 
-/**
- * `/universes/:uid/maps/:mid` — map editor view.
- *
- * Orchestrates: MapCanvas, MapToolbar, MapLegend, AddEntriesPicker,
- * AssetPickerModal, ConfirmDialog (delete pin/region), Toast, EmptyState overlay.
- *
- * Add-pin flow (D-05): addPinMode → canvas click captures coords → opens
- * AddEntriesPicker → onAdd(entryId) calls useAddPin → picker stays open for
- * additional placements; addPinMode stays active.
- *
- * Draw-region flow (D-04): drawRegionMode → canvas click appends vertex to
- * pendingVertices → rubber-band preview → close via first-vertex click (≥3 verts)
- * or Enter key → useCreateRegion POST → optionally link entry via picker.
- *
- * Drag-reposition (D-06): MapCanvas onPinDragEnd → useMovePin.
- * Click pin: MapCanvas PinCircle distinguishes click from drag; navigates
- * to /universes/:uid/entries/:entryId same-tab.
- *
- * Left-click region with linked entry → navigate to entry detail (D-08-click).
- * Right-click region → region context menu (recolor/relink/rename/delete) (D-06).
- *
- * Change image (D-03): AssetPickerModal → useUpdateMap({ imageAssetId }).
- * Stored pin normalized coords are preserved unchanged.
- *
- * Esc priority (mirrors DiagramEditor layered useEffects):
- *   1. Entry picker / region entry picker open → close picker.
- *   2. drawRegionMode active + pending vertices → clear vertices (Esc mid-draw).
- *   3. Context menu open (pin or region) → close menu.
- *   4. addPinMode / drawRegionMode active (no picker/menu/vertices) → exit mode.
- *
- * Pins are joined with useEntries(uid) to supply entryTitle/entryType before
- * passing to MapCanvas — the API returns bare map_pins rows without entry join.
- */
 export function MapEditor() {
-  // In share mode there is no :uid param — use 'share' placeholder so hooks
-  // interpolate /universes/share/maps/:mid, which the api/client.ts seam
-  // rewrites to /api/share/maps/:mid (strips the /universes/<anything> prefix).
   const { uid: paramUid, mid = '' } = useParams<{ uid: string; mid: string }>();
   const isShare = useShareMode();
   const shareToken = useShareToken();
   const uid = paramUid ?? (isShare ? 'share' : '');
   const navigate = useNavigate();
-  // Phase 53 NEST-01 D-03: read origin from router nav state (`navigate(to, { state: { from } })`).
-  // Cast is safe — only MapEditor/MapBreadcrumb ever write this key.
   const location = useLocation();
   const fromOrigin = (location.state as { from?: { name: string; id: string } } | null)?.from ?? null;
 
-  // ── Data hooks ───────────────────────────────────────────────────────────────
   const { data: map, isLoading, isError } = useMap(uid, mid);
   const { data: entriesData } = useEntries(uid);
   // Content-Forward Views §6 — tooltip identity: cover/icon/monogram for the hover tooltip,
-  // resolved from the same entries LIST cache as entriesData above (no second request).
   const medallions = useEntryMedallions(uid);
-  // Phase 44 GEOSHARE-01: enable the layers query in share mode.
-  // The transparent client seam (api/client.ts) translates
   // /universes/share/map-layers → /api/share/map-layers, now served by 44-02.
   // Do NOT re-key queryKey (['map-layers', uid]) — memory react-query-key-change-blast-radius.
   const { data: layers = [] } = useMapLayers(uid, { enabled: !!uid });
@@ -223,31 +165,24 @@ export function MapEditor() {
   const createRegion = useCreateRegion(uid, mid);
   const updateRegion = useUpdateRegion(uid, mid);
   const deleteRegion = useDeleteRegion(uid, mid);
-  // Phase 51 ROUTE-01/02 (Plan 07): route mutations — draw, restyle, rename, relink, delete.
   const createRoute = useCreateRoute(uid, mid);
   const updateRoute = useUpdateRoute(uid, mid);
   const deleteRoute = useDeleteRoute(uid, mid);
-  // Phase 52 SECRET-01: secret-toggle mutations for pin, region, route.
-  // Invalidate ONLY the existing ['map', uid, mid] key — no new key segments.
   // (memory: react-query-key-change-blast-radius)
   // Layer secret toggle lives in LayersPanel.tsx (it already owns all layer mutations directly).
   const togglePinSecret = useTogglePinSecret(uid, mid);
   const toggleRegionSecret = useToggleRegionSecret(uid, mid);
   const toggleRouteSecret = useToggleRouteSecret(uid, mid);
-  // Phase 53 NEST-01 D-01: set/clear target map on pins and regions.
   // Rides the existing /pins/:pinId/style + /regions/:regionId PATCH endpoints (53-02 precedent).
   // Invalidate ONLY the existing ['map', uid, mid] key (memory: react-query-key-change-blast-radius).
   const setPinTargetMap = useSetPinTargetMap(uid, mid);
   const setRegionTargetMap = useSetRegionTargetMap(uid, mid);
-  // Phase 53 NEST-01: universe maps list for "Opens: {mapName}" indicator in context menus.
   // ['maps', uid] key — isolated from ['map', uid, mid] per react-query-key-change-blast-radius.
   const { data: allMaps = [] } = useMaps(uid);
 
-  // ── Image dimensions (loaded from the rawUrl to get intrinsic size) ──────────
   const [imageWidth, setImageWidth] = useState(DEFAULT_IMAGE_WIDTH);
   const [imageHeight, setImageHeight] = useState(DEFAULT_IMAGE_HEIGHT);
 
-  // Load image dimensions when rawUrl becomes available.
   useEffect(() => {
     if (!map?.rawUrl) return;
     const img = new Image();
@@ -258,7 +193,6 @@ export function MapEditor() {
     img.src = map.rawUrl;
   }, [map?.rawUrl]);
 
-  // ── UI state ─────────────────────────────────────────────────────────────────
   const [addPinMode, setAddPinMode] = useState(false);
   const [pendingPinCoords, setPendingPinCoords] = useState<{ x: number; y: number } | null>(null);
   const [entryPickerOpen, setEntryPickerOpen] = useState(false);
@@ -272,13 +206,9 @@ export function MapEditor() {
   const [layersPanelVisible, setLayersPanelVisible] = useState(false);
   // Grid overlay toggle — off by default (D-05). Mirrors legendVisible/layersPanelVisible pattern.
   const [gridVisible, setGridVisible] = useState(false);
-  // Imperative zoom handle — wired to MapZoomControls onZoomIn/onZoomOut/onFitReset callbacks.
   const canvasRef = useRef<MapCanvasHandle>(null);
 
-  // ── Phase 52 SEARCH-01: in-map search state (D-04, D-05, D-06, D-07) ─────────
-  // searchQuery is controlled by MapToolbar's search input (editor + share mode).
   // searchInputRef is forwarded to the input element for the `/` focus shortcut (D-04).
-  // highlightedItemId is set on result select; MapCanvas renders a pulse on that item;
   //   cleared after the pulse animation completes (D-05a).
   // selectedResultIndex tracks arrow-key navigation in the dropdown (-1 = no selection).
   const [searchQuery, setSearchQuery] = useState('');
@@ -287,14 +217,10 @@ export function MapEditor() {
   const [selectedResultIndex, setSelectedResultIndex] = useState(-1);
 
   // Color picker for LayersPanel terrain-type swatches (onRequestColorPick wiring).
-  // When the LayersPanel requests a color pick, we open this dialog and forward
-  // the selected color to the `layersColorPickerCallback` function.
   const [layersColorPickerOpen, setLayersColorPickerOpen] = useState(false);
   const [layersColorPickerCurrent, setLayersColorPickerCurrent] = useState('#000000');
   const [layersColorPickerCallback, setLayersColorPickerCallback] = useState<((hex: string) => void) | null>(null);
 
-  // Phase 53 NEST-01 D-01: map picker state.
-  // mapPickerPin XOR mapPickerRegion is set while the picker is open (whichever context menu triggered it).
   const [mapPickerOpen, setMapPickerOpen] = useState(false);
   const [mapPickerPin, setMapPickerPin] = useState<MapPin | null>(null);
   const [mapPickerRegion, setMapPickerRegion] = useState<MapRegion | null>(null);
@@ -305,9 +231,7 @@ export function MapEditor() {
   const [regionContextMenu, setRegionContextMenu] = useState<RegionContextMenuState>(null);
   const [deleteRegionTarget, setDeleteRegionTarget] = useState<MapRegion | null>(null);
 
-  // ── Draw-route mode state (ROUTE-01, Plan 07) ─────────────────────────────────
   // pendingVertices is SHARED with draw-region — route draw is another branch in the
-  // existing vertex pipeline (handleCanvasClick), NOT a new input paradigm.
   const [drawRouteMode, setDrawRouteMode] = useState(false);
   const [routeContextMenu, setRouteContextMenu] = useState<RouteContextMenuState>(null);
   const [deleteRouteTarget, setDeleteRouteTarget] = useState<MapRoute | null>(null);
@@ -318,40 +242,26 @@ export function MapEditor() {
   const [routeColorTarget, setRouteColorTarget] = useState<MapRoute | null>(null);
 
   // ── Terrain paint state (43-04) ───────────────────────────────────────────────
-  // armedTerrainTypeId !== null → paintTerrainMode active; pendingVertices SHARED with drawRegion
   const [armedTerrainTypeId, setArmedTerrainTypeId] = useState<string | null>(null);
   const [armedLayerId, setArmedLayerId] = useState<string | null>(null);
   const [terrainContextMenu, setTerrainContextMenu] = useState<TerrainContextMenuState>(null);
   const [reclassifySubmenuOpen, setReclassifySubmenuOpen] = useState(false);
 
   // ── Per-viewer layer visibility/opacity (localStorage, never server) ──────────
-  // Key: `weltbon.mapview.${uid}.${mid}`; shape: Record<layerId, { visible, opacity }>
   const [layerViewerState, setLayerViewerState] = useState<
     Record<string, { visible: boolean; opacity: number }>
   >({});
   const [regionRelinkPickerOpen, setRegionRelinkPickerOpen] = useState(false);
-  // Region whose entry link is being changed. Captured when the relink picker
-  // opens because the context menu (its prior source) is dismissed immediately.
   const [regionRelinkTarget, setRegionRelinkTarget] = useState<MapRegion | null>(null);
   const [renameRegionTarget, setRenameRegionTarget] = useState<MapRegion | null>(null);
   const [renameRegionDraft, setRenameRegionDraft] = useState('');
-  // Color picker state (for pins and regions)
   const [pinColorTarget, setPinColorTarget] = useState<MapPin | null>(null);
   const [regionColorTarget, setRegionColorTarget] = useState<MapRegion | null>(null);
   const [glyphPickerTarget, setGlyphPickerTarget] = useState<MapPin | null>(null);
 
-  // ── Join pins with entries ────────────────────────────────────────────────────
-  // The API returns bare map_pins rows (id, mapId, entryId, x, y, color, icon).
   // We join here to supply entryTitle/entryType/summary for MapCanvas pin display (D-07, D-09).
-  //
   // SUMMARY SOURCE (D-07, memory list-endpoint-body-projection-false-green):
   // Auth mode: summary comes from the useEntries list cache (entry.summary — always present
-  //   in the list projection). Fallback to pin.summary (e.g. for pins with no matching entry).
-  // Share mode: entriesData is undefined (no useEntries join for share); enrichedPins
-  //   falls back to map.pins, which already carry summary from the Plan 03 server projection
-  //   (getPublicMap, entries INNER JOINed for is_public=true filter). No change needed here.
-  //
-  // DO NOT add body to this join — body is omitted from the entries list endpoint
   // (memory list-endpoint-body-projection-false-green) and would yield undefined in prod.
   // DO NOT re-key ['map',uid,mid] / ['maps',uid] / ['map-layers',uid] (memory react-query-key-change-blast-radius).
   const enrichedPins = useMemo<MapPin[]>(() => {
@@ -369,7 +279,6 @@ export function MapEditor() {
     });
   }, [map?.pins, entriesData]);
 
-  // ── Regions from map payload ──────────────────────────────────────────────────
   // CR-01 fix: exclude terrain-area rows (those with terrainTypeId set) so they are
   // not double-rendered as grey RegionPolygons on top of the correct TerrainAreaPolygon.
   // Terrain-area rows are handled exclusively by the terrainAreas memo below.
@@ -379,10 +288,6 @@ export function MapEditor() {
   );
 
   // ── Client-side terrain areas join (43-04) ────────────────────────────────────
-  // Filter regions to those with a terrainTypeId, then enrich with color/layer from layers data.
-  // This join means recoloring a terrain type propagates automatically on query invalidation.
-  //
-  // Phase 44 GEOSHARE-01 (D-44-03): In share mode, the share map detail already carries a
   // pre-enriched `terrainAreas` array (discriminated + joined server-side by getPublicMap).
   // Use it directly so no client-side join is required in share mode.
   const terrainAreas = useMemo<TerrainAreaRegion[]>(() => {
@@ -418,7 +323,6 @@ export function MapEditor() {
     return result;
   }, [isShare, map?.terrainAreas, map?.regions, layers]);
 
-  // ── Derive armed type name for paint banner ───────────────────────────────────
   const armedTypeName = useMemo(() => {
     if (!armedTerrainTypeId) return '';
     for (const layer of layers) {
@@ -428,7 +332,6 @@ export function MapEditor() {
     return '';
   }, [armedTerrainTypeId, layers]);
 
-  // ── Universe entries for AddEntriesPicker ────────────────────────────────────
   const universeEntries = useMemo(
     () =>
       (entriesData ?? []).map((e) => ({
@@ -439,7 +342,6 @@ export function MapEditor() {
     [entriesData],
   );
 
-  // ── Legend labels (parsed from map.legendLabels JSON) ────────────────────────
   const legendLabels = useMemo<Record<string, string> | null>(() => {
     if (!map?.legendLabels) return null;
     try {
@@ -449,7 +351,6 @@ export function MapEditor() {
     }
   }, [map?.legendLabels]);
 
-  // ── Phase 52 SEARCH-01: client-side search match logic (D-06, D-07) ──────────────
   // Case-insensitive substring match over:
   //   - enrichedPins: linked-entry title only (D-06). Skip pins with no entryTitle.
   //   - regions: region name (D-06). Skip unnamed regions.
@@ -472,7 +373,6 @@ export function MapEditor() {
       if (results.length >= 10) break;
     }
 
-    // Regions — match region name; position = centroid of parsed point array
     for (const region of regions) {
       if (!region.name) continue;                              // unnamed → skip (D-06)
       if (region.name.toLowerCase().includes(q)) {
@@ -490,7 +390,6 @@ export function MapEditor() {
       if (results.length >= 10) break;
     }
 
-    // Routes — match route name/label; position = midpoint of middle segment
     for (const route of (map?.routes ?? [])) {
       if (!route.name) continue;                               // unnamed → skip (D-06)
       if (route.name.toLowerCase().includes(q)) {
@@ -516,9 +415,6 @@ export function MapEditor() {
   }, [searchQuery, enrichedPins, regions, map?.routes]);
 
   // ── Share-mode static layerViewerState (44-03 D-44-01) ────────────────────────
-  // In share mode: build state statically from layers — all visible, each at its
-  // own default_opacity. No localStorage, no toggles, no sliders. Recomputes when
-  // layers data arrives (React Query populates it after the first fetch).
   const shareLayerViewerState = useMemo<Record<string, { visible: boolean; opacity: number }>>(() => {
     if (!isShare || layers.length === 0) return {};
     return Object.fromEntries(
@@ -526,7 +422,6 @@ export function MapEditor() {
     );
   }, [isShare, layers]);
 
-  // Apply the share static state when it is computed (layers arrive async).
   useEffect(() => {
     if (!isShare || layers.length === 0) return;
     setLayerViewerState(shareLayerViewerState);
@@ -569,11 +464,9 @@ export function MapEditor() {
     try {
       localStorage.setItem(key, JSON.stringify(layerViewerState));
     } catch {
-      // Quota exceeded — ignore silently
     }
   }, [isShare, uid, mid, layerViewerState]);
 
-  // ── Esc priority ladder (layered useEffects, mirrors DiagramEditor) ───────────
 
   // Priority 1: any picker open → close picker (entry or region-entry or rename).
   useEffect(() => {
@@ -592,7 +485,6 @@ export function MapEditor() {
     return () => window.removeEventListener('keydown', handler);
   }, [entryPickerOpen, relinkPickerOpen, regionRelinkPickerOpen, renameRegionTarget]);
 
-  // Priority 2: drawRegionMode active + pending vertices → clear vertices.
   useEffect(() => {
     if (!drawRegionMode || pendingVertices.length === 0) return;
     const handler = (e: KeyboardEvent) => {
@@ -602,7 +494,6 @@ export function MapEditor() {
     return () => window.removeEventListener('keydown', handler);
   }, [drawRegionMode, pendingVertices]);
 
-  // Priority 2b: Enter key to close region (≥3 vertices while in draw mode).
   useEffect(() => {
     if (!drawRegionMode || pendingVertices.length < 3) return;
     const handler = (e: KeyboardEvent) => {
@@ -667,7 +558,6 @@ export function MapEditor() {
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [drawRouteMode, pendingVertices]);
 
-  // Priority 3: context menu open → close menu (pin or region or terrain or route).
   useEffect(() => {
     if (!contextMenu && !regionContextMenu && !terrainContextMenu && !routeContextMenu) return;
     const handler = (e: KeyboardEvent) => {
@@ -684,7 +574,6 @@ export function MapEditor() {
     return () => window.removeEventListener('keydown', handler);
   }, [contextMenu, regionContextMenu, terrainContextMenu, routeContextMenu]);
 
-  // Priority 4: addPinMode / drawRegionMode active (no picker/menu/vertices) → exit mode.
   useEffect(() => {
     if (!addPinMode || entryPickerOpen || contextMenu) return;
     const handler = (e: KeyboardEvent) => {
@@ -732,7 +621,6 @@ export function MapEditor() {
     if (pendingVertices.length < 3) return;
     const pts = [...pendingVertices];
     setPendingVertices([]);
-    // Don't exit drawRegionMode so user can draw multiple regions.
     try {
       await createRegion.mutateAsync({
         name: '',
@@ -765,7 +653,6 @@ export function MapEditor() {
     }
   }, [createRegion, pendingVertices, armedTerrainTypeId]);
 
-  // Async version that takes vertex snapshot (avoids stale closure in setState callback).
   const handleCloseTerrainAreaAsync = useCallback(async (verts: Array<{ x: number; y: number }>) => {
     if (verts.length < 3) return;
     try {
@@ -783,14 +670,8 @@ export function MapEditor() {
 
   // ── Add-pin flow handlers ────────────────────────────────────────────────────
 
-  /**
-   * Called by MapCanvas when user clicks the canvas in addPinMode or drawRegionMode.
-   * In drawRegionMode: append vertex; snap-close if on first vertex (≥3 verts).
-   * In addPinMode: store pending coords and open entry picker.
-   */
   const handleCanvasClick = useCallback((nx: number, ny: number) => {
     // NEW (43-04): paintTerrainMode branch — mirrors drawRegionMode vertex-append logic.
-    // Route draw branch (ROUTE-01, Plan 07): append vertex; finish via Enter or double-click
     // (NOT snap-to-first — routes are open polylines). Checked before drawRegionMode so the
     // route mode takes priority when both might be set (mutual exclusivity is enforced at arm-time).
     if (drawRouteMode) {
@@ -813,13 +694,11 @@ export function MapEditor() {
       return;
     }
     if (drawRegionMode) {
-      // Check if the click is near the first vertex — close polygon (snap).
       setPendingVertices((verts) => {
         if (verts.length >= 3) {
           const fv = verts[0];
           const dx = Math.abs(nx - fv.x);
           const dy = Math.abs(ny - fv.y);
-          // Snap threshold: 0.025 of image fraction (loose in normalized space).
           if (dx < 0.025 && dy < 0.025) {
             // Trigger close asynchronously to avoid setState-in-setState.
             setTimeout(() => handleCloseRegionAsync([...verts]), 0);
@@ -830,12 +709,10 @@ export function MapEditor() {
       });
       return;
     }
-    // addPinMode:
     setPendingPinCoords({ x: nx, y: ny });
     setEntryPickerOpen(true);
   }, [drawRouteMode, armedTerrainTypeId, drawRegionMode, handleCloseTerrainAreaAsync, handleCloseRegion]); // eslint-disable-line react-hooks/exhaustive-deps
 
-  // Async version that takes a snapshot of vertices (avoids stale closure in setState callback).
   const handleCloseRegionAsync = useCallback(async (verts: Array<{ x: number; y: number }>) => {
     if (verts.length < 3) return;
     try {
@@ -850,8 +727,6 @@ export function MapEditor() {
     }
   }, [createRegion]);
 
-  // ── Route draw close helper (ROUTE-01, Plan 07) ──────────────────────────────
-  // Mirror of handleCloseRegionAsync but with min 2 vertices (routes are OPEN polylines,
   // not closed polygons; min-3 rule does NOT apply). Does not clear drawRouteMode so the
   // user can draw multiple routes without re-arming.
   const handleCloseRouteAsync = useCallback(async (verts: Array<{ x: number; y: number }>) => {
@@ -868,11 +743,6 @@ export function MapEditor() {
     }
   }, [createRoute]);
 
-  /**
-   * Called when user selects an entry from the picker.
-   * Calls useAddPin with the pending coords + chosen entryId.
-   * Picker closes but addPinMode stays active for multiple placements.
-   */
   const handleEntryAdd = useCallback(
     async (entryId: string) => {
       if (!pendingPinCoords) return;
@@ -904,7 +774,6 @@ export function MapEditor() {
     [movePin],
   );
 
-  // ── Pin context menu handlers ────────────────────────────────────────────────
 
   const handlePinContextMenu = useCallback(
     (pin: MapPin, clientX: number, clientY: number) => {
@@ -938,8 +807,6 @@ export function MapEditor() {
     setContextMenu(null);
   };
 
-  // Phase 52 SECRET-01: toggle secret on pin from context menu (D-01).
-  // Only shown to owner (gated !isShare at render time).
   const handleContextMenuTogglePinSecret = async () => {
     if (!contextMenu) return;
     const { pin } = contextMenu;
@@ -951,8 +818,6 @@ export function MapEditor() {
     }
   };
 
-  // Phase 53 NEST-01 D-01: open map picker from pin context menu.
-  // Captures current pin, closes context menu, opens picker.
   const handleContextMenuLinkMap = () => {
     if (!contextMenu) return;
     setMapPickerPin(contextMenu.pin);
@@ -962,7 +827,6 @@ export function MapEditor() {
     setSelectedPinId(null);
   };
 
-  // Phase 53 NEST-01 D-01: directly unlink target map from pin context menu (no picker).
   // Neutral action — no ConfirmDialog (UI-SPEC Color note: unlinking is non-destructive).
   const handleContextMenuUnlinkMapPin = async () => {
     if (!contextMenu) return;
@@ -998,10 +862,8 @@ export function MapEditor() {
     setSelectedPinId(null);
   };
 
-  // ── Region context menu handlers ─────────────────────────────────────────────
 
   const handleRegionClick = useCallback((region: MapRegion) => {
-    // Phase 53 NEST-01 D-02: map-open wins — check targetMapId FIRST.
     // Passes origin via router state so MapBreadcrumb can render on the target map (D-03).
     if (region.targetMapId) {
       const to = shareToken
@@ -1021,9 +883,7 @@ export function MapEditor() {
     }
   }, [navigate, shareToken, uid, mid, map?.name]);
 
-  // Phase 53 NEST-01 D-02: pin click-to-open handler (passed as MapCanvas onOpenMap).
   // Share-token-aware route; passes origin via router state for breadcrumb (D-03).
-  // Works identically in editor and share (MapCanvas calls onOpenMap for both).
   const handleOpenMap = useCallback((targetMapId: string) => {
     const to = shareToken
       ? `/share/${shareToken}/maps/${targetMapId}`
@@ -1064,8 +924,6 @@ export function MapEditor() {
     setRegionContextMenu(null);
   };
 
-  // Phase 52 SECRET-01: toggle secret on region from context menu (D-01).
-  // Only shown to owner (gated !isShare at render time).
   const handleRegionContextMenuToggleSecret = async () => {
     if (!regionContextMenu) return;
     const { region } = regionContextMenu;
@@ -1077,7 +935,6 @@ export function MapEditor() {
     }
   };
 
-  // Phase 53 NEST-01 D-01: open map picker from region context menu.
   const handleRegionContextMenuLinkMap = () => {
     if (!regionContextMenu) return;
     setMapPickerRegion(regionContextMenu.region);
@@ -1086,7 +943,6 @@ export function MapEditor() {
     setRegionContextMenu(null);
   };
 
-  // Phase 53 NEST-01 D-01: directly unlink target map from region context menu (no picker).
   const handleRegionContextMenuUnlinkMap = async () => {
     if (!regionContextMenu) return;
     const { region } = regionContextMenu;
@@ -1133,9 +989,6 @@ export function MapEditor() {
     setRenameRegionTarget(null);
   };
 
-  // Phase 53 NEST-01 D-01: map picker selection handler (called by MapPickerModal onSelect).
-  // Captures mapPickerPin/mapPickerRegion from the closure at call time — state is stable
-  // because onClose (which clears the state) runs AFTER onSelect in the picker.
   const handleSelectTargetMap = async (mapId: string) => {
     try {
       if (mapPickerPin) {
@@ -1148,7 +1001,6 @@ export function MapEditor() {
     }
   };
 
-  // Phase 53 NEST-01 D-01: map picker unlink handler (called by MapPickerModal onUnlink).
   const handleUnlinkTargetMap = async () => {
     try {
       if (mapPickerPin) {
@@ -1200,12 +1052,10 @@ export function MapEditor() {
 
   const handleArmTerrainType = useCallback(
     (typeId: string | null, layerId: string) => {
-      // Exit other modes (mode exclusivity)
       setAddPinMode(false);
       setDrawRegionMode(false);
       setPendingVertices([]);
       if (typeId === armedTerrainTypeId) {
-        // Clicking the same armed swatch while no pending vertices → disarm
         setArmedTerrainTypeId(null);
         setArmedLayerId(null);
       } else {
@@ -1233,7 +1083,6 @@ export function MapEditor() {
     [armedTerrainTypeId, layers],
   );
 
-  // ── Route left-click navigate (ROUTE-02, Plan 07) ────────────────────────────
   // Share-aware: mirror handleRegionClick (731-739). Navigate within /share/:token in share
   // mode to avoid uid leaks (T-51-14). Inert when route.entryId is null.
   const handleRouteClick = useCallback((route: MapRoute) => {
@@ -1246,7 +1095,6 @@ export function MapEditor() {
     }
   }, [navigate, shareToken, uid]);
 
-  // ── Route context menu handlers (ROUTE-02, Plan 07) ──────────────────────────
   // Mirror the region context menu set (741-807): clone handlers swapping region→route,
   // adding the route-only restyle controls (lineStyle/width/showArrow, D-06).
 
@@ -1318,8 +1166,6 @@ export function MapEditor() {
     }
   };
 
-  // Phase 52 SECRET-01: toggle secret on route from context menu (D-01).
-  // Only shown to owner (gated !isShare at render time).
   const handleRouteContextMenuToggleSecret = async () => {
     if (!routeContextMenu) return;
     const { route } = routeContextMenu;
@@ -1377,13 +1223,10 @@ export function MapEditor() {
     }
   };
 
-  // dblclick finisher for route draw (Plan 07 ROUTE-01).
-  // Uses functional setState to read the latest vertices snapshot — avoids stale closure.
   // Removes the last vertex (the duplicate from the dblclick's second single-click) before closing.
   const handleCanvasDblClick = useCallback(() => {
     if (!drawRouteMode) return;
     setPendingVertices((verts) => {
-      // Trim the duplicate dblclick vertex (2nd click of dblclick adds an extra point).
       const trimmed = verts.length > 1 ? verts.slice(0, -1) : verts;
       if (trimmed.length >= 2) {
         setTimeout(() => handleCloseRouteAsync(trimmed), 0);
@@ -1403,7 +1246,6 @@ export function MapEditor() {
     [],
   );
 
-  // ── Color / glyph picker handlers ────────────────────────────────────────────
 
   const handlePinColorSelect = async (color: string) => {
     if (!pinColorTarget) return;
@@ -1438,8 +1280,6 @@ export function MapEditor() {
     }
   };
 
-  // ── LayersPanel color picker handler (onRequestColorPick wiring) ─────────────
-  // The LayersPanel surfaces an optional onRequestColorPick callback so MapEditor
   // can open the shared MAP_COLOR_PALETTE picker for terrain-type swatch changes.
   const handleRequestColorPick = useCallback(
     (currentColor: string, onPick: (hex: string) => void) => {
@@ -1450,7 +1290,6 @@ export function MapEditor() {
     [],
   );
 
-  // ── Legend rename handler ────────────────────────────────────────────────────
 
   const handleLegendRenameLabel = useCallback(
     async (key: string, value: string) => {
@@ -1465,7 +1304,6 @@ export function MapEditor() {
     [legendLabels, updateMap],
   );
 
-  // ── Change image handler ─────────────────────────────────────────────────────
 
   const handleChangeImageSelect = async (assetId: string) => {
     setChangeImageOpen(false);
@@ -1508,7 +1346,6 @@ export function MapEditor() {
     return () => window.removeEventListener('mousedown', handler);
   }, [terrainContextMenu]);
 
-  // ── Click-away to close route context menu (ROUTE-02, Plan 07) ───────────────
   useEffect(() => {
     if (!routeContextMenu) return;
     const handler = (e: MouseEvent) => {
@@ -1521,7 +1358,6 @@ export function MapEditor() {
     return () => window.removeEventListener('mousedown', handler);
   }, [routeContextMenu]);
 
-  // ── Phase 52 SEARCH-01: click-away to close search dropdown ──────────────────
   useEffect(() => {
     if (!searchQuery.trim()) return;
     const handler = (e: MouseEvent) => {
@@ -1544,9 +1380,7 @@ export function MapEditor() {
     setSelectedResultIndex(-1);
   }, [searchResults]);
 
-  // ── Phase 52 SEARCH-01: `/` shortcut — focus the search input (D-04) ─────────
   // No-op when focus is already in an INPUT or TEXTAREA (D-04 guard).
-  // Mirror of existing keydown effect ladder (lines 456–607).
   useEffect(() => {
     const handler = (e: KeyboardEvent) => {
       if (e.key !== '/') return;
@@ -1559,10 +1393,6 @@ export function MapEditor() {
     return () => window.removeEventListener('keydown', handler);
   }, []);
 
-  // ── Phase 52 SEARCH-01: select handler — panZoomTo + highlight ───────────────
-  // Clears the query, pans/zooms to the item, sets a temporary highlight, then
-  // clears it after the 1.5s pulse animation + buffer.
-  // CRITICAL: no d3 datum handler — imperative ref call only.
   const handleSearchResultSelect = useCallback((result: SearchResult) => {
     setSearchQuery('');
     setSelectedResultIndex(-1);
@@ -1571,10 +1401,7 @@ export function MapEditor() {
     setTimeout(() => setHighlightedItemId(null), 2000);
   }, []);
 
-  // ── Phase 52 SEARCH-01: Arrow/Enter keyboard navigation in the dropdown ───────
   // Attached to the window when the search dropdown is visible (searchQuery non-empty
-  // + results exist). Checks `document.activeElement === searchInputRef.current` so
-  // it only fires when the search input is focused.
   useEffect(() => {
     if (!searchQuery.trim() || searchResults.length === 0) return;
     const handler = (e: KeyboardEvent) => {
@@ -1599,7 +1426,6 @@ export function MapEditor() {
     return () => window.removeEventListener('keydown', handler);
   }, [searchQuery, searchResults, selectedResultIndex, handleSearchResultSelect]);
 
-  // ── Render ────────────────────────────────────────────────────────────────────
 
   if (isLoading) {
     return <p className="p-6 text-sm text-neutral-500">{COPY.loading}</p>;
@@ -1615,11 +1441,7 @@ export function MapEditor() {
 
   return (
     <div className="relative h-full w-full overflow-hidden">
-      {/* Floating toolbar overlay — Phase 52 SEARCH-01: now renders in BOTH editor and share mode
-          so the search input is available to share visitors (D-04 + D-06a).
-          Mutation buttons (Add pin, Draw region, Change image, etc.) only appear when their
-          callbacks are provided — they are omitted in share mode. The search input always
-          appears (when onSearchQueryChange is provided). */}
+
       <MapToolbar
         mapName={map.name}
         searchQuery={searchQuery}
@@ -1632,7 +1454,6 @@ export function MapEditor() {
             setAddPinMode((v) => !v);
             if (drawRegionMode) setDrawRegionMode(false);
             if (drawRouteMode) { setDrawRouteMode(false); setPendingVertices([]); }
-            // Exit terrain paint mode (mode exclusivity)
             if (armedTerrainTypeId) {
               setArmedTerrainTypeId(null);
               setArmedLayerId(null);
@@ -1644,7 +1465,6 @@ export function MapEditor() {
             if (addPinMode) setAddPinMode(false);
             if (drawRouteMode) { setDrawRouteMode(false); setPendingVertices([]); }
             if (!drawRegionMode) setPendingVertices([]);
-            // Exit terrain paint mode (mode exclusivity)
             if (armedTerrainTypeId) {
               setArmedTerrainTypeId(null);
               setArmedLayerId(null);
@@ -1669,13 +1489,7 @@ export function MapEditor() {
         } : {})}
       />
 
-      {/* Phase 52 SEARCH-01: live search results dropdown (D-05).
-          Positioned below the toolbar (top-14 = 56px, toolbar is top-4 ~40px tall).
-          z-50 matches context menus. Shows when the search query is non-empty.
-          Each row: type badge + label + item-type tag (D-05).
-          Keyboard: ArrowUp/Down selects row; Enter confirms; Escape clears.
-          All elements React-rendered — no d3 datum handlers
-          (memory: timeline-pins-react-rendered-no-d3-datum). */}
+
       {searchQuery.trim() && (
         <div
           id="map-search-dropdown"
@@ -1684,7 +1498,6 @@ export function MapEditor() {
           className="absolute left-4 top-14 z-50 min-w-[260px] max-w-[320px] rounded-md border border-neutral-200 dark:border-neutral-800 bg-white dark:bg-neutral-900 shadow-lg overflow-hidden"
         >
           {searchResults.length === 0 ? (
-            /* D-05: explicit empty/no-match state */
             <div className="px-3 py-2 text-sm text-neutral-500 dark:text-neutral-400 italic">
               No matches
             </div>
@@ -1749,7 +1562,6 @@ export function MapEditor() {
           AT MOST ONE element. Priority order mirrors the toolbar mutual-exclusion logic
           (route > region > terrain > addPin). */}
       {!isShare && (() => {
-        // Compute the single active banner text (null → no banner rendered).
         const bannerText: string | null =
           drawRouteMode
             ? COPY.drawRouteBanner + (pendingVertices.length > 0 ? ` (${pendingVertices.length} vertices)` : '')
@@ -1774,10 +1586,7 @@ export function MapEditor() {
         );
       })()}
 
-      {/* Map canvas — d3-zoom + React-rendered pins + regions.
-          In share mode: addPinMode/drawRegionMode forced false; mutation
-          callbacks (context menus) are no-ops (T-40-12).
-          canvasRef exposes the imperative zoom seam for MapZoomControls (D-04, Plan 02). */}
+
       <MapCanvas
         ref={canvasRef}
         imageUrl={map.rawUrl}
@@ -1815,10 +1624,7 @@ export function MapEditor() {
         onOpenMap={handleOpenMap}
       />
 
-      {/* Phase 53 NEST-01 D-03: single-level breadcrumb — rendered in BOTH editor and share.
-          Sits at absolute left-4 top-4 z-20. The MapToolbar shifts to top-16 (hasBreadcrumb)
-          so they do not overlap (UI-SPEC §3). Only rendered when router nav state carries `from`.
-          No edit-only variant — share visitors also navigate nested maps. */}
+
       {fromOrigin && (
         <MapBreadcrumb
           originMapId={fromOrigin.id}
@@ -1886,9 +1692,7 @@ export function MapEditor() {
                 <button
                   type="button"
                   onClick={() => {
-                    // Mirror the toolbar onToggleAddPinMode exclusion: clear all draw modes
                     // before arming addPinMode so the two-mode overlap cannot occur even if
-                    // this button is clicked while some draw mode is transitioning.
                     if (drawRegionMode) setDrawRegionMode(false);
                     if (drawRouteMode) { setDrawRouteMode(false); setPendingVertices([]); }
                     if (armedTerrainTypeId) { setArmedTerrainTypeId(null); setArmedLayerId(null); }
@@ -1943,7 +1747,7 @@ export function MapEditor() {
             open={regionRelinkPickerOpen}
           />
 
-          {/* Entry picker for route relink (ROUTE-02, Plan 07) */}
+
           <AddEntriesPicker
             entries={universeEntries}
             placedEntryIds={new Set()}
@@ -1953,9 +1757,7 @@ export function MapEditor() {
             open={routeRelinkPickerOpen}
           />
 
-          {/* Phase 53 NEST-01 D-01: map picker for linking a target map to a pin or region.
-              currentTargetMapId derives from whichever item is being edited (pin XOR region).
-              onClose clears picker state; onSelect/onUnlink fire mutations then picker calls onClose. */}
+
           <MapPickerModal
             open={mapPickerOpen}
             onClose={() => {
@@ -2025,7 +1827,7 @@ export function MapEditor() {
           >
             Change icon...
           </button>
-          {/* Phase 52 SECRET-01: toggle secret (D-01). Normal color/style preserved. */}
+
           <button
             type="button"
             role="menuitem"
@@ -2034,9 +1836,7 @@ export function MapEditor() {
           >
             {contextMenu?.pin.secret ? COPY.contextMenuUnmarkSecret : COPY.contextMenuMarkSecret}
           </button>
-          {/* Phase 53 NEST-01 D-01: "Opens: {mapName}" indicator + "Link to map…" + "Unlink map".
-              Independent of the existing "Change entry…" item — both/either/neither may be set.
-              Suppressed in share mode (whole menu is !isShare-gated above). */}
+
           {contextMenu.pin.targetMapId && (() => {
             const targetMap = allMaps.find((m) => m.id === contextMenu.pin.targetMapId);
             return (
@@ -2107,7 +1907,7 @@ export function MapEditor() {
           >
             {COPY.regionContextMenuColor}
           </button>
-          {/* Phase 52 SECRET-01: toggle secret (D-01). Normal color/style preserved. */}
+
           <button
             type="button"
             role="menuitem"
@@ -2116,7 +1916,7 @@ export function MapEditor() {
           >
             {regionContextMenu?.region.secret ? COPY.contextMenuUnmarkSecret : COPY.contextMenuMarkSecret}
           </button>
-          {/* Phase 53 NEST-01 D-01: map-link items — independent of "Change entry…" item. */}
+
           {regionContextMenu.region.targetMapId && (() => {
             const targetMap = allMaps.find((m) => m.id === regionContextMenu.region.targetMapId);
             return (
@@ -2227,7 +2027,7 @@ export function MapEditor() {
         </div>
       )}
 
-      {/* Route context menu (ROUTE-02, Plan 07) — suppressed in share mode (T-51-13) */}
+
       {!isShare && routeContextMenu && (
         <div
           id="map-route-context-menu"
@@ -2297,7 +2097,7 @@ export function MapEditor() {
           >
             {COPY.routeContextMenuColor}
           </button>
-          {/* Phase 52 SECRET-01: toggle secret (D-01). Normal color/style preserved. */}
+
           <button
             type="button"
             role="menuitem"
@@ -2524,7 +2324,7 @@ export function MapEditor() {
             </div>
           )}
 
-          {/* Route delete confirm dialog (ROUTE-02, Plan 07) */}
+
           <ConfirmDialog
             open={deleteRouteTarget !== null}
             onOpenChange={(open) => {
@@ -2537,7 +2337,7 @@ export function MapEditor() {
             onConfirm={handleDeleteRouteConfirm}
           />
 
-          {/* Route rename dialog (ROUTE-02, Plan 07) */}
+
           {renameRouteTarget && (
             <div
               role="dialog"

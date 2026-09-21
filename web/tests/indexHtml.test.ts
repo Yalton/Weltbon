@@ -2,11 +2,11 @@ import { describe, it, expect } from 'vitest';
 import { readFileSync } from 'node:fs';
 import { resolve } from 'node:path';
 
-// POL-01 Task 3 — index.html link/meta wiring contract.
+
 const WEB_ROOT = resolve(__dirname, '..');
 const html = readFileSync(resolve(WEB_ROOT, 'index.html'), 'utf8');
 
-describe('index.html link + meta wiring (POL-01 Task 3)', () => {
+describe('index.html link + meta wiring', () => {
   it('declares at least 4 <link rel="icon"> entries (svg + multi-size png)', () => {
     const matches = html.match(/<link[^>]+rel="icon"[^>]*>/g) ?? [];
     expect(matches.length).toBeGreaterThanOrEqual(4);

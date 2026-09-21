@@ -1,11 +1,3 @@
-/**
- * Simulation renderer interface and configuration types.
- *
- * Per UI-SPEC §5.2 + §5.4: Canvas2D first, SimRenderer interface defined so
- * a WebGL/three.js renderer could be substituted without changing AppBackground.tsx.
- *
- * Plan 08-02 ships the Canvas2D implementation only; three.js deferred (§14.4).
- */
 
 export interface SimBody {
   x: number;
@@ -38,13 +30,10 @@ export interface SimRenderer {
   draw(): void;                   // paint current state
   resize(width: number, height: number): void;
   setTheme(isDark: boolean): void;
-  setEntries(entries: Array<{ id: string; type: string }>): void; // POL-03 — accepts empty array in plan 08-02
+  setEntries(entries: Array<{ id: string; type: string }>): void;
   dispose(): void;
 }
 
-/**
- * DEFAULT_SIM_CONFIG — exact values per UI-SPEC §5.2.
- */
 export const DEFAULT_SIM_CONFIG: SimConfig = {
   ambientCount: 70,
   entryCap: 80,

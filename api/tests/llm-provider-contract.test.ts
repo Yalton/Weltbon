@@ -1,86 +1,3 @@
-/**
- * Phase 23-05 — LLMProvider CONTRACT test (PROVIDER-04 + PROVIDER-01 closure).
- *
- * Goal
- * ----
- * Lock the PROVIDER-04 success criterion at test time: drive IDENTICAL input
- * fixtures through both `vi.mock`'d SDKs and assert both `AnthropicProvider`
- * and `OpenAIProvider` produce IDENTICAL `AuditSuggestion[]` arrays from the
- * same logical content. This is the "one render path on the engine side"
- * property Phase 24 relies on.
- *
- * Per project documentation D-01 + D-02:
- * the assertion is on the WIRE-SHAPE contract of `RunAuditResult`
- * (`{ text, toolUse, usage, costUsd }`) and the parsed `AuditSuggestion[]`
- * payload — NOT on identical audit SEMANTICS. The two adapters take different
- * routes (Anthropic parses `content[].type === 'tool_use'`; OpenAI parses
- * `chat.completions.parse` output and wraps it into a synthetic `toolUse[]`)
- * but BOTH must materialize the same shape from equivalent fixture content.
- *
- * Per RESEARCH §"Mock SDK Strategy for Contract Test" (lines 513-625):
- * we `vi.mock` the two SDK modules at the TypeScript module boundary. The
- * fixtures returned by the mocks reference a single SHARED_SUGGESTIONS
- * source-of-truth array, so we can assert that both providers extract
- * exactly that array — empty results or shape drift would fail loudly.
- *
- * Without this contract test, Phase 24's engine could subtly diverge per
- * provider without anyone noticing until a real audit run produces shape-
- * mismatched output. The test runs in the unit lane (no DB), in < 5 seconds.
- *
- * Mocking strategy (mirrors `llm-anthropic.test.ts` + `llm-openai.test.ts`):
- *   - `vi.mock('@anthropic-ai/sdk')` exposes a callable default whose
- *     `messages.create` returns a tool_use block carrying SHARED_SUGGESTIONS
- *     and whose `messages.countTokens` returns 0 (below MIN_CACHEABLE_TOKENS
- *     so no cache_control branch is exercised).
- *   - `vi.mock('openai')` exposes a callable default whose
- *     `chat.completions.parse` returns `message.parsed.suggestions` =
- *     SHARED_SUGGESTIONS, and whose `models.list` resolves to empty data.
- *   - `vi.mock('openai/helpers/zod')` passes through the schema + name as a
- *     plausible response_format object (the real Zod-vs-helper compatibility
- *     is locked separately in `llm-openai.test.ts` test #13).
- *   - All three mocks attach static-member error subclasses via Object.assign
- *     so production-code `err instanceof OpenAI.AuthenticationError` checks
- *     don't crash at module evaluation (the error branches aren't exercised
- *     in the success-path contract assertions, but the import-time presence
- *     of `OpenAI.APIError` etc. must remain truthy).
- *
- * Coverage
- * --------
- *   1. PROVIDER-01 — both providers conform to the 5-method LLMProvider
- *      interface (`validate`, `estimate`, `runAudit`, `listModels`, `pricing`).
- *   2. PROVIDER-04 — both providers extract IDENTICAL AuditSuggestion[] from
- *      identical fixture content (the eponymous contract assertion).
- *   3. Wire-shape parity — both providers return RunAuditResult with the same
- *      4-key shape (`text`, `toolUse`, `usage`, `costUsd`) and NormalizedUsage
- *      with the same 4-key shape (cache fields = 0 for OpenAI per the
- *      `NormalizedUsage` JSDoc in `interface.ts`).
- *   4. Tool-name convention — both providers materialize `toolUse[0].name ===
- *      'emit_findings'` (the wire-shape convention for Phase 27 engine: the
- *      model invokes emit_findings to deliver its final-turn answer).
- *   5. Positive-cost invariant — both providers compute `costUsd > 0` for the
- *      100-input / 50-output fixture.
- *   6. D-02 boundary — `AuditSuggestion` contains only the 4-or-5 provider-
- *      emitted fields; no engine-set fields (gap_key, source, model, runId,
- *      dismissalSnapshot) leak into Phase 23 outputs.
- *   7. validate() success path — both providers resolve when SDK ping
- *      resolves.
- *   8. listModels() shape — both providers return ≥ 2 listings with the
- *      required pricing fields.
- *
- * Requirements satisfied:
- *   - PROVIDER-04 (the contract test itself)
- *   - PROVIDER-01 closure (cross-provider conformance to LLMProvider surface)
- *
- * Issue #48 Task 8 addendum: a third `describe` block near the end of this
- * file ("Ollama under PROVIDER-04") brings `OllamaProvider` under this
- * contract using the REAL captured fixture from Task 5
- * (`tests/fixtures/ollama/chat-tool-call.json`), fetch-stubbed rather than
- * `vi.mock`'d (Ollama has no SDK). It is deliberately narrower than the
- * SHARED_SUGGESTIONS byte-equality above — see that block's own header
- * comment for why — but locks the property PROVIDER-04 exists to protect:
- * all three providers round-trip a tool call into the same canonical
- * `{ id, name, input }` shape.
- */
 
 import { describe, it, expect, vi, beforeEach, afterEach } from 'vitest';
 import { readFileSync } from 'node:fs';
@@ -91,32 +8,6 @@ import type { AuditSuggestion } from '../src/types/audit-suggestion.js';
 const here = dirname(fileURLToPath(import.meta.url));
 const ollamaFx = (n: string) =>
   JSON.parse(readFileSync(resolve(here, `fixtures/ollama/${n}.json`), 'utf8'));
-/**
- * The REAL captured `/api/chat` tool-call response (Task 5,
- * `tests/fixtures/ollama/chat-tool-call.json`, from a live Ollama 0.32.12
- * server) — deliberately NOT hand-written. Its two load-bearing properties
- * (both contradicted the original plan, per Task 8's brief, and must NOT be
- * "corrected"):
- *   - `tool_calls[0].id` is a REAL id (`call_a9wwonwx`), not synthesized.
- *   - `message.content` is EMPTY; the model's prose lives in
- *     `message.thinking`, which `OllamaProvider.runAudit` deliberately never
- *     reads into `text` (see ollama.ts's file-header comment — surfacing it
- *     would trip the engine's D-10 "prose in a final turn" check on every
- *     thinking-model response).
- *
- * Its suggestion payload is `{ title, detail }`, NOT the `AuditSuggestion`
- * shape (`category`/`rationale`/`evidence`/`referencedEntryIds`) the
- * Anthropic/OpenAI mocks above emit — it is a real response captured before
- * the schema had that exact vocabulary. The contract this section locks is
- * therefore narrower than PROVIDER-04's SHARED_SUGGESTIONS equality: Ollama
- * cannot honestly claim byte-identical suggestion content without either
- * hand-editing the captured fixture (defeating the point of capturing it) or
- * waiting for a second live capture against the current schema. What IS
- * asserted, and what actually matters for PROVIDER-04's engine-facing
- * invariant, is that the tool call round-trips into the same canonical
- * `{ id, name, input }` shape as the other two providers, with the real
- * (not positional) id preserved and `text` reflecting `content` only.
- */
 const ollamaChatFixture = ollamaFx('chat-tool-call');
 
 /**
@@ -227,7 +118,7 @@ const SHARED_SUGGESTIONS: AuditSuggestion[] = [
 // branch fires — the contract test focuses on the parsed-output shape, not
 // the cache pathway (which is locked in `llm-anthropic.test.ts` test #14/15).
 
-// Phase 27 D-11: module-scope mock handles so per-test cases can override
+
 // the SDK's response via mockResolvedValueOnce (engine-shape fixtures +
 // emit_findings round-trip + smuggled-gap_key need per-call control).
 // The hoisted block initialises the handles + default error subclasses BEFORE
@@ -363,7 +254,7 @@ const { OpenAIMockedErrors } = vi.hoisted(() => {
 });
 
 vi.mock('openai', () => {
-  // Phase 27 D-09: OpenAI provider now calls chat.completions.create() with
+
   // function-tool calling. The model "invokes" emit_findings to deliver the
   // final answer; arguments is a JSON-stringified suggestions envelope.
   // The provider parses arguments and normalizes to the engine-facing
@@ -405,7 +296,7 @@ vi.mock('openai', () => {
       completions: {
         create: mockChatCompletionsCreate,
         // `parse` retained for back-compat — runAudit() no longer invokes
-        // it (Phase 27 D-09), so this mock is a vestigial defense in depth.
+
         parse: vi.fn().mockResolvedValue(happyResponse),
       },
     },
@@ -533,7 +424,7 @@ describe('LLMProvider contract (PROVIDER-04 + PROVIDER-01)', () => {
     expect(Object.keys(anthropicResult.usage).sort()).toEqual(expectedUsageKeys);
     expect(Object.keys(openaiResult.usage).sort()).toEqual(expectedUsageKeys);
 
-    // OpenAI's cache fields are 0 per Plan 23-04 normalizeUsage (no
+
     // OpenAI cache-write/read billing surface). Anthropic's fixture also
     // sets both cache fields to 0.
     expect(openaiResult.usage.cacheCreationInputTokens).toBe(0);
@@ -609,9 +500,9 @@ describe('LLMProvider contract (PROVIDER-04 + PROVIDER-01)', () => {
     // D-02: AuditSuggestion has exactly these 5 fields (entryId optional).
     // The allow-list is the canonical AuditSuggestion type in
     // ../src/types/audit-suggestion.ts. Any extra field on a parsed
-    // suggestion would indicate that Phase 24 engine logic (gap_key,
+
     // source, model, runId, dismissalSnapshot per D-02 documentation) has
-    // drifted into Phase 23 provider territory.
+
     const allowedFields = new Set([
       'category',
       'entryId',
@@ -661,7 +552,7 @@ describe('LLMProvider contract (PROVIDER-04 + PROVIDER-01)', () => {
 });
 
 // ===========================================================================
-// Phase 27 D-11 — engine-shape fixtures (the test that would have caught
+
 // commit 23bb99f's defect on first run)
 // ===========================================================================
 //
@@ -676,7 +567,7 @@ describe('LLMProvider contract (PROVIDER-04 + PROVIDER-01)', () => {
 //   trivial { role: 'user', content } messages through the provider; no
 //   multi-turn engine-shape fixture exercised the translation path.
 //
-// Phase 27 D-11 adds engine-shape fixtures that mirror the actual engine
+
 // output. The fixtures round-trip through BOTH providers; any future
 // regression that drops the wire-translation step (Anthropic) or rejects
 // the engine-shape (OpenAI) fails this test at PR time via CI.
@@ -759,7 +650,7 @@ describe('engine-shape fixtures (D-11 — would have caught commit 23bb99f)', ()
   });
 
   it('multi-turn engine-shape messages round-trip through OpenAI without provider error', async () => {
-    // Phase 27 D-09: OpenAI's chat.completions.create accepts the engine's
+
     // role:'tool' / role:'assistant' shapes natively (OpenAI was the
     // reference shape the engine was originally built against — that's
     // exactly why Anthropic needed the translator). This test locks the
@@ -823,7 +714,7 @@ describe('engine-shape fixtures (D-11 — would have caught commit 23bb99f)', ()
 });
 
 // ===========================================================================
-// Phase 27 D-11 — emit_findings round-trip (the symmetric contract assertion)
+
 // ===========================================================================
 describe('emit_findings round-trip (D-11)', () => {
   beforeEach(() => {
@@ -998,10 +889,10 @@ describe('emit_findings round-trip (D-11)', () => {
     expect(openaiArgs.tools.find((t) => t.function.name === 'emit_findings')).toBeDefined();
   });
 
-  it('smuggled gap_key inside emit_findings tool_use is rejected by AuditOutputStrictSchema on both providers (Phase 24 BL-02 invariant preserved)', async () => {
-    // Phase 24 BL-02 / T-24-04-03 / T-24-04-04: AuditOutputStrictSchema is
+  it('smuggled gap_key inside emit_findings tool_use is rejected by AuditOutputStrictSchema on both providers', async () => {
+
     // `.strict()` on both the envelope and the inner suggestion. A smuggled
-    // gap_key inside a suggestion fails the parse. Phase 27 moves the parse
+
     // from JSON.parse(result.text) to tool_use.input — the invariant must
     // hold across the migration.
     //
@@ -1101,7 +992,7 @@ describe('emit_findings round-trip (D-11)', () => {
 });
 
 // ===========================================================================
-// Issue #48 Task 8 — Ollama under the PROVIDER-04 contract
+
 // ===========================================================================
 //
 // Why this section is separate from the `describe('LLMProvider contract ...')`
@@ -1109,7 +1000,7 @@ describe('emit_findings round-trip (D-11)', () => {
 // Anthropic and OpenAI through HAND-WRITTEN mocks that both return
 // SHARED_SUGGESTIONS verbatim, so byte-identical-suggestions equality is a
 // meaningful assertion. Ollama's fixture here is a REAL captured response
-// (Task 5) with a different suggestion vocabulary (`{ title, detail }`, not
+
 // `AuditSuggestion`'s `{ category, rationale, evidence, referencedEntryIds }`)
 // — hand-editing it to match SHARED_SUGGESTIONS would defeat the entire
 // point of testing against a real capture (see ollama-wire.ts's file header:
@@ -1120,7 +1011,7 @@ describe('emit_findings round-trip (D-11)', () => {
 // the tool call round-trips into — asserted below against Ollama's real id,
 // real name, and real (structurally-typed) input, plus the RunAuditResult
 // wire-shape parity the other providers are held to.
-describe('Ollama under PROVIDER-04 (Task 8 — real captured fixture, not a hand-written shape)', () => {
+describe('Ollama under PROVIDER-04', () => {
   beforeEach(() => {
     vi.clearAllMocks();
   });

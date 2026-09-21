@@ -6,10 +6,6 @@ import { PrecisionBadge, type Precision } from './PrecisionBadge';
 
 const PRECISIONS: Precision[] = ['exact', 'approximate', 'era'];
 
-/**
- * Locked copy from UI-SPEC §Copywriting Contract — keep verbatim. The
- * acceptance criteria for Plan 20-04 verifies these literal strings.
- */
 const COPY = {
   TITLE: 'Pin entry',
   POSITION_LABEL: 'Position',
@@ -27,29 +23,13 @@ export interface PinPopoverProps {
   open: boolean;
   onOpenChange: (open: boolean) => void;
   entryId: string;
-  /** Container-relative drop coordinates (UI-SPEC §Interaction Contract). */
   dropX: number;
   dropY: number;
-  /** Initial position translated from dropX via xToPos (D-07 linear). */
   initialPosition: number;
-  /** Initial label hint (typically the entry title). */
   initialLabel?: string;
-  /**
-   * Error bridge — fires alongside the inline error message so the parent
-   * (Plan 06 TimelineView) can surface a Toast. Popover stays open on error.
-   */
   onError?: (err: unknown) => void;
 }
 
-/**
- * Radix Popover for confirming a fresh pin creation at a dropped position
- * (TIMELINE-05). Mirrors `CreateLinkPopover` lifecycle (Esc / outside-click
- * close, inline error + onError on mutation rejection — UI-SPEC §H
- * belt-and-suspenders).
- *
- * Saves via `useUpsertTimelinePin` (D-08: no new endpoint — the existing
- * upsert handles both create and reposition).
- */
 export function PinPopover({
   universeId,
   open,
@@ -114,8 +94,6 @@ export function PinPopover({
           sideOffset={12}
           collisionPadding={8}
           onOpenAutoFocus={(e) => {
-            // Let Radix focus the first input naturally; preventing the
-            // default focus scope would skip the position input's autoFocus.
             // No-op kept for parity with CreateLinkPopover semantics.
             void e;
           }}

@@ -6,26 +6,11 @@ import { TypeBadge } from './TypeBadge';
 import type { Entry } from '../hooks/useEntries';
 
 // ---------------------------------------------------------------------------
-// Types
 // ---------------------------------------------------------------------------
 
 interface EntryHoverCardProps {
-  /**
-   * The full list Entry object (title, entryType, summary, icon, coverImageId).
-   * Body is NOT on the list entry — it is lazily fetched when the card opens
-   * and summary is empty (D-13 fallback).
-   */
   entry: Entry;
-  /**
-   * Universe id — used for authed cover-image URL construction and the D-13
-   * lazy body fetch (passed to useEntry).
-   */
   universeId: string;
-  /**
-   * The resolved entry <Link> to wrap as the hover trigger (D-01).
-   * The card wraps this element and never calls preventDefault/stopPropagation
-   * on its click — navigation is always preserved.
-   */
   children: React.ReactNode;
 }
 
@@ -33,41 +18,19 @@ interface EntryHoverCardProps {
 // Markdown-strip helper (D-13 body excerpt — plain text only, XSS-safe)
 // ---------------------------------------------------------------------------
 
-/**
- * Strip markdown syntax to plain text and return a short excerpt.
- * Used for the D-13 empty-summary fallback so the card shows a real excerpt
- * rather than an empty summary region.
- *
- * Strips: headings (#), bold/italic (*_), inline code (`), links ([text](url)),
- * images (![alt](url)), blockquotes (>), horizontal rules (---), HTML tags.
- * Collapses whitespace and trims to ~200 characters.
- *
- * T-46-04: all output is plain text — XSS-safe React elements only (no raw HTML injection).
- */
 function stripMarkdown(body: string): string {
   let text = body;
-  // Remove fenced code blocks
   text = text.replace(/```[\s\S]*?```/g, '');
-  // Remove HTML tags
   text = text.replace(/<[^>]+>/g, '');
-  // Remove headings (# Heading)
   text = text.replace(/^#{1,6}\s+/gm, '');
-  // Remove images ![alt](url)
   text = text.replace(/!\[[^\]]*\]\([^)]*\)/g, '');
-  // Convert links [text](url) → text
   text = text.replace(/\[([^\]]+)\]\([^)]*\)/g, '$1');
-  // Remove inline code
   text = text.replace(/`[^`]*`/g, '');
-  // Remove bold/italic (**, __, *, _)
   text = text.replace(/\*{1,3}([^*]+)\*{1,3}/g, '$1');
   text = text.replace(/_{1,3}([^_]+)_{1,3}/g, '$1');
-  // Remove blockquotes
   text = text.replace(/^>\s*/gm, '');
-  // Remove horizontal rules
   text = text.replace(/^[-*_]{3,}\s*$/gm, '');
-  // Collapse whitespace
   text = text.replace(/\s+/g, ' ').trim();
-  // Truncate to ~200 characters at a word boundary
   if (text.length > 200) {
     const cut = text.lastIndexOf(' ', 200);
     text = text.slice(0, cut > 0 ? cut : 200) + '…';
@@ -76,31 +39,8 @@ function stripMarkdown(body: string): string {
 }
 
 // ---------------------------------------------------------------------------
-// EntryHoverCard component
 // ---------------------------------------------------------------------------
 
-/**
- * Phase 46 Plan 02 — XREF-02 entry hover-preview card.
- *
- * Wraps the resolved entry `<Link>` (passed as children) in a Radix Popover.
- * The card opens on hover (150ms delay, D-02), keyboard focus (D-03), or a
- * tap on the ⓘ caret affordance (D-04, coarse-pointer only).
- * Click always navigates — the card never intercepts (D-01).
- *
- * Card content (mini entry-detail header):
- *   - Cover image banner when coverImageId is set (D-12); omitted otherwise (D-13)
- *   - entry.icon + title + TypeBadge
- *   - Summary line-clamped to ~3 lines (D-11)
- *   - D-13 fallback: when summary is empty, lazily fetches body via useEntry
- *     (gated on card-open + empty summary) and shows a markdown-stripped excerpt.
- *
- * T-46-04 XSS: all content is plain-text React children — XSS-safe, no raw HTML injection.
- * T-46-05 Private-entry: entriesById is sourced from the is_public-filtered
- *   useEntries list; the lazy body fetch goes to the share seam when in share mode.
- * T-46-06 Cover-image 404: onError hides the broken <img> element.
- * T-46-07 Click-hijack: no preventDefault/stopPropagation on the trigger child.
- * T-46-12 Fetch storm: useEntry is enabled ONLY when card is open AND summary empty.
- */
 export function EntryHoverCard({
   entry,
   universeId,
@@ -114,11 +54,9 @@ export function EntryHoverCard({
   // Determine whether a lazy body fetch is needed (D-13 fallback gate).
   const summaryPresent = entry.summary.trim().length > 0;
   // Gate the fetch: only when card is open AND summary is empty (T-46-12).
-  // Passing '' to useEntry disables it via `enabled: !!universeId && !!entryId`.
   const lazyEntryId = open && !summaryPresent ? entry.id : '';
   const { data: lazyEntry, isLoading: lazyLoading } = useEntry(universeId, lazyEntryId);
 
-  // Compute the displayed summary text:
   //   - summary present → use it directly
   //   - summary absent + body fetched → markdown-stripped excerpt
   //   - summary absent + loading → placeholder
@@ -159,7 +97,6 @@ export function EntryHoverCard({
   }
 
   // D-03: keyboard focus/blur on the trigger Link opens/closes the card.
-  // The Link is already the focus target — no extra tab stop needed.
   const handleFocus = handleMouseEnter;
   const handleBlur = handleMouseLeave;
 
@@ -173,8 +110,6 @@ export function EntryHoverCard({
     setOpen(true);
   }
 
-  // Cover image URL — built client-side from coverImageId (Phase 38 pattern).
-  // <img src> bypasses the api() seam so the URL must be explicit (Phase 38 Pitfall 4 / T-38-21).
   const coverSrc = entry.coverImageId
     ? isShareMode
       ? `/api/share/assets/${entry.coverImageId}/raw`

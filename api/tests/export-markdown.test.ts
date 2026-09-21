@@ -20,13 +20,6 @@ import {
 } from '../src/db/schema.js';
 import { eq } from 'drizzle-orm';
 
-/**
- * Plan 04-02 EXP-02 + EXP-05 (markdown ZIP) integration coverage.
- *
- * Layout: a small fixture universe (3 categories, 5 entries, 4 links,
- * 2 issues — 1 open, 1 resolved) is exported as ?format=markdown,
- * unzipped via yauzl, and asserted on at the .md content level.
- */
 describe('EXP-02: markdown ZIP exporter — full integration', () => {
   let handle: TestDbHandle;
   let app: ReturnType<typeof createApp>;
@@ -196,7 +189,7 @@ describe('EXP-02: markdown ZIP exporter — full integration', () => {
         sourceEntryId: entryA.id,
         targetEntryId: entryB.id,
         label: 'knows',
-        // Phase 35 REL-01: direction replaces bidirectional
+
         direction: 'directed',
       });
     await db()
@@ -206,7 +199,7 @@ describe('EXP-02: markdown ZIP exporter — full integration', () => {
         sourceEntryId: entryA.id,
         targetEntryId: entryC.id,
         label: 'located in',
-        // Phase 35 REL-01: bidirectional=true → direction='undirected'
+
         direction: 'undirected',
       });
     await db()
@@ -216,7 +209,7 @@ describe('EXP-02: markdown ZIP exporter — full integration', () => {
         sourceEntryId: entryD.id,
         targetEntryId: entryE.id,
         label: 'owns',
-        // Phase 35 REL-01: direction replaces bidirectional
+
         direction: 'directed',
       });
     await db()
@@ -226,7 +219,7 @@ describe('EXP-02: markdown ZIP exporter — full integration', () => {
         sourceEntryId: entryA.id,
         targetEntryId: entryD.id,
         label: 'knows',
-        // Phase 35 REL-01: direction replaces bidirectional
+
         direction: 'directed',
       });
 

@@ -1,23 +1,3 @@
-/**
- * ShareLinksSection — Phase 29 per-universe Share Links section
- * embedded on UniverseSettings → Share Links tab (UI-SPEC §D).
- *
- * Owner workflow:
- *   1. See the list of ACTIVE share links for this universe (revoked rows
- *      are filtered client-side here; the global /settings/shares view
- *      surfaces the full audit trail including revoked tokens).
- *   2. Click "Create share link" → opens CreateShareLinkDialog (two-phase
- *      form → reveal). The plaintext URL is shown exactly once.
- *   3. Click "Revoke" on a row → opens ConfirmDialog (destructive=true)
- *      → on confirm, DELETE /api/shares/:id → react-query invalidates
- *      `['shares']` and the row disappears.
- *
- * Per UI-SPEC §D the per-token row deliberately OMITS:
- *   - the Status column (filtered to active rows; the global view has it)
- *   - the Copy action (plaintext is gone after creation — D-08 one-time
- *     reveal is irreversible)
- *   - the inline rename UX (rename lives on /settings/shares per §F)
- */
 
 import { useMemo, useState } from 'react';
 import {
@@ -39,7 +19,6 @@ export function ShareLinksSection({ universeId }: Props) {
   const revokeShareLink = useRevokeShareLink();
 
   // UI-SPEC §D: filter to non-revoked rows. Revoked tokens disappear from
-  // the UniverseSettings list immediately; the full audit trail lives on
   // /settings/shares (UI-SPEC §F).
   const universeShares = useMemo(
     () =>
@@ -245,7 +224,7 @@ export function ShareLinksSection({ universeId }: Props) {
         </div>
       )}
 
-      {/* Create share link dialog — two-phase form → reveal. */}
+
       <CreateShareLinkDialog
         open={createOpen}
         onOpenChange={setCreateOpen}
@@ -268,8 +247,6 @@ export function ShareLinksSection({ universeId }: Props) {
             try {
               await revokeShareLink.mutateAsync(revokeTarget.id);
             } catch {
-              // Silent invalidate on 404 race — useRevokeShareLink's onError
-              // handler reconciles the table on refetch.
             }
           }
         }}

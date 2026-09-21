@@ -1,14 +1,3 @@
-/**
- * Phase 27 Plan 04 Task 3 — LlmKeys cost-unknown footnote tests.
- *
- * Pins:
- *   - Test 6: a key with `costUnknownCount===2` renders the literal
- *     `(plus 2 runs with unknown pricing)` footnote appended to the existing
- *     `$<totalSpentUsd>` value.
- *   - Test 7: a key with `costUnknownCount===0` (or undefined) renders only
- *     the `$<totalSpentUsd>` value — no parenthetical, no extra whitespace.
- *   - Footnote tone is NEUTRAL (text-neutral-500) NOT amber per CONTEXT D-06.
- */
 
 import { describe, it, expect, beforeEach, vi } from 'vitest';
 import { render, screen, waitFor } from '@testing-library/react';
@@ -72,7 +61,7 @@ const BASE_KEY = {
   totalSpentUsd: '0.0042',
 };
 
-describe('LlmKeys — Phase 27 D-06 cost_unknown footnote', () => {
+describe('LlmKeys — D-06 cost_unknown footnote', () => {
   beforeEach(() => {
     vi.mocked(api).mockReset();
   });

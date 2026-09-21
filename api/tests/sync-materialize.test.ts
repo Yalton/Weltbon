@@ -1,7 +1,3 @@
-/**
- * Plan D Task 4 — the extracted materialization service (C-12/C-20 behavior,
- * now reusable by the in-process local apply path).
- */
 import { describe, it, expect, beforeAll, afterAll, beforeEach, vi } from 'vitest';
 import { createHash } from 'node:crypto';
 import { mkdtemp } from 'node:fs/promises';
@@ -12,7 +8,7 @@ import { createTestDb, cleanDb, createTestUser, type TestDbHandle } from './help
 
 const sha = (b: Buffer) => createHash('sha256').update(b).digest('hex');
 
-describe('sync materialization service (Plan D Task 4)', () => {
+describe('sync materialization service', () => {
   let handle: TestDbHandle;
   let userId: string;
   let universeId: string;
@@ -294,7 +290,7 @@ describe('sync materialization service (Plan D Task 4)', () => {
     expect(await storageBackend.exists(`${id}_thumb`)).toBe(false);
   });
 
-  describe('the pre-commit / post-commit split (Plan E, E-04)', () => {
+  describe('the pre-commit / post-commit split', () => {
     it('writeAssetBytes copies bytes and the thumbnail but touches neither the row nor the staged blob', async () => {
       const { writeAssetBytes, syncBlobKey } = await import('../src/services/sync/materialize.js');
       const { storageBackend } = await import('../src/services/storage/local.js');
@@ -412,7 +408,7 @@ describe('sync materialization service (Plan D Task 4)', () => {
     });
 
     it('discardWrittenAssets leaves a PRE-EXISTING thumbnail alone when sharp could not read the original', async () => {
-      // This is the crash state Plan E exists to repair: an asset row whose
+
       // original bytes are missing but whose _thumb survived. A peer can PUT
       // arbitrary bytes over the sync protocol (only browser uploads are
       // magic-number restricted), so writeAssetBytes can legitimately fail to
@@ -696,7 +692,7 @@ describe('sync materialization service (Plan D Task 4)', () => {
     expect(after.thumbSizeBytes).toBe(7); // untouched
   });
 
-  // ── writeAssetBytes' own unwind (Plan E, E-05) ────────────────────────────
+
   //
   // Both CALL SITES partition orphans from repairs. This unwind is the path that
   // reaches neither of them: because writeAssetBytes throws, the caller's
@@ -781,7 +777,7 @@ describe('sync materialization service (Plan D Task 4)', () => {
     // `complete` half of the partition is what covers this: sparing every
     // pre-existing entry would leave a possibly-truncated original under a
     // committed row, which exists() reports as present forever, so the row never
-    // re-enters a plan and the sweep never looks at it again.
+
     const repair = await seedAsset(png, { storeBytes: false });
     await storageBackend.put(syncBlobKey(universeId, hash), png);
 
@@ -806,9 +802,9 @@ describe('sync materialization service (Plan D Task 4)', () => {
     expect(await storageBackend.exists(repair.id)).toBe(false);
   });
 
-  // ── the staged-blob sweep (Plan E, E-07) ──────────────────────────────────
 
-  describe('sweepUnmaterializedAssets (Plan E, E-07)', () => {
+
+  describe('sweepUnmaterializedAssets', () => {
     async function png(seed: number): Promise<Buffer> {
       const sharp = (await import('sharp')).default;
       return sharp({

@@ -23,7 +23,6 @@ export type MarkdownLinkDialogProps = {
   initialKind?: MarkdownLinkKind;
   initialTarget?: string;
   initialLabel?: string;
-  /** Supplying entries is useful for callers that already have the list cached. */
   entries?: Entry[];
 };
 

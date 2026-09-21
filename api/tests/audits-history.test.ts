@@ -1,29 +1,3 @@
-/**
- * Phase 26 Plan 03 Task 2 — GET /api/universes/:uid/audits integration tests.
- *
- * Endpoint contract (D-09 / D-16):
- *   - Paginated history of past audit runs for ONE universe.
- *   - requireUniverse INLINE (T-24-05-02) — 403 on cross-tenant access.
- *   - Mount point: /api/universes/:uid/audits (under the existing auditRoutes
- *     instance which is already routed via `apiR.route('/universes/:uid', auditRoutes)`).
- *   - Response: { rows: AuditHistoryRow[], total: number, hasMore: boolean }.
- *   - Filter: universe_id = uid (after requireUniverse).
- *   - Order: startedAt DESC.
- *   - Pagination: ?limit (default 100, max 200) & ?offset (default 0); Zod-coerced ints.
- *   - suggestionsByCategory aggregated from issues table via
- *     SELECT audit_run_id, category, COUNT(*) GROUP BY audit_run_id, category
- *     WHERE audit_run_id IN (:runIds) AND category IS NOT NULL.
- *   - totalEntries: number for scope='universe' rows; null for scope='entry' rows
- *     (per AuditHistoryRow JSDoc in api/src/types/audit-suggestion.ts).
- *   - Empty universe returns { rows:[], total:0, hasMore:false } (NOT 404).
- *
- * Security invariants tested (Plan 26-03 threat-model):
- *   T-26-03-02 — suggestionsByCategory aggregation never includes issues from
- *               other universes (subquery filters by runIds derived from the
- *               universe-filtered base query).
- *   T-26-03-04 — Cross-universe access returns 403 via requireUniverse.
- *   T-26-03-03 — limit cap (?limit=999 rejected; default applied; max 200).
- */
 
 import { describe, it, expect, beforeAll, afterAll, beforeEach, vi } from 'vitest';
 
@@ -44,7 +18,7 @@ import { setTestDb } from '../src/db/client.js';
 import { createApp } from '../src/index.js';
 import { auditRuns, universes, entries, issues } from '../src/db/schema.js';
 
-describe('GET /api/universes/:uid/audits (Phase 26 Plan 03 Task 2 — D-09 audit history)', () => {
+describe('GET /api/universes/:uid/audits', () => {
   let handle: TestDbHandle;
   let app: ReturnType<typeof createApp>;
 

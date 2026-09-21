@@ -1,19 +1,3 @@
-/**
- * Issue #48 Task 6 — llm-connections routes CRUD + GET /api/config, gated on
- * localMode.
- *
- * `boot(localMode, encryptionKey?)` rebuilds the app with a given
- * WELTBON_LOCAL_MODE / LLM_KEY_ENCRYPTION_KEY. `_resetEnvForTests()` is
- * essential, not decoration: config.ts caches `Env` in a module-scope
- * singleton, so a changed `process.env` would otherwise never be re-read.
- * `index.js` itself is NOT re-evaluated by the plain `import()` below — the
- * module cache returns the same module object every call in this process,
- * so its module-scope code (including index.ts's own `const cfg = env()`)
- * runs exactly once for this whole file. What makes `boot()` actually
- * reflect the flags is that createApp() reads `env().localMode` LIVE, at
- * call time — mirroring the identical pattern in tests/local-session.test.ts
- * and documented in routes/auth.ts (DV-11 / "Finding 2 review fix").
- */
 import { describe, it, expect, beforeAll, afterAll, beforeEach, afterEach, vi } from 'vitest';
 import { readFileSync } from 'node:fs';
 import { fileURLToPath } from 'node:url';
@@ -23,14 +7,6 @@ import { createTestDb, cleanDb, createTestUser, authHeader, type TestDbHandle } 
 const here = dirname(fileURLToPath(import.meta.url));
 const fx = (n: string) => JSON.parse(readFileSync(resolve(here, `fixtures/ollama/${n}.json`), 'utf8'));
 
-/**
- * Mirrors tests/llm-ollama.test.ts's fakeFetch (Task 4) — duplicated here
- * rather than imported because that file does not export it. `/api/show` is
- * a POST whose body names the model (the same URL serves every model), so
- * routes for it are keyed `/api/show:<model>` and matched against the
- * parsed request body's `model` field; every other route is matched by
- * plain URL substring.
- */
 function fakeFetch(routes: Record<string, unknown>): typeof fetch {
   return (async (url: string, init?: RequestInit): Promise<Response> => {
     if (url.includes('/api/show')) {
@@ -115,7 +91,7 @@ describe('llm-connections routes', () => {
     // future refactor that mounts the router unconditionally, or a test/dev
     // harness that builds the app once and reuses it, silently removes it.
     //
-    // Fix round 2 (#48 whole-branch review, Minor 5): the existing off-mode
+
     // tests all call boot(false), so the router is never mounted and the 404
     // they get satisfies `expect([403, 404]).toContain(...)`. Deleting all
     // five `if (!env().localMode) ... 403` handler guards left the whole suite
@@ -190,7 +166,7 @@ describe('llm-connections routes', () => {
     expect((await res.json()).localMode).toBe(false);
   });
 
-  it('GET /api/config requires authentication (fix round 1, Finding 1: a share token must not reach it either — see share-boundary.test.ts)', async () => {
+  it('GET /api/config requires authentication', async () => {
     await boot(true);
     const res = await app.request('/api/config');
     expect(res.status).toBe(401);
@@ -225,7 +201,7 @@ describe('llm-connections routes', () => {
   });
 
   it('refuses a secret it cannot encrypt (503) rather than silently dropping it — no row is written', async () => {
-    // No LLM_KEY_ENCRYPTION_KEY configured. Before Task 6's fix,
+
     // upsertConnection would write the row with the secret simply gone and no
     // error anywhere; this pins the caller-visible 503 AND that nothing was
     // written, so a retry-without-noticing scenario cannot leave a

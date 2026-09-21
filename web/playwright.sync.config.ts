@@ -1,8 +1,7 @@
 import { defineConfig } from '@playwright/test';
 
 /**
- * E2E for the Plan F sync UI, run against INSTANCE A of the two-instance dev
- * rig (docs/sync-dev-rig.md): the Vite dev server on :5173, proxying /api to
+ * The sync rig runs the Vite dev server on :5173, proxying /api to
  * instance A's host-run API on :3000, with instance B (the peer) at :3001.
  *
  * SEPARATE FROM `playwright.config.ts` ON PURPOSE. That config targets the
@@ -22,7 +21,6 @@ import { defineConfig } from '@playwright/test';
  * instances and the run is awaited inline in the UI (F-02/F-06).
  *
  * `testMatch` is an array, not a single string, because Feature #42's
- * `connect-to-weltbon.spec.ts` (Task 7) needs this SAME rig — instance A's UI
  * under test, instance B as the peer it connects to — and a bare string here
  * would only ever pick up `sync.spec.ts`, silently leaving the new spec
  * undiscovered. Adding a file here does not change what rig this config

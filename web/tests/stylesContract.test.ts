@@ -2,12 +2,12 @@ import { describe, it, expect } from 'vitest';
 import { readFileSync } from 'node:fs';
 import { resolve } from 'node:path';
 
-// POL-04 Task 1 — styles.css static contract: motion tokens, keyframes,
+
 // prose block, and reduced-motion-last ordering.
 const WEB_ROOT = resolve(__dirname, '..');
 const css = readFileSync(resolve(WEB_ROOT, 'src/styles.css'), 'utf8');
 
-describe('styles.css contract (POL-04 Task 1)', () => {
+describe('styles.css contract', () => {
   it('declares the required motion + sim CSS custom-property tokens', () => {
     expect(css).toContain('--motion-ease-out');
     expect(css).toContain('--motion-ease-in');

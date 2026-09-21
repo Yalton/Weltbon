@@ -1,4 +1,3 @@
--- Phase 35 REL-01: typed-link schema — add link_type + direction, migrate bidirectional, add universes.link_types.
 -- Hand-written migration (NOT drizzle-kit generated) because:
 -- 1. REL-01 requires a CHECK constraint on direction ('directed'|'undirected') — Drizzle DSL cannot express this.
 -- 2. Backfill from bidirectional must complete before the NOT NULL + CHECK are applied.

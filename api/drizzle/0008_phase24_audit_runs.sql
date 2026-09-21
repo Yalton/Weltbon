@@ -1,4 +1,3 @@
--- Phase 24 AUDIT-01/02/03: audit_runs table + issues extensions + universes extensions.
 -- Hand-written migration (NOT drizzle-kit generated) because the NULLS NOT DISTINCT clause
 -- on the (universe_id, gap_key) unique index is unsupported by the Drizzle schema DSL.
 -- AUDIT-02 T-24-01-01: This raw-SQL UNIQUE INDEX is the load-bearing dedup mechanism that

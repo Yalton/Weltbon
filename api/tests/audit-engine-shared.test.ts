@@ -1,24 +1,3 @@
-/**
- * #50 Task 7 review round 1 — shared settlement against a REAL database.
- *
- * tests/audit-engine.test.ts drives the engine with a db stub and an injected
- * settlement spy. That is the right shape for proving the revocation
- * checkpoint, and it proved it. It cannot prove settlement, and its blind spot
- * was not hypothetical: a spy accepts any argument, so ten green tests sat on
- * top of an engine that handed the real service a value it rejects outright.
- *
- * `settleSharedAuditReservation` validates its amount as a clean six-decimal
- * number. A summed float of per-turn provider costs almost never is one —
- * `cachedInputUsdPer1M: 0.1` against realistic token counts yields values like
- * 0.005303499999999999 — so the call threw, the engine swallowed it, and the
- * reservation stayed `reserved` with the recipient's concurrency slot held.
- * Because the run was already terminal, no status-keyed recovery could ever
- * find it: the recipient was locked out of every future shared audit,
- * permanently and silently.
- *
- * These tests therefore assert on the LEDGER — reservation state and usage
- * counters — after a real engine run, not on what the engine called.
- */
 
 import { describe, it, expect, beforeAll, afterAll, beforeEach, vi } from 'vitest';
 import { eq } from 'drizzle-orm';
@@ -63,7 +42,7 @@ const PRICED_MODEL = 'claude-haiku-4-5-20251001';
 // passes, which is exactly why the unit file missed this.
 const REALISTIC_TURN_COST = 0.005303499999999999;
 
-describe('audit-engine shared settlement (#50 Task 7, real ledger)', () => {
+describe('audit-engine shared settlement', () => {
   let handle: TestDbHandle;
 
   beforeAll(async () => {

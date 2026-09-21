@@ -1,10 +1,3 @@
-/**
- * AIBadge — neutral-grey "AI" pill per D-06.
- *
- * Source-signal is orthogonal to category signal (D-06): this badge never
- * takes a color prop. Renders next to the existing SeverityPill on AI rows
- * in IssuesView and IssueSection.
- */
 export function AIBadge() {
   return (
     <span

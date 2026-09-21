@@ -43,15 +43,10 @@ import { SplitLevelControl } from '../components/import/SplitLevelControl';
 import { DocxPromoteControl } from '../components/import/DocxPromoteControl';
 
 /**
- * Phase 12 integration view at /universes/:uid/import.
  *
  * Owns the parent state machine (UI-SPEC §6.1):
  *   check-draft → resume-prompt | upload
- *   upload → review (on parsed)
- *   review → committing → success-redirect | commit-error
- *   resume-prompt → review (Continue) | upload (Discard)
  *
- * Composes Wave-2 components (Plans 12-03, 12-04, 12-05) plus the Plan 12-06
  * ImportResumePrompt and ImportCommitProgress. The view is the single site of
  * the POST /api/universes/:uid/ingest/commit call (D-25), TanStack query
  * cache invalidation on success (D-28), the resume-from-localStorage prompt
@@ -75,11 +70,6 @@ const DEFAULT_FILTERS: ReviewFilters = {
   types: new Set<string>(),
 };
 
-/**
- * Build the wire-shape commit body from the current preview and decisions.
- * Rejected entries are dropped client-side per D-25; rename applies newTitle;
- * skip keeps the entry with disposition='skip'; accept keeps any user edits.
- */
 function buildCommitBody(
   preview: IngestPreview,
   decisions: ReviewDecisions,
@@ -121,12 +111,6 @@ function buildCommitBody(
   return { entries };
 }
 
-/**
- * Filter entries by status / category / type per UI-SPEC §4.3 predicates.
- * Conflict-status entries are those whose effective title collides with an
- * existing universe entry, OR have a skip/rename disposition (the user
- * already decided how to resolve the conflict).
- */
 function filterEntries(
   entries: PreviewEntry[],
   decisions: ReviewDecisions,
@@ -172,10 +156,6 @@ function filterEntries(
   });
 }
 
-/**
- * Build the post-commit success-toast string per UI-SPEC §10 success-toast
- * rows. Counts only — never echoes user content.
- */
 function formatSuccessToast(r: CommitResult): string {
   const ePart = pluralize(r.entryIds.length, 'entry', 'entries');
   const lPart = pluralize(r.linksCreated, 'link', 'links');
@@ -204,14 +184,8 @@ export function IngestImport() {
   const [filters, setFilters] = useState<ReviewFilters>(DEFAULT_FILTERS);
   const [discardOpen, setDiscardOpen] = useState(false);
   // #37: the upload as posted, kept so the reviewer can re-request the preview
-  // at a different split level. Null when the session was resumed from a
-  // saved draft — the files are gone, so the control cannot be offered.
   const [source, setSource] = useState<UploadSource | null>(null);
-  // Split and DOCX promotion are two controls over one server preview. They
-  // therefore share one pending lifecycle and one request generation: only
-  // the newest request may replace the review, save its draft, or clear the
   // pending state. The ref also closes the same-render window before React
-  // has committed the disabled controls.
   const [repreviewing, setRepreviewing] = useState(false);
   const repreviewPendingRef = useRef(false);
   const repreviewGenerationRef = useRef(0);
@@ -228,9 +202,8 @@ export function IngestImport() {
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, []);
 
-  // BLOCK-1 fix (plan-checker): values are the original-cased TITLE, not the
+
   // entry id. Consumers (ConflictChip aria-label, ConflictBanner copy) need
-  // the displayable existing title; the entry id is unused downstream.
   const existingEntriesByLowerTitle = useMemo(() => {
     const m = new Map<string, string>();
     (existingEntries ?? []).forEach((e) => m.set(e.title.toLowerCase(), e.title));
@@ -246,23 +219,12 @@ export function IngestImport() {
       saveDraft({ preview: p, decisions: d }),
     300,
   );
-
-  // Debounce-save on every decisions change while in review.
   useEffect(() => {
     if (step.kind === 'review' && preview) {
       debouncedSave(preview, decisions);
     }
   }, [decisions, preview, step.kind, debouncedSave]);
 
-  /**
-   * Clear the draft AND abandon any save still in flight (issue #54).
-   *
-   * A decision change queues a 300ms debounced write. Clearing without
-   * cancelling left that write pending, so it landed a moment later and
-   * resurrected the draft the user had just discarded — or, on the commit
-   * path, one they had already imported. Every clear site must go through
-   * here; calling clearDraft() directly reintroduces the bug.
-   */
   const discardDraft = useCallback(() => {
     debouncedSave.cancel();
     clearDraft();
@@ -297,20 +259,6 @@ export function IngestImport() {
         .map((file) => file.uploadIndex),
     );
 
-  /**
-   * Replace the server preview using the complete split + promotion state.
-   *
-   * Every decision is dropped, deliberately. A replacement can produce a
-   * different set of entries with different synthetic paths, and decisions
-   * are keyed by path — carrying them over would silently reapply a user's
-   * choice to whatever entry inherited that path.
-   *
-   * A generation check is still required despite disabled controls: two DOM
-   * events can enter during one React render before the disabled state lands.
-   * The newest request wins even when promises settle out of order. A failure
-   * never mutates the old preview or draft, and an older response cannot do so
-   * after that failure.
-   */
   const requestReplacementPreview = async (
     splitLevel: number | null,
     promotedDocxIndices: ReadonlySet<number>,
@@ -328,8 +276,6 @@ export function IngestImport() {
         promotedDocxIndices,
       );
       if (generation !== repreviewGenerationRef.current) return;
-      // discardDraft() rather than clearDraft(): a debounced save carrying the
-      // old preview may still be pending and would otherwise resurrect it.
       discardDraft();
       setPreview(next);
       setDecisions({});
@@ -338,7 +284,6 @@ export function IngestImport() {
     } catch (err) {
       if (generation !== repreviewGenerationRef.current) return;
       // Same canned-copy rule as the commit path (T-12-22): never surface a
-      // raw error message. The existing preview stays on screen untouched.
       setStep({ kind: 'commit-error', message: classifyError(err) });
     } finally {
       if (generation === repreviewGenerationRef.current) {
@@ -348,20 +293,11 @@ export function IngestImport() {
     }
   };
 
-  /** #37 SP-04: re-request the preview at the level the user picked. */
   const handleSplitLevelChange = async (level: number | null) => {
     if (!preview || repreviewing) return;
     await requestReplacementPreview(level, promotedIndicesFrom(preview));
   };
 
-  /**
-   * #35 DOCX-09: re-request with the complete next set of promoted uploads.
-   * The server response is the source of truth, so toggling one row copies
-   * every current `promoted` index before adding or deleting that row.
-   *
-   * The shared replacement path preserves the applied split level, abandons a
-   * queued old draft, resets path-keyed decisions, and ignores stale replies.
-   */
   const handleDocxPromotionChange = async (
     uploadIndex: number,
     promoted: boolean,
@@ -581,7 +517,6 @@ export function IngestImport() {
     if (!preview || !uid || repreviewPendingRef.current) return;
     const body = buildCommitBody(preview, decisions);
     // D-29 belt-and-braces guard: sticky bar already disables commit when
-    // accepted === 0; this is the parent's last line of defense.
     const committable = body.entries.filter(
       (e) => e.decision.disposition !== 'skip',
     );
@@ -613,13 +548,10 @@ export function IngestImport() {
     } catch (err) {
       const message = `Import failed. ${classifyError(err)} Your review is saved — try again or adjust and re-commit.`;
       setStep({ kind: 'commit-error', message });
-      // localStorage NOT cleared — user can retry.
     }
   };
 
   // UI-SPEC §9.1 keyboard nav. Skip when focus is in an editable field so
-  // user typing isn't hijacked; Escape is the only key allowed inside fields
-  // (it always resets filters).
   const handleKeyDown = (e: KeyboardEvent<HTMLDivElement>) => {
     if (step.kind !== 'review' || filteredEntries.length === 0) return;
     const target = e.target as HTMLElement;
@@ -689,8 +621,6 @@ export function IngestImport() {
       />
     );
   }
-
-  // step in {review, committing, commit-error} — master-detail layout.
   if (!preview || !universe) return null;
 
   const focusedEntry =
@@ -706,8 +636,6 @@ export function IngestImport() {
       : focusedEdits.title ?? focusedEntry.title
     : '';
   // BLOCK-1 fix: existingEntriesByLowerTitle maps lowercased title → original-
-  // cased title (not entry id). Direct .get() returns the displayable existing
-  // title for the ConflictBanner copy.
   const focusedMatched = focusedEffective
     ? existingEntriesByLowerTitle.get(focusedEffective.toLowerCase()) ?? null
     : null;

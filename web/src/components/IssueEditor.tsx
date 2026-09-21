@@ -12,24 +12,11 @@ interface Props {
   universeId: string;
   open: boolean;
   onOpenChange: (open: boolean) => void;
-  /** Non-null → edit mode. Null/undefined → create mode. */
   initialIssue?: Issue | null;
-  /** Pre-populate the entry association (used by EntryDetail's "Flag issue"). */
   initialEntryIds?: string[];
-  /** Called after a successful create/update. */
   onSaved?: (issue: Issue) => void;
 }
 
-/**
- * Create / edit an issue. Radix Dialog with title, description, severity
- * select, and read-only entry-association chips (v1).
- *
- * Scope note: multi-entry edit UI (add/remove entry chips interactively) is a
- * polish item. Today the "Flag issue" path pre-populates entryIds from the
- * calling EntryDetail, and the "New issue" path (from IssuesView) may pass
- * none. If the user later wants to re-associate an issue to different
- * entries, that can ship in a follow-up without changing this dialog's shape.
- */
 export function IssueEditor({
   universeId,
   open,
@@ -48,7 +35,6 @@ export function IssueEditor({
   const createIssue = useCreateIssue(universeId);
   const updateIssue = useUpdateIssue(universeId);
 
-  // Derive the chip list: in edit mode, show the issue's current entries;
   // in create mode, show whichever entries the caller pre-populated.
   const entryChips = isEdit
     ? initialIssue?.entries.map((e) => ({ id: e.id, label: `${e.icon ?? ''} ${e.title}`.trim() })) ?? []

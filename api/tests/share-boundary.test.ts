@@ -1,30 +1,3 @@
-/**
- * api/tests/share-boundary.test.ts — Phase 29 SHARE-03 boundary test (T-29-22 regression gate).
- *
- * The /api/share/* namespace is the SINGLE auditable surface that accepts the
- * `share-token` header (D-02 + SHARE-03). Every OTHER route in the OpenAPI
- * document MUST reject a request whose only credential is a `share-token`
- * header — the rejection takes the shape of 401 (no bearer / no cookie ⇒
- * requireAuth fails) or 403 (resource forbidden after auth check), NOT 200.
- *
- * Threat — T-29-22 (Tampering):
- *   A future plan accidentally mounts a mutation route under `/api/share/*`,
- *   OR accidentally teaches `requireAuth` / `requireJwtAuth` to fall through
- *   to `share-token` when the bearer slot is empty. Either regression silently
- *   broadens the share-token credential domain. This test enumerates every
- *   non-`/share/*` route in the OpenAPI doc and asserts the gate fires.
- *
- * Sanity baseline:
- *   - `/api/share/entries` with the same `share-token` header returns 200,
- *     proving the seed token is actually valid (guards against a silently
- *     broken seed where every assertion would pass for the wrong reason).
- *   - The non-share path-spec count is ≥ 5 — guards against an empty
- *     OpenAPI doc or a filter that accidentally matches everything.
- *
- * Lane: DB-gated (integration) — the test inserts a real `share_tokens` row
- * via Plan 01's `generateShareToken` so the boundary assertion uses a token
- * `requireShareToken` actually accepts.
- */
 
 import { describe, it, expect, beforeAll, afterAll } from 'vitest';
 import { createTestDb, createTestUser, type TestDbHandle } from './helpers.js';
@@ -230,7 +203,7 @@ describe('SHARE-03 baseline sanity (the seed produced a valid token)', () => {
         `or shareRoutes is not mounted on /api/share. ` +
         `Body: ${JSON.stringify(res.body)?.slice(0, 200)}`,
     ).toBe(200);
-    // Phase 33: share /entries returns a bare array (matches authenticated contract)
+
     expect(Array.isArray(res.body)).toBe(true);
   });
 });
@@ -303,7 +276,7 @@ describe('XREF-07 SC5: v5.2 mutation surface rejects share-token-only callers', 
   it('share.ts declares no mutation route (read-only router invariant)', async () => {
     // Assert that the OpenAPI document declares NO /api/share/* POST/PATCH/DELETE
     // route. This is the structural proof that no v5.2 (or any) mutation was ever
-    // mounted under the share prefix — even if a future plan adds a new route
+
     // and forgets to run the SHARE-03 enumeration, this named assertion catches it.
     const res = await app.fetch(new Request('http://localhost/api/openapi.json'));
     expect(res.status).toBe(200);

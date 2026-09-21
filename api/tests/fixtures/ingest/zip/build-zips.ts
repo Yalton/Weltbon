@@ -1,5 +1,4 @@
 /**
- * Reproducible ZIP fixture builder for Phase 11-03 ingest-zip tests.
  *
  * Outputs:
  *   - valid-vault.zip   — vault-basic/ recursively zipped (yazl deflate)

@@ -1,30 +1,3 @@
-/**
- * Plan D — the OWNER-facing half of /api/sync (D-04, D-10).
- *
- * Mounted at the SAME /api/sync prefix as routes/sync.ts (seven routes: Plan
- * C's six PAT-or-JWT peer routes plus A-04's discovery route), but from this
- * separate file so the peer surface stays exactly those seven routes. Every
- * route here is JWT-only
- * (`middleware: [requireJwtAuth] as const`), mirroring the D-13 rule already
- * applied in routes/llm-keys.ts and routes/tokens.ts: a stolen PAT must not be
- * able to enumerate a user's remotes, mint links, or (once Task 7 lands) aim
- * this server's outbound fetch at a URL of the attacker's choosing.
- *
- *   POST   /remotes                create (validate URL, encrypt PAT)
- *   GET    /remotes                list, masked
- *   PATCH  /remotes/{id}           update label / baseUrl / replace PAT
- *   DELETE /remotes/{id}           delete + drop each link's base snapshot
- *   GET    /remotes/{id}/universes what that remote holds, + local state (A-04)
- *   POST   /adopt                  create a universe from a remote, then link it (A-02)
- *   POST   /links                  create {universeId, remoteId}
- *   GET    /links?universeId=      list
- *   DELETE /links/{id}             delete + drop the base snapshot
- *   GET    /conflicts?universeId=  list LWW-loser conflicts (S-03)
- *   POST   /conflicts/{id}/resolve mark resolved without restoring
- *   POST   /conflicts/{id}/restore write the loser back as a fresh local edit
- *
- * Task 7 (the drive loop) lands in this same file, so keep it clean.
- */
 import { OpenAPIHono, createRoute, z } from '@hono/zod-openapi';
 import { and, asc, eq, inArray, isNull, or } from 'drizzle-orm';
 import { db as getDb } from '../db/client.js';
@@ -52,18 +25,12 @@ import { isUniqueViolation } from '../db/pg-error.js';
 
 type AppEnv = { Variables: AuthVariables };
 
-// ─── Zod schemas ────────────────────────────────────────────────────────────
 
 const errorSchema = z.object({ error: z.string() });
 
 const idParams = z.object({ id: z.string().uuid() });
 
-// Shared response-object constants (Task 6/7 also reference these). Each holds
-// the text that is ACTUALLY duplicated verbatim across two or more routes
-// today — not a generic placeholder — so a route whose wording differs
 // meaningfully (e.g. postRemoteRoute's 401 calls out the D-10 PAT rule by
-// name) keeps its own specific inline response object instead of being
-// flattened into one of these.
 const err400 = { content: { 'application/json': { schema: errorSchema } }, description: 'Invalid base URL (D-04).' };
 const err401 = { content: { 'application/json': { schema: errorSchema } }, description: 'Missing or invalid JWT bearer.' };
 const err403 = { content: { 'application/json': { schema: errorSchema } }, description: 'Universe belongs to another user.' };
@@ -147,7 +114,6 @@ const listConflictsQuerySchema = z.object({
 });
 
 // rowId/tableName are `text` (D-03/D-14), not `uuid` — the merge engine keys
-// the universe singleton on the literal string 'universe'.
 const conflictSchema = z.object({
   id: z.string().uuid(),
   universeId: z.string().uuid(),
@@ -159,14 +125,7 @@ const conflictSchema = z.object({
   createdAt: z.string(),
 });
 
-// Task 7: the drive loop's two routes. A SyncRunError carries its own `code`
-// (machine-readable, for Plan E's UI) alongside the human message, so this
-// error body has more fields than the plain errorSchema used elsewhere.
-// `code` and `collisions` are both OPTIONAL because /links/{id}/run maps TWO
-// separate error hierarchies into this one shape: SyncRunError bodies always
-// carry `code`; a local SyncApplyError (a DIFFERENT hierarchy — applyManifestOps'
-// own errors, mirrored from routes/sync.ts's apply handler) does not, and its
-// CrossUniverseCollisionError variant instead carries `collisions` — {collection,
+// The sync-run error body carries a machine-readable code alongside the human
 // count} ONLY, never the foreign ids themselves (C-21).
 const syncErrorSchema = z.object({
   error: z.string(),
@@ -192,28 +151,17 @@ const countsSchema = z.object({
   deleted: z.record(z.string(), z.number()),
 });
 
-// Must match SyncRunResult (run-sync.ts) field for field. It did not: Plan E's
+// This schema must match SyncRunResult in run-sync.ts field-for-field. The
 // three asset-reconciliation counters were added to the interface and not here,
-// so the generated OpenAPI promised a shape the route no longer returned.
 const syncRunResultSchema = z.object({
   linkId: z.string().uuid(),
   bootstrapped: z.boolean(),
   conflicts: z.number(),
   blobsPushed: z.number(),
   blobsPulled: z.number(),
-  /** Plan E: byte-less LOCAL asset rows this run restored (not delta arrivals). */
   assetsRepairedLocally: z.number(),
-  /**
-   * Plan E: asset rows whose bytes were pushed to repair the PEER rather than to
-   * deliver a change. Separate from blobsPushed, which cannot tell the two apart.
-   */
   assetsRepairedOnPeer: z.number(),
-  /**
-   * Plan E (E-07): byte-less rows the peer healed by ITSELF during this run's
-   * apply. 0 from a peer that predates E-07 and does not report it.
-   */
   assetsSweptOnPeer: z.number(),
-  /** Plan E (E-03): rows whose bytes neither side holds — reported, not fatal. */
   assetsUnrepairable: z.number(),
   pushed: countsSchema,
   appliedLocally: countsSchema,
@@ -221,9 +169,6 @@ const syncRunResultSchema = z.object({
 
 // Every status a SyncRunError subclass can carry (run-errors.ts). Declaring
 // each here is the C-19 lesson: a per-class instanceof chain silently 500s
-// the day a class is added, so the route's single branch below narrows on
-// `err.status` — but the OpenAPI schema must still promise every value that
-// cast can actually produce.
 const syncRunErrorResponses = {
   400: { content: { 'application/json': { schema: syncErrorSchema } }, description: 'Malformed request the apply engine rejected.' },
   401: { content: { 'application/json': { schema: syncErrorSchema } }, description: 'Missing or invalid JWT bearer.' },
@@ -256,13 +201,6 @@ function toMaskedRemote(row: SyncRemoteRow): {
   };
 }
 
-/**
- * Task 7 needs this: given a sync_links id and the caller's userId, return the
- * link row IF the universe it points at belongs to that user, else undefined.
- * Joins syncLinks -> universes and filters on universes.userId, since
- * ownership of a link is defined by ownership of its universe, not the link
- * row itself (sync_links carries no user_id column).
- */
 export async function ownedLink(id: string, userId: string) {
   const rows = await getDb()
     .select({ link: syncLinks })
@@ -273,7 +211,6 @@ export async function ownedLink(id: string, userId: string) {
   return rows[0]?.link;
 }
 
-/** A remote row scoped to its owner, or undefined. Not-owned == not-found (never 403). */
 async function ownedRemote(id: string, userId: string) {
   const rows = await getDb()
     .select()
@@ -291,7 +228,6 @@ function encryptionUnavailable() {
   };
 }
 
-// ─── Routes: /remotes ───────────────────────────────────────────────────────
 
 const postRemoteRoute = createRoute({
   method: 'post',
@@ -313,19 +249,12 @@ const postRemoteRoute = createRoute({
   responses: {
     201: { content: { 'application/json': { schema: maskedRemoteSchema } }, description: 'Remote registered. Response is masked.' },
     200: { content: { 'application/json': { schema: maskedRemoteSchema } }, description: 'Remote already registered for this base URL; the stored token was replaced. Response is masked.' },
-    // syncErrorSchema, not the shared err400: this route's 400 carries
-    // InvalidRemoteUrlError's `code` alongside `error` so the client can render
     // its own address-shaped copy instead of the operator-facing reason string
-    // ("Invalid remote URL: not a valid absolute URL"), which names a "remote"
-    // and a "PAT" — vocabulary the #42 desktop flow must never show.
     400: { content: { 'application/json': { schema: syncErrorSchema } }, description: 'Invalid base URL (D-04), code `invalid-remote-url`; or both a pat and a password were sent.' },
-    // Specific rather than the shared err401: this is the one route whose 401
     // wording calls out the D-10 PAT rule by name. It is now ONLY the local
     // auth failure — see the 422 below.
     401: { content: { 'application/json': { schema: syncErrorSchema } }, description: 'Missing or invalid JWT bearer (or PAT — D-10).' },
     // OB-02's peer credential rejection. Deliberately NOT 401: the caller IS
-    // authenticated here, and a 401 makes the SPA's fetch wrapper rotate the
-    // user's local session and potentially sign them out — see PeerAuthError's
     // docstring in services/sync/peer-auth.ts.
     422: { content: { 'application/json': { schema: syncErrorSchema } }, description: 'The peer instance rejected the given email/password (code `peer_credentials_rejected`).' },
     502: { content: { 'application/json': { schema: syncErrorSchema } }, description: 'The peer instance was unreachable, or did not answer as a Weltbon instance.' },
@@ -406,10 +335,7 @@ const testRemoteRoute = createRoute({
   request: { params: idParams },
   responses: {
     200: { content: { 'application/json': { schema: testRemoteResponseSchema } }, description: 'Handshake succeeded; the peer\'s identity.' },
-    // testRemote() never touches the apply engine, so it has no 400 source, and
     // it only handshakes: `/handshake` is not universe-scoped, so SyncRemoteClient
-    // maps a 403 there to SyncAuthError (401) rather than an ownership collision.
-    // This route therefore has no 403 source either.
     401: syncRunErrorResponses[401],
     402: syncRunErrorResponses[402],
     404: syncRunErrorResponses[404],
@@ -444,8 +370,6 @@ const remoteUniversesRoute = createRoute({
       },
       description: 'What the remote instance holds, with this instance\'s state for each.',
     },
-    // Same set as testRemoteRoute: this path cannot reach the apply engine (no
-    // 400) and folds "not owned" into SyncLinkNotFoundError → 404 (never 403).
     401: syncRunErrorResponses[401],
     402: syncRunErrorResponses[402],
     404: syncRunErrorResponses[404],
@@ -474,10 +398,6 @@ const adoptRoute = createRoute({
   responses: {
     201: { content: { 'application/json': { schema: linkSchema } }, description: 'Universe adopted; link created.' },
     // Reachable: UNIVERSE_APPLY.toValues (apply-tables.ts) calls ts() on the
-    // peer row's createdAt/updatedAt, which throws InvalidSyncTimestampError
-    // (a SyncApplyError, status 400) for a malformed or absent timestamp — and
-    // SyncRemoteClient.listUniverses only validates id and name, so a peer
-    // answering with a row that has no updatedAt reaches this branch.
     400: syncRunErrorResponses[400],
     401: syncRunErrorResponses[401],
     402: syncRunErrorResponses[402],
@@ -490,7 +410,6 @@ const adoptRoute = createRoute({
   },
 });
 
-// ─── Routes: /links ─────────────────────────────────────────────────────────
 
 const postLinkRoute = createRoute({
   method: 'post',
@@ -513,7 +432,6 @@ const postLinkRoute = createRoute({
     401: syncRunErrorResponses[401],
     402: syncRunErrorResponses[402],
     403: syncRunErrorResponses[403],
-    // Specific rather than the shared err404: this route's 404 covers TWO
     // different not-found causes (universe or remote), distinct from every
     // other route's single-cause 404 wording.
     404: syncRunErrorResponses[404],
@@ -537,8 +455,6 @@ const getLinksRoute = createRoute({
     200: { content: { 'application/json': { schema: z.array(linkSchema) } }, description: 'Array of links with remote metadata.' },
     401: err401,
     403: err403,
-    // Specific rather than the shared err404: this route only ever 404s for
-    // the universe (it has no remoteId to be missing), unlike postLinkRoute.
     404: { content: { 'application/json': { schema: errorSchema } }, description: 'Universe not found.' },
   },
 });
@@ -555,8 +471,6 @@ const deleteLinkRoute = createRoute({
   responses: {
     200: { content: { 'application/json': { schema: z.object({ deleted: z.literal(true) }) } }, description: 'Link (and its base snapshot) deleted.' },
     401: err401,
-    // Specific rather than the shared err404: "link" here, not "remote" —
-    // deleteRemoteRoute's err404 wording would be wrong for this row type.
     404: { content: { 'application/json': { schema: errorSchema } }, description: 'Link not found / not owned.' },
   },
 });
@@ -581,8 +495,6 @@ const patchLinkRoute = createRoute({
   responses: {
     200: { content: { 'application/json': { schema: linkSchema } }, description: 'Updated link.' },
     401: err401,
-    // Specific rather than the shared err404: "link" here, not "remote" —
-    // deleteLinkRoute's wording, matching this route's row type.
     404: { content: { 'application/json': { schema: errorSchema } }, description: 'Link not found / not owned.' },
   },
 });
@@ -591,7 +503,7 @@ const runLinkRoute = createRoute({
   method: 'post',
   path: '/links/{id}/run',
   tags: ['Sync Links'],
-  summary: 'Run the sync drive loop for a link (Plan D, the centrepiece)',
+  summary: 'Run a sync cycle through a linked peer',
   description:
     'Pulls the remote snapshot, three-way merges against the stored base, ' +
     'applies the merged delta locally AND pushes the mirror-image delta to ' +
@@ -633,8 +545,6 @@ const getConflictsRoute = createRoute({
   responses: {
     200: { content: { 'application/json': { schema: z.array(conflictSchema) } }, description: 'Array of conflicts, newest first.' },
     401: err401,
-    // Specific rather than the shared err403: this route's 403 names the
-    // universe, matching its own 404 wording below, not a "remote" concept.
     403: err403,
     404: { content: { 'application/json': { schema: errorSchema } }, description: 'Universe not found.' },
   },
@@ -652,7 +562,6 @@ const resolveConflictRoute = createRoute({
   responses: {
     200: { content: { 'application/json': { schema: conflictSchema } }, description: 'Conflict marked resolved.' },
     401: err401,
-    // Specific rather than the shared err404: "conflict" here, not "remote".
     404: { content: { 'application/json': { schema: errorSchema } }, description: 'Conflict not found / not owned.' },
   },
 });
@@ -675,26 +584,15 @@ const restoreConflictRoute = createRoute({
     // (e.g. an unknown collection name), not the D-04 base-URL wording.
     400: { content: { 'application/json': { schema: errorSchema } }, description: 'Apply engine rejected the restore (SyncApplyError, e.g. unknown collection).' },
     401: err401,
-    // Declared for truthfulness, not reachability: applyManifestOps can throw
-    // UniverseOwnershipError (status 403) if the universe's ownership changed
-    // out from under this conflict row. ownedConflict's join means the caller
-    // was verified as the owner moments earlier, so this is latent rather than
-    // reachable today — but the route's own `err.status as ...` cast asserts
-    // every status applyManifestOps can produce, and an undeclared status in a
-    // generated OpenAPI schema is exactly the kind of promise a client trusts
-    // and then breaks on.
     403: err403,
     404: { content: { 'application/json': { schema: errorSchema } }, description: 'Conflict not found / not owned.' },
-    // syncErrorSchema (not the bare errorSchema): a CrossUniverseCollisionError
     // here — reachable because the C-09 pre-flight checks the loserPayload's
-    // ids against every universe on the instance, not just the caller's — adds
     // an optional {collisions:[{collection,count}]} alongside `error` (C-21:
     // never the ids themselves). Every other apply-time 409 stays bare `error`.
     409: { content: { 'application/json': { schema: syncErrorSchema } }, description: 'Apply-time conflict (SyncApplyError, e.g. unique constraint or a cross-universe id collision — C-21 safe).' },
   },
 });
 
-// ─── Link row → wire shape ──────────────────────────────────────────────────
 
 function toLinkWire(row: {
   id: string;
@@ -726,7 +624,6 @@ function toLinkWire(row: {
   };
 }
 
-// ─── Conflict row → wire shape ──────────────────────────────────────────────
 
 function toConflictWire(row: SyncConflictRow) {
   return {
@@ -741,7 +638,6 @@ function toConflictWire(row: SyncConflictRow) {
   };
 }
 
-// ─── Router ─────────────────────────────────────────────────────────────────
 
 export const syncClientRoutes = new OpenAPIHono<AppEnv>()
 
@@ -759,7 +655,6 @@ export const syncClientRoutes = new OpenAPIHono<AppEnv>()
       normalizedUrl = normalizeRemoteUrl(baseUrl);
     } catch (err) {
       if (err instanceof InvalidRemoteUrlError) {
-        // `code` so the client can map this to its own copy. The message
         // itself stays as-is for operators and for every existing caller.
         return c.json({ error: err.message, code: err.code }, 400);
       }
@@ -767,8 +662,6 @@ export const syncClientRoutes = new OpenAPIHono<AppEnv>()
     }
 
     // OB-02. A label is optional now, because asking a first-time user to
-    // invent one is friction with no payoff. The host is a better default
-    // than anything they would type.
     const effectiveLabel = label !== '' ? label : new URL(normalizedUrl).host;
 
     let pat: string;
@@ -791,26 +684,10 @@ export const syncClientRoutes = new OpenAPIHono<AppEnv>()
     }
 
     // OB-03. A user pressing Connect twice, or retrying a flow that failed
-    // after this step, must not strand a second remote (and a second
-    // encrypted PAT) for the same instance. Scoped to userId: two users
-    // registering the same peer legitimately hold separate rows.
-    //
-    // No unique index backs this. Production rows predate the rule and may
-    // already contain duplicates, and sync_links.remoteId references them,
-    // so collapsing them is a data migration out of proportion to the
-    // benefit. The residual race — two simultaneous submissions — yields one
-    // extra row, not corruption.
-    //
     // ORDER BY IS LOAD-BEARING, not tidiness. `limit(1)` with no ordering lets
-    // the database return ANY of a duplicate pair, and it need not return the
-    // same one twice running. That matters because everything downstream is
-    // keyed on the remote id this returns: `sync_links.remoteId` points at one
-    // specific duplicate, and `localState` in the discovery listing is computed
     // per remoteId. Hand the flow the OTHER duplicate and an already-synced
-    // universe reports `'present'` instead of `'linked'`, which the #42 picker
     // disables — a dead end for exactly the legacy-duplicate users OB-03 exists
     // to protect. Oldest-first, because the oldest row is the one any existing
-    // link is likeliest to reference. `id` breaks a createdAt tie so the pick
     // is total, not merely usually-stable.
     const [existing] = await getDb()
       .select()
@@ -823,7 +700,6 @@ export const syncClientRoutes = new OpenAPIHono<AppEnv>()
 
     if (existing) {
       // Re-registering with a fresh credential is the repair path for a
-      // revoked PAT, so the token is replaced rather than left stale.
       const [updated] = await getDb()
         .update(syncRemotes)
         .set({ encryptedPat: enc })
@@ -880,9 +756,6 @@ export const syncClientRoutes = new OpenAPIHono<AppEnv>()
       updateValues.encryptedPat = encryptSecret(pat, cfg.llmKeyEncryptionKey);
     }
 
-    // No updatable field was supplied (e.g. body `{}`) — drizzle's mapUpdateSet
-    // throws a plain `Error: No values to set` for an empty SET clause, which
-    // is not an HTTPException and would surface as an undeclared 500. Treat an
     // empty update as a no-op: return the existing row unchanged, no UPDATE issued.
     if (Object.keys(updateValues).length === 0) {
       return c.json(toMaskedRemote(existing), 200);
@@ -895,27 +768,12 @@ export const syncClientRoutes = new OpenAPIHono<AppEnv>()
       .returning();
 
     // AS-08: "re-entered credentials" is one of the three explicit user
-    // actions that unpause a link, and this route is where credentials are
     // re-entered. A PAT that expired pauses every link on this remote with
     // `remote-unauthorized`, and the status row tells the user to sign in
-    // again and save a fresh token — so saving one has to actually undo what
-    // the stale one caused. Without this the user does exactly what they were
-    // asked and the links stay paused.
-    //
     // Scoped to a PAT change only: a label or base-URL edit is not a
     // credential and must not silently resume a link paused for some unrelated
-    // reason. failure_count/next_poll_at go with it for the same reason the
     // auto-sync toggle resets them — a link must not resume mid-backoff.
-    //
-    // Scoped a second way (#66): only links a token can actually unblock. This
-    // used to clear paused_reason for every link on the remote, including ones
-    // paused for a deleted remote universe or a lapsed subscription — resumed
     // for exactly one run, which re-paused them, after a window of the UI
-    // saying they were fine. See TOKEN_FIXABLE_PAUSE_REASONS for the rule.
-    //
-    // Links that are NOT paused stay in scope, so a link merely serving out a
-    // backoff still gets its counters reset as before; it is only a pause this
-    // token cannot lift that is now left alone.
     if (pat !== undefined) {
       await getDb()
         .update(syncLinks)
@@ -943,8 +801,6 @@ export const syncClientRoutes = new OpenAPIHono<AppEnv>()
       return c.json({ error: 'Remote not found' }, 404);
     }
 
-    // Drop every link's base snapshot BEFORE the row deletes — the FK cascades
-    // the sync_links ROWS, but nothing cascades storageBackend.
     const links = await getDb()
       .select({ id: syncLinks.id })
       .from(syncLinks)
@@ -967,9 +823,6 @@ export const syncClientRoutes = new OpenAPIHono<AppEnv>()
     } catch (err) {
       // ONE branch reading the error's own status/code (C-19 lesson): a
       // per-class instanceof chain silently returns 500 the day a new
-      // SyncRunError subclass is added. Narrower than runLinkRoute's cast:
-      // testRemote() cannot raise 400, but peer ownership refusals map to 403
-      // (see the route's declared responses above).
       if (err instanceof SyncRunError) {
         return c.json({ error: err.message, code: err.code }, err.status as 401 | 402 | 403 | 404 | 409 | 413 | 500 | 502);
       }
@@ -987,7 +840,6 @@ export const syncClientRoutes = new OpenAPIHono<AppEnv>()
     } catch (err) {
       // ONE branch reading the error's own status/code (C-19 lesson): a
       // per-class instanceof chain silently returns 500 the day a new
-      // SyncRunError subclass is added.
       if (err instanceof SyncRunError) {
         return c.json({ error: err.message, code: err.code }, err.status as 401 | 402 | 404 | 409 | 413 | 500 | 502);
       }
@@ -999,7 +851,6 @@ export const syncClientRoutes = new OpenAPIHono<AppEnv>()
     const userId = c.var.userId;
     const { universeId, remoteId } = c.req.valid('json');
 
-    // requireUniverse throws 404 if absent, 403 if another user's.
     await requireUniverse(universeId, userId);
 
     const remote = await ownedRemote(remoteId, userId);
@@ -1008,9 +859,6 @@ export const syncClientRoutes = new OpenAPIHono<AppEnv>()
     }
 
     try {
-      // Link creation is the one write path that did not already handshake.
-      // Refuse self, incompatible, unauthorized, or unreachable peers before
-      // duplicate checking or insertion changes any link state.
       await testRemote(remoteId, userId);
 
       // Pre-check the unique (universeId, remoteId) pair rather than surfacing
@@ -1052,10 +900,6 @@ export const syncClientRoutes = new OpenAPIHono<AppEnv>()
       return c.json(toLinkWire(link, remote), 201);
     } catch (err) {
       // TWO hierarchies, checked in this order — the same C-19/C-21 shape
-      // runLinkRoute uses. The LOCAL seed apply throws SyncApplyError —
-      // UniverseOwnershipError (403), or InvalidSyncTimestampError (400) if the
-      // peer's universe row has a malformed/missing timestamp (see the 400
-      // response declared above) — neither of which extends SyncRunError.
       if (err instanceof SyncApplyError) {
         const mapped = mapSyncApplyError(err, 'sync-client/adopt');
         return c.json(mapped.body, mapped.status as 400 | 403 | 409);
@@ -1091,8 +935,6 @@ export const syncClientRoutes = new OpenAPIHono<AppEnv>()
       return c.json({ error: 'Link not found' }, 404);
     }
 
-    // Drop the base snapshot BEFORE deleting the row — an orphaned blob nothing
-    // will ever collect otherwise.
     await deleteBaseSnapshot(link.id);
     await getDb().delete(syncLinks).where(eq(syncLinks.id, id));
     return c.json({ deleted: true as const }, 200);
@@ -1103,14 +945,11 @@ export const syncClientRoutes = new OpenAPIHono<AppEnv>()
     const { id } = c.req.valid('param');
     const { autoSync } = c.req.valid('json');
 
-    // ownedLink is the existing ownership check — a link belonging to another
-    // user must be indistinguishable from one that does not exist.
     const link = await ownedLink(id, userId);
     if (!link) return c.json({ error: 'Link not found' }, 404);
 
     // Re-enabling auto-sync CLEARS pausedReason: it is one of the three
     // explicit user actions that unpause a link (AS-08). Without this the
-    // toggle would flip and the scheduler would keep skipping the link.
     // failureCount resets with it so the link does not resume mid-backoff.
     await getDb()
       .update(syncLinks)
@@ -1138,12 +977,8 @@ export const syncClientRoutes = new OpenAPIHono<AppEnv>()
       const result = await runSync(id, userId, { force: force === 'true' });
       return c.json(result, 200);
     } catch (err) {
-      // The LOCAL apply (applyManifestOps, inside runSync's drive loop) throws
       // SyncApplyError — a SEPARATE hierarchy from SyncRunError (its own C-19
-      // lesson: routes/sync.ts already needed one branch for this tree, and
-      // this route needs its own, because the two hierarchies do not share a
       // common base). Checked FIRST, via the ONE shared mapper (C-21) that
-      // routes/sync.ts and restoreConflictRoute also use — see its docstring
       // for why hand-rolling this per call site is exactly what re-leaks C-21.
       if (err instanceof SyncApplyError) {
         const mapped = mapSyncApplyError(err, 'sync-client/run');
@@ -1151,7 +986,6 @@ export const syncClientRoutes = new OpenAPIHono<AppEnv>()
       }
       // ONE branch reading the error's own status/code (C-19 lesson): a
       // per-class instanceof chain silently returns 500 the day a new
-      // SyncRunError subclass is added.
       if (err instanceof SyncRunError) {
         return c.json({ error: err.message, code: err.code }, err.status as 400 | 401 | 402 | 403 | 404 | 409 | 413 | 500 | 502);
       }
@@ -1163,7 +997,6 @@ export const syncClientRoutes = new OpenAPIHono<AppEnv>()
     const userId = c.var.userId;
     const { universeId, includeResolved } = c.req.valid('query');
 
-    // requireUniverse throws 404 if absent, 403 if another user's.
     await requireUniverse(universeId, userId);
 
     const rows = await listConflicts(universeId, includeResolved === 'true');
@@ -1196,10 +1029,7 @@ export const syncClientRoutes = new OpenAPIHono<AppEnv>()
     try {
       await restoreConflict(conflict, userId);
     } catch (err) {
-      // restoreConflict feeds a STORED loserPayload into applyManifestOps,
       // whose C-09 pre-flight checks incoming ids against EVERY universe on
-      // the instance, not just the caller's — so CrossUniverseCollisionError
-      // is genuinely reachable here. Routed through the ONE shared mapper
       // (C-21) that routes/sync.ts and runLinkRoute also use — see its
       // docstring for why hand-rolling this per call site is exactly what
       // re-leaks C-21.

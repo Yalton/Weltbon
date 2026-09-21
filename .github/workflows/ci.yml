@@ -1,8 +1,5 @@
-# Weltbon PR + master CI (Phase 27 PROV-FOLLOWUP-03).
 #
-# Two lanes per locked Phase 27 decisions:
 #   - Lane 1 (unit, ~30 sec):   pnpm test (api unit project, no DB) + web vitest
-#     + desktop `node --test` (issue #13). The desktop suite is DB-less and
 #     sub-second, and root `pnpm install` already installs its deps, so it
 #     rides in this lane rather than adding a job (a new job would need its
 #     own install AND a new required-status-check entry under D-16).
@@ -17,14 +14,12 @@
 # Branches -> master -> Branch protection rules -> Require status checks to
 # pass before merging -> mark `ci / unit`, `ci / integration-smoke`, and
 # `ci / integration-merge (...)` as required.
-# Documented in the phase SUMMARY.
 #
 # Runner labels separate the unit and integration workloads so they can be
 # routed to runners with the right capacity. The repository is PRIVATE, which
 # is what makes self-hosted execution safe: a self-hosted runner on a public
 # repo executes code from any fork's pull request. Do not make this repository
 # public without moving CI back to hosted runners or gating the workflow on
-# `pull_request_target` review.
 #
 # GitHub assigns each service container's host port dynamically. The workflow
 # uses `${{ job.services.postgres.ports[5432] }}` in each database step, so CI
@@ -36,7 +31,6 @@
 #
 # Test-only postgres creds (weltbon/weltbon/weltbon) are scoped to the
 # ephemeral service container and mirror docker-compose.yml verbatim per D-14.
-# Per the phase threat model (T-27-01-01), this workflow MUST NOT reference
 # any repository-secret context for provider API keys; cross-AI smoke against
 # real provider keys is explicitly out of scope and routed to a future
 # hardening phase.
@@ -90,7 +84,6 @@ jobs:
 
       # Covers desktop/src/secrets.test.ts, which pins the DV-10 data-loss fix
       # (an unreadable/malformed secrets.json must never be silently
-      # regenerated over). It ran in no CI lane until issue #13.
       - name: Run desktop tests
         run: cd desktop && pnpm test
 

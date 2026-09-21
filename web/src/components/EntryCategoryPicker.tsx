@@ -7,10 +7,6 @@ interface Props {
   id?: string;
 }
 
-/**
- * Native <select> bound to an entry's categoryId. "Uncategorized" maps to
- * null. Options come from useCategories (already cached by the sidebar).
- */
 export function EntryCategoryPicker({ universeId, value, onChange, id }: Props) {
   const { data } = useCategories(universeId);
 

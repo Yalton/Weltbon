@@ -1,4 +1,3 @@
--- Phase 51 ROUTE-01: map_routes table — freeform polyline routes / journey lines.
 --
 -- Structural near-clone of map_regions (0026_phase40_regions_styling.sql):
 --   same FK cascade rules and normalized 0..1 points JSON convention.

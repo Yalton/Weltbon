@@ -9,7 +9,6 @@ import { parsePosition } from '../lib/parsePosition';
 interface Props {
   universeId: string;
   entryId: string;
-  /** Non-null → edit mode (pre-fills form). Null → create mode. */
   currentPin: TimelinePin | null;
   open: boolean;
   onOpenChange: (open: boolean) => void;
@@ -21,17 +20,6 @@ const PRECISIONS: Array<'exact' | 'approximate' | 'era'> = [
   'era',
 ];
 
-/**
- * Pin to timeline / Edit pin modal.
- *
- * Form fields:
- *  - Position: text input (NOT type=number — must accept '4.35e17'),
- *    validated via parsePosition on submit; inline error.
- *  - Label: required text input.
- *  - Precision: native <select> (consistent with EntryEditor's type select).
- *
- * On submit → calls useUpsertTimelinePin.mutateAsync, closes on success.
- */
 export function PinEditor({
   universeId,
   entryId,
@@ -60,7 +48,6 @@ export function PinEditor({
     }
   }, [open, currentPin]);
 
-  // Live position parse for preview hint (does NOT block submit on its own —
   // submit re-validates so the error message lands at the right moment).
   const livePosition = parsePosition(positionInput);
 

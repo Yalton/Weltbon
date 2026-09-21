@@ -1,5 +1,4 @@
 /**
- * #50 Task 8 — the recipient's view of an administrator-provided LLM
  * connection, mounted on the LLM keys settings page.
  *
  * ── Why this renders ABOVE the personal BYOK consent gate ────────────────
@@ -54,10 +53,6 @@ function GrantCard({ grant }: { grant: SharedGrant }) {
   const providerName = grant.disclosure.providerName;
   const accepted = grant.consentedAt !== null;
   const pending = consent.isPending || withdraw.isPending;
-  // Review finding: `consent.error ?? withdraw.error` kept showing a failed
-  // withdrawal's alert next to a connection a later Accept had just fixed.
-  // Only the action the user last invoked can be the one they are reading
-  // about, so the error is keyed to it.
   const [lastAction, setLastAction] = useState<'consent' | 'withdraw' | null>(null);
   const error = lastAction === 'consent' ? consent.error : lastAction === 'withdraw' ? withdraw.error : null;
 
@@ -128,12 +123,7 @@ function GrantCard({ grant }: { grant: SharedGrant }) {
         )}
       </div>
 
-      {/* One live region per card, carrying both outcomes: a screen reader
-          user acting on a specific connection needs the result of THAT
-          action, not a page-level status that could belong to any card.
-          Review finding: it used to announce only 'Saving…', so a completed
-          accept-or-withdraw — the entire point of the interaction — passed
-          silently, with the button label as the only evidence. */}
+
       <p
         aria-live="polite"
         className="mt-2 text-xs text-neutral-500 dark:text-neutral-400 empty:mt-0"
@@ -146,14 +136,7 @@ function GrantCard({ grant }: { grant: SharedGrant }) {
         </p>
       )}
 
-      {/* Review finding: this was a single unguarded click, while key
-          revocation two components over goes through ConfirmDialog. It is
-          less severe than deleting a key — re-accepting is one click and the
-          server is idempotent — but it is not free either: the engine's
-          checkpoint kills a running audit, so the recipient loses that run's
-          output while the owner has already paid for the turns it spent.
-          That consequence belongs at the moment of decision, which is why
-          the sentence moved off the card and into the dialog body. */}
+
       <ConfirmDialog
         open={confirmWithdraw}
         onOpenChange={setConfirmWithdraw}
@@ -184,11 +167,7 @@ function GrantCard({ grant }: { grant: SharedGrant }) {
 export function SharedLlmConnections() {
   const { data, isPending, error } = useSharedLlmGrants();
 
-  // A user with no shared connection is the common case, and an empty
-  // "Shared connections" heading would be noise on every settings visit for
   // every self-hoster who will never have one. Nothing renders until there
-  // is something to say — including while loading, so the page does not
-  // reflow a skeleton in and out for the majority who have no grants.
   if (isPending) return null;
 
   if (error) {

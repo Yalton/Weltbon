@@ -377,8 +377,8 @@ describe('parseDocumentXml — the prolog scan cannot be padded past or short-ci
 });
 
 describe('parseDocumentXml — hyperlinks and footnote references', () => {
-  // Task 6 consumes both of these and builds its own runs from object literals,
-  // so an error here would stay invisible until Task 7.
+
+
   it('puts r:id and w:anchor on the runs inside w:hyperlink, and only those', () => {
     const doc = p('<w:p><w:hyperlink r:id="rId9" w:anchor="sec1">' +
                   '<w:r><w:t>link</w:t></w:r></w:hyperlink>' +

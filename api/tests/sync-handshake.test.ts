@@ -1,16 +1,3 @@
-/**
- * Plan C Task 4 — the C-14 journal-unavailable branch (pure unit, no DB).
- *
- * C-14 requires that an unreadable migration journal fails LOUDLY: migrationHead()
- * throws MigrationHeadUnavailableError, and the handshake handler maps that to 503
- * rather than a permissive default that would let mismatched instances sync.
- *
- * migrationHead()'s cache is process-global, so any sibling test in this worker
- * that calls localIdentity() warms it and would hide the cold-read failure this
- * file needs. The beforeEach/afterEach resetMigrationHeadCache() (plus restoring
- * DRIZZLE_DIR) is what actually isolates it — not the file boundary — and also
- * keeps this file from poisoning a sibling.
- */
 import { describe, it, expect, beforeEach, afterEach } from 'vitest';
 import { mkdtemp, mkdir, writeFile, rm } from 'node:fs/promises';
 import { tmpdir } from 'node:os';

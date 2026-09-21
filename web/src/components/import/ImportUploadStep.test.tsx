@@ -429,7 +429,6 @@ describe('.docx classification (#35)', () => {
   });
 
   it('applies each cap independently within one mixed batch', () => {
-    // Fix-round-1 gap: a batch that mixes a valid .docx with an oversized
     // .md must be rejected for the MARKDOWN reason, not silently accepted
     // because the docx part passed its own (much larger) cap, and not
     // rejected with the docx message either -- the two caps are independent
@@ -445,7 +444,7 @@ describe('.docx classification (#35)', () => {
     expect(err).not.toContain('.docx');
   });
 
-  describe('describeKind summary copy (#35 fix round 1)', () => {
+  describe('describeKind summary copy', () => {
     it('describes an all-markdown selection as before', () => {
       expect(describeKind('md', [md('a.md'), md('b.md')])).toBe('2 .md files');
       expect(describeKind('md', [md('a.md')])).toBe('.md file');

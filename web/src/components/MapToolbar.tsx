@@ -15,63 +15,25 @@ const COPY = {
 } as const;
 
 export interface MapToolbarProps {
-  /** The map's display name — shown read-only in the toolbar. */
   mapName: string;
-  /** Whether the canvas is in add-pin mode. */
   addPinMode?: boolean;
-  /** Toggle add-pin mode on/off. Only shown when provided. */
   onToggleAddPinMode?: () => void;
-  /** Whether the canvas is in draw-region mode (D-04). */
   drawRegionMode?: boolean;
-  /** Toggle draw-region mode on/off. Only shown when provided. */
   onToggleDrawRegionMode?: () => void;
-  /** Whether the canvas is in draw-route mode (ROUTE-01, Plan 07). */
   drawRouteMode?: boolean;
-  /** Toggle draw-route mode on/off. */
   onToggleDrawRouteMode?: () => void;
-  /** Open the Change image picker. Only shown when provided. */
   onChangeImage?: () => void;
-  /** Whether the legend panel is visible. */
   legendVisible?: boolean;
-  /** Toggle legend panel. */
   onToggleLegend?: () => void;
-  /** Whether the layers panel is visible. */
   layersPanelVisible?: boolean;
-  /** Toggle layers panel. */
   onToggleLayersPanel?: () => void;
 
-  // ── Phase 52 SEARCH-01: controlled search input (D-04) ─────────────────────
-  /** Value of the search input (controlled). Rendered in BOTH editor and share view (D-04). */
   searchQuery?: string;
-  /** Called when the search input value changes. Only rendered when provided. */
   onSearchQueryChange?: (q: string) => void;
-  /** Ref forwarded to the search `<input>` element for programmatic focus (/ shortcut). */
   searchInputRef?: React.RefObject<HTMLInputElement | null>;
-  // ── Phase 53 NEST-01 D-03: breadcrumb presence flag ─────────────────────────
-  /** When true, shifts the toolbar from top-4 to top-16 so the MapBreadcrumb chip
-   * (always rendered at top-4) sits above without overlap (UI-SPEC §3). */
   hasBreadcrumb?: boolean;
 }
 
-/**
- * Floating top-left toolbar overlay for MapEditor.
- *
- * Simplified version of DiagramToolbar — no undo/redo, no align/distribute,
- * no export, no auto-layout. Contains only:
- *   - "Add pin" mode toggle (accent fill when active) — shown when onToggleAddPinMode provided
- *   - "Draw region" mode toggle (accent fill when active) — shown when onToggleDrawRegionMode provided
- *   - "Change image" action (border style) — shown when onChangeImage provided
- *   - "Legend" toggle button (border style) — shown when onToggleLegend provided
- *   - Read-only map name (text-sm font-semibold)
- *   - Search input (always shown when onSearchQueryChange provided) — Phase 52 SEARCH-01 (D-04)
- *
- * Phase 52 SEARCH-01 (D-04): The search input renders in BOTH editor and share view.
- * Mutation buttons (Add pin, Draw region, etc.) are gated on their callback props so they
- * are absent in share mode (where only the search input and map name are passed).
- *
- * Positioning: absolute left-4 top-4 z-10, mirroring DiagramToolbar's
- * floating overlay but anchored top-left (not top-right).
- */
 export function MapToolbar({
   mapName,
   addPinMode,
@@ -90,8 +52,6 @@ export function MapToolbar({
   searchInputRef,
   hasBreadcrumb,
 }: MapToolbarProps) {
-  // Whether any mutation button is present — used to decide if a divider is needed
-  // before the search input.
   const hasMutationButtons = !!(onToggleAddPinMode || onToggleDrawRegionMode || onChangeImage || onToggleLegend || onToggleLayersPanel);
 
   return (
@@ -125,8 +85,7 @@ export function MapToolbar({
         </button>
       )}
 
-      {/* Draw region mode toggle — Phase 40 D-04.
-          Only shown when onToggleDrawRegionMode is provided (absent in share mode). */}
+
       {onToggleDrawRegionMode && (
         <button
           type="button"
@@ -144,7 +103,7 @@ export function MapToolbar({
         </button>
       )}
 
-      {/* Draw route mode toggle — Phase 51 ROUTE-01 (Plan 07). Only shown when onToggleDrawRouteMode provided. */}
+
       {onToggleDrawRouteMode && (
         <button
           type="button"
@@ -209,13 +168,7 @@ export function MapToolbar({
         </button>
       )}
 
-      {/* Phase 52 SEARCH-01: Controlled search input (D-04).
-          Rendered OUTSIDE the mutation-button gate — visible in BOTH editor and share view.
-          Only shown when onSearchQueryChange is provided (D-04, plan task 2).
-          Glassy on-theme chrome matching existing toolbar buttons. Width w-40 (160px) fits
-          typical toolbar without overflow; placeholder text guides user to type to search.
-          CRITICAL: no d3 datum handler — React onChange only
-          (memory: timeline-pins-react-rendered-no-d3-datum). */}
+
       {onSearchQueryChange && (
         <input
           ref={searchInputRef}

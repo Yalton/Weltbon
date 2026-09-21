@@ -2,15 +2,6 @@ import { describe, it, expect } from 'vitest';
 import { mergeCollection, contentEqual } from '../src/services/sync/merge.js';
 import { COLLECTIONS, type ManifestRow, type CollectionDescriptor } from '../src/services/sync/manifest.js';
 
-/**
- * Task 4 (Plan B): the row-level three-way merge core — full matrix.
- *
- * Each cell of the plan's 17-cell matrix gets at least one `it`. Fixtures use
- * REAL descriptor instances from COLLECTIONS (mapPins for plain-id cells,
- * timelinePins for the natural-key cells, issues for the unordered-array cell,
- * entries for the ordered-array cell) so the tests exercise the same identity
- * and natural-key knowledge the engine will use in production.
- */
 
 const desc = (name: string): CollectionDescriptor => {
   const d = COLLECTIONS.find((c) => c.name === name);
@@ -93,7 +84,7 @@ const timelinePins = desc('timelinePins');
 const issues = desc('issues');
 const entries = desc('entries');
 
-describe('mergeCollection matrix (Plan B, Task 4)', () => {
+describe('mergeCollection matrix', () => {
   // Cell 1: unchanged / unchanged → no ops, no conflict
   it('cell 1 — unchanged/unchanged: no ops, no conflict', () => {
     const base = [pin()];
@@ -460,7 +451,7 @@ describe('mergeCollection matrix (Plan B, Task 4)', () => {
   });
 });
 
-describe('contentEqual (Plan B, Task 4)', () => {
+describe('contentEqual', () => {
   it('ignores NON_CONTENT_FIELDS (updatedAt/createdAt)', () => {
     expect(contentEqual(pin({ updatedAt: T0 }), pin({ updatedAt: T2 }))).toBe(true);
     expect(contentEqual(issue({ createdAt: T0, updatedAt: T0 }), issue({ createdAt: T2, updatedAt: T2 }))).toBe(true);

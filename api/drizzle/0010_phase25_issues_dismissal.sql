@@ -1,6 +1,4 @@
--- Phase 25 AISSUE-03/04/06: dismissal columns for AI-sourced issues.
 -- Hand-written migration (NOT drizzle-kit generated) because the additive pattern
--- matches the Phase 24 convention (see 0008_phase24_audit_runs.sql) and drizzle-kit
 -- would regenerate the full schema diff rather than a surgical ADD COLUMN block.
 -- All new columns are nullable — human issues and pre-Phase-25 AI issues have no
 -- dismissal data; existing rows remain byte-identical after this migration.

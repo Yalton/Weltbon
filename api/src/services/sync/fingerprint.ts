@@ -4,7 +4,6 @@ import { universes } from '../../db/schema.js';
 import { APPLY_ORDER } from './apply-tables.js';
 
 /**
- * Issue #44 (AS-02): a cheap "has anything changed?" value for one universe.
  *
  * TWO aggregates per collection, and both are required, because deletes here
  * are HARD deletes. max(updated_at) alone is blind to a deletion — removing a
@@ -20,7 +19,6 @@ import { APPLY_ORDER } from './apply-tables.js';
  * snapshot by another name. The cost of a miss is a DELAYED sync, never a
  * wrong one — the next real change dislodges it, and manual sync always works.
  *
- * CONCURRENCY (fix round 1): this function is polled on a ~5s local tick AND
  * served to remote peers over HTTP on every poll, so the 17 APPLY_ORDER
  * collection aggregates are issued CONCURRENTLY via Promise.all rather than
  * awaited one at a time — 17 sequential round trips would undermine the
@@ -47,7 +45,6 @@ import { APPLY_ORDER } from './apply-tables.js';
  * calls would never equal itself and would trigger an endless sync loop; see
  * the test that pins this.
  *
- * NOT OPAQUE, NOT A HASH (fix round 1): the returned string embeds real
  * per-collection row counts and raw max(updated_at) values in plain text.
  * Anyone holding the string can read those counts and times directly.
  *
@@ -84,15 +81,7 @@ import { APPLY_ORDER } from './apply-tables.js';
  * there. Do not assume opacity just because the string looks arbitrary.
  */
 export async function universeFingerprint(universeId: string): Promise<string> {
-  // The universe row FIRST, and separately, because APPLY_ORDER does not
-  // contain it — the singleton lives in UNIVERSE_APPLY (applied once, never
-  // deleted). Omitting this makes a rename, or a calendar/theme change,
   // invisible to auto-sync. See the test that guards exactly this.
-  //
-  // Kept SEQUENTIAL ahead of the concurrent batch below (deliberate, not
-  // incidental): it is a cheap early exit for a universe that no longer
-  // exists ('absent'), which would otherwise still cost all 17 collection
-  // queries if it were folded into the same Promise.all.
   const [u] = await db()
     .select({ updatedAt: universes.updatedAt })
     .from(universes)

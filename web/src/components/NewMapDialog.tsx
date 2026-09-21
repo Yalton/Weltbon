@@ -20,7 +20,6 @@ const COPY = {
   saveFailed: "Couldn't create map. Try again.",
 } as const;
 
-// ─────────────────────────────────────────────────────────────────────────────
 
 interface Props {
   open: boolean;
@@ -43,7 +42,6 @@ export function NewMapDialog({ open, onOpenChange, universeId }: Props) {
   const [errorField, setErrorField] = useState<FieldError>(null);
   const [errorCopy, setErrorCopy] = useState<string | null>(null);
 
-  // Reset form state whenever the dialog opens.
   useEffect(() => {
     if (open) {
       setNameInput('');
@@ -54,7 +52,6 @@ export function NewMapDialog({ open, onOpenChange, universeId }: Props) {
     }
   }, [open]);
 
-  // Derive thumbnail preview URL from the selected asset id.
   const selectedAsset = assets?.find((a) => a.id === imageAssetId) ?? null;
   const imageThumbnailUrl = selectedAsset?.thumbUrl ?? null;
 

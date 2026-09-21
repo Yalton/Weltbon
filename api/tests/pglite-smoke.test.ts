@@ -19,7 +19,7 @@ describe.skipIf(!spike)('PGlite viability smoke (desktop spec D-07)', () => {
     await migrate(db, { migrationsFolder: './drizzle' });
 
     // Seed a user -> universe -> entry through plain inserts (no API layer —
-    // this test is about the DATABASE, the suite in Task 4 covers the API).
+
     const [user] = await db
       .insert(schema.users)
       .values({ email: 'spike@test.local', passwordHash: 'x', displayName: 'Spike' })

@@ -25,7 +25,6 @@ export function Login() {
       await login.mutateAsync(values);
       navigate('/universes', { replace: true });
     } catch {
-      // Error rendered below via login.error
     }
   });
 

@@ -1,43 +1,20 @@
 import { useSearchParams } from 'react-router-dom';
 import { useCallback, useMemo } from 'react';
 
-/**
- * Shape of the URL-backed entry filters.
- *
- * - q: free-text search string (maps to ?q=)
- * - type: entryType filter (maps to ?type=)
- * - tags: AND-semantics tag list (maps to repeated ?tag=)
- * - category: category uuid, or the literal string 'uncategorized' for the
- *   NULL-category bucket (maps to ?category=)
- * - wip: three-state WIP filter — null (all), true (WIP only), false (finished only)
- *   (maps to ?wip=true / ?wip=false; absent = null)
- * - fieldFilters: exact-match meta-field filters keyed by field name
- *   (maps to ?field.{name}={value} — dot-notation, AND semantics)
- */
 export interface EntryFilters {
   q: string;
   type: string | null;
   tags: string[];
   category: string | null;
-  /** Three-state: null = show all, true = WIP only, false = finished only */
   wip: boolean | null;
-  /** Exact-match field filters — keys are field names, values are filter values */
   fieldFilters: Record<string, string>;
 }
 
-/**
- * Typed wrapper around react-router's useSearchParams that projects the URL
- * into an EntryFilters object and exposes a partial-patch updater. Writes
- * use `replace: true` so typing in the search box does not flood browser
- * history with one entry per keystroke.
- */
 export function useFilterParams(): [EntryFilters, (patch: Partial<EntryFilters>) => void] {
   const [params, setParams] = useSearchParams();
 
   const filters: EntryFilters = useMemo(
     () => {
-      // Decode fieldFilters: iterate all params whose name starts with "field.",
-      // strip the prefix to produce the key.
       const fieldFilters: Record<string, string> = {};
       params.forEach((value, key) => {
         if (key.startsWith('field.')) {
@@ -90,7 +67,6 @@ export function useFilterParams(): [EntryFilters, (patch: Partial<EntryFilters>)
               next.set('wip', String(patch.wip));
             }
           }
-          // fieldFilters: full replace — delete all existing field.* params first,
           // then set each new key (mirrors the tags delete-all-then-append).
           if ('fieldFilters' in patch) {
             const keysToDelete: string[] = [];

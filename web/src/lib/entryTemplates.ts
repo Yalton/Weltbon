@@ -1,29 +1,16 @@
-/**
- * Entry templates registry for the Template Picker.
- *
- * Phase 28 v3.2: 6 default templates with ordered meta arrays (D-09),
- * rich multi-section bodies (D-08), and a metaArrayToRecord helper (D-10).
- * Typed meta-field variants (number/date/select) are deferred to a future phase (D-12).
- */
 
 export interface EntryTemplateMetaField {
   name: string;
-  /** D-12 — always typed as string in Phase 28; number/date/select variants deferred */
   default_value: string;
 }
 
 export interface EntryTemplate {
   id: string;
   label: string;
-  /** Pre-fills EntryEditor's type select; freeform string per D-07. */
   entryType: string;
-  /** Markdown scaffold; may be multi-line (D-11). */
   summary: string;
-  /** Markdown with at least 2 ## headers (D-08). */
   body: string;
-  /** Ordered blueprint fields (D-09); NOT Record<string,string>. */
   meta: EntryTemplateMetaField[];
-  /** Short blurb shown under the picker card title. */
   description?: string;
 }
 
@@ -227,12 +214,6 @@ export function getTemplate(id: string): EntryTemplate | undefined {
   return TEMPLATES.find((t) => t.id === id);
 }
 
-/**
- * D-10 transform: convert the ordered meta blueprint array to a flat Record.
- * Used by EntryEditor's setMeta() call on the read path.
- * If duplicate field names exist (should not happen in well-formed templates),
- * last-write-wins.
- */
 export function metaArrayToRecord(meta: EntryTemplateMetaField[]): Record<string, string> {
   const out: Record<string, string> = {};
   for (const f of meta) out[f.name] = f.default_value;

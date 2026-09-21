@@ -1,5 +1,4 @@
 /**
- * Issue #35 (DOCX-02) — convertDocx(). The route's only import.
  *
  * unpack → parse → headings → convert. Everything below this file is either
  * pure or single-purpose; this is where the parts meet, and therefore where
@@ -50,11 +49,8 @@ export interface DocxConversion {
   warnings: DocxWarning[];
   media: DocxMediaRef[];
   headings: {
-    /** Resolved deterministically, from Heading styles + outlineLvl. */
     styled: number;
-    /** What the heuristic would promote under the mixed-document eligibility gate. */
     unstyledCandidates: number;
-    /** Whether it did. */
     promoted: boolean;
   };
 }
@@ -79,19 +75,6 @@ function attr(attrs: Record<string, string>, name: string): string | null {
   return value === undefined ? null : value;
 }
 
-/**
- * THE ONLY WAY A PART REACHES A PARSER. rejectDoctype first, always; the
- * SaxesParser is constructed after it has returned, so a payload whose whole
- * cost is in the expansion never gets started on.
- *
- * `xmlns: false` matches parse.ts: OOXML prefixes are fixed by the format and
- * namespace-aware parsing would only add a way for a hostile file to make a
- * well-formed part unreadable by redeclaring a prefix.
- *
- * A malformed part is a refusal rather than a silent empty result: a
- * numbering.xml we could not read would otherwise turn every ordered list in
- * the document into a bullet list with nothing said about it.
- */
 function parsePart(
   xml: string,
   part: string,
@@ -107,14 +90,6 @@ function parsePart(
   parser.write(xml).close();
 }
 
-/**
- * word/_rels/document.xml.rels → relId → target.
- *
- * Namespace prefixes are not matched: the relationships part declares a
- * default namespace, so its elements are `Relationship`, but some producers
- * emit a prefixed form. Matching on the local name after the last colon costs
- * nothing and reads both.
- */
 function parseRels(xml: string): Map<string, string> {
   const rels = new Map<string, string>();
   parsePart(xml, 'document.xml.rels', (parser) => {
@@ -133,21 +108,6 @@ function localName(name: string): string {
   return cut === -1 ? name : name.slice(cut + 1);
 }
 
-/**
- * footnotes.xml / endnotes.xml → w:id (AS WRITTEN, a string) → note text.
- *
- * Keyed by the raw attribute string because parse.ts preserves `footnoteRef`
- * exactly and convert.ts uses that string directly. Numeric coercion would
- * round large IDs and make matching definitions disappear without warning.
- *
- * w:type="separator" / "continuationSeparator" are skipped: they are Word's
- * horizontal rules, carry no author text, and occupy ids (-1, 0) that would
- * otherwise shadow nothing but still clutter the map.
- *
- * w:delText is NOT collected, matching parse.ts's tracked-changes rule — a
- * footnote's deleted draft text must not come back as live prose here after
- * being dropped everywhere else.
- */
 function parseNotes(xml: string, part: string, into: Map<string, string>): void {
   parsePart(xml, part, (parser) => {
     let currentId: string | null = null;
@@ -175,13 +135,6 @@ function parseNotes(xml: string, part: string, into: Map<string, string>): void 
       const name = localName(tag.name);
       if (name === 't') capture = false;
       if (name === 'footnote' || name === 'endnote') {
-        // First writer wins, so footnotes.xml is not overwritten by an
-        // endnote sharing its id. parse.ts collapses w:footnoteReference and
-        // w:endnoteReference into one `footnoteRef` field, so ids from the two
-        // parts share a namespace they do not have in OOXML; both starting at
-        // 1 is normal. Recorded as a known limitation rather than fixed here:
-        // separating them means changing the document model, which is a
-        // different change from wiring the parts together.
         if (currentId !== null && text.trim() !== '' && !into.has(currentId)) {
           into.set(currentId, text.trim());
         }
@@ -192,11 +145,6 @@ function parseNotes(xml: string, part: string, into: Map<string, string>): void 
   });
 }
 
-/**
- * docProps/core.xml → the DOCX-01 `docx:` frontmatter block. Only the four
- * keys the spec names; everything else Word writes (revision, lastModifiedBy,
- * the template name) is noise in an entry's metadata.
- */
 const CORE_PROP_KEYS: Record<string, string> = {
   'dc:title': 'title',
   'dc:creator': 'creator',
@@ -227,23 +175,6 @@ function parseCoreProps(xml: string): Record<string, string> | null {
   return Object.keys(out).length === 0 ? null : out;
 }
 
-/**
- * numbering.xml → numId → 'bullet' | 'ordered' (DOCX-04's list row).
- *
- * Two hops, because OOXML puts the format one indirection away: w:num carries
- * the numId the paragraph references and points at an abstractNumId, and the
- * w:numFmt lives on the abstract definition's levels.
- *
- * Only level 0's numFmt is read. A list can change format per level, but the
- * only decision downstream is one marker per item and convert.ts already
- * indents by level; reading every level would model a distinction the output
- * cannot carry.
- *
- * Anything that is not "bullet" or "none" is ordered — decimal, lowerLetter,
- * upperRoman and the rest all render as an ordinal list. Defaulting the other
- * way would silently flatten every numbered list Word writes with a format we
- * did not enumerate.
- */
 function parseNumbering(xml: string): Map<string, 'bullet' | 'ordered'> {
   const formatByAbstract = new Map<string, 'bullet' | 'ordered'>();
   const abstractByNum = new Map<string, string>();
@@ -276,9 +207,6 @@ function parseNumbering(xml: string): Map<string, 'bullet' | 'ordered'> {
           numId = attr(attrs, 'w:numId');
           break;
         case 'w:abstractNumId': {
-          // Inside w:num this element carries the link; inside w:abstractNum
-          // the id is an attribute of the parent, so the guard on numId is
-          // what keeps the two apart.
           const val = attr(attrs, 'w:val');
           if (numId !== null && val !== null) abstractByNum.set(numId, val);
           break;
@@ -303,20 +231,10 @@ function parseNumbering(xml: string): Map<string, 'bullet' | 'ordered'> {
 }
 
 interface ContentTypeIndex {
-  /** Lower-cased extension → content type, from <Default>. */
   byExtension: Map<string, string>;
-  /** Absolute part name ("/word/media/x.png") → content type, from <Override>. */
   byPartName: Map<string, string>;
 }
 
-/**
- * [Content_Types].xml — the only source there is for DOCX-07's `contentType`,
- * and the reason the manifest field stopped being permanently null.
- *
- * Reading it costs nothing extra: unpack.ts already decompresses the part, and
- * no image byte is touched to resolve a type — the extension and the override
- * table are all it takes.
- */
 function parseContentTypes(xml: string): ContentTypeIndex {
   const byExtension = new Map<string, string>();
   const byPartName = new Map<string, string>();
@@ -338,11 +256,6 @@ function parseContentTypes(xml: string): ContentTypeIndex {
   return { byExtension, byPartName };
 }
 
-/**
- * Override wins over Default — that is what an override is for, and a media
- * part whose extension lies about its type is exactly the case the package
- * author used it to correct.
- */
 function resolveContentType(name: string | null, index: ContentTypeIndex | null): string | null {
   if (name === null || index === null) return null;
   const partName = name.startsWith('/') ? name : `/${name}`;
@@ -373,28 +286,14 @@ export async function convertDocx(
     : parseNumbering(parts.numbering);
   const contentTypes = parts.contentTypes === null ? null : parseContentTypes(parts.contentTypes);
 
-  // The manifest's rows, straight off the central directory. Not one of these
   // entries is ever decompressed (T-35-05); unpack.ts recorded name and
   // declared size while walking, and that is all DOCX-07 asks for.
   const mediaEntries = parts.otherEntries.filter((e) => e.name.startsWith('word/media/'));
 
   const styledCount = countStyledHeadings(doc.blocks, styleIndex);
 
-  // THE HEURISTIC NOW RUNS UNCONDITIONALLY, and its result is used for two
-  // different things that must not be conflated.
-  //
-  // It used to run only when styledCount === 0, on the reasoning that a
-  // discarded count should not be computed. That reasoning was wrong in a way
-  // that was invisible: ONE accidental styled heading — and styling a document
-  // TITLE as Heading 1 is Word's default — took the count to zero, which took
-  // away the promotion affordance AND every diagnostic at once. Measured on a
   // document of 40 hand-formatted sections plus one styled title: warnings was
-  // the empty array. The same document without the title reported both
   // `no-headings` and `unstyled-headings-detected`. The user got one entry and
-  // no explanation of why.
-  //
-  // The extra cost is one linear pass over the blocks, which is the same order
-  // as the conversion that follows it.
   const heuristic = detectUnstyledHeadings(doc.blocks);
 
   const eligibleCandidates: Map<number, HeadingLevel> = isHeadingPromotionEligible(
@@ -414,10 +313,6 @@ export async function convertDocx(
   });
 
   const warnings = [...result.warnings];
-  // convertDocument cannot raise this one: with promotion off it is handed an
-  // empty map and has no idea any candidate exists. Emitted only when the
-  // candidates are still on the table — once promoted, they ARE headings, the
-  // affordance is spent, and repeating the offer would be noise.
   if (eligibleCandidates.size > 0 && !promoted) {
     const n = eligibleCandidates.size;
     warnings.push({
@@ -429,10 +324,6 @@ export async function convertDocx(
     });
   }
 
-  // Mixed documents keep their deterministic structure. Promotion only adds
-  // eligible heuristic candidates; it never replaces or downgrades styled
-  // headings. Keep this diagnostic after promotion so the resulting structure
-  // remains explainable, but suppress the separate offer once it is spent.
   if (styledCount > 0 && eligibleCandidates.size > 0) {
     const one = styledCount === 1;
     const styledWord = `${styledCount} styled heading${one ? '' : 's'}`;

@@ -1,7 +1,6 @@
 /**
  * api/src/services/ingest-commit.ts
  *
- * Phase 12-01 — atomic commit service for the markdown ingestion review flow.
  *
  * Takes a reviewed `IngestPreview` body (with per-entry decisions and edits) and
  * inserts the entire accepted batch (new categories + entries + resolved links)
@@ -36,24 +35,13 @@ import {
   links as linksTable,
   categories as categoriesTable,
 } from '../db/schema.js';
-import { sourcePathDisplayForms } from './ingest-markdown.js';
 
 // ─── Constants (D-24) ────────────────────────────────────────────────────────
 
-/**
- * Rows per chunked INSERT statement. With ~9 columns per entry insert, 1000 rows
- * ≈ 9000 parameters per statement, well under Postgres' 65535 cap.
- */
 export const CHUNK_SIZE = 1000;
 
-/**
- * Per-table chunk-count cap. Effective per-table row cap is
- * CHUNK_SIZE * MAX_CHUNKS_PER_TABLE = 50_000. Total cap across the three tables
- * is 3x that, used by the size-cap pre-check.
- */
 export const MAX_CHUNKS_PER_TABLE = 50;
 
-// ─── Typed errors ───────────────────────────────────────────────────────────
 
 export class TitleCollisionError extends Error {
   constructor(public readonly title: string) {
@@ -72,7 +60,6 @@ export class CommitSizeError extends Error {
   }
 }
 
-// ─── Zod schemas ────────────────────────────────────────────────────────────
 
 const linkOutSchema = z.object({
   target: z.string(),
@@ -123,83 +110,6 @@ export type CommitResult = {
   categoriesCreated: number;
 };
 
-/**
- * Per-alias character cap, mirroring the entries route's alias schema so an
- * ingested entry can still be PATCHed without the client having to prune what
- * the importer wrote.
- */
-const MAX_ALIAS_LENGTH = 100;
-
-/**
- * Issue #60 — decide which source-path aliases each accepted entry keeps.
- *
- * An Obsidian vault addresses notes by file (`[[lore/ayin_pockets]]`,
- * `[[ayin_pockets]]`), not by the H1 the importer turns into a title. Preview
- * now resolves those refs, but the *rendered* entry re-resolves them through
- * WikilinkText's title → alias → dictionary ladder, so the path forms have to
- * survive the commit or every such link falls into the dictionary
- * missing-term flow the moment the import finishes.
- *
- * Four candidates are dropped, all for the same reason: an alias that can
- * never win a lookup is not a mapping, it is a wrong label on the entry.
- *   - equal to the entry's own title — the title tier already answers it;
- *   - equal to another accepted entry's title, or an existing universe title —
- *     title outranks alias in both resolvers, so the alias is unreachable and
- *     names an entry that isn't its owner;
- *   - a basename two accepted files share — whichever entry got it would
- *     capture links meant for the other, and nothing downstream reviews that;
- *   - over MAX_ALIAS_LENGTH.
- *
- * Returned parallel to `accepted`, one array per entry, path form before
- * basename form.
- *
- * @param accepted        Accepted entries with their batch-relative path and *effective* title.
- * @param existingTitles  Titles already in the universe (any case).
- */
-export function planSourceAliases(
-  accepted: Array<{ path: string; title: string }>,
-  existingTitles: string[],
-): string[][] {
-  const takenTitles = new Set<string>();
-  for (const t of existingTitles) takenTitles.add(t.trim().toLowerCase());
-  for (const e of accepted) takenTitles.add(e.title.trim().toLowerCase());
-
-  // Count basename claims across the batch so ambiguous ones can be dropped.
-  const baseClaims = new Map<string, number>();
-  for (const e of accepted) {
-    const forms = sourcePathDisplayForms(e.path);
-    const base = forms[forms.length - 1].toLowerCase();
-    baseClaims.set(base, (baseClaims.get(base) ?? 0) + 1);
-  }
-
-  return accepted.map((e) => {
-    const ownTitle = e.title.trim().toLowerCase();
-    const forms = sourcePathDisplayForms(e.path);
-    const kept: string[] = [];
-    const seen = new Set<string>();
-
-    for (let i = 0; i < forms.length; i++) {
-      const form = forms[i];
-      const key = form.toLowerCase();
-      const isBasename = i === forms.length - 1 && forms.length > 1;
-
-      if (form.length === 0 || form.length > MAX_ALIAS_LENGTH) continue;
-      if (seen.has(key)) continue;
-      // An alias equal to any title — including this entry's own — loses to the
-      // title tier, so it is never reachable.
-      if (takenTitles.has(key) && key !== ownTitle) continue;
-      if (key === ownTitle) continue;
-      if (isBasename && (baseClaims.get(key) ?? 0) > 1) continue;
-
-      seen.add(key);
-      kept.push(form);
-    }
-
-    return kept;
-  });
-}
-
-// ─── Service ─────────────────────────────────────────────────────────────────
 
 /**
  * Atomically commits a reviewed batch. The route is responsible for calling
@@ -226,10 +136,8 @@ export async function commitIngest(
   _userId: string,
   rawBody: unknown,
 ): Promise<CommitResult> {
-  // 1. Zod validation. Throws ZodError → route maps to 400.
   const body = commitBodySchema.parse(rawBody);
 
-  // 2. Filter to accepted (accept | rename) entries; skip is dropped.
   const accepted = body.entries.filter(
     (e) => e.decision.disposition === 'accept' || e.decision.disposition === 'rename',
   );
@@ -251,14 +159,11 @@ export async function commitIngest(
     }
   }
 
-  // 5. Load the universe row so we can validate entryType ∈ universe.entryTypes
   //    (D-26 server-side enforcement).
   const universeRow = await db().query.universes.findFirst({
     where: eq(universes.id, uid),
   });
   if (!universeRow) {
-    // Defensive — should never happen because the route already called
-    // requireUniverse, but if it did the universe was deleted between checks.
     throw new Error('Invalid path: universe missing');
   }
   const validTypes = new Set(universeRow.entryTypes);
@@ -269,7 +174,6 @@ export async function commitIngest(
     }
   }
 
-  // 6. Compute effective titles (rename overrides original title).
   const effectiveTitles = accepted.map((e) =>
     e.decision.disposition === 'rename' ? e.decision.newTitle : e.title,
   );
@@ -296,13 +200,6 @@ export async function commitIngest(
     }
   }
 
-  // 7c. #60: source-path aliases, so filename links keep resolving after the
-  //     import. Computed here because it needs the existing titles just read.
-  const sourceAliases = planSourceAliases(
-    accepted.map((e, idx) => ({ path: e.path, title: effectiveTitles[idx] })),
-    existingTitleRows.map((r) => r.title),
-  );
-
   // 8. Compute the LOGICAL row cap. This is defense-in-depth, NOT an OOM guard:
   //    it runs after the whole body is already parsed into memory. The pre-parse
   //    raw-body OOM guard is the commit route's bodyLimit (INGEST_MAX_BODY_BYTES).
@@ -310,7 +207,6 @@ export async function commitIngest(
     (sum, e) => sum + e.linksOut.filter((l) => l.resolved).length,
     0,
   );
-  // newCategories count is bounded by `accepted.length`; use accepted.length as
   // a conservative upper bound for the cap pre-check.
   const totalRowsBound = accepted.length + accepted.length + acceptedLinkCount;
   const cap = CHUNK_SIZE * MAX_CHUNKS_PER_TABLE * 3;
@@ -320,7 +216,6 @@ export async function commitIngest(
 
   // 9. Begin the atomic transaction (D-24).
   return await db().transaction(async (tx) => {
-    // ── Step A: load existing categories ───────────────────────────────────
     const existingCatRows = await tx
       .select({ id: categoriesTable.id, label: categoriesTable.label })
       .from(categoriesTable)
@@ -338,13 +233,11 @@ export async function commitIngest(
       const cat = e.category;
       if (cat === null) continue;
       if ('existingId' in cat) {
-        // Defensive: ensure the existingId actually exists.
         const found = existingCatRows.find((r) => r.id === cat.existingId);
         if (!found) {
           throw new Error('Invalid category id');
         }
       } else {
-        // newName branch
         const lower = cat.newName.toLowerCase();
         if (existingCategoryByLower.has(lower)) continue; // silent merge
         if (newCatByLower.has(lower)) continue;
@@ -372,7 +265,6 @@ export async function commitIngest(
       }
     }
 
-    // ── Step C: build entries to insert (with resolved categoryId) ─────────
     type EntryInsert = typeof entriesTable.$inferInsert;
     const entriesToInsert: EntryInsert[] = accepted.map((e, idx) => {
       let categoryId: string | null = null;
@@ -381,10 +273,8 @@ export async function commitIngest(
         if ('existingId' in cat) {
           categoryId = cat.existingId;
         } else {
-          // newName — must be in the lookup map after Step B.
           const found = existingCategoryByLower.get(cat.newName.toLowerCase());
           if (!found) {
-            // Should never happen after Step B, but throw defensively.
             throw new Error('Invalid category id');
           }
           categoryId = found;
@@ -396,13 +286,11 @@ export async function commitIngest(
         entryType: e.entryType,
         body: e.body,
         tags: e.tags,
-        aliases: sourceAliases[idx],
         meta: e.meta,
         categoryId,
       };
     });
 
-    // ── Step D: chunked entry INSERT, building path → newId map ────────────
     const entryIdByPath = new Map<string, string>();
     const entryIds: string[] = [];
     for (let i = 0; i < entriesToInsert.length; i += CHUNK_SIZE) {
@@ -411,8 +299,6 @@ export async function commitIngest(
         .insert(entriesTable)
         .values(slice)
         .returning({ id: entriesTable.id });
-      // Drizzle returns rows in input order; zip with the source slice to
-      // rebuild the path → id map.
       for (let j = 0; j < slice.length; j++) {
         const sourceEntry = accepted[i + j];
         entryIdByPath.set(sourceEntry.path, inserted[j].id);
@@ -420,7 +306,6 @@ export async function commitIngest(
       }
     }
 
-    // ── Step E: build link rows from each accepted entry's linksOut ───────
     type LinkInsert = typeof linksTable.$inferInsert;
     const linksToInsert: LinkInsert[] = [];
     for (const e of accepted) {
@@ -440,14 +325,11 @@ export async function commitIngest(
           sourceEntryId: sourceId,
           targetEntryId: targetId,
           label: l.label,
-          // Phase 35 REL-01: direction is NOT NULL; ingested links are always
-          // directed by default (no bidirectional concept in wikilink ingest).
           direction: 'directed' as const,
         });
       }
     }
 
-    // ── Step F: chunked link INSERT ────────────────────────────────────────
     let linksCreated = 0;
     for (let i = 0; i < linksToInsert.length; i += CHUNK_SIZE) {
       const slice = linksToInsert.slice(i, i + CHUNK_SIZE);

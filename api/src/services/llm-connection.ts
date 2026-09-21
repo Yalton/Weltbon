@@ -21,7 +21,6 @@ export interface ConnectionRow {
   provider: string;
   baseUrl: string;
   label: string;
-  /** Decrypted, or null when absent / undecryptable. Never the ciphertext. */
   secret: string | null;
   lastValidatedAt: Date | null;
 }
@@ -39,7 +38,6 @@ export async function getConnection(
   if (!row) return null;
 
   let secret: string | null = null;
-  // A rotated encryption key must not make the row unusable: the base URL is
   // not a secret. Fall back to null rather than throwing.
   if (row.ciphertext && row.iv && row.authTag && row.bodySuffix && encryptionKeyHex) {
     secret = decryptSecret(
@@ -73,16 +71,10 @@ export async function upsertConnection(
   secretPlaintext?: string,
   encryptionKeyHex?: string,
 ): Promise<ConnectionRow> {
-  // #48 Task 6 fix: a truthy secretPlaintext with no encryptionKeyHex used to
   // fall through to `enc = null` below — the row was written with the secret
-  // simply gone, no error at any layer. A caller who thought they had just
-  // saved a proxy bearer token would discover it missing only the next time
-  // something tried to use it. Task 6 (routes/llm-connections.ts) is the only
   // caller that can ever pass a secret, and its own 503 gate normally keeps
-  // this from firing in practice — this throw is the backstop for any future
   // caller that does not know about that landmine. An empty-string
   // secretPlaintext ('' — "clear the secret") is intentionally NOT covered:
-  // it is falsy, so it takes the `enc = null` path below exactly as before,
   // which is the correct "no secret" result, not a failure to encrypt one.
   if (secretPlaintext && !encryptionKeyHex) {
     throw new Error(

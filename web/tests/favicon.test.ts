@@ -2,7 +2,7 @@ import { describe, it, expect } from 'vitest';
 import { existsSync, readFileSync, statSync } from 'node:fs';
 import { resolve } from 'node:path';
 
-// POL-01 Task 2 — favicon assets + manifest contract.
+
 // All paths are resolved against the web/ root (one level above /tests).
 const WEB_ROOT = resolve(__dirname, '..');
 const PUBLIC = resolve(WEB_ROOT, 'public');
@@ -18,7 +18,7 @@ const REQUIRED_FILES = [
   'manifest.webmanifest',
 ];
 
-describe('favicon + manifest assets (POL-01 Task 2)', () => {
+describe('favicon + manifest assets', () => {
   it('all 8 required favicon/manifest files exist in /public', () => {
     for (const f of REQUIRED_FILES) {
       const p = resolve(PUBLIC, f);

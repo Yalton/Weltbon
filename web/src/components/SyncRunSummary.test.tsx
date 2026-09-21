@@ -1,15 +1,3 @@
-/**
- * SyncRunSummary tests — Plan F (Task 3), the honest-reporting rules.
- *
- * These assert the rules DIRECTLY rather than by driving a click through the
- * whole Sync tab, which is the reason the component was split out: the rules
- * are about what a given result renders, and nothing about them needs a query
- * client, a router or a mutation.
- *
- * SyncTab.test.tsx keeps its own end-to-end versions of the two most important
- * ones — they prove the summary is actually wired to a completed run, which a
- * unit test here cannot.
- */
 
 import { describe, it, expect } from 'vitest';
 import { render, screen } from '@testing-library/react';

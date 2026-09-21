@@ -41,10 +41,7 @@ export async function ensureLocalUser(
     .returning({ id: users.id, email: users.email, displayName: users.displayName });
   if (created.length > 0) return created[0];
 
-  // Lost the race: a concurrent caller's insert won and ours silently did
   // nothing (onConflictDoNothing), instead of throwing 23505. Re-read the
-  // winner's row — it must exist, since onConflictDoNothing() only produces
-  // an empty result when a conflicting row is already there.
   const winner = await db.query.users.findFirst({
     where: eq(users.email, LOCAL_USER_EMAIL),
     columns: { id: true, email: true, displayName: true },

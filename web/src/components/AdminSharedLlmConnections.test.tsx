@@ -1,19 +1,3 @@
-/**
- * #50 Task 9 — administrator panel for granting/revoking shared LLM access.
- *
- * Mirrors SharedLlmConnections.test.tsx's negative-assertion discipline (see
- * that file's header): a "must never render X" claim is worthless unless a
- * simulated leak of X is shown to fail the assertion. The admin panel's
- * `AdminSharedGrant` type LEGITIMATELY carries owner and recipient identity
- * (displayName/email) — unlike the recipient's `SharedGrant`, hiding that
- * from an administrator would make the grant list useless. What must never
- * render here is key material: ciphertext, a plaintext secret, a key's
- * bodySuffix/keyId, or a provider endpoint. The poison fixtures below attach
- * exactly those as extra properties the type does not declare, so a
- * component that started rendering `grant.apiKey` or similar would fail the
- * redaction check without needing a test written against that specific
- * field name.
- */
 
 import { describe, it, expect, vi, beforeEach } from 'vitest';
 import { render, screen, waitFor, within } from '@testing-library/react';

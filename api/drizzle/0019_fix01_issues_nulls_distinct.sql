@@ -1,4 +1,3 @@
--- Phase 34 FIX-01: fix issues_universe_gap_key_unique — recreate as a plain unique index.
 -- Hand-written migration (NOT drizzle-kit generated): Drizzle DSL cannot express the
 -- null-comparison nuance on a unique index, so this is authored by hand.
 -- Fixes a real product bug (CIDEBT-01): worldbuilders cannot file a 2nd manual issue per

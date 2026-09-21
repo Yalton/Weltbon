@@ -1,8 +1,3 @@
-/**
- * Small presentational chip used by FilterChipRow. Neutral styling matches
- * the rest of the app's dark/light surfaces; the × button gets an explicit
- * `aria-label` so assistive tech + tests can target "Remove {label}".
- */
 export function FilterChip({
   label,
   onRemove,

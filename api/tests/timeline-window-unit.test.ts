@@ -1,17 +1,7 @@
 import { describe, it, expect } from 'vitest';
 import { patchSchema } from '../src/routes/universes.js';
 
-/**
- * Phase 20 D-01 — Zod schema coverage for the universes PATCH body's new
- * `timelineWindow` field. No DB, no app fetch — pure Zod parse, so this
- * file auto-joins the unit lane (NOT added to vitest.config.ts
- * DB_GATED_TESTS).
- *
- * Threat T-20-01 mitigation is enforced here: `z.number().finite()` rejects
- * Infinity / -Infinity / NaN. `.nullable()` permits only literal `null`,
- * not arbitrary objects.
- */
-describe('universes patchSchema — timelineWindow (Phase 20 D-01)', () => {
+describe('universes patchSchema — timelineWindow', () => {
   it('accepts a finite { start, end } object', () => {
     const result = patchSchema.parse({ timelineWindow: { start: -10000, end: 26000 } });
     expect(result.timelineWindow).toEqual({ start: -10000, end: 26000 });

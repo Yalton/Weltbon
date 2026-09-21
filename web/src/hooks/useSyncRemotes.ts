@@ -1,5 +1,4 @@
 /**
- * Plan F (Task 2) — TanStack Query hooks for /api/sync/remotes/*.
  *
  * Wire shape (api/src/routes/sync-client.ts, JWT-only — a PAT cannot enumerate
  * a user's remotes):
@@ -23,48 +22,37 @@
 
 import { useMutation, useQuery, useQueryClient } from '@tanstack/react-query';
 import { api } from '../api/client';
-// Keys live in their own module so Task 3's universe-scoped link hooks import
-// the SAME definitions this module invalidates — see syncKeys.ts.
 import { SYNC_REMOTES_QUERY_KEY, SYNC_LINKS_QUERY_PREFIX } from './syncKeys';
 
-/** A saved remote connection, as the server masks it. Never carries the PAT. */
 export interface SyncRemote {
   id: string;
   label: string;
   baseUrl: string;
-  /** Last few characters of the stored token — the only part ever returned. */
   patSuffix: string;
   createdAt: string;
 }
 
-/** The peer instance's self-report, from the S-08 handshake. */
 export interface RemoteIdentity {
   weltbonVersion: string;
   appVersion: string;
   migrationHead: string;
 }
 
-/** `POST /sync/remotes/:id/test` — 200 only; every failure throws an ApiError. */
 export interface TestRemoteResult {
   ok: true;
   remote: RemoteIdentity;
 }
 
-/** List the caller's registered remotes (masked). */
 export function useSyncRemotes() {
   return useQuery({
     queryKey: SYNC_REMOTES_QUERY_KEY,
     queryFn: () => api<SyncRemote[]>('/sync/remotes'),
-    // Matches useLlmKeys. Task 3's Sync tab lists remotes too (to pick one
-    // when creating a link), so without this both subscribers refetch on every
     // mount and navigating between the two surfaces re-hits the network for a
-    // list that changes only when the user changes it. Every mutation below
     // invalidates, so user-initiated changes still appear immediately.
     staleTime: 60_000,
   });
 }
 
-/** Register a new remote. `pat` is minted on the OTHER instance (F-05). */
 export function useCreateSyncRemote() {
   const qc = useQueryClient();
   return useMutation({
@@ -79,17 +67,6 @@ export function useCreateSyncRemote() {
   });
 }
 
-/**
- * Update a remote's label, base URL, and/or stored PAT.
- *
- * The body is assembled key-by-key rather than spread, because the server
- * validates `pat: z.string().min(1).optional()`: a body that carries `pat` at
- * all must carry a non-empty one. An edit form whose token field was left
- * blank means "keep the current token", so `pat` must be ABSENT from the JSON,
- * not present-and-empty. (`undefined` would also vanish through
- * JSON.stringify, but only by accident of the serializer; omitting the key is
- * the explicit statement.)
- */
 export function useUpdateSyncRemote() {
   const qc = useQueryClient();
   return useMutation({
@@ -109,7 +86,6 @@ export function useUpdateSyncRemote() {
   });
 }
 
-/** Delete a remote. See the invalidation comment — the blast radius is wide. */
 export function useDeleteSyncRemote() {
   const qc = useQueryClient();
   return useMutation({
@@ -117,31 +93,12 @@ export function useDeleteSyncRemote() {
       api<void>(`/sync/remotes/${vars.id}`, { method: 'DELETE' }),
     onSuccess: () => {
       qc.invalidateQueries({ queryKey: SYNC_REMOTES_QUERY_KEY });
-      // `sync_links.remote_id` is `onDelete: 'cascade'`
-      // (api/src/db/schema.ts:775), so this DELETE also destroyed every
-      // sync link that pointed at this remote — in EVERY universe that used
-      // it, not just whichever universe the user last had open. This module
       // is account-scoped and holds no universe id, so it cannot name the
-      // affected keys; invalidating the whole `['sync','links']` prefix is
-      // the only way to stop a Sync tab from rendering links the server has
-      // already deleted.
       qc.invalidateQueries({ queryKey: SYNC_LINKS_QUERY_PREFIX });
-      // Conflicts are deliberately NOT invalidated, though it looks like an
-      // omission next to the two above: `sync_conflicts` carries neither a
-      // remote_id nor a link_id, only `universe_id` (api/src/db/schema.ts), so
-      // nothing about it cascades from deleting a remote. Invalidating it
-      // would be a refetch that can never return different rows.
     },
   });
 }
 
-/**
- * Run the S-08 handshake against a saved remote.
- *
- * Deliberately does NOT invalidate anything: a handshake reads the peer's
- * identity and touches no local row, so a refetch would be pure noise. The
- * result is transient per-row UI state for the caller to render.
- */
 export function useTestSyncRemote() {
   return useMutation({
     mutationFn: (vars: { id: string }) =>

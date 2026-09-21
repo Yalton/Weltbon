@@ -1,22 +1,3 @@
-/**
- * PAT Parity E2E round-trip integration test (API-04)
- *
- * This test is the API-04 acceptance gate: it proves that every capability class
- * accessible to JWT bearers is also accessible via PAT bearer, and that the data
- * survives an export→import round-trip with identity preserved.
- *
- * D-10: Single E2E round-trip — mint a PAT via JWT, then drive:
- *   create universe → category → entries → link → issue → timeline pin →
- *   graph-data (smoke) → export JSON → import to new universe → re-export →
- *   assert round-trip identity (titles, labels, category names match).
- *
- * D-11: Plus a tiny smoke check confirming PAT meta-API rejects PAT bearer
- *   (D-13 regression guard). Already covered deeply in tokens.test.ts; this
- *   is just the wiring check post-Phase 10 migration.
- *
- * Skip pattern: tests skip if DATABASE_URL is not available (matches project-wide
- * pattern for DB-dependent integration suites).
- */
 
 import fs from 'node:fs';
 import yauzl from 'yauzl';

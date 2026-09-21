@@ -123,28 +123,7 @@ describe('shared LLM grant routes', () => {
       : inspect(value, { depth: null, maxStringLength: Infinity, maxArrayLength: Infinity })
   );
 
-  /**
-   * Task 10 final boundary check — scans free-text (captured console output,
-   * which is lines, not a JSON object) rather than a parsed value. A field-name
-   * scan alone was rejected in earlier review on this branch for two reasons
-   * that both apply here: (1) `expectNoCredentialMaterial`'s FIELD-NAME walk
-   * cannot run over plain text at all, so logger output needs its own scan;
-   * (2) a scan that only recognises a quoted `"key":` shape would miss the
-   * VALUE leaking on its own line (e.g. a stack trace interpolating the raw
-   * secret with no surrounding braces), so the plaintext-key check is a bare
-   * substring match independent of the field-name regexes below it.
-   *
-   * The field-name regex accepts an OPTIONAL quote before the colon, not a
-   * required one: `JSON.stringify` produces `"ownerKeyId":`, but `node:util`'s
-   * `inspect` — which the logger-output test below now renders object
-   * arguments through, per Task 10 review finding 1 — renders plain
-   * identifier keys unquoted as `ownerKeyId: 'value'`. A fixed-quote regex
-   * caught the JSON shape and silently missed the inspect shape; confirmed by
-   * execution (see the fix report): planting `{ ownerKeyId: '...' }` (no
-   * quotes, no matching plaintext-key substring) into the real
-   * `console.error` path in `api/src/index.ts` passed with the old regex.
-   */
-  function expectNoCredentialLeakInText(text: string, context: string) {
+    function expectNoCredentialLeakInText(text: string, context: string) {
     expect(text, `${context} must not contain the seeded plaintext key`).not.toContain(SECRET);
     for (const forbidden of FORBIDDEN) {
       expect(
@@ -435,19 +414,7 @@ describe('shared LLM grant routes', () => {
     expect(await duplicate.json()).toEqual({ error: 'An active shared connection already exists', code: 'shared_connection_exists' });
   });
 
-  /**
-   * Task 10 final boundary check. Captures REAL console output (both the Hono
-   * request logger and app.onError's console.error) across a success flow
-   * (grant creation against an admin whose real ciphertext-backed key is
-   * seeded — SECRET, above) and a forced unexpected-error flow (the same
-   * pattern `normalizes unexpected sharing failures` above uses to reach
-   * app.onError's shared-path console.error), then scans everything captured.
-   *
-   * This is deliberately over the REAL logger call sites in api/src/index.ts
-   * rather than a synthetic string — a passing assertion here is evidence
-   * about production log output, not just about the scanning function.
-   */
-  it('never emits credential material through captured logger output on shared routes', async () => {
+    it('never emits credential material through captured logger output on shared routes', async () => {
     const owner = await createAdminWithKey('owner-logger-scan@test.dev');
     const recipient = await createTestUser(handle, { email: 'recipient-logger-scan@test.dev', password: 'long-enough-password' });
     const recipientJwt = await issueAccessToken(recipient.id);
@@ -512,7 +479,7 @@ describe('shared LLM grant routes', () => {
     expect(() => expectNoCredentialLeakInText(`some log line mentioning ${SECRET}`, 'test')).toThrow();
     expect(() => expectNoCredentialLeakInText('unhandled error: {"ciphertext":"abc"}', 'test')).toThrow();
     expect(() => expectNoCredentialLeakInText("unhandled error: {'ownerKeyId':'abc'}", 'test')).toThrow();
-    // Task 10 review finding 1 fix round: `node:util`'s `inspect` (which the
+
     // logger-output test above now renders object arguments through) writes
     // plain identifier keys UNQUOTED — `{ ownerKeyId: 'abc' }`, not
     // `{"ownerKeyId":"abc"}`. Regression-locks the exact gap review finding 1

@@ -1,5 +1,4 @@
 /**
- * Phase 38 MEDIA-01/02/03/04: Authenticated per-universe image asset API.
  *
  * Routes (mounted at /universes/:uid/assets):
  *   POST   /                  upload (multipart) — bodyLimit → magic-number → quota → sharp → store
@@ -43,23 +42,20 @@ import type { AuthVariables } from '../middleware/auth.js';
 
 type AppEnv = { Variables: AuthVariables };
 
-// ─── Validation constants (RESEARCH.md Code Examples) ─────────────────────────
 
 const ALLOWED_MIME = new Set(['image/png', 'image/jpeg', 'image/webp', 'image/gif']);
 
 // Re-exported for backward compatibility — the single definitions now live in
-// services/media/ so a non-HTTP caller (Plan D's local apply, via
+
 // services/sync/remote-client.ts) can depend on them without dragging in this
 // whole route module (@hono/zod-openapi, hono/body-limit, file-type, ...).
 export { maxFileBytes, maxUniverseQuota } from '../services/media/limits.js';
 export { SHARP_OPTS } from '../services/media/sharp-opts.js';
 
-// ─── Shared param schemas ─────────────────────────────────────────────────────
 
 const uidParams = z.object({ uid: z.string().uuid() });
 const uidAndIdParams = z.object({ uid: z.string().uuid(), id: z.string().uuid() });
 
-// ─── Zod schemas ──────────────────────────────────────────────────────────────
 
 const assetSchema = z.object({
   id: z.string(),
@@ -70,10 +66,8 @@ const assetSchema = z.object({
   sizeBytes: z.number(),
   thumbSizeBytes: z.number(),
   altText: z.string().nullable(),
-  // Plan C (S-10): toAssetResponse spreads the DB row, so the sync content hash
+
   // ships in every owner-facing asset response. Declared so the OpenAPI contract
-  // matches what is actually served. Never reaches share routes — those serve
-  // bytes only, never asset metadata JSON.
   contentHash: z.string().nullable(),
   rawUrl: z.string(),
   thumbUrl: z.string(),
@@ -99,13 +93,9 @@ const usageSchema = z.object({
 const errorSchema = z.object({ error: z.string() });
 
 // ─── Upload size-cap middleware (T-38-11, D-10) ──────────────────────────────────
-//
-// bodyLimit runs BEFORE the handler's parseBody() call, rejecting oversize bodies
 // pre-buffer to defend against OOM. Wired via the route's `middleware: [...]` field
 // (the codebase-idiomatic per-route middleware pattern, e.g. share.ts requireShareToken)
 // rather than a global app.use — so only the upload route is size-capped.
-// Resolve maxSize lazily per request so MEDIA_MAX_FILE_BYTES overrides set after
-// module load (e.g. in tests) are honored. The bodyLimit factory is rebuilt per
 // invocation — cheap, and keeps the size cap a runtime-tunable config (D-10).
 const uploadSizeLimit: MiddlewareHandler = (c, next) =>
   bodyLimit({
@@ -113,11 +103,9 @@ const uploadSizeLimit: MiddlewareHandler = (c, next) =>
     onError: (ctx) => ctx.json({ error: 'File too large' }, 413),
   })(c, next);
 
-// ─── Helpers ───────────────────────────────────────────────────────────────────
 
 /**
  * Build the public serving URLs for an asset (D-02 stable URL).
- * Phase 38 UAT-fix: URLs are now HMAC-signed so <img src> can carry the auth
  * capability without needing an Authorization: Bearer header (which browsers
  * can't attach to image tags). The signature is embedded in the query string.
  */
@@ -128,17 +116,10 @@ function assetUrls(uid: string, id: string): { rawUrl: string; thumbUrl: string 
   };
 }
 
-/** Shape a DB asset row into the API response (adds rawUrl/thumbUrl). */
 function toAssetResponse(uid: string, row: typeof assets.$inferSelect) {
   return { ...row, ...assetUrls(uid, row.id) };
 }
 
-/**
- * Scan all references to an asset across the universe (D-12).
- *   - cover refs: entries.cover_image_id = id
- *   - inline refs: entries.body LIKE '%asset://<id>%'
- * Returns a deduplicated reference list (cover + inline) plus the count.
- */
 async function scanAssetReferences(
   universeId: string,
   assetId: string,
@@ -164,7 +145,6 @@ async function scanAssetReferences(
   return { count: references.length, references };
 }
 
-// ─── Route definitions ────────────────────────────────────────────────────────
 
 const err401 = { content: { 'application/json': { schema: errorSchema } }, description: 'Unauthorized' };
 const err403 = { content: { 'application/json': { schema: errorSchema } }, description: 'Forbidden' };
@@ -298,11 +278,9 @@ const thumbAssetRoute = createRoute({
   },
 });
 
-// ─── Router ───────────────────────────────────────────────────────────────────
 
 export const assetsRouter = new OpenAPIHono<AppEnv>()
 
-  // GET /universes/:uid/assets — list (bare array)
   .openapi(listAssetsRoute, async (c) => {
     const { uid } = c.req.valid('param');
     await requireUniverse(uid, c.var.userId);
@@ -311,7 +289,6 @@ export const assetsRouter = new OpenAPIHono<AppEnv>()
     return c.json(rows.map((r) => toAssetResponse(uid, r)) as any, 200);
   })
 
-  // POST /universes/:uid/assets — upload (uploadSizeLimit bodyLimit via route.middleware)
   .openapi(uploadAssetRoute, async (c) => {
       const { uid } = c.req.valid('param');
       await requireUniverse(uid, c.var.userId);
@@ -356,7 +333,6 @@ export const assetsRouter = new OpenAPIHono<AppEnv>()
         return c.json({ error: 'Image could not be processed (corrupt or too large)' }, 415);
       }
 
-      // 4. Persist bytes + thumbnail, then the registry row.
       const assetId = crypto.randomUUID();
       const extension = detected.ext === 'jpeg' ? 'jpg' : detected.ext;
       const filename = file.name && file.name.length > 0 ? file.name : `upload.${extension}`;
@@ -374,8 +350,7 @@ export const assetsRouter = new OpenAPIHono<AppEnv>()
           extension,
           sizeBytes: safeBytes.length,
           thumbSizeBytes: thumbBytes.length,
-          // Plan C (S-10): record the content hash at write time so
-          // ensureAssetHashes() never has to touch a freshly uploaded blob.
+
           contentHash: sha256Hex(safeBytes),
         })
         .returning();
@@ -383,7 +358,6 @@ export const assetsRouter = new OpenAPIHono<AppEnv>()
       return c.json(toAssetResponse(uid, row) as any, 201);
     })
 
-  // PATCH /universes/:uid/assets/:id — rename
   .openapi(renameAssetRoute, async (c) => {
     const { uid, id } = c.req.valid('param');
     await requireUniverse(uid, c.var.userId);
@@ -447,12 +421,7 @@ export const assetsRouter = new OpenAPIHono<AppEnv>()
     return c.body(null, 204);
   })
 
-  // GET /universes/:uid/assets/:id/raw — serve original bytes
-  //
-  // Phase 38 UAT-fix: two authorization paths:
-  //   1. Bearer path (c.var.userId set): use the existing requireUniverse ownership check.
   //   2. Signed-URL path (no bearer, valid ?e&s query params): verify HMAC sig, scope row
-  //      by universeId=uid AND id — the sig IS the capability, no user lookup needed.
   //      This allows <img src> tags to load images without an Authorization header.
   .openapi(rawAssetRoute, async (c) => {
     const { uid, id } = c.req.valid('param');
@@ -491,9 +460,6 @@ export const assetsRouter = new OpenAPIHono<AppEnv>()
     return c.body(bytes);
   })
 
-  // GET /universes/:uid/assets/:id/thumb — serve thumbnail bytes
-  //
-  // Phase 38 UAT-fix: same two-path authorization as /raw above.
   .openapi(thumbAssetRoute, async (c) => {
     const { uid, id } = c.req.valid('param');
 

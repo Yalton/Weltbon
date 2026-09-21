@@ -1,22 +1,6 @@
-/**
- * Inline chip surfacing the per-entry conflict / skip / rename disposition for
- * an import-review list row.
- *
- * Visual language per UI-SPEC §3.4 + §4.4:
- *   - 'conflict' / 'skip' → amber chip reading "Conflict"
- *   - 'rename' → neutral chip reading "→ Renamed"
- *
- * Accessibility per UI-SPEC §9.2: `role="status"` with sr-only matchedTitle so
- * screen readers hear "Status: Conflict — matches \"<title>\" already in
- * universe." (or the rename-resolved analog) instead of just "Conflict".
- *
- * Static Tailwind class strings only — no template-string class composition
- * (Phase 8 §0 / Tailwind v4 contract).
- */
 
 interface ConflictChipProps {
   variant: 'conflict' | 'skip' | 'rename';
-  /** Existing-universe title that this entry collides with (or was renamed away from). */
   matchedTitle?: string;
 }
 
@@ -37,7 +21,6 @@ export function ConflictChip({ variant, matchedTitle }: ConflictChipProps) {
     );
   }
 
-  // conflict / skip share the amber chip.
   return (
     <span
       role="status"

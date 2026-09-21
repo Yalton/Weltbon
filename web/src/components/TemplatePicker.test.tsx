@@ -6,8 +6,8 @@ import { useState, useEffect } from 'react';
 import { TemplatePicker } from './TemplatePicker';
 import { TEMPLATES } from '../lib/entryTemplates';
 
-// Phase 28 Plan 10 (gap closure) activated the previously-skipped behavioral
-// tests originally TODO'd in Plan 05 (28-REVIEW.md §WR-03). The fetch mock
+
+
 // pattern follows web/src/api/client.test.ts (vitest spyOn; the project does
 // not use MSW). The Harness also fixes 28-REVIEW.md §IN-01 in passing by
 // wrapping the QueryClient construction in useState so a Harness re-render
@@ -21,7 +21,7 @@ import { TEMPLATES } from '../lib/entryTemplates';
 //     the entire last_used_at stamp feature silently breaks
 //   - Clone-to-personal button presence on each default card (jsdom does not
 //     render CSS hover transitions; visual opacity is covered by the manual
-//     browser smoke in 28-08-PLAN.md Task 4 / CR-01 verification)
+
 //   - Escape closes the picker without navigating
 
 type LocationSnapshot = { pathname: string; state: unknown };
@@ -241,7 +241,7 @@ describe('TemplatePicker', () => {
     await screen.findByText('Default templates');
     // The Clone-to-personal control is one <button> per Default card.
     // Visual opacity (hover state) is verified by the manual browser smoke
-    // in 28-08-PLAN.md Task 4 (CR-01 verification); jsdom does not compute
+
     // CSS transitions, so this test asserts DOM presence only.
     //
     // We query by literal text rather than by role+name because the outer

@@ -140,7 +140,7 @@ describe('formatCalendar', () => {
     expect(result!.compact).toBe('14 Frostmoon, 412 TE');
   });
 
-  // ─── D-04: moon phase arithmetic ─────────────────────────────────────────────
+
 
   it('moonPhases are computed correctly (dayIndex mod cycleDays)', () => {
     // position 7 → dayIndex=7, Luna cycleDays=7, phase = 7 mod 7 = 0

@@ -4,9 +4,6 @@ import { entryTypeHexColor } from '../lib/entryTypeColor';
 
 // 6-swatch edge color palette derived from entryTypeColor.ts real constants.
 // Default is the neutral fallback gray; remaining 5 are stable entry-type hexes.
-// Executor note (SUMMARY source): gray=#6b7280 (fallback), blue=#3b82f6 (concept),
-// emerald=#10b981 (entity), amber=#f59e0b (location), rose=#f43f5e (event),
-// purple=#a855f7 (faction).
 export const EDGE_PALETTE: readonly string[] = [
   '#6b7280', // gray — ENTRY_TYPE_HEX_FALLBACK (neutral default)
   entryTypeHexColor('concept'),   // #3b82f6 blue
@@ -19,7 +16,6 @@ export const EDGE_PALETTE: readonly string[] = [
 export type LineStyle = 'solid' | 'dashed' | 'dotted';
 
 // Locked copy block (UI-SPEC "Draw-Edge Popover" copy table).
-// Edit-mode strings ("Edit edge", "Save changes", "Saving...") added for plan 08.
 const COPY = {
   title: 'Draw edge',
   titleEdit: 'Edit edge',
@@ -50,40 +46,16 @@ export interface InitialEdgeValues {
 export interface DrawEdgePopoverProps {
   open: boolean;
   onOpenChange: (open: boolean) => void;
-  /** Display name for the source node. */
   fromTitle: string;
-  /** Display name for the target node. */
   toTitle: string;
-  /** Container-relative drop coordinates (matches CreateLinkPopover anchor pattern). */
   dropX: number;
   dropY: number;
-  /** Called with the confirmed label + style + color on submit. */
   onSubmit: (opts: { label: string; lineStyle: LineStyle; color: string }) => Promise<void>;
-  /** Optional error callback so the parent can surface a Toast too. */
   onError?: (err: unknown) => void;
-  /**
-   * Edit mode: pre-fills label/lineStyle/color from an existing edge.
-   * When provided alongside mode='edit', the title and submit copy switch to edit strings.
-   * Defaults to undefined (create mode — preserves Plan 05/06 callers byte-compatible).
-   */
   initialEdge?: InitialEdgeValues;
-  /**
-   * 'create' (default) or 'edit'.
-   * 'edit' mode pre-fills controls from initialEdge, uses edit-mode copy strings,
-   * and routes submit to the caller's useUpdateEdge mutation.
-   */
   mode?: 'create' | 'edit';
 }
 
-/**
- * Radix Popover anchored at arbitrary drop coordinates via an invisible 1x1
- * Popover.Anchor div — mirrors CreateLinkPopover pattern. Extends it with:
- *   - lineStyle radio group (Solid/Dashed/Dotted)
- *   - 6-swatch color picker (active swatch: 2px var(--color-accent) ring)
- *
- * Locked copywriting follows the UI-SPEC "Draw-Edge Popover" table verbatim.
- * EDGE_PALETTE is re-exported for callers that need to seed the default color.
- */
 export function DrawEdgePopover({
   open,
   onOpenChange,
@@ -117,9 +89,7 @@ export function DrawEdgePopover({
     }
   };
 
-  // Reset internal state whenever the popover closes so the next open is fresh.
   // In edit mode, reset to the initialEdge values (not blank) so re-opens reflect
-  // the current edge values.
   const handleOpenChange = (next: boolean) => {
     if (!next) {
       setLabel(isEdit && initialEdge ? initialEdge.label : '');

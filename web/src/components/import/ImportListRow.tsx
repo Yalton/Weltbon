@@ -1,16 +1,3 @@
-/**
- * Single row in the import-review master list (UI-SPEC §4.4).
- *
- * Presentational + prop-driven: parent (Plan 12-06 ImportReview view) owns
- * focus state + decisions; this component just renders. Selection is in-page
- * (no URL change) so the row is a `<button type="button">`, not a NavLink.
- *
- * Recipe: see UI-SPEC §4.4 (full row anatomy). Active-row recipe mirrors
- * `web/src/components/Sidebar.tsx:30-46`.
- *
- * Static Tailwind class strings only — conditional via array + filter+join,
- * never template-string concat (Phase 8 §0 / Tailwind v4).
- */
 
 import type { PreviewEntry, CommitDecision } from '../../types/ingestReview';
 import { TypeBadge } from '../TypeBadge';
@@ -19,9 +6,7 @@ import { ConflictChip } from './ConflictChip';
 interface ImportListRowProps {
   entry: PreviewEntry;
   decision: CommitDecision;
-  /** Title to display (post-rename if applicable). Computed by the parent. */
   effectiveTitle: string;
-  /** Matched existing-universe title for conflict/skip/rename rows; null otherwise. */
   conflictTitle: string | null;
   isFocused: boolean;
   onFocus: () => void;
@@ -42,11 +27,8 @@ export function ImportListRow({
   // the IngestPreview-level `warnings` array is batch-level only).
   const warningCount = entry.linksOut.filter((l) => !l.resolved).length;
 
-  // First-char icon fallback (Phase 8 §0 forbids icon dependencies).
   const icon = entry.title.slice(0, 1).toUpperCase() || '·';
 
-  // Show the chip when disposition is conflict/skip/rename AND we know the
-  // matched existing title.
   const showChip =
     (disposition === 'skip' || disposition === 'rename') && conflictTitle !== null;
   const chipVariant: 'conflict' | 'skip' | 'rename' | null = showChip

@@ -8,7 +8,6 @@ import { isUniqueViolation } from '../db/pg-error.js';
 
 type AppEnv = { Variables: AuthVariables };
 
-// ─── Zod schemas ────────────────────────────────────────────────────────────
 
 const createSchema = z.object({
   label: z.string().trim().min(1, 'Label is required').max(100),
@@ -34,7 +33,6 @@ const inviteListItemSchema = z.object({
 
 const errorSchema = z.object({ error: z.string() });
 
-// ─── Routes ─────────────────────────────────────────────────────────────────
 
 const postRoute = createRoute({
   method: 'post',
@@ -127,7 +125,6 @@ const deleteRoute = createRoute({
   },
 });
 
-// ─── Router ──────────────────────────────────────────────────────────────────
 
 export const inviteRoutes = new OpenAPIHono<AppEnv>()
 

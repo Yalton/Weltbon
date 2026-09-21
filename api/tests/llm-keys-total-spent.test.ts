@@ -1,18 +1,3 @@
-/**
- * Phase 26 Plan 08 Task 3 — GET /api/llm-keys totalSpentUsd field.
- *
- * D-14: each masked key row now carries `totalSpentUsd: string`, populated
- * from SUM(audit_runs.cost_usd) GROUP BY (provider, user_id). Per the JSDoc
- * note this is an APPROXIMATION (joined by provider+user_id, not byok_key_id)
- * — multiple keys for the same provider for the same user all show the same
- * total. This trade-off is intentional (Phase 22 schema choice).
- *
- * Coverage:
- *   1. Two providers' keys for user A → each shows their provider's total
- *   2. User B unaffected by A's runs (T-26-08-05 cross-tenant isolation)
- *   3. User with keys but no runs → '0.0000' (NOT null / NOT '—')
- *   4. Wire shape: totalSpentUsd is always a string (cost-as-string convention)
- */
 
 import { describe, it, expect, beforeAll, afterAll, beforeEach, vi } from 'vitest';
 
@@ -42,7 +27,7 @@ import { setTestDb } from '../src/db/client.js';
 import { createApp } from '../src/index.js';
 import { auditRuns, universes } from '../src/db/schema.js';
 
-describe('GET /api/llm-keys totalSpentUsd (Phase 26 Plan 08 Task 3 / D-14)', () => {
+describe('GET /api/llm-keys totalSpentUsd', () => {
   let handle: TestDbHandle;
   let app: ReturnType<typeof createApp>;
 

@@ -1,10 +1,3 @@
-/**
- * Base-snapshot storage (Plan A — sync spec "Data model").
- * The base is the universe's state as of the last successful sync with one
- * remote, stored as gzip JSON in the existing storageBackend under a
- * link-scoped key. Content shape is the export payload (typed in Plan A2/B —
- * `unknown` here on purpose; this module is a dumb blob store).
- */
 import { gzipSync, gunzipSync } from 'node:zlib';
 import { storageBackend } from '../storage/local.js';
 

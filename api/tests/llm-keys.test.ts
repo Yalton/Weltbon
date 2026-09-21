@@ -1,26 +1,3 @@
-/**
- * Phase 22-04 — /api/llm-keys/* integration tests.
- *
- * Coverage matrix:
- *   - Every route (POST / GET / PUT / DELETE / POST /:id/revalidate) × happy path
- *   - Every error branch (400 / 401 / 404 / 409 / 422 / 503)
- *   - PAT-rejection matrix (LLMKEY-06 / D-13 mirror) — every route returns 401 for PAT bearer
- *   - UNIQUE(user_id, provider) collision → 409
- *   - LLMKEY-03 masking invariant — no response body contains ciphertext / iv / authTag / plaintext
- *   - Strict-state save flow — rejected provider response → 422 with row-count-0 assertion
- *   - LLMKEY-08 behavioral coverage — calls the exported assertLlmKeyEncryptionKey directly
- *     with a real test DB + stubbed cfg to pin every quadrant of the (rows × env) truth table
- *
- * Mocking strategy (Phase 23-06 / D-03 migration — Strategy A):
- *   - vi.mock('../src/providers/llm/index.js') stubs the getProvider factory so
- *     every test's call to getProvider(name).validate(plaintext) routes through a
- *     vi.fn(). The other exports of the provider barrel (LLMError, LLMProviderError,
- *     PRICING, types) pass through to the real impl. The services/llm-key.ts module
- *     (encryptKey, getDecryptedKey) is NOT mocked — the real AES-256-GCM crypto is
- *     exercised end-to-end.
- *   - The DB is REAL (createTestDb with an isolated schema) — no DB mocking. Every route
- *     exercises a real drizzle SELECT/INSERT/UPDATE/DELETE against PG.
- */
 
 import { describe, it, expect, beforeAll, afterAll, beforeEach, vi } from 'vitest';
 
@@ -45,7 +22,7 @@ import { adminAuditLog, llmApiKeys, llmSharedGrants, users } from '../src/db/sch
 // Mock the provider abstraction so the routes never actually hit Anthropic / OpenAI.
 // Default behavior is "happy path"; individual tests override via mockRejectedValueOnce.
 //
-// Phase 23-06 D-03 (Strategy A): the mock target shifted from Phase 22's
+
 // services/llm-key.js helper to '../src/providers/llm/index.js' (getProvider
 // factory). The vi.hoisted block captures a stable mockValidate reference
 // visible inside the factory AND in per-test bodies for
@@ -76,7 +53,7 @@ import { resolveSharedGrantCredential } from '../src/services/llm-credential.js'
 
 const ENCRYPTION_KEY = '0'.repeat(64);
 
-describe('llm-key routes (Phase 22-04: LLMKEY-01/03/04/05/06)', () => {
+describe('llm-key routes', () => {
   let handle: TestDbHandle;
   // eslint-disable-next-line @typescript-eslint/no-explicit-any
   let app: any;
@@ -298,7 +275,7 @@ describe('llm-key routes (Phase 22-04: LLMKEY-01/03/04/05/06)', () => {
       expect(res.status).toBe(400);
     });
 
-    // Fix round 1 (#48 review, Finding 1): 'cohere' above is garbage under
+
     // BOTH the old two-provider enum and the new three-provider LlmProvider —
     // it never exercised the actual regression. 'ollama' is a real
     // LlmProvider value (services/llm-key.ts), so before this route was
@@ -859,7 +836,7 @@ describe('llm-key routes (Phase 22-04: LLMKEY-01/03/04/05/06)', () => {
 
   // ─── assertLlmKeyEncryptionKey (LLMKEY-08 boot fail-fast behavioral coverage) ─
 
-  describe('assertLlmKeyEncryptionKey (LLMKEY-08 boot fail-fast — Plan 03 behavioral coverage)', () => {
+  describe('assertLlmKeyEncryptionKey', () => {
     it('returns without throwing when llm_api_keys is empty and cfg.llmKeyEncryptionKey is undefined', async () => {
       // DB is fresh (beforeEach cleanDb) and llm_api_keys is empty.
       const { env: loadEnvFn } = await import('../src/config.js');
@@ -929,7 +906,7 @@ describe('llm-key routes (Phase 22-04: LLMKEY-01/03/04/05/06)', () => {
     });
   });
 
-  // ─── /api/llm-keys/consent (GET + POST) — Phase 22-05 ───────────────────
+
   describe('consent endpoints', () => {
     it('GET /api/llm-keys/consent returns { consentedAt: null } for a freshly created user', async () => {
       const { jwt } = await createUserAndJwt('consent-fresh@test.com');

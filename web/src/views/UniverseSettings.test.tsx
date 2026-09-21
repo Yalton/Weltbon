@@ -37,12 +37,6 @@ function renderSettings(initialUrl: string = `/universes/U1/settings`) {
   );
 }
 
-/**
- * Phase 26 Plan 06 — UniverseSettings is now a tabbed layout (D-09). Tests for
- * EntryTypesSection content render the page directly into the `entry-types`
- * tab via ?tab= so the existing assertions ("concept" chip, "add type" input,
- * etc.) hit the right panel without an extra click step.
- */
 function renderSettingsOnEntryTypesTab() {
   return renderSettings(`/universes/U1/settings?tab=entry-types`);
 }
@@ -97,7 +91,7 @@ describe('UniverseSettings — EntryTypesSection integration', () => {
     vi.mocked(api).mockResolvedValue(UNIVERSE as never);
     renderSettingsOnEntryTypesTab();
 
-    // Phase 26 Plan 06 — the tab bar also renders an "Entry types" label, so
+
     // disambiguate by heading role.
     expect(await screen.findByRole('heading', { name: /^entry types$/i })).toBeInTheDocument();
     expect(screen.getByText('concept')).toBeInTheDocument();
@@ -231,7 +225,7 @@ describe('UniverseSettings — EntryTypesSection integration', () => {
   });
 });
 
-describe('UniverseSettings — delete universe typed-confirmation (Phase 18-01)', () => {
+describe('UniverseSettings — delete universe typed-confirmation', () => {
   beforeEach(() => {
     vi.mocked(api).mockReset();
   });
@@ -319,15 +313,6 @@ describe('UniverseSettings — delete universe typed-confirmation (Phase 18-01)'
   });
 });
 
-/**
- * Plan F (Task 3) — the Sync tab's registration in TABS.
- *
- * This is not a formality. `safeTab` falls back to `general` for any `?tab=`
- * value TABS does not list, so a Sync tab that renders perfectly but is missing
- * from that array deep-links users to General with no error anywhere. The
- * fallback is deliberate (it refuses to gate a panel on untrusted URL state),
- * which is exactly why the registration needs its own guard.
- */
 describe('UniverseSettings — Sync tab (F-01)', () => {
   beforeEach(() => {
     vi.mocked(api).mockReset();

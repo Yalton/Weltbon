@@ -2,7 +2,6 @@ import { useState } from 'react';
 import * as Dialog from '@radix-ui/react-dialog';
 import { useImportDictionaryCsv, type ImportResult } from '../hooks/useDictionary';
 
-// ─── Types ───────────────────────────────────────────────────────────────────
 
 interface Props {
   open: boolean;
@@ -10,41 +9,12 @@ interface Props {
   universeId: string;
   lid: string | null;
   onImported: (result: { inserted: number; updated: number }) => void;
-  /** Optional word to prefill the add-word flow (from unresolved [[word]] affordance). */
   prefillWord?: string;
-  /** Test-only: pre-set row errors to display (used by DictionaryTable.test.tsx). */
   _testRowErrors?: { row: number; message: string }[];
-  /** Test-only: pre-set import result to display. */
   _testImportResult?: { inserted: number; updated: number };
 }
 
-// ─── DictionaryImportDialog ──────────────────────────────────────────────────
 
-/**
- * Phase 32 Plan 03 — CSV import dialog.
- *
- * Uses @radix-ui/react-dialog (same shell as ConfirmDialog.tsx).
- *
- * States:
- *   - Idle: file picker + format hint
- *   - File selected: file name displayed, Import button enabled
- *   - Importing: button shows "Importing…", inputs disabled
- *   - Success (no errors): close + parent toasts "Imported N word(s)"
- *   - Success (with row errors): inline error list + summary
- *   - Error — file too large: inline error (client-side guard, T-32-10)
- *   - Error — missing headers: inline error
- *
- * Dialog animation: animate-dialog-in / animate-dialog-out (UI-SPEC tokens).
- *
- * prefillWord (Plan 04 affordance): when set, documented as deferred to
- * open-add-row flow in the parent Dictionary view (not a full word form here).
- * See SUMMARY.md for the decision.
- *
- * UI-SPEC compliance:
- *   - Exactly 2 font weights (400/600)
- *   - Copywriting Contract copy strings
- *   - animate-dialog-in / animate-dialog-out animation tokens
- */
 export function DictionaryImportDialog({
   open,
   onOpenChange,
@@ -100,12 +70,10 @@ export function DictionaryImportDialog({
       setImportResult({ inserted: result.inserted, updated: result.updated });
 
       if (!result.rowErrors || result.rowErrors.length === 0) {
-        // Success with no errors: close and surface toast in parent
         onImported({ inserted: result.inserted, updated: result.updated });
         onOpenChange(false);
         reset();
       }
-      // Success with row errors: stay open and show inline errors
     } catch (err: unknown) {
       const msg = err instanceof Error ? err.message : String(err);
       if (msg.toLowerCase().includes('missing') && msg.toLowerCase().includes('column')) {
@@ -133,7 +101,6 @@ export function DictionaryImportDialog({
   const hasResult = importResult !== null;
   const hasRowErrors = rowErrors.length > 0;
 
-  // Format hint — which language scope this import targets
   const scopeHint = lid
     ? 'Importing into the selected language dictionary.'
     : 'Importing into the universe-level dictionary.';

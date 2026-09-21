@@ -10,7 +10,6 @@ const repoRoot = resolve(here, '..');
  * E2E smoke tests for the public share surface, run against the dockerized
  * production build at http://localhost:3000.
  *
- * These exist because every share-surface bug fixed in Phase 33 (the bare-array
  * render crash, the missing calendar/timelineWindow, the wikilink → /login
  * redirect, the WordPopover, and the d3 pin-click) was INVISIBLE to the jsdom
  * unit suite — only a real browser surfaced them. Playwright drives a real
@@ -33,7 +32,7 @@ const CHROMIUM =
 
 export default defineConfig({
   testDir: './e2e',
-  // The Plan F sync suite lives in the same directory but targets a completely
+
   // different topology (the two-instance dev rig: Vite on :5173 + a peer on
   // :3001) and has its own global setup. It runs from playwright.sync.config.ts;
   // without this it would be swept up here and run against the wrong stack.

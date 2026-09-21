@@ -1,16 +1,3 @@
-/**
- * Locking test for PROXY-05 artifacts (plan 16.1-02 Wave-0 gap fix).
- *
- * The reverse-proxy snippets and smoke script were present and manually verified
- * in 14-VERIFICATION.md, but no Vitest spec asserted their presence and
- * non-emptiness — an accidental deletion would not be caught by the test suite.
- *
- * This spec closes that Wave-0 gap: every artifact that PROXY-05 requires must
- * exist on disk and contain at least one byte.
- *
- * Paths are resolved from the repo root (two levels above api/).
- * No DB needed. No network needed.
- */
 
 import { describe, it, expect } from 'vitest';
 import { statSync } from 'node:fs';

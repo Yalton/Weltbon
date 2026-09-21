@@ -1,7 +1,3 @@
-/**
- * Issue #74, Task 2 — DOCX parts are materialised sequentially in upload order
- * so one shared parser budget has deterministic ownership when it is exhausted.
- */
 import { describe, it, expect, vi, beforeEach } from 'vitest';
 
 const conversionControl = vi.hoisted(() => ({

@@ -1,23 +1,3 @@
-/**
- * CreateLlmKeyDialog — Radix Dialog for entering an LLM provider API key.
- *
- * Two modes:
- *   'create'  — Add a new key (POST /api/llm-keys)
- *   'replace' — Replace an existing key (PUT /api/llm-keys/:id) — provider locked
- *
- * Form fields: provider (anthropic | openai), label (optional), key (plaintext).
- *
- * T-22-05-01 mitigation: on 200 success the dialog closes AND the form resets,
- * unmounting the paste-box DOM node (React removes it; GC reclaims the string).
- * T-22-05-02 mitigation: the plaintext is NEVER rendered back to the view after
- * submission — only `bodySuffix` is shown. The dialog never enters a reveal phase.
- * T-22-05-03 mitigation: `autoComplete='off'` on the key input.
- *
- * Error handling per <canonical_error_copy> (22-04 + 22-05 PLAN):
- *   - 422 rejected / 503 transient / 409 conflict — display server's `error`
- *     string verbatim inline; the paste box is NOT cleared so the user can fix.
- *   - 200 success — clear form, close dialog, call onCreated.
- */
 
 import { useEffect } from 'react';
 import * as Dialog from '@radix-ui/react-dialog';
@@ -48,9 +28,7 @@ type FormValues = z.infer<typeof createSchema>;
 export interface CreateLlmKeyDialogProps {
   open: boolean;
   onOpenChange: (open: boolean) => void;
-  /** If set, the dialog operates in replace mode for that key id. */
   replaceTarget?: { id: string; provider: LlmProvider; label: string } | null;
-  /** Called after a successful create/replace. */
   onCreated?: () => void;
 }
 
@@ -92,7 +70,6 @@ export function CreateLlmKeyDialog({
   const handleOpenChange = (nextOpen: boolean) => {
     if (!nextOpen) {
       // T-22-05-01: clear the paste box + provider/label on close so the
-      // plaintext does not linger in the DOM after the dialog unmounts.
       reset({ provider: 'anthropic', label: '', key: '' });
       createMutation.reset();
       replaceMutation.reset();
@@ -115,13 +92,10 @@ export function CreateLlmKeyDialog({
           label: values.label,
         });
       }
-      // Success — clear the form and close.
       reset({ provider: 'anthropic', label: '', key: '' });
       onCreated?.();
       onOpenChange(false);
     } catch {
-      // On error, the mutation's `error` is exposed via activeMutation.error
-      // and rendered inline below. The paste box is NOT cleared.
     }
   };
 

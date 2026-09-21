@@ -10,7 +10,6 @@ import { Loading } from './ui/Loading';
 
 // Re-export for any downstream consumer that still imports these from
 // TimelinePinSection (no in-tree consumers today, but keeping the public
-// surface stable is cheap and avoids surprise breakage during the refactor).
 export { PrecisionBadge, precisionDotClass };
 
 interface Props {
@@ -18,17 +17,6 @@ interface Props {
   entryId: string;
 }
 
-/**
- * Per-entry timeline section rendered on EntryDetail below IssueSection.
- *
- * Reads useTimelinePins (cached query — no second API call when /timeline is
- * already loaded), finds the pin where pin.entryId === entryId. Two states:
- *   - No pin: 'Not pinned' + 'Add pin' button → PinEditor (currentPin=null)
- *   - Pin:    label + position + PrecisionBadge + Edit + Remove buttons
- *
- * Edit reopens PinEditor with currentPin pre-filled. Remove opens a
- * ConfirmDialog and calls useDeleteTimelinePin on confirm.
- */
 export function TimelinePinSection({ universeId, entryId }: Props) {
   const { data: pins, isLoading } = useTimelinePins(universeId);
   const remove = useDeleteTimelinePin(universeId);

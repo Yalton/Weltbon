@@ -1,4 +1,4 @@
-# Two-instance rig for developing and manually verifying sync (Plan F, F-09).
+# Two-instance rig for developing and manually verifying sync.
 #
 # Instance A runs on the HOST (vite 5173 + tsx watch API on 3000) against db-a,
 # so the UI under development has HMR. Instance B is fully containerized on
@@ -56,9 +56,7 @@ services:
   # `up -d --build`, not a restart.
   #
   # JWT_SECRET/INVITE_CODE read *_B-suffixed variables and default to values
-  # distinct from instance A's own — see "Registering accounts" in
-  # docs/sync-dev-rig.md for why that split matters even though nothing
-  # shadows these anymore. Override via a shell-exported JWT_SECRET_B /
+  # distinct from instance A's own. Override via a shell-exported JWT_SECRET_B /
   # INVITE_CODE_B if you need different values.
   app-b:
     build: .

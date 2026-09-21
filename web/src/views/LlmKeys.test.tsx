@@ -1,20 +1,3 @@
-/**
- * LlmKeys view tests — Phase 22-05.
- *
- * Pins:
- *   - Consent gate (LLMKEY-07): paste UI hidden until consentedAt is non-null
- *   - Canonical D-09 consent copy ("provider sees your text; you pay for the
- *     tokens; Weltbon stores your key encrypted at rest")
- *   - Masked preview format ••••••••<bodySuffix> (LLMKEY-03 frontend mirror)
- *   - Server error strings rendered verbatim (canonical 422 / 503 / 409 copy)
- *   - Paste box NOT cleared on 422 / 503 / 409
- *   - Revoke flow uses ConfirmDialog → DELETE
- *   - Re-validate flow: 200 shows inline status; 422 shows inline error
- *
- * Mirrors the wrapper scaffolding from Tokens.test.tsx (MemoryRouter +
- * QueryClientProvider). Mocks the api() client at the module boundary so we
- * can dispatch by path.
- */
 
 import { describe, it, expect, beforeEach, vi } from 'vitest';
 import { render, screen, waitFor, within } from '@testing-library/react';
@@ -75,15 +58,6 @@ type Handler =
   | Error
   | ((path: string, init?: RequestInit) => unknown);
 
-/**
- * #50 Task 8: the view now mounts SharedLlmConnections, which queries
- * /llm-shares on every render path. Defaulted to an empty list rather than
- * added to each case: a test about the personal-key consent gate should not
- * have to know that a shared-connection panel exists, and without the default
- * every one of them would render that panel's "could not load" alert — a
- * second role="alert" in the tree that quietly changes what getByRole finds.
- * Cases that care about shared connections override it explicitly.
- */
 const DEFAULT_ROUTES: Record<string, Handler> = {
   '/llm-shares': { grants: [] },
 };
@@ -141,7 +115,7 @@ const mockLlmKey = {
   label: 'work',
   createdAt: new Date(Date.now() - 2 * 24 * 60 * 60 * 1000).toISOString(),
   lastValidatedAt: new Date(Date.now() - 1 * 60 * 60 * 1000).toISOString(),
-  // Phase 26 D-14: server emits 4-decimal-formatted USD cumulative spend.
+
   totalSpentUsd: '0.0000',
 };
 
@@ -337,7 +311,7 @@ describe('LlmKeys view', () => {
       expect(screen.getByTestId('llm-keys-table')).toBeInTheDocument();
     });
     expect(screen.getByText('••••••••XYZ4')).toBeInTheDocument();
-    // Provider label — scoped to the keys table because the Phase 26 D-14
+
     // PricingTable (mounted above the keys table) also renders an "Anthropic"
     // group-header label, which would otherwise make this lookup ambiguous.
     const keysTable = screen.getByTestId('llm-keys-table');

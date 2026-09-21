@@ -1,15 +1,3 @@
-/**
- * Issue #48 Task 5 — `ollama-wire.ts` unit tests.
- *
- * `fromOllamaToolCalls` is tested against the REAL captured fixture
- * (`fixtures/ollama/chat-tool-call.json`, one live `/api/chat` tool-call
- * response from Ollama 0.32.12 / qwen3:14b), not a hand-written shape. The
- * plan was originally written from Ollama's documented wire shape and was
- * wrong on the one detail a hand-written fixture could never have caught:
- * `tool_calls[0].id` DOES exist on a live server (`"call_a9wwonwx"`), contra
- * "Ollama supplies no call id". A test built from a hand-rolled object would
- * have happily encoded the same wrong assumption and passed forever.
- */
 import { describe, it, expect } from 'vitest';
 import { readFileSync } from 'node:fs';
 import { fileURLToPath } from 'node:url';
@@ -106,7 +94,7 @@ describe('fromOllamaToolCalls', () => {
 describe('chooseNumCtx', () => {
   it('adds output headroom above the prompt rather than sizing to the prompt exactly', async () => {
     const { chooseNumCtx } = await import('../src/providers/llm/ollama-wire.js');
-    // Fix round 2 (Minor 6): this asserted `toBeGreaterThanOrEqual(5000)`,
+
     // which `chooseNumCtx = (est) => est` satisfies — i.e. it passed with
     // OUTPUT_HEADROOM_TOKENS deleted entirely, the one thing it names. A
     // window sized to the prompt with no room for the answer means the model
@@ -123,7 +111,7 @@ describe('chooseNumCtx', () => {
 
   it('falls back to a conservative CEILING when the architectural maximum is unknown', async () => {
     const { chooseNumCtx } = await import('../src/providers/llm/ollama-wire.js');
-    // Fix round 2 (Minor 6): the old assertion here was
+
     // `toBeGreaterThanOrEqual(1000)`, which says nothing at all about the
     // fallback this test is named for — it passed whether CONSERVATIVE_MAX
     // was 8192, infinity, or absent. The behaviour that matters when

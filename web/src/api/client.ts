@@ -2,7 +2,6 @@ let accessToken: string | null = null;
 let refreshInflight: Promise<string | null> | null = null;
 
 /**
- * Phase 29 share-mode seam — module-level plaintext share token.
  *
  * When non-null, every `api()` call is routed to the `/api/share/*` prefix
  * with a `share-token` header IN PLACE OF the `Authorization: Bearer`
@@ -70,30 +69,20 @@ export async function api<T = unknown>(
   init: RequestInit = {}
 ): Promise<T> {
   const doFetch = (token: string | null): Promise<Response> => {
-    // When the body is FormData, the browser sets
     // `multipart/form-data; boundary=...` automatically — overriding it
-    // with `application/json` here would strip the boundary parameter and
-    // make the server unable to parse the body. JSON callsites (string /
-    // undefined body) keep the existing default.
     const isFormData = init.body instanceof FormData;
     const baseHeaders: Record<string, string> = isFormData
       ? {}
       : { 'Content-Type': 'application/json' };
 
-    // Phase 29 share-mode branch (T-29-28 strict union — never both auth
-    // headers on the same request). The path translation strips a leading
     // `/universes/<uid>` segment if present so authenticated-style hooks
     // (e.g. `/universes/${uid}/entries`) emit the share-namespace shape
-    // `/api/share/entries`. Paths that do NOT begin with `/universes/<uid>`
     // (e.g. `/auth/me`, `/llm-keys`) pass through unchanged — they would
-    // hit `/api/share/<path>` which Plan 04 does not declare, so Hono 404s
     // them (acceptable per T-29-29 — they are not in the visitor's
-    // expected fetch surface).
     if (shareTokenPlaintext) {
       const translatedPath = path.replace(/^\/universes\/[^/]+/, '');
       return fetch(`/api/share${translatedPath}`, {
         ...init,
-        // No cookies on share requests — visitor is unauthenticated and
         // must not transmit any leftover auth cookies cross-namespace.
         credentials: 'omit',
         headers: {
@@ -122,11 +111,7 @@ export async function api<T = unknown>(
   // /auth/logout, and /auth/me each have their own expected semantics —
   // a 401 from /auth/login means "wrong credentials" (should surface to
   // the user), a 401 from /auth/refresh means "refresh cookie invalid"
-  // (already the refresh attempt — don't recurse). Guarding here prevents
-  // infinite refresh loops and spurious refresh calls on failed logins.
   // Defense-in-depth: also skip the refresh path for any request whose URL is
-  // under /share/ — a visitor has no refresh cookie, and the token is either
-  // valid or not. This guards the edge case where shareTokenPlaintext was null
   // at call-site check time but the URL is still a share path.
   if (
     res.status === 401 &&

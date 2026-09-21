@@ -1,46 +1,3 @@
-/**
- * Phase 23-04 — OpenAIProvider unit tests.
- *
- * Coverage (PROVIDER-03 + PROVIDER-05 OpenAI side + PROVIDER-07 OpenAI side):
- *
- *   1. validate() success path via mocked client.models.list
- *   2. validate() error mapping for every SDK subclass listed in RESEARCH
- *      §"SDK Error Taxonomy → 7 LLMError Variants" OpenAI table:
- *      AuthenticationError, PermissionDeniedError, RateLimitError,
- *      APIConnectionError, InternalServerError, NotFoundError,
- *      UnprocessableEntityError, APIError.status === 402, and
- *      a defensive UnknownProviderError fallback for non-SDK errors
- *   3. estimate() returns a local js-tiktoken count with ZERO network calls
- *      (PROVIDER-07 locked: SDK methods never invoked during estimate)
- *   4. ZOD V4 COMPATIBILITY SMOKE CHECK — exercises real zod 4.1.4 +
- *      openai/helpers/zod's zodResponseFormat at test time to close
- *      Pitfall #5 empirically at landing, not at runtime in production
- *   5. runAudit() canonical wire-shape output (text + toolUse + usage + costUsd)
- *   6. runAudit() cost math with cached input tokens (RESEARCH Pattern 7)
- *   7. DUAL safety-filter check — both finish_reason === 'content_filter'
- *      and message.refusal cause ContentBlockedBySafetyFilter (T-23-04-03)
- *   8. listModels() + pricing() consult PRICING.openai only
- *
- * Mocking strategy (mirrors llm-anthropic.test.ts pattern, RESEARCH §"Mock
- * SDK Strategy for Contract Test"):
- *   - vi.mock('openai') replaces the default export with a callable that
- *     returns a controlled { chat.completions.parse, models.list } stub.
- *   - The default mock also carries instanceof-checkable error subclasses
- *     attached as static members (OpenAI.AuthenticationError etc.), each
- *     extending a base APIError class so production code's
- *     `err instanceof OpenAI.AuthenticationError` branches resolve correctly.
- *   - Module-scope vi.fn() handles (mockModelsList, mockChatCompletionsParse)
- *     let each it-body program return values / rejected values per case.
- *   - vi.mock('openai/helpers/zod') passes through schema + name as a
- *     plausible response_format object — Tests (m) verify the REAL
- *     zodResponseFormat works with the project's installed Zod 4.1.4 in
- *     parallel by using vi.importActual.
- *
- * vi.hoisted convention (mirrors api/tests/llm-keys.test.ts + llm-anthropic.test.ts):
- *   OpenAIProvider does NOT transitively import api/src/db/client.ts, but
- *   matching project convention pre-emptively defuses any future re-import
- *   that could pull config.ts → env() at module evaluation time.
- */
 
 import { describe, it, expect, vi, beforeEach } from 'vitest';
 
@@ -69,8 +26,8 @@ vi.hoisted(() => {
 
 const { mockChatCompletionsParse, mockChatCompletionsCreate, mockModelsList, MockedErrors } = vi.hoisted(() => {
   const mockChatCompletionsParse = vi.fn();
-  // Phase 27 D-09: OpenAI provider migrated from chat.completions.parse
-  // (Phase 23 response_format path) to chat.completions.create with
+
+
   // function-tool calling. The `parse` mock is kept for backward-compat
   // shape but should never be invoked from runAudit() anymore.
   const mockChatCompletionsCreate = vi.fn();
@@ -119,7 +76,7 @@ vi.mock('openai', () => {
   // then Object.assign the error subclasses so static-member instanceof
   // checks (`OpenAI.AuthenticationError`) work in production code.
   //
-  // Phase 27 D-09: chat.completions exposes BOTH `create` (new — function-tool
+
   // path) and `parse` (legacy — response_format path, retained for the Zod-v4
   // smoke test in this file). runAudit() now uses `create`; the `parse` mock
   // remains attached so the smoke test that exercises the real
@@ -150,7 +107,7 @@ vi.mock('openai/helpers/zod', () => ({
   })),
 }));
 
-// Phase 27 D-09 canonical happy-path response fixture for runAudit.
+
 // runAudit now calls chat.completions.create() and consumes tool_calls
 // (function-tool calling). The model "invokes" emit_findings to deliver the
 // final answer; arguments is a JSON string per OpenAI spec.
@@ -435,7 +392,7 @@ describe('OpenAIProvider (PROVIDER-03 + PROVIDER-05 + PROVIDER-07)', () => {
   // runAudit() — wire-shape, cost math, dual safety-filter check
   // -----------------------------------------------------------------------
 
-  it('runAudit calls chat.completions.create once and returns canonical wire shape (Phase 27 D-09 — function tool)', async () => {
+  it('runAudit calls chat.completions.create once and returns canonical wire shape', async () => {
     mockChatCompletionsCreate.mockResolvedValueOnce(HAPPY_PATH_RESPONSE);
 
     const { getProvider } = await import('../src/providers/llm/index.js');
@@ -601,10 +558,10 @@ describe('OpenAIProvider (PROVIDER-03 + PROVIDER-05 + PROVIDER-07)', () => {
   });
 
   // -----------------------------------------------------------------------
-  // Phase 27 D-09 — emit_findings function-tool wire shape
+
   // -----------------------------------------------------------------------
 
-  it('runAudit forwards engine tools as OpenAI function-tool array (Phase 27 D-09 — emit_findings)', async () => {
+  it('runAudit forwards engine tools as OpenAI function-tool array', async () => {
     mockChatCompletionsCreate.mockResolvedValueOnce(HAPPY_PATH_RESPONSE);
 
     const { getProvider } = await import('../src/providers/llm/index.js');

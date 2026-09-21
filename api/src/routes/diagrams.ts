@@ -1,5 +1,4 @@
 /**
- * Phase 31 DIAGRAM-01 + DIAGRAM-02: Diagram CRUD, node management, and edge write-through.
  *
  * Edge write-through directionality (resolves CONTEXT open question):
  *   GET diagram detail returns only links rows that carry THIS diagram's id
@@ -27,14 +26,12 @@ import type { AuthVariables } from '../middleware/auth.js';
 
 type AppEnv = { Variables: AuthVariables };
 
-// ─── Shared param schemas ─────────────────────────────────────────────────────
 
 const uidParams = z.object({ uid: z.string().uuid() });
 const uidAndDidParams = z.object({ uid: z.string().uuid(), did: z.string().uuid() });
 const uidDidNodeParams = z.object({ uid: z.string().uuid(), did: z.string().uuid(), nodeId: z.string().uuid() });
 const uidDidEdgeParams = z.object({ uid: z.string().uuid(), did: z.string().uuid(), edgeId: z.string().uuid() });
 
-// ─── Zod schemas ──────────────────────────────────────────────────────────────
 
 const LINE_STYLES = ['solid', 'dashed', 'dotted'] as const;
 
@@ -74,19 +71,11 @@ const nodeSchema = z.object({
 const createEdgeSchema = z.object({
   sourceEntryId: z.string().uuid(),
   targetEntryId: z.string().uuid(),
-  // An edge label is optional in the editor — DrawEdgePopover's submit is gated
   // on `pending` alone, not on a non-empty label — and DiagramEditor posts an
-  // explicit `null` for the empty case. A bare required string rejected that,
-  // so an unlabeled edge could never be drawn. Same defect as #28 on
-  // createLinkSchema.label; `edgeSchema` below already returns it nullable.
   label: z.string().max(100).nullable().optional(),
   lineStyle: z.enum(LINE_STYLES).optional().default('solid'),
   color: z.string().max(50).optional(),
-  // Phase 35 REL-01: DIAGRAM-02 keeps `bidirectional` on the diagram-edge API
-  // surface (the editor toggle is a diagram concept) but maps it to
   // links.direction at the write-through boundary:
-  //   bidirectional=true  → direction='undirected'
-  //   bidirectional=false → direction='directed'
   bidirectional: z.boolean().optional().default(false),
 });
 
@@ -96,10 +85,6 @@ const edgeSchema = z.object({
   sourceEntryId: z.string(),
   targetEntryId: z.string(),
   label: z.string().nullable(),
-  // Phase 35 REL-01: diagram edges expose `direction` (the links column value)
-  // instead of `bidirectional`. The diagram editor (Plan 04) derives the toggle
-  // from `direction === 'undirected'`. Callers who previously read
-  // `bidirectional` must now read `direction`.
   direction: z.string(),
   linkType: z.string().nullable(),
   diagramId: z.string().nullable(),
@@ -120,7 +105,6 @@ const diagramDetailSchema = z.object({
 
 const errorSchema = z.object({ error: z.string() });
 
-// ─── Route definitions ────────────────────────────────────────────────────────
 
 const listDiagramsRoute = createRoute({
   method: 'get',
@@ -322,12 +306,7 @@ const updateEdgeRoute = createRoute({
   },
 });
 
-// ─── Helper ───────────────────────────────────────────────────────────────────
 
-/**
- * Fetch diagram, verify it belongs to the universe.
- * Returns 404 if not found.
- */
 async function requireDiagram(diagramId: string, universeId: string) {
   const rows = await db()
     .select()
@@ -339,11 +318,9 @@ async function requireDiagram(diagramId: string, universeId: string) {
   return rows[0];
 }
 
-// ─── Router ───────────────────────────────────────────────────────────────────
 
 export const diagramsRouter = new OpenAPIHono<AppEnv>()
 
-  // GET /universes/:uid/diagrams — list diagrams
   .openapi(listDiagramsRoute, async (c) => {
     const { uid } = c.req.valid('param');
     await requireUniverse(uid, c.var.userId);
@@ -356,7 +333,6 @@ export const diagramsRouter = new OpenAPIHono<AppEnv>()
     return c.json(rows as any, 200);
   })
 
-  // POST /universes/:uid/diagrams — create diagram
   .openapi(createDiagramRoute, async (c) => {
     const { uid } = c.req.valid('param');
     await requireUniverse(uid, c.var.userId);
@@ -370,7 +346,6 @@ export const diagramsRouter = new OpenAPIHono<AppEnv>()
     return c.json(row as any, 201);
   })
 
-  // GET /universes/:uid/diagrams/:did — diagram detail with nodes + edges
   .openapi(getDiagramRoute, async (c) => {
     const { uid, did } = c.req.valid('param');
     await requireUniverse(uid, c.var.userId);
@@ -396,7 +371,6 @@ export const diagramsRouter = new OpenAPIHono<AppEnv>()
     return c.body(null, 204);
   })
 
-  // POST /universes/:uid/diagrams/:did/nodes — add node
   .openapi(addNodeRoute, async (c) => {
     const { uid, did } = c.req.valid('param');
     await requireUniverse(uid, c.var.userId);
@@ -412,7 +386,6 @@ export const diagramsRouter = new OpenAPIHono<AppEnv>()
       return c.json({ error: 'Entry not found in this universe' }, 404);
     }
 
-    // Check for duplicate (diagramId, entryId) — return 409
     const existing = await db()
       .select({ id: diagramNodes.id })
       .from(diagramNodes)
@@ -429,7 +402,6 @@ export const diagramsRouter = new OpenAPIHono<AppEnv>()
     return c.json(row as any, 201);
   })
 
-  // PATCH /universes/:uid/diagrams/:did/nodes — upsert node position (update x/y for existing node)
   .openapi(upsertNodeRoute, async (c) => {
     const { uid, did } = c.req.valid('param');
     await requireUniverse(uid, c.var.userId);
@@ -454,7 +426,6 @@ export const diagramsRouter = new OpenAPIHono<AppEnv>()
     return c.json(updated as any, 200);
   })
 
-  // DELETE /universes/:uid/diagrams/:did/nodes/:nodeId — remove node (does NOT delete entry)
   .openapi(deleteNodeRoute, async (c) => {
     const { uid, did, nodeId } = c.req.valid('param');
     await requireUniverse(uid, c.var.userId);
@@ -498,18 +469,11 @@ export const diagramsRouter = new OpenAPIHono<AppEnv>()
       return c.json({ error: 'Source or target entry not found in this universe' }, 400);
     }
 
-    // Normalize once: the schema accepts an omitted label and an explicit null
-    // (the editor sends null for an unlabeled edge), and the column is nullable.
-    // Collapsing both to null here keeps the lookup and the insert below reading
     // one value instead of each re-deriving it.
     const edgeLabel = data.label ?? null;
 
-    // Upsert: if a link with this (universeId, sourceEntryId, targetEntryId, label) already
-    // exists, update its diagramId/lineStyle/color rather than creating a duplicate.
     // This reconciles the links_unique_idx and prevents a 500 on duplicate (T-31-02).
-    //
-    // Note: the links table does NOT have a unique constraint on (sourceEntryId, targetEntryId, label)
-    // in the Drizzle schema — it was removed in an earlier phase. We do a lookup-then-insert/update.
+
     const existingLinks = await db()
       .select()
       .from(links)
@@ -518,16 +482,12 @@ export const diagramsRouter = new OpenAPIHono<AppEnv>()
           eq(links.universeId, uid),
           eq(links.sourceEntryId, data.sourceEntryId),
           eq(links.targetEntryId, data.targetEntryId),
-          // An absent label is NULL in this column, and SQL `= NULL` is never
-          // true — so matching it needs IS NULL, or the dedupe above silently
-          // never finds an existing unlabeled edge and inserts a duplicate.
           edgeLabel === null ? isNull(links.label) : eq(links.label, edgeLabel),
         )
       );
 
     let row;
     if (existingLinks.length > 0) {
-      // Update the existing link with diagram metadata
       const [updated] = await db()
         .update(links)
         .set({
@@ -539,11 +499,7 @@ export const diagramsRouter = new OpenAPIHono<AppEnv>()
         .returning();
       row = updated;
     } else {
-      // Create new link with diagram metadata.
-      // Phase 35 REL-01 DIAGRAM-02: map the diagram-edge bidirectional toggle
       // to links.direction at the write-through boundary. Diagram edges are
-      // untyped (linkType: null). Plan 04 derives the editor toggle from
-      // `direction === 'undirected'` on read.
       const [created] = await db()
         .insert(links)
         .values({
@@ -564,7 +520,6 @@ export const diagramsRouter = new OpenAPIHono<AppEnv>()
     return c.json(row as any, 201);
   })
 
-  // DELETE /universes/:uid/diagrams/:did/edges/:edgeId — delete edge (deletes the links row)
   .openapi(deleteEdgeRoute, async (c) => {
     const { uid, did, edgeId } = c.req.valid('param');
     await requireUniverse(uid, c.var.userId);
@@ -582,7 +537,6 @@ export const diagramsRouter = new OpenAPIHono<AppEnv>()
     return c.body(null, 204);
   })
 
-  // PATCH /universes/:uid/diagrams/:did/edges/:edgeId — update edge label/lineStyle/color
   // T-31-17: requireUniverse blocks cross-tenant access. Then we assert the edge belongs to
   //          this diagram+universe before updating (cross-universe write guard).
   // T-31-18: lineStyle validated by zod enum (solid|dashed|dotted); color by z.string().max(50).
@@ -590,12 +544,10 @@ export const diagramsRouter = new OpenAPIHono<AppEnv>()
     const { uid, did, edgeId } = c.req.valid('param');
     // Step 1: requireAuth (applied by apiR.use) + requireUniverse (T-31-17)
     await requireUniverse(uid, c.var.userId);
-    // Step 2: verify the diagram belongs to this universe
     await requireDiagram(did, uid);
 
     const data = c.req.valid('json');
 
-    // Step 3: assert the edge (links row) belongs to this diagramId AND universe
     // — prevents cross-universe writes if an attacker supplies a valid uid/did pair
     // that doesn't contain the target edgeId (T-31-17).
     const existing = await db()
@@ -607,8 +559,6 @@ export const diagramsRouter = new OpenAPIHono<AppEnv>()
       return c.json({ error: 'Edge not found' }, 404);
     }
 
-    // Step 4: Build the update set — only mutate label/lineStyle/color. Never touch
-    // sourceEntryId/targetEntryId/universeId/diagramId (those are immutable on update).
     const updateSet: Record<string, unknown> = {};
     if (data.label !== undefined) updateSet.label = data.label;
     if (data.lineStyle !== undefined) updateSet.lineStyle = data.lineStyle;

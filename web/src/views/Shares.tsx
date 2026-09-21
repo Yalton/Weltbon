@@ -1,22 +1,3 @@
-/**
- * Shares view — /settings/shares
- *
- * Global owner audit view for ALL share-link tokens across ALL the owner's
- * universes (UI-SPEC §F). Mirrors `Invites.tsx` shell with these UI-SPEC §F
- * adaptations:
- *
- *   - 9-column table: Universe | Label | Status | Preview | Created |
- *     Last accessed | Expiry | Access count | Actions
- *   - Status chip three-branch (active / revoked / expired) derived inline
- *     from `revokedAt` + `expiresAt` (no extra API state)
- *   - Inline rename UX on the Label cell (click → input → blur/Enter commit;
- *     Escape revert)
- *   - Revoke ConfirmDialog destructive=true with templated body per
- *     UI-SPEC §Copywriting Contract
- *   - NO "New share link" button on this view (UI-SPEC §F — creation lives
- *     only on UniverseSettings per the D-20 architecture)
- *   - Revoked rows: opacity-50 + line-through label + "revoked" chip
- */
 
 import { useState, type KeyboardEvent } from 'react';
 import { Link, NavLink } from 'react-router-dom';
@@ -50,7 +31,6 @@ export default function Shares() {
 
   // Inline rename state — UI-SPEC §F: blur OR Enter commits, Escape reverts.
   // T-29-33: NOT on every keystroke (no debounce needed; the semantic intent
-  // boundary is sufficient).
   const [renameTargetId, setRenameTargetId] = useState<string | null>(null);
   const [renameValue, setRenameValue] = useState('');
   const [renameError, setRenameError] = useState<string | null>(null);
@@ -383,8 +363,6 @@ export default function Shares() {
             try {
               await revokeShareLink.mutateAsync(revokeTarget.id);
             } catch {
-              // Silent invalidate on 404 race — useRevokeShareLink's onError
-              // handler reconciles the table on refetch.
             }
           }
         }}

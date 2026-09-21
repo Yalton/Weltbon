@@ -1,24 +1,6 @@
-/**
- * Shared precision-badge primitives lifted out of TimelinePinSection so the
- * Phase 20 PinPopover can render the same precision dot + label treatment
- * without redeclaring the helpers (CONTEXT.md §D-13, PATTERNS.md §"Precision
- * Dot Visual").
- *
- * Visual contract (matches research §17 question 3):
- *   era         → accent (violet)
- *   approximate → neutral-400 (mid grey)
- *   exact       → neutral-200 (light grey)
- *
- * The exported `Precision` union mirrors the inline literal type used by
- * TimelinePin and PinEditor — keeping it as a named export here avoids
- * importing it from the hooks layer.
- */
 
 export type Precision = 'exact' | 'approximate' | 'era';
 
-/**
- * Tailwind classes for the small precision dot on the pin display.
- */
 export function precisionDotClass(p: Precision): string {
   const base = 'inline-block w-2 h-2 rounded-full';
   switch (p) {

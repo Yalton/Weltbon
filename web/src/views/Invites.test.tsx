@@ -10,7 +10,7 @@ vi.mock('../api/client', () => ({
   api: vi.fn(),
 }));
 
-// Plan 13-05 lands the real CreateInviteDialog in a sibling Wave 3 worktree.
+
 // Stubbing it here keeps this test file (and module resolution) green pre-merge,
 // and the real component takes over once the wave lands — the stub renders nothing
 // because the dialog is a sibling concern; the revoke + list behavior under test

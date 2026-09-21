@@ -1,30 +1,3 @@
-/**
- * Phase 27 D-01/D-02/D-03 — Live model-catalog cache unit tests.
- *
- * Unit lane (no DB, no createTestDb). Both SDK packages are mocked via
- * vi.mock('@anthropic-ai/sdk') + vi.mock('openai') with module-scope vi.fn()
- * handles each test reprograms. Pattern mirrors api/tests/llm-anthropic.test.ts
- * + api/tests/llm-openai.test.ts; this is the unit-only suite for the cache
- * surface (DB-gated integration of the cache lives in Plan 03's scope).
- *
- * Tests (PROV-FOLLOWUP-01):
- *   1. Cache hit per D-01: two sequential calls within 30 min → one SDK call.
- *   2. Cache TTL bust per D-01: 31 min later → second SDK call.
- *   3. Cache-key isolation per D-03: two different keyIds → two cache entries,
- *      one SDK call each.
- *   4. Stale fallback per D-02: SDK throws after cached entry exists → returns
- *      cached with source: 'cache_stale' regardless of TTL.
- *   5. PRICING fallback per D-02: SDK throws AND no cached entry → returns
- *      Object.keys(PRICING[provider]) with source: 'pricing_fallback'.
- *   6. Unpriced-live presence per D-05: live id NOT in PRICING is included
- *      with hasPricing: false; never filtered out.
- *   8. apiKey not in cache state: peek the Map; assert no apiKey substring
- *      leaks into key or value. Sanity check for the LLMKEY-03 invariant
- *      (cache key uses keyId UUID, not bodySuffix, not plaintext).
- *
- * (Test 7 in the plan's <behavior> block is the PRICING invariant subset
- * revision — it lives in llm-pricing.test.ts where the assertion is patched.)
- */
 
 import { describe, it, expect, vi, beforeEach, afterEach } from 'vitest';
 import { readFileSync } from 'node:fs';
@@ -34,12 +7,6 @@ import { dirname, resolve } from 'node:path';
 const here = dirname(fileURLToPath(import.meta.url));
 const fx = (n: string) => JSON.parse(readFileSync(resolve(here, `fixtures/ollama/${n}.json`), 'utf8'));
 
-/**
- * Mirrors tests/llm-ollama.test.ts's fakeFetch (Task 4) — duplicated here
- * because that file does not export it. `/api/show` is a POST whose body
- * names the model, so routes for it are keyed `/api/show:<model>` and
- * matched against the parsed request body's `model` field.
- */
 function fakeFetch(routes: Record<string, unknown>): typeof fetch {
   return (async (url: string, init?: RequestInit): Promise<Response> => {
     if (url.includes('/api/show')) {
@@ -116,12 +83,12 @@ beforeEach(() => {
 });
 
 afterEach(() => {
-  // Only the two Task 6 live-Ollama-discovery tests below stub the global
+
   // fetch; harmless no-op for every other test in this file.
   vi.unstubAllGlobals();
 });
 
-describe('model-catalog cache (Phase 27 D-01/D-02/D-03 PROV-FOLLOWUP-01)', () => {
+describe('model-catalog cache', () => {
   // -----------------------------------------------------------------------
   // Test 1 — cache hit per D-01
   // -----------------------------------------------------------------------
@@ -319,7 +286,7 @@ describe('model-catalog cache (Phase 27 D-01/D-02/D-03 PROV-FOLLOWUP-01)', () =>
   });
 
   // -----------------------------------------------------------------------
-  // Fix round 1 (#48 review, Finding 2) — getModels('ollama', ...) must
+
   // preserve the module's own D-02 contract ("always returns something
   // usable; never blocks the dropdown") rather than throw. Unreachable via
   // the real route today (llm-models.ts validates against KEY_PROVIDER_NAMES,
@@ -351,7 +318,7 @@ describe('model-catalog cache (Phase 27 D-01/D-02/D-03 PROV-FOLLOWUP-01)', () =>
   });
 
   // -----------------------------------------------------------------------
-  // Issue #48 Task 6 — the interim stub above is replaced with real live
+
   // discovery once `credential.baseUrl` IS present. No production route
   // wires provider:'ollama' into getModels() yet (llm-models.ts is scoped to
   // KEY_PROVIDER_NAMES), so without a test here this branch would have zero

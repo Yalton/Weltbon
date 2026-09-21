@@ -7,12 +7,9 @@ import type { AuthVariables } from '../middleware/auth.js';
 
 type AppEnv = { Variables: AuthVariables };
 
-// ─── Path param schema ───────────────────────────────────────────────────────
 
-// When mounted at /universes, the route path '/{id}/stats' exposes GET /api/universes/:id/stats
 const idParams = z.object({ id: z.string().uuid() });
 
-// ─── Zod schemas ────────────────────────────────────────────────────────────
 
 const errorSchema = z.object({ error: z.string() });
 
@@ -39,7 +36,6 @@ const statsResponseSchema = z.object({
   })),
 });
 
-// ─── Route definition ────────────────────────────────────────────────────────
 
 const statsRoute = createRoute({
   method: 'get',
@@ -75,7 +71,6 @@ const statsRoute = createRoute({
   },
 });
 
-// ─── Router ──────────────────────────────────────────────────────────────────
 
 export const statsRoutes = new OpenAPIHono<AppEnv>()
 
@@ -92,7 +87,6 @@ export const statsRoutes = new OpenAPIHono<AppEnv>()
     await requireUniverse(id, userId);
 
     // Run all aggregates concurrently for efficiency. D-06: computed fresh on
-    // every request, no caching.
     const [
       entriesCountRes,
       linksCountRes,
@@ -102,32 +96,27 @@ export const statsRoutes = new OpenAPIHono<AppEnv>()
       entriesByCategoryRes,
       recentlyEditedRes,
     ] = await Promise.all([
-      // totalEntries
       db()
         .select({ total: count() })
         .from(entries)
         .where(eq(entries.universeId, id)),
 
-      // totalLinks
       db()
         .select({ total: count() })
         .from(links)
         .where(eq(links.universeId, id)),
 
-      // totalTimelinePins: join via entries (timeline_pins has no universeId column)
       db()
         .select({ total: count() })
         .from(timelinePins)
         .innerJoin(entries, eq(timelinePins.entryId, entries.id))
         .where(eq(entries.universeId, id)),
 
-      // totalCategories
       db()
         .select({ total: count() })
         .from(categories)
         .where(eq(categories.universeId, id)),
 
-      // entriesByType: GROUP BY entry_type ordered by count DESC
       db()
         .select({
           type: entries.entryType,
@@ -138,7 +127,6 @@ export const statsRoutes = new OpenAPIHono<AppEnv>()
         .groupBy(entries.entryType)
         .orderBy(desc(count())),
 
-      // entriesByCategory: GROUP BY category_id with label join
       db()
         .select({
           categoryId: entries.categoryId,
@@ -176,7 +164,6 @@ export const statsRoutes = new OpenAPIHono<AppEnv>()
       count: Number(r.count),
     }));
 
-    // Surface null categoryId as the 'Uncategorized' bucket
     const categoryDistribution = entriesByCategoryRes.map((r) => ({
       categoryId: r.categoryId ?? null,
       label: r.categoryId === null ? 'Uncategorized' : (r.label ?? 'Unknown'),

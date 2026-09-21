@@ -10,40 +10,13 @@ import type { Calendar } from '../lib/calendarFormat';
 import type { TimelineWindow } from '../hooks/useTimelineWindow';
 import type { UniverseTheme } from '../types/theme';
 
-/**
- * Public root URL for the "Made with Weltbon" banner brand link.
- *
- * UI-SPEC §Copywriting Contract: "Weltbon is a link to https://weltbon.app
- * (or the configured public URL root)". The project has no Vite `.env` file
- * and no `import.meta.env` typing baseline, so this is a hardcoded constant
- * — future plans can introduce a VITE_PUBLIC_URL seam with a `vite-env.d.ts`
- * reference if the public root ever needs per-environment configuration.
- */
 const PUBLIC_ROOT_URL = 'https://weltbon.app';
 
 interface UniverseMeta {
   name: string;
   ownerDisplayName: string;
-  /**
-   * Phase 33 INT-BLOCKER-1 fix: the server already returns `calendar` on this
-   * object (api/src/services/share-views.ts getPublicUniverseMeta +
-   * universeMetaResponseSchema). Widen the client type so the value flows
-   * through instead of being silently dropped.
-   */
   calendar?: Calendar | null;
-  /**
-   * Phase 33 SHARE-02: timelineWindow is also returned by getPublicUniverseMeta
-   * so the share TimelineView can render (it 404s on useTimelineWindow('share')
-   * otherwise). Threaded into ShareModeContext like `calendar`.
-   */
   timelineWindow?: TimelineWindow | null;
-  /**
-   * Universe theming (2026-07-10 spec): getPublicUniverseMeta +
-   * universeMetaResponseSchema also return `theme` and a resolved
-   * `backdropUrl` on this object (mirrors the `calendar`/`timelineWindow`
-   * widening above). No `backdropThumbUrl` on the share seam — share pages
-   * only render the full-bleed raw image.
-   */
   theme?: UniverseTheme | null;
   backdropUrl?: string | null;
 }
@@ -70,7 +43,6 @@ interface ShareUniverseResponse {
  *    metadata fetch, and cleanup runs `clearShareToken()` so navigating away
  *    guarantees no leak into a subsequent authenticated session (T-29-27).
  *
- * Universe metadata is fetched from `GET /api/share/universe` (Plan 04
  * — `{ universe: { name, ownerDisplayName } }`). A 404 here means the token
  * is invalid, revoked, or expired — render `<ShareNotFound />` per
  * UI-SPEC §G (no banner, no login/register CTA per D-19).
@@ -83,12 +55,7 @@ export function ShareLayout() {
   const [universeMeta, setUniverseMeta] = useState<UniverseMeta | null>(null);
   const [error, setError] = useState<boolean>(false);
 
-  // HALF (a) — synchronous token readiness (Gap 1 race fix):
-  // Set the share token in the render body, BEFORE the useEffect below and
-  // BEFORE any descendant component renders or fires its first query. This
   // ensures the module-level shareTokenPlaintext seam is non-null by the time
-  // React calls any child queryFn on this render pass. The StrictMode
-  // unmount→clearShareToken(null)→remount cycle is safe because the
   // token-keyed cache (half b) ensures a null-token 404 entry occupies a
   // distinct cache slot from the ready-token result.
   if (token) {
@@ -98,18 +65,10 @@ export function ShareLayout() {
   useEffect(() => {
     if (!token) return;
     setShareToken(token);
-    // The leading `/universe` path becomes `/api/share/universe` after the
-    // Task 1 client seam (path translation strips the /universes/<uid>
-    // prefix when present; here there is none, so /universe passes through
-    // and the prefix swap routes it correctly).
     api<ShareUniverseResponse>('/universe')
       .then((res) => setUniverseMeta(res.universe))
       .catch((err) => {
         // 404 → ShareNotFound (invalid/revoked/expired token per UI-SPEC §G).
-        // Any other ApiError → also surface ShareNotFound; the visitor has no
-        // session, so there is no useful recovery action other than the copy
-        // "ask the owner for an updated link". Network errors fall into the
-        // same bucket — the visitor cannot do anything else.
         if (err instanceof ApiError) {
           setError(true);
         } else {

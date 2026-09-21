@@ -1,14 +1,3 @@
-/**
- * Plan D Task 8 — the two-instance acceptance suite for the sync drive loop.
- *
- * A and B are two INSTANCES: two independent databases, two independent
- * users, two independent blob stores, holding the SAME universe id. Instance
- * B is a Hono app object, not a listening socket, so the peer transport is
- * injected via runSync's `fetchImpl` option — see makeFetch() below. This is
- * the same harness shape as tests/sync-convergence.test.ts (Plan C Task 7),
- * extended to drive the actual client-side loop (runSync) rather than
- * hand-rolling the merge/apply calls a client would make.
- */
 import { describe, it, expect, beforeAll, afterAll, beforeEach, vi } from 'vitest';
 
 // CRITICAL — must be set BEFORE the *first* env() call in the process. See
@@ -58,7 +47,7 @@ function comparable(manifest: any) {
   return out;
 }
 
-describe('two-instance acceptance for the sync drive loop (Plan D Task 8)', () => {
+describe('two-instance acceptance for the sync drive loop', () => {
   let A: TestDbHandle;
   let B: TestDbHandle;
   let uploadsA: string;
@@ -309,7 +298,7 @@ describe('two-instance acceptance for the sync drive loop (Plan D Task 8)', () =
     expect(remoteUniverse.userId).toBe(collisionOwner.id);
   });
 
-  // ── Plan F0 scenario 1: bootstrap a universe that ALREADY has an asset ────
+
   //
   // The suite has never been able to contain this. Every asset scenario in
   // Plans C, D and E opens with a bootstrap of an EMPTY universe and adds
@@ -351,9 +340,9 @@ describe('two-instance acceptance for the sync drive loop (Plan D Task 8)', () =
     expect(await storageBackend.exists(syncBlobKey(universeId, sha256(bytes)))).toBe(false);
   });
 
-  // ── Plan F0 scenario 2: the seed apply's partial-write window (F0-02) ─────
+
   //
-  // If phase 1 lands and phase 2 is refused, the peer keeps an EMPTY universe
+
   // row. That is accepted, and this pins WHY: the next run finds
   // remote != null with base == null, so it takes the MERGE path, where every
   // local row is an add and every asset is a delta member. The peer holds NO
@@ -377,7 +366,7 @@ describe('two-instance acceptance for the sync drive loop (Plan D Task 8)', () =
     const before = await snapshot('A');
 
     // Refuse only the FULL apply. The seed apply carries no ops, so the body is
-    // what distinguishes them — refusing every /apply would also refuse phase 1
+
     // and prove nothing about this window. The two differ structurally and
     // exactly: the seed sends `ops: {}` literally, while the full apply always
     // sends every collection key from manifestToOps. Discriminating on the key
@@ -434,7 +423,7 @@ describe('two-instance acceptance for the sync drive loop (Plan D Task 8)', () =
     expect(assetOnA).toBeDefined();
   });
 
-  // ── Plan F0 scenario 4: a transferred asset settles in ONE run (F0-04) ────
+
   //
   // Asserting the ABSENCE of an asset op, not merely that the run succeeded — a
   // run that pushes a spurious delta succeeds too, so a success assertion here
@@ -635,12 +624,12 @@ describe('two-instance acceptance for the sync drive loop (Plan D Task 8)', () =
     expect(await storageBackend.exists(syncBlobKey(universeId, sha256(bytesB)))).toBe(false);
   });
 
-  // ── Scenario 4b: repairing the PEER's lost bytes (Plan E, E-06 push) ──────
+
   //
-  // The Plan D casualty, on the far side: B's asset ROW survives, its bytes do
+
   // not. Both manifests then report the asset identically, so merge.ts's
   // !contentEqual gate leaves it out of BOTH ops lists — this is precisely the
-  // breakage that nothing before Plan E could see.
+
   //
   // What this pins beyond "blobsPushed went up" is the half that a push alone
   // does NOT accomplish: putBlob only STAGES on the peer, and the peer copies a
@@ -714,7 +703,7 @@ describe('two-instance acceptance for the sync drive loop (Plan D Task 8)', () =
     expect(await storageBackend.exists(syncBlobKey(universeId, sha256(bytes)))).toBe(false);
   });
 
-  // ── Scenario 4c: the staged blob whose apply never landed (Plan E, E-07) ──
+
   //
   // PROBE-D. The push lands — B now holds a staged blob — and the apply that was
   // supposed to consume it is refused. B is left with a staged blob AND a
@@ -737,7 +726,7 @@ describe('two-instance acceptance for the sync drive loop (Plan D Task 8)', () =
     await use('A');
     await runSync(linkId, ownerA.id, { fetchImpl: makeFetch() }); // A -> B
 
-    // The Plan D casualty on B: the row survives, the bytes do not.
+
     await use('B');
     expect(await storageBackend.exists(asset.id)).toBe(true); // precondition
     await storageBackend.delete(asset.id);
@@ -793,7 +782,7 @@ describe('two-instance acceptance for the sync drive loop (Plan D Task 8)', () =
     expect(await storageBackend.exists(syncBlobKey(universeId, hash))).toBe(false);
   });
 
-  // ── Scenario 4d: the C-20 sibling variant (Plan E, E-07) ─────────────────
+
   //
   // No staged blob is ever involved here, and no probe can see this one. Two rows
   // share a content hash on B; one keeps its bytes, the other loses them.
@@ -855,7 +844,7 @@ describe('two-instance acceptance for the sync drive loop (Plan D Task 8)', () =
   // ── Scenario 4e: a PEER cannot aim our byte write at another universe ─────
   //
   // The same C-09 hole as the apply route, on the initiating side, and the one
-  // review did not check. run-sync's plan ids come from the MERGED asset set,
+
   // which is built from the PEER's snapshot — so a malicious or corrupt peer can
   // name any asset id on this instance, including one in a universe it has no
   // relationship with. The orphan/repair partition is no defence: a foreign id is
@@ -869,7 +858,7 @@ describe('two-instance acceptance for the sync drive loop (Plan D Task 8)', () =
     await runSync(linkId, ownerA.id, { fetchImpl: makeFetch() }); // bootstrap, empty
 
     // A victim universe on A, belonging to a DIFFERENT user, holding a byte-less
-    // asset row whose thumbnail survives — the Plan D casualty as bait.
+
     const victimUser = await createTestUser(A, { email: 'victim@instance.dev', password: 'password123' });
     const [victimUniverse] = await A.db
       .insert(universesTable)
@@ -923,18 +912,18 @@ describe('two-instance acceptance for the sync drive loop (Plan D Task 8)', () =
     expect((await storageBackend.get(`${victimAssetId}_thumb`))!.equals(victimThumb)).toBe(true);
   });
 
-  // ── Scenario 4f: the Plan D bug itself, on the LOCAL side (Plan E, E-06 pull) ─
+
   //
-  // The casualty Plan E exists for: applyManifestOps commits an asset row with
+
   // its contentHash inside its transaction and the bytes are copied outside it,
   // so a crash between the two leaves a row whose bytes are absent HERE. Before
-  // Plan E that was permanent AND invisible — buildSyncManifest reports the row
+
   // with its hash, both manifests agree, merge.ts's !contentEqual gate keeps it
   // out of both ops lists, and no later run could ever put it in a
   // materialization plan.
   //
   // Scenario 4b is the mirror of this on the PEER. This is the direction the
-  // plan names first, and the one no other test drives end to end: 9b breaks A
+
   // the same way but then REFUSES the apply, so it pins the E-05 partition
   // rather than the repair completing.
   //
@@ -971,7 +960,7 @@ describe('two-instance acceptance for the sync drive loop (Plan D Task 8)', () =
     await A.db.update(assets).set({ thumbSizeBytes: STALE, updatedAt: pinnedAt }).where(eq(assets.id, asset.id));
     await B.db.update(assets).set({ thumbSizeBytes: STALE, updatedAt: pinnedAt }).where(eq(assets.id, asset.id));
 
-    // The Plan D casualty, locally: the row survives, the bytes and the
+
     // thumbnail do not.
     await use('A');
     await storageBackend.delete(asset.id);
@@ -1021,7 +1010,7 @@ describe('two-instance acceptance for the sync drive loop (Plan D Task 8)', () =
   // reported rather than being quietly dropped from remoteOps to "let the rest
   // through": a row removed from the delta while the base records it as synced
   // makes the NEXT merge read base-has-it / local-has-it / remote-lacks-it as a
-  // remote DELETE, and LWW then deletes it locally. A repair plan that can delete
+
   // assets is not a repair plan — so run 2 must still find the row on both sides.
   it('reports an asset neither side can source, succeeds, advances the base, and still has the row after a second run (E-03)', async () => {
     const { assets, syncLinks } = await import('../src/db/schema.js');
@@ -1392,7 +1381,7 @@ describe('two-instance acceptance for the sync drive loop (Plan D Task 8)', () =
     expect(after.entries).toHaveLength(0);
   });
 
-  // ── Scenario 9b: a refused apply must not undo a REPAIR (Plan E, E-05) ────
+
   //
   // The complement of scenario 9. D-06 promises a refused sync is a complete
   // no-op locally, and E-05 keeps that promise by discarding bytes written ahead
@@ -1400,7 +1389,7 @@ describe('two-instance acceptance for the sync drive loop (Plan D Task 8)', () =
   // merge does not touch, so it is not part of the delta D-06 speaks about, and
   // undoing its restored bytes would re-break the asset on every run for as long
   // as the peer keeps refusing (over quota, read-only), with the bytes sitting
-  // right there in the surviving staged blob. That is the Plan D bug reintroduced
+
   // on the failure path.
   it('keeps repaired bytes when the remote refuses the apply, including a thumbnail that predates the run', async () => {
     await use('A');
@@ -1411,7 +1400,7 @@ describe('two-instance acceptance for the sync drive loop (Plan D Task 8)', () =
     await use('A');
     await runSync(linkId, ownerA.id, { fetchImpl: makeFetch() }); // A -> B, B holds the bytes
 
-    // The Plan D casualty, locally: the row survives, the ORIGINAL bytes do not.
+
     // The thumbnail deliberately survives — it predates this run, so E-05 must
     // not remove it even though writeAssetBytes overwrites it.
     await use('A');
@@ -1540,7 +1529,7 @@ describe('two-instance acceptance for the sync drive loop (Plan D Task 8)', () =
     expect(rowOnA).toBeDefined();
   });
 
-  // ── Plan F0 scenario 3: the thumb residual is now REPAIRED ────────────────
+
   //
   // This scenario previously asserted the opposite — that a stale
   // thumbSizeBytes survives a further run — and it was pinned that way on
@@ -1551,7 +1540,7 @@ describe('two-instance acceptance for the sync drive loop (Plan D Task 8)', () =
   // applies and finalizeMaterialization after them, so a REFUSED apply keeps
   // the repaired bytes (correctly — that is the designed partition) and skips
   // finalize. planAssetMaterialization then short-circuits on exists(id), so
-  // the row never re-enters a materialization plan and nothing recomputes the
+
   // size. repairThumbSizes is what sees it, by comparing the row against the
   // thumbnail actually on disk.
   it('repairs a stale thumbSizeBytes on a later run (F0-06)', async () => {
@@ -1647,11 +1636,11 @@ describe('two-instance acceptance for the sync drive loop (Plan D Task 8)', () =
 
   // ── Scenario 10: blob bytes absent on BOTH sides ─────────────────────────
   //
-  // Plan E: the asset is a delta member (A has no row for it yet), and neither
+
   // side holds its bytes, so reconcileAssets classifies it L ∩ M and raises
-  // SyncBlobUnavailableError WITHOUT attempting a GET. Before Plan E this
+
   // surfaced as SyncUnreachableError, because getBlob threw on the peer's 404
-  // before run-sync reached its re-plan check — see E-03/E-08.
+
   it('blob bytes absent from both stores fail the run and the base does not advance', async () => {
     await use('A');
     await runSync(linkId, ownerA.id, { fetchImpl: makeFetch() }); // bootstrap, empty

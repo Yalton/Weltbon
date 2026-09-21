@@ -1,21 +1,16 @@
 /**
- * Issue #48 Task 6 — /api/llm-connections/* route table.
  *
  * Endpoint-based provider CRUD (Ollama today; see CONNECTION_PROVIDER_NAMES
  * below). Companion to llm-keys.ts, which owns the KEY-based providers
- * (anthropic/openai). This router is the HTTP surface over Task 1's
  * services/llm-connection.ts.
  *
  * ── Desktop-only, enforced TWICE ─────────────────────────────────────────
  * A hosted Weltbon instance must never accept a user-supplied endpoint: it
  * would let a hosted user point the server at an arbitrary URL the server
  * then issues requests to on the user's behalf (an SSRF vector), and there
- * is no product reason for it — the whole point of Ollama support is "your
- * own machine, your own network" (see docs/weltbon-sync-product-goal.md-
- * adjacent reasoning: sync is the paid hosted tier; local LLM is the
- * desktop-only tier). So the restriction is enforced in two independent
+ * is no product reason for it — Ollama support is for a local desktop
+ * connection. So the restriction is enforced in two independent
  * places, mirroring the pattern routes/auth.ts documents for the
- * local-session route (DV-11 / "Finding 2 review fix"):
  *
  *   1. Conditional route REGISTRATION in index.ts — `if (env().localMode)`
  *      around the `apiR.route('/llm-connections', llmConnectionRoutes)`
@@ -30,12 +25,10 @@
  *      per-request. Checking again here means even a future refactor that
  *      breaks (1) still fails closed instead of open.
  *
- * A hidden UI control is NOT enforcement of either of these — Task 7's
  * frontend section is presentation only.
  *
  * ── Provider set: CONNECTION_PROVIDER_NAMES, not PROVIDER_NAMES ─────────
  * Mirrors llm-keys.ts's own KEY_PROVIDER_NAMES narrowing (see that file's
- * "Fix round 1" comment) but in the opposite direction: llm_connections rows
  * exist for ENDPOINT-based providers only, and today that set has exactly
  * one member ('ollama' — see llm-credential.ts's `ENDPOINT_PROVIDERS` Set,
  * which this constant must stay in lockstep with). Using the wider
@@ -88,12 +81,10 @@ import { env } from '../config.js';
 
 type AppEnv = { Variables: AuthVariables };
 
-// ─── Provider set (see file header) ────────────────────────────────────────
 
 const CONNECTION_PROVIDER_NAMES = ['ollama'] as const;
 type ConnectionProvider = (typeof CONNECTION_PROVIDER_NAMES)[number];
 
-// ─── Zod schemas ────────────────────────────────────────────────────────────
 
 const errorSchema = z.object({ error: z.string() });
 
@@ -114,7 +105,6 @@ const connectionSchema = z.object({
 const putBodySchema = z.object({
   baseUrl: z.string().min(1),
   label: z.string().optional(),
-  /** Optional bearer for an authenticating reverse proxy in front of Ollama. */
   secret: z.string().optional(),
 });
 
@@ -125,7 +115,6 @@ const testResponseSchema = z.object({
 const modelInfoSchema = z.object({
   name: z.string(),
   supportsTools: z.boolean(),
-  /** The model's ARCHITECTURAL maximum — NOT the runtime window. See ollama.ts. */
   contextLength: z.number().nullable(),
 });
 
@@ -142,7 +131,6 @@ function toMaskedConnection(row: LlmConnectionRow): {
   lastValidatedAt: string | null;
 } {
   return {
-    // Cast is safe: every row this router writes goes through PUT, which
     // Zod-validates `provider` against CONNECTION_PROVIDER_NAMES.
     provider: row.provider as ConnectionProvider,
     baseUrl: row.baseUrl,
@@ -167,7 +155,6 @@ async function getRawConnectionRow(
 
 const NOT_LOCAL_MODE_ERROR = 'Local connections are only configurable on the desktop app';
 
-// ─── Routes ─────────────────────────────────────────────────────────────────
 
 const getRoute = createRoute({
   method: 'get',
@@ -270,7 +257,6 @@ const modelsRoute = createRoute({
   },
 });
 
-// ─── Router ──────────────────────────────────────────────────────────────────
 
 export const llmConnectionRoutes = new OpenAPIHono<AppEnv>()
 
@@ -297,9 +283,6 @@ export const llmConnectionRoutes = new OpenAPIHono<AppEnv>()
 
     // A secret this server cannot encrypt must never be silently dropped.
     // upsertConnection() (services/llm-connection.ts) now THROWS in exactly
-    // this case as a backstop for any future caller — this 503 is what turns
-    // that throw into an actionable response instead of a bare 500 here,
-    // by never reaching the throw at all when we can see the problem coming.
     if (secret && !cfg.llmKeyEncryptionKey) {
       return c.json(
         {
@@ -314,9 +297,6 @@ export const llmConnectionRoutes = new OpenAPIHono<AppEnv>()
     await upsertConnection(userId, provider, baseUrl, label ?? '', secret, cfg.llmKeyEncryptionKey);
     const row = await getRawConnectionRow(userId, provider);
     if (row === null) {
-      // Defensive: mirrors upsertConnection's own "vanished immediately after
-      // upsert" guard — should be unreachable outside a concurrent delete
-      // racing this exact request.
       throw new Error('connection vanished immediately after upsert');
     }
     return c.json(toMaskedConnection(row), 200);
@@ -341,7 +321,6 @@ export const llmConnectionRoutes = new OpenAPIHono<AppEnv>()
     const userId = c.var.userId;
     const { provider } = c.req.valid('param');
 
-    // Decrypt only here — this is the one handler that actually needs the
     // plaintext secret (to authenticate through a proxy in front of Ollama).
     const conn = await getConnection(userId, provider, cfg.llmKeyEncryptionKey);
     if (conn === null) {
@@ -378,12 +357,7 @@ export const llmConnectionRoutes = new OpenAPIHono<AppEnv>()
     const userId = c.var.userId;
     const { provider } = c.req.valid('param');
 
-    // Decrypt the secret here too. Fix round 2 (#48 whole-branch review,
-    // Important 3): this handler used to skip decryption on the grounds that
     // listOllamaModels sent no Authorization header — which was true, and was
-    // the bug. Behind an authenticating proxy the testRoute above validated
-    // WITH the bearer and reported "Reachable", then this route 401'd and the
-    // dropdown came back empty with a green indicator still showing.
     const conn = await getConnection(userId, provider, cfg.llmKeyEncryptionKey);
     if (conn === null) {
       return c.json({ error: 'No connection configured for this provider' }, 404);

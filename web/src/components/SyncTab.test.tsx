@@ -1,24 +1,3 @@
-/**
- * SyncTab tests — Plan F (Task 3), the universe-scoped Sync tab.
- *
- * Pins the three decisions this component implements:
- *   - F-01: links live per universe (this tab), remotes per account.
- *   - F-02: "Sync now" blocks inline; a `busy` failure offers Run anyway.
- *   - F-06: elapsed seconds, never synthetic progress, plus a first-sync
- *     warning for a link that has never completed a run.
- * …and the honest-reporting rules: `assetsUnrepairable` stated plainly,
- * `assetsRepairedLocally` never as an exact figure.
- *
- * Error prose is asserted against SYNC_ERROR_COPY, never retyped. A test that
- * retyped it would pass against a component that hardcoded its own string, and
- * would break on every deliberate copy edit.
- *
- * NEGATIVE ASSERTIONS USE APOSTROPHE-FREE PHRASES. This component renders
- * typographic apostrophes (&rsquo;, U+2019), so a `queryByText(/can't/)` with a
- * straight quote can never match and would pass no matter what the component
- * did. Every `not.toBeInTheDocument` below matches a phrase containing no
- * apostrophe at all.
- */
 
 import { describe, it, expect, beforeEach, afterEach, vi } from 'vitest';
 import { render, screen, waitFor, within, act, fireEvent } from '@testing-library/react';
@@ -233,7 +212,6 @@ describe('SyncTab — #44 auto-sync toggle and status', () => {
     // WHAT THIS TEST DOES AND DOES NOT PROVE. It asserts the button is
     // reachable, and nothing more — the run itself, and the clear that follows
     // it, are server-side. That distinction is not pedantic: the clear did not
-    // exist until the #44 whole-branch review, this test passed the entire
     // time, and the pause was inescapable in practice. The API-side proof is
     // in api/tests/sync-auto.test.ts ("a successful manual run clears…").
     vi.mocked(api).mockImplementation(

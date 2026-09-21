@@ -11,42 +11,12 @@ export interface CreateLinkPopoverProps {
   onOpenChange: (open: boolean) => void;
   from: GraphNode;
   to: GraphNode;
-  /** Container-relative drop coordinates (UI-SPEC §E). */
   dropX: number;
   dropY: number;
-  /**
-   * Existing A→B label, if any. Hydrates the label input as an editable
-   * default value (CONTEXT.md D-03d — hint AS default value, not as a
-   * separate badge / chip).
-   */
   existingLabelHint?: string;
-  /**
-   * Error callback fired alongside the inline error message so the parent
-   * (GraphView, Plan 19-04) can surface a Toast. The popover stays open
-   * on error (UI-SPEC §H belt-and-suspenders).
-   */
   onError?: (err: unknown) => void;
 }
 
-/**
- * Radix Popover anchored at arbitrary drop coordinates via an invisible 1×1
- * Popover.Anchor div (UI-SPEC §E + 19-RESEARCH §"Pattern 2"). Hosts a
- * `LinkTypeSelect` combobox + direction toggle above the demoted optional
- * "Display label" `RelationCombobox`. Submission calls
- * `useCreateLink.mutateAsync` and closes on success; failure renders an
- * inline error AND fires the `onError` callback (parent surfaces Toast).
- *
- * Locked copywriting (UI-SPEC §Surface 1 + §"Copywriting Contract"):
- *  - Title: "Create link" (unchanged)
- *  - Type field label: "Type"
- *  - Type combobox placeholder: "Search or enter a type..."
- *  - Direction toggle label: "Direction"
- *  - Direction options: "A → B" (directed) / "A ↔ B" (undirected)
- *  - Label field label: "Display label (optional)"
- *  - Label field placeholder: "e.g. sworn shield since the Sundering"
- *  - Primary CTA: "Create link" / "Creating..."
- *  - Inline error: "Couldn't create link. Try again."
- */
 export function CreateLinkPopover({
   universeId,
   open,
@@ -104,10 +74,7 @@ export function CreateLinkPopover({
           sideOffset={12}
           collisionPadding={8}
           // Prevent FocusScope from auto-focusing the LinkTypeSelect
-          // input on open — its `onFocus={() => setOpen(true)}` would
-          // immediately open the inner suggestions popover, capturing the
           // user's first Esc (Rule 2: UX correctness — UI-SPEC §E expects
-          // Esc to close the outer popover in one keypress).
           onOpenAutoFocus={(e) => e.preventDefault()}
           // Explicit Esc + outside-click hooks (UI-SPEC §E lifecycle).
           onEscapeKeyDown={(e) => {

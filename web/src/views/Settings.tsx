@@ -1,12 +1,3 @@
-/**
- * Settings view — POL-03, §14.3 (route /settings confirmed).
- *
- * Single-section page with one toggle for the entries-as-bodies layer.
- * Per UI-SPEC §7.3 (toggle recipe), §10 (copy), §2.1 (typography), §1 (spacing).
- *
- * Route: /settings (inside Layout so AppBackground renders — §5.5 intent)
- * Linked from: UserMenu → Settings
- */
 
 import { useSimSettings } from '../store/simSettings';
 import BuildVersion from '../components/BuildVersion';

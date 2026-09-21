@@ -8,12 +8,10 @@ import type { AuthVariables } from '../middleware/auth.js';
 
 type AppEnv = { Variables: AuthVariables };
 
-// ─── Path param schemas ──────────────────────────────────────────────────────
 
 const uidParams = z.object({ uid: z.string().uuid() });
 const uidAndEntryIdParams = z.object({ uid: z.string().uuid(), entryId: z.string().uuid() });
 
-// ─── Zod schemas ─────────────────────────────────────────────────────────────
 
 const coordSchema = z.object({
   entryId: z.string().uuid(),
@@ -61,11 +59,7 @@ const graphPositionRowSchema = z.object({
 
 const errorSchema = z.object({ error: z.string() });
 
-// ─── Helpers ─────────────────────────────────────────────────────────────────
 
-/**
- * Assert every entryId belongs to the given universe (TOCTOU-safe when `reader` is a tx).
- */
 async function assertEntriesInUniverse(
   // eslint-disable-next-line @typescript-eslint/no-explicit-any
   reader: any,
@@ -83,7 +77,6 @@ async function assertEntriesInUniverse(
   }
 }
 
-// ─── graphRoutes route definitions ───────────────────────────────────────────
 
 const getGraphDataRoute = createRoute({
   method: 'get',
@@ -115,7 +108,6 @@ const getGraphDataRoute = createRoute({
   },
 });
 
-// ─── graphRoutes router ───────────────────────────────────────────────────────
 
 // GET /universes/:uid/graph-data -- returns { nodes, edges, positions }
 export const graphRoutes = new OpenAPIHono<AppEnv>()
@@ -159,7 +151,6 @@ export const graphRoutes = new OpenAPIHono<AppEnv>()
     return c.json({ nodes: nodeRows as any, edges: edgeRows as any, positions: positionRows as any }, 200);
   });
 
-// ─── graphPositionRoutes route definitions ────────────────────────────────────
 
 const upsertPositionRoute = createRoute({
   method: 'post',
@@ -302,7 +293,6 @@ const clearEntryPositionRoute = createRoute({
   },
 });
 
-// ─── graphPositionRoutes router ───────────────────────────────────────────────
 
 // Routes under /universes/:uid/graph-positions
 export const graphPositionRoutes = new OpenAPIHono<AppEnv>()
@@ -336,7 +326,6 @@ export const graphPositionRoutes = new OpenAPIHono<AppEnv>()
     const data = c.req.valid('json');
 
     await db().transaction(async (tx) => {
-      // Validate inside the tx so the check + writes are atomic
       await assertEntriesInUniverse(tx, uid, data.map((p) => p.entryId));
       for (const p of data) {
         await tx

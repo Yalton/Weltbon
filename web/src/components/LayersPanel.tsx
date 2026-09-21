@@ -16,67 +16,25 @@ import {
 } from '../hooks/useMapLayers';
 import { ConfirmDialog } from './ConfirmDialog';
 
-// ─── Props ────────────────────────────────────────────────────────────────────
 
 export interface LayersPanelProps {
   universeId: string;
   visible: boolean;
   onToggle: () => void;
-  /**
-   * Color picker integration (D-42-07): Plan 04 wires the existing pin/region
-   * color picker here. LayersPanel surfaces the callback so that MapEditor can
-   * open its shared color picker and forward the result back to the panel.
-   * When undefined, swatch clicks are no-ops (graceful until Plan 04 wires it).
-   */
   onRequestColorPick?: (
     currentColor: string,
     onPick: (hex: string) => void,
   ) => void;
-  /**
-   * Armed terrain type for paint mode (43-04).
-   * The swatch with this ID shows a highlight ring (aria-pressed=true).
-   */
   armedTerrainTypeId?: string | null;
-  /**
-   * Callback to arm/disarm a terrain type for painting.
-   * Called with (typeId, layerId) — null typeId means disarm.
-   */
   onArmTerrainType?: (typeId: string | null, layerId: string) => void;
-  /**
-   * Per-viewer layer visibility/opacity from localStorage (43-04).
-   * When provided, replaces the local hiddenLayerIds state for visibility.
-   */
   layerViewerState?: Record<string, { visible: boolean; opacity: number }>;
-  /**
-   * Callback to update per-viewer visibility/opacity (43-04).
-   * Writes to localStorage only — no server PATCH.
-   */
   onLayerViewerStateChange?: (
     layerId: string,
     patch: { visible?: boolean; opacity?: number },
   ) => void;
 }
 
-// ─── LayersPanel ──────────────────────────────────────────────────────────────
 
-/**
- * Palette-management panel for universe-wide thematic layers and terrain types.
- *
- * CRITICAL: outer wrapper uses pointer-events-none so d3-zoom on MapCanvas is
- * never blocked. Only the inner panel is pointer-events-auto.
- *
- * Implements the APPROVED UI-SPEC contract (42-UI-SPEC.md):
- * - World-wide scope banner (D-42-04, permanent, no dismiss)
- * - Preset CTAs shown only when no layers exist (D-42-02)
- * - Inline rename on double-click (Enter/blur commit; Esc discard)
- * - Visibility checkbox (local-only state, NO API call — D-42-03)
- * - Opacity slider (PATCH defaultOpacity — D-42-08)
- * - Up/down reorder arrows for ordered layers only (D-42-05)
- * - Height-range label input for ordered-layer types (D-42-06)
- * - Color swatch (cycles MAP_COLOR_PALETTE for new types — D-42-07)
- * - ConfirmDialog for destructive deletes (D-42-04 — optional, included)
- * - Esc key closes the panel (keyboard a11y)
- */
 export function LayersPanel({
   universeId,
   visible,
@@ -87,14 +45,12 @@ export function LayersPanel({
   layerViewerState,
   onLayerViewerStateChange,
 }: LayersPanelProps) {
-  // Only fetch when the panel is actually shown — in share mode the editor mounts
   // this panel with visible=false, and fetching there 404s on the share seam (WR-03).
   const { data: layers = [] } = useMapLayers(universeId, { enabled: visible });
 
   const createLayer = useCreateMapLayer(universeId);
   const updateLayer = useUpdateMapLayer(universeId);
   const deleteLayer = useDeleteMapLayer(universeId);
-  // Phase 52 SECRET-01: secret toggle (D-03a). LayersPanel owns its own layer mutations directly.
   const toggleLayerSecret = useToggleLayerSecret(universeId);
   const createType = useCreateTerrainType(universeId);
   const updateType = useUpdateTerrainType(universeId);
@@ -102,18 +58,15 @@ export function LayersPanel({
   const addBiomes = useAddBiomesPreset(universeId);
   const addElevation = useAddElevationPreset(universeId);
 
-  // ── Inline rename state ────────────────────────────────────────────────────
   const [editingId, setEditingId] = useState<string | null>(null);
   const [draftName, setDraftName] = useState('');
   const [renameError, setRenameError] = useState('');
 
-  // ── Expand/collapse per layer ──────────────────────────────────────────────
   const [expandedLayerIds, setExpandedLayerIds] = useState<Set<string>>(new Set());
 
   // ── Per-viewer visibility (local only — no API call) ──────────────────────
   const [hiddenLayerIds, setHiddenLayerIds] = useState<Set<string>>(new Set());
 
-  // ── Delete confirm dialog ──────────────────────────────────────────────────
   const [deleteTarget, setDeleteTarget] = useState<{
     kind: 'layer' | 'type';
     id: string;
@@ -132,7 +85,6 @@ export function LayersPanel({
     return () => window.removeEventListener('keydown', handle);
   }, [visible, stableOnToggle]);
 
-  // ── Inline rename handlers ─────────────────────────────────────────────────
   const startRename = (id: string, current: string) => {
     setEditingId(id);
     setDraftName(current);
@@ -170,7 +122,6 @@ export function LayersPanel({
     }
   };
 
-  // ── Helpers ────────────────────────────────────────────────────────────────
   const toggleExpand = (layerId: string) => {
     setExpandedLayerIds((prev) => {
       const next = new Set(prev);
@@ -229,7 +180,6 @@ export function LayersPanel({
     const neighborIdx = direction === 'up' ? idx - 1 : idx + 1;
     if (neighborIdx < 0 || neighborIdx >= types.length) return;
     const neighbor = types[neighborIdx];
-    // Swap sort_orders
     updateType.mutate({
       layerId: layer.id,
       typeId: type.id,
@@ -249,10 +199,8 @@ export function LayersPanel({
     });
   };
 
-  // ── Render ─────────────────────────────────────────────────────────────────
   return (
     // Pointer-events-none wrapper so d3-zoom on MapCanvas is never blocked.
-    // CRITICAL: this class must NOT be removed — same guard as MapLegend.
     <div className="pointer-events-none absolute inset-0">
       {visible && (
         <div
@@ -316,7 +264,6 @@ export function LayersPanel({
               </div>
             </div>
           ) : (
-            /* Layer list */
             <ul role="list">
               {[...layers]
                 .sort((a, b) => a.sortOrder - b.sortOrder)
@@ -399,8 +346,7 @@ export function LayersPanel({
                           title="Visible"
                         />
 
-                        {/* Phase 52 SECRET-01: per-layer secret toggle (D-03a).
-                            LayersPanel is always owner-only (rendered !isShare in MapEditor). */}
+
                         <button
                           type="button"
                           onClick={() =>

@@ -15,9 +15,6 @@ export function UserMenu() {
   const logout = useLogout();
   const navigate = useNavigate();
 
-  // Local mode has no account lifecycle, so the menu held exactly one item that
-  // repeated its own trigger. A direct link is the same destination in one click,
-  // and it drops an accessible name ("Application menu") that did not contain the
   // visible label, which no voice-control user could have spoken (WCAG 2.5.3).
   if (authMode === 'local') {
     return (

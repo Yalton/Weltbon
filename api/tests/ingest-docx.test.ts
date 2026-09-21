@@ -1,25 +1,3 @@
-/**
- * Issue #35 — .docx through POST /api/universes/:uid/ingest and /ingest/commit.
- *
- * THE ONLY TESTS ON THIS BRANCH THAT RUN THE REAL HTTP HANDLER AGAINST A REAL
- * DATABASE. Everything else about .docx is unit-tested one layer down, and that
- * layer cannot answer the question this file exists for: does the HANDLER wire
- * the pieces together the way the spec says. The unit suite pins
- * `docxToMarkdownPath` as a function; only a request through the route pins
- * that the handler calls it, and a regression that drops the call is silent —
- * `parseBatch`'s `isMarkdownFile` gate discards the converted document with no
- * error at all, leaving a 200 with an empty entry list (DOCX-01/DOCX-13).
- *
- * REGISTRATION. `api/vitest.config.ts`'s integration project uses an explicit
- * `include` list, not a glob. A file missing from it is silently never run and
- * the suite still passes green — so the first test below asserts this file's
- * own registration, and the task report records the lane's reported test count.
- *
- * Fixtures are built in memory (`makeDocx`/`documentWith`) — no binary .docx in
- * git. Cap tests deliberately use INVALID .docx bytes so a passing assertion
- * proves the cap ran BEFORE conversion: a valid fixture would return the same
- * status either way and prove nothing.
- */
 import { describe, it, expect, beforeAll, afterAll, beforeEach, vi } from 'vitest';
 import { readFileSync } from 'node:fs';
 import { join, dirname } from 'node:path';
@@ -35,7 +13,6 @@ import {
 } from './helpers.js';
 import { universes, entries, links } from '../src/db/schema.js';
 import { makeDocx, documentWith } from './helpers/docx-fixture.js';
-import { DB_GATED_TESTS } from '../ci/integration-tiers.mjs';
 
 /**
  * Item 8's unexpected-throw case. `convertDocx` is imported statically by
@@ -173,11 +150,8 @@ describe('POST /api/universes/:uid/ingest — .docx (#35)', () => {
   // ─── 1. Registration proved ───────────────────────────────────────────────
 
   it('is registered in DB_GATED_TESTS — an unregistered file is silently never run', () => {
-    // The list moved out of vitest.config.ts into ci/integration-tiers.mjs when
-    // the integration lane grew tiers; this guard kept reading the config and so
-    // failed for every file, which is the exact failure it exists to catch.
-    // Assert against the array itself rather than any file's text.
-    expect(DB_GATED_TESTS).toContain('tests/ingest-docx.test.ts');
+    const config = readFileSync(join(__dirname, '..', 'vitest.config.ts'), 'utf8');
+    expect(config).toContain("'tests/ingest-docx.test.ts'");
   });
 
   // ─── 2. The rewrite, at the ROUTE layer (the single most important test) ───

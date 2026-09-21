@@ -12,16 +12,6 @@ export interface GraphSubgraphFilterProps {
   onFocusChange: (focus: SubgraphFocus | null) => void;
 }
 
-/**
- * Banner + focus-entry picker + hop-depth selector shown when a universe has
- * more than SUBGRAPH_THRESHOLD nodes. The user picks a focus entry and a hop
- * count; the parent GraphView filters the node/edge sets to the computed
- * neighborhood before handing them to GraphCanvas.
- *
- * Why cap the option list at 2000: rendering 10k+ <option> elements stalls
- * the browser in-select. Beyond 2000 entries the user should rely on search
- * (Plan 03-03) or categories (Plan 03-06) to navigate instead.
- */
 export function GraphSubgraphFilter({
   nodes,
   totalCount,

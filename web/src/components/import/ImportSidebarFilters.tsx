@@ -1,19 +1,3 @@
-/**
- * Sidebar filter column for the import-review screen (UI-SPEC §4.3 + §4.6).
- *
- * Three filter dimensions:
- *   - Status (radio, single-select, default 'all')
- *   - Category (multi-checkbox; empty Set === "all checked" semantically)
- *   - Type (multi-checkbox; same shape)
- *
- * Plus a Bulk actions section with three buttons:
- *   - "Reject all with warnings (N)" — disabled when warningCount === 0
- *   - "Reject all in <category>" — enabled only when filters.categories.size === 1
- *   - "Restore N rejected" — disabled when rejectedCount === 0
- *
- * Presentational + prop-driven; parent (Plan 12-06 ImportReview) owns state +
- * callback wiring. Static Tailwind class strings only.
- */
 
 import type { ReactNode } from 'react';
 
@@ -21,9 +5,7 @@ export type StatusFilter = 'all' | 'accepted' | 'rejected' | 'conflicts' | 'warn
 
 export type ReviewFilters = {
   status: StatusFilter;
-  /** Empty Set === "all categories selected" (semantic shorthand for default state). */
   categories: Set<string>;
-  /** Empty Set === "all types selected". */
   types: Set<string>;
 };
 

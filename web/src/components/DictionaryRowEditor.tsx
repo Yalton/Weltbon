@@ -3,7 +3,6 @@ import { TagInput } from './TagInput';
 import { DICTIONARY_TERMS } from './dictionaryTerms';
 import type { DictionaryWord, CreateWordInput } from '../hooks/useDictionary';
 
-// ─── Types ───────────────────────────────────────────────────────────────────
 
 type DraftWord = {
   word: string;
@@ -15,7 +14,6 @@ type DraftWord = {
 };
 
 interface Props {
-  /** When set, this is an edit of an existing word. When null, it's a new word. */
   word?: DictionaryWord | null;
   isSaving?: boolean;
   onSave: (draft: CreateWordInput) => void | Promise<void>;
@@ -23,26 +21,7 @@ interface Props {
   languageEntryId: string | null;
 }
 
-// ─── DictionaryRowEditor ─────────────────────────────────────────────────────
 
-/**
- * Phase 32 Plan 03 — Inline row editor for dictionary words.
- *
- * Renders as a <tr> of controlled inputs for word/ipa/pos/gloss/etymology/tags.
- * Used for both edit-existing (PATCH) and add-new (POST) rows.
- *
- * Etymology: <textarea> with min-height 96px (UI-SPEC constraint, D-11).
- * Tags: <TagInput> component.
- * Keyboard: Enter saves on single-line fields; Escape discards.
- * Saving state: disables inputs, shows "Saving…".
- *
- * UI-SPEC compliance:
- *   - Exactly 2 font weights (400/600)
- *   - py-3 cells
- *   - focus:ring-2 focus:ring-[color:var(--color-accent)]
- *   - "Save word" / "Discard changes" copy
- *   - min-height 44px row (touch target WCAG 2.5.5)
- */
 export function DictionaryRowEditor({
   word,
   isSaving = false,

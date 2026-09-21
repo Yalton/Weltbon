@@ -1,7 +1,5 @@
 /**
- * Phase 22 BYOK — LLM API key encryption + decryption.
  *
- * Two exports consumed by Plan 22-04 (routes) and Phase 23+ (provider abstraction):
  *
  *   - encryptKey(plaintext, encryptionKeyHex):
  *       AES-256-GCM with per-call random 12-byte IV + 16-byte auth tag.
@@ -13,8 +11,6 @@
  *       malformed (non-64-hex) env var. Caller cannot distinguish — treat null as
  *       "no usable key". No cache anywhere (D-10).
  *
- * Phase 23 D-03 (D-03b) — provider-ping helpers moved out:
- *   The Phase 22 provider-validation function and its typed-error class that
  *   previously lived here have been removed. They are now provided by the
  *   provider abstraction in `api/src/providers/llm/` via
  *   `getProvider(provider).validate(plaintext)` which throws `LLMProviderError`
@@ -34,66 +30,25 @@ import { llmApiKeys } from '../db/schema.js';
 import { encryptSecret, decryptSecret, type EncryptedSecret } from './crypto.js';
 
 // ---------------------------------------------------------------------------
-// Public types
 // ---------------------------------------------------------------------------
 
-// Plan A (2026-07-17): the AES-256-GCM envelope shape is now owned by
-// crypto.ts (EncryptedSecret). EncryptedKey keeps its exported name/shape —
-// callers and stored DB rows are untouched — but is now an alias.
+
 export type EncryptedKey = EncryptedSecret;
 
-// Issue #48: 'ollama' added. Ollama is endpoint-based (no BYOK key row in
-// llm_api_keys — Task 1's llm_connections carries its base URL instead), but
-// the type lives here regardless: every route that switches on provider name
-// (auditProvider validation, audit estimate) must see 'ollama' as a valid
-// value or it 400s before the provider layer ever runs.
 export type LlmProvider = 'anthropic' | 'openai' | 'ollama';
 
-/**
- * Every provider name — use where the meaning genuinely is "any LLM
- * provider" (e.g. universes.auditProvider, the audit-estimate query — a
- * universe's audit config can legitimately name Ollama once Task 4 lands).
- * Widen this, not each copy.
- */
 export const PROVIDER_NAMES = ['anthropic', 'openai', 'ollama'] as const;
 
-/**
- * Providers that store a row in `llm_api_keys` — i.e. everything BYOK-key
- * routes (llm-keys.ts CRUD, llm-models.ts's live catalog) actually operate
- * on. Deliberately narrower than PROVIDER_NAMES: Ollama is endpoint-based
- * (Task 1's llm_connections, keyed on a base URL) and NEVER gets an
- * llm_api_keys row — `do not modify llm_api_keys` is a standing constraint,
- * not a TODO. Using PROVIDER_NAMES on those two routes let
- * `POST /api/llm-keys {provider:'ollama'}` pass Zod validation and reach
- * `getProvider('ollama').validate(...)`, which throws a plain (non-
- * LLMProviderError) Error that route's catch doesn't handle — an
- * authenticated client could trigger a bare 500 with a stack trace instead
- * of a clean 4xx, and the OpenAPI schema advertised a provider value the
- * route could never actually accept. If this constant is ever "simplified"
- * back to `= PROVIDER_NAMES`, that whole class of bug returns.
- */
 export const KEY_PROVIDER_NAMES = ['anthropic', 'openai'] as const;
 
 // ---------------------------------------------------------------------------
-// encryptKey
 // ---------------------------------------------------------------------------
 
-/**
- * AES-256-GCM encrypt. Per-call random 12-byte IV — never reused.
- *
- * Caller is responsible for validating `encryptionKeyHex` (config.ts checks
- * the 64-hex-char shape at boot). If the hex is malformed, Buffer.from will
- * silently produce a short buffer and createCipheriv will throw — but the
- * boundary that swallows that throw is `getDecryptedKey`, not encryptKey.
- * In encryption (POST route) flow, a malformed key MUST be caught at config
- * boot via the LLMKEY-08 fail-fast.
- */
 export function encryptKey(plaintext: string, encryptionKeyHex: string): EncryptedKey {
   return encryptSecret(plaintext, encryptionKeyHex);
 }
 
 // ---------------------------------------------------------------------------
-// getDecryptedKey
 // ---------------------------------------------------------------------------
 
 const HEX_KEY_RE = /^[0-9a-f]{64}$/i;
@@ -137,10 +92,7 @@ export const getDecryptedKey = async (
     const row = rows[0];
 
     // CR-02 fix: pin the version explicitly. encryptedKeyVersion is persisted
-    // on every INSERT/UPDATE; without this guard a future v2 row would be
     // decrypted with the current key and produce an auth-tag failure → silent
-    // null with no diagnostic surface to distinguish "wrong key" from "wrong
-    // version" from "tampering". Operators need to know rotation tooling has
     // not landed yet. The warn line is metadata-only (no plaintext/ciphertext/
     // key material — T-22-02-01..06).
     if (row.encryptedKeyVersion !== 1) {
@@ -167,16 +119,11 @@ export const getDecryptedKey = async (
     );
     if (decrypted === null) {
       // Metadata-only warn. NEVER reference err.message, plaintext, ciphertext,
-      // iv, authTag, keyBuf, encryptionKeyHex. The userId + provider tuple is
-      // the only diagnostic surface we expose (operator can correlate to the
-      // DB row).
       console.warn('[llm-key] decryption failed for user', userId, 'provider', provider);
     }
     return decrypted;
   } catch {
     // Metadata-only warn. NEVER reference err.message, plaintext, ciphertext, iv,
-    // authTag, keyBuf, encryptionKeyHex. The userId + provider tuple is the only
-    // diagnostic surface we expose (operator can correlate to the DB row).
     console.warn('[llm-key] decryption failed for user', userId, 'provider', provider);
     return null;
   }

@@ -1,17 +1,3 @@
-/**
- * UI-SPEC §G — invalid / revoked / expired token page.
- *
- * Rendered by `ShareLayout` when `GET /api/share/universe` returns 404 (or
- * any other error — the visitor has no useful recovery action either way,
- * so we collapse all error states to the same surface). Per D-19 there is
- * NO login or register CTA — the visitor's intent is to view shared
- * content, not to be acquired; the error page is not the right moment.
- *
- * Layout deliberately avoids `ShareLayout` (no banner, no sidebar) because
- * there is no universe name or owner display name to render in the banner.
- * The Weltbon wordmark at top-left mirrors the authenticated `Layout`
- * header for visual continuity with the rest of the app.
- */
 export function ShareNotFound() {
   return (
     <div className="min-h-full flex flex-col">

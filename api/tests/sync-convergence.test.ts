@@ -1,16 +1,3 @@
-/**
- * Plan C Task 7 — end-to-end convergence over the real /api/sync surface.
- *
- * A and B are two INSTANCES: two independent databases, two independent users,
- * two independent blob stores, holding the same universe id (S-05). The test
- * performs exactly what a Plan D client will — snapshot both sides, merge
- * against the stored base, push each side's delta through POST apply — and
- * asserts the two manifests agree afterwards.
- *
- * `use('A' | 'B')` flips setTestDb and UPLOADS_DIR. Handlers resolve db() per
- * request and storage reads UPLOADS_DIR per I/O call, so one app object serves
- * both instances.
- */
 import { describe, it, expect, beforeAll, afterAll, beforeEach } from 'vitest';
 import { mkdtemp } from 'node:fs/promises';
 import { tmpdir } from 'node:os';
@@ -53,7 +40,7 @@ function manifestToOps(manifest: any) {
   return ops;
 }
 
-describe('two-instance convergence (Plan C acceptance)', () => {
+describe('two-instance convergence', () => {
   let A: TestDbHandle;
   let B: TestDbHandle;
   let uploadsA: string;
@@ -167,12 +154,7 @@ describe('two-instance convergence (Plan C acceptance)', () => {
     return await res.json();
   }
 
-  /**
-   * One sync round driven from A (A is "local", B is "remote"), exactly as a
-   * Plan D client will. Returns the ManifestMergeResult, or null when the round
-   * was a bootstrap push (B had never seen the universe).
-   */
-  async function syncRound(base: any | null) {
+    async function syncRound(base: any | null) {
     const { mergeManifests } = await import('../src/services/sync/merge.js');
 
     await use('A');
@@ -421,7 +403,7 @@ describe('two-instance convergence (Plan C acceptance)', () => {
 
     const { entries, maps, mapPins } = await import('../src/db/schema.js');
     await A.db.update(entries).set({ isPublic: false }).where(eq(entries.id, secretEntry.id));
-    // A secret map pin too: `secret` is the inverse-polarity flag (Phase 52),
+
     // so this checks apply preserves BOTH filter columns, not just one.
     const [map] = await A.db.insert(maps).values({ universeId, name: 'Atlas' }).returning();
     const [secretPin] = await A.db
@@ -455,7 +437,7 @@ describe('two-instance convergence (Plan C acceptance)', () => {
     expect((await shared.json()).map((e: any) => e.title)).toEqual(['Visible lore']);
 
     //   …and `secret` — via /api/share/maps/{mid} (getPublicMap drops secret pins,
-    // Phase 52 SECRET-01). The map's only pin is secret, so the projected pins
+
     // must be empty, and the secret pin id must not appear anywhere in them. This
     // is the half that a raw B.db.select (column survival) cannot prove.
     const mapDetail = await app.request(`/api/share/maps/${map.id}`, { headers: { 'share-token': plaintext } });

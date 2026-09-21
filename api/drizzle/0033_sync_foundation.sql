@@ -1,4 +1,3 @@
--- Sync Foundation (Plan A, sync spec S-03/S-10 + spike-report hardening note).
 --
 -- Part 1 — convert the five NAIVE updated_at columns to timestamptz.
 -- USING "updated_at" AT TIME ZONE 'UTC' interprets stored naive values as UTC,
@@ -42,7 +41,6 @@ ALTER TABLE "terrain_types" ADD COLUMN "updated_at" timestamp with time zone DEF
 --> statement-breakpoint
 ALTER TABLE "share_tokens" ADD COLUMN "updated_at" timestamp with time zone DEFAULT now() NOT NULL;
 --> statement-breakpoint
--- Part 3 — sync tables (sync spec "Data model").
 CREATE TABLE "sync_remotes" (
   "id" uuid PRIMARY KEY DEFAULT gen_random_uuid() NOT NULL,
   "user_id" uuid NOT NULL REFERENCES "users"("id") ON DELETE CASCADE,

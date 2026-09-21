@@ -1,5 +1,4 @@
 /**
- * Phase 39 MAPS-01/02/03: Map CRUD + pin CRUD.
  *
  * Auth: every route applies requireAuth (via apiR.use('/universes/*', requireAuth)
  *   at the app level) + requireUniverse (inline per-handler, the established pattern).
@@ -29,13 +28,7 @@ import type { AuthVariables } from '../middleware/auth.js';
 
 type AppEnv = { Variables: AuthVariables };
 
-// ─── Signed URL helper (mirrors assets.ts assetUrls) ─────────────────────────
 
-/**
- * Build HMAC-signed serving URLs for a map's image asset.
- * Mirrors assetUrls() in api/src/routes/assets.ts (Phase 38 UAT-fix).
- * Returns null urls when imageAssetId is null (map has no image).
- */
 function mapImageUrls(
   uid: string,
   imageAssetId: string | null,
@@ -49,7 +42,6 @@ function mapImageUrls(
   };
 }
 
-// ─── Shared param schemas ─────────────────────────────────────────────────────
 
 const uidParams = z.object({ uid: z.string().uuid() });
 const uidAndMidParams = z.object({ uid: z.string().uuid(), mid: z.string().uuid() });
@@ -57,7 +49,6 @@ const uidMidPinParams = z.object({ uid: z.string().uuid(), mid: z.string().uuid(
 const uidMidRegionParams = z.object({ uid: z.string().uuid(), mid: z.string().uuid(), regionId: z.string().uuid() });
 const uidMidRouteParams = z.object({ uid: z.string().uuid(), mid: z.string().uuid(), routeId: z.string().uuid() });
 
-// ─── Zod schemas ──────────────────────────────────────────────────────────────
 
 const createMapSchema = z.object({
   name: z.string().min(1).max(200),
@@ -83,7 +74,7 @@ const mapSchema = z.object({
   name: z.string(),
   imageAssetId: z.string().nullable(),
   createdAt: z.string().or(z.date()),
-  legendLabels: z.string().nullable().optional(), // Phase 41.1: parity with publicMapSchema (share-seam-bare-array-contract)
+  legendLabels: z.string().nullable().optional(),
   rawUrl: z.string().nullable(),
   thumbUrl: z.string().nullable(),
 });
@@ -94,16 +85,12 @@ const pinSchema = z.object({
   entryId: z.string().nullable(),           // D-01a: pin may be map-only (NEST-01)
   x: z.number(),
   y: z.number(),
-  color: z.string().nullable().optional(),  // Phase 40 MAPS-05 (D-01)
-  icon: z.string().nullable().optional(),   // Phase 40 MAPS-05 (D-02)
-  // Phase 52 SECRET-01: owner-only secret flag in authenticated response (NOT in share.ts).
+  color: z.string().nullable().optional(),
+  icon: z.string().nullable().optional(),
   secret: z.boolean().optional(),
-  // Phase 53 NEST-01: optional target map link (null = unlinked).
   targetMapId: z.string().uuid().nullable().optional(),
 });
 
-// Phase 40 MAPS-04: Region Zod schemas (D-09)
-// Phase 43 TERRAIN-01: terrainTypeId discriminator added to all three region schemas.
 const regionSchema = z.object({
   id: z.string(),
   mapId: z.string(),
@@ -112,11 +99,8 @@ const regionSchema = z.object({
   points: z.string(),               // raw JSON string; web parses to {x,y}[]
   color: z.string().nullable(),
   createdAt: z.string().or(z.date()),
-  // Phase 43: terrain discriminator — null = political/standalone; set = terrain area (T-43-01)
   terrainTypeId: z.string().uuid().nullable().optional(),
-  // Phase 52 SECRET-01: owner-only secret flag in authenticated response (NOT in share.ts).
   secret: z.boolean().optional(),
-  // Phase 53 NEST-01: optional target map link (null = unlinked).
   targetMapId: z.string().uuid().nullable().optional(),
 });
 
@@ -125,16 +109,12 @@ const createRegionSchema = z.object({
   points: z.string().min(1),        // JSON [{x,y}, ...] — min 1 char required
   // entryId/color are .nullable() because the draw-region UI sends explicit
   // null for a standalone, default-colored region (matches the DB's nullable
-  // columns, the handler's `?? null`, and updateRegionSchema). .optional()
-  // alone rejected null → 400, so standalone regions could not be drawn.
   entryId: z.string().uuid().nullable().optional(),
   color: z.string().nullable().optional(),
-  // Phase 43: terrain discriminator (T-43-01: UUID shape validated; FK constraint handles referential integrity)
   terrainTypeId: z.string().uuid().nullable().optional(),
 }).refine((data) => !(data.entryId && data.terrainTypeId), {
   // CR-01: entryId XOR terrainTypeId — a terrain area carries no entry link. Share
   // terrain-area queries don't privacy-gate on entries.isPublic, so a both-set region
-  // would expose a private entry's UUID to share visitors.
   message: 'A region may link an entry or a terrain type, not both',
 });
 
@@ -142,11 +122,8 @@ const updateRegionSchema = z.object({
   name: z.string().max(200).optional(),
   color: z.string().nullable().optional(),
   entryId: z.string().uuid().nullable().optional(),
-  // Phase 43: reclassify support — use 'terrainTypeId' in data presence check in handler
   terrainTypeId: z.string().uuid().nullable().optional(),
-  // Phase 52 SECRET-01: owner-only secret flag; false = visible to share, true = excluded.
   secret: z.boolean().optional(),
-  // Phase 53 NEST-01: optional target map link (null = unlinked).
   targetMapId: z.string().uuid().nullable().optional(),
 }).refine(
   (data) =>
@@ -159,11 +136,9 @@ const updateRegionSchema = z.object({
   { message: 'At least one field must be provided' },
 ).refine((data) => !(data.entryId && data.terrainTypeId), {
   // CR-01: entryId XOR terrainTypeId (see createRegionSchema). The cross-request
-  // combination is caught in the PATCH handler against the stored row.
   message: 'A region may link an entry or a terrain type, not both',
 });
 
-// Phase 51 ROUTE-01: Route Zod schemas (mirror region schemas; drop terrainTypeId; add lineStyle/width/showArrow)
 const routeSchema = z.object({
   id: z.string(),
   mapId: z.string(),
@@ -175,13 +150,11 @@ const routeSchema = z.object({
   width: z.number().int(),
   showArrow: z.boolean(),
   createdAt: z.string().or(z.date()),
-  // Phase 52 SECRET-01: owner-only secret flag in authenticated response (NOT in share.ts).
   secret: z.boolean().optional(),
 });
 
 const createRouteSchema = z.object({
   name: z.string().max(200).default(''),
-  // Phase 51 WR-03: structurally validate the raw points JSON server-side.
   points: z.string().min(1).refine(isValidRoutePoints, { message: ROUTE_POINTS_ERROR }),
   // entryId/color nullable — draw-route UI may send explicit null for standalone route
   entryId: z.string().uuid().nullable().optional(),
@@ -200,7 +173,6 @@ const updateRouteSchema = z.object({
   // WR-04: cap stroke width (mirror createRouteSchema).
   width: z.number().int().positive().max(64).optional(),
   showArrow: z.boolean().optional(),
-  // Phase 52 SECRET-01: owner-only secret flag; mirrors showArrow boolean-toggle pattern.
   secret: z.boolean().optional(),
 }).refine(
   (data) =>
@@ -214,14 +186,10 @@ const updateRouteSchema = z.object({
   { message: 'At least one field must be provided' },
 );
 
-// Phase 40 MAPS-05: Pin style Zod schema
-// Phase 52 SECRET-01: secret added alongside color/icon (owner-only flag).
-// Phase 53 NEST-01: targetMapId added for set/clear of the nested-map link.
 const pinStyleSchema = z.object({
   color: z.string().nullable().optional(),
   icon: z.string().nullable().optional(),
   secret: z.boolean().optional(),
-  // Phase 53 NEST-01: optional target map link (null = unlinked).
   targetMapId: z.string().uuid().nullable().optional(),
 }).refine(
   (data) =>
@@ -240,10 +208,10 @@ const mapDetailSchema = z.object({
   createdAt: z.string().or(z.date()),
   rawUrl: z.string().nullable(),
   thumbUrl: z.string().nullable(),
-  legendLabels: z.string().nullable().optional(), // Phase 40 MAPS-05 (D-03): legend caption overrides
+  legendLabels: z.string().nullable().optional(),
   pins: z.array(pinSchema),
-  regions: z.array(regionSchema),   // Phase 40: regions alongside pins
-  routes: z.array(routeSchema),     // Phase 51: routes alongside regions
+  regions: z.array(regionSchema),
+  routes: z.array(routeSchema),
 });
 
 const createPinSchema = z.object({
@@ -251,7 +219,6 @@ const createPinSchema = z.object({
   entryId: z.string().uuid().nullable().optional(),
   x: z.number().finite().min(0).max(1), // normalized 0..1 (D-10)
   y: z.number().finite().min(0).max(1),
-  // Phase 53 NEST-01: optional target map link for map-only or dual-target pins.
   targetMapId: z.string().uuid().nullable().optional(),
 });
 
@@ -266,7 +233,6 @@ const relinkPinSchema = z.object({
 
 const errorSchema = z.object({ error: z.string() });
 
-// ─── Route definitions ────────────────────────────────────────────────────────
 
 const listMapsRoute = createRoute({
   method: 'get',
@@ -444,7 +410,6 @@ const deletePinRoute = createRoute({
   },
 });
 
-// Phase 40 MAPS-05: Pin style PATCH route (D-01, D-02)
 const updatePinStyleRoute = createRoute({
   method: 'patch',
   path: '/{mid}/pins/{pinId}/style',
@@ -467,7 +432,6 @@ const updatePinStyleRoute = createRoute({
   },
 });
 
-// Phase 40 MAPS-04: Region CRUD routes (D-09)
 const addRegionRoute = createRoute({
   method: 'post',
   path: '/{mid}/regions',
@@ -527,7 +491,6 @@ const deleteRegionRoute = createRoute({
   },
 });
 
-// Phase 51 ROUTE-01: Route CRUD routes (mirrors region route defs)
 const addRouteRoute = createRoute({
   method: 'post',
   path: '/{mid}/routes',
@@ -587,12 +550,7 @@ const deleteRouteRoute = createRoute({
   },
 });
 
-// ─── Helper ───────────────────────────────────────────────────────────────────
 
-/**
- * Fetch map, verify it belongs to the universe. Returns 404 if not found.
- * Mirrors requireDiagram in diagrams.ts.
- */
 async function requireMap(mapId: string, universeId: string) {
   const rows = await db()
     .select()
@@ -604,7 +562,6 @@ async function requireMap(mapId: string, universeId: string) {
   return rows[0];
 }
 
-// ─── Router ───────────────────────────────────────────────────────────────────
 
 export const mapsRouter = new OpenAPIHono<AppEnv>()
 
@@ -618,7 +575,6 @@ export const mapsRouter = new OpenAPIHono<AppEnv>()
       .from(maps)
       .where(eq(maps.universeId, uid));
 
-    // Inject signed image URLs for each map (null imageAssetId → null urls)
     const withUrls = rows.map((row) => ({
       ...row,
       ...mapImageUrls(uid, row.imageAssetId ?? null),
@@ -650,7 +606,6 @@ export const mapsRouter = new OpenAPIHono<AppEnv>()
     return c.json({ ...row, ...mapImageUrls(uid, row.imageAssetId ?? null) } as any, 201);
   })
 
-  // GET /universes/:uid/maps/:mid — map detail with pins AND regions (Phase 40)
   .openapi(getMapRoute, async (c) => {
     const { uid, mid } = c.req.valid('param');
     await requireUniverse(uid, c.var.userId);
@@ -659,15 +614,15 @@ export const mapsRouter = new OpenAPIHono<AppEnv>()
     const [pinRows, regionRows, routeRows] = await Promise.all([
       db().select().from(mapPins).where(eq(mapPins.mapId, mid)),
       db().select().from(mapRegions).where(eq(mapRegions.mapId, mid)),
-      db().select().from(mapRoutes).where(eq(mapRoutes.mapId, mid)),  // Phase 51
+      db().select().from(mapRoutes).where(eq(mapRoutes.mapId, mid)),
     ]);
 
     return c.json({
       ...map,
       ...mapImageUrls(uid, map.imageAssetId ?? null),
       pins: pinRows,
-      regions: regionRows,   // Phase 40 addition
-      routes: routeRows,     // Phase 51 addition
+      regions: regionRows,
+      routes: routeRows,
     } as any, 200);
   })
 
@@ -709,7 +664,6 @@ export const mapsRouter = new OpenAPIHono<AppEnv>()
     return c.json({ ...updated, ...mapImageUrls(uid, updated.imageAssetId ?? null) } as any, 200);
   })
 
-  // DELETE /universes/:uid/maps/:mid — delete map (cascades to pins via FK)
   .openapi(deleteMapRoute, async (c) => {
     const { uid, mid } = c.req.valid('param');
     await requireUniverse(uid, c.var.userId);
@@ -741,8 +695,6 @@ export const mapsRouter = new OpenAPIHono<AppEnv>()
       }
     }
 
-    // Phase 53 NEST-01: validate targetMapId is in this universe + not a self-target.
-    // Null/undefined targetMapId = no nested map link (always allowed at create time).
     if (data.targetMapId) {
       // T-53-06: reject self-target
       if (data.targetMapId === mid) {
@@ -766,7 +718,6 @@ export const mapsRouter = new OpenAPIHono<AppEnv>()
         entryId: data.entryId ?? null,
         x: data.x,
         y: data.y,
-        // Phase 53 NEST-01: persist target map link when provided
         targetMapId: data.targetMapId ?? null,
       })
       .returning();
@@ -794,7 +745,6 @@ export const mapsRouter = new OpenAPIHono<AppEnv>()
     return c.json(updated as any, 200);
   })
 
-  // PATCH /universes/:uid/maps/:mid/pins/:pinId/relink — relink pin to a different entry
   .openapi(relinkPinRoute, async (c) => {
     const { uid, mid, pinId } = c.req.valid('param');
     await requireUniverse(uid, c.var.userId);
@@ -823,7 +773,6 @@ export const mapsRouter = new OpenAPIHono<AppEnv>()
     return c.json(updated as any, 200);
   })
 
-  // DELETE /universes/:uid/maps/:mid/pins/:pinId — delete pin (linked entry untouched)
   .openapi(deletePinRoute, async (c) => {
     const { uid, mid, pinId } = c.req.valid('param');
     await requireUniverse(uid, c.var.userId);
@@ -848,15 +797,11 @@ export const mapsRouter = new OpenAPIHono<AppEnv>()
     await requireMap(mid, uid);
     const data = c.req.valid('json');
 
-    // Build update object — only include fields that were provided
-    // null is a valid value (clears the style), undefined means not provided
     const updates: { color?: string | null; icon?: string | null; secret?: boolean; targetMapId?: string | null } = {};
     if ('color' in data) updates.color = data.color ?? null;
     if ('icon' in data) updates.icon = data.icon ?? null;
-    // Phase 52 SECRET-01: persist secret flag when provided
     if (data.secret !== undefined) updates.secret = data.secret;
 
-    // Phase 53 NEST-01: set/clear target map link with universe + self-target validation
     // Skip existence/self checks when targetMapId is null (clearing is always allowed — D-53-02).
     if ('targetMapId' in data) {
       if (data.targetMapId !== null && data.targetMapId !== undefined) {
@@ -908,7 +853,6 @@ export const mapsRouter = new OpenAPIHono<AppEnv>()
     }
 
     // CR-02: Validate optional terrainTypeId belongs to this universe (IDOR guard).
-    // terrain_types → map_layers; map_layers.universe_id must match uid.
     if (data.terrainTypeId) {
       const typeRows = await db()
         .select({ id: terrainTypes.id })
@@ -928,7 +872,6 @@ export const mapsRouter = new OpenAPIHono<AppEnv>()
         name: data.name ?? '',
         points: data.points,
         color: data.color ?? null,
-        // Phase 43 TERRAIN-01: persist terrain discriminator (T-43-01)
         terrainTypeId: data.terrainTypeId ?? null,
       })
       .returning();
@@ -968,7 +911,6 @@ export const mapsRouter = new OpenAPIHono<AppEnv>()
 
     // CR-01: entryId XOR terrainTypeId must also hold across requests — the schema
     // refine only sees one PATCH body, so setting terrainTypeId on an entry-linked
-    // region (or entryId on a terrain area) has to be checked against the stored row.
     if (data.entryId || data.terrainTypeId) {
       const [existing] = await db()
         .select({ entryId: mapRegions.entryId, terrainTypeId: mapRegions.terrainTypeId })
@@ -985,18 +927,14 @@ export const mapsRouter = new OpenAPIHono<AppEnv>()
       }
     }
 
-    // Build partial update — only provided fields
     const updates: { name?: string; color?: string | null; entryId?: string | null; terrainTypeId?: string | null; secret?: boolean; targetMapId?: string | null } = {};
     if (data.name !== undefined) updates.name = data.name;
     if ('color' in data) updates.color = data.color ?? null;
     if ('entryId' in data) updates.entryId = data.entryId ?? null;
-    // Phase 43 TERRAIN-01: reclassify support — 'key' in data presence check mirrors color/entryId pattern
     // so an omitted terrainTypeId does NOT overwrite the existing value (T-43-01)
     if ('terrainTypeId' in data) updates.terrainTypeId = data.terrainTypeId ?? null;
-    // Phase 52 SECRET-01: persist secret flag when provided
     if (data.secret !== undefined) updates.secret = data.secret;
 
-    // Phase 53 NEST-01: set/clear target map link with universe + self-target validation
     // Skip existence/self checks when targetMapId is null (clearing is always allowed — D-53-02).
     if ('targetMapId' in data) {
       if (data.targetMapId !== null && data.targetMapId !== undefined) {
@@ -1030,7 +968,6 @@ export const mapsRouter = new OpenAPIHono<AppEnv>()
     return c.json(updated as any, 200);
   })
 
-  // DELETE /universes/:uid/maps/:mid/regions/:regionId — delete region (never deletes entry)
   .openapi(deleteRegionRoute, async (c) => {
     const { uid, mid, regionId } = c.req.valid('param');
     await requireUniverse(uid, c.var.userId);
@@ -1049,7 +986,6 @@ export const mapsRouter = new OpenAPIHono<AppEnv>()
     return c.body(null, 204);
   })
 
-  // Phase 51 ROUTE-01: Route CRUD handlers (mirror region handlers; no terrainTypeId)
 
   // POST /universes/:uid/maps/:mid/routes — create route (T-51-06: entryId universe check)
   .openapi(addRouteRoute, async (c) => {
@@ -1104,8 +1040,6 @@ export const mapsRouter = new OpenAPIHono<AppEnv>()
       }
     }
 
-    // Build partial update — only provided fields
-    // null is a valid value (clears color/entryId), undefined means not provided
     const updates: {
       name?: string;
       color?: string | null;
@@ -1121,7 +1055,6 @@ export const mapsRouter = new OpenAPIHono<AppEnv>()
     if (data.lineStyle !== undefined) updates.lineStyle = data.lineStyle;
     if (data.width !== undefined) updates.width = data.width;
     if (data.showArrow !== undefined) updates.showArrow = data.showArrow;
-    // Phase 52 SECRET-01: persist secret flag when provided; mirrors showArrow pattern.
     if (data.secret !== undefined) updates.secret = data.secret;
 
     // T-51-01 IDOR guard: scope by both routeId AND mapId
@@ -1138,7 +1071,6 @@ export const mapsRouter = new OpenAPIHono<AppEnv>()
     return c.json(updated as any, 200);
   })
 
-  // DELETE /universes/:uid/maps/:mid/routes/:routeId — delete route (never deletes entry)
   .openapi(deleteRouteRoute, async (c) => {
     const { uid, mid, routeId } = c.req.valid('param');
     await requireUniverse(uid, c.var.userId);

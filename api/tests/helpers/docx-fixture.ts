@@ -1,5 +1,4 @@
 /**
- * Issue #35 — build .docx buffers in memory for tests.
  *
  * yazl, not archiver: yazl is already this repo's zip-fixture builder
  * (tests/fixtures/ingest/zip/build-zips.ts) and is a devDependency, whereas
@@ -67,7 +66,6 @@ const LOCAL_FILE_HEADER_SIGNATURE = 0x04034b50;
  * An earlier version of this mutated yazl's live Entry object
  * (`entries[i].utf8FileName = ...`) between addBuffer() and end(), reasoning
  * that yazl's zlib.deflateRaw compression callback is always async so the
- * mutation would land first. Review found that assumption is false whenever
  * an entry uses `{ compress: false }` (a normal yazl option): yazl's
  * pumpEntries() then writes the local file header SYNCHRONOUSLY inside
  * addBuffer(), before any post-call mutation can run, producing an archive

@@ -1,0 +1,55 @@
+# Weltbon — nginx reverse-proxy snippet.
+#
+# Drop into /etc/nginx/sites-available/welt.conf (or include from your nginx.conf),
+# replace welt.example.com with your domain, obtain a TLS cert (certbot/acme.sh),
+# and reload nginx.
+#
+# Verify the stack with:
+#   WELTBON_PROXY_URL=https://welt.example.com PROXY_SMOKE_PAT=wbn_pat_xxx \
+#     ./scripts/proxy-smoke.sh
+#
+# Adjust the upstream target if Weltbon runs in a different network:
+#   docker-compose host-mode:   proxy_pass http://localhost:3000;
+#   docker-compose service net: proxy_pass http://app:3000;        (requires shared docker network)
+#   bare Node + pnpm dev:       proxy_pass http://localhost:3000;
+
+server {
+    listen 443 ssl http2;
+    server_name welt.example.com;
+
+    # ssl_certificate     /etc/letsencrypt/live/welt.example.com/fullchain.pem;
+    # ssl_certificate_key /etc/letsencrypt/live/welt.example.com/privkey.pem;
+    # ssl_protocols       TLSv1.2 TLSv1.3;
+
+    # Single upstream — Weltbon's API also serves the SPA via the catch-all
+    # in api/src/index.ts (no separate /assets vs /api routing needed at the proxy layer).
+    #
+    # IMPORTANT: ALL proxy_set_header directives MUST live INSIDE this location block.
+    # nginx inheritance rule: declaring even ONE proxy_set_header inside a location
+    # silently drops every proxy_set_header inherited from the outer server scope. So
+    # all directives live here, in one place.
+    #
+    # Each `proxy_set_header NAME value;` REPLACES any client-supplied value for that
+    # header — there is no "append" form. That makes this block the trusted-proxy
+    # contract: the upstream sees only the X-Forwarded-* values nginx writes here,
+    # never the client's.
+    location / {
+        proxy_pass http://localhost:3000;
+        proxy_http_version 1.1;
+
+        proxy_set_header Host              $host;
+        proxy_set_header X-Forwarded-Proto $scheme;
+        proxy_set_header X-Forwarded-Host  $host;
+        proxy_set_header X-Forwarded-For   $remote_addr;
+        proxy_set_header Connection        "";
+    }
+
+    # Optional: HTTP -> HTTPS redirect (uncomment if nginx is also the :80 listener)
+    # listen 80;
+    # if ($scheme = http) { return 301 https://$host$request_uri; }
+
+    # Operator concerns out of scope for this snippet:
+    #   - Rate limiting       (limit_req_zone)
+    #   - WAF rules           (ngx_http_modsecurity_module)
+    #   - Access logging      (access_log directive — set to taste)
+}

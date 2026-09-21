@@ -14,16 +14,6 @@ export interface CategoryListResponse {
   uncategorizedCount: number;
 }
 
-/**
- * TanStack Query hook for the universe-scoped category list.
- *
- * Keyed on ['categories', universeId, shareToken] so mutations on categories
- * (Plan 07 drag-to-reorder, create/rename) can invalidate precisely, AND so
- * a transient null-token (StrictMode clear) cache entry cannot be read back as
- * the ready-token result. See Gap 1 race fix (half b) in 29-08-PLAN.md.
- * In authenticated mode shareToken is the stable constant null, so the owner
- * cache key ['categories', universeId, null] is behaviorally unchanged.
- */
 export function useCategories(universeId: string) {
   // HALF (b) — share-token-keyed cache + enabled gate (Gap 1 race fix):
   const shareToken = getShareToken();
@@ -45,10 +35,6 @@ export type UpdateCategoryInput = {
   icon?: string;
 };
 
-/**
- * Create a new category in a universe. Invalidates ['categories', universeId]
- * on success so the sidebar reflects the new row + count.
- */
 export function useCreateCategory(universeId: string) {
   const qc = useQueryClient();
   return useMutation({
@@ -63,10 +49,6 @@ export function useCreateCategory(universeId: string) {
   });
 }
 
-/**
- * Rename / re-emoji an existing category. Takes { id, patch } so a single
- * hook instance can update any category in the universe.
- */
 export function useUpdateCategory(universeId: string) {
   const qc = useQueryClient();
   return useMutation({
@@ -81,11 +63,6 @@ export function useUpdateCategory(universeId: string) {
   });
 }
 
-/**
- * Delete a category. Entries in that category fall back to uncategorized
- * (FK onDelete: set null). Invalidates both categories and entries prefixes
- * so affected entry rows re-render without a stale categoryId.
- */
 export function useDeleteCategory(universeId: string) {
   const qc = useQueryClient();
   return useMutation({
@@ -100,18 +77,10 @@ export function useDeleteCategory(universeId: string) {
   });
 }
 
-/**
- * Reorder categories (drag & drop). Takes the new ordered id list.
- *
- * Optimistic: the sidebar cache is rewritten in onMutate so the drop is
- * instant visually. On error the previous snapshot is restored. onSettled
- * always invalidates to reconcile with the server-computed sortOrder values.
- */
 export function useReorderCategories(universeId: string) {
   const qc = useQueryClient();
   // Match the read query's share-token-keyed cache slot (see useCategories).
   // Reorder is owner-only, so shareToken is null here — but reading it from the
-  // same seam keeps the optimistic getQueryData/setQueryData aligned with the
   // exact key the read query writes to, instead of the pre-29-08 two-element key.
   const shareToken = getShareToken();
   return useMutation<void, Error, string[], { prev: CategoryListResponse | undefined }>({

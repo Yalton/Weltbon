@@ -1,9 +1,7 @@
--- Phase 42 LAYER-01/LAYER-02/LAYER-03: map_layers + terrain_types tables + map_regions.terrain_type_id column.
 --
 -- map_layers: universe-scoped thematic terrain layer palette (biomes, elevation, climate).
 --   universe_id FK CASCADE — deleting a universe removes all its layers.
 --   ordered boolean — true → ranked elevation bands; false → flat thematic palette (D-42-05).
---   default_opacity persists the initial per-layer opacity for Phase 43 rendering (D-42-08).
 --   sort_order integer for user-defined display order.
 --
 -- terrain_types: layer-scoped terrain type definitions (Forest, Grassland, Lowlands, Peaks…).

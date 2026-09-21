@@ -47,15 +47,11 @@ export function useCreateLink(universeId: string) {
     onSuccess: () => {
       qc.invalidateQueries({ queryKey: ['entry', universeId] });
       // A newly-typed label should appear in the relation combobox next time
-      // it opens, so its usage count reflects the new link.
       qc.invalidateQueries({ queryKey: ['relations', universeId] });
       // GRAPH-04 fix: useGraphData is keyed ['graph-data', universeId] (see
-      // useGraphData.ts:34); without this invalidation the graph view does
-      // not refetch after a new link is created (matches useGraphPositions
       // canonical pattern at useGraphPositions.ts:31-33).
       qc.invalidateQueries({ queryKey: ['graph-data', universeId] });
       // Invalidate link-types so the LinkTypeSelect combobox reflects the
-      // newly used type in its autocomplete suggestions.
       qc.invalidateQueries({ queryKey: ['link-types', universeId] });
     },
   });
@@ -86,18 +82,15 @@ export function usePatchLink(universeId: string) {
         method: 'PATCH',
         body: JSON.stringify(body),
       }),
-    onSuccess: () => {
-      qc.invalidateQueries({ queryKey: ['entry', universeId] });
-      qc.invalidateQueries({ queryKey: ['graph-data', universeId] });
-    },
+  onSuccess: () => {
+    qc.invalidateQueries({ queryKey: ['entry', universeId] });
+    qc.invalidateQueries({ queryKey: ['graph-data', universeId] });
+    qc.invalidateQueries({ queryKey: ['relations', universeId] });
+    qc.invalidateQueries({ queryKey: ['link-types', universeId] });
+  },
   });
 }
 
-/**
- * Fetches relation labels with their usage counts for a universe.
- * Backend (Plan 05-03) returns the array sorted by count DESC, label ASC.
- * Consumed by RelationCombobox in LinkEditor.
- */
 export function useRelations(universeId: string) {
   return useQuery({
     queryKey: ['relations', universeId],
@@ -106,11 +99,6 @@ export function useRelations(universeId: string) {
   });
 }
 
-/**
- * Fetches link types with their usage counts for a universe.
- * Returns all previously-used link types sorted by count DESC.
- * Consumed by LinkTypeSelect combobox for autocomplete suggestions.
- */
 export function useLinkTypes(universeId: string) {
   return useQuery({
     queryKey: ['link-types', universeId],

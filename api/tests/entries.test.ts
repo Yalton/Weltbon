@@ -317,7 +317,7 @@ describe('entry routes (ENT-01..06)', () => {
     expect(detail.outboundLinks[0].targetTitle).toBe('Entry B');
     expect(detail.outboundLinks[0].targetIcon).toBe('B');
     expect(detail.outboundLinks[0].label).toBe('created by');
-    // Phase 35 REL-01: bidirectional replaced by direction ('directed'|'undirected')
+
     expect(detail.outboundLinks[0].direction).toBe('directed');
     expect(detail.outboundLinks[0].id).toBeTruthy();
   });
@@ -345,12 +345,12 @@ describe('entry routes (ENT-01..06)', () => {
     expect(detail.backlinks[0].sourceTitle).toBe('Entry A');
     expect(detail.backlinks[0].sourceIcon).toBe('A');
     expect(detail.backlinks[0].label).toBe('created by');
-    // Phase 35 REL-01: bidirectional replaced by direction ('directed'|'undirected')
+
     expect(detail.backlinks[0].direction).toBe('directed');
   });
 
   // LINK-02/04/05: undirected link shows direction=undirected in both directions
-  // Phase 35 REL-01: bidirectional bool replaced by direction enum ('directed'|'undirected')
+
   it('undirected link shows direction=undirected in both outbound and backlink', async () => {
     const { hdrs } = await userWithToken('link3@test.com');
     const universe = await createUniverse(hdrs);
@@ -947,9 +947,9 @@ describe('entry routes (ENT-01..06)', () => {
     });
   });
 
-  // ─── Phase 45 XREF-04: Aliases (D-05/D-06/D-07/D-08) ──────────────────────
 
-  describe('aliases (Phase 45 XREF-04)', () => {
+
+  describe('aliases', () => {
     // ALIAS-01: create entry with aliases — round-trips correctly
     it('POST entry with aliases persists and returns them (D-08)', async () => {
       const { hdrs } = await userWithToken('alias-create@test.com');
@@ -1140,7 +1140,7 @@ describe('entry routes (ENT-01..06)', () => {
     });
   });
 
-  // ─── Phase 48 XREF-05: rename-propagation integration tests ───────────────
+
 
   describe('PATCH rename-propagation (XREF-05)', () => {
     // Helper: fetch an entry body directly for post-state assertions

@@ -1,18 +1,3 @@
-/**
- * Phase 32 Plan 04 Task 1 — MarkdownRenderer + WikilinkText + WordPopover tests.
- *
- * Covers per the plan's acceptance criteria (≥5 cases):
- *   T1. D-01 precedence: entry-title beats same-spelling dictionary word
- *   T2. Resolved dictionary word: accent-soft span with popover (gloss+ipa)
- *   T3. Unresolved [[word]]: amber missing span + "+" add button
- *   T4. Code span `[[x]]`: NOT resolved (literal code rendering)
- *   T5. No-wikis prop: [[x]] renders as literal text (backwards-compat)
- *   T6. Share/read-only path: unresolved span renders WITHOUT "+" add button
- *       when onAddWord is absent
- *   T7. Alias [[word|Alias]] resolves on "word" but displays "Alias"
- *   T8. Share-mode entry-title wikilink navigates to /share/:token/entries/:id
- *       (Phase 33 INT-BLOCKER-2 fix)
- */
 
 import { describe, it, expect, vi } from 'vitest';
 import { render, screen } from '@testing-library/react';
@@ -351,7 +336,7 @@ describe('T7: alias [[word|Alias]] resolves on "word" and displays "Alias"', () 
   });
 
   it('displays alias label for a resolved entry title', () => {
-    // Phase 45 D-03: entryTitles keyed on lower(title.trim()) from Phase 45 onward.
+
     const entryTitles = new Map([['aragorn', 'entry-99']]);
     const wikis = makeWikis({ entryTitles });
 
@@ -368,12 +353,12 @@ describe('T7: alias [[word|Alias]] resolves on "word" and displays "Alias"', () 
 
 // ---------------------------------------------------------------------------
 // T8 — Share-mode entry-title wikilink navigates to /share/:token/entries/:id
-// (Phase 33 INT-BLOCKER-2 fix)
+
 // ---------------------------------------------------------------------------
 
 describe('T8: share-mode entry-title wikilink uses /share/:token/entries/:id', () => {
   it('generates a share-subtree href when isShareMode=true and shareToken is set', () => {
-    // Phase 45 D-03: entryTitles keyed on lower(title.trim()) from Phase 45 onward.
+
     const entryTitles = new Map([['gondor', 'entry-55']]);
     const wikis = makeWikis({
       entryTitles,
@@ -392,7 +377,7 @@ describe('T8: share-mode entry-title wikilink uses /share/:token/entries/:id', (
   });
 
   it('falls back to authenticated path when isShareMode is absent (default behavior)', () => {
-    // Phase 45 D-03: entryTitles keyed on lower(title.trim()) from Phase 45 onward.
+
     const entryTitles = new Map([['gondor', 'entry-55']]);
     const wikis = makeWikis({ entryTitles }); // no isShareMode
 

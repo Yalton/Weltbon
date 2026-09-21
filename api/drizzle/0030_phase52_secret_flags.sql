@@ -1,4 +1,3 @@
--- Phase 52 SECRET-01/02: add secret flag to map item tables.
 -- Default false = not secret (owner sees everything; share path filters where secret=true).
 -- Backfill: existing rows default to false (not secret) automatically via NOT NULL + DEFAULT.
 ALTER TABLE "map_pins"    ADD COLUMN "secret" boolean DEFAULT false NOT NULL;

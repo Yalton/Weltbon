@@ -1,37 +1,3 @@
-/**
- * Phase 27 Plan 03 Task 3 — DB-gated integration test for the audit-engine
- * cost_unknown flag write path (D-06).
- *
- * Exercises the engine UPDATE path against a real Postgres test schema. We
- * inject test-only deps for the side-effects we don't want to actually run
- * (no real LLM call, no real cheap-finds, no real digest build) but use the
- * real DB so the post-run SELECT against `audit_runs.cost_unknown` is
- * authoritative.
- *
- * Coverage (Plan 27-03 Task 3 — Tests 1-3 from <behavior>):
- *   1. Unpriced model sets flag: model='claude-future-snapshot-9' (NOT in
- *      PRICING) → after engine runs, the row reports
- *      (cost_unknown=true, cost_usd='0.0000').
- *   2. Priced model clears flag: model='claude-haiku-4-5-20251001' (IN
- *      PRICING) → row reports (cost_unknown=false, cost_usd > '0.0000').
- *   3. Diagnostic stderr: the unpriced run emits at least one console.error
- *      matching '[audit-engine] cost_unknown set for model:' with safe
- *      metadata only ({ runId, model, provider }) — never apiKey, never
- *      err.message.
- *
- * Mocking strategy:
- *   - getProvider: returns a fake provider whose `pricing(model)` mirrors the
- *     real PRICING.anthropic lookup AND whose `runAudit` returns a synthetic
- *     final-turn (text='{"suggestions":[]}', toolUse=[], usage zero, costUsd
- *     either 0 or a fixed non-zero value depending on the priced path).
- *   - resolveCredential: returns { apiKey: 'fixture-api-key' }.
- *   - runCheapFinds: returns empty cheap-finds list.
- *   - buildStructuralDigest: returns a minimal digest + empty validEntryIds.
- *   - validateReferencedEntryIds: returns the input list with droppedCount=0.
- *
- * Marker: imports `createTestDb` / `setTestDb` — the canonical DB-gated test
- * tag per Phase 17 D-17-02.
- */
 
 import { describe, it, expect, beforeAll, afterAll, beforeEach, vi } from 'vitest';
 import { eq } from 'drizzle-orm';
@@ -51,7 +17,7 @@ import { auditRuns, universes } from '../src/db/schema.js';
 import { runAudit, type AuditEngineDeps } from '../src/services/audit-engine.js';
 import { PRICING } from '../src/providers/llm/pricing.js';
 
-describe('audit-engine cost_unknown flag (Phase 27 Plan 03 Task 1 / D-06)', () => {
+describe('audit-engine cost_unknown flag', () => {
   let handle: TestDbHandle;
 
   beforeAll(async () => {
@@ -133,7 +99,7 @@ describe('audit-engine cost_unknown flag (Phase 27 Plan 03 Task 1 / D-06)', () =
       validate: vi.fn().mockResolvedValue(undefined),
       estimate: vi.fn().mockResolvedValue(0),
       runAudit: vi.fn().mockResolvedValue({
-        // Phase 27 D-09/D-10: final-turn answer arrives via emit_findings
+
         // tool_use.input (prose text in the final turn is now a contract
         // violation that fails with INVALID_OUTPUT).
         text: '',
@@ -266,7 +232,7 @@ describe('audit-engine cost_unknown flag (Phase 27 Plan 03 Task 1 / D-06)', () =
     await runAudit(runId, makeDeps({ providerCostUsd: 0 }));
 
     // Find the cost_unknown log call (engine may emit other diagnostic stderr;
-    // we filter to the literal prefix the plan acceptance requires).
+
     const cuCalls = errSpy.mock.calls.filter(
       (call) =>
         typeof call[0] === 'string' &&

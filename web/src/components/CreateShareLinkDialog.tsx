@@ -1,26 +1,3 @@
-/**
- * CreateShareLinkDialog — Phase 29 owner-side mint dialog.
- *
- * Single Radix Dialog with two internal phases (mirrors CreateTokenDialog):
- *   'form'   — label input + expiry dropdown → POST /api/shares
- *   'reveal' — one-time `shareUrl` display + Copy + aria-live announcement
- *
- * UI-SPEC §E divergences from CreateTokenDialog (deliberate, documented):
- *   - Dialog.Title sizing: `text-xl font-semibold` (20px/600) NOT `text-lg`
- *     (18px). The Phase 29 typography scale declares only 4 sizes; 18px is
- *     not declared.
- *   - aria-live region: `assertive` (not `polite`) — the one-time URL reveal
- *     is a higher-stakes moment than the PAT reveal.
- *   - Form fields: a native `<select>` for expiresInDays (NOT Radix Select)
- *     matching the existing UniverseSettings provider/model dropdowns.
- *   - Reveal phase label: "Save this link now" / "Copy link" (matches
- *     UI-SPEC §Copywriting Contract verbatim).
- *
- * T-29-31 one-time reveal: `tokenData` lives only in component state and is
- * cleared on every dialog close (`handleOpenChange`). The plaintext URL is
- * never persisted to localStorage / sessionStorage / browser history — the
- * URL leaves memory when the dialog closes.
- */
 
 import { useEffect, useRef, useState } from 'react';
 import * as Dialog from '@radix-ui/react-dialog';
@@ -70,7 +47,6 @@ export function CreateShareLinkDialog({ open, onOpenChange, universeId }: Props)
   });
 
   // Reset all internal state when the dialog closes — T-29-31 enforces that
-  // the shareUrl never persists past dialog close.
   const handleOpenChange = (nextOpen: boolean) => {
     if (!nextOpen) {
       setPhase('form');
@@ -84,8 +60,7 @@ export function CreateShareLinkDialog({ open, onOpenChange, universeId }: Props)
     onOpenChange(nextOpen);
   };
 
-  // Focus the Copy button when phase transitions to 'reveal' (UI-SPEC §E
-  // accessibility checklist).
+
   useEffect(() => {
     if (phase === 'reveal') {
       copyButtonRef.current?.focus();
@@ -222,7 +197,7 @@ export function CreateShareLinkDialog({ open, onOpenChange, universeId }: Props)
                 </code>
               </div>
 
-              {/* Copy button — UI-SPEC §E. Auto-focused on phase transition. */}
+
               <button
                 ref={copyButtonRef}
                 type="button"

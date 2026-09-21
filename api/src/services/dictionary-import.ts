@@ -1,17 +1,3 @@
-/**
- * Phase 32 CONLANG-02 — CSV import service for dictionary words.
- *
- * Exports `importDictionaryCsv(buf, { universeId, languageEntryId })`.
- *
- * Design decisions:
- * - D-09: Upsert on (universe, language, word) collision — OVERWRITES ipa/gloss/pos/etymology/tags.
- *   KEY DIVERGENCE from ingest-commit.ts: ingest-commit skips/renames on collision (D-23);
- *   dictionary import OVERWRITES (D-09).
- * - D-10: Required columns: word + gloss. Extra/reordered/missing-optional columns tolerated.
- *   tags cell is semicolon-split ("noun;archaic" → ['noun','archaic']); comma is the CSV delimiter.
- * - T-32-04: Row count cap via CHUNK_SIZE × MAX_CHUNKS_PER_TABLE (inherited from ingest-commit).
- * - Row-level errors are surfaced WITHOUT aborting valid rows (D-10).
- */
 
 import { parse } from 'csv-parse/sync';
 import { z } from 'zod';
@@ -28,7 +14,6 @@ const MAX_CHUNKS_PER_TABLE = 50;
 // COALESCE(language_entry_id, '00000000-0000-0000-0000-000000000000')
 const NULL_SENTINEL = '00000000-0000-0000-0000-000000000000';
 
-// ─── Typed errors ─────────────────────────────────────────────────────────────
 
 export class DictionaryImportSizeError extends Error {
   constructor(public readonly max: number) {
@@ -42,12 +27,10 @@ export interface DictionaryRowError {
   message: string;
 }
 
-// ─── Row schema ──────────────────────────────────────────────────────────────
 
 // CR-03: max() guards mirror the CRUD route Zod schemas in dictionary.ts so that
 // oversized values in a CSV row surface as per-row errors instead of writing
 // arbitrarily-long strings to the DB. etymology uses 10000 (markdown field, no
-// explicit CRUD max) matching the reviewer's recommendation.
 const rowSchema = z.object({
   word:         z.string().min(1, 'word is required').max(200),
   gloss:        z.string().min(1, 'gloss is required').max(1000),
@@ -59,7 +42,6 @@ const rowSchema = z.object({
 
 type ParsedRow = z.output<typeof rowSchema>;
 
-// ─── Import result ─────────────────────────────────────────────────────────────
 
 export interface ImportResult {
   inserted: number;
@@ -67,20 +49,11 @@ export interface ImportResult {
   rowErrors: DictionaryRowError[];
 }
 
-// ─── Main function ────────────────────────────────────────────────────────────
 
-/**
- * Parse and upsert dictionary words from a CSV buffer.
- *
- * @param buf         Raw CSV bytes (UTF-8 or BOM-prefixed)
- * @param options     universeId (required), languageEntryId (null = universe-level fallback)
- * @returns           { inserted, updated, rowErrors }
- */
 export async function importDictionaryCsv(
   buf: Buffer,
   { universeId, languageEntryId }: { universeId: string; languageEntryId: string | null },
 ): Promise<ImportResult> {
-  // ── Step 1: Parse CSV ──────────────────────────────────────────────────────
   let records: Record<string, string>[];
   try {
     records = parse(buf, {
@@ -94,7 +67,6 @@ export async function importDictionaryCsv(
     throw new Error(`CSV parse error: ${err?.message ?? String(err)}`);
   }
 
-  // ── Step 2: Validate required headers ─────────────────────────────────────
   if (records.length === 0) {
     // Empty file or header-only — nothing to import
     return { inserted: 0, updated: 0, rowErrors: [] };
@@ -123,7 +95,6 @@ export async function importDictionaryCsv(
       .map((t) => t.trim())
       .filter(Boolean);
 
-    // Normalize POS aliases
     const pos = raw['partOfSpeech'] ?? raw['part_of_speech'] ?? raw['pos'] ?? '';
 
     const result = rowSchema.safeParse({
@@ -158,14 +129,6 @@ export async function importDictionaryCsv(
   // ── Step 5: Chunked transaction upsert (D-09 OVERWRITE on collision) ──────
   // The scope-unique index is: dictionary_words_scope_word_unique
   //   ON (universe_id, COALESCE(language_entry_id, '00000000-...'), lower(word))
-  //
-  // This is a unique INDEX (not a UNIQUE CONSTRAINT), so ON CONFLICT ON CONSTRAINT
-  // is not valid. We must use ON CONFLICT (expression) matching the index exactly.
-  //
-  // We use Drizzle's tx.execute(sql`...`) with parameterized values to run the upsert.
-  // xmax = 0 distinguishes INSERT (new row) from UPDATE (existing row) in PostgreSQL.
-  //
-  // We process rows individually within the chunked loop to keep parameter counts low
   // and to get per-row xmax feedback.
 
   let inserted = 0;
@@ -177,13 +140,7 @@ export async function importDictionaryCsv(
 
       for (const row of chunk) {
         // Use raw SQL to target the expression-based unique index.
-        // The tags array must be cast to text[] for Postgres to accept it.
-        // Drizzle's sql tag parameterizes arrays correctly as Postgres arrays
-        // when the value is passed directly (not nested in sql expressions).
-        // We build a valid PostgreSQL ARRAY literal from the tags array.
         const tags = row.tags ?? [];
-        // Build the tags array literal as a SQL expression: ARRAY[$1, $2, ...]::text[]
-        // If empty, use ARRAY[]::text[].
         const tagsExpr =
           tags.length === 0
             ? sql`ARRAY[]::text[]`
@@ -192,7 +149,6 @@ export async function importDictionaryCsv(
                 sql`, `,
               )}]::text[]`;
 
-        // Handle nullable languageEntryId — null must be passed as SQL NULL, not '${null}::uuid'
         const langIdExpr = languageEntryId
           ? sql`${languageEntryId}::uuid`
           : sql`NULL::uuid`;

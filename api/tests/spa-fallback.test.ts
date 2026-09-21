@@ -1,20 +1,3 @@
-/**
- * Integration test locking the SPA deep-link fallback chain (PROXY-04).
- *
- * Guards api/src/index.ts:81-83:
- *   app.use('*', serveStatic({ root: './web-dist' }));
- *   app.get('/', serveStatic({ path: './web-dist/index.html' }));
- *   app.get('*', serveStatic({ path: './web-dist/index.html' }));
- *
- * Per CONTEXT.md §"SPA deep-link fallback", PROXY-04 is verification-by-test,
- * NOT a code change. The four routes below come verbatim from ROADMAP.md
- * Phase 14 success criterion 4:
- *   /universes/:id/entries, /settings/tokens, /settings/invites, /universes/:id/import
- *
- * Stub fixture: writes a minimal index.html with `<div id="root">` to ./web-dist
- * (relative to api/ cwd at test runtime — matches what serveStatic resolves).
- * Cleans up after. No DB needed (SPA fallback does not touch the database).
- */
 
 import { describe, it, expect, beforeAll, afterAll } from 'vitest';
 import { mkdirSync, writeFileSync, rmSync, existsSync, readFileSync } from 'node:fs';

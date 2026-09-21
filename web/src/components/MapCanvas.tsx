@@ -11,7 +11,6 @@ import { Medallion } from './Medallion';
 import { TypeBadge } from './TypeBadge';
 import type { MedallionSource } from '../lib/medallion';
 
-// ─── Constants ────────────────────────────────────────────────────────────────
 const HIT_RADIUS = 22;         // transparent hit area — 44px diameter touch target
 const DRAG_THRESHOLD_PX = 4;   // pointer movement below this is treated as a click
 const SNAP_DISTANCE_PX = 18;   // first-vertex snap radius in IMAGE pixels (scaled)
@@ -19,161 +18,62 @@ const GRID_PX = 100;           // grid spacing in image pixels (T-50-03: bounded
 const ROUTE_HIT_WIDTH = 20;    // wide transparent hit-stroke for route polylines (image-space units)
 const ROUTE_LABEL_MAX_CHARS = 24; // label truncation length for route midpoint chip
 
-// ─── Teardrop pin marker geometry (D-03) ─────────────────────────────────────
-// Tip at local (0,0) = the pin's normalized image coordinate.
-// Circular body extends upward (negative y in local coords) so the <g> transform
-// `translate(pinX,pinY)` correctly anchors the tip to the pin location.
-// Counteracted by scale(1/currentScale) so the marker stays constant screen size.
-//
-//   Head circle center: (0, -20)  head radius: 11
-//   Path: tip → left bezier → head-left (-11,-20) → arc over top → head-right (11,-20)
-//         → right bezier → tip
-//   Arc: large-arc=1, sweep=0 → counterclockwise in SVG (goes through topmost point (0,-31))
 const TEARDROP_D =
   'M 0 0 C -5 -6,-11 -14,-11 -20 A 11 11 0 1 0 11 -20 C 11 -14,5 -6,0 0 Z';
 
-// foreignObject placement for the 16×16 glyph icon, centered at (0, -18) in local coords.
 const GLYPH_OFFSET_X = -8;
 const GLYPH_OFFSET_Y = -26;
 
-/** Clamp a number to [lo, hi]. */
 function clamp(v: number, lo: number, hi: number): number {
   return Math.min(hi, Math.max(lo, v));
 }
 
-// ─── Imperative handle (Task 1: D-05 zoom seam) ──────────────────────────────
-/**
- * Imperative zoom methods exposed via forwardRef + useImperativeHandle.
- * MapEditor holds a ref to MapCanvas and calls these from MapZoomControls callbacks.
- */
 export interface MapCanvasHandle {
-  /** Zoom in by 1.3× (scaleBy on the d3 zoomBehavior). */
   zoomIn(): void;
-  /** Zoom out by 1/1.3 (scaleBy on the d3 zoomBehavior). */
   zoomOut(): void;
-  /** Fit image to viewport — restores the initial fit-to-view transform. */
   fitReset(): void;
-  /**
-   * Pan and zoom to normalized image-space coordinates (0..1).
-   * Used by the search result select flow (SEARCH-01, D-05a).
-   * Target zoom level ~2.5 (enough detail without excessive magnification).
-   * CRITICAL: React-rendered only — no d3 datum handlers (memory: timeline-pins-react-rendered-no-d3-datum).
-   */
   panZoomTo(nx: number, ny: number): void;
 }
 
-// Target zoom level for panZoomTo (SEARCH-01, D-05a). High enough to see item detail.
 const PAN_ZOOM_TARGET_SCALE = 2.5;
 
-// ─── Props ────────────────────────────────────────────────────────────────────
 export interface MapCanvasProps {
-  /** Pre-signed full-res URL for the map image. Null when the backing asset was deleted (ON DELETE SET NULL). */
   imageUrl: string | null;
-  /** Image natural width in pixels (used for fit-to-view and coord conversion). */
   imageWidth: number;
-  /** Image natural height in pixels. */
   imageHeight: number;
-  /** Pins with optional joined entryTitle/entryType/color/icon. */
   pins: MapPin[];
-  /** Regions for this map. */
   regions: MapRegion[];
-  /** When true, cursor shows crosshair and canvas click emits onCanvasClick. */
   addPinMode: boolean;
-  /** When true, canvas click drops a region vertex. */
   drawRegionMode: boolean;
-  /** In-progress polygon vertices (normalized 0..1). */
   pendingVertices: Array<{ x: number; y: number }>;
-  /** Currently selected pin id (shows selection ring). Null clears selection. */
   selectedPinId: string | null;
-  /** Universe id for same-tab entry navigation. */
   universeId: string;
-  /**
-   * Content-Forward Views §6 — entryId → cover/icon/monogram, from useEntryMedallions.
-   * ONLY the hover tooltip reads it; the canvas (pins/regions/routes) is untouched.
-   * Regions and map-only pins have no entryId, so they simply render no medallion.
-   */
   medallions?: Map<string, MedallionSource>;
-  /** Called with normalized [0,1] coords when user clicks canvas in addPinMode or drawRegionMode. */
   onCanvasClick: (nx: number, ny: number) => void;
-  /** Called when a pin drag ends with the new normalized position. */
   onPinDragEnd: (pinId: string, nx: number, ny: number) => void;
-  /** Called on pin right-click/contextmenu with client coords. */
   onPinContextMenu: (pin: MapPin, clientX: number, clientY: number) => void;
-  /** Called on region left-click (navigate to linked entry). */
   onRegionClick: (region: MapRegion) => void;
-  /** Called on region right-click with client coords (context menu). */
   onRegionContextMenu: (region: MapRegion, clientX: number, clientY: number) => void;
 
-  // ── Phase 43: terrain area rendering ────────────────────────────────────────
-  /** Terrain areas (MapRegions with non-null terrainTypeId), enriched client-side. */
   terrainAreas?: TerrainAreaRegion[];
-  /** Per-viewer layer visibility and opacity (client-only, from MapEditor state). */
   layerViewerState?: Record<string, { visible: boolean; opacity: number }>;
-  /** When true, canvas click drops a terrain-area vertex (reuses draw-region pipeline). */
   paintTerrainMode?: boolean;
-  /** Called on terrain area right-click with client coords (context menu). */
   onTerrainAreaContextMenu?: (region: TerrainAreaRegion, clientX: number, clientY: number) => void;
-  /** Map layers for stacking order (sorted ascending by sortOrder). */
   layers?: MapLayer[];
-  /** When true, render the optional faint square grid overlay in image space (D-05). Off by default. */
   gridVisible?: boolean;
 
-  // ── Phase 51 ROUTE-01: route polyline rendering ──────────────────────────────
-  /** Routes for this map. */
   routes?: MapRoute[];
-  /** Called on route left-click (navigate to linked entry). */
   onRouteClick?: (route: MapRoute) => void;
-  /** Called on route right-click with client coords (context menu). */
   onRouteContextMenu?: (route: MapRoute, clientX: number, clientY: number) => void;
-  /** When true, canvas click drops a route vertex (reuses draw-region pipeline). */
   drawRouteMode?: boolean;
-  /**
-   * Called on double-click while drawRouteMode is active — signals the route
-   * draw finisher (open polyline closed by dblclick or Enter).
-   * d3's dblclick-to-zoom is already suppressed in the d3 zoom setup.
-   */
   onCanvasDblClick?: () => void;
-  /**
-   * Called when the user clicks a pin while drawRouteMode is active.
-   * MapEditor appends the pin's exact normalized coords to pendingVertices so the
-   * route snaps precisely to the pin rather than using a screen-space approximation.
-   * BUG-B fix (51-07). No-op / undefined in share mode.
-   */
   onRouteVertexAtPin?: (pin: MapPin) => void;
 
-  // ── Phase 52 SEARCH-01: search result highlight ──────────────────────────────
-  /**
-   * ID of the pin/region/route to briefly highlight via a pulse animation.
-   * Set by MapEditor when a search result is selected (D-05a); cleared after the pulse.
-   * React-rendered SVG — no d3 datum handler (memory: timeline-pins-react-rendered-no-d3-datum).
-   */
   highlightedItemId?: string | null;
 
-  // ── Phase 53 NEST-01: nested-map navigation (D-02) ──────────────────────────
-  /**
-   * Called when a pin with targetMapId is clicked (map-open wins — fires BEFORE entry navigation).
-   * The parent (MapEditor / ShareMapView) is responsible for share-token-aware routing.
-   * Plan 07 wires this callback; Plan 06 defines the prop contract.
-   */
   onOpenMap?: (targetMapId: string) => void;
 }
 
-// ─── PinCircle ────────────────────────────────────────────────────────────────
-/**
- * React-rendered SVG pin group.
- *
- * CRITICAL: All interaction uses React event handlers (onClick, onPointerDown,
- * onPointerMove, onPointerUp, onContextMenu). d3 `.on()` datum handlers are
- * NEVER attached to this component — `d` is undefined on React-rendered elements
- * and would throw (memory: timeline-pins-react-rendered-no-d3-datum).
- *
- * Constant screen size: `scale(1/currentScale)` counteracts the viewport transform.
- *
- * Drag coordinate conversion uses the DELTA approach (zoom-aware):
- *   delta_img_x = (clientX - startClientX) / currentScale
- * This correctly converts zoomed pixels to image pixels without requiring
- * a second reference to the SVG element.
- */
 interface PinCircleProps {
   pin: MapPin;
   imageWidth: number;
@@ -184,27 +84,10 @@ interface PinCircleProps {
   onNavigate: (entryId: string) => void;
   onDragEnd: (pinId: string, nx: number, ny: number) => void;
   onContextMenu: (pin: MapPin, clientX: number, clientY: number) => void;
-  /** Called on pointer enter with client coords; must NOT call if drag is active (D-11 isolation). */
   onPinHoverEnter: (pin: MapPin, clientX: number, clientY: number) => void;
-  /** Called on pointer leave; must NOT call if drag is active (D-11 isolation). */
   onPinHoverLeave: () => void;
-  /**
-   * When true, a click on this pin calls onRouteVertexAtPin instead of onNavigate,
-   * and pin drag-reposition is suppressed (pin is a snap target in route-draw mode).
-   * BUG-B fix (51-07).
-   */
   drawRouteMode?: boolean;
-  /**
-   * Called when drawRouteMode is true and the user clicks the pin.
-   * MapEditor appends the pin's exact normalized coords to pendingVertices.
-   * BUG-B fix (51-07).
-   */
   onRouteVertexAtPin?: (pin: MapPin) => void;
-  /**
-   * Phase 53 NEST-01 (D-02): Called when pin.targetMapId is set and the pin is clicked.
-   * Map-open wins — this fires BEFORE onNavigate(entryId) and returns immediately.
-   * Undefined when the parent has not wired nested-map navigation (Plan 07).
-   */
   onOpenMap?: (targetMapId: string) => void;
 }
 
@@ -223,25 +106,15 @@ function PinCircle({
   onRouteVertexAtPin,
   onOpenMap,
 }: PinCircleProps) {
-  // Pin color: explicit override or fallback to entry type color (D-01, graceful degradation D-03)
   const pinColor = pin.color ?? entryTypeHexColor(pin.entryType ?? 'concept');
-  // Phase 52 SECRET-01: shareToken for lock-badge gate (D-02).
-  // Hook called unconditionally at component top — React Hook rules.
   const shareTokenForBadge = useShareToken();
 
-  // ── Drag visual position (D-11 fix) ────────────────────────────────────────
-  // Stored in local state so a parent re-render during drag (e.g. selection state
-  // change, future tooltip hover) does NOT snap the marker back to pin.x*imageWidth.
-  // When null (idle), the transform falls back to pin.x * imageWidth as before.
   const [dragVisualX, setDragVisualX] = useState<number | null>(null);
   const [dragVisualY, setDragVisualY] = useState<number | null>(null);
 
-  // Image-space pin position: use drag-local state during drag to prevent parent
-  // re-renders from resetting the visual position mid-drag.
   const pinX = dragVisualX !== null ? dragVisualX : pin.x * imageWidth;
   const pinY = dragVisualY !== null ? dragVisualY : pin.y * imageHeight;
 
-  // Drag bookkeeping (mutable ref — does not trigger re-renders itself)
   const dragging = useRef(false);
   const dragStart = useRef<{
     clientX: number;
@@ -266,15 +139,11 @@ function PinCircle({
 
   const handlePointerMove = (e: React.PointerEvent<SVGGElement>) => {
     if (!dragging.current || !dragStart.current) return;
-    // In route-draw mode the pin is a snap target, not draggable.
-    // Skip drag-tracking so moved stays false and pointer-up treats it as a click → vertex snap.
-    // BUG-B fix (51-07).
     if (drawRouteMode) return;
     const dx = e.clientX - dragStart.current.clientX;
     const dy = e.clientY - dragStart.current.clientY;
     if (Math.abs(dx) > DRAG_THRESHOLD_PX || Math.abs(dy) > DRAG_THRESHOLD_PX) {
       dragStart.current.moved = true;
-      // Update visual position in local state (D-11 fix: not derived from pin.x during drag)
       const k = currentScale;
       const nx = clamp(dragStart.current.origX + dx / (k * imageWidth), 0, 1);
       const ny = clamp(dragStart.current.origY + dy / (k * imageHeight), 0, 1);
@@ -291,30 +160,19 @@ function PinCircle({
     const start = dragStart.current;
     dragStart.current = null;
 
-    // Clear visual drag state — pin.x * imageWidth resumes after parent re-renders
     setDragVisualX(null);
     setDragVisualY(null);
 
     if (!start.moved) {
-      // Route-draw mode: snap a vertex to this pin's exact location instead of navigating.
-      // BUG-B fix (51-07): clicking a pin while drawRouteMode appends a route vertex
-      // at the pin's exact normalized coords, not a canvas-click approximation.
       if (drawRouteMode) {
         onRouteVertexAtPin?.(pin);
         return;
       }
-      // D-02 map-open-wins (NEST-01): if pin targets a map, open it and return BEFORE entry nav.
-      // A map-only pin (entryId null) opens the map; a dual-target pin also opens the map.
-      // Pins with neither targetMapId nor entryId remain inert (today's behavior).
       if (pin.targetMapId) { onOpenMap?.(pin.targetMapId); return; }
-      // Idle mode: navigate to entry when linked (entryId may be null for map-only pins, D-01a).
       if (pin.entryId) onNavigate(pin.entryId);
       return;
     }
 
-    // DRAG-END COORDINATE CONVERSION (zoom-aware, DELTA approach — VERBATIM D-11):
-    // A screen-space delta is in ZOOMED pixels, so divide by the current zoom
-    // scale k before converting to image-space delta. currentScale = k.
     const k = currentScale;
     const dxImg = (e.clientX - start.clientX) / k;
     const dyImg = (e.clientY - start.clientY) / k;
@@ -329,17 +187,12 @@ function PinCircle({
     onContextMenu(pin, e.clientX, e.clientY);
   };
 
-  // Hover handlers — NEVER fire during an active drag (D-11 isolation).
-  // Hover state is managed by MapCanvas (not PinCircle) via the callbacks.
-  // NEVER attach d3 .on(event,(e,d)=>) for hover — d is undefined on React SVG (memory).
   const handlePointerEnter = (e: React.PointerEvent<SVGGElement>) => {
-    // Skip hover during drag to avoid interfering with drag state (D-11 isolation).
     if (dragging.current) return;
     onPinHoverEnter(pin, e.clientX, e.clientY);
   };
 
   const handlePointerLeave = () => {
-    // Skip hover-leave during drag (pointer capture keeps the element "hot" during drag).
     if (dragging.current) return;
     onPinHoverLeave();
   };
@@ -438,22 +291,6 @@ function PinCircle({
   );
 }
 
-// ─── RegionPolygon ────────────────────────────────────────────────────────────
-/**
- * React-rendered SVG polygon for a map region (D-07).
- *
- * CRITICAL: All interaction uses React event handlers (onClick, onContextMenu).
- * NEVER use d3 .on(event, (e, d) => ...) on this element — d is undefined on
- * React-rendered SVG and would throw (T-40-09, memory: timeline-pins-react-rendered-no-d3-datum).
- *
- * Translucent fill (fillOpacity 0.18) + solid border (strokeOpacity 1) in the
- * element color (D-07). Renders BEFORE pins in z-order so pins stay on top (D-07).
- *
- * isDrawing gate (43-05): When isDrawing is true (addPinMode||drawRegionMode||paintTerrainMode),
- * the polygon sets pointerEvents:'none' so clicks fall through to the root <svg> onClick
- * (handleSvgClick → onCanvasClick → vertex append). onRegionClick navigation is also
- * suppressed while isDrawing. onContextMenu is UNCHANGED in all modes.
- */
 interface RegionPolygonProps {
   region: MapRegion;
   imageWidth: number;
@@ -461,9 +298,7 @@ interface RegionPolygonProps {
   isDrawing: boolean;
   onRegionClick: (region: MapRegion) => void;
   onRegionContextMenu: (region: MapRegion, clientX: number, clientY: number) => void;
-  /** Called on pointer enter with client coords for the tooltip overlay. */
   onRegionHoverEnter: (region: MapRegion, clientX: number, clientY: number) => void;
-  /** Called on pointer leave to clear the tooltip. */
   onRegionHoverLeave: () => void;
 }
 
@@ -477,10 +312,8 @@ function RegionPolygon({
   onRegionHoverEnter,
   onRegionHoverLeave,
 }: RegionPolygonProps) {
-  // Phase 52 SECRET-01: shareToken for lock-badge gate. Hook called unconditionally (React rules).
   const shareTokenForBadge = useShareToken();
 
-  // Parse the points JSON string to [{x, y}] normalized 0..1 then convert to image space.
   let points: Array<{ x: number; y: number }> = [];
   try {
     points = JSON.parse(region.points) as Array<{ x: number; y: number }>;
@@ -490,21 +323,16 @@ function RegionPolygon({
 
   if (points.length < 3) return null;
 
-  // Build SVG polygon points string in image-space coords.
   const svgPoints = points
     .map((p) => `${p.x * imageWidth},${p.y * imageHeight}`)
     .join(' ');
 
   const color = region.color ?? '#6b7280';
 
-  // Centroid (simple average of vertices) for badge placement.
   const centroidX = points.reduce((s, p) => s + p.x * imageWidth, 0) / points.length;
   const centroidY = points.reduce((s, p) => s + p.y * imageHeight, 0) / points.length;
 
   const handleClick = (e: React.MouseEvent<SVGPolygonElement>) => {
-    // While isDrawing: return early WITHOUT stopPropagation and WITHOUT calling onRegionClick.
-    // The click bubbles to handleSvgClick → vertex append; no entry navigation occurs (43-05).
-    // While idle: stopPropagation + navigate to linked entry (D-07 behavior unchanged).
     if (isDrawing) return;
     e.stopPropagation();
     onRegionClick(region);
@@ -516,7 +344,6 @@ function RegionPolygon({
     onRegionContextMenu(region, e.clientX, e.clientY);
   };
 
-  // Hover handlers — NEVER attach d3 .on(event,(e,d)=>) — d is undefined on React SVG (memory).
   const handlePointerEnter = (e: React.PointerEvent<SVGPolygonElement>) => {
     onRegionHoverEnter(region, e.clientX, e.clientY);
   };
@@ -535,7 +362,6 @@ function RegionPolygon({
         strokeWidth={1.5}
         strokeOpacity={1}
         style={{
-          // Show pointer cursor when region is clickable: has an entry link OR a target map (NEST-01).
           cursor: (region.entryId || region.targetMapId) ? 'pointer' : 'default',
           pointerEvents: isDrawing ? 'none' : 'auto',
         }}
@@ -582,25 +408,6 @@ function RegionPolygon({
   );
 }
 
-// ─── RoutePolyline ────────────────────────────────────────────────────────────
-/**
- * React-rendered SVG polyline for a map route (ROUTE-01, Plan 06).
- *
- * CRITICAL: All interaction uses React event handlers (onClick, onContextMenu).
- * NEVER use d3 .on(event, (e, d) => ...) on this element — d is undefined on
- * React-rendered SVG and would throw (T-51-12, memory: timeline-pins-react-rendered-no-d3-datum).
- *
- * Two stacked path elements: a visible styled polyline (pointerEvents:'none') and a
- * fat transparent hit-stroke (strokeWidth=ROUTE_HIT_WIDTH) carrying handlers (D-07).
- * When isDrawing, BOTH paths set pointerEvents:'none' so clicks fall through to
- * handleSvgClick → vertex append (43-05 draw-mode fall-through).
- *
- * T-51-11: JSON.parse guard + min-2-point early return so malformed/short geometry renders null.
- * T-51-12: Label rendered as React text in <foreignObject> — no dangerouslySetInnerHTML.
- *
- * Optional end-arrowhead via SVG <marker> at the final vertex (showArrow=true).
- * Optional upright glassy label chip via <foreignObject> at the path midpoint (name!=='').
- */
 interface RoutePolylineProps {
   route: MapRoute;
   imageWidth: number;
@@ -608,9 +415,7 @@ interface RoutePolylineProps {
   isDrawing: boolean;
   onRouteClick: (route: MapRoute) => void;
   onRouteContextMenu: (route: MapRoute, clientX: number, clientY: number) => void;
-  /** Called on pointer enter for tooltip overlay. */
   onRouteHoverEnter: (route: MapRoute, clientX: number, clientY: number) => void;
-  /** Called on pointer leave to clear tooltip. */
   onRouteHoverLeave: () => void;
 }
 
@@ -624,10 +429,8 @@ function RoutePolyline({
   onRouteHoverEnter,
   onRouteHoverLeave,
 }: RoutePolylineProps) {
-  // Phase 52 SECRET-01: shareToken for lock-badge gate. Hook called unconditionally (React rules).
   const shareTokenForBadge = useShareToken();
 
-  // T-51-11: Parse points JSON — malformed or short geometry renders null rather than throwing.
   let points: Array<{ x: number; y: number }> = [];
   try {
     points = JSON.parse(route.points) as Array<{ x: number; y: number }>;
@@ -637,19 +440,15 @@ function RoutePolyline({
 
   if (points.length < 2) return null;
 
-  // Build SVG polyline points string in image-space coords.
   const svgPoints = points
     .map((p) => `${p.x * imageWidth},${p.y * imageHeight}`)
     .join(' ');
 
   const color = route.color ?? '#6b7280';
 
-  // Pointer events: none when any draw mode active (draw-mode fall-through, 43-05 / D-07).
   const pointerEventsValue: React.CSSProperties['pointerEvents'] = isDrawing ? 'none' : 'auto';
 
   const handleClick = (e: React.MouseEvent) => {
-    // While isDrawing: return early WITHOUT stopPropagation — click bubbles to handleSvgClick
-    // → vertex append; no route navigation occurs (mirrors RegionPolygon 43-05 pattern).
     if (isDrawing) return;
     e.stopPropagation();
     onRouteClick(route);
@@ -661,7 +460,6 @@ function RoutePolyline({
     onRouteContextMenu(route, e.clientX, e.clientY);
   };
 
-  // Hover handlers — NEVER attach d3 .on(event,(e,d)=>) — d is undefined on React SVG.
   const handlePointerEnter = (e: React.PointerEvent) => {
     onRouteHoverEnter(route, e.clientX, e.clientY);
   };
@@ -670,20 +468,17 @@ function RoutePolyline({
     onRouteHoverLeave();
   };
 
-  // Midpoint for the label chip: midpoint of the middle segment.
   const midIdx = Math.floor((points.length - 1) / 2);
   const p0 = points[midIdx];
   const p1 = points[midIdx + 1];
   const midX = ((p0.x + p1.x) / 2) * imageWidth;
   const midY = ((p0.y + p1.y) / 2) * imageHeight;
 
-  // T-51-12: Label rendered as React text — no dangerouslySetInnerHTML.
   const labelText =
     route.name.length > ROUTE_LABEL_MAX_CHARS
       ? route.name.slice(0, ROUTE_LABEL_MAX_CHARS) + '…'
       : route.name;
 
-  // Unique per-route marker ID to avoid defs collisions across multiple routes.
   const markerId = `route-arrow-${route.id}`;
 
   return (
@@ -786,26 +581,6 @@ function RoutePolyline({
   );
 }
 
-// ─── TerrainAreaPolygon ───────────────────────────────────────────────────────
-/**
- * React-rendered SVG polygon for a terrain area (TERRAIN-03).
- *
- * CRITICAL: All interaction uses React event handlers (onClick, onContextMenu).
- * NEVER use d3 .on(event, (e, d) => ...) on this element — d is undefined on
- * React-rendered SVG and would throw (memory: timeline-pins-react-rendered-no-d3-datum).
- *
- * Borderless solid fill (stroke="none") in the terrain type's derived color.
- * Fill opacity is per-viewer (0..1). Right-click opens context menu (UNCHANGED in all modes).
- *
- * isDrawing gate (43-05): When isDrawing is true (addPinMode||drawRegionMode||paintTerrainMode),
- * the polygon sets pointerEvents:'none' so clicks fall through to the root <svg> onClick
- * (handleSvgClick → onCanvasClick → vertex append). The left-click handleClick no-op also
- * skips stopPropagation while isDrawing (belt-and-suspenders). When isDrawing is false,
- * left-click is still a passive no-op (stopPropagation fires, no vertex; terrain areas are
- * not click-to-navigate — D-43-04). onContextMenu is UNCHANGED in all modes.
- *
- * Renders BELOW political regions (inside terrain-areas group, before regions group).
- */
 interface TerrainAreaPolygonProps {
   region: TerrainAreaRegion;
   imageWidth: number;
@@ -823,8 +598,6 @@ function TerrainAreaPolygon({
   isDrawing,
   onTerrainAreaContextMenu,
 }: TerrainAreaPolygonProps) {
-  // Parse the points JSON string to [{x, y}] normalized 0..1 then convert to image space.
-  // Wrapped in try/catch — malformed points render nothing rather than throwing (T-43-04).
   let points: Array<{ x: number; y: number }> = [];
   try {
     points = JSON.parse(region.points) as Array<{ x: number; y: number }>;
@@ -834,14 +607,11 @@ function TerrainAreaPolygon({
 
   if (points.length < 3) return null;
 
-  // Build SVG polygon points string in image-space coords (same math as RegionPolygon).
   const svgPoints = points
     .map((p) => `${p.x * imageWidth},${p.y * imageHeight}`)
     .join(' ');
 
   const handleClick = (e: React.MouseEvent<SVGPolygonElement>) => {
-    // Belt-and-suspenders: only stopPropagation when NOT drawing.
-    // When isDrawing, return immediately so the click bubbles to handleSvgClick (43-05).
     if (isDrawing) return;
     e.stopPropagation();
   };
@@ -868,28 +638,6 @@ function TerrainAreaPolygon({
   );
 }
 
-// ─── MapCanvas ────────────────────────────────────────────────────────────────
-/**
- * SVG canvas with d3-zoom/pan applied to the `<svg>` element only.
- * Pins and regions are React-rendered inside `<g class="pins">` / `<g class="regions">`
- * and use React event handlers exclusively — no d3 datum binding on any element.
- *
- * d3 APIs used:
- *   - d3.zoom() on the <svg> element
- *   - d3.select() for the <g.viewport> element
- *   - zoomBehavior.translateTo / scaleTo for initial fit-to-view
- *   - d3.zoomTransform(svgEl) to read current transform for coord inversion
- *
- * COORDINATE CONVERSION (Approach A — two-step):
- *   Step 1: screen → SVG-ROOT space via svgEl.getScreenCTM().inverse()
- *   Step 2: SVG-ROOT → IMAGE space via d3.zoomTransform(svgEl).invert()
- * This correctly accounts for the d3 zoom transform on <g.viewport>.
- * Using getScreenCTM().inverse() alone (on the svg root) would give SVG-ROOT
- * coords, NOT image coords — pins would persist at the wrong location after
- * any pan or zoom (this is the MAPS-03 correctness bug).
- *
- * Z-ORDER (D-07): regions <g> is rendered BEFORE pins <g> so pins stay on top.
- */
 export const MapCanvas = forwardRef<MapCanvasHandle, MapCanvasProps>(function MapCanvas({
   imageUrl,
   imageWidth,
@@ -925,56 +673,29 @@ export const MapCanvas = forwardRef<MapCanvasHandle, MapCanvasProps>(function Ma
   const svgRef = useRef<SVGSVGElement>(null);
   const containerRef = useRef<HTMLDivElement>(null);
   const [currentScale, setCurrentScale] = useState(1);
-  // Ref to the d3 zoomBehavior — lifted so imperative handle methods can call it (Task 1).
   const zoomBehaviorRef = useRef<ZoomBehavior<SVGSVGElement, unknown> | null>(null);
-  // Pointer position in image space for rubber-band preview (drawRegionMode).
   const [pointerImgPos, setPointerImgPos] = useState<{ x: number; y: number } | null>(null);
   const navigate = useNavigate();
 
-  // ── Hover tooltip state (D-07, D-08, Plan 04 Task 2) ──────────────────────────
-  // Managed here (not in PinCircle/RegionPolygon) so the overlay renders outside the SVG.
-  // Independent of the PinCircle dragging ref — hover callbacks skip during drag.
   const [hoveredTooltip, setHoveredTooltip] = useState<{
     title: string;
     type: string | undefined;
     summary: string | undefined | null;
-    /** Client-space X (used with container-relative offset for positioning). */
     clientX: number;
     clientY: number;
-    /** Phase 53 NEST-01: entryId for dual-target "View entry →" link (D-02). Null = map-only pin. */
     entryId?: string | null;
-    /** Phase 53 NEST-01: targetMapId — truthy means this item opens a nested map. */
     targetMapId?: string | null;
   } | null>(null);
-  // Phase 53 NEST-01: grace-period timer so the pointer can travel from the pin to the
-  // "View entry →" tooltip link without the tooltip dismissing (D-02 dual-target affordance).
-  // Cleared when the pointer re-enters a pin/region or when the pointer enters the tooltip link.
   const hoverLeaveTimerRef = useRef<ReturnType<typeof setTimeout> | null>(null);
-  // Share-token-aware navigation (T-40-14 / D-12): when a share token is present,
-  // pin/region left-click navigates within /share/:token to avoid uid leaks.
   const shareToken = useShareToken();
 
-  // isDrawing: true whenever any vertex-producing mode is active (43-05).
-  // Mirrors the exact condition in handleSvgClick (~:491) — keep them consistent.
-  // Used to gate pointerEvents on overlay polygons (TerrainAreaPolygon, RegionPolygon)
-  // so clicks over existing areas fall through to handleSvgClick → onCanvasClick.
-  // addPinMode is included because handleSvgClick already appends a pin/vertex for it
-  // and a pin-placement click over a terrain area should also pass through.
-  // isDrawing includes drawRouteMode so route elements set pointerEvents:'none'
-  // during route draw, letting clicks fall through to handleSvgClick → vertex append.
   const isDrawing = addPinMode || drawRegionMode || drawRouteMode || paintTerrainMode;
 
-  // Ref mirror of isDrawing — read by the d3 zoom .filter() closure so the zoom behavior
-  // always sees the LIVE draw-mode state without being torn down and recreated (which would
-  // lose the current pan/zoom transform). Updated by a separate useEffect each render so it
-  // is consistent with isDrawing but does NOT appear in the zoom-effect deps array.
-  // BUG-A fix (51-07).
   const isDrawingRef = useRef(isDrawing);
   useEffect(() => {
     isDrawingRef.current = isDrawing;
   }, [isDrawing]);
 
-  // Phase 53 NEST-01: cleanup hover-leave timer on unmount to prevent setState-on-unmounted-component.
   useEffect(() => {
     return () => {
       if (hoverLeaveTimerRef.current !== null) {
@@ -983,10 +704,6 @@ export const MapCanvas = forwardRef<MapCanvasHandle, MapCanvasProps>(function Ma
     };
   }, []);
 
-  // Install d3-zoom on the svg element, targeting <g.viewport>.
-  // Pins and regions are React-rendered inside this effect's SVG structure but are
-  // NOT touched by d3 — d3 only manages the zoom transform on <g.viewport>.
-  // zoomBehavior is lifted to zoomBehaviorRef so imperative handle methods can call it (Task 1).
   useEffect(() => {
     if (!svgRef.current || imageWidth <= 0 || imageHeight <= 0) return;
 
@@ -999,16 +716,9 @@ export const MapCanvas = forwardRef<MapCanvasHandle, MapCanvasProps>(function Ma
       unknown
     >()
       .scaleExtent([0.1, 8])
-      // BUG-A fix (51-07): disable d3 pan-start gestures while any draw mode is active.
-      // The closure reads isDrawingRef.current so it always sees the live value without
-      // the zoom behavior being torn down (which would lose the current transform).
-      // deps are [imageWidth, imageHeight] only — DO NOT add mode flags here.
-      // Wheel events always pass through so scroll-to-zoom works in all modes.
-      // When not drawing, restore d3's default filter (primary button, no Ctrl).
       .filter((event) => {
         if (event.type === 'wheel') return true;
         if (isDrawingRef.current) return false;
-        // d3 default: primary button only, no Ctrl modifier.
         return !event.ctrlKey && !event.button;
       })
       .on('zoom', (evt) => {
@@ -1016,16 +726,11 @@ export const MapCanvas = forwardRef<MapCanvasHandle, MapCanvasProps>(function Ma
         setCurrentScale(evt.transform.k);
       });
 
-    // Lift into ref so useImperativeHandle can access it without closure staleness.
     zoomBehaviorRef.current = zoomBehavior;
 
     svg.call(zoomBehavior);
-    // Disable d3's built-in dblclick-to-zoom so a double-click on a pin
-    // doesn't accidentally zoom the canvas.
     svg.on('dblclick.zoom', null);
 
-    // Fit image to viewport on mount.
-    // Scale so the image fills the viewport without clipping.
     const vw = svgEl.clientWidth || svgEl.getBoundingClientRect().width;
     const vh = svgEl.clientHeight || svgEl.getBoundingClientRect().height;
     if (vw > 0 && vh > 0) {
@@ -1040,10 +745,6 @@ export const MapCanvas = forwardRef<MapCanvasHandle, MapCanvasProps>(function Ma
     };
   }, [imageWidth, imageHeight]);
 
-  // ── Imperative zoom handle (Task 1: D-05 seam for MapZoomControls) ───────────
-  // Exposes zoomIn / zoomOut / fitReset so MapEditor can wire MapZoomControls
-  // buttons directly to the d3 zoomBehavior without prop-drilling callbacks.
-  // Phase 52 SEARCH-01: also exposes panZoomTo(nx, ny) for search result selection (D-05a).
   useImperativeHandle(ref, () => ({
     zoomIn() {
       if (!svgRef.current || !zoomBehaviorRef.current) return;
@@ -1065,10 +766,6 @@ export const MapCanvas = forwardRef<MapCanvasHandle, MapCanvasProps>(function Ma
         zoomBehaviorRef.current.scaleTo(svg, scale);
       }
     },
-    // Phase 52 SEARCH-01: pan + zoom to normalized image-space coordinates (D-05a).
-    // Mirrors fitReset: guard on svgRef + zoomBehaviorRef, convert nx/ny to image pixels,
-    // call translateTo + scaleTo. Target scale PAN_ZOOM_TARGET_SCALE (2.5).
-    // CRITICAL: no d3 datum handler — imperative call only (memory: timeline-pins-react-rendered-no-d3-datum).
     panZoomTo(nx: number, ny: number) {
       if (!svgRef.current || !zoomBehaviorRef.current) return;
       const svg = select(svgRef.current);
@@ -1079,17 +776,10 @@ export const MapCanvas = forwardRef<MapCanvasHandle, MapCanvasProps>(function Ma
     },
   }), [imageWidth, imageHeight]);
 
-  // ── Coordinate conversion helper ─────────────────────────────────────────────
-  // Two-step screen → image space conversion (Approach A).
-  // Used by both handleSvgClick and handleSvgPointerMove.
   const screenToImage = (clientX: number, clientY: number): { nx: number; ny: number } | null => {
     const svgEl = svgRef.current;
     if (!svgEl) return null;
 
-    // Feature-detect the SVG geometry APIs before calling them. Environments without a layout
-    // engine (jsdom) implement NEITHER, and an unguarded call does not return null — it THROWS,
-    // from inside an event handler, so it escapes as an unhandled error rather than degrading.
-    // Same class of guard as the `if (!screenCTM)` check below; both are no-ops in a browser.
     if (typeof svgEl.createSVGPoint !== 'function' || typeof svgEl.getScreenCTM !== 'function') {
       return null;
     }
@@ -1098,12 +788,10 @@ export const MapCanvas = forwardRef<MapCanvasHandle, MapCanvasProps>(function Ma
     pt.x = clientX;
     pt.y = clientY;
 
-    // Step 1: screen → SVG-ROOT space (NOT yet image space).
     const screenCTM = svgEl.getScreenCTM();
     if (!screenCTM) return null;
     const root = pt.matrixTransform(screenCTM.inverse());
 
-    // Step 2: undo the d3 zoom transform (which lives on <g.viewport>) → IMAGE space.
     const [imgX, imgY] = zoomTransform(svgEl).invert([root.x, root.y]);
 
     const nx = clamp(imgX / imageWidth, 0, 1);
@@ -1111,13 +799,8 @@ export const MapCanvas = forwardRef<MapCanvasHandle, MapCanvasProps>(function Ma
     return { nx, ny };
   };
 
-  // CANVAS CLICK — COORDINATE CONVERSION (Approach A — two-step).
-  // Fires when addPinMode, drawRegionMode, or paintTerrainMode is active.
-  // paintTerrainMode reuses the same onCanvasClick vertex-append pipeline as drawRegionMode
-  // (the MapEditor onCanvasClick handler branches on armed state).
   const handleSvgClick = (e: React.MouseEvent<SVGSVGElement>) => {
     if (!addPinMode && !drawRegionMode && !drawRouteMode && !paintTerrainMode) return;
-    // Ignore clicks that originated on a pin group (they handle their own events).
     if ((e.target as Element).closest('g[aria-label]')) return;
 
     const pos = screenToImage(e.clientX, e.clientY);
@@ -1125,10 +808,6 @@ export const MapCanvas = forwardRef<MapCanvasHandle, MapCanvasProps>(function Ma
     onCanvasClick(pos.nx, pos.ny);
   };
 
-  // POINTER MOVE — track cursor in image space for rubber-band preview.
-  // Active in drawRegionMode AND paintTerrainMode (shared vertex-snap preview).
-  // dblclick finisher for route draw — d3's dblclick-to-zoom is already suppressed.
-  // Only fires when drawRouteMode is active; delegates to MapEditor's handler.
   const handleSvgDblClick = (e: React.MouseEvent<SVGSVGElement>) => {
     if (!drawRouteMode) return;
     e.stopPropagation();
@@ -1141,9 +820,6 @@ export const MapCanvas = forwardRef<MapCanvasHandle, MapCanvasProps>(function Ma
     if (pos) setPointerImgPos({ x: pos.nx * imageWidth, y: pos.ny * imageHeight });
   };
 
-  // Navigate to entry — share-token-aware (T-40-14).
-  // In share mode: /share/:token/entries/:entryId (no uid leak to visitor).
-  // In authenticated mode: /universes/:uid/entries/:entryId.
   const handleNavigate = (entryId: string) => {
     if (shareToken) {
       navigate(`/share/${shareToken}/entries/${entryId}`);
@@ -1152,16 +828,11 @@ export const MapCanvas = forwardRef<MapCanvasHandle, MapCanvasProps>(function Ma
     }
   };
 
-  // ── Hover tooltip callbacks (D-07, D-08) ──────────────────────────────────────
-  // T-50-07: summary rendered as React text child — auto-escaped, NEVER dangerouslySetInnerHTML.
-  // Callbacks are stable via useCallback so PinCircle/RegionPolygon renders are not spurious.
   const handlePinHoverEnter = useCallback((pin: MapPin, clientX: number, clientY: number) => {
-    // Cancel any pending hover-leave dismissal (grace period for dual-target tooltip link travel).
     if (hoverLeaveTimerRef.current !== null) {
       clearTimeout(hoverLeaveTimerRef.current);
       hoverLeaveTimerRef.current = null;
     }
-    // Map-only pins (targetMapId set, entryId null) have no entry title — show "Opens map" affordance.
     const isMapOnly = !!pin.targetMapId && !pin.entryId;
     setHoveredTooltip({
       title: isMapOnly ? 'Opens map' : (pin.entryTitle ?? 'Pin'),
@@ -1175,7 +846,6 @@ export const MapCanvas = forwardRef<MapCanvasHandle, MapCanvasProps>(function Ma
   }, []);
 
   const handleRegionHoverEnter = useCallback((region: MapRegion, clientX: number, clientY: number) => {
-    // Cancel any pending hover-leave dismissal.
     if (hoverLeaveTimerRef.current !== null) {
       clearTimeout(hoverLeaveTimerRef.current);
       hoverLeaveTimerRef.current = null;
@@ -1186,17 +856,12 @@ export const MapCanvas = forwardRef<MapCanvasHandle, MapCanvasProps>(function Ma
       summary: undefined,
       clientX,
       clientY,
-      // NEST-01 (CR-01): carry entryId/targetMapId so a dual-target region's
-      // "View entry →" tooltip link renders — the only path to a linked entry
-      // for a share visitor once map-open wins the click.
       entryId: region.entryId,
       targetMapId: region.targetMapId,
     });
   }, []);
 
-  // Phase 51 ROUTE-01: route hover handler — shows route name in tooltip.
   const handleRouteHoverEnter = useCallback((route: MapRoute, clientX: number, clientY: number) => {
-    // Cancel any pending hover-leave dismissal.
     if (hoverLeaveTimerRef.current !== null) {
       clearTimeout(hoverLeaveTimerRef.current);
       hoverLeaveTimerRef.current = null;
@@ -1211,22 +876,16 @@ export const MapCanvas = forwardRef<MapCanvasHandle, MapCanvasProps>(function Ma
   }, []);
 
   const handleHoverLeave = useCallback(() => {
-    // Phase 53 NEST-01: 150ms grace period so the pointer can cross the ~14px gap from the pin
-    // to the "View entry →" tooltip link without dismissing the tooltip (D-02 dual-target).
     hoverLeaveTimerRef.current = setTimeout(() => {
       setHoveredTooltip(null);
       hoverLeaveTimerRef.current = null;
     }, 150);
   }, []);
 
-  // ── Rubber-band preview helpers ──────────────────────────────────────────────
-  // Convert pending vertices (normalized) to image-space SVG points string.
   const pendingPoints = pendingVertices
     .map((p) => `${p.x * imageWidth},${p.y * imageHeight}`)
     .join(' ');
 
-  // First-vertex snap affordance — check if pointer is near the first vertex.
-  // Active in drawRegionMode and paintTerrainMode (same vertex snap behavior).
   const isNearFirstVertex =
     (drawRegionMode || paintTerrainMode) &&
     pendingVertices.length >= 3 &&
@@ -1238,18 +897,13 @@ export const MapCanvas = forwardRef<MapCanvasHandle, MapCanvasProps>(function Ma
       return Math.sqrt(dx * dx + dy * dy) < SNAP_DISTANCE_PX / currentScale;
     })();
 
-  // Preview shape includes the current pointer as a trailing vertex for rubber-band effect.
-  // drawRouteMode is included so the open-polyline preview also tracks the cursor.
   const previewPoints =
     (drawRegionMode || drawRouteMode || paintTerrainMode) && pendingVertices.length > 0 && pointerImgPos
       ? pendingPoints + ` ${pointerImgPos.x},${pointerImgPos.y}`
       : pendingPoints;
 
-  // The region draw preview color uses the accent color.
   const previewColor = 'var(--color-accent, #3b82f6)';
 
-  // Compute tooltip position relative to the container div.
-  // getBoundingClientRect() returns zeros in jsdom — that's fine for tests (tooltip still renders).
   const tooltipStyle = hoveredTooltip ? (() => {
     const rect = containerRef.current?.getBoundingClientRect();
     const left = hoveredTooltip.clientX - (rect?.left ?? 0) + 14;
@@ -1257,24 +911,15 @@ export const MapCanvas = forwardRef<MapCanvasHandle, MapCanvasProps>(function Ma
     return { left, top } as React.CSSProperties;
   })() : undefined;
 
-  // Whether the summary excerpt should render (D-08):
-  // non-empty string only — empty string, null, undefined all suppress the excerpt line.
   const hasExcerpt =
     hoveredTooltip?.summary != null &&
     hoveredTooltip.summary.trim().length > 0;
 
-  // Truncate summary to ~120 chars to keep the tooltip compact.
   const excerptText =
     hasExcerpt && hoveredTooltip!.summary!.length > 120
       ? hoveredTooltip!.summary!.slice(0, 120) + '…'
       : hoveredTooltip?.summary ?? '';
 
-  // Content-Forward Views §6 — the tooltip's identity disc.
-  // A cold entries cache (e.g. deep-link straight to a map — the list has not resolved when the
-  // map first paints) means the medallions map has no entry yet. Synthesize from the tooltip's
-  // own joined fields so the identity still renders as a monogram — matching GraphCanvas and
-  // TimelineCanvas, which both fall back the same way rather than rendering nothing.
-  // A map-only pin or a region has NO entryId at all: those render no medallion, by design.
   const medallion: MedallionSource | undefined = hoveredTooltip?.entryId
     ? (medallions?.get(hoveredTooltip.entryId) ?? {
         title: hoveredTooltip.title,
@@ -1285,8 +930,6 @@ export const MapCanvas = forwardRef<MapCanvasHandle, MapCanvasProps>(function Ma
     : undefined;
 
   return (
-    // Container div: fills parent, provides positioning context for the tooltip overlay.
-    // height/width inherit from the SVG's h-full w-full, matching prior layout.
     <div ref={containerRef} className="relative h-full w-full">
     <svg
       ref={svgRef}
@@ -1493,8 +1136,6 @@ export const MapCanvas = forwardRef<MapCanvasHandle, MapCanvasProps>(function Ma
                   fill={isSnapped ? previewColor : '#ffffff'}
                   stroke={previewColor}
                   strokeWidth={1.5 / currentScale}
-                  // Route mode: no snap-to-first-vertex affordance — routes finish via Enter/dblclick,
-                  // never by snapping back to the first vertex. No pointer cursor, no 'Close polygon' label.
                   style={{ cursor: isFirst && !drawRouteMode && pendingVertices.length >= 3 ? 'pointer' : 'default', pointerEvents: 'none' }}
                   aria-label={isFirst && !drawRouteMode ? 'Close polygon' : `Vertex ${idx + 1}`}
                 />
@@ -1534,18 +1175,15 @@ export const MapCanvas = forwardRef<MapCanvasHandle, MapCanvasProps>(function Ma
             Position: image-space coords for pin/region/route (same centroid/midpoint logic
             as the lock badge renderers in PinCircle/RegionPolygon/RoutePolyline). */}
         {highlightedItemId && (() => {
-          // Find the highlighted item and compute its image-space position.
           let px: number | null = null;
           let py: number | null = null;
 
-          // Check pins first
           const hitPin = pins.find((p) => p.id === highlightedItemId);
           if (hitPin) {
             px = hitPin.x * imageWidth;
             py = hitPin.y * imageHeight;
           }
 
-          // Check regions
           if (px === null) {
             const hitRegion = regions.find((r) => r.id === highlightedItemId);
             if (hitRegion) {
@@ -1559,7 +1197,6 @@ export const MapCanvas = forwardRef<MapCanvasHandle, MapCanvasProps>(function Ma
             }
           }
 
-          // Check routes
           if (px === null) {
             const hitRoute = routes.find((r) => r.id === highlightedItemId);
             if (hitRoute) {

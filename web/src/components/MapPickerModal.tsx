@@ -55,32 +55,15 @@ function MapGlyph() {
 }
 
 export interface MapPickerModalProps {
-  /** Whether the panel is visible. */
   open: boolean;
-  /** Called when the user dismisses the panel (× button or Esc). */
   onClose: () => void;
-  /** Called when the user selects a map to link. Closes immediately. */
   onSelect: (mapId: string) => void;
-  /** Called when the user clicks Unlink. */
   onUnlink: () => void;
-  /** The current map's id — excluded from the list. */
   currentMapId: string;
-  /** The currently linked target map id (undefined / null = no link set). */
   currentTargetMapId?: string | null;
-  /** Universe id — passed to useMaps. */
   universeId: string;
 }
 
-/**
- * Right-side slide-in panel (w-72, absolute right-0 top-0 h-full) for linking
- * a map target to a pin or region. Modeled on AddEntriesPicker verbatim —
- * swaps entries → maps, drops ConfirmDialog (unlink is non-destructive, UI-SPEC Color note).
- *
- * Animation: translate-x-full → translate-x-0 (180ms --motion-ease-out).
- * Respects prefers-reduced-motion (handled globally in styles.css).
- * Accessibility: role="region" aria-label="Link to map", search aria-label="Search maps",
- * close aria-label="Close map picker"; Esc closes.
- */
 export function MapPickerModal({
   open,
   onClose,
@@ -93,7 +76,6 @@ export function MapPickerModal({
   const [query, setQuery] = useState('');
   const { data: allMaps = [] } = useMaps(universeId);
 
-  // Exclude the current map — a map can't target itself.
   const otherMaps = allMaps.filter((m) => m.id !== currentMapId);
 
   const filtered = query.trim()
@@ -151,7 +133,6 @@ export function MapPickerModal({
       {/* Map list */}
       <div className="flex-1 overflow-y-auto px-2 pb-2">
         {otherMaps.length === 0 ? (
-          /* Empty state — no other maps exist at all */
           <div className="flex flex-col items-center text-center px-4 py-6 gap-2">
             <p className="text-sm font-medium text-neutral-500 dark:text-neutral-400">
               {COPY.emptyHeading}
@@ -161,7 +142,6 @@ export function MapPickerModal({
             </p>
           </div>
         ) : filtered.length === 0 && query.trim() ? (
-          /* Empty search state */
           <p className="px-2 py-3 text-xs text-neutral-500 dark:text-neutral-400">
             {COPY.emptySearch(query.trim())}
           </p>

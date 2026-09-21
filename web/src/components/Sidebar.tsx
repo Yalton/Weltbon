@@ -66,11 +66,6 @@ function SidebarNavLink({
 }: {
   to: string;
   children: React.ReactNode;
-  /**
-   * Rendered ONLY above zero. See `Sidebar`'s F-07 comment: a badge is read as
-   * authoritative, so "no badge" has to mean "nothing to say", never "nothing
-   * is known yet".
-   */
   badge?: number;
 }) {
   return (
@@ -101,21 +96,6 @@ function SidebarNavLink({
   );
 }
 
-/**
- * F-07 — the sync-conflict badge is CURRENT-UNIVERSE ONLY.
- *
- * `useSyncConflictCount` reads the same query key as the Sync tab's list, for
- * the universe already on screen, so the two can never disagree. It returns 0
- * while loading and 0 on error, and the badge renders only above zero — a badge
- * is read as authoritative, so a wrong number is worse than no number, and
- * silence is the right failure mode rather than a confident "no conflicts".
- *
- * THE LIMIT, STATED PLAINLY: this cannot surface conflicts in a universe the
- * user has not opened. Fixing that would need an account-wide count endpoint,
- * which does not exist and which Plan F does not add (Plan F changes nothing
- * under api/). No copy anywhere implies otherwise — the Sync tab's own list
- * says "this universe only" for the same reason.
- */
 export function Sidebar({ universeId }: { universeId: string }) {
   const { data, isLoading, error } = useCategories(universeId);
   const conflictCount = useSyncConflictCount(universeId);

@@ -58,11 +58,10 @@ export default function App() {
             <Route path="invites" element={authMode === 'local' || !isAdmin ? <Navigate to="/settings" replace /> : <Invites />} />
             <Route path="users" element={authMode === 'local' || !isAdmin ? <Navigate to="/settings" replace /> : <AdminUsers />} />
             <Route path="templates" element={<Templates />} />
-            {/* Phase 29 — global owner audit view for all share links. */}
+
             <Route path="shares" element={<Shares />} />
             <Route path="llm" element={<LlmKeys />} />
-            {/* Plan F — sync remotes are account-scoped (sync_remotes has no
-                universe column), so they live here, not in universe settings. */}
+
             <Route path="sync" element={<SyncSettings />} />
           </Route>
         </Route>
@@ -88,30 +87,13 @@ export default function App() {
           <Route path="/universes/:uid/import" element={<IngestImport />} />
         </Route>
       </Route>
-      {/*
-        Phase 29 — public read-only share-link visitor subtree. Mounted
-        OUTSIDE <ProtectedRoute> so an unauthenticated visitor can reach
-        these routes; the api-client share-mode seam (web/src/api/client.ts)
-        rewrites every fetch to /api/share/* with a share-token header for
-        the lifetime of ShareLayout mount. The four reused views adapt via
-        useShareMode() rather than being duplicated as Shared* variants.
-      */}
+
       <Route path="/share/:token" element={<ErrorBoundary fallback={<ShareFallback />}><ShareLayout /></ErrorBoundary>}>
         <Route index element={<EntryList />} />
         <Route path="entries/:entryId" element={<EntryDetail />} />
         <Route path="graph" element={<GraphView />} />
         <Route path="timeline" element={<TimelineView />} />
-        {/*
-          Phase 40 Plan 04 — share-mode map routes. Mounted here (outside
-          ProtectedRoute) so unauthenticated visitors can reach them.
-          Both views adapt via useShareMode() — no Shared* variants needed.
-          MapList renders the maps grid read-only (no New map / Delete affordances
-          when isShare=true); MapEditor renders the canvas read-only (toolbar,
-          draw/add modes, and all mutation affordances suppressed by Task 1).
-          Data flows through the api/client.ts seam:
-            /universes/share/maps  → /api/share/maps
-            /universes/share/maps/:mid → /api/share/maps/:mid
-        */}
+
         <Route path="maps" element={<MapList />} />
         <Route path="maps/:mid" element={<MapEditor />} />
       </Route>

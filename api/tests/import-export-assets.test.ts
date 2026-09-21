@@ -1,18 +1,3 @@
-/**
- * Phase 38 Plan 05 — MEDIA-06 export→reimport asset round-trip integration tests.
- *
- * Covers:
- *   - MEDIA-06 round-trip: export a universe with cover + inline-embed assets as a
- *     ZIP; import the ZIP; assert the new universe has restored asset bytes + remapped
- *     coverImageId + remapped inline asset:// body ref.
- *   - Legacy compat: a plain JSON payload (weltbon_version 1.0.0, no assets key)
- *     imports successfully with no asset rows created.
- *
- * NOTE: UPLOADS_DIR must be set to a temp dir BEFORE importing createApp so the
- * storageBackend singleton binds to the writable path (same pattern as assets.test.ts).
- * This file sets UPLOADS_DIR only if it is not already set (so when assets.test.ts
- * runs in the same vitest worker it does not clobber the already-set path).
- */
 
 import { mkdtempSync, rmSync } from 'node:fs';
 import { tmpdir } from 'node:os';

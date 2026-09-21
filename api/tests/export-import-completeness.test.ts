@@ -19,27 +19,7 @@ import {
   type FieldRegistryEntry,
 } from '../src/db/schema.js';
 
-/**
- * api/tests/export-import-completeness.test.ts — Plan A2 (Export-Payload
- * Completeness) round-trip coverage.
- *
- * Verifies the manifest-2.1.0 additions from Tasks 1-3 actually export,
- * import, and remap correctly: dictionary words, diagrams + nodes, share
- * tokens, and the universe-level calendar/theme/fieldRegistry/audit
- * settings — plus the A2-03 (timestamps re-stamped) and A2-04 (duplicate
- * hash skip) semantics.
- *
- * Plan C (manifest 2.2.0) extends this with link edge styling (lineStyle +
- * color), which 2.1.0 dropped on export and therefore on every sync.
- *
- * Setup/helpers are modeled on tests/export-import.test.ts (createTestDb +
- * setTestDb bootstrap, same ZIP manifest-extraction approach). Distinctive
- * seed values (e.g. 'quenya-word', calendar month 'Frostmoon') keep
- * misrouted fields loud rather than silently passing.
- *
- * Lane: DB-gated (integration) — registered in vitest.config.ts DB_GATED_TESTS.
- */
-describe('export/import completeness (Plan A2)', () => {
+describe('export/import completeness', () => {
   let handle: TestDbHandle;
   let app: ReturnType<typeof createApp>;
 
@@ -184,7 +164,7 @@ describe('export/import completeness (Plan A2)', () => {
     const langEntry = await createEntry(universe.id, hdrs, { title: 'Quenya' });
     const subjectA = await createEntry(universe.id, hdrs, { title: 'Diagram Subject A' });
     const subjectB = await createEntry(universe.id, hdrs, { title: 'Diagram Subject B' });
-    // Plan B (Task 1): wip entry — asserts the manifest no longer drops entries.wip.
+
     const wipEntry = await createEntry(universe.id, hdrs, { title: 'Draft Entry', wip: true });
 
     // Dictionary: one entry-scoped word, one universe-level (languageEntryId: null).
@@ -216,7 +196,7 @@ describe('export/import completeness (Plan A2)', () => {
       { diagramId: diagram!.id, entryId: subjectB.id, x: 30, y: 40 },
     ]);
 
-    // Plan C (manifest 2.2.0): 2.1.0 dropped diagramId/lineStyle/color. diagramId
+
     // is asserted HERE and only here: it is deliberately not importable (import
     // mints fresh diagram ids), so the round-trip scenario structurally cannot
     // catch its removal from the manifest.
@@ -269,13 +249,13 @@ describe('export/import completeness (Plan A2)', () => {
     expect(data.universe.auditProvider).toBe('anthropic');
     expect(data.universe.auditModel).toBe('claude-test-model');
 
-    // Plan B (Task 1): universe singleton identity/timestamps — the manifest
+
     // used to omit id/createdAt/updatedAt entirely (B-06 merge prerequisite).
     expect(data.universe.id).toBe(universe.id);
     expect(data.universe.createdAt).toBeTruthy();
     expect(data.universe.updatedAt).toBeTruthy();
 
-    // Plan B (Task 1): entries.wip — the manifest used to drop this DB column.
+
     // eslint-disable-next-line @typescript-eslint/no-explicit-any
     const draftEntry = data.entries.find((e: any) => e.id === wipEntry.id);
     expect(draftEntry).toBeTruthy();
@@ -296,7 +276,7 @@ describe('export/import completeness (Plan A2)', () => {
     expect(scopedWord.languageEntryId).toBe(langEntry.id);
     expect(universalWord.languageEntryId).toBeNull();
 
-    // Plan C (manifest 2.2.0): link edge styling survives the export.
+
     // eslint-disable-next-line @typescript-eslint/no-explicit-any
     const exportedLink = data.links.find((l: any) => l.lineStyle !== null);
     expect(exportedLink).toBeDefined();
@@ -320,7 +300,7 @@ describe('export/import completeness (Plan A2)', () => {
 
     const langEntry = await createEntry(universe.id, hdrs1, { title: 'Quenya' });
     const diagramSubject = await createEntry(universe.id, hdrs1, { title: 'Diagram Subject' });
-    // Plan B (Task 1): wip entry — asserts entries.wip round-trips through export+import.
+
     await createEntry(universe.id, hdrs1, { title: 'Draft Entry', wip: true });
 
     await db().insert(dictionaryWords).values([
@@ -336,7 +316,7 @@ describe('export/import completeness (Plan A2)', () => {
       { diagramId: diagram!.id, entryId: diagramSubject.id, x: 1, y: 2 },
     ]);
 
-    // Plan C (manifest 2.2.0): edge styling must survive export + re-import.
+
     await db().insert(links).values({
       universeId: universe.id,
       sourceEntryId: langEntry.id,
@@ -391,7 +371,7 @@ describe('export/import completeness (Plan A2)', () => {
     expect(newSubjectEntry).toBeTruthy();
     expect(newLangEntry!.id).not.toBe(langEntry.id);
 
-    // Plan B (Task 1): entries.wip round-trips through export+import.
+
     const newDraftEntry = importedEntries.find((e) => e.title === 'Draft Entry');
     expect(newDraftEntry).toBeTruthy();
     expect(newDraftEntry!.wip).toBe(true);
@@ -415,7 +395,7 @@ describe('export/import completeness (Plan A2)', () => {
     expect(importedNodes[0]!.entryId).toBe(newSubjectEntry!.id);
     expect(importedNodes[0]!.entryId).not.toBe(diagramSubject.id);
 
-    // Plan C (manifest 2.2.0): lineStyle + color round-trip. diagramId does NOT
+
     // (import mints fresh diagram ids — sync, not import, preserves it).
     const importedLinks = await db().select().from(links).where(eq(links.universeId, importResult.universeId));
     expect(importedLinks).toHaveLength(1);
@@ -440,7 +420,7 @@ describe('export/import completeness (Plan A2)', () => {
     expect((importedUniverse!.fieldRegistry as FieldRegistryEntry[])[0]!.name).toBe('Power Level');
     expect(importedUniverse!.auditEnabled).toBe(true);
 
-    // Plan B (Task 1): the manifest's universe.id is accepted-and-IGNORED —
+
     // import always mints a fresh universe id (sync, not import, preserves ids).
     expect(importedUniverse!.id).not.toBe(universe.id);
     expect(importedUniverse!.id).toBe(importResult.universeId);

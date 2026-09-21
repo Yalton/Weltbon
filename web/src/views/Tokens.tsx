@@ -1,12 +1,3 @@
-/**
- * Tokens view — /settings/tokens
- *
- * Personal Access Token management page.
- * Three states: loading (skeleton rows), empty state, populated table.
- * Per UI-SPEC §5, copywriting locked to §13.
- *
- * Route: /settings/tokens (nested inside SettingsLayout via App.tsx)
- */
 
 import { useState } from 'react';
 import { useTokens, useRevokeToken, type Token } from '../hooks/useTokens';
@@ -176,7 +167,6 @@ export default function Tokens() {
             try {
               await revokeToken.mutateAsync(revokeTarget.id);
             } catch {
-              // Silent invalidate on 404 race — useRevokeToken's onError handles it
             }
           }
         }}

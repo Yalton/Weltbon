@@ -66,7 +66,7 @@ describe('makeDocx fixture helper', () => {
   });
 
   it('adds extraEntries verbatim, including duplicates of an allowlisted name', async () => {
-    // Load-bearing for the entry-confusion test in Task 3: the helper must be
+
     // able to build an archive a real writer never would.
     const buf = await makeDocx({
       documentXml: MINIMAL_DOCUMENT_XML,

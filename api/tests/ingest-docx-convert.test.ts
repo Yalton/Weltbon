@@ -148,7 +148,7 @@ describe('convertDocument — blocks', () => {
   });
 
   it('does NOT escape heading text, unlike every other run', () => {
-    // Reversed deliberately in fix round 1. Escaping is right everywhere the
+
     // escape stays inside the rendered body, and wrong in a heading, because
     // inferTitle and ingest-split's headingText slice the H1 from the SOURCE:
     // `# \\#1 \\*The\\* Vale` titled the entry `\\#1 \\*The\\* Vale`,

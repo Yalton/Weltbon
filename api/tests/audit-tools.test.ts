@@ -1,22 +1,3 @@
-/**
- * Phase 24-02 — audit-tools.ts unit tests.
- *
- * Strategy: Strategy A from llm-keys.test.ts — vi.hoisted captures a stable
- * mockSelect reference; vi.mock stubs db() so the production code's db()
- * call returns a controlled chainable mock.
- *
- * The DB mock returns a thenable chain: select() returns an object with
- * from() → where() → limit() → then(), and from() → where() → then()
- * (for the validateReferencedEntryIds full-table query).
- *
- * Coverage:
- *   1. getEntryBody returns the full shape for a valid (universeId, entryId) pair
- *   2. getEntryBody returns null when the entryId belongs to a different universe
- *   3. getEntryBody returns null for a random UUID not in the DB
- *   4. validateReferencedEntryIds keeps suggestions whose all refs are valid + drops
- *      suggestions with any hallucinated id
- *   5. validateReferencedEntryIds handles an empty suggestions array
- */
 
 import { describe, it, expect, vi, beforeEach } from 'vitest';
 

@@ -6,18 +6,7 @@ import { setTestDb } from '../src/db/client.js';
 import { loadUniverseExportPayload } from '../src/services/export/payload.js';
 import { importUniverseJson } from '../src/services/import-json.js';
 
-/**
- * Phase 20 D-01 — DB-gated round-trip coverage for universes.timeline_window:
- *  - PATCH /universes/:id accepts { timelineWindow }
- *  - GET /universes/:id returns the persisted value
- *  - PATCH with null clears the window
- *  - JSON export emits universe.timelineWindow; importUniverseJson
- *    persists it (and tolerates missing field → null default)
- *
- * Registered in api/vitest.config.ts DB_GATED_TESTS so it joins the
- * integration lane only.
- */
-describe('Timeline window (Phase 20 D-01)', () => {
+describe('Timeline window', () => {
   let handle: TestDbHandle;
   let app: ReturnType<typeof createApp>;
 
@@ -150,7 +139,7 @@ describe('Timeline window (Phase 20 D-01)', () => {
     expect(importedUniverse.timelineWindow).toEqual({ start: -50000, end: 2050 });
   });
 
-  it('import without a timelineWindow field defaults to null (pre-Phase-20 export compat)', async () => {
+  it('import without a timelineWindow field defaults to null', async () => {
     const { user, hdrs } = await userWithToken('tw6@test.com');
     // Build a minimal v1.0.0 export-shaped payload WITHOUT a timelineWindow key.
     const legacyExport = {

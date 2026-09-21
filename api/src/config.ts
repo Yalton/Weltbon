@@ -1,20 +1,15 @@
-// api/src/config.ts
 export type DbDriver = 'postgres' | 'pglite';
 
 export interface Env {
   jwtSecret: Uint8Array;
   dbDriver: DbDriver;
-  /** Undefined when dbDriver === 'pglite'. */
   databaseUrl: string | undefined;
-  /** The PGlite data directory. Required when dbDriver === 'pglite', else undefined. */
   dataDir: string | undefined;
   chromiumPath: string | undefined;
   publicOrigin: string | undefined;
   port: number;
-  /** Directory holding the built SPA. Relative paths resolve against process.cwd(). */
   webDist: string;
   llmKeyEncryptionKey: string | undefined;
-  // Phase 24 AUDIT hard caps (T-24-01-03: validated at boot, defaults applied when unset).
   auditMaxToolCalls: number;     // AUDIT_MAX_TOOL_CALLS, default 20
   auditMaxWallClockMs: number;   // AUDIT_MAX_WALL_CLOCK_MS, default 120_000
   auditMaxCostUsd: number;       // AUDIT_MAX_COST_USD, default 1.00
@@ -33,15 +28,6 @@ export interface Env {
    * must never be reachable from the LAN.
    */
   bindHost: string | undefined;
-  /**
-   * #44 (AS-07): run the auto-sync scheduler in this process.
-   *
-   * ON by default and only the literal 'off' disables it — auto-sync is the
-   * feature, and an operator who has to discover a flag to get it has a broken
-   * install, not a configured one. The escape hatch exists for the cases where
-   * a background loop is genuinely unwanted: a one-shot container, a migration
-   * run, or an operator debugging a link by hand.
-   */
   autoSyncEnabled: boolean;
 }
 
@@ -82,9 +68,6 @@ export function loadEnv(source: NodeJS.ProcessEnv = process.env): Env {
       '(the directory PGlite stores its data in).'
     );
   }
-  // Validate the URL's shape whenever one is present, regardless of driver. A
-  // stray or mistyped DATABASE_URL on a pglite install should be reported, not
-  // silently ignored.
   if (db && !db.startsWith('postgresql://') && !db.startsWith('postgres://')) {
     throw new Error(
       `DATABASE_URL must start with postgresql:// or postgres:// (got: ${db.slice(0, 20)}...)`
@@ -108,8 +91,6 @@ export function loadEnv(source: NodeJS.ProcessEnv = process.env): Env {
   }
 
   // LLMKEY-08: validate format when present, but do NOT require at load time.
-  // The conditional "required when llm_api_keys rows exist" check lives at boot
-  // (api/src/index.ts assertLlmKeyEncryptionKey) where the DB state is known.
   const llmKeyEncryptionKey = source.LLM_KEY_ENCRYPTION_KEY;
   if (llmKeyEncryptionKey !== undefined && !/^[0-9a-f]{64}$/i.test(llmKeyEncryptionKey)) {
     throw new Error(
@@ -118,7 +99,6 @@ export function loadEnv(source: NodeJS.ProcessEnv = process.env): Env {
     );
   }
 
-  // Phase 24 AUDIT hard caps (T-24-01-03: validate at boot; defaults supplied for safe fallback).
   // Mirror the `port: Number(source.PORT ?? 3000)` pattern: Number() coercion + NaN/non-positive guard.
   const auditMaxToolCalls = Number(source.AUDIT_MAX_TOOL_CALLS ?? 20);
   if (Number.isNaN(auditMaxToolCalls) || auditMaxToolCalls <= 0) {
@@ -164,27 +144,16 @@ export function loadEnv(source: NodeJS.ProcessEnv = process.env): Env {
     localMode: source.WELTBON_LOCAL_MODE === '1' || source.WELTBON_LOCAL_MODE === 'true',
     // `|| undefined` (not `??`): an explicitly-set-but-empty WELTBON_BIND_HOST=
     // must fall back to the all-interfaces default too, not pass '' through to
-    // net.Server#listen (Node's http server treats '' as 0.0.0.0 in practice,
-    // but the intent here is "undefined means unset", not "empty string is a
-    // valid hostname").
     bindHost: source.WELTBON_BIND_HOST || undefined,
-    // Default ON: anything other than the literal 'off' — unset included —
     // leaves auto-sync running.
     autoSyncEnabled: source.WELTBON_AUTO_SYNC !== 'off',
   };
 }
 
-// Lazy: only loaded when first imported by the server entrypoint.
-// Tests can call loadEnv(customEnv) directly.
 let _env: Env | null = null;
 export function env(): Env {
   if (_env === null) _env = loadEnv();
   return _env;
 }
 
-/**
- * Tests only: drop the cached Env so a changed process.env is re-read.
- * Leading underscore is this repo's convention for a test-only export — see
- * `_resetModelCacheForTests` in `providers/llm/model-catalog.ts`.
- */
 export function _resetEnvForTests(): void { _env = null; }

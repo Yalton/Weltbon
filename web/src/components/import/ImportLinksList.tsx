@@ -4,12 +4,6 @@ interface ImportLinksListProps {
   linksOut: LinkOut[];
 }
 
-/**
- * Read-only outbound-links summary for an import-review entry. Each row
- * shows the wikilink target text and a resolved/unresolved status pill.
- *
- * UI-SPEC §4.5 section 6.
- */
 export function ImportLinksList({ linksOut }: ImportLinksListProps) {
   return (
     <div className="mt-6 pt-6 border-t border-neutral-200 dark:border-neutral-800">

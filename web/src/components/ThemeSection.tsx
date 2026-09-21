@@ -22,7 +22,6 @@ const FONT_LABELS: Record<keyof typeof FONT_STACKS, string> = {
   crimson: 'Crimson Pro',
 };
 
-/** Strip undefined keys so the saved theme object is minimal and stable. */
 function compact(t: UniverseTheme): UniverseTheme {
   return Object.fromEntries(
     Object.entries(t).filter(([, v]) => v !== undefined),
@@ -34,7 +33,6 @@ export function ThemeSection({ universe }: { universe: Universe }) {
   const [draft, setDraft] = useState<UniverseTheme>(universe.theme ?? {});
   const [pickerOpen, setPickerOpen] = useState(false);
   // Thumb URL of a backdrop picked THIS session — the server-resolved
-  // universe.backdropThumbUrl only exists after save, so this gives immediate
   // thumbnail + live-preview feedback right after picking.
   const [pickedThumbUrl, setPickedThumbUrl] = useState<string | null>(null);
 

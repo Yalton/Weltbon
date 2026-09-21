@@ -1,27 +1,11 @@
-/**
- * diagramExport — pure JSON serialize/parse for Export JSON + import round-trip.
- *
- * DIAGRAM-03 requirement.
- *
- * Threat T-31-05: parseDiagram validates shape without eval/dangerouslySetInnerHTML.
- * Content is opaque data; the canvas wave renders it as SVG text with escaping.
- *
- * No React, no DOM, no I/O. Pure data transforms.
- *
- * Export JSON shape:
- *   { version: 1, diagram: DiagramMeta, nodes: DiagramNode[], edges: DiagramEdge[] }
- */
 
-// ─── Types ────────────────────────────────────────────────────────────────────
 
-/** Diagram-level metadata. */
 export interface DiagramMeta {
   id: string;
   name: string;
   description?: string;
 }
 
-/** A node in the diagram (entry placed at a position). */
 export interface DiagramNode {
   id: string;
   entryId: string;
@@ -30,7 +14,6 @@ export interface DiagramNode {
   [key: string]: unknown; // allow extra fields to pass through
 }
 
-/** An edge in the diagram (styled relation between two nodes). */
 export interface DiagramEdge {
   id: string;
   source: string;
@@ -41,7 +24,6 @@ export interface DiagramEdge {
   [key: string]: unknown; // allow extra fields to pass through
 }
 
-/** The serialized payload shape (version 1). */
 export interface SerializedDiagram {
   version: 1;
   diagram: DiagramMeta;
@@ -49,15 +31,7 @@ export interface SerializedDiagram {
   edges: DiagramEdge[];
 }
 
-// ─── serializeDiagram ─────────────────────────────────────────────────────────
 
-/**
- * Serializes a diagram to a plain JSON-stringifiable object.
- *
- * Returns `{ version: 1, diagram, nodes, edges }`.
- * The actual file download (URL.createObjectURL + anchor click) is wired in
- * the editor wave — this function is pure data transformation only.
- */
 export function serializeDiagram(
   diagram: DiagramMeta,
   nodes: DiagramNode[],
@@ -71,7 +45,6 @@ export function serializeDiagram(
   };
 }
 
-// ─── parseDiagram ─────────────────────────────────────────────────────────────
 
 /**
  * Validates and normalizes an untrusted parsed-JSON payload.
@@ -91,10 +64,8 @@ export function parseDiagram(obj: unknown): SerializedDiagram | null {
 
   const raw = obj as Record<string, unknown>;
 
-  // Version check
   if (raw['version'] !== 1) return null;
 
-  // Diagram metadata required
   const diagramRaw = raw['diagram'];
   if (!diagramRaw || typeof diagramRaw !== 'object') return null;
   const diagramObj = diagramRaw as Record<string, unknown>;
@@ -110,12 +81,10 @@ export function parseDiagram(obj: unknown): SerializedDiagram | null {
       : {}),
   };
 
-  // Nodes — normalize to empty array if absent or not an array
   const nodes: DiagramNode[] = Array.isArray(raw['nodes'])
     ? (raw['nodes'] as DiagramNode[])
     : [];
 
-  // Edges — normalize to empty array if absent or not an array
   const edges: DiagramEdge[] = Array.isArray(raw['edges'])
     ? (raw['edges'] as DiagramEdge[])
     : [];

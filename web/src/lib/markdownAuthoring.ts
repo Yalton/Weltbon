@@ -6,7 +6,6 @@ export type MarkdownDiagnostic = {
 };
 
 export type ParsedFrontmatter = {
-  /** The original document-start block, including its opening and closing fences. */
   raw: string | null;
   tags: string[];
   diagnostics: MarkdownDiagnostic[];
@@ -87,8 +86,6 @@ function parseFrontmatterYaml(region: FrontmatterRegion): FrontmatterYamlAnalysi
       };
     }
     try {
-      // Parsing is used only to force validation of aliases and other deferred errors.
-      // The returned JS value is deliberately discarded so raw YAML stays lossless.
       document.toJS();
     } catch (error) {
       const message = error instanceof Error ? error.message : 'The YAML value could not be resolved.';
@@ -235,14 +232,6 @@ export function parseMarkdownFrontmatter(markdown: string): ParsedFrontmatter {
   return { raw: parsed.diagnostics.length > 0 ? markdown : region.text, ...parsed };
 }
 
-/**
- * Return the body of a valid document-start YAML frontmatter block.
- *
- * The authoring parser has stricter rules for the supported `tags` field than
- * the Markdown reading surface needs. Reading only needs to know whether the
- * complete YAML document is parseable, so valid metadata with unknown fields
- * is hidden while malformed metadata remains visible for recovery.
- */
 export function stripMarkdownFrontmatter(markdown: string): string {
   const region = frontmatterRegion(markdown);
   if (!region || region.closeStart < 0) return markdown;

@@ -1,18 +1,3 @@
-/**
- * Phase 27 Plan 04 Task 1 — useListModels hook tests.
- *
- * Pins:
- *   - The hook issues a fetch to `/llm/models?provider=<p>` when a provider is supplied.
- *   - The hook is disabled (no fetch issued) when provider is undefined.
- *   - The query's staleTime is 1_800_000ms (30 min) — aligned to Phase 27 D-01
- *     backend cache TTL so the frontend does not re-trigger the cache miss.
- *   - The wire-shape types `ListingsResult` and `ModelListingWithCoverage`
- *     are exported from `web/src/types/audit.ts` with the correct shape.
- *   - `AuditRun.costUnknown: boolean` and `LlmKey.costUnknownCount: number`
- *     are present in the wire-shape type definitions (Phase 27 D-06).
- *   - `web/src/data/pricing.ts PRICING_AS_OF` matches the API-side value
- *     in `api/src/providers/llm/pricing.ts` exactly (string equality).
- */
 
 import { describe, it, expect, beforeEach, vi } from 'vitest';
 import { renderHook, waitFor } from '@testing-library/react';
@@ -58,7 +43,7 @@ const SAMPLE_LISTING: ListingsResult = {
   fetchedAt: '2026-05-26T20:00:00.000Z',
 };
 
-describe('useListModels — Phase 27 D-01 (live model catalog hook)', () => {
+describe('useListModels — D-01 (live model catalog hook)', () => {
   beforeEach(() => {
     vi.mocked(api).mockReset();
   });
@@ -97,7 +82,7 @@ describe('useListModels — Phase 27 D-01 (live model catalog hook)', () => {
     expect(result.current.fetchStatus).toBe('idle');
   });
 
-  it('Test 3 — staleTime is 1_800_000ms (30 min) per Phase 27 D-01', async () => {
+  it('Test 3 — staleTime is 1_800_000ms (30 min) per D-01', async () => {
     vi.mocked(api).mockResolvedValue(SAMPLE_LISTING as never);
     const qc = makeClient();
     const wrapper = makeWrapper(qc);
@@ -122,7 +107,7 @@ describe('useListModels — Phase 27 D-01 (live model catalog hook)', () => {
   });
 });
 
-describe('#50 Task 9 — useListModels / useLlmShares share one query key (llmModelsKey)', () => {
+describe('useListModels / useLlmShares share one query key (llmModelsKey)', () => {
   beforeEach(() => {
     vi.mocked(api).mockReset();
   });
@@ -247,7 +232,7 @@ describe('#50 Task 9 — useListModels / useLlmShares share one query key (llmMo
   });
 });
 
-describe('Phase 27 Plan 04 Task 1 — wire-shape type mirrors', () => {
+describe('wire-shape type mirrors', () => {
   it('Test 4a — ListingsResult and ModelListingWithCoverage are structurally usable', () => {
     // Compile-time check: assignment must succeed for the right shape, fail
     // for the wrong shape. Vitest runs against tsc-compiled JS so a structural
@@ -308,7 +293,7 @@ describe('Phase 27 Plan 04 Task 1 — wire-shape type mirrors', () => {
   });
 });
 
-describe('Phase 27 Plan 04 Task 1 — PRICING_AS_OF sync', () => {
+describe('PRICING_AS_OF sync', () => {
   it('Test 5 — web/src/data/pricing.ts PRICING_AS_OF matches api/src/providers/llm/pricing.ts exactly', () => {
     // Read both files at test time so the assertion catches drift even if
     // someone bumps one side without the other.

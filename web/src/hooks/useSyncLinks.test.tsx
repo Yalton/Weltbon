@@ -1,14 +1,3 @@
-/**
- * Plan F (Task 3) — hooks for the universe-scoped `/api/sync/links` surface.
- *
- * Same scaffolding as useSyncRemotes.test.tsx: api() mocked at the module
- * boundary, a fresh QueryClient per test with retry off, and invalidation
- * asserted by spying on the client rather than by observing a refetch (which
- * would depend on subscriber timing).
- *
- * The load-bearing test in this file is the LAST one: the run mutation must
- * invalidate on failure as well as success. See its comment.
- */
 import { describe, it, expect, beforeEach, vi } from 'vitest';
 import { renderHook, act, waitFor } from '@testing-library/react';
 import { QueryClient, QueryClientProvider } from '@tanstack/react-query';

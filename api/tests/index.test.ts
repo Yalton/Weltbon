@@ -11,12 +11,12 @@ describe('createApp() route mounts (CONT-01 /api prefix + SPA fallback)', () => 
 
   const originalNodeEnv = process.env.NODE_ENV;
   const originalWebDist = process.env.WELTBON_WEB_DIST;
-  // FIX 3 (final whole-branch review): this used to stub api/web-dist itself
+
   // (skipping the stub whenever a real build was already there) — which meant
   // `desktop`'s own `build:app` (it populates api/web-dist as a real build
   // step) put this file on a collision course with whatever WAS actually
   // built there, and made this integration lane red on any checkout that had
-  // run a desktop build. WELTBON_WEB_DIST (added by Task 2 of this branch;
+
   // read by config.ts as `cfg.webDist`, defaulting to './web-dist' only when
   // unset) lets this test point the server at a throwaway temp directory
   // instead, so it can no longer collide with a real build under

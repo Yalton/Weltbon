@@ -23,29 +23,14 @@ export interface UniverseEntry {
 }
 
 export interface AddEntriesPickerProps {
-  /** All entries in the universe to list. */
   entries: UniverseEntry[];
-  /** Entry ids whose nodes are already placed in the diagram. */
   placedEntryIds: Set<string>;
-  /** Called when the user clicks "Add" on a non-placed entry. */
   onAdd: (entryId: string) => void;
-  /** Called when the user confirms "Remove from diagram". */
   onRemove: (entryId: string) => void;
-  /** Called when the user dismisses the panel (× button or Esc). */
   onClose: () => void;
-  /** Whether the panel is visible. */
   open: boolean;
 }
 
-/**
- * Right-side slide-in panel (w-72, absolute right-0 top-0 h-full) for adding
- * and removing diagram nodes. Renders all universe entries with search, "Add"
- * per row, "Added" badge for already-placed nodes, and "Remove from diagram"
- * action with a destructive ConfirmDialog.
- *
- * Animation: translate-x-full -> translate-x-0 (180ms --motion-ease-out).
- * Accessibility: search input aria-label="Search entries".
- */
 export function AddEntriesPicker({
   entries,
   placedEntryIds,

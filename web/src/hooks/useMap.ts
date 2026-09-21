@@ -2,41 +2,32 @@ import { useQuery, useMutation, useQueryClient } from '@tanstack/react-query';
 import { api } from '../api/client';
 
 // Query key: ['map', universeId, mapId] — deliberately isolated per react-query-key-change-blast-radius.
-// Singular 'map' (distinct from plural 'maps' list key) matches the useDiagram pattern.
-// Do NOT reuse or extend any other domain's query key.
 // CRITICAL: Do NOT re-key when adding regions — widen the TypeScript type only.
 // (react-query-key-change-blast-radius: re-keying breaks sibling exact-key cache ops.)
 
 export interface MapPin {
   id: string;
   mapId: string;
-  entryId: string | null; // D-01a: nullable — map-only pins (no linked entry) allowed (Phase 53 NEST-01)
+  entryId: string | null;
   x: number; // normalized 0..1
   y: number; // normalized 0..1
-  // Phase 40 MAPS-05 style overrides (D-01, D-02):
   color?: string | null; // nullable hex — null means entryTypeHexColor fallback
   icon?: string | null;  // nullable glyph key from mapGlyphs.ts
-  // Phase 52 SECRET-01: owner-only secret flag (false = visible; true = hidden from share).
   // Non-optional — the server always returns it. Share responses never include secret=true pins
   // (they are filtered server-side in getPublicMap / share-views.ts).
   secret: boolean;
-  // Phase 53 NEST-01: target map for nested navigation. A string sets the link; null means not set.
   // INCLUDED in share responses (unlike secret) — visitors need it to navigate nested maps.
   // Do NOT re-key ['map', universeId, mapId] when adding this field.
   // (memory: react-query-key-change-blast-radius)
   targetMapId?: string | null;
-  // Joined display fields — injected by the editor from useEntries, NOT returned by the API.
   // API returns bare map_pins rows (no entry join server-side).
   entryTitle?: string;
   entryType?: string;
-  // Phase 50 MAP-UI-03 (D-09): share-projected from entries.summary for tooltip excerpt parity.
   // In auth mode, summary is joined client-side from useEntries in MapEditor (enrichedPins).
   // In share mode, summary comes from the server projection (getPublicMap) — no client-side useEntries join for pins.
   summary?: string | null;
 }
 
-// Phase 40 MAPS-04 (D-09): Region polygon within a map.
-// Phase 43 TERRAIN-01: terrainTypeId discriminator added (null = political/standalone; set = terrain area).
 // CRITICAL: Do NOT re-key ['map', universeId, mapId] when widening this type.
 // (memory: react-query-key-change-blast-radius)
 export interface MapRegion {
@@ -47,24 +38,15 @@ export interface MapRegion {
   points: string; // JSON: [{x:number, y:number}, ...] normalized 0..1
   color: string | null; // nullable hex — null means neutral fallback
   createdAt: string;
-  // Phase 52 SECRET-01: owner-only secret flag. Non-optional — server always returns it.
   // Share responses never include secret=true regions (filtered in getPublicMap).
   secret: boolean;
-  // Phase 43: terrain discriminator — null = political/standalone; non-null = terrain area
   terrainTypeId?: string | null;
-  // Phase 53 NEST-01: target map for nested navigation. A string sets the link; null means not set.
   // INCLUDED in share responses (unlike secret) — visitors need it to navigate nested maps.
   // Do NOT re-key ['map', universeId, mapId] when adding this field.
   // (memory: react-query-key-change-blast-radius)
   targetMapId?: string | null;
 }
 
-/**
- * Phase 43 TERRAIN-01: Enriched variant of MapRegion for terrain area rendering.
- * Built client-side in MapEditor by joining MapRegion against useMapLayers data.
- * NOT returned by the API directly — discriminator is in terrain_type_id column,
- * color + layerId + layerSortOrder are joined from terrain_types/map_layers.
- */
 export interface TerrainAreaRegion extends MapRegion {
   terrainTypeId: string;      // guaranteed non-null (discriminator)
   terrainTypeColor: string;   // hex — joined from terrain_types.color
@@ -72,7 +54,6 @@ export interface TerrainAreaRegion extends MapRegion {
   layerSortOrder: number;     // from map_layers.sort_order, for bottom-to-top stacking
 }
 
-// Phase 51 ROUTE-01: Route polyline within a map.
 // CRITICAL: Do NOT re-key ['map', universeId, mapId] when widening this type.
 // (memory: react-query-key-change-blast-radius)
 export interface MapRoute {
@@ -85,7 +66,6 @@ export interface MapRoute {
   lineStyle: 'solid' | 'dashed';
   width: number;
   showArrow: boolean;
-  // Phase 52 SECRET-01: owner-only secret flag. Non-optional — server always returns it.
   // Share responses never include secret=true routes (filtered in getPublicMap).
   secret: boolean;
   createdAt: string;
@@ -101,11 +81,8 @@ export interface MapDetail {
   createdAt: string;
   legendLabels?: string | null; // JSON: Record<string,string> keyed by "{color}:{icon}"
   pins: MapPin[];
-  regions: MapRegion[]; // Phase 40 MAPS-04: widened payload, key UNCHANGED
-  routes: MapRoute[]; // Phase 51 ROUTE-01: widened payload, key UNCHANGED
-  // Phase 44 GEOSHARE-01: terrain areas pre-enriched by the share seam (D-44-03).
-  // Only populated on share map detail responses; undefined in authenticated responses.
-  // In share mode, the API discriminates terrainTypeId IS NOT NULL rows into this group
+  regions: MapRegion[];
+  routes: MapRoute[];
   // and joins terrainTypeColor/layerId/layerSortOrder server-side (no client-side join needed).
   terrainAreas?: TerrainAreaRegion[];
 }
@@ -118,11 +95,6 @@ export function useMap(universeId: string, mapId: string) {
   });
 }
 
-/**
- * useUpdateMap — supports rename, change-image (imageAssetId), and legendLabels
- * update per D-03. Invalidates BOTH the detail key ['map', universeId, mapId] AND
- * the list key ['maps', universeId] so the tile grid reflects the new name/thumbnail.
- */
 export function useUpdateMap(universeId: string, mapId: string) {
   const qc = useQueryClient();
   return useMutation({
@@ -166,10 +138,6 @@ export function useMovePin(universeId: string, mapId: string) {
   });
 }
 
-/**
- * useRelinkPin — change the entryId of an existing pin (D-07).
- * PATCHes /pins/:pinId/relink with { entryId }.
- */
 export function useRelinkPin(universeId: string, mapId: string) {
   const qc = useQueryClient();
   return useMutation({
@@ -200,13 +168,7 @@ export function useDeletePin(universeId: string, mapId: string) {
   });
 }
 
-// ─── Phase 40 MAPS-05: Pin style mutation ────────────────────────────────────
 
-/**
- * useUpdatePinStyle — update a pin's color and/or icon (D-01, D-02).
- * PATCHes /pins/:pinId/style with { color, icon }.
- * Invalidates the existing ['map', universeId, mapId] key — no new key (landmine).
- */
 export function useUpdatePinStyle(universeId: string, mapId: string) {
   const qc = useQueryClient();
   return useMutation({
@@ -232,12 +194,7 @@ export function useUpdatePinStyle(universeId: string, mapId: string) {
   });
 }
 
-// ─── Phase 40 MAPS-04: Region mutations ──────────────────────────────────────
 
-/**
- * useCreateRegion — POST .../regions to create a new region polygon (D-04, D-09).
- * Invalidates ['map', universeId, mapId] so the canvas re-renders.
- */
 export function useCreateRegion(universeId: string, mapId: string) {
   const qc = useQueryClient();
   return useMutation({
@@ -246,7 +203,6 @@ export function useCreateRegion(universeId: string, mapId: string) {
       points: string; // JSON [{x,y}, ...]
       entryId?: string | null;
       color?: string | null;
-      // Phase 43 TERRAIN-01: optional terrain discriminator
       terrainTypeId?: string | null;
     }) =>
       api<MapRegion>(`/universes/${universeId}/maps/${mapId}/regions`, {
@@ -254,17 +210,12 @@ export function useCreateRegion(universeId: string, mapId: string) {
         body: JSON.stringify(input),
       }),
     onSuccess: () => {
-      // CRITICAL: invalidate the EXISTING key — do NOT change the key shape
       // (memory: react-query-key-change-blast-radius)
       qc.invalidateQueries({ queryKey: ['map', universeId, mapId] });
     },
   });
 }
 
-/**
- * useUpdateRegion — PATCH .../regions/:regionId (rename, recolor, relink D-06).
- * Invalidates the existing map key — no new key.
- */
 export function useUpdateRegion(universeId: string, mapId: string) {
   const qc = useQueryClient();
   return useMutation({
@@ -279,7 +230,6 @@ export function useUpdateRegion(universeId: string, mapId: string) {
       name?: string;
       color?: string | null;
       entryId?: string | null;
-      // Phase 43 TERRAIN-01: for reclassify — sets the terrain area's type (D-43-02/D-43-03)
       terrainTypeId?: string | null;
     }) =>
       api<MapRegion>(
@@ -297,10 +247,6 @@ export function useUpdateRegion(universeId: string, mapId: string) {
   });
 }
 
-/**
- * useDeleteRegion — DELETE .../regions/:regionId (D-06).
- * Never touches the linked entry — only removes the region record.
- */
 export function useDeleteRegion(universeId: string, mapId: string) {
   const qc = useQueryClient();
   return useMutation({
@@ -315,12 +261,7 @@ export function useDeleteRegion(universeId: string, mapId: string) {
   });
 }
 
-// ─── Phase 51 ROUTE-01: Route mutations ──────────────────────────────────────
 
-/**
- * useCreateRoute — POST .../routes to create a new route polyline (ROUTE-01).
- * Invalidates ['map', universeId, mapId] so the canvas re-renders.
- */
 export function useCreateRoute(universeId: string, mapId: string) {
   const qc = useQueryClient();
   return useMutation({
@@ -338,17 +279,12 @@ export function useCreateRoute(universeId: string, mapId: string) {
         body: JSON.stringify(input),
       }),
     onSuccess: () => {
-      // CRITICAL: invalidate the EXISTING key — do NOT change the key shape
       // (memory: react-query-key-change-blast-radius)
       qc.invalidateQueries({ queryKey: ['map', universeId, mapId] });
     },
   });
 }
 
-/**
- * useUpdateRoute — PATCH .../routes/:routeId (rename, recolor, relink, restyle).
- * Invalidates the existing map key — no new key.
- */
 export function useUpdateRoute(universeId: string, mapId: string) {
   const qc = useQueryClient();
   return useMutation({
@@ -384,10 +320,6 @@ export function useUpdateRoute(universeId: string, mapId: string) {
   });
 }
 
-/**
- * useDeleteRoute — DELETE .../routes/:routeId.
- * Never touches the linked entry — only removes the route record.
- */
 export function useDeleteRoute(universeId: string, mapId: string) {
   const qc = useQueryClient();
   return useMutation({
@@ -402,9 +334,7 @@ export function useDeleteRoute(universeId: string, mapId: string) {
   });
 }
 
-// ─── Phase 52 SECRET-01: Secret toggle mutations ──────────────────────────────
 // Each mutation PATCHes the respective item with { secret } and invalidates the
-// EXISTING ['map', universeId, mapId] key verbatim — no new key segment.
 // (memory: react-query-key-change-blast-radius)
 
 /**
@@ -477,16 +407,8 @@ export function useToggleRouteSecret(universeId: string, mapId: string) {
   });
 }
 
-// ─── Phase 53 NEST-01: Target-map set/clear mutations ─────────────────────────
-// Each mutation PATCHes the respective item with { targetMapId } (string sets, null clears)
-// and invalidates the EXISTING ['map', universeId, mapId] key verbatim — no new key segment.
 // (memory: react-query-key-change-blast-radius)
 
-/**
- * useSetPinTargetMap — PATCH .../pins/:pinId/style with { targetMapId }.
- * Rides the existing pinStyleSchema endpoint (mirrors 53-02 design).
- * Invalidates ['map', universeId, mapId] — EXACT key shape, no new segment.
- */
 export function useSetPinTargetMap(universeId: string, mapId: string) {
   const qc = useQueryClient();
   return useMutation({
@@ -506,11 +428,6 @@ export function useSetPinTargetMap(universeId: string, mapId: string) {
   });
 }
 
-/**
- * useSetRegionTargetMap — PATCH .../regions/:regionId with { targetMapId }.
- * Rides the existing region PATCH endpoint (mirrors 53-02 design).
- * Invalidates ['map', universeId, mapId] — EXACT key shape, no new segment.
- */
 export function useSetRegionTargetMap(universeId: string, mapId: string) {
   const qc = useQueryClient();
   return useMutation({

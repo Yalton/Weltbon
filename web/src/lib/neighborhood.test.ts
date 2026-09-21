@@ -3,7 +3,7 @@ import { neighborhood } from './neighborhood';
 import type { GraphEdge } from '../hooks/useGraphData';
 
 function edge(id: string, source: string, target: string, _bidirectional = false): GraphEdge {
-  // Phase 35 REL-01: bidirectional replaced by direction; undirected edges use direction='undirected'
+
   return { id, source, target, label: null, linkType: null, direction: _bidirectional ? 'undirected' : 'directed' };
 }
 

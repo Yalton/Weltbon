@@ -33,8 +33,8 @@ import {
 import { runSync } from '../src/services/sync/run-sync.js';
 import { storageBackend } from '../src/services/storage/local.js';
 
-// Used by Task 7's acceptance test. If the typecheck flags it as unused while
-// only Tasks 5-6 exist, add it in Task 7 instead of deleting the import above.
+
+
 const sha256 = (b: Buffer) => createHash('sha256').update(b).digest('hex');
 
 describe('universe adoption', () => {
@@ -362,7 +362,7 @@ describe('universe adoption', () => {
       // POST /adopt — every other adoptUniverse test calls the service
       // directly. This is the one that exercises adoptBodySchema, the actual
       // route handler (and its two error-hierarchy mapping, C-19/C-21), and
-      // toLinkWire's 201 shape, which is what Task 8's hook consumes.
+
       const { issueAccessToken } = await import('../src/services/auth.js');
       const jwt = await issueAccessToken(ownerA.id);
 

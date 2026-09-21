@@ -7,19 +7,6 @@ import {
 } from '../src/services/sync/merge.js';
 import { COLLECTIONS, type ManifestRow, type SyncManifest } from '../src/services/sync/manifest.js';
 
-/**
- * Task 5 (Plan B): the whole-manifest three-way merge.
- *
- * These exercise mergeManifests across many collections at once + the universe
- * singleton (B-06), version gate (B-09), idempotence, and — the heart of the
- * suite — the CONVERGENCE property: after each side applies its derived ops, both
- * sides content-converge to `merged`.
- *
- * CRITICAL (Task 4 note honored): mergeCollection emits NO op for a touch-only
- * (updatedAt-only) row, so a side's local `updatedAt` may legitimately differ
- * from `merged` with no reconciling op. Convergence is therefore asserted with
- * `contentEqual` PER ROW (updatedAt is metadata, not state) — never deep-equal.
- */
 
 // Distinct ISO instants for LWW ordering. T0 < T1 < T2.
 const T0 = '2026-01-01T00:00:00.000Z';
@@ -204,7 +191,7 @@ function scenario1(): { base: SyncManifest; local: SyncManifest; remote: SyncMan
   return { base, local, remote };
 }
 
-describe('mergeManifests (Plan B, Task 5)', () => {
+describe('mergeManifests', () => {
   // Scenario 1 --------------------------------------------------------------
   it('scenario 1 — full manifest across three collections at once', () => {
     const { base, local, remote } = scenario1();
@@ -417,7 +404,7 @@ describe('mergeManifests (Plan B, Task 5)', () => {
 
       // I1 invariant, asserted globally over the whole fuzz run: every conflict's
       // winner must actually exist in the merged state — a "winner" that isn't in
-      // merged is a phantom ledger record (Plan B review I1).
+
       for (const c of res.conflicts) {
         if (c.collection === 'universe') continue;
         const rows = (res.merged as unknown as Record<string, Array<Record<string, unknown>>>)[c.collection] ?? [];
@@ -443,7 +430,7 @@ describe('mergeManifests (Plan B, Task 5)', () => {
   });
 });
 
-describe('contentEqual over thumbSizeBytes (Plan F0, F0-04)', () => {
+describe('contentEqual over thumbSizeBytes', () => {
   function assetRow(over: Partial<ManifestRow> = {}): ManifestRow {
     return {
       id: '11111111-1111-4111-8111-111111111111',

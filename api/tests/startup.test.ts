@@ -111,7 +111,7 @@ describe('startup config guard (OPS-04 / AUTH-05a / AUTH-05b)', () => {
     ).not.toThrow();
   });
 
-  // Phase 24 AUDIT hard cap env var validation (T-24-01-03)
+
   const validEnv = {
     JWT_SECRET: 'a'.repeat(32),
     DATABASE_URL: 'postgresql://localhost/x',

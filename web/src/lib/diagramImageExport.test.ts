@@ -1,15 +1,3 @@
-/**
- * diagramImageExport unit tests (DIAGRAM-03 / Plan 10 TDD).
- *
- * Coverage:
- *   - serializeSvgElement: namespace, dimensions, child elements, round-trip-parse
- *   - serializeSvgElement: fill/stroke inlining
- *   - exportSvg: constructs Blob of type image/svg+xml and calls URL.createObjectURL
- *
- * PNG rasterization (Image.onload + canvas.toBlob) is NOT tested under jsdom
- * (no real pixel pipeline). The exportPng unit test only asserts the function
- * exists and is callable — full raster fidelity is verified in the human checkpoint.
- */
 
 import { describe, it, expect, vi, afterEach } from 'vitest';
 import { serializeSvgElement, exportSvg, exportPng } from './diagramImageExport';

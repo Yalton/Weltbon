@@ -160,11 +160,6 @@ async function lockedUtcMonthStart(
   return row.monthStart;
 }
 
-/**
- * Every mutating sharing transaction acquires account locks through this
- * helper. Sorting the IDs makes the order independent of the caller's role
- * (actor/owner/recipient), which prevents revoke-vs-reserve cycles.
- */
 async function lockUsers(tx: SharingTx, userIds: string[]) {
   const ids = [...new Set(userIds)].sort();
   if (ids.length === 0) return [];
@@ -174,8 +169,6 @@ async function lockUsers(tx: SharingTx, userIds: string[]) {
     .for('update');
 }
 
-// Keep membership serialization separate from account-row locking so every
-// participant set can still be acquired through lockUsers in sorted order.
 async function lockOwnerMembership(tx: SharingTx, ownerUserId: string): Promise<void> {
   await tx.execute(sql`SELECT pg_advisory_xact_lock(hashtext(${ownerUserId})::bigint)`);
 }
@@ -262,40 +255,10 @@ export async function listRecipientSharedGrants(userId: string): Promise<SharedR
   }));
 }
 
-// A function, not a shared constant: the same `sql` fragment is embedded twice
-// in one statement (select list and join predicate), and reusing one object
-// across both positions relies on drizzle's fragment reuse being safe. Building
-// a fresh one costs nothing and does not.
 function monthStartExpr() {
   return sql<string>`DATE_TRUNC('month', NOW() AT TIME ZONE 'UTC')::date`;
 }
 
-/**
- * One statement for the whole admin grant listing.
- *
- * Review finding: this used to fan out per grant — two `users` lookups plus a
- * `getSharedQuotaSnapshot` (two more queries), all fired concurrently through
- * `Promise.all` over the entire grant list. At 100 grants that is ~400
- * concurrent queries to answer one request, and it recomputed the *identical*
- * quota snapshot once per provider grant a recipient holds. Every one of those
- * reads was already available as a join.
- *
- * `users` is joined twice (owner and recipient) with LEFT joins rather than
- * INNER, deliberately: an inner join would silently DROP a grant whose
- * participant row is missing, turning a broken invariant into a shorter list
- * nobody notices. The explicit null check below keeps the documented 404
- * (`shared_connection_not_found`) that the route's OpenAPI response describes.
- *
- * The month boundary is computed by Postgres in the same statement rather than
- * in Node, matching `getSharedQuotaSnapshot`/`lockedUtcMonthStart` — the DB's
- * clock is the one every write already uses, and deriving it here from the
- * API process's clock would let a listing and a reservation disagree about
- * which month a recipient is in.
- *
- * The projection is unchanged and must stay that way: `SharedAdminGrantView`
- * carries no key material, no ciphertext and no `ownerKeyId`. Widening the
- * select list here widens what the admin route serializes.
- */
 function selectAdminSharedGrants(where?: ReturnType<typeof eq>) {
   const ownerUser = alias(users, 'owner_user');
   const recipientUser = alias(users, 'recipient_user');
@@ -367,16 +330,6 @@ export async function listAdminSharedGrants(): Promise<SharedAdminGrantView[]> {
   return (await selectAdminSharedGrants()).map(toAdminSharedGrantView);
 }
 
-/**
- * Projects ONE grant through the same statement the listing uses.
- *
- * Exists because the create route used to call `listAdminSharedGrants()` and
- * then `.find()` the row it had just inserted — the entire fan-out above,
- * every grant on the instance, to answer a 201 about one of them. Sharing
- * `selectAdminSharedGrants` rather than hand-rolling a second projection is
- * the point: two projections would be two places for a field to leak into the
- * admin response, and only one of them would be reviewed.
- */
 export async function getAdminSharedGrant(grantId: string): Promise<SharedAdminGrantView | null> {
   const [row] = await selectAdminSharedGrants(eq(llmSharedGrants.id, grantId)).limit(1);
   return row ? toAdminSharedGrantView(row) : null;
@@ -528,9 +481,6 @@ export async function revokeSharedGrant(
   reason: SharedRevocationReason,
 ): Promise<void> {
   if (!REVOCATION_REASONS.has(reason)) throw new SharedLlmError('shared_revocation_reason_invalid');
-  // This read only discovers the immutable participant IDs. It deliberately
-  // does not lock the grant; the transaction locks every account first, then
-  // re-reads and locks the grant using the canonical order.
   const [participantIds] = await getDb().select({
     ownerUserId: llmSharedGrants.ownerUserId,
     recipientUserId: llmSharedGrants.recipientUserId,
@@ -565,6 +515,7 @@ export async function revokeSharedGrant(
   });
 }
 
+// Reserve under locks so concurrent audits cannot exceed the owner's quota.
 export async function reserveSharedAudit(input: SharedAuditReservationInput): Promise<SharedAuditReservation> {
   if (!isSharedProvider(input.provider)) throw new SharedLlmError('shared_provider_unsupported');
   const reservedUsd = sixDecimalAmount(input.reservationUsd, false);
@@ -576,7 +527,6 @@ export async function reserveSharedAudit(input: SharedAuditReservationInput): Pr
     if (!recipient || recipient.disabledAt) throw new SharedLlmError('shared_recipient_unavailable');
     if (!owner || !owner.isAdmin || owner.disabledAt) throw new SharedLlmError('shared_access_revoked');
 
-    // Grant is the first non-account row locked by both reserve and revoke.
     const [grant] = await tx.select().from(llmSharedGrants).where(and(
       eq(llmSharedGrants.id, input.grantId),
       eq(llmSharedGrants.recipientUserId, input.recipientUserId),
@@ -597,34 +547,7 @@ export async function reserveSharedAudit(input: SharedAuditReservationInput): Pr
     )).for('update');
     if (!usage) throw new SharedLlmError('shared_usage_unavailable');
 
-    // Self-healing admission. `llm_shared_usage` references only `users`, so
-    // nothing cascades into it: deleting a universe removes its `audit_runs`,
-    // which cascades to `llm_shared_audit_reservations`, and leaves this row
-    // still holding the charge AND the concurrency slot with no reservation
-    // and no run left for the engine or the stranded-reservation sweep to
-    // find. `reconcileSharedUsageCounters()` repairs exactly that, but
-    // `audit-recovery.ts` calls it at BOOT ONLY; on a hosted instance that is
-    // restarted rarely, one universe deletion locks the recipient out of
-    // shared audits for the rest of the UTC month with no self-service
-    // remedy, and their settings page reads "1 of 1 at a time" with no run to
-    // point at. The row is already locked FOR UPDATE, so recomputing the held
-    // totals from the reservations that actually survive costs one indexed
-    // query (llm_shared_reservations_recipient_month_idx covers exactly this
-    // predicate) on the admission path and makes the counter self-healing.
-    //
-    // This is NOT the concurrency guard and must not be mistaken for one —
-    // the `audit_runs_shared_recipient_active_unique` partial index is, and it
-    // is what makes recomputing here safe under concurrency. The counter only
-    // decides whether admission is even attempted; repairing it can therefore
-    // never admit a second live run, it can only stop a phantom hold from
-    // refusing one the index would have allowed.
-    //
-    // Written before the predicates rather than after, deliberately: a repair
-    // that lands after the check would leave THIS call rejected on numbers the
-    // transaction already knew were wrong. If a later predicate in this
-    // transaction throws, the repair rolls back with it — correct, because the
-    // rejection is then a real one and the next admission attempt recomputes
-    // from the same surviving rows.
+    // Recompute held totals at admission to self-heal stale denormalized usage counters.
     const [held] = await tx.select({
       heldUsd: sql<string>`COALESCE(SUM(${llmSharedAuditReservations.reservedCostUsd}), 0)::text`,
       heldCount: sql<number>`COUNT(*)::int`,
@@ -650,7 +573,6 @@ export async function reserveSharedAudit(input: SharedAuditReservationInput): Pr
       liveActiveAudits = heldCount;
     }
 
-    // Key and consent locks follow the grant/usage order consistently.
     const [key] = await tx.select().from(llmApiKeys).where(and(
       eq(llmApiKeys.userId, input.credentialOwnerId),
       eq(llmApiKeys.provider, input.provider),
@@ -731,6 +653,7 @@ export async function settleSharedAuditReservation(
     const isFailed = terminalState === 'failed';
     await tx.update(llmSharedUsage).set({
       reservedCostUsd: sql`${llmSharedUsage.reservedCostUsd} - ${reservation.reservedCostUsd}::numeric`,
+        // Preserve actual terminal cost; only a released run refunds its reservation.
       settledCostUsd: isSucceeded || isFailed
         ? sql`${llmSharedUsage.settledCostUsd} + ${settledUsd}::numeric`
         : usage.settledCostUsd,
@@ -758,31 +681,6 @@ export async function settleSharedAuditReservation(
   });
 }
 
-/**
- * Releases a reservation's hold WITHOUT touching the audit run row.
- *
- * `settleSharedAuditReservation` deliberately rewrites `audit_runs.status`,
- * `cost_usd` and `finished_at`, because for a run the engine finished those
- * three ARE the settlement. Recovery needs the opposite: the run row already
- * carries the truth (`process_restarted`, plus whatever per-turn telemetry the
- * engine managed to write before it died), and settling through the normal
- * path would overwrite the recorded cost with 0 — erasing the only record of
- * what the provider actually billed for that run.
- *
- * It does NOT imply "nothing is charged", and the docblock that used to say so
- * was a review finding: this function settles at `actualCostUsd` under
- * `terminalState`, so a `succeeded`/`failed` recovery DOES debit
- * `settled_cost_usd` and bump the completed/failed counters — that is the
- * whole point of `releaseStrandedSharedReservations` settling a terminal run
- * at its recorded cost rather than forgiving it. Only the `released` terminal
- * state charges nothing, and `releaseSharedReservation` below is the caller
- * that asks for it. A comment that misstates money handling is worse than no
- * comment, because the next reader trusts it instead of the code.
- *
- * What is always true: the hold comes off `reserved_cost_usd` and the
- * concurrency slot is returned. Idempotent by the same predicate as the normal
- * settlement — a reservation that is no longer `reserved` is left alone.
- */
 async function finalizeReservationWithoutRun(
   auditRunId: string,
   terminalState: 'succeeded' | 'failed' | 'released',
@@ -811,6 +709,7 @@ async function finalizeReservationWithoutRun(
     const isFailed = terminalState === 'failed';
     await tx.update(llmSharedUsage).set({
       reservedCostUsd: sql`${llmSharedUsage.reservedCostUsd} - ${reservation.reservedCostUsd}::numeric`,
+        // Preserve actual terminal cost; only a released run refunds its reservation.
       settledCostUsd: isSucceeded || isFailed
         ? sql`${llmSharedUsage.settledCostUsd} + ${settledUsd}::numeric`
         : usage.settledCostUsd,
@@ -833,38 +732,10 @@ async function finalizeReservationWithoutRun(
   });
 }
 
-/**
- * Gives a reservation's hold back and charges NOTHING.
- *
- * This is the function the "nothing is charged" reasoning actually describes:
- * the hold comes off `reserved_cost_usd`, the concurrency slot is returned,
- * `settled_cost_usd` is untouched and neither the completed nor the failed
- * counter moves. Used when the run produced no result the recipient can use —
- * a process death mid-run, an admission that was rolled back — because
- * billing an administrator for that is the wrong way to be wrong.
- *
- * `settledCostUsd` on the reservation row is set to 0 and the state becomes
- * `released`, which is what distinguishes it in the ledger from a `settled`
- * row that happened to cost 0.
- */
 export async function releaseSharedReservation(auditRunId: string): Promise<void> {
   await finalizeReservationWithoutRun(auditRunId, 'released', 0);
 }
 
-/**
- * Releases every reservation still held by a run that has already finished.
- *
- * This is the recovery net for the whole stranding class, and it is keyed on
- * the RESERVATION rather than on the run's status — which is the difference
- * that matters. `recoverOrphanAuditRuns` finds runs stuck in `pending`/
- * `running`; a reservation is stranded precisely when the run reached a
- * terminal status but its settlement did not complete (settlement threw, the
- * process died in the window between the two writes, or a code path failed to
- * settle at all). Those runs are invisible to a status-keyed sweep forever,
- * and each one costs its recipient a permanent concurrency slot.
- *
- * Returns the number released, for boot-log observability.
- */
 export async function releaseStrandedSharedReservations(): Promise<number> {
   const stranded = await getDb().select({
     auditRunId: llmSharedAuditReservations.auditRunId,
@@ -881,18 +752,8 @@ export async function releaseStrandedSharedReservations(): Promise<number> {
   let released = 0;
   for (const row of stranded) {
     try {
-      // Review finding: this used to release every stranded reservation at 0,
-      // which silently forgave the charge for a run that had ALREADY
-      // succeeded — the owner's month never debited for an audit the
-      // recipient received, and the completedAudits counter the recipient's
-      // settings page now shows under-reporting it. A terminal run's recorded
-      // cost is the honest amount, so it is settled at that cost under its
-      // own status; only a run that recorded nothing is released whole.
+      // Charge terminal runs with recorded cost; release only runs lacking chargeable evidence.
       const cost = Number(row.costUsd);
-      // The WHERE above already restricts to these two, but audit_runs.status
-      // is free text at the type level; narrowing here rather than casting
-      // keeps a future third terminal status from silently becoming a
-      // settlement state nobody chose.
       const terminal = row.status === 'succeeded' ? 'succeeded' as const
         : row.status === 'failed' ? 'failed' as const
         : null;
@@ -902,40 +763,12 @@ export async function releaseStrandedSharedReservations(): Promise<number> {
         : releaseSharedReservation(row.auditRunId));
       released += 1;
     } catch {
-      // One unreleasable row must not stop the rest. The caller runs at boot.
     }
   }
   return released;
 }
 
-/**
- * Recomputes each recipient-month's held totals from the reservations that
- * actually survive.
- *
- * `llm_shared_audit_reservations.audit_run_id` cascades from `audit_runs`, but
- * `llm_shared_usage` has no run reference and cascades from nothing. Deleting
- * a universe with a shared audit in flight — which `DELETE /universes/:id`
- * permits — therefore removes the run and its reservation while leaving
- * `active_audit_count` and `reserved_cost_usd` incremented, with nothing left
- * for either the engine or the reservation sweep to find. The recipient is
- * locked out of shared audits for the rest of the UTC month, which is the
- * exact outcome all of this machinery exists to prevent.
- *
- * Called at boot, and safe there for the same reason the sweep is: the orphan
- * pass has already force-failed every pending/running run, so any reservation
- * still `reserved` is settled or released before this runs, and the recomputed
- * totals cannot race a live audit.
- *
- * Boot is NOT the only repair, and treating it as one was a review finding: a
- * hosted instance restarts rarely, so a single universe deletion could hold a
- * recipient out for the rest of the UTC month. `reserveSharedAudit` recomputes
- * the same totals for the one recipient-month it is admitting, under that
- * row's FOR UPDATE lock. This function stays for the recipients who never
- * attempt another audit, and because a whole-table pass at boot is cheap.
- *
- * Deliberately does NOT touch settled/completed/failed counters — those are
- * cumulative history, not a live hold, and nothing can orphan them.
- */
+// Reconcile derived counters after interrupted runs leave orphaned reservations.
 export async function reconcileSharedUsageCounters(): Promise<number> {
   const held = await getDb().select({
     recipientUserId: llmSharedAuditReservations.recipientUserId,
@@ -1011,8 +844,6 @@ async function revokeSharedGrantsForOwnerScoped(
 ): Promise<void> {
   if (!REVOCATION_REASONS.has(reason)) throw new SharedLlmError('shared_revocation_reason_invalid');
   await lockOwnerMembership(tx, ownerUserId);
-  // Discover recipients without taking a grant lock. All account rows are
-  // then acquired in one deterministic order before any grant lock.
   const grantParticipants = await tx.select({
     recipientUserId: llmSharedGrants.recipientUserId,
   }).from(llmSharedGrants).where(activeOwnerGrantWhere(ownerUserId, ownerKeyId));
@@ -1022,12 +853,10 @@ async function revokeSharedGrantsForOwnerScoped(
     ...grantParticipants.map((grant) => grant.recipientUserId),
   ]);
 
-  // The owner lock closes the window for a new grant to commit. Re-read after
-  // acquiring it so a grant that was waiting on the lock is included, then
-  // acquire every recipient row before taking grant locks or writing audits.
   const reconciledParticipants = await tx.select({
     recipientUserId: llmSharedGrants.recipientUserId,
   }).from(llmSharedGrants).where(activeOwnerGrantWhere(ownerUserId, ownerKeyId));
+  // Re-read membership after the owner lock so revocations cannot race this update.
   const reconciledAccounts = await lockUsers(tx, [
     ownerUserId,
     actorUserId,

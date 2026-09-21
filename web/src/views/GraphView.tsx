@@ -25,13 +25,6 @@ const SUBGRAPH_THRESHOLD = 300;
 
 type ToastState = { message: string; variant: 'success' | 'error' } | null;
 
-/**
- * Phase 19 Plan 19-04: popoverState drives the conditional <CreateLinkPopover>
- * render at the bottom of this view. from/to are the dragged GraphNodes;
- * dropX/Y are container-relative pixel coords for the popover anchor;
- * existingLabelHint pre-fills the popover's label input when an A→B edge
- * already exists (CONTEXT.md D-03d).
- */
 type PopoverState = {
   from: GraphNode;
   to: GraphNode;
@@ -40,15 +33,6 @@ type PopoverState = {
   existingLabelHint?: string;
 } | null;
 
-/**
- * Look up the most-recent (== first, since the graph-data API returns
- * edges in DESC createdAt order) link label for a (fromId, toId) pair.
- * Returns undefined if no edge matches or if the matching edge has an
- * empty label.
- *
- * Used by `handleLinkDragEnd` to prefill the popover label input with a
- * hint when A→B already exists (UI-SPEC D-03d "Existing-Link Merge").
- */
 function lookupExistingLabel(
   edges: GraphEdge[],
   fromId: string,
@@ -58,27 +42,8 @@ function lookupExistingLabel(
   return match?.label ? match.label : undefined;
 }
 
-/**
- * /universes/:uid/graph — force-directed graph of entries and links.
- *
- * Orchestration seams:
- *  - useGraphData: one query for nodes + edges + positions
- *  - GraphCanvas: SVG + d3-force; click/hover/pin/edit-mode-drag callbacks bubble up
- *  - GraphSubgraphFilter: replaces the canvas when nodes.length > 300
- *
- * Phase 19 Plan 19-02 additions:
- *  - editMode toggle (persistent button in the toolbar)
- *  - popoverState (captured on drop-on-different-node; rendered in 19-04)
- *  - toast state (self-drop + future link-creation error)
- *  - dragSourceId state (mirrored from GraphCanvas via onDragSourceChange)
- *  - canvas-level Esc handler gated on dragSourceId === null (UI-SPEC §G)
- */
 export function GraphView() {
-  // Phase 29 — share-mode awareness. In share mode the route is
-  // `/share/:token/graph` (no `uid` param); substitute the literal 'share'
-  // so the existing useGraphData(universeId) hook builds a path the
   // api-client seam can translate to /api/share/graph-data. The `token`
-  // param drives navigation back into the share subtree on node click.
   const { uid: paramUid, token } = useParams<{ uid: string; token: string }>();
   const isShareMode = useShareMode();
   const uid = paramUid ?? (isShareMode ? 'share' : undefined);
@@ -89,7 +54,6 @@ export function GraphView() {
   const pin = usePinNode(universeId);
   const reset = useResetGraphLayout(universeId);
 
-  // Phase 28 REL-02: per-universe link-type registry for edge coloring + legend.
   const { data: universe } = useUniverse(universeId);
   const updateUniverse = useUpdateUniverse(universeId);
   const linkTypeRegistry = universe?.linkTypes ?? {};
@@ -97,7 +61,6 @@ export function GraphView() {
   // Cover art comes from the entries LIST cache — /graph-data has no cover field.
   const medallions = useEntryMedallions(universeId);
 
-  // Legend visibility persisted to localStorage (default: true).
   const [legendVisible, setLegendVisible] = useState<boolean>(() => {
     try {
       const stored = localStorage.getItem(LEGEND_STORAGE_KEY);
@@ -113,7 +76,6 @@ export function GraphView() {
       try {
         localStorage.setItem(LEGEND_STORAGE_KEY, String(next));
       } catch {
-        // localStorage unavailable (e.g. private browsing quota) — silent fail
       }
       return next;
     });
@@ -138,18 +100,15 @@ export function GraphView() {
   const [focus, setFocus] = useState<SubgraphFocus | null>(null);
   const [hovered, setHovered] = useState<{ node: GraphNode; x: number; y: number } | null>(null);
 
-  // Phase 19 Plan 19-02 — orchestration state.
   const [editMode, setEditMode] = useState(false);
   const [popoverState, setPopoverState] = useState<PopoverState>(null);
   const [toast, setToast] = useState<ToastState>(null);
   // Mirrors GraphCanvas's internal drag-source state via the optional
   // onDragSourceChange callback so the canvas-level Esc useEffect below
   // can short-circuit while a drag is in flight (UI-SPEC §G items 3 vs 4:
-  // Esc during a drag belongs to the drag's own listener in GraphCanvas,
   // NOT to the edit-mode toggle).
   const [dragSourceId, setDragSourceId] = useState<string | null>(null);
 
-  // Responsive sizing — observe the container so the SVG fills the outlet.
   const containerRef = useRef<HTMLDivElement>(null);
   const [size, setSize] = useState({ width: 800, height: 600 });
   useEffect(() => {
@@ -166,10 +125,7 @@ export function GraphView() {
       );
     };
 
-    // Measure immediately as well as observing. The initial 800×600 fallback
-    // otherwise remains in effect in browsers/environments where the first
     // ResizeObserver notification is delayed, stretching a corner-clustered
-    // simulation across a much larger SVG.
     readSize();
     const frameId = typeof window.requestAnimationFrame === 'function'
       ? window.requestAnimationFrame(() => readSize())
@@ -191,17 +147,12 @@ export function GraphView() {
   // no drag is in flight (UI-SPEC §G item 4). The `dragSourceId !== null`
   // short-circuit is REQUIRED by the §G priority list: a single Esc
   // keydown during a drag belongs to item 3 (GraphCanvas's mid-drag
-  // listener); only Esc with `dragSourceId === null` and `popoverState ===
   // null` belongs to item 4 (edit-mode exit).
-  //
   // Lifecycle note: while a drag is in flight, this effect re-runs with
   // dragSourceId='X' and short-circuits — its `window.addEventListener` is
   // NOT installed. The mid-drag Esc keydown therefore reaches ONLY
-  // GraphCanvas's listener. When GraphCanvas emits onDragSourceChange(null)
   // on Esc-cancel, this effect re-runs with dragSourceId=null and installs
-  // its listener — but the user has already released Esc. A SUBSEQUENT
   // Esc press is the one that exits edit mode. This matches UI-SPEC §G
-  // "Esc order of priority" verbatim and is locked by Test 10.
   useEffect(() => {
     if (!editMode || popoverState !== null || dragSourceId !== null) return;
     const handler = (e: KeyboardEvent) => {
@@ -238,7 +189,6 @@ export function GraphView() {
             : 'Create entries and link them — relationships show up here automatically.'
         }
         action={
-          // Phase 29 D-18 — no "New entry" CTA for visitors.
           !isShareMode ? (
             <button
               type="button"
@@ -256,22 +206,6 @@ export function GraphView() {
   const overThreshold = data.nodes.length > SUBGRAPH_THRESHOLD;
   const canvasVisible = !overThreshold || !!focus;
 
-  /**
-   * GraphCanvas → GraphView callback for edit-mode drag ends. Routes the
-   * three drop outcomes:
-   *   - `to === null`     → empty canvas; silent cancel (no toast, no popover).
-   *   - `to === 'self'`   → self-drop; render error Toast with locked copy.
-   *   - `to: GraphNode`   → drop on different node; capture popoverState
-   *                          with container-relative coords + an
-   *                          existingLabelHint when A→B already exists.
-   *
-   * dropClientX / dropClientY are screen-space (from
-   * evt.sourceEvent.clientX/Y in GraphCanvas's d3-drag end handler — see
-   * Plan 19-02 Task 1). They are converted to container-relative
-   * coordinates here so the popover anchor (Plan 19-04) can be styled
-   * with plain `left` / `top` against `containerRef`'s `position:
-   * relative` parent.
-   */
   const handleLinkDragEnd = (
     from: GraphNode,
     to: GraphNode | 'self' | null,
@@ -304,13 +238,7 @@ export function GraphView() {
           {data.edges.length === 1 ? 'link' : 'links'}
         </div>
         <div className="pointer-events-auto flex items-center gap-2">
-          {/*
-            Phase 29 D-18 / UI-SPEC §A — in share mode the entire toolbar
-            mutation cluster (Edit-mode toggle for drag-to-link, Reset
-            layout) is hidden. The graph canvas itself, the subgraph
-            filter UI, node click navigation, hover tooltip, and pan/zoom
-            remain — they are pure reads.
-          */}
+
           {!isShareMode && (
             <>
               <button
@@ -379,25 +307,20 @@ export function GraphView() {
               : navigate(`/universes/${universeId}/entries/${node.id}`)
           }
           // Pin (drag-to-reposition save) is a mutation — silently no-op
-          // in share mode; the visitor cannot persist layout state.
           onPinNode={
             isShareMode
               ? () => {
-                  /* read-only: positions are owner state */
                 }
               : (node, x, y) => pin.mutate({ entryId: node.id, x, y })
           }
           onHoverNode={(node, x, y) =>
             setHovered(node ? { node, x, y } : null)
           }
-          // Phase 29 — share mode forces editMode=false at the canvas
           // boundary so the drag-to-link gesture is unreachable even if
-          // editMode state were somehow toggled (defense in depth — the
           // toolbar toggle is hidden, but this is the canvas-level guard).
           editMode={isShareMode ? false : editMode}
           onLinkDragEnd={handleLinkDragEnd}
           onDragSourceChange={setDragSourceId}
-          // Phase 28 REL-02 — link-type color registry.
           linkTypeRegistry={linkTypeRegistry}
           // Content-Forward Views §4 — cover/emoji/monogram per node.
           medallions={medallions}
@@ -408,9 +331,7 @@ export function GraphView() {
         <GraphTooltip node={hovered.node} x={hovered.x} y={hovered.y} />
       )}
 
-      {/* Phase 28 REL-02: toggle-able legend overlay. Uses pointer-events-none
-          wrapper (same pattern as GraphTooltip) so d3-zoom pan/drag is not
-          intercepted. Visibility persisted to localStorage. */}
+
       <RelationLegend
         edges={data.edges}
         registry={linkTypeRegistry}
@@ -419,19 +340,7 @@ export function GraphView() {
         onColorChange={handleLegendColorChange}
       />
 
-      {/*
-        Phase 19 Plan 19-04: CreateLinkPopover mounted conditionally on
-        popoverState !== null. onOpenChange(false) clears popoverState so
-        Esc / outside-click / Cancel / post-success all route to the same
-        cleanup. onError fires the per-view Toast with the locked
-        belt-and-suspenders error copy (UI-SPEC §H — identical to the
-        popover's inline error).
 
-        Phase 29: In share mode the popover is never mounted — editMode
-        is forced false above, so the drop callback never reaches the
-        popover-state setter. The `!isShareMode` guard here is
-        belt-and-suspenders for the same constraint.
-      */}
       {popoverState && !isShareMode && (
         <CreateLinkPopover
           universeId={universeId}

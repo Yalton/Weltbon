@@ -3,24 +3,11 @@ import { useCategories } from '../../hooks/useCategories';
 
 interface IngestCategoryPickerProps {
   universeId: string;
-  /**
-   * Either an existing-category id, an in-flight new-name string, or null
-   * (uncategorized). Caller owns the value.
-   */
   value: { existingId: string } | { newName: string } | null;
   onChange: (value: { existingId: string } | { newName: string } | null) => void;
   id?: string;
 }
 
-/**
- * Existing-OR-new category picker for the markdown import review pane.
- *
- * Wraps the EntryCategoryPicker recipe (native <select>) and adds a
- * "+ Create category" option that swaps to an autoFocus text input. New
- * names are committed via onChange on blur or Enter; Escape cancels.
- *
- * D-26 / UI-SPEC §5.3.
- */
 export function IngestCategoryPicker({
   universeId,
   value,
@@ -51,7 +38,6 @@ export function IngestCategoryPicker({
     if (next === '__new__') {
       setMode('create');
       setNewNameDraft('');
-      // Do NOT call onChange yet — wait for user to commit a name.
       return;
     }
     onChange({ existingId: next });
@@ -60,7 +46,6 @@ export function IngestCategoryPicker({
   function commitNewName() {
     const trimmed = newNameDraft.trim();
     if (trimmed === '') {
-      // empty draft = cancel
       setMode('select');
       onChange(null);
       return;

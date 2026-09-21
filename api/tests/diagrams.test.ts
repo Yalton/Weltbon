@@ -1,16 +1,3 @@
-/**
- * Phase 31 DIAGRAM-01 + DIAGRAM-02 route-level integration tests.
- *
- * Covers:
- *   - Create / list / delete diagram (universe-scoped)
- *   - Add / list nodes to a diagram; uniqueness constraint (diagramId, entryId)
- *   - Delete node leaves the underlying entries row intact (DIAGRAM-01 invariant)
- *   - Upsert node position (PATCH-like idempotent POST)
- *   - Edge write-through: POST creates/updates a links row with diagramId, lineStyle, color
- *   - Duplicate (source, target, label) edge POST returns 2xx — no 500 on unique-index collision
- *   - GET diagram detail returns nodes + edges associated with this diagram
- *   - Auth-gated: 401 without token; 403 for cross-tenant access
- */
 
 import { describe, it, expect, beforeAll, afterAll, beforeEach } from 'vitest';
 import { createApp } from '../src/index.js';

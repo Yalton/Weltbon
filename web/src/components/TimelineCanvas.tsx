@@ -20,28 +20,13 @@ import { formatCalendar, type Calendar } from '../lib/calendarFormat';
 import { MedallionSVGNode } from './MedallionSVG';
 import type { MedallionSource } from '../lib/medallion';
 
-/**
- * Fixed parallax scroll-rate ratio between the era-layer and the pin-layer
- * x-translation (CONTEXT.md §D-06). The era-layer translates at 0.5x the
- * pin-layer's transform.x; both scale at the same k. Not user-configurable.
- */
 const PARALLAX_RATIO = 0.5;
 
-/**
- * Pin medallion radius in SVG units at k=1 — an 18px disc (Content-Forward Views §6).
- * Raised from 6 (the bare-dot era's 12px) now that the pin carries a cover, an emoji or a
- * monogram and has to be legible. Everything downstream reads this constant: the stacked-pin
- * vertical offset (STACK_OFFSET, 40 — still >2x the diameter, so stacked medallions clear
- * each other), the proximity-label and hover-popover anchors, and the adjacent-label offset.
- */
 const PIN_RADIUS = 9;
 
-/** Vertical offset between stacked pins at the same numeric position. */
 const STACK_OFFSET = 40;
 
-/** Screen-space distance at which proximity name labels fully fade in. */
 const HOVER_RADIUS = 14;
-/** Screen-space distance beyond which proximity name labels are hidden. */
 const PROXIMITY_THRESHOLD = 110;
 
 const POSITION_FORMAT = new Intl.NumberFormat('en-US', { maximumFractionDigits: 2 });
@@ -89,53 +74,13 @@ export interface TimelineCanvasProps {
   window: { start: number; end: number };
   width: number;
   height: number;
-  /**
-   * Per-universe fictional calendar (CALENDAR-02). When non-null, position
-   * labels and hover popovers render the compact calendar date string instead
-   * of the raw numeric value. When null, falls back to raw numeric (CALENDAR-03).
-   */
   calendar: Calendar | null;
-  /**
-   * Content-Forward Views §6 — entryId → cover/icon/monogram, from useEntryMedallions
-   * (the entries LIST cache; the timeline-pins payload carries no cover). Falls back to the
-   * pin's own joined entryTitle/entryType/entryIcon when an id is absent.
-   */
   medallions?: Map<string, MedallionSource>;
-  /** Click handler — fires on pin click without modifier keys. */
   onPinClick?: (pin: TimelinePin) => void;
-  /**
-   * Whether pins are draggable. Default true. When false (Phase 33 — share
-   * mode), the d3-drag behavior is NOT attached to pins, so the trailing
-   * native `click` is never suppressed by d3-drag's post-gesture click filter.
-   * Without this, a read-only share visitor's "CLICK TO OPEN" never fires
-   * `onPinClick` because the (no-op) drag swallows the click on any pointer
-   * jitter. Pan/zoom of the canvas is unaffected (that lives on the svg, not
-   * the pins).
-   */
   pinsDraggable?: boolean;
-  /**
-   * Fires at d3-drag `end` (pointer-up) with the translated new position.
-   * NOT fired if the drag was cancelled mid-flight via Esc (D-08a).
-   */
   onPinDragEnd?: (pin: TimelinePin, newPosition: number) => void;
-  /**
-   * Lifecycle callback surfaced to the parent — fires with the pin id on
-   * drag start and with `null` on drag end OR Esc cancel. Used by the
-   * orchestrator (Plan 06) to gate its own Esc handler.
-   */
   onDragSourceChange?: (pinId: string | null) => void;
-  /**
-   * True while an @dnd-kit panel-card drag is in flight. Disables d3-zoom
-   * pan/zoom so the cross-component drag doesn't fight the canvas (RESEARCH
-   * §Pattern 3).
-   */
   isDndDragActive?: boolean;
-  /**
-   * Live d3-zoom transform surfaced to the parent so the orchestrator (Plan
-   * 06 TimelineView) can invert the transform when translating @dnd-kit drop
-   * coords to canvas-space position math (RESEARCH §Q3). Fires on every zoom
-   * tick — handlers should write to a ref, not setState.
-   */
   onTransformChange?: (transform: { x: number; y: number; k: number }) => void;
 }
 
@@ -153,16 +98,6 @@ interface RenderedSpan {
   width: number;
 }
 
-/**
- * SVG canvas with two parallel layers (era-layer behind, pin-layer in front),
- * d3-zoom pan/zoom, d3-drag pin reposition with Esc cancel, vertical stacking
- * at duplicate positions, and out-of-range edge clamping with chevron
- * indicators (D-03).
- *
- * Imperative DOM writes inside zoom/drag handlers — never setState per tick
- * (RESEARCH §Pitfall 1). React owns the data-join shape; d3 owns transform
- * updates on the live element selections.
- */
 export function TimelineCanvas({
   universeId: _universeId,
   pins,
@@ -180,15 +115,12 @@ export function TimelineCanvas({
 }: TimelineCanvasProps) {
   const svgRef = useRef<SVGSVGElement>(null);
 
-  // Mirrored callback refs so the main effect's dep list stays stable across
   // parent re-renders that hand new arrow-function identities.
   const onPinClickRef = useRef(onPinClick);
   const onPinDragEndRef = useRef(onPinDragEnd);
   const onDragSourceChangeRef = useRef(onDragSourceChange);
   const onTransformChangeRef = useRef(onTransformChange);
-  // Mirror pinsDraggable so the main setup effect reads the live value without
   // re-binding (share-mode is constant per mount, but a ref keeps the stable
-  // dep list intact — same pattern as the callback refs above).
   const pinsDraggableRef = useRef(pinsDraggable);
   useEffect(() => {
     onPinClickRef.current = onPinClick;
@@ -200,7 +132,6 @@ export function TimelineCanvas({
 
   // Esc-cancel mid-drag (D-08a): set by the keydown listener installed at
   // drag start, read by the d3-drag `end` handler to skip the onPinDragEnd
-  // emission.
   const cancelledRef = useRef(false);
   // Mirrors isDndDragActive so the d3-zoom filter (which is captured at setup
   // time) sees the live value without re-binding the zoom behavior.
@@ -210,21 +141,16 @@ export function TimelineCanvas({
   }, [isDndDragActive]);
 
   // Latest d3-zoom transform — exposed for orchestrator-side coordinate
-  // inversion (Plan 06 drop math) and used by the Esc-to-home reset.
   const zoomBehaviorRef = useRef<ZoomBehavior<SVGSVGElement, unknown> | null>(null);
   // Local mirror of the d3-zoom transform — used for cursor-to-pin proximity
-  // calc on pointermove. Kept in a ref (not state) so zoom ticks don't trigger
   // React re-renders (RESEARCH §Pitfall 1).
   const transformRef = useRef({ x: 0, y: 0, k: 1 });
 
   // Cursor in SVG-container screen coords + currently-hovered pin id, both for
-  // the proximity name labels and the hover popover.
   const [cursor, setCursor] = useState<{ x: number; y: number } | null>(null);
   const [hoveredPinId, setHoveredPinId] = useState<string | null>(null);
 
   // Pre-compute the render data outside the d3 effect so the JSX can also
-  // assert structure synchronously on first paint (jsdom needs this — d3
-  // imperative writes happen in a useEffect that's a tick behind render).
   const baselineY = height / 2;
   const initialAxisTicks = useMemo(() => {
     return axisValues(timelineWindow.start, timelineWindow.end, width).map((value) => {
@@ -236,7 +162,6 @@ export function TimelineCanvas({
     });
   }, [calendar, timelineWindow.end, timelineWindow.start, width]);
 
-  // Stack index per position: pins.length=N at the same position become
   // 0..N-1 stack indices, rendered upward from the baseline.
   const stackIndexByPin = new Map<string, number>();
   const stackSeen = new Map<number, number>();
@@ -264,8 +189,6 @@ export function TimelineCanvas({
   });
 
   // Era span rendering uses the already-sorted-by-server timeline list; if a
-  // caller passes unsorted, the math still produces correct spans because
-  // inferEraSpans iterates in input order (caller contract documented).
   const spans = inferEraSpans(pins, timelineWindow.end).filter(
     (s) => s.endPos > s.startPos, // drop zero-width spans (back-to-back eras)
   );
@@ -277,7 +200,6 @@ export function TimelineCanvas({
 
   // Spec §6 — a label per pin only when there's room. A rough per-character width estimate is
   // enough: being wrong costs a slightly-clipped label, not a broken axis. Crowded pins keep
-  // the existing hover tooltip as their only label.
   const labelVisibleFor = useMemo(() => {
     const visible = new Set<string>();
     const sorted = [...renderedPins].sort((a, b) => a.x - b.x);
@@ -293,7 +215,6 @@ export function TimelineCanvas({
   }, [renderedPins]);
 
   // d3-zoom + d3-drag wiring. Runs once per [pins, window, width, height]
-  // change and tears down listeners on cleanup.
   useEffect(() => {
     if (!svgRef.current) return;
     const svg = select(svgRef.current);
@@ -302,7 +223,6 @@ export function TimelineCanvas({
     const pinLayer = svg.select<SVGGElement>('g.pin-layer');
     // Content-Forward Views §6: the pins are medallion <g> groups now, not bare <circle>s.
     // This selection feeds the d3-DRAG behavior only — the click-to-open path stays React
-    // (see the "click dispatch" note below; a d3 handler here would carry no datum).
     const pinSel = pinLayer
       .select<SVGGElement>('g.pins')
       .selectAll<SVGGElement, RenderedPin>('g[data-pin-id]');
@@ -369,10 +289,8 @@ export function TimelineCanvas({
     const zoomBehavior: ZoomBehavior<SVGSVGElement, unknown> = zoom<SVGSVGElement, unknown>()
       .scaleExtent([0.05, 100])
       .filter((event: Event) => {
-        // Mouse button > 0 (right/middle) — block.
         const ev = event as MouseEvent;
         if (typeof ev.button === 'number' && ev.button > 0) return false;
-        // Don't pan when starting from a pin (drag owns it).
         const target = ev.target as Element | null;
         if (target && target.closest('[data-pin-id]')) return false;
         // Don't pan/zoom while a cross-component dnd drag is in flight.
@@ -382,16 +300,13 @@ export function TimelineCanvas({
       .on('zoom', (evt) => {
         const t = evt.transform;
         pinLayer.attr('transform', t.toString());
-        // Era layer translates at PARALLAX_RATIO * t.x, same scale.
         // Reduced-motion users get a 1:1 transform (no parallax differential).
         const eraTransform = prefersReducedMotion
           ? t.toString()
           : `translate(${t.x * PARALLAX_RATIO}, 0) scale(${t.k})`;
         eraLayer.attr('transform', eraTransform);
         updateAxis(t);
-        // Surface the live transform to the orchestrator (Plan 06) for
         // inverse-coord math on @dnd-kit drop events. Imperative-only —
-        // parent writes to a ref, never setState per tick.
         onTransformChangeRef.current?.({ x: t.x, y: t.y, k: t.k });
         transformRef.current = { x: t.x, y: t.y, k: t.k };
       });
@@ -434,7 +349,6 @@ export function TimelineCanvas({
       })
       .on('end', (evt, d) => {
         if (cancelledRef.current) {
-          // Esc already cleaned up the keydown listener and notified parent.
           return;
         }
         removeKeydown();
@@ -447,7 +361,6 @@ export function TimelineCanvas({
         onPinDragEndRef.current?.(d.pin, newPosition);
         onDragSourceChangeRef.current?.(null);
       });
-    // Phase 33: in share mode (pinsDraggable=false) do NOT attach the drag
     // behavior — read-only pins must not be repositionable.
     if (pinsDraggableRef.current) {
       pinSel.call(dragBehavior);
@@ -456,22 +369,15 @@ export function TimelineCanvas({
     // ---------- click dispatch ----------
     // Pin click-to-open is handled by a React onClick on the <g> JSX, NOT
     // here. The pins are React-rendered, so this d3 selection carries NO datum
-    // (`d` is undefined) — the old `d3 .on('click', (e,d) => onPinClick(d.pin))`
-    // threw "Cannot read properties of undefined (reading 'pin')" AND its
-    // evt.stopPropagation() blocked the React handler from bubbling, so the
-    // pin never opened. Removed entirely; the React onClick is the single,
-    // working path (Phase 33 — fixes share-visitor "CLICK TO OPEN").
 
     // ---------- Esc → home (when no drag in flight) ----------
     const escHomeHandler = (e: KeyboardEvent) => {
       if (e.key !== 'Escape') return;
       // If a drag is in flight, the per-drag keydown listener handles it
-      // (cancelledRef is true). Skip the home reset to avoid clobbering the
       // mid-drag cancel.
       if (cancelledRef.current || activeKeydownHandler) return;
       // Reset to home view. The d3-transition package is not in the tree
       // (RESEARCH §"Don't Hand-Roll" — keep dependency surface small), so we
-      // apply the identity transform immediately. The 300ms animation called
       // out in UI-SPEC §Animation is a deferred polish item; functional
       // home-reset behavior (D-07c) is preserved.
       svg.call(zoomBehavior.transform, zoomIdentity);
@@ -608,9 +514,6 @@ export function TimelineCanvas({
         <g className="pins">
           {renderedPins.map(({ pin, x, cy, clamped, clampSide }) => {
             const displayName = pin.entryTitle || pin.label || 'Pin';
-            // The pins payload carries no cover, so the entries LIST cache supplies it.
-            // When the entry isn't in that map (still loading, or filtered out), fall back
-            // to the pin's own joined fields — the medallion degrades to emoji/monogram.
             const source: MedallionSource =
               medallions?.get(pin.entryId) ?? {
                 title: displayName,
@@ -633,11 +536,8 @@ export function TimelineCanvas({
                     : `${displayName} at position ${pin.position}`
                 }
                 transform={`translate(${x}, ${cy})`}
-                // Phase 33: React onClick directly on the pin is the open path.
                 // The pins are React-rendered, so the imperative d3 selection
-                // carried no datum and its `.on('click')` threw on `d.pin`
                 // (undefined) while stopPropagation-ing the real click. This
-                // delegated React handler is the single, working open path.
                 onClick={() => onPinClick?.(pin)}
                 className={
                   clamped

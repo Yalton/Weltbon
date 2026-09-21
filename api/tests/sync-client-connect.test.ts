@@ -1,11 +1,3 @@
-/**
- * Task 2 (OB-03) — POST /api/sync/remotes idempotency.
- * Task 3 (OB-02) — the credential-shape alternative to a pasted PAT.
- *
- * Registering the same base URL twice under the same owner must not strand a
- * second remote row (and a second encrypted PAT). Mirrors the setup used by
- * tests/sync-client-crud.test.ts.
- */
 import { describe, it, expect, beforeAll, afterAll, beforeEach, vi } from 'vitest';
 
 // CRITICAL — must be set BEFORE the *first* env() call in the process. See

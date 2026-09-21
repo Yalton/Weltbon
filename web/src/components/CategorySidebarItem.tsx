@@ -11,15 +11,6 @@ interface Props {
   onDelete: (category: Category) => void;
 }
 
-/**
- * Sortable category row for the sidebar. Uses dnd-kit's useSortable to expose
- * setNodeRef + transform + listeners. The drag listeners attach to a wrapper
- * around the icon/label span so the collapse chevron button and the ellipsis
- * DropdownMenu trigger remain independently clickable without activating drag.
- *
- * A 5px PointerSensor activationConstraint on the parent DndContext prevents
- * accidental drag starts from small pointer jitter.
- */
 export function CategorySidebarItem({
   category,
   isCollapsed,
@@ -66,7 +57,6 @@ export function CategorySidebarItem({
           <DropdownMenu.Trigger
             aria-label={`Category actions for ${category.label}`}
             className="px-2 py-1 text-sm text-neutral-400 hover:text-neutral-600 dark:hover:text-neutral-200 opacity-0 group-hover:opacity-100 focus:opacity-100 data-[state=open]:opacity-100"
-            // Prevent drag activation when the ellipsis is clicked
             onPointerDown={(e) => e.stopPropagation()}
             onKeyDown={(e) => e.stopPropagation()}
           >

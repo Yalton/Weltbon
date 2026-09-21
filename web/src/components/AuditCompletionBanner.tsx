@@ -6,47 +6,7 @@ import { useIssues, type AuditCategory } from '../hooks/useIssues';
 import { EMOJI } from './CategoryIcon';
 import { formatRelative } from '../utils/formatRelative';
 
-/**
- * Phase 26 — Audit completion banner. This file is the canonical
- * implementation of CONTEXT decision **D-07** (completion banner replaces the
- * progress panel in place; persistent until X-dismissed; succeeded vs failed
- * variants with locked visuals + copy).
- *
- * Reused in two mount contexts:
- *   - inside AuditCostDialog / AuditProgressPanel (dismissible=true → "×" close).
- *   - as IssuesView filter header when an `?audit_run_id=` deep-link is active
- *     (Plan 07; dismissible=false → "✕ Clear filter" instead of "×").
- *
- * **W-7 over-fetch fix:** `useEstimateAudit` is gated by
- *   `enabled: run?.status === 'succeeded' && universe?.auditEnabled === true`
- * so failed runs and opted-out historical runs skip the estimate fetch
- * entirely — the partial-coverage chip only matters for successful, opted-in
- * runs. Hook-gating via the `enabled` option (added in Plan 04) keeps the
- * call-site Rules-of-Hooks compliant while avoiding the redundant network
- * round-trip.
- *
- * **D-08 partial-coverage chip:** rendered when `run.analyzedEntries < 0.5 ×
- * totalEntries`. Because the run-state route does not expose totalEntries
- * directly, we use `estimate.breakdown.scopeEntryCount` as the surrogate. If
- * the estimate is gated off (W-7) OR fails, the chip is suppressed silently —
- * absent information is preferable to a wrong chip.
- *
- * LLMError ERROR_COPY table is locked verbatim from UI-SPEC §Copywriting; the
- * `fallback` branch guarantees that an unknown server error string never
- * surfaces raw provider text to the user (T-26-05-01).
- */
 
-/**
- * Locked LLMError → copy mapping (UI-SPEC §Copywriting). Do NOT paraphrase.
- *
- * Exported ONLY so AuditCompletionBanner.test.tsx's owner-key-state leak
- * checks can plant a regressed line here and render it through this component
- * — the real producer — instead of asserting against a hand-written array of
- * phrasings. A guard validated against a curated list validates the list; the
- * branch's standing rule (task-10-brief.md) is that the poison goes through
- * the real path. Nothing in src/ imports this, and nothing should: the table
- * is the component's own copy, not shared vocabulary.
- */
 export const ERROR_COPY: Record<string, string> = {
   budget_exhausted:
     'The run exceeded the configured cost or token cap. Partial suggestions were persisted.',
@@ -71,16 +31,9 @@ export const ERROR_COPY: Record<string, string> = {
     "The audit scope is too large for the selected model's context window. Try a narrower audit scope.",
   content_blocked:
     'The provider blocked some content for safety reasons. Try a narrower audit scope.',
-  // #50 Task 9 — Task 7 introduced these two tags precisely so a recipient of
-  // a shared connection is not misdirected to their OWN Settings by the
   // generic provider-error copy above ("Update or replace it under Settings
   // → LLM keys" is meaningless for a credential the recipient never holds).
-  // Neither line says anything about the OWNER's key state — deleted,
-  // revoked, invalid, expired — because the server itself deliberately never
-  // discloses that to the recipient (see useLlmShares.ts's file header: "a
   // recipient who could tell one owner-side failure from another has been
-  // handed an oracle for the administrator roster"). Both point at the same
-  // two remedies: ask the administrator, or fall back to a personal key.
   shared_access_revoked:
     'Your access to this shared connection has ended. Contact the administrator who shared it, or add a personal API key in Settings → LLM keys.',
   shared_credential_unavailable:
@@ -92,7 +45,6 @@ export const ERROR_COPY: Record<string, string> = {
 export interface AuditCompletionBannerProps {
   universeId: string;
   runId: string;
-  /** When false, renders "✕ Clear filter" instead of the "×" close. */
   dismissible?: boolean;
   onClearFilter?: () => void;
   onDismiss?: () => void;
@@ -117,7 +69,6 @@ export function AuditCompletionBanner({
 
   // W-7: useEstimateAudit gated to skip unnecessary calls on failed/opted-out
   // runs — partial-coverage chip only matters when status===succeeded AND the
-  // universe is opted in.
   const estimateQuery = useEstimateAudit(
     universeId,
     run?.scope ?? 'universe',
@@ -141,7 +92,6 @@ export function AuditCompletionBanner({
   if (!run) return null;
   if (run.status !== 'succeeded' && run.status !== 'failed') return null;
 
-  // Stale (succeeded > 30 min ago) — small muted line above body.
   const finishedAtMs = run.finishedAt ? new Date(run.finishedAt).getTime() : null;
   const stale =
     run.status === 'succeeded' &&
@@ -190,10 +140,7 @@ export function AuditCompletionBanner({
         )}
 
         <div className="text-sm tabular-nums text-neutral-600 dark:text-neutral-400 mt-2">
-          {/* Phase 27 D-06 — render an amber "cost unknown" chip in place of
-              "Cost: $X.XXXX" when the run used an unpriced model. Copy is
-              lowercase, no $ sign (CONTEXT line 173). Amber palette matches
-              the partial-coverage chip below (Phase 26 D-08 visual language). */}
+
           {run.costUnknown ? (
             <span
               className="inline-flex items-center text-xs text-amber-700 dark:text-amber-400 bg-amber-50 dark:bg-amber-950/30 border border-amber-300 dark:border-amber-800 rounded px-2 py-1"

@@ -1,6 +1,3 @@
-/**
- * Plan C Task 1 — asset content hash backfill + manifest 2.2.0 completeness.
- */
 import { describe, it, expect, beforeAll, afterAll, beforeEach } from 'vitest';
 import { createHash } from 'node:crypto';
 import { mkdtemp } from 'node:fs/promises';
@@ -8,7 +5,7 @@ import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import { createTestDb, cleanDb, createTestUser, type TestDbHandle } from './helpers.js';
 
-describe('sync asset hashing (Plan C, S-10)', () => {
+describe('sync asset hashing', () => {
   let handle: TestDbHandle;
   let userId: string;
 

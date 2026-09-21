@@ -176,7 +176,7 @@ describe('AppBackground', () => {
     warnSpy.mockRestore();
   });
 
-  // --- Plan 08-03: entry-body subscription tests ---
+
 
   it('calls setEntries([]) when toggle is OFF, outside universe route', () => {
     mockShowEntriesAsBodies = false;

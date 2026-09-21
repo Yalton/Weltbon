@@ -1,20 +1,3 @@
-/**
- * Phase 26 Plan 08 Task 1 — GET /api/universes/:uid/audits/estimate integration tests.
- *
- * The route returns the AuditEstimate (lower/upper/breakdown/model) computed
- * by services/audit-estimator.ts BEFORE a run exists. The dialog opens
- * pre-run, so the route is query-param-shaped (NOT runId-in-path; W-1
- * deviation from CONTEXT D-16).
- *
- * Security invariants tested:
- *   T-26-08-01 — opt-in enforcement (audit_enabled=false → 403)
- *   T-26-08-02 — estimator failure surfaces 502 with generic message, no stack leak
- *   T-26-08-06 — apiKey never logged by route (verified by no-console-spy assertion)
- *   T-24-05-02 — cross-tenant requireUniverse (403)
- *
- * Mocking strategy mirrors audit-routes.test.ts (Strategy A — spread the
- * actual provider barrel, override getProvider for estimate stub).
- */
 
 import { describe, it, expect, beforeAll, afterAll, beforeEach, vi } from 'vitest';
 import { eq } from 'drizzle-orm';
@@ -23,7 +6,7 @@ vi.hoisted(() => {
   process.env.LLM_KEY_ENCRYPTION_KEY = '0'.repeat(64);
 });
 
-// #50 Task 6: typed with the LLMProvider.estimate() argument rather than
+
 // `() => Promise<number>` — the shared tests assert WHICH credential reached
 // the provider, and `mock.calls[0][0]` on a zero-arg signature is a
 // compile-time tuple-index error, not a runtime one.
@@ -77,7 +60,7 @@ const ENCRYPTION_KEY = '0'.repeat(64);
 const OWNER_SECRET = 'sk-ant-estimate-owner-secret';
 const RECIPIENT_SECRET = 'sk-ant-estimate-recipient-secret';
 
-describe('GET /api/universes/:uid/audits/estimate (Phase 26 Plan 08 Task 1)', () => {
+describe('GET /api/universes/:uid/audits/estimate', () => {
   let handle: TestDbHandle;
   let app: ReturnType<typeof createApp>;
 
@@ -271,7 +254,7 @@ describe('GET /api/universes/:uid/audits/estimate (Phase 26 Plan 08 Task 1)', ()
 
   // --- 403: audit_enabled=false ---------------------------------------------
 
-  it('returns 403 when audit_enabled=false (T-26-08-01 Phase 24 SC-1 invariant preserved)', async () => {
+  it('returns 403 when audit_enabled=false', async () => {
     const { hdrs } = await userWithToken('estimate-opt-off@test.com');
     const universe = await createUniverse(hdrs);
     // NOT enabling audit
@@ -333,7 +316,7 @@ describe('GET /api/universes/:uid/audits/estimate (Phase 26 Plan 08 Task 1)', ()
     expect(res.status).toBe(200);
     const body = await json(res);
     // Zero cost, not a missing estimate: Ollama has no PRICING entries, so the
-    // estimator takes its documented unknown-model path (Phase 27 D-05/D-06's
+
     // cost_unknown shape). The dialog needs a *present* estimate object, which
     // this is — the numbers being zero is the correct answer for a local model.
     expect(body.model).toEqual({ provider: 'ollama', name: 'qwen3:32b' });

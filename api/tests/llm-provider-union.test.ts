@@ -20,9 +20,9 @@ const FILES = [
   '../src/services/audit-estimator.ts',
   '../src/scripts/list-provider-models.ts',
   '../../web/src/hooks/useUniverse.ts',
-  // Fix round 2 (#48 whole-branch review, Finding 7): useAudits.ts was NOT in
+
   // this list even though its `useListModels` union was widened by hand in
-  // Task 7 — the neighbouring `useEstimateAudit(provider)` param was missed
+
   // and stayed two-provider. That is precisely the pattern this test exists to
   // catch, so the file it happened in now gets checked. types/audit.ts joins it
   // for the same reason: `AuditEstimate.model.provider` echoes back whatever
@@ -31,7 +31,7 @@ const FILES = [
   '../../web/src/types/audit.ts',
 ];
 
-// Fix round 1 (#48 review): llm-key.ts now legitimately declares
+
 // KEY_PROVIDER_NAMES = ['anthropic', 'openai'] as const — the BYOK-key-only
 // constant used by llm-keys.ts / llm-models.ts, which never gets an
 // llm_api_keys row for 'ollama' and so must NOT advertise it. That is a

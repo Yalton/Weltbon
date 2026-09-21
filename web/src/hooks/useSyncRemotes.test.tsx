@@ -1,13 +1,3 @@
-/**
- * Plan F (Task 2) — hooks for the account-scoped `/api/sync/remotes` surface.
- *
- * Mirrors useCategories.test.tsx's scaffolding: the api() client is mocked at
- * the module boundary, each test builds its own QueryClient with retry off,
- * and invalidation is asserted by spying on the client rather than by
- * observing a refetch (which would depend on subscriber timing). It drops that
- * file's MutationCache.onError swallow — see the failure-path test below for
- * why this file does not need one.
- */
 import { describe, it, expect, beforeEach, vi } from 'vitest';
 import { renderHook, act, waitFor } from '@testing-library/react';
 import { QueryClient, QueryClientProvider } from '@tanstack/react-query';

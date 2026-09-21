@@ -1,12 +1,6 @@
 import { describe, it, expect, vi, beforeEach, afterEach, type MockInstance } from 'vitest';
 import { api } from './client';
 
-/**
- * Tests cover the FormData branch added by Plan 12-02 plus the JSON branch
- * to guard against accidental regression. Plan 12-06's multipart upload
- * relies on the browser setting the multipart boundary itself; if api()
- * forces `application/json` the server can't parse the request.
- */
 describe('api() helper — Content-Type negotiation', () => {
   let fetchSpy: MockInstance<typeof fetch>;
 

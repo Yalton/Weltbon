@@ -1,21 +1,3 @@
-/**
- * Plan F — the one way the sync UI renders a `SyncCopy`.
- *
- * Shared by /settings/sync (Task 2) and the universe Sync tab (Task 3) rather
- * than copied, because the two callers feed it copy from DIFFERENT producers
- * whose field shapes disagree, and the disagreement is easy to miss:
- *
- *   - `syncErrorMessage(err)` — `detail` and `raw` are disjoint. `raw` is the
- *     throw site's own message; nothing in it repeats `detail`.
- *   - `lastErrorMessage(link.lastError)` — `raw` is the WHOLE `last_error`
- *     column, with `detail` already embedded verbatim inside it (see
- *     lib/syncErrorCopy.ts's docstring on `SyncCopy.raw`).
- *
- * A component that unconditionally renders message + detail + <details>{raw}
- * is correct for the first producer and prints the detail twice for the
- * second. So the disclosure is suppressed when `raw` already contains
- * `detail`: there is no information in it the user has not been shown.
- */
 
 import type { SyncCopy } from '../lib/syncErrorCopy';
 
@@ -28,8 +10,6 @@ export function SyncErrorNotice({
   testId?: string;
   className?: string;
 }) {
-  // `includes` rather than equality: on the `lastErrorMessage` path `raw` is
-  // `${code}: ${detail}`, so it CONTAINS the detail without being equal to it.
   const rawAddsSomething = !!copy.raw && !(copy.detail && copy.raw.includes(copy.detail));
 
   return (

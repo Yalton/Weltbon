@@ -1,18 +1,13 @@
 import { useNavigate } from 'react-router-dom';
 
 export interface MapBreadcrumbProps {
-  /** The origin map's id — where to navigate back to. */
   originMapId: string;
-  /** The origin map's display name — shown in the chip and title attr. */
   originMapName: string;
-  /** Share token if in share mode — controls the nav branch. */
   shareToken?: string | null;
-  /** Universe id — used in authenticated nav branch. */
   universeId?: string;
 }
 
 /**
- * Single-level "← Back to [origin map name]" breadcrumb chip (Phase 53 D-03).
  *
  * Placement: absolute left-4 top-4 z-20 — the parent must shift MapToolbar to
  * top-16 while this is visible (UI-SPEC §3: toolbar default is left-4 top-4).

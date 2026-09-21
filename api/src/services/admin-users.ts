@@ -43,7 +43,6 @@ export async function listAdminUsers() {
 }
 
 async function getUserImpact(userId: string, dbHandle: DrizzleDb = getDb()) {
-  // A transaction uses one postgres client; queries must be sequential rather
   // than Promise.all or node-postgres rejects the concurrent client use.
   const universesOwned = await dbHandle.$count(universes, eq(universes.userId, userId));
   const refreshTokensActive = await dbHandle.$count(refreshTokens, and(eq(refreshTokens.userId, userId), isNull(refreshTokens.revokedAt)));

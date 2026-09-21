@@ -1,4 +1,3 @@
--- Phase 32 CONLANG-01 + CONLANG-03
 -- Creates the dictionary_words table with a GENERATED tsvector FTS column ('simple' for
 -- word/ipa to avoid English stemming corrupting invented words, 'english' for gloss),
 -- a GIN index, a scope-unique index using COALESCE sentinel for nullable language_entry_id,

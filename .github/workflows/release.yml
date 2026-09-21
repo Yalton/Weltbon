@@ -52,17 +52,19 @@ jobs:
     # with "recent account payments have failed or your spending limit needs to
     # be increased". That is an org billing state, not something a workflow can
     # retry past, and it left the repo unable to cut a release at all. ci.yml
-    # moved to the CI VM for the same reason; this follows it so that
+    # moved to citreum-runner-01 for the same reason; this follows it so that
     # tagging keeps working while the billing is sorted out.
     #
     # This job needs node (next-version.mjs), git and gh (the verify step). All
     # three are in the runner image — checked, not assumed. It builds nothing
     # and needs no Docker.
     #
-    # This job holds RELEASE_TOKEN. The operator explicitly accepts that
-    # repository-writing credential on the dedicated private-repository CI VM;
-    # keep the runner group private and do not expose it to public repositories.
-    runs-on: [self-hosted, weltbon-ci-unit]
+    # Move this back to ubuntu-latest once billing is restored: a release job
+    # holds RELEASE_TOKEN, and a hosted runner is a cleaner place for a
+    # repo-writing credential than a box that also runs production.
+    # The dedicated trusted release runner is not provisioned yet. Keep this
+    # on the existing trusted host until its replacement is online.
+    runs-on: [self-hosted, citreum]
     # The release commit is itself a push to master. Without this guard the
     # workflow re-enters, finds `chore(release):` in range (no bump, since chore
     # is not a releasing type) and does nothing — harmless but a wasted run every

@@ -11,10 +11,7 @@ export function Layout() {
         <Link to="/universes" className="wordmark text-lg">
           Weltbon
         </Link>
-        {/* Phase 26 D-17: cross-universe in-flight audits badge sits next to
-            the user menu. InFlightAuditsBadge returns null when no runs are
-            in flight, so the header gracefully collapses to just the UserMenu
-            for users without active audits (zero visual delta vs pre-Phase-26). */}
+
         <div className="flex items-center gap-2">
           <InFlightAuditsBadge />
           <UserMenu />

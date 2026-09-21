@@ -46,13 +46,7 @@ describe('export/import (EXP-01, IMP-01..03)', () => {
     return res.json();
   }
 
-  /**
-   * Extract and parse manifest.json from an export ZIP buffer. Since Phase 38
-   * MEDIA-06 (D-07) the ?format=json export is an `application/zip` bundle of
-   * manifest.json + assets/, so every "read the exported JSON" assertion below
-   * goes through here instead of res.json() on the raw ZIP bytes.
-   */
-  // eslint-disable-next-line @typescript-eslint/no-explicit-any
+    // eslint-disable-next-line @typescript-eslint/no-explicit-any
   async function extractManifest(zipBytes: Buffer): Promise<Record<string, any>> {
     return new Promise((resolve, reject) => {
       yauzl.fromBuffer(zipBytes, { lazyEntries: true }, (err, zipfile) => {
@@ -110,7 +104,7 @@ describe('export/import (EXP-01, IMP-01..03)', () => {
   async function insertLink(universeId: string, sourceEntryId: string, targetEntryId: string, label: string | null, direction: 'directed' | 'undirected' = 'directed') {
     const [created] = await db()
       .insert(links)
-      // Phase 35 REL-01: direction replaces bidirectional; linkType defaults to null (untyped)
+
       .values({ universeId, sourceEntryId, targetEntryId, label, direction, linkType: null })
       .returning();
     return created;
@@ -161,7 +155,7 @@ describe('export/import (EXP-01, IMP-01..03)', () => {
     await res.arrayBuffer();
   });
 
-  // 04-01: Phase 4 dated filename in Content-Disposition.
+
   // Filenames now go through exportFilename() (slug + YYYY-MM-DD) so successive
   // exports of the same universe coexist in Downloads without manual rename.
   // D-07: the JSON export is a ZIP bundle, so the extension is .zip.
@@ -379,7 +373,7 @@ describe('export/import (EXP-01, IMP-01..03)', () => {
         { id: 'b0b0b0b0-b0b0-4b0b-8b0b-b0b0b0b0b0b0', title: 'Entry', entryType: 'concept', summary: '', body: '', tags: [], meta: {}, icon: '', categoryId: null },
       ],
       links: [
-        // Phase 35 REL-01: direction replaces bidirectional in the import schema (backward-compat: bidirectional still accepted)
+
         { id: 'c0c0c0c0-c0c0-4c0c-8c0c-c0c0c0c0c0c0', sourceEntryId: 'b0b0b0b0-b0b0-4b0b-8b0b-b0b0b0b0b0b0', targetEntryId: 'd0d0d0d0-d0d0-4d0d-8d0d-d0d0d0d0d0d0', label: 'bad ref', direction: 'directed' },
       ],
     };
@@ -832,13 +826,9 @@ describe('export/import (EXP-01, IMP-01..03)', () => {
     expect(reExportData.entries[0].id).not.toBe(originalEntryId);
   });
 
-  // --- Phase 45 XREF-04 (D-08): aliases round-trip + SC1 display-text pipe form ---
 
-  /**
-   * Export a universe as a ZIP buffer.
-   * The ?format=json route returns application/zip since Phase 38 MEDIA-06.
-   */
-  async function exportAsZipBuffer(uid: string, hdrs: Record<string, string>): Promise<Buffer> {
+
+    async function exportAsZipBuffer(uid: string, hdrs: Record<string, string>): Promise<Buffer> {
     const res = await app.request(`http://localhost/api/universes/${uid}/export?format=json`, {
       headers: { ...hdrs },
     });
@@ -893,7 +883,7 @@ describe('export/import (EXP-01, IMP-01..03)', () => {
     // Verify the entry was created with the correct aliases.
     expect(entry.aliases).toEqual(['Old Name', 'AKA']);
 
-    // Export the universe as ZIP (Phase 38 MEDIA-06 ZIP format).
+
     const zipBytes = await exportAsZipBuffer(universe.id, hdrs);
 
     // Import into a clean universe via ZIP upload.
@@ -982,7 +972,7 @@ describe('export/import (EXP-01, IMP-01..03)', () => {
 
   // ALIAS-RT-03: aliases + ALL THREE link forms round-trip byte-identical (SC2 / XREF-07).
   // Seeds one entry whose body carries plain [[entry]], piped [[entry|display]], AND embed
-  // ![[entry]] — the three forms Phase 45's ALIAS-RT-01 did not fully cover (missing ![[ ]]).
+
   // Asserts each token survives export → ZIP import byte-identical, closing the SC2 gap.
   it('ALIAS-RT-03: aliases + all link forms ([[]], [[|display]], ![[...]]) round-trip byte-identical (SC2)', async () => {
     const { hdrs } = await userWithToken('alias-rt03@test.com');

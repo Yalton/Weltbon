@@ -3,21 +3,9 @@ import { ConfirmDialog } from '../ConfirmDialog';
 import { pluralize } from '../../lib/format';
 import type { SavedDraft } from '../../types/ingestReview';
 
-/**
- * Centered inline prompt rendered when localStorage holds an in-progress
- * import draft (UI-SPEC §6.2 / D-20). Offers [Continue review] and
- * [Discard and start over] (the latter behind a destructive ConfirmDialog).
- *
- * Presentational — parent (Plan 12-06 IngestImport) decides what
- * onContinue/onDiscard do. The dialog open/close state is local because the
- * confirm ceremony lives entirely inside this component per UI-SPEC §13.11.
- *
- * Static Tailwind class strings only (Tailwind v4 contract).
- */
 interface ImportResumePromptProps {
   draft: SavedDraft;
   onContinue: () => void;
-  /** Called only AFTER the user confirms the destructive ConfirmDialog. */
   onDiscard: () => void;
 }
 
@@ -68,13 +56,6 @@ export function ImportResumePrompt({
   );
 }
 
-/**
- * File-local ISO → human-readable relative formatter. Matches UI-SPEC §6.2's
- * "5 minutes ago" / "2 hours ago" / "3 days ago" expectations. The shared
- * web/src/utils/formatRelative.ts capitalizes "Just now"; this prompt uses
- * "just now" inline with the surrounding sentence ("You started reviewing ...
- * just now."), so we keep the helper file-local.
- */
 function formatRelativeFromIso(iso: string): string {
   const t = new Date(iso).getTime();
   if (Number.isNaN(t)) return 'recently';

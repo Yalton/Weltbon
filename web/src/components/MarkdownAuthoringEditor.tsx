@@ -72,8 +72,6 @@ export type MarkdownAuthoringCommand = {
   shortcut?: string;
 };
 
-// The toolbar, palette, and keyboard shortcuts share this one registry.
-// Callouts emit the documented `> [!TYPE]` syntax. Unlisted types remain raw.
 export const markdownAuthoringCommands: readonly MarkdownAuthoringCommand[] = [
   { id: 'paragraph', label: 'Paragraph', shortLabel: '¶', markdown: 'Paragraph' },
   { id: 'heading-1', label: 'Heading 1', shortLabel: 'H1', markdown: '# Heading' },
@@ -305,13 +303,6 @@ function preservedHeadingLines(markdown: string, previousMarkdown: string | unde
   return preserved;
 }
 
-/**
- * Lexical preserves a trailing space in a formatted heading as an HTML entity.
- * That entity is semantically inert in an ATX heading and makes the canonical
- * Source document look like an HTML-escaped implementation detail. Keep the
- * normalization limited to newly introduced rich-editor heading output; Source mode
- * remains the lossless escape hatch for literal entities and other whitespace-sensitive text.
- */
 export function canonicalizeLiveMarkdown(markdown: string, previousMarkdown?: string): string {
   let fence: MarkdownFence | null = null;
   const preservedLines = preservedHeadingLines(markdown, previousMarkdown);
@@ -353,8 +344,6 @@ const editorPlugins = [
   tablePlugin(),
   linkPlugin(),
   imagePlugin(),
-  // Keep source support inside the editor boundary. The shell owns the labelled
-  // toggle so it can preserve an exact raw document when the live parser cannot.
   diffSourcePlugin({ viewMode: 'rich-text' }),
 ];
 

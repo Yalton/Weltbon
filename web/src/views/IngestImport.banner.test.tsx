@@ -7,8 +7,8 @@ import { ApiError } from '../api/client';
 // IngestImport.tsx:491 — `Import failed. ${classifyError(err)} Your review is saved — try again or adjust and re-commit.`
 //
 // If IngestImport.tsx:491 ever changes (e.g., banner template restructure
-// explicitly deferred per Phase 16.1 CONTEXT.md), this test must be
-// updated in lockstep. The PHRASE content is locked by Phase 16's
+
+
 // classifyError test suite (web/src/lib/format.test.ts); this file locks
 // the OUTER CONCATENATION contract.
 //

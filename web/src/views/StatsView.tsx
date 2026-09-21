@@ -1,10 +1,6 @@
 import { useParams, useNavigate } from 'react-router-dom';
 import { useStats } from '../hooks/useStats';
 
-/**
- * Inline lightweight relative-time helper.
- * No date-fns — v4.0 dep cap prohibits adding it.
- */
 function relativeTime(isoString: string): string {
   const then = new Date(isoString).getTime();
   const now = Date.now();
@@ -58,12 +54,6 @@ export function StatsView() {
             className="rounded-md border border-neutral-200 dark:border-neutral-800 bg-white dark:bg-neutral-900 p-4 flex flex-col gap-1"
           >
             {isLoading ? (
-              /* Deliberately NOT the shared <Loading /> (#32): a centered
-                 spinner where a number belongs misreads the tile, and four
-                 role="status" regions would announce four times. The tile's
-                 own aria-label already carries the state; this only fixes the
-                 contrast half, swapping the near-invisible neutral for an ink
-                 token. */
               <span className="text-sm text-ink-muted">Loading...</span>
             ) : (
               <span className="text-xl font-semibold tabular-nums text-neutral-900 dark:text-neutral-100">

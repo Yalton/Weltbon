@@ -25,11 +25,9 @@ import type { CanvasNode } from '../components/DiagramCanvas';
 import type { DiagramNode, DiagramEdge } from '../hooks/useDiagram';
 import type { LayoutMode } from '../components/DiagramToolbar';
 
-// ─── Constants ────────────────────────────────────────────────────────────────
 
 const UNDO_STACK_LIMIT = 50;
 
-// ─── Undo/Redo types ─────────────────────────────────────────────────────────
 
 type NodeMoveOp = {
   type: 'node-move';
@@ -57,7 +55,6 @@ type BatchOp = {
 
 type UndoableOp = NodeMoveOp | EdgeCreateOp | EdgeDeleteOp | BatchOp;
 
-// ─── PopoverState ─────────────────────────────────────────────────────────────
 
 type PopoverState = {
   sourceEntryId: string;
@@ -66,7 +63,6 @@ type PopoverState = {
   dropY: number;
 } | null;
 
-// ─── EditEdgeState ────────────────────────────────────────────────────────────
 
 type EditEdgeState = {
   edgeId: string;
@@ -77,18 +73,15 @@ type EditEdgeState = {
   toTitle: string;
 } | null;
 
-// ─── RenameNodeState ──────────────────────────────────────────────────────────
 
 type RenameNodeState = {
   entryId: string;
   currentTitle: string;
 } | null;
 
-// ─── ToastState ───────────────────────────────────────────────────────────────
 
 type ToastState = { message: string; variant: 'success' | 'error' } | null;
 
-// ─── Locked copy ─────────────────────────────────────────────────────────────
 
 const COPY = {
   loading: 'Loading diagram...',
@@ -101,24 +94,9 @@ const COPY = {
   renameCancel: 'Cancel',
 } as const;
 
-/**
- * /universes/:uid/diagrams/:did — full-canvas diagram editor.
- *
- * Orchestrates: DiagramToolbar, DiagramCanvas, AddEntriesPicker, DrawEdgePopover, Toast.
- * Data layer: useDiagram + useEntries + node/edge mutation hooks.
- * Undo/redo: session-scoped stack (cap 50), tracks node moves + edge create/delete.
- * Layout mode: Auto-layout dispatches to familyTreeLayout (family-tree) or orgChartLayout
- * (org-chart) per layoutMode state; result applied as a single undoable batch.
- * Export JSON: serializeDiagram → URL.createObjectURL + transient <a download>.
- * Esc priority: 1=close popover, 2=cancel drag (handled in DiagramCanvas), 3=exit edit mode.
- *
- * Reduced motion: relies on existing styles.css prefers-reduced-motion rule.
- * Node drag + auto-layout snap apply NO JS animation (DIAGRAM-05).
- */
 export function DiagramEditor() {
   const { uid = '', did = '' } = useParams<{ uid: string; did: string }>();
 
-  // ── Data ───────────────────────────────────────────────────────────────────
   const { data: diagram, isLoading, isError } = useDiagram(uid, did);
   const { data: entriesData } = useEntries(uid);
   const addNode = useAddNode(uid, did);
@@ -129,13 +107,9 @@ export function DiagramEditor() {
   const updateEdge = useUpdateEdge(uid, did);
   const renameNode = useRenameNode(uid, did);
 
-  // ── Canvas SVG ref — used by Export SVG / Export PNG (Plan 10) ──────────
   // WR-07: widened to SVGSVGElement | null to match the honest handle type from
-  // DiagramCanvas. The existing null guards (if (!canvasSvgRef.current) return)
-  // continue to work and now also satisfy the narrowed type.
   const canvasSvgRef = useRef<SVGSVGElement | null>(null);
 
-  // ── UI state ───────────────────────────────────────────────────────────────
   const [editMode, setEditMode] = useState(false);
   const [pickerOpen, setPickerOpen] = useState(false);
   const [layoutMode, setLayoutMode] = useState<LayoutMode>(null);
@@ -149,12 +123,10 @@ export function DiagramEditor() {
   const [toast, setToast] = useState<ToastState>(null);
   const [dragSourceId, setDragSourceId] = useState<string | null>(null);
 
-  // ── Undo/redo stack ────────────────────────────────────────────────────────
   // undoStack: array of undoable ops, pointer points to next-undoable index
   const [undoStack, setUndoStack] = useState<UndoableOp[]>([]);
   const [undoPointer, setUndoPointer] = useState(-1); // -1 = nothing to undo
 
-  // Ref kept in sync with undoPointer so pushOp's setUndoStack updater can read
   // the authoritative pointer without a stale closure (CR-01 fix).
   const undoPointerRef = useRef(-1);
   useEffect(() => {
@@ -163,13 +135,10 @@ export function DiagramEditor() {
 
   const pushOp = useCallback((op: UndoableOp) => {
     // CR-01: derive both the new stack AND the new pointer inside a single
-    // functional update so they come from one authoritative computation, not
     // two stale closures that can diverge on cap overflow or redo-trim.
     setUndoStack((prev) => {
-      // Discard any "future" ops above the current pointer (redo history cleared on new op)
       const base = prev.slice(0, undoPointerRef.current + 1);
       let next = [...base, op];
-      // Cap at limit — trim from the front
       if (next.length > UNDO_STACK_LIMIT) {
         next = next.slice(next.length - UNDO_STACK_LIMIT);
       }
@@ -197,8 +166,6 @@ export function DiagramEditor() {
     await applyUndoOp(op, 'redo');
   }, [canRedo, undoPointer, undoStack]);
 
-  // Apply a single undo/redo operation. Node moves restore positions.
-  // Edge ops just invalidate the cache (the server is the source of truth).
   const applyUndoOp = async (op: UndoableOp, direction: 'undo' | 'redo') => {
     if (op.type === 'node-move') {
       const { entryId, prevX, prevY, nextX, nextY } = op;
@@ -216,7 +183,6 @@ export function DiagramEditor() {
         await deleteEdge.mutateAsync(op.edgeId);
       }
       // redo of edge-create not supported (would need to re-create, but we
-      // don't have all the original data). Redo just leaves the deleted edge gone.
     } else if (op.type === 'edge-delete') {
       if (direction === 'undo') {
         // Restore the edge by re-creating it with original fields
@@ -231,7 +197,6 @@ export function DiagramEditor() {
     }
   };
 
-  // ── Keyboard: Ctrl/Cmd+Z and Ctrl/Cmd+Shift+Z ─────────────────────────────
   useEffect(() => {
     const handler = (e: KeyboardEvent) => {
       const mod = e.ctrlKey || e.metaKey;
@@ -261,7 +226,6 @@ export function DiagramEditor() {
   }, [pickerOpen]);
 
   // ── Canvas-level Esc: exit edit mode (priority 3) ─────────────────────────
-  // Only fires when no popover is open, no drag is in flight, and the picker is closed.
   useEffect(() => {
     if (!editMode || popoverState !== null || editEdgeState !== null || renameNodeState !== null || dragSourceId !== null || pickerOpen) return;
     const handler = (e: KeyboardEvent) => {
@@ -271,7 +235,6 @@ export function DiagramEditor() {
     return () => window.removeEventListener('keydown', handler);
   }, [editMode, popoverState, editEdgeState, renameNodeState, dragSourceId, pickerOpen]);
 
-  // ── Build CanvasNodes: join DiagramNode with Entry display fields ──────────
   const canvasNodes = useMemo<CanvasNode[]>(() => {
     if (!diagram?.nodes || !entriesData) return diagram?.nodes?.map((n) => ({
       ...n,
@@ -289,13 +252,11 @@ export function DiagramEditor() {
     });
   }, [diagram?.nodes, entriesData]);
 
-  // ── Placed entry ids for AddEntriesPicker ────────────────────────────────
   const placedEntryIds = useMemo(
     () => new Set(diagram?.nodes?.map((n) => n.entryId) ?? []),
     [diagram?.nodes],
   );
 
-  // ── Universe entries for AddEntriesPicker ────────────────────────────────
   const universalEntries = useMemo(
     () =>
       (entriesData ?? []).map((e) => ({
@@ -306,7 +267,6 @@ export function DiagramEditor() {
     [entriesData],
   );
 
-  // ── Node add handler ──────────────────────────────────────────────────────
   const handleAddEntry = useCallback(
     (entryId: string) => {
       addNode.mutate({ entryId, x: 200 + Math.random() * 200, y: 200 + Math.random() * 200 });
@@ -314,7 +274,6 @@ export function DiagramEditor() {
     [addNode],
   );
 
-  // ── Node remove handler ──────────────────────────────────────────────────
   const handleRemoveEntry = useCallback(
     (entryId: string) => {
       const node = diagram?.nodes.find((n) => n.entryId === entryId);
@@ -325,7 +284,6 @@ export function DiagramEditor() {
     [diagram?.nodes, removeNode],
   );
 
-  // ── Node move handler (tracked for undo) ─────────────────────────────────
   // CR-02: Accept prevX/prevY from DiagramCanvas (captured at drag-start) instead
   // of reconstructing them from the React-Query cache, which may already reflect
   // an in-flight optimistic update, causing undo to be a no-op.
@@ -350,7 +308,6 @@ export function DiagramEditor() {
     setToast({ message: COPY.selfDropToast, variant: 'error' });
   }, []);
 
-  // ── Edge popover submit ────────────────────────────────────────────────────
   const handleDrawEdgeSubmit = useCallback(
     async (opts: { label: string; lineStyle: LineStyle; color: string }) => {
       if (!popoverState) return;
@@ -367,7 +324,6 @@ export function DiagramEditor() {
     [popoverState, createEdge, pushOp],
   );
 
-  // ── Node selection ────────────────────────────────────────────────────────
   const handleSelectNode = useCallback(
     (id: string | null, addToSelection = false) => {
       if (id === null) {
@@ -396,7 +352,6 @@ export function DiagramEditor() {
     [entriesData],
   );
 
-  // ── Edge selection ─────────────────────────────────────────────────────────
   const handleSelectEdge = useCallback((id: string | null) => {
     setSelectedEdgeId(id);
     if (id !== null) setSelection(new Set());
@@ -452,7 +407,6 @@ export function DiagramEditor() {
     [entryMap],
   );
 
-  // ── Node rename submit (routes to useRenameNode) ──────────────────────────
   const handleRenameSubmit = useCallback(async () => {
     if (!renameNodeState) return;
     const trimmed = renameInput.trim();
@@ -465,9 +419,6 @@ export function DiagramEditor() {
   }, [renameNodeState, renameInput, renameNode]);
 
   // ── Auto-layout (mode-aware dispatch) ────────────────────────────────────
-  // Dispatches to familyTreeLayout or orgChartLayout based on layoutMode.
-  // Both functions accept the same (nodes, edges, opts) signature and return
-  // the same Map<string, {x, y}> type — single apply path for both.
   const handleAutoLayout = useCallback(async () => {
     if (!diagram || layoutMode === null) return;
     const layoutEdges = (diagram.edges ?? []).map((e) => ({
@@ -483,7 +434,6 @@ export function DiagramEditor() {
         ? orgChartLayout(layoutNodes, layoutEdges, layoutOpts)
         : familyTreeLayout(layoutNodes, layoutEdges, layoutOpts);
 
-    // Build batch op for undo (single batch = one Undo reverts all)
     const batchOps: NodeMoveOp[] = [];
     for (const [entryId, pos] of positions) {
       const prev = diagram.nodes.find((n) => n.entryId === entryId);
@@ -498,7 +448,6 @@ export function DiagramEditor() {
     }
 
     // WR-06: persist all positions with failure rollback tracking.
-    // If request k fails, push only the ops that succeeded so undo is accurate.
     const succeededOps: NodeMoveOp[] = [];
     try {
       for (const op of batchOps) {
@@ -515,7 +464,6 @@ export function DiagramEditor() {
 
   // ── Align/distribute (single-undoable-batch path — same as Auto-layout) ───
   // Takes the current multi-selection, applies alignNodes / distributeNodes,
-  // persists each position via moveNode.mutateAsync, and pushes a single BatchOp
   // so one Undo restores all pre-align positions. DIAGRAM-01/03.
   const handleAlign = useCallback(
     async (edge: AlignEdge) => {
@@ -528,7 +476,6 @@ export function DiagramEditor() {
       }));
       const newPositions = alignNodes(inputNodes, edge);
 
-      // Build batch op for undo (single batch = one Undo reverts all)
       const batchOps: NodeMoveOp[] = [];
       for (const [entryId, pos] of newPositions) {
         const prev = diagram.nodes.find((n) => n.entryId === entryId);
@@ -570,7 +517,6 @@ export function DiagramEditor() {
       }));
       const newPositions = distributeNodes(inputNodes, axis);
 
-      // Build batch op for undo
       const batchOps: NodeMoveOp[] = [];
       for (const [entryId, pos] of newPositions) {
         const prev = diagram.nodes.find((n) => n.entryId === entryId);
@@ -601,7 +547,6 @@ export function DiagramEditor() {
     [diagram, selection, canvasNodes, moveNode, pushOp],
   );
 
-  // ── Export JSON ───────────────────────────────────────────────────────────
   const handleExportJson = useCallback(() => {
     if (!diagram) return;
     const exportEdges = (diagram.edges ?? []).map((e) => ({
@@ -636,7 +581,6 @@ export function DiagramEditor() {
     URL.revokeObjectURL(url);
   }, [diagram]);
 
-  // ── Export SVG ───────────────────────────────────────────────────────────
   const handleExportSvg = useCallback(() => {
     if (!diagram || !canvasSvgRef.current) return;
     exportSvg(canvasSvgRef.current, diagram.name, () => {
@@ -644,7 +588,6 @@ export function DiagramEditor() {
     });
   }, [diagram]);
 
-  // ── Export PNG ───────────────────────────────────────────────────────────
   const handleExportPng = useCallback(() => {
     if (!diagram || !canvasSvgRef.current) return;
     exportPng(canvasSvgRef.current, diagram.name, {
@@ -654,7 +597,6 @@ export function DiagramEditor() {
     });
   }, [diagram]);
 
-  // ── Find source/target titles for DrawEdgePopover ─────────────────────────
   const sourceTitle = popoverState
     ? (entryMap.get(popoverState.sourceEntryId)?.title ?? popoverState.sourceEntryId)
     : '';
@@ -662,7 +604,6 @@ export function DiagramEditor() {
     ? (entryMap.get(popoverState.targetEntryId)?.title ?? popoverState.targetEntryId)
     : '';
 
-  // ── Render ────────────────────────────────────────────────────────────────
 
   if (isLoading) {
     return <p className="p-6 text-sm text-neutral-500">{COPY.loading}</p>;

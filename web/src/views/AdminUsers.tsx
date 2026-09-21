@@ -2,7 +2,6 @@ import { FormEvent, useState } from 'react';
 import { Navigate } from 'react-router-dom';
 import { getAdminUser, useAdminAuditLog, useAdminUserActions, useAdminUsers, type AdminUser } from '../hooks/useAdminUsers';
 import { useAuthStore } from '../store/auth';
-// #50 Task 9 — administrator-side grant/revoke panel for shared LLM access.
 import { AdminSharedLlmConnections } from '../components/AdminSharedLlmConnections';
 
 export default function AdminUsers() {

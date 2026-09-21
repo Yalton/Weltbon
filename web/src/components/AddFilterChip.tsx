@@ -5,18 +5,6 @@ import type { Category } from '../hooks/useCategories';
 import type { FieldRegistryEntry } from '../types/fieldRegistry';
 import { BooleanInput, EntryRefInput, UrlInput } from './MetaEditor';
 
-/**
- * "+ Filter" chip that opens a Radix Popover to pick a new filter value for
- * type, tag, category, WIP status (three-state), or a typed registered field.
- *
- * Phase 36 DATA-04 adds:
- *  - "Status" group: three-state WIP select (All entries / WIP only / Finished only)
- *  - "Fields" group: a field picker + a typed value input per field type, only
- *    rendered when registeredFields.length > 0. D-07: the value inputs REUSE the
- *    MetaEditor typed inputs (BooleanInput / EntryRefInput / UrlInput) instead of
- *    re-implementing them inline — no hand-typing UUIDs or true/false.
- *    D-08: one chip per field — re-adding a chip on the same field replaces it.
- */
 export function AddFilterChip({
   universeId,
   filters,
@@ -35,7 +23,6 @@ export function AddFilterChip({
   const [open, setOpen] = useState(false);
   const [tagDraft, setTagDraft] = useState('');
 
-  // Fields group state
   const [selectedFieldName, setSelectedFieldName] = useState('');
   const [fieldValueDraft, setFieldValueDraft] = useState('');
 
@@ -65,7 +52,6 @@ export function AddFilterChip({
   }
 
   function handleWipChange(value: string) {
-    // '' → null (all), 'true' → true, 'false' → false
     if (value === '') {
       updateFilters({ wip: null });
     } else {
@@ -100,7 +86,6 @@ export function AddFilterChip({
       open={open}
       onOpenChange={(next) => {
         setOpen(next);
-        // Reset the field picker when the popover closes.
         if (!next) {
           setSelectedFieldName('');
           setFieldValueDraft('');
@@ -230,7 +215,6 @@ export function AddFilterChip({
                       value={fieldValueDraft}
                       onChange={(v) => {
                         // Boolean is a tri-toggle that applies immediately on a
-                        // concrete Yes/No selection ('' clears the draft).
                         setFieldValueDraft(v);
                         if (v) applyFieldFilter(v);
                       }}
@@ -250,7 +234,6 @@ export function AddFilterChip({
                       onChange={setFieldValueDraft}
                     />
                   ) : (
-                    /* text + number */
                     <input
                       id={fieldValueInputId}
                       type={selectedField.type === 'number' ? 'number' : 'text'}

@@ -105,7 +105,7 @@ describe('Sidebar', () => {
 
     renderSidebar();
 
-    // Plan 10 adds an ellipsis menu trigger per row — scope to the collapse
+
     // button via exact name match on the category label.
     const button = await screen.findByRole('button', { name: 'Characters' });
     expect(button).toHaveAttribute('data-collapsed', 'false');
@@ -177,18 +177,6 @@ describe('Sidebar', () => {
   });
 });
 
-/**
- * Plan F (F-07) — the current-universe sync-conflict badge.
- *
- * SCOPE, STATED HONESTLY. This badge counts conflicts in the universe already
- * on screen and nothing else. It cannot surface conflicts in a universe the
- * user has not opened; that is a known, accepted limit of putting the count
- * here, and the copy must not imply otherwise.
- *
- * A BADGE IS READ AS AUTHORITATIVE, so a wrong number is worse than no number.
- * It renders only above zero, and the count is 0 while loading and 0 on error —
- * silence, never a confident "no conflicts".
- */
 describe('Sidebar sync conflict badge (F-07)', () => {
   const CATEGORIES = { categories: [], uncategorizedCount: 0 };
 

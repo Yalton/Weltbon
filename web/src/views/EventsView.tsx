@@ -15,7 +15,6 @@ import { Loading } from '../components/ui/Loading';
 const POSITION_FORMAT = new Intl.NumberFormat('en-US', { maximumFractionDigits: 2 });
 
 export function EventsView() {
-  // Phase 29 share-mode awareness — mirrors EntryList.
   const { uid: paramUid } = useParams<{ uid: string }>();
   const isShareMode = useShareMode();
   const uid = paramUid ?? (isShareMode ? 'share' : undefined);
@@ -23,25 +22,20 @@ export function EventsView() {
   const { calendar } = useCalendar(uid!);
   const { data: entries } = useEntries(uid!);
 
-  // ── Filter state ──────────────────────────────────────────────────────────
   const [participantId, setParticipantId] = useState<string | undefined>(undefined);
   const [eraIndex, setEraIndex] = useState<number | undefined>(undefined);
   const [fromPositionInput, setFromPositionInput] = useState('');
   const [toPositionInput, setToPositionInput] = useState('');
   const [addEventOpen, setAddEventOpen] = useState(false);
 
-  // Participant filter dropdown state.
   const [participantDropdownOpen, setParticipantDropdownOpen] = useState(false);
 
-  // Parse numeric range filter values.
   const fromParsed = parsePosition(fromPositionInput);
   const toParsed = parsePosition(toPositionInput);
 
-  // Build the filters object to pass to useEvents.
   const filters: EventFilters = {};
   if (participantId) filters.participantId = participantId;
 
-  // Era filter: map the selected era to from/to position using calendar eras.
   if (eraIndex !== undefined && calendar) {
     const era = calendar.eras[eraIndex];
     if (era) {
@@ -53,7 +47,6 @@ export function EventsView() {
       }
     }
   } else {
-    // Explicit range overrides era filter.
     if (fromParsed.ok) filters.fromPosition = fromParsed.value;
     if (toParsed.ok) filters.toPosition = toParsed.value;
   }
@@ -68,13 +61,11 @@ export function EventsView() {
 
   const isEmpty = !events || events.length === 0;
 
-  // Participant name for chip display.
   const participantEntry = entries?.find((e) => e.id === participantId);
   const participantLabel = participantEntry
     ? `Participant: ${participantEntry.title}`
     : 'Participant';
 
-  // Era label for chip display.
   const eraLabel =
     eraIndex !== undefined && calendar
       ? `Era: ${calendar.eras[eraIndex]?.name ?? String(eraIndex)}`

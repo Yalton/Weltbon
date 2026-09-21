@@ -1,25 +1,3 @@
-/**
- * Phase 11-03 Task 2 — POST /api/universes/:uid/ingest endpoint tests.
- *
- * Coverage:
- *   - Auth gating (401 missing/invalid bearer; 403 cross-user)
- *   - Happy path: multipart files[] returns IngestPreview JSON
- *   - Happy path: multipart zip returns IngestPreview JSON (filters hidden dirs)
- *   - PAT parity: same 200 with PAT bearer
- *   - No-DB-write: row counts unchanged before/after a 200 response
- *   - 413 file_count cap (>1000 file parts)
- *   - 413 file_size cap (>1 MB single file)
- *   - 413 zip_size cap (>50 MB zip)
- *   - 413 total_uncompressed_size cap (zip-bomb fixture, <2s wall time)
- *   - 400 neither files nor zip
- *   - 400 both files and zip
- *   - 400 zip part with bad magic bytes
- *   - 404 missing universe
- *   - OpenAPI doc presence (/api/openapi.json contains the path with bearerAuth)
- *
- * Skip pattern: tests skip if DATABASE_URL is unreachable (matches the project-wide
- * pattern; non-DB tests in this file would still run but the suite needs createTestDb).
- */
 
 import { describe, it, expect, beforeAll, afterAll, beforeEach } from 'vitest';
 import { existsSync, readFileSync } from 'node:fs';
@@ -51,7 +29,7 @@ function ensureFixtures(): void {
   }
 }
 
-describe('POST /api/universes/:uid/ingest (Phase 11-03 Task 2)', () => {
+describe('POST /api/universes/:uid/ingest', () => {
   let handle: TestDbHandle;
   // eslint-disable-next-line @typescript-eslint/no-explicit-any
   let app: any;
@@ -127,7 +105,7 @@ describe('POST /api/universes/:uid/ingest (Phase 11-03 Task 2)', () => {
   // #37 SP-04: posts a fresh preview request against its own user+universe
   // (each test gets an isolated batch) and returns the raw Response, so
   // callers can `await res.json()` / check `res.status` directly the way the
-  // task brief's test cases do. `split_level` is transmitted as a multipart
+
   // text field: omitted when undefined (auto-detect), the literal string
   // "null" for explicit null (do not split), else the level as a string.
   async function postPreview(opts: {

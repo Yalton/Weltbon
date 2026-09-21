@@ -178,7 +178,7 @@ describe('UniverseList view', () => {
     await waitFor(() => expect(screen.getByText('Post-Sundering')).toBeInTheDocument());
   });
 
-  // --- Phase 18-02 — kebab discoverability, menu, dialog, toast coverage ---
+
 
   it('renders an always-visible kebab on each universe card (Test A)', async () => {
     const fetchMock = makeFetchMock();
@@ -418,7 +418,7 @@ describe('UniverseList view', () => {
     expect((input as HTMLInputElement).value).toBe('');
   });
 
-  // --- Task 7 — themed universe cards on the homepage ---
+
 
   it('renders a themed card with its contained backdrop', async () => {
     const themedUniverses = [
@@ -451,7 +451,7 @@ describe('UniverseList view', () => {
   });
 });
 
-// --- Task 6 (#42, OB-05) — Connect to Weltbon entry point ---
+
 
 describe('Connect to Weltbon entry point (OB-05)', () => {
   beforeEach(() => {

@@ -1,4 +1,3 @@
--- Plan D (D-03): sync_conflicts.row_id holds a MERGE key, not a database uuid.
 -- merge.ts keys the universe singleton on the literal string 'universe', so the
 -- uuid type raised 22P02 the first time two devices both edited universe-level
 -- settings — silently losing the S-03 record the spec promises is restorable.

@@ -22,7 +22,6 @@ const COPY = {
   deleteConfirmLabel: 'Delete',
 } as const;
 
-// ─────────────────────────────────────────────────────────────────────────────
 
 export function DiagramList() {
   const { uid } = useParams<{ uid: string }>();

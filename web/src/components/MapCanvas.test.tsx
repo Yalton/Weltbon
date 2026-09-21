@@ -1,40 +1,3 @@
-/**
- * MapCanvas regression tests — UAT Test 5 click-through bug (43-05).
- *
- * This file exists specifically to cover the UAT Test 5 click-through bug that the mocked
- * MapEditor test (web/src/views/MapEditor.test.tsx) cannot catch: MapEditor.test.tsx mocks
- * MapCanvas entirely (renders a stub), so it cannot catch a bug in MapCanvas's own pointer-
- * event routing.
- *
- * Root cause (closed by Task 1): TerrainAreaPolygon and RegionPolygon both set
- * pointerEvents:'auto' and call e.stopPropagation() unconditionally, so a click over
- * an existing terrain area or political region is swallowed — the click never reaches the
- * root <svg> onClick (handleSvgClick), which is the only path to onCanvasClick.
- *
- * Why we assert structure (pointerEvents), not the full click→onCanvasClick chain:
- * The real chain is:
- *   fireEvent.click → root <svg> onClick (handleSvgClick) → screenToImage()
- *   → svgEl.createSVGPoint()/getScreenCTM() → jsdom implements NEITHER
- *   → screenToImage feature-detects them and returns null
- *   → handleSvgClick early-returns at `if (!pos) return;` → onCanvasClick is never reached.
- *
- * (This comment used to claim those APIs "return null/undefined" in jsdom. They do not — they
- *  are absent, so an unguarded call THROWS. Because it fires from an event handler the throw
- *  escaped as a vitest *unhandled error*, which exits non-zero even with every test passing —
- *  that is how CI's web lane stayed red at 1095/1095 green. screenToImage now feature-detects.)
- * Asserting onCanvasClick would therefore be permanently RED in jsdom regardless of the fix.
- * Stubbing the SVG geometry pipeline (createSVGPoint + getScreenCTM + DOMMatrix) would only
- * re-test a hand-rolled copy of the coordinate math, not the actual bug.
- * The structural assertion (polygon.style.pointerEvents === 'none') directly captures the
- * root cause — the overlay polygon's pointer-events value. Tests A/B flip RED if Task 1's
- * fix is reverted, making this a true regression guard.
- *
- * Test A: TerrainAreaPolygon has pointerEvents:'none' when paintTerrainMode=true.
- * Test B: RegionPolygon has pointerEvents:'none' and does NOT call onRegionClick when
- *         drawRegionMode=true.
- * Test C: RegionPolygon has pointerEvents:'auto' and DOES call onRegionClick exactly once
- *         when all modes are false (idle no-regression guard).
- */
 import { describe, it, expect, beforeEach, vi, afterEach } from 'vitest';
 import React from 'react';
 import { render, fireEvent, cleanup, screen, within } from '@testing-library/react';
@@ -226,16 +189,7 @@ describe('MapCanvas — overlay polygon pointer-events gating (UAT Test 5, 43-05
     expect((polygon as HTMLElement).style.pointerEvents).toBe('none');
   });
 
-  /**
-   * Test B — region polygon transparent during draw mode; no onRegionClick navigation.
-   * Render MapCanvas with drawRegionMode=true and one political MapRegion.
-   * Assert pointerEvents:'none' AND that clicking the polygon does NOT call onRegionClick
-   * (the handleClick early-return while isDrawing prevents both stopPropagation and navigation).
-   *
-   * RED pre-fix (before Task 1): pointerEvents:'auto' and handleClick calls onRegionClick → FAIL.
-   * GREEN post-fix: pointerEvents:'none' and onRegionClick not called → PASS.
-   */
-  it('Test B: region polygon has pointerEvents:none and does not navigate when drawRegionMode=true', () => {
+    it('Test B: region polygon has pointerEvents:none and does not navigate when drawRegionMode=true', () => {
     const { container, onRegionClick } = renderMapCanvas({
       drawRegionMode: true,
       regions: [POLITICAL_REGION],
@@ -272,9 +226,9 @@ describe('MapCanvas — overlay polygon pointer-events gating (UAT Test 5, 43-05
   });
 });
 
-// ── Phase 50 Task 1 (Plan 02): grid overlay + imperative zoom handle ──────────
 
-describe('MapCanvas — grid overlay (D-05, Plan 02 Task 1)', () => {
+
+describe('MapCanvas — grid overlay', () => {
   /**
    * Test I: grid overlay is ABSENT when gridVisible is false (default).
    */
@@ -304,7 +258,7 @@ describe('MapCanvas — grid overlay (D-05, Plan 02 Task 1)', () => {
   });
 });
 
-// ── Phase 50 Task 2: PinCircle teardrop + glow + drag regression ─────────────
+
 
 // A minimal pin fixture for teardrop and drag tests.
 const TEST_PIN: MapPin = {
@@ -352,7 +306,7 @@ function stubPointerCapture(el: Element) {
   });
 }
 
-describe('PinCircle — teardrop render (D-03, Task 2)', () => {
+describe('PinCircle — teardrop render', () => {
   /**
    * Test D: The pin group must contain a <path> element (teardrop shape).
    * RED pre-impl: PinCircle renders a <circle r=14>, not a <path> → FAIL.
@@ -393,7 +347,7 @@ describe('PinCircle — teardrop render (D-03, Task 2)', () => {
   });
 });
 
-describe('PinCircle — drag regression (D-11, Task 2)', () => {
+describe('PinCircle — drag regression', () => {
   /**
    * Test G: drag > threshold at currentScale=1 fires onDragEnd with correct DELTA coords.
    *
@@ -462,9 +416,9 @@ describe('PinCircle — drag regression (D-11, Task 2)', () => {
   });
 });
 
-// ── Phase 50 Task 2 (Plan 04): pin/region hover tooltip (D-07, D-08) ──────────
 
-// Tooltip pin fixtures — include summary field (MapPin.summary is optional per Plan 03).
+
+
 const PIN_WITH_SUMMARY: MapPin = {
   id: 'tip1',
   mapId: 'm1',
@@ -519,7 +473,7 @@ const REGION_FOR_HOVER: MapRegion = {
   terrainTypeId: null,
 };
 
-describe('MapCanvas — pin/region hover tooltip (D-07, D-08, Plan 04 Task 2)', () => {
+describe('MapCanvas — pin/region hover tooltip', () => {
   /**
    * Test L: Hovering a pin shows a tooltip overlay with the pin title.
    * RED pre-impl: no tooltip overlay exists → FAIL.
@@ -618,17 +572,7 @@ describe('MapCanvas — pin/region hover tooltip (D-07, D-08, Plan 04 Task 2)', 
     expect(tooltip!.textContent).toContain('Northern Realm');
   });
 
-  /**
-   * Test P: Entering a pin during an active drag does NOT call onDragEnd an extra time.
-   * onPointerEnter must be independent of the drag ref — entering/leaving during drag
-   * does not fire onDragEnd or reset the drag (Plan 01 D-11 isolation).
-   *
-   * RED pre-impl: no enter handler → no interference → could pass pre-impl, but the
-   * tooltip test (L) ensures this describe block is MIXED-RED (L fails).
-   * GREEN post-impl: hover handler reads dragging.current and returns early → onDragEnd
-   * called exactly once (from the real pointerUp), not from enter/leave.
-   */
-  it('Test P: drag is unaffected by pointer enter/leave during an active drag', () => {
+    it('Test P: drag is unaffected by pointer enter/leave during an active drag', () => {
     const onPinDragEnd = vi.fn();
     const { container } = renderMapCanvas({
       pins: [PIN_WITH_SUMMARY],
@@ -657,7 +601,7 @@ describe('MapCanvas — pin/region hover tooltip (D-07, D-08, Plan 04 Task 2)', 
   });
 });
 
-// ── Content-Forward Views §6: tooltip identity (Task 12) ──────────────────────
+
 // The map's hover tooltip (this file's `hoveredTooltip` overlay) leads with the linked
 // entry's medallion (cover → icon → monogram) and a serif title, resolved from the
 // `medallions` prop (a Map<entryId, MedallionSource> from useEntryMedallions, threaded
@@ -808,7 +752,7 @@ describe('Content-Forward Views §6 — tooltip identity', () => {
   });
 });
 
-// ── Phase 51 Plan 06: RoutePolyline render tests ──────────────────────────────
+
 
 // A simple two-vertex route going from (0.2, 0.5) to (0.8, 0.5) — a horizontal line.
 const ROUTE_POINTS = JSON.stringify([
@@ -872,7 +816,7 @@ const ARROW_ROUTE: MapRoute = {
   createdAt: CREATED_AT,
 };
 
-describe('MapCanvas — RoutePolyline render (Phase 51, Plan 06)', () => {
+describe('MapCanvas — RoutePolyline render', () => {
   /**
    * Test Q: A solid route renders two stacked <polyline> elements (visible + hit-stroke)
    * with fill="none" and the expected stroke color on the visible path.
@@ -987,7 +931,7 @@ describe('MapCanvas — RoutePolyline render (Phase 51, Plan 06)', () => {
   });
 });
 
-// ── Phase 51 Plan 07 BUG-1 regression: route draw preview is an open polyline ──
+
 //
 // Confirms the fix for "Route draws as a CLOSED POLYGON": when drawRouteMode is true
 // and pendingVertices are present, the rubber-band preview must render a <polyline>
@@ -995,7 +939,7 @@ describe('MapCanvas — RoutePolyline render (Phase 51, Plan 06)', () => {
 //
 // Also confirms the first-vertex circle aria-label is "Vertex 1" in route mode
 // (NOT "Close polygon", which would imply snap-to-close is active — it must not be).
-describe('MapCanvas — route draw preview is an open polyline (BUG-1 fix, Plan 07)', () => {
+describe('MapCanvas — route draw preview is an open polyline', () => {
   const TWO_VERTS = [
     { x: 0.2, y: 0.3 },
     { x: 0.6, y: 0.7 },
@@ -1143,7 +1087,7 @@ describe('MapCanvas — d3 zoom filter disables pan in draw modes (BUG-A, 51-07)
   });
 });
 
-// ── Phase 53 NEST-01: map-open-wins + dual-target "View entry →" tooltip (D-02) ─
+
 //
 // D-02: Clicking a pin with targetMapId calls onOpenMap (not navigate) — map-open wins.
 // D-02: A dual-target pin (both entryId and targetMapId) shows a "View entry →" tooltip link.
@@ -1180,7 +1124,7 @@ const DUAL_TARGET_PIN: MapPin = {
   targetMapId: 'target-map-id-2',
 };
 
-describe('PinCircle — NEST-01 map-open-wins (D-02, Plan 53-06)', () => {
+describe('PinCircle — NEST-01 map-open-wins', () => {
   /**
    * Test BD: clicking a map-only pin (targetMapId set, entryId null) calls onOpenMap
    * with the targetMapId and does NOT call navigate (map-open wins, D-02).

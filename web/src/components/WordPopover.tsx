@@ -9,31 +9,9 @@ interface WordPopoverProps {
   gloss: string;
   ipa: string;
   universeId: string;
-  /** If set, the dictionary navigate URL includes ?lid=<languageEntryId>. */
   languageEntryId?: string | null;
 }
 
-/**
- * Phase 32 Plan 04 — D-04 WordPopover.
- *
- * Trigger: the resolved `[[word]]` span (role=button, tabIndex 0,
- * bg var(--color-accent-soft), cursor-pointer).
- *
- * Hover opens after 150ms; mouse-leave closes with 100ms grace.
- * Click navigates directly to the dictionary row (?highlight=<word>).
- *
- * Radix Popover shell mirrors InFlightAuditsBadge.tsx (sideOffset=8,
- * side="top" preferred). Word term: font-semibold 600. IPA: font-mono
- * text-neutral-500. Gloss: body text.
- *
- * T-32-12 XSS: all content is plain-text props; no dangerouslySetInnerHTML.
- *
- * Phase 33 T-33-07 / CONLANG-04: In share mode, the click navigation to
- * /universes/share/dictionary (a protected route) is suppressed so visitors
- * are never stranded at /login. Hover-only gloss+IPA popover is preserved.
- * The trigger span loses role="button", tabIndex, and keyboard handlers in
- * share mode — it is a plain hoverable span with no button semantics.
- */
 export function WordPopover({
   word,
   displayLabel,
@@ -71,7 +49,6 @@ export function WordPopover({
   function handleClick() {
     // T-33-07: no-op in share mode — /universes/share/dictionary is a protected
     // route that would redirect to /login. There is no share-mode dictionary
-    // route by design; the fix is to remove the dead click target.
     if (isShareMode) return;
     const params = new URLSearchParams();
     if (languageEntryId) params.set('lid', languageEntryId);
@@ -91,7 +68,6 @@ export function WordPopover({
       <Popover.Trigger asChild>
         {isShareMode ? (
           // Share mode: hover-only plain span — no button role, no tabIndex,
-          // no click/keydown handlers. Hover gloss+IPA popover intact.
           <span
             onMouseEnter={handleMouseEnter}
             onMouseLeave={handleMouseLeave}

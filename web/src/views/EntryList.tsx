@@ -20,13 +20,7 @@ import { Loading } from '../components/ui/Loading';
 type ToastState = { message: string; variant: 'success' | 'error' } | null;
 
 export function EntryList() {
-  // Phase 29 — share-mode awareness. In share mode there is no `uid` URL
-  // param (the visitor URL is `/share/:token`), so we substitute the
-  // literal 'share' string for hooks that interpolate the universe id
   // into the path. The api-client seam (web/src/api/client.ts) strips the
-  // `/universes/<anything>` prefix when shareTokenPlaintext is set, so the
-  // resulting fetch is /api/share/entries — exactly what the Plan 04 read
-  // namespace serves.
   const { uid: paramUid, token } = useParams<{ uid: string; token: string }>();
   const isShareMode = useShareMode();
   const uid = paramUid ?? (isShareMode ? 'share' : undefined);
@@ -35,46 +29,17 @@ export function EntryList() {
   const { data: entries, isLoading } = useFilteredEntries(uid!, filters);
   const { data: universe } = useUniverse(uid);
 
-  // Feature #42 (task 7) — the first-sync-failed banner. The connect flow
-  // deliberately does NOT roll back when a first sync fails: the user keeps
-  // the adopted universe and lands right here. An empty universe with no
-  // explanation is indistinguishable from data loss, so this banner is what
-  // makes that state legible. It is driven by PERSISTED server state (the
-  // sync link row), not component/session state, so it survives a reload —
-  // a transient toast would not. Skipped in share mode: a visitor has no
-  // sync links to explain and no ability to retry one.
   const { data: syncLinks } = useSyncLinks(isShareMode ? undefined : uid);
   const runSyncLink = useRunSyncLink(uid ?? '');
-  // Condition is exactly `status === 'error' && lastSyncedAt === null` —
-  // errored AND never once synced. Both halves matter: a link that synced
   // fine for weeks and then failed today has a non-null lastSyncedAt and
-  // must NOT show this "first sync didn't finish" copy.
-  //
-  // `.find` deliberately surfaces only the FIRST such link. A universe with
-  // links to two different peers could have two links matching this
-  // condition at once, and retrying the first (which invalidates and
-  // refetches every sync link) would clear the banner even though the
   // second link is still broken. Fine for today — the one-button flow only
   // ever creates one link per universe — but a future multi-peer universe
-  // would need this to surface (or cycle through) every match, not just one.
   const failedFirstSyncLink = syncLinks?.find(
     (link) => link.status === 'error' && link.lastSyncedAt === null,
   );
 
-  // #44 (AS-09, task 7) — the unresolved-conflict count. Under MANUAL sync a
-  // conflict arrived while the user was watching the screen they had just
   // clicked "Sync now" on; under auto-sync, LWW losers can pile up for days
-  // with nobody opening the Sync tab, and a silently discarded edit is the
-  // worst outcome this feature can produce. Uses `useSyncConflictCount`
-  // (already consumed the same way by Sidebar.tsx's badge) rather than
-  // deriving the length from `useSyncConflicts` by hand — it shares that
-  // hook's query key, so no extra network traffic, but ALSO zeroes the count
-  // on a failed background refetch, where TanStack Query would otherwise keep
   // serving the previous successful `data`. Re-deriving `.length` locally
-  // would drop that hardening and let this banner keep asserting a stale
-  // count after the Sidebar badge has already gone silent about it. Skipped
-  // in share mode for the same reason as the banner above: a visitor has no
-  // sync links.
   const conflictCount = useSyncConflictCount(isShareMode ? undefined : uid);
 
   const [importOpen, setImportOpen] = useState(false);
@@ -85,8 +50,6 @@ export function EntryList() {
   // Toast auto-dismiss is now handled inside <Toast />.
 
   // One-shot bridge: if we landed here with location.state.toast set (e.g.,
-  // from the Phase 12 IngestImport post-commit navigation per UI-SPEC §6.7),
-  // surface it via the existing <Toast> with the supplied variant.
   useEffect(() => {
     const stateToast = location.state as
       | { toast?: string; toastVariant?: 'success' | 'error' }
@@ -112,8 +75,7 @@ export function EntryList() {
 
   return (
     <div className="max-w-4xl mx-auto">
-      {/* First-sync-failed banner (Feature #42, task 7). Persisted-state
-          driven so it survives a reload — see the hook usage above. */}
+
       {failedFirstSyncLink && (
         <div
           role="alert"
@@ -167,13 +129,7 @@ export function EntryList() {
       <div className="flex items-center justify-between mb-6">
         <h1 className="text-2xl font-semibold tracking-tight">Entries</h1>
         <div className="flex items-center gap-2">
-          {/*
-            Phase 29 D-18 — in share mode every create / import affordance
-            is hidden. ExportMenu is also hidden because the share read
-            namespace (Plan 04) does not expose export endpoints; surfacing
-            a non-functional button would mislead the visitor. Audit gaps
-            is owner-only by both design and backend gating.
-          */}
+
           {!isShareMode && (
             <>
               <ExportMenu
@@ -245,7 +201,6 @@ export function EntryList() {
         />
       ) : isEmpty ? (
         <EmptyState
-          // Phase 29 Gap 3 — gate empty-state copy on isShareMode so the
           // visitor surface uses jargon-free, visitor-appropriate strings
           // instead of owner-onboarding copy that leaks "universe" terminology
           // and prompts actions unavailable to a read-only visitor.
@@ -256,10 +211,7 @@ export function EntryList() {
               : 'Entries are the building blocks of your universe — people, places, events, ideas. Pick a template or start from scratch.'
           }
           action={
-            // Phase 29 D-18 — share-mode visitors get no create CTA on the
             // empty state. The empty-state copy is still useful context
-            // ("no public entries yet"), so we render the heading/body
-            // without an action.
             !isShareMode ? (
               <button
                 type="button"

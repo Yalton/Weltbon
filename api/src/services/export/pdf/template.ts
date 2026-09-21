@@ -12,37 +12,6 @@ import type {
   ExportPayloadIssue,
 } from '../payload.js';
 
-/**
- * HTML template assembly for the PDF exporter (Plan 04-03 Task 1).
- *
- * Produces a single complete HTML5 document fed into puppeteer's
- * `page.setContent()`. The document is laid out as:
- *
- *   1. Title page    — universe name (large), description blockquote,
- *                      counts paragraph, then `page-break-after: always`.
- *   2. Contents (TOC)— H1 + nested ordered list with `#cat-{id}` and
- *                      `#entry-{id}` anchors that match the body section
- *                      ids. Followed by another `page-break-after`.
- *   3. Body          — per category in user sortOrder (Uncategorized last):
- *                      H1 with `page-break-before: always`, then per entry
- *                      alphabetized by title: H2 + meta line + summary
- *                      callout + body (markdown→HTML via remark) + Links
- *                      section + Open Issues section.
- *
- * Page-1-no-footer trick: `@page :first { margin: 0 0 0 0; }` collapses the
- * title page's footer band to zero height so the puppeteer-substituted
- * footer renders off-canvas. The CSS rule is documented inside cssRules
- * below — confirmed visually with the manual verification step in 04-03.
- *
- * Bidirectional link convention (matches Plan 04-02): a single bidirectional
- * link record renders as outbound on BOTH endpoints. There's no separate
- * "backlinks" section in the PDF — the symmetry is obvious from each entry
- * showing the other under its own Links section.
- *
- * Resolved-issue exclusion: we read from `payload.openIssues`, which the
- * loader has already filtered to `resolved=false`. The PDF can never leak
- * resolved issues by construction.
- */
 
 const mdToHtml = unified()
   .use(remarkParse)
@@ -50,15 +19,6 @@ const mdToHtml = unified()
   .use(remarkRehype)
   .use(rehypeStringify);
 
-/**
- * Render a markdown string into HTML via remark + remark-gfm.
- *
- * Returns the empty string for empty/whitespace-only input so the body
- * sections cleanly omit when an entry has no body. Asynchronous because
- * unified's `process` returns a Promise — kept separate so the caller can
- * await each entry's body in parallel if needed (current code awaits
- * sequentially since per-entry markdown is small).
- */
 async function renderBodyHtml(md: string): Promise<string> {
   const trimmed = md?.trim() ?? '';
   if (!trimmed) return '';
@@ -66,11 +26,6 @@ async function renderBodyHtml(md: string): Promise<string> {
   return String(file);
 }
 
-/**
- * Escape the five characters that can break out of an HTML attribute or
- * text node context. Used for every user-supplied string emitted into the
- * template (titles, summaries, tags, footer's universe name).
- */
 export function escapeHtml(input: string): string {
   return input
     .replace(/&/g, '&amp;')
@@ -80,36 +35,16 @@ export function escapeHtml(input: string): string {
     .replace(/'/g, '&#39;');
 }
 
-/**
- * Footer template per RESEARCH Code Example 1.
- *
- * Three columns: empty left, centered `<span class="pageNumber"></span>`
- * (substituted by puppeteer with the current page number), right-aligned
- * universe name. Inline styles only — the footer template runs in an
- * isolated context and `body` styles do not apply (RESEARCH Pitfall:
- * puppeteer-issue/1853).
- *
- * The page-1-no-footer concern is handled by the `@page :first` rule in
- * the main template's CSS, which collapses the bottom margin to zero on
- * the title page so this footer renders off-canvas there.
- */
 export function footerTemplate(universeName: string): string {
   return `<div style="font-size: 9px; color: #666; width: 100%; padding: 0 20mm; display: flex; justify-content: space-between; font-family: Inter, sans-serif;"><span></span><span><span class="pageNumber"></span></span><span style="text-align: right;">${escapeHtml(
     universeName,
   )}</span></div>`;
 }
 
-/**
- * Build the complete HTML5 document string fed into puppeteer's setContent().
- *
- * Async because `buildFontFaceBlock()` reads font files from disk and
- * because each entry's markdown body is rendered through unified.
- */
 export async function renderUniverseHtml(payload: ExportPayload): Promise<string> {
   const fontBlock = await buildFontFaceBlock();
   const cssRules = buildCssRules();
 
-  // Phase 38 MEDIA-06 (D-08): build asset map for data-URI injection.
   const assetMap = new Map(payload.assets.map((a) => [a.id, a] as const));
 
   const titlePage = renderTitlePage(payload);
@@ -121,21 +56,12 @@ export async function renderUniverseHtml(payload: ExportPayload): Promise<string
 
 // ---------- private helpers ----------
 
-/**
- * Phase 38 MEDIA-06 (D-08): Load asset bytes from StorageBackend and convert to
- * a data URI string for embedding in Chromium-rendered HTML (avoids cross-origin fetch).
- * Returns null if the asset is not found.
- */
 async function assetToDataUri(assetId: string, mimeType: string): Promise<string | null> {
   const bytes = await storageBackend.get(assetId);
   if (!bytes) return null;
   return `data:${mimeType};base64,${bytes.toString('base64')}`;
 }
 
-/**
- * Phase 38 MEDIA-06 (D-08): Rewrite `asset://uuid` image refs in HTML body content
- * to data URIs so Chromium embeds them without any network fetch.
- */
 async function rewriteAssetDataUris(
   html: string,
   assetMap: Map<string, ExportPayloadAsset>,
@@ -161,9 +87,7 @@ async function rewriteAssetDataUris(
 }
 
 function buildCssRules(): string {
-  // `@page :first { margin: 0 ... }` collapses the title page's bottom
   // margin so puppeteer's substituted footer renders into zero-height
-  // space — effectively invisible on page 1, visible on every page after.
   return `
     @page { size: A4; margin: 20mm 20mm 25mm 20mm; }
     @page :first { margin: 0; }
@@ -302,7 +226,6 @@ async function renderEntry(
     `<p class="meta">Type: ${escapeHtml(entry.entryType)} · Tags: ${escapeHtml(tags)}</p>`,
   );
 
-  // Phase 38 MEDIA-06 (D-08): cover image as data URI (no cross-origin fetch in Chromium).
   if (entry.coverImageId) {
     const coverAsset = assetMap.get(entry.coverImageId);
     if (coverAsset) {
@@ -320,14 +243,12 @@ async function renderEntry(
     parts.push(`<blockquote class="summary">${escapeHtml(summary)}</blockquote>`);
   }
 
-  // Phase 38 MEDIA-06 (D-08): rewrite asset:// refs in body HTML to data URIs.
   const rawBodyHtml = await renderBodyHtml(entry.body ?? '');
   const bodyHtml = rawBodyHtml ? await rewriteAssetDataUris(rawBodyHtml, assetMap) : '';
   if (bodyHtml) {
     parts.push(`<div class="entry-body">${bodyHtml}</div>`);
   }
 
-  // Links section — outbound, grouped by relation label, sorted alphabetically.
   const outbound = idx.outboundBySource.get(entry.id);
   if (outbound && outbound.length > 0) {
     const byRelation = new Map<string, Set<string>>();
@@ -357,7 +278,6 @@ async function renderEntry(
     parts.push('</div>');
   }
 
-  // Open Issues section — only when entry has at least one open issue.
   const issues = idx.openIssuesByEntry.get(entry.id);
   if (issues && issues.length > 0) {
     parts.push(
@@ -400,9 +320,7 @@ function buildOutboundIndex(
     else out.set(k, [v]);
   };
   for (const l of payload.links) {
-    // Phase 35 REL-01: label is now nullable; fall back to linkType then 'related'
     push(l.sourceEntryId, { relation: l.label ?? l.linkType ?? 'related', otherEntryId: l.targetEntryId });
-    // Phase 35 REL-01: was `if (l.bidirectional)` — undirected links appear on both sides
     if (l.direction === 'undirected') {
       push(l.targetEntryId, { relation: l.label ?? l.linkType ?? 'related', otherEntryId: l.sourceEntryId });
     }

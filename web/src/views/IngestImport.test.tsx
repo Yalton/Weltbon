@@ -254,7 +254,7 @@ function mkDocxPreview(
   };
 }
 
-describe('IngestImport (Phase 12 E2E)', () => {
+describe('IngestImport', () => {
   beforeEach(() => {
     vi.mocked(api).mockReset();
     localStorage.clear();

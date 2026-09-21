@@ -39,7 +39,7 @@ describe('universeFingerprint', () => {
   });
 
   it('is stable when nothing changes, including under concurrent calls, with parts in APPLY_ORDER order', async () => {
-    // Fix round 1 (#44): universeFingerprint now issues its 17 APPLY_ORDER
+
     // collection aggregates via Promise.all instead of one at a time. This
     // pins the property that change could break: same DB state -> the exact
     // same byte-identical string, whether the calls race each other or run

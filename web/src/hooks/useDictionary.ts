@@ -1,7 +1,6 @@
 import { useMutation, useQueries, useQuery, useQueryClient } from '@tanstack/react-query';
 import { api } from '../api/client';
 
-// ─── Types ───────────────────────────────────────────────────────────────────
 
 export interface DictionaryWord {
   id: string;
@@ -38,50 +37,9 @@ export interface CreateWordInput {
   languageEntryId: string | null;
 }
 
-export type UpdateWordInput = Partial<Omit<CreateWordInput, 'languageEntryId'>> & {
-  /**
-   * Issue #59 — the entries whose Markdown the user accepted for rewriting.
-   * Omitted means "rename the glossary row only", which stays the default.
-   */
-  propagate?: { entryIds: string[] };
-};
+export type UpdateWordInput = Partial<Omit<CreateWordInput, 'languageEntryId'>>;
 
-/** Issue #59 — one entry the rename would rewrite. */
-export interface TermRenameTarget {
-  entryId: string;
-  title: string;
-  wikilinkCount: number;
-  textCount: number;
-}
 
-/** Issue #59 — an occurrence the rename refuses to change, and why. */
-export interface TermRenameSkip {
-  entryId: string;
-  title: string;
-  reason: 'out_of_scope' | 'case_mismatch';
-  count: number;
-}
-
-export interface TermRenamePreview {
-  word: string;
-  newWord: string;
-  totalOccurrences: number;
-  entries: TermRenameTarget[];
-  skipped: TermRenameSkip[];
-}
-
-// ─── Hooks ───────────────────────────────────────────────────────────────────
-
-/**
- * Filter-keyed list hook (D-13).
- *
- * Query key includes the full filter object so any change to q or lid triggers
- * a server refetch. The server applies FTS for ?q= and scope for ?lid=.
- * Client-side sort/facet (pos, tag) are applied in DictionaryTable.
- *
- * Mirrors useFilteredEntries — cache-key design per project memory:
- * react-query-key-change-blast-radius (per-file api mock; exact key ops).
- */
 export function useFilteredDictionary(
   universeId: string,
   filters: DictionaryFilters,
@@ -101,11 +59,6 @@ export function useFilteredDictionary(
   });
 }
 
-/**
- * Create a new word (POST /universes/:uid/dictionary).
- * Invalidates the ['dictionary', universeId] prefix so all filter variants
- * refetch.
- */
 export function useCreateWord(universeId: string) {
   const qc = useQueryClient();
   return useMutation({
@@ -120,10 +73,6 @@ export function useCreateWord(universeId: string) {
   });
 }
 
-/**
- * Update an existing word (PATCH /universes/:uid/dictionary/:wid).
- * Invalidates the ['dictionary', universeId] prefix.
- */
 export function useUpdateWord(universeId: string, wordId: string) {
   const qc = useQueryClient();
   return useMutation({
@@ -141,29 +90,6 @@ export function useUpdateWord(universeId: string, wordId: string) {
   });
 }
 
-/**
- * Issue #59 — ask the server what renaming `wordId` to `newWord` would rewrite.
- *
- * A plain function rather than a hook: the caller runs it inside the save
- * handler and needs the answer before deciding whether to open the review
- * dialog, which is the same two-phase shape EntryEditor uses for entry renames
- * (`previewEntryUpdate`).
- */
-export function previewTermRename(
-  universeId: string,
-  wordId: string,
-  newWord: string,
-): Promise<TermRenamePreview> {
-  return api<TermRenamePreview>(
-    `/universes/${universeId}/dictionary/${wordId}/rename-preview`,
-    { method: 'POST', body: JSON.stringify({ word: newWord }) },
-  );
-}
-
-/**
- * Delete a word (DELETE /universes/:uid/dictionary/:wid).
- * Invalidates the ['dictionary', universeId] prefix.
- */
 export function useDeleteWord(universeId: string, wordId: string) {
   const qc = useQueryClient();
   return useMutation({
@@ -177,14 +103,6 @@ export function useDeleteWord(universeId: string, wordId: string) {
   });
 }
 
-/**
- * Bulk-import words from a CSV file.
- * Posts multipart FormData to /universes/:uid/dictionary/import.
- * If `lid` is provided, appends ?lid=<lid> so the import targets the
- * language-scoped dictionary rather than the universe-level fallback (CR-01).
- * Returns { inserted, updated, rowErrors[] }.
- * Invalidates the ['dictionary', universeId] prefix on success.
- */
 export function useImportDictionaryCsv(universeId: string, lid?: string | null) {
   const qc = useQueryClient();
   return useMutation({
@@ -206,13 +124,6 @@ export function useImportDictionaryCsv(universeId: string, lid?: string | null) 
   });
 }
 
-/**
- * Fetch language-type entries for the universe — used to populate the
- * language switcher in the Dictionary view.
- *
- * Returns only entries of type 'language'; the server-side ?type= filter is
- * applied so we get a small targeted list without fetching all entries.
- */
 export function useLanguageEntries(universeId: string) {
   return useQuery({
     queryKey: ['language-entries', universeId],
@@ -224,26 +135,7 @@ export function useLanguageEntries(universeId: string) {
   });
 }
 
-/**
- * Phase 32 Plan 04 — D-02 universe-wide dictionary union.
- *
- * Used by EntryDetail when the entry links NO language entry. The server-side
- * GET /dictionary endpoint returns only the null-scoped fallback when no `lid`
- * is provided. To build the UNION of ALL dictionaries in the universe (all
- * language dicts + null-scope fallback), we:
- *   1. Fetch the language-entries list to get each language's id.
- *   2. Issue one query per language dict (lid=<id>) + one for the null-scope
- *      fallback (lid=null).
- *   3. Merge all rows into a single lower(word)→DictionaryWord map. On
- *      spelling collision, first encountered wins (acceptable per D-02).
- *
- * In share mode the api-client seam rewrites these fetches to
- * /api/share/dictionary?lid=... — only public words enter the map (T-32-11).
- *
- * Returns: { words: DictionaryWord[], isLoading, isError }
- */
 export function useUniverseDictionary(universeId: string) {
-  // Step 1: get language entries (already cached from Dictionary view)
   const { data: langEntries, isPending: langPending, isError: langError } = useLanguageEntries(universeId);
 
   // Step 2: dynamic parallel queries — one per language + one for null-scope
@@ -273,9 +165,7 @@ export function useUniverseDictionary(universeId: string) {
   const isLoading = langPending || dictQueries.some((q) => q.isPending);
   const isError = langError || dictQueries.some((q) => q.isError);
 
-  // Merge all rows into a single lower(word)→DictionaryWord map. On collision,
   // null-scope (index 0, loaded first) takes priority; language-scoped rows
-  // fill in the rest. Order is deterministic by lidList iteration order.
   const words: DictionaryWord[] = [];
   for (const q of dictQueries) {
     if (q.data) words.push(...q.data);

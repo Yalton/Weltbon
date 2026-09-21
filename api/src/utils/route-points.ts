@@ -1,10 +1,4 @@
-// Phase 51 WR-03: shared structural validator for map-route `points` JSON.
-//
-// `points` is stored as a raw JSON string of normalized [0,1] {x,y} coordinates
 // (web parses it in MapCanvas RoutePolyline). Without server-side structure
-// checks, a value like "[1,2,3]" or '[{"a":1}]' parses but yields NaN coords,
-// rendering a broken/invisible route with no error surfaced. Shared by the
-// create route schema (routes/maps.ts) and the import schema (services/
 // import-json.ts) so both unprivileged-input surfaces validate identically.
 
 export const ROUTE_POINTS_ERROR =

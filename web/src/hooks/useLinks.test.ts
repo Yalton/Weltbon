@@ -54,11 +54,11 @@ describe('useCreateLink', () => {
     expect(invalidatedKeys).toContain(JSON.stringify(['entry', 'U1']));
     expect(invalidatedKeys).toContain(JSON.stringify(['relations', 'U1']));
     expect(invalidatedKeys).toContain(JSON.stringify(['graph-data', 'U1']));
-    // Phase 35 REL-01: also invalidates link-types for the combobox
+
     expect(invalidatedKeys).toContain(JSON.stringify(['link-types', 'U1']));
   });
 
-  it('sends linkType + direction in the create payload (Phase 35 REL-01)', async () => {
+  it('sends linkType + direction in the create payload', async () => {
     vi.mocked(api).mockResolvedValue({ ...fixtureLink, linkType: 'parent_of', direction: 'directed' });
     const qc = new QueryClient({
       defaultOptions: { queries: { retry: false }, mutations: { retry: false } },

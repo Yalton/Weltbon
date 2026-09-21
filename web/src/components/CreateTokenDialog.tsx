@@ -1,11 +1,3 @@
-/**
- * CreateTokenDialog — single Radix Dialog with two internal phases:
- *   'form'   — react-hook-form + Zod to create a new PAT (UI-SPEC §7)
- *   'reveal' — copy-once plaintext display (UI-SPEC §8)
- *
- * T-09-12 mitigation: plaintext lives only in component state;
- * cleared on close so it is never persisted beyond the modal lifetime.
- */
 
 import { useState, useEffect, useRef } from 'react';
 import * as Dialog from '@radix-ui/react-dialog';
@@ -44,7 +36,6 @@ export function CreateTokenDialog({ open, onOpenChange }: Props) {
     resolver: zodResolver(schema),
   });
 
-  // Reset all internal state when the dialog closes
   const handleOpenChange = (nextOpen: boolean) => {
     if (!nextOpen) {
       setPhase('form');
@@ -56,7 +47,7 @@ export function CreateTokenDialog({ open, onOpenChange }: Props) {
     onOpenChange(nextOpen);
   };
 
-  // Focus the Copy button when phase transitions to 'reveal' (UI-SPEC §8.6)
+
   useEffect(() => {
     if (phase === 'reveal') {
       copyButtonRef.current?.focus();
@@ -69,7 +60,6 @@ export function CreateTokenDialog({ open, onOpenChange }: Props) {
       setTokenData(result);
       setPhase('reveal');
     } catch {
-      // mutation error — useCreateToken does not retry; the error is visible
       // in the button state. react-hook-form keeps the form intact for retry.
     }
   };

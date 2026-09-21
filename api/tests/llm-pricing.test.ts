@@ -1,27 +1,3 @@
-/**
- * PROVIDER-06 — PRICING source-of-truth + getProvider factory contract.
- *
- * Pure unit test (no DB, no env mocks, no SDK mocks). Mirrors the
- * pat-service.test.ts pattern: dynamic `await import(...)` inside each it body
- * so module-loader side effects (none here) are deterministic per test.
- *
- * Eight invariants enforced:
- *   1. PRICING_AS_OF parses as a valid YYYY-MM-DD ISO date string.
- *   2. PRICING.anthropic contains the 3 required models with 4-field numeric pricing rows.
- *   3. PRICING.openai contains the 2 verified models (gpt-5-pro tolerated as ASSUMED).
- *   4. claude-haiku-4-5 baseline pricing values are exactly the documented numbers
- *      (drift triggers red CI without a paired PRICING_AS_OF bump).
- *   5. gpt-5-mini baseline pricing values are exactly the documented numbers.
- *   6. getProvider('anthropic' | 'openai') returns LLMProvider-conforming
- *      instances with working listModels() / pricing().
- *   7. PRICING is a SUBSET of listModels() — Phase 27 D-04 revision:
- *      every PRICING id appears in the live/offline list as `hasPricing: true`;
- *      the reverse direction is no longer asserted (live can contain models
- *      PRICING doesn't yet have rates for — D-05 unpriced-but-selectable case).
- *   8. getProvider returns the SAME singleton instance per provider name
- *      across multiple calls (lazy-singleton invariant — RESEARCH Pitfall #6
- *      lift).
- */
 
 import { describe, it, expect } from 'vitest';
 
@@ -46,7 +22,7 @@ describe('PRICING constants (PROVIDER-06)', () => {
       expect(row.cachedInputUsdPer1M).toBeGreaterThan(0);
       expect(typeof row.cacheWriteUsdPer1M).toBe('number');
       expect(row.cacheWriteUsdPer1M).toBeGreaterThan(0);
-      // Phase 26 W-4: contextWindow required on every row so PricingTable shows the actual number
+
       // instead of '—'. Removing the field triggers red CI without a paired PRICING_AS_OF bump.
       expect(typeof row.contextWindow).toBe('number');
       expect(row.contextWindow).toBeGreaterThan(0);
@@ -65,7 +41,7 @@ describe('PRICING constants (PROVIDER-06)', () => {
       expect(row.outputUsdPer1M).toBeGreaterThanOrEqual(0);
       expect(typeof row.cachedInputUsdPer1M).toBe('number');
       expect(row.cachedInputUsdPer1M).toBeGreaterThanOrEqual(0);
-      // Phase 26 W-4: contextWindow required on every row.
+
       expect(typeof row.contextWindow).toBe('number');
       expect(row.contextWindow).toBeGreaterThan(0);
     }
@@ -80,7 +56,7 @@ describe('PRICING constants (PROVIDER-06)', () => {
     expect(row.outputUsdPer1M).toBe(5.0);
     expect(row.cachedInputUsdPer1M).toBe(0.1);
     expect(row.cacheWriteUsdPer1M).toBe(1.25);
-    // Phase 26 W-4: contextWindow pinned to verified provider-docs value for the baseline model.
+
     expect(row.contextWindow).toBe(200_000);
   });
 
@@ -90,7 +66,7 @@ describe('PRICING constants (PROVIDER-06)', () => {
     expect(row.inputUsdPer1M).toBe(0.25);
     expect(row.outputUsdPer1M).toBe(2.0);
     expect(row.cachedInputUsdPer1M).toBe(0.025);
-    // Phase 26 W-4: contextWindow pinned to verified provider-docs value for the baseline model.
+
     expect(row.contextWindow).toBe(400_000);
   });
 
@@ -111,8 +87,8 @@ describe('PRICING constants (PROVIDER-06)', () => {
     }
   });
 
-  it('PRICING is a subset of live listModels() (Phase 27 D-04 revision)', async () => {
-    // Phase 27 D-04 revision: PRICING is the cost lookup, not the catalog;
+  it('PRICING is a subset of live listModels()', async () => {
+
     // live `models.list()` from the provider drives the catalog (see
     // api/src/providers/llm/model-catalog.ts D-01). Live can contain models
     // PRICING doesn't yet have rates for (D-05 unpriced-but-selectable case),

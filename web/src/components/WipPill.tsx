@@ -1,13 +1,3 @@
-/**
- * WipPill — amber "WIP" pill indicator.
- *
- * When `onToggle` is absent: renders a non-interactive <span> for display on
- * EntryCard (D-05 badge-only, no dimming).
- *
- * When `onToggle` is provided: renders an interactive <button role="switch">
- * for the detail-header quick-toggle (D-06). The aria-label reflects the
- * current state so users know which action will occur on click.
- */
 
 interface WipPillProps {
   wip: boolean;

@@ -1,6 +1,5 @@
 import type { ReactNode } from 'react';
 
-/** Serif title · muted subtitle · right-aligned actions (spec §2). */
 export function PageHeader({
   title,
   subtitle,

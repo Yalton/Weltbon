@@ -1,16 +1,3 @@
-/**
- * SettingsLayout tests — Plan 09-03 must_haves truth #4.
- *
- * Asserts UI-SPEC §4.3 + §4.5 contract:
- * - <nav aria-label="Settings sections"> with seven NavLinks ("Visual",
- *   "API tokens", "Invite codes", "Templates", "Shares", "LLM keys", "Sync")
- * - Active state classes on the link matching the current route
- * - Container uses flex-col md:flex-row (mobile stacks above content; md: row)
- * - <Outlet /> renders nested route children
- *
- * Mirrors the MemoryRouter + Routes scaffolding from Tokens.test.tsx.
- * No QueryClient needed: SettingsLayout has no queries.
- */
 
 import { beforeEach, describe, it, expect, vi } from 'vitest';
 import { render, screen } from '@testing-library/react';
@@ -63,7 +50,7 @@ describe('SettingsLayout', () => {
     const templates = screen.getByRole('link', { name: 'Templates' });
     const shares = screen.getByRole('link', { name: 'Shares' });
     const llmKeys = screen.getByRole('link', { name: 'LLM keys' });
-    // Plan F Task 2 — account-scoped sync remotes.
+
     const sync = screen.getByRole('link', { name: 'Sync' });
 
     expect(visual.getAttribute('href')).toBe('/settings');
@@ -79,24 +66,12 @@ describe('SettingsLayout', () => {
     expect(nav.querySelectorAll('a').length).toBe(8);
   });
 
-  // "Administrator-only" is Users and Invite codes, not API tokens. A PAT is a
-  // credential for the caller's own account: /settings/tokens is not admin-gated
-  // and `GET|POST|DELETE /api/auth/tokens` is behind `requireJwtAuth`, which
-  // scopes every row to the caller. Hiding the link from non-admins made the
-  // feature reachable only by typing the URL.
   it('hides administrator-only settings links for a non-administrator', () => {
     useAuthStore.setState({ user: { id: 'member-1', email: 'member@test.dev', displayName: 'Member', isAdmin: false } });
     renderAt('/settings');
+    expect(screen.queryByRole('link', { name: 'API tokens' })).not.toBeInTheDocument();
     expect(screen.queryByRole('link', { name: 'Invite codes' })).not.toBeInTheDocument();
     expect(screen.queryByRole('link', { name: 'Users' })).not.toBeInTheDocument();
-  });
-
-  it('shows "API tokens" to a non-administrator in server mode', () => {
-    useAuthStore.setState({ user: { id: 'member-1', email: 'member@test.dev', displayName: 'Member', isAdmin: false } });
-    renderAt('/settings');
-    const apiTokens = screen.getByRole('link', { name: 'API tokens' });
-    expect(apiTokens).toBeInTheDocument();
-    expect(apiTokens.getAttribute('href')).toBe('/settings/tokens');
   });
 
   it('applies active classes to the "Visual" link when route is /settings', () => {

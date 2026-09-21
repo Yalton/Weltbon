@@ -8,7 +8,7 @@ web/node_modules
 dist/
 build/
 coverage/
-# Task 6: local desktop-launch verification builds api/web-dist as a copy of
+# Local desktop-launch verification builds api/web-dist as a copy of
 # web/dist (Docker builds it the same way, but inside the image, not the repo).
 api/web-dist/
 *.log
@@ -20,7 +20,7 @@ TestUniverse/
 
 # Playwright E2E
 web/e2e/seed.json
-# Plan F Task 5 — the two-instance sync suite's own seed, and the screenshots it
+# Two-instance sync suite seed and generated screenshots.
 # takes at each step (a few MB per run, regenerated on every run).
 web/e2e/sync-seed.json
 web/e2e/screenshots/

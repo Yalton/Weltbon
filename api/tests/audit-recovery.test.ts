@@ -1,18 +1,3 @@
-/**
- * Phase 24 Plan 06 — audit-recovery.test.ts
- *
- * Integration-lane (DB-gated) tests for recoverOrphanAuditRuns (AUDIT-12).
- *
- * Tests:
- *   1. Force-fails pending + running rows to failed/process_restarted.
- *   2. Leaves already-terminal rows (succeeded/failed) untouched.
- *   3. D-03 enforcement: stream-persisted Issues under an orphan run STAY visible
- *      after recovery (dismissed_at=NULL, audit_run_id intact, source='ai').
- *   4. Idempotent re-run: second call returns 0 (terminal rows excluded by WHERE).
- *
- * Pattern: mirrors api/tests/seedInviteCode.test.ts (direct service call against
- * real test DB; no HTTP layer).
- */
 
 import { describe, it, expect, beforeAll, afterAll, beforeEach } from 'vitest';
 import { eq, inArray } from 'drizzle-orm';
@@ -275,7 +260,7 @@ describe('recoverOrphanAuditRuns (AUDIT-12 + CONTEXT D-03)', () => {
   });
 
   // ---------------------------------------------------------------------------
-  // #50 Task 7: orphaned SHARED runs also hold a reservation
+
   //
   // A crash is the one case where nothing else will ever release it — the
   // engine's own finally never ran. Left held, it keeps one of the
@@ -323,7 +308,7 @@ describe('recoverOrphanAuditRuns (AUDIT-12 + CONTEXT D-03)', () => {
     // Boot-time path: one unreleasable reservation must not stop the others,
     // and must not stop the API from starting.
     // Two DIFFERENT recipients: audit_runs_shared_recipient_active_unique
-    // permits only one active shared run per user, which is the rule Task 6
+
     // relies on — a single-user version of this test cannot even be seeded.
     const first = await seedUser('recovery-shared-fail-a@example.com');
     const second = await seedUser('recovery-shared-fail-b@example.com');

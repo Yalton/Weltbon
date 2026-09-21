@@ -1,27 +1,3 @@
-/**
- * MapEditor share-mode render tests (GEOSHARE-01 / 44-03) +
- * MapEditor route interaction tests (ROUTE-02, Plan 07).
- *
- * Share-mode tests (Tests 1-7):
- *  1. Share legend renders per-layer terrain types in sortOrder (present-types-only)
- *  2. Share legend renders ordered-layer ranked-ramp band labels
- *  3. Share mode shows NO visibility toggles and NO opacity sliders (D-44-01)
- *  4. Terrain area polygon group renders in the share canvas
- *  5. MapZoomControls renders in share mode (D-09 parity)
- *  6. MapCompass renders in share mode (D-09 parity)
- *  7. share-mode pins carry server-projected summary through to MapCanvas (D-07, D-09)
- *
- * Route interaction tests (ROUTE-02, Plan 07):
- *  R1. lineStyle toggle fires updateRoute
- *  R2. width preset fires updateRoute
- *  R3. showArrow toggle fires updateRoute
- *  R4. rename fires updateRoute
- *  R5. relink fires updateRoute
- *  R6. delete-confirm fires deleteRoute
- *  R7. left-click on linked route navigates (editor path)
- *  R8. left-click on linked route navigates (share path) — in share mode
- *  R9. share mode suppresses route context menu (T-51-13)
- */
 import { describe, it, expect, beforeEach, vi, afterEach } from 'vitest';
 import React from 'react';
 import { render, screen, waitFor, fireEvent } from '@testing-library/react';
@@ -48,8 +24,8 @@ vi.mock('../contexts/ShareModeContext', () => ({
 
 // Mock MapCanvas — the test asserts on terrain group rendering via stub, not real SVG.
 // Expose a stub <g className="terrain-areas"> so assertions can check terrain render.
-// Also exposes pin summaries (data-testid="pin-summary") for Plan 04 Task 3 share-parity test.
-// Also exposes route stubs (data-testid="route-stub") for ROUTE-02 Plan 07 interaction tests.
+
+
 type MockMapPin = {
   id: string;
   entryId: string;
@@ -73,7 +49,6 @@ type MockMapCanvasProps = {
   routes?: MockMapRoute[];
   onRouteClick?: (route: MockMapRoute) => void;
   onRouteContextMenu?: (route: MockMapRoute, clientX: number, clientY: number) => void;
-  /** Content-Forward Views §6 — tooltip identity map threaded in by MapEditor (Task 12). */
   medallions?: Map<string, { title: string; entryType: string; icon: string; coverThumbUrl: string | null }>;
   [key: string]: unknown;
 };
@@ -83,20 +58,19 @@ vi.mock('../components/MapCanvas', () => ({
     const { pins = [], terrainAreas = [], layers = [], layerViewerState = {}, routes = [], onRouteClick, onRouteContextMenu, medallions } = props;
     return (
       <div data-testid="map-canvas-stub">
-        {/* Content-Forward Views §6 (Task 12): expose the medallions prop so wiring tests can
-            assert MapEditor threaded useEntryMedallions(uid) through to MapCanvas. */}
+        {}
         <span data-testid="map-canvas-medallions" data-size={medallions?.size ?? 0}>
           {medallions ? Array.from(medallions.entries()).map(([id, m]) => (
             <span key={id} data-testid="map-canvas-medallion-entry" data-entry-id={id} data-cover={m.coverThumbUrl ?? ''} />
           )) : null}
         </span>
-        {/* Expose pin summaries so Plan 04 Task 3 share-parity test can assert on them */}
+        {}
         {pins.map((pin) =>
           pin.summary ? (
             <span key={pin.id} data-testid="pin-summary" data-pin-id={pin.id}>{pin.summary}</span>
           ) : null
         )}
-        {/* Route stubs — expose click + right-click triggers for ROUTE-02 Plan 07 tests */}
+        {}
         {routes.map((route) => (
           <div key={route.id} data-testid="route-stub" data-route-id={route.id}>
             <button
@@ -185,14 +159,14 @@ vi.mock('../components/AddEntriesPicker', () => ({
     ) : null,
 }));
 
-// Phase 53 NEST-01: Mock MapPickerModal — out of scope for existing tests; stub so it never
+
 // calls useMaps in the test environment (which would receive the wrong api mock shape).
 vi.mock('../components/MapPickerModal', () => ({
   MapPickerModal: ({ open }: { open?: boolean }) =>
     open ? <div data-testid="map-picker-modal-stub" /> : null,
 }));
 
-// Phase 53 NEST-01: Mock MapBreadcrumb — breadcrumb only renders when router state has `from`;
+
 // existing tests use clean MemoryRouter with no nav state, so it never mounts anyway.
 // Stub it to keep the mock list consistent and guard against future router-state accidents.
 vi.mock('../components/MapBreadcrumb', () => ({
@@ -324,12 +298,6 @@ function makeLayers(): MapLayer[] {
   ];
 }
 
-/**
- * Map detail simulating the share API response (D-44-03).
- * - `regions`: political/standalone only (no terrain-tagged rows — discriminated out by share backend)
- * - `terrainAreas`: pre-enriched terrain areas with terrainTypeColor/layerId/layerSortOrder,
- *   mirroring what getPublicMap returns after the Phase 44-02 discriminator split.
- */
 function makeMapDetail(): MapDetail {
   return {
     id: MAP_ID,
@@ -343,7 +311,7 @@ function makeMapDetail(): MapDetail {
     pins: [],
     // Political/standalone regions only (no terrain-tagged rows in share response)
     regions: [],
-    // Phase 51 ROUTE-01: routes array (empty for terrain-focused share tests).
+
     routes: [],
     // Pre-enriched terrain areas from the share seam (D-44-03).
     // Both Elevation types (Lowlands + Highlands) and one Biome (Forest) are present.
@@ -513,7 +481,7 @@ describe('MapEditor share mode (GEOSHARE-01 / 44-03)', () => {
       screen.queryByRole('slider', { name: /opacity/i }),
     ).not.toBeInTheDocument();
 
-    // Phase 52 SEARCH-01 (D-04): MapToolbar NOW renders in share mode (for the search input).
+
     // The toolbar stub IS present — but mutation/editing buttons must NOT be rendered
     // (no onToggleAddPinMode / onToggleDrawRegionMode passed in share mode).
     expect(screen.queryByTestId('map-toolbar-stub')).toBeInTheDocument();
@@ -584,27 +552,13 @@ describe('MapEditor share mode (GEOSHARE-01 / 44-03)', () => {
     });
   });
 
-  /**
-   * Test 7: Share-mode enrichedPins pass server-projected summary through to MapCanvas (D-07, D-09).
-   *
-   * In share mode there is NO authenticated useEntries join, so the tooltip summary MUST come
-   * from the server projection on map.pins (Plan 03 / getPublicMap). The enrichedPins path:
-   *   if (!entriesData) return map.pins;  ← share mode: entriesData undefined → pass pins as-is
-   *
-   * This test verifies that a pin with summary from the share API response reaches MapCanvas
-   * with that summary intact — the MapCanvas stub renders pin summaries as data-testid="pin-summary".
-   *
-   * Acceptance criteria (Plan 04 Task 3):
-   * - grep -c "summary: entry" web/src/views/MapEditor.tsx ≥ 1 (join widened)
-   * - Share-mode pins carry Plan 03 server-projected summary through to MapCanvas
-   */
-  it('Test 7: share-mode pins carry server-projected summary through to MapCanvas (D-07, D-09)', async () => {
+    it('Test 7: share-mode pins carry server-projected summary through to MapCanvas (D-07, D-09)', async () => {
     const SHARE_PIN_SUMMARY = 'The famous castle of the northern realm.';
 
     vi.mocked(api).mockImplementation(async (path: string) => {
       if (path.includes('/map-layers')) return [] as never;
       if (path.includes('/entries')) return [] as never;
-      // Return map detail with a pin that has a server-projected summary (Plan 03)
+
       return {
         ...makeMapDetail(),
         pins: [
@@ -618,7 +572,7 @@ describe('MapEditor share mode (GEOSHARE-01 / 44-03)', () => {
             icon: null,
             entryTitle: 'North Castle',
             entryType: 'location',
-            // summary comes from the server projection (Plan 03 / getPublicMap)
+
             summary: SHARE_PIN_SUMMARY,
             createdAt: '2026-01-01T00:00:00Z',
           },
@@ -641,13 +595,7 @@ describe('MapEditor share mode (GEOSHARE-01 / 44-03)', () => {
     });
   });
 
-  /**
-   * Test 8: MapEditor threads useEntryMedallions(uid) into MapCanvas as the `medallions` prop
-   * (Content-Forward Views §6 / Task 12). The entries LIST cache (same query useEntries(uid)
-   * already reads) is the single source for the tooltip's cover/icon/monogram — no second
-   * request, no new query key (memory: react-query-key-change-blast-radius).
-   */
-  it('Test 8: threads useEntryMedallions(uid) into MapCanvas as the medallions prop', async () => {
+    it('Test 8: threads useEntryMedallions(uid) into MapCanvas as the medallions prop', async () => {
     vi.mocked(api).mockImplementation(async (path: string) => {
       if (path.includes('/map-layers')) return [] as never;
       if (path.includes('/entries')) {
@@ -688,9 +636,9 @@ describe('MapEditor share mode (GEOSHARE-01 / 44-03)', () => {
   });
 });
 
-// ── Route interaction tests (ROUTE-02, Plan 07) ───────────────────────────────
 
-describe('MapEditor route interactions (ROUTE-02, Plan 07)', () => {
+
+describe('MapEditor route interactions', () => {
   const ROUTE_1_ID = 'route-1-uuid';
   const LINKED_ENTRY_ID = 'entry-linked-uuid';
   const EDITOR_UID = 'test-universe-uuid';
@@ -724,7 +672,7 @@ describe('MapEditor route interactions (ROUTE-02, Plan 07)', () => {
       if (path.includes('/map-layers')) return [] as never;
       // Universe entries list (/universes/:uid/entries)
       if (path.match(/\/entries$/) || path.match(/\/entries\?/)) return [] as never;
-      // Phase 53 NEST-01: universe maps list (/universes/:uid/maps without a trailing /:mid).
+
       // useMaps calls this; return [] so MapPickerModal (even if un-mocked) gets an empty list.
       if (path.match(/\/maps$/) || path.match(/\/maps\?/)) return [] as never;
       // Route mutation calls (/routes/:routeId)
@@ -991,7 +939,7 @@ describe('MapEditor route interactions (ROUTE-02, Plan 07)', () => {
   });
 });
 
-// ── BUG-2 / BUG-3 regression tests (Plan 07 UAT fix) ────────────────────────────
+
 //
 // BUG-2: Multiple hint banners could stack (each positioned at the same absolute
 //   spot) when two draw modes were simultaneously active. Fix: compute ONE banner
@@ -1003,7 +951,7 @@ describe('MapEditor route interactions (ROUTE-02, Plan 07)', () => {
 //   the canvas click appear to "not register". Fix: hide the CTA whenever any
 //   draw mode is active.
 
-describe('MapEditor banner dedup + CTA draw-mode guard (BUG-2/BUG-3, Plan 07)', () => {
+describe('MapEditor banner dedup + CTA draw-mode guard', () => {
   const EDITOR_UID_B = 'test-universe-uuid';
 
   // A map with no content so the empty-state CTA shows.

@@ -467,7 +467,7 @@ describe('DiagramEditor', () => {
     });
   });
 
-  it('Test 10: Export SVG calls URL.createObjectURL with a Blob of type image/svg+xml (Plan 10)', async () => {
+  it('Test 10: Export SVG calls URL.createObjectURL with a Blob of type image/svg+xml', async () => {
     vi.mocked(api).mockImplementation(async (path: string) => {
       if (path.includes('/entries') && !path.includes('/diagrams')) return makeEntries(2) as never;
       return makeDiagramDetail(2, 1) as never;

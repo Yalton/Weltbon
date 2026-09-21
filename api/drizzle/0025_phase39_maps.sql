@@ -1,4 +1,3 @@
--- Phase 39 MAPS-01/02/03 (D-10, D-11): maps table + map_pins table.
 --
 -- maps: per-universe image-backed map definition. imageAssetId is nullable (SET NULL
 --   on asset delete per D-03 so image swaps don't break existing pins). The API

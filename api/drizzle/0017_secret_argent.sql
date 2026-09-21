@@ -1,4 +1,3 @@
--- Phase 31 DIAGRAM-01 + DIAGRAM-02
 -- Creates the diagrams and diagram_nodes tables and adds write-through columns to links.
 
 CREATE TABLE "diagrams" (

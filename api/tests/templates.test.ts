@@ -1,20 +1,3 @@
-/**
- * Phase 28 Plan 03 Task 1 — /api/templates integration tests.
- *
- * Coverage matrix (12 behavior cases from PLAN.md):
- *   - GET /templates with no auth returns 401
- *   - GET /templates with valid JWT returns 200 + array, scoped to calling user only
- *   - GET /templates with valid PAT returns 200 (D-13: PAT-or-JWT acceptance)
- *   - POST /templates with valid body returns 201 + inserted row
- *   - POST /templates with duplicate (entryType, name) for same user returns 409 exact error (D-04)
- *   - POST /templates with same name but different entryType succeeds (D-04 per-type uniqueness)
- *   - PUT /templates/:id with valid owner returns 200 + updated row
- *   - PUT /templates/:id renaming to colliding (entryType, name) returns 409
- *   - PUT /templates/:id against another user's id returns 404 (NOT 403)
- *   - DELETE /templates/:id by owner returns 204; row absent from subsequent GET
- *   - DELETE /templates/:id against another user's id returns 404
- *   - POST /templates with clonedFrom field returns 201 + clonedFrom round-trips (D-02)
- */
 
 import { describe, it, expect, beforeAll, afterAll, beforeEach } from 'vitest';
 import { createTestDb, cleanDb, createTestUser, type TestDbHandle } from './helpers.js';
@@ -306,7 +289,7 @@ describe('routes/templates', () => {
     // CR-02 regression — pre-fix this case returned 200 (success) or 500 (crash) intermittently;
     // post-fix returns 404 unconditionally. The TOCTOU race itself (DELETE between pre-check and UPDATE)
     // cannot be reproduced without invasive test hooks; the `if (!row)` guard at templates.ts
-    // is the post-fix safety net for that race — verified by the grep gate in 28-08-PLAN.md Task 2 <verify>.
+
     it('returns 404 when the row is deleted between pre-check and update (TOCTOU race)', async () => {
       const { jwt } = await createUserAndJwt('put-toctou@test.com');
 

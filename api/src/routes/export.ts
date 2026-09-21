@@ -21,7 +21,6 @@ const exportQuerySchema = z.object({
 
 const errorSchema = z.object({ error: z.string() });
 
-// ─── Route definition ─────────────────────────────────────────────────────────
 
 /**
  * /universes/:uid/export — switches on ?format= query.
@@ -53,7 +52,7 @@ const exportRoute = createRoute({
     200: {
       content: {
         'application/json': {
-          // Full universe export payload — shape is large and nested; z.any() per planner discretion
+
           schema: z.any(),
         },
         'application/zip': {
@@ -94,16 +93,13 @@ const exportRoute = createRoute({
   },
 });
 
-// ─── Router ───────────────────────────────────────────────────────────────────
 
 export const exportRoutes = new OpenAPIHono<AppEnv>().openapi(exportRoute, async (c) => {
   const { uid } = c.req.valid('param');
   const universe = await requireUniverse(uid, c.var.userId);
-  // Read format from validated query; fall back to raw query for safety
   const format = c.req.valid('query').format ?? c.req.query('format') ?? 'json';
 
   if (format === 'json') {
-    // Phase 38 MEDIA-06 (D-07): JSON export is now a ZIP (manifest.json + assets/).
     // The filename changes from .json to .zip; Content-Type is application/zip.
     const stream = await exportUniverseJson(uid);
     c.header('Content-Type', 'application/zip');
@@ -124,9 +120,6 @@ export const exportRoutes = new OpenAPIHono<AppEnv>().openapi(exportRoute, async
   }
   if (format === 'pdf') {
     // DV-14: the PDF renderer drives a SYSTEM Chromium via puppeteer-core, which
-    // a desktop install has no reason to have — and Electron's bundled Chromium
-    // cannot be driven by puppeteer in the normal way. Refuse by name rather than
-    // 500ing on a missing binary. ZIP/JSON export is unaffected.
     if (env().localMode) {
       return c.json(
         { error: 'PDF export is not available in the desktop app. Use ZIP or Markdown export instead.' },

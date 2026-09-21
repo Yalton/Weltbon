@@ -239,7 +239,7 @@ describe('createCanvas2dRenderer', () => {
       expect(() => renderer.dispose()).not.toThrow();
     });
 
-    // Plan 08-03: entry-body layer tests
+
     it('setEntries([{id:"a", type:"concept"}]) adds 1 entry body; ambient count unchanged', () => {
       const renderer = createCanvas2dRenderer({
         config: DEFAULT_SIM_CONFIG,

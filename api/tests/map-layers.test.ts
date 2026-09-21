@@ -1,17 +1,3 @@
-/**
- * Phase 42 LAYER-01/02/03 route-level integration tests.
- *
- * Covers:
- *   - Layer CRUD: POST/PATCH/DELETE /universes/:uid/map-layers
- *   - Terrain-type CRUD: POST/PATCH/DELETE /universes/:uid/map-layers/:layerId/terrain-types
- *   - GET list: bare array of layers with nested terrainTypes
- *   - Reorder (sort_order swap via PATCH sortOrder)
- *   - Preset bulk-insert: POST .../presets/biomes → 7 types; POST .../presets/elevation → 5 bands
- *   - DELETE terrain type SET NULL: map_regions.terrain_type_id is nulled (not cascade-deleted)
- *   - IDOR: cross-universe uid → 404; cross-universe layerId on terrain-type route → 404
- *
- * Follows the maps.test.ts / diagrams.test.ts integration-test pattern exactly.
- */
 
 import { mkdtempSync, rmSync } from 'node:fs';
 import { tmpdir } from 'node:os';
@@ -31,7 +17,7 @@ import { db } from '../src/db/client.js';
 import { mapRegions } from '../src/db/schema.js';
 import { eq } from 'drizzle-orm';
 
-describe('map-layers routes (Phase 42)', () => {
+describe('map-layers routes', () => {
   let handle: TestDbHandle;
   let app: ReturnType<typeof createApp>;
 
@@ -464,7 +450,7 @@ describe('map-layers routes (Phase 42)', () => {
     const region = await json(regionRes);
 
     // Tag the region with the terrain type by updating terrainTypeId directly via DB
-    // (the maps API doesn't expose terrainTypeId yet — that's Phase 43)
+
     // Use handle.db directly to set the discriminator
     await handle.db
       .update(mapRegions)
@@ -673,7 +659,7 @@ describe('map-layers routes (Phase 42)', () => {
     expect(list[0].terrainTypes.length).toBe(7);
   });
 
-  // ─── Phase 52 SECRET-02: secret toggle on layer ───────────────────────────
+
 
   it('PATCH /map-layers/:layerId with {secret:true} sets secret and returns 200', async () => {
     const { hdrs, uid } = await seedUniverse();

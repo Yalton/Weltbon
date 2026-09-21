@@ -1,23 +1,3 @@
-/**
- * Issue #35, Task 8 — route-wiring guardrail for the ingest.ts <-> ingest-docx
- * integration point.
- *
- * NO DB: this exercises `isDocxFile` / `docxToMarkdownPath` (exported from
- * routes/ingest.ts for exactly this reason) plus the real `convertDocx` and
- * `parseBatch`/`isMarkdownFile` modules the route wires together — the same
- * pieces the handler touches, without the HTTP/auth/DB layer around them.
- * Task 9 owns the full-stack integration test (DB-gated); this file is not
- * added to vitest.config.ts's DB_GATED_TESTS list, so it auto-joins the unit
- * lane per the project convention (see timeline-window-unit.test.ts).
- *
- * The test this file exists to make impossible to remove without noticing:
- * a converted .docx that is NOT rewritten to .md is silently discarded by
- * parseBatch (isMarkdownFile gates it) and the document vanishes from the
- * preview with zero errors — the same failure mode as the .markdown bug
- * fixed elsewhere on this branch (DOCX-13). Demonstrated by running both the
- * correct and the wrong path through the real parseBatch, per the "verify by
- * running" project convention — not asserted from reading the code.
- */
 import { describe, it, expect } from 'vitest';
 import { isDocxFile, docxToMarkdownPath, materializeFileParts } from '../src/routes/ingest.js';
 import { convertDocx } from '../src/services/ingest-docx/index.js';
@@ -36,7 +16,7 @@ const BATCH_CTX = {
   existingCategories: [],
 };
 
-describe('ingest.ts docx wiring — isDocxFile / docxToMarkdownPath (Issue #35 Task 8)', () => {
+describe('ingest.ts docx wiring — isDocxFile / docxToMarkdownPath', () => {
   it('isDocxFile matches .docx case-insensitively and rejects .md/.markdown', () => {
     expect(isDocxFile('chapter.docx')).toBe(true);
     expect(isDocxFile('Chapter.DOCX')).toBe(true);
@@ -82,7 +62,7 @@ describe('ingest.ts docx wiring — isDocxFile / docxToMarkdownPath (Issue #35 T
   });
 });
 
-describe('materializeFileParts — hidden-path .docx is skipped BEFORE conversion (fix round 1, carry #2)', () => {
+describe('materializeFileParts — hidden-path .docx is skipped BEFORE conversion', () => {
   it('a hidden .docx is never converted: no docxConversions entry, not rewritten, content left empty', async () => {
     const buf = await makeDocx({ documentXml: HEADING_DOCUMENT_XML });
     const hiddenFile = new File([buf], '.trash/chapter.docx');
@@ -115,7 +95,7 @@ describe('materializeFileParts — hidden-path .docx is skipped BEFORE conversio
   });
 });
 
-describe('chapter.docx + chapter.md colliding in one batch (fix round 1, carry #3 — pinned, not fixed)', () => {
+describe('chapter.docx + chapter.md colliding in one batch', () => {
   it('both rewrite to chapter.md and both come back titleCollision — deliberate, not accidental', async () => {
     const buf = await makeDocx({ documentXml: HEADING_DOCUMENT_XML });
     const conversion = await convertDocx(buf, { promoteHeadings: false });

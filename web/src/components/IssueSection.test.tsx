@@ -12,7 +12,7 @@ import { api } from '../api/client';
 import { IssueSection } from './IssueSection';
 import type { Severity } from '../hooks/useIssues';
 
-// Phase 26 Plan 06 — IssueSection now mounts <AuditCostDialog> which calls
+
 // useNavigate(); a MemoryRouter is required even when the dialog is closed.
 function renderSection(props: Parameters<typeof IssueSection>[0]) {
   const qc = new QueryClient({

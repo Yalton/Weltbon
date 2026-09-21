@@ -1,5 +1,4 @@
 /**
- * Phase 42 LAYER-01/02/03: Universe-scoped map layer + terrain-type CRUD.
  *
  * Auth: every route applies requireAuth (via apiR.use('/universes/*', requireAuth)
  *   at the app level) + requireUniverse (inline per-handler, the established pattern).
@@ -28,13 +27,11 @@ import type { AuthVariables } from '../middleware/auth.js';
 
 type AppEnv = { Variables: AuthVariables };
 
-// ─── Shared param schemas ─────────────────────────────────────────────────────
 
 const uidParams = z.object({ uid: z.string().uuid() });
 const uidAndLayerParams = z.object({ uid: z.string().uuid(), layerId: z.string().uuid() });
 const uidLayerTypeParams = z.object({ uid: z.string().uuid(), layerId: z.string().uuid(), typeId: z.string().uuid() });
 
-// ─── Zod schemas ──────────────────────────────────────────────────────────────
 
 const createLayerSchema = z.object({
   name: z.string().min(1).max(200),
@@ -45,7 +42,6 @@ const updateLayerSchema = z.object({
   name: z.string().min(1).max(200).optional(),
   defaultOpacity: z.number().min(0).max(1).optional(),
   sortOrder: z.number().int().optional(),
-  // Phase 52 SECRET-02: owner-only secret flag; false = visible to share visitors.
   secret: z.boolean().optional(),
 }).refine(
   (d) => d.name !== undefined || d.defaultOpacity !== undefined || d.sortOrder !== undefined || d.secret !== undefined,
@@ -89,11 +85,9 @@ const layerSchema = z.object({
   sortOrder: z.number(),
   createdAt: z.string().or(z.date()),
   terrainTypes: z.array(terrainTypeSchema),
-  // Phase 52 SECRET-02: owner-only secret flag in authenticated response (NOT in share.ts).
   secret: z.boolean().optional(),
 });
 
-// ─── Route definitions ────────────────────────────────────────────────────────
 
 const listLayersRoute = createRoute({
   method: 'get',
@@ -172,7 +166,6 @@ const deleteLayerRoute = createRoute({
   },
 });
 
-// Preset routes — must come BEFORE /{layerId} to avoid path conflict
 const presetBiomesRoute = createRoute({
   method: 'post',
   path: '/presets/biomes',
@@ -268,12 +261,7 @@ const deleteTerrainTypeRoute = createRoute({
   },
 });
 
-// ─── Helper ───────────────────────────────────────────────────────────────────
 
-/**
- * Fetch a layer and verify it belongs to the universe. Returns 404 if not found.
- * Mirrors requireMap in maps.ts — enforces the second IDOR boundary (T-42-04).
- */
 async function requireLayer(layerId: string, universeId: string) {
   const rows = await db()
     .select()
@@ -285,7 +273,6 @@ async function requireLayer(layerId: string, universeId: string) {
   return rows[0];
 }
 
-// ─── Router ───────────────────────────────────────────────────────────────────
 
 export const mapLayersRouter = new OpenAPIHono<AppEnv>()
 
@@ -311,7 +298,6 @@ export const mapLayersRouter = new OpenAPIHono<AppEnv>()
       .where(inArray(terrainTypes.layerId, layerIds))
       .orderBy(terrainTypes.sortOrder);
 
-    // Group terrain types by layerId
     const typesByLayer = new Map<string, typeof typeRows>();
     for (const t of typeRows) {
       const existing = typesByLayer.get(t.layerId) ?? [];
@@ -328,7 +314,6 @@ export const mapLayersRouter = new OpenAPIHono<AppEnv>()
   })
 
   // POST /universes/:uid/map-layers/presets/biomes — Biomes preset (7 types, transaction)
-  // NOTE: preset routes must be defined BEFORE /{layerId} routes to avoid path conflicts.
   .openapi(presetBiomesRoute, async (c) => {
     const { uid } = c.req.valid('param');
     await requireUniverse(uid, c.var.userId);
@@ -398,8 +383,6 @@ export const mapLayersRouter = new OpenAPIHono<AppEnv>()
     await requireUniverse(uid, c.var.userId);
     const data = c.req.valid('json');
 
-    // Append new layer at the end: next sort_order = max(existing) + 1.
-    // Without this every layer defaults to sort_order=0, so the up/down reorder
     // swap becomes a 0↔0 no-op and GET-list order is non-deterministic (WR-01).
     const [{ maxOrder }] = await db()
       .select({ maxOrder: max(mapLayers.sortOrder) })
@@ -430,7 +413,6 @@ export const mapLayersRouter = new OpenAPIHono<AppEnv>()
     if (data.name !== undefined) updates.name = data.name;
     if (data.defaultOpacity !== undefined) updates.defaultOpacity = data.defaultOpacity;
     if (data.sortOrder !== undefined) updates.sortOrder = data.sortOrder;
-    // Phase 52 SECRET-02: persist secret flag when provided
     if (data.secret !== undefined) updates.secret = data.secret;
 
     const [updated] = await db()

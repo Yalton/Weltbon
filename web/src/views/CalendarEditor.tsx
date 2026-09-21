@@ -8,7 +8,6 @@ import { EmptyState } from '../components/EmptyState';
 import { ConfirmDialog } from '../components/ConfirmDialog';
 import { Loading } from '../components/ui/Loading';
 
-// ─── LOCKED copy strings (all literals asserted by tests) ──────────────────
 const COPY = {
   PAGE_HEADING: 'Calendar',
   PAGE_SUBTITLE:
@@ -51,7 +50,6 @@ const COPY = {
   REMOVE_CANCEL_LABEL: 'Keep calendar',
 } as const;
 
-// ─── Row types with stable keys ─────────────────────────────────────────────
 
 function newRowId(): string {
   if (typeof crypto !== 'undefined' && 'randomUUID' in crypto) {
@@ -96,7 +94,6 @@ function arrayMove<T>(arr: T[], from: number, to: number): T[] {
   return result;
 }
 
-// ─── Draft → Calendar conversion ────────────────────────────────────────────
 
 function draftToCalendar(
   eras: EraRow[],
@@ -124,7 +121,6 @@ function draftToCalendar(
   };
 }
 
-// ─── Calendar → Draft rows conversion ───────────────────────────────────────
 
 function calendarToDraft(cal: Calendar): {
   eras: EraRow[];
@@ -155,23 +151,19 @@ function calendarToDraft(cal: Calendar): {
   };
 }
 
-// ─── CalendarEditor page ─────────────────────────────────────────────────────
 
 export function CalendarEditor() {
   const { uid } = useParams<{ uid: string }>();
   const { calendar, setCalendar, isLoading, isPending } = useCalendar(uid ?? '');
 
-  // Whether the user has started editing (creates a fresh empty draft when no calendar)
   const [editing, setEditing] = useState(false);
 
-  // Draft state
   const [eras, setEras] = useState<EraRow[]>([]);
   const [months, setMonths] = useState<MonthRow[]>([]);
   const [weekdays, setWeekdays] = useState<WeekdayRow[]>([]);
   const [moons, setMoons] = useState<MoonRow[]>([]);
   const [beforeEraAbbr, setBeforeEraAbbr] = useState('');
 
-  // Validation errors
   const [monthsError, setMonthsError] = useState<string | null>(null);
   const [eraOrderError, setEraOrderError] = useState<string | null>(null);
   const [saveError, setSaveError] = useState<string | null>(null);
@@ -181,13 +173,11 @@ export function CalendarEditor() {
   const [monthLengthErrors, setMonthLengthErrors] = useState<Record<string, string>>({});
   const [moonCycleErrors, setMoonCycleErrors] = useState<Record<string, string>>({});
 
-  // Live preview position input
   const [previewInput, setPreviewInput] = useState('412');
 
   // Remove-calendar confirm dialog
   const [removeOpen, setRemoveOpen] = useState(false);
 
-  // Hydrate draft when calendar loads (or clears)
   useEffect(() => {
     if (calendar !== null) {
       const draft = calendarToDraft(calendar);
@@ -239,7 +229,6 @@ export function CalendarEditor() {
   const validate = (): boolean => {
     let valid = true;
 
-    // Validate era start positions as numbers
     const newEraErrors: Record<string, string> = {};
     for (const row of eras) {
       const p = parsePosition(row.startPosition);
@@ -250,7 +239,6 @@ export function CalendarEditor() {
     }
     setEraStartErrors(newEraErrors);
 
-    // Validate month lengths as positive integers
     const newMonthErrors: Record<string, string> = {};
     for (const row of months) {
       const n = Number(row.lengthDays);
@@ -261,7 +249,6 @@ export function CalendarEditor() {
     }
     setMonthLengthErrors(newMonthErrors);
 
-    // Validate moon cycle days as positive integers
     const newMoonErrors: Record<string, string> = {};
     for (const row of moons) {
       const n = Number(row.cycleDays);
@@ -272,7 +259,6 @@ export function CalendarEditor() {
     }
     setMoonCycleErrors(newMoonErrors);
 
-    // Empty months check
     if (months.length === 0) {
       setMonthsError(COPY.VALIDATION_EMPTY_MONTHS);
       valid = false;
@@ -280,7 +266,6 @@ export function CalendarEditor() {
       setMonthsError(null);
     }
 
-    // Monotonic era starts check (only if no parse errors)
     if (Object.keys(newEraErrors).length === 0 && eras.length > 1) {
       const positions = eras.map((e) => parsePosition(e.startPosition))
         .filter((r): r is { ok: true; value: number } => r.ok)
@@ -325,7 +310,6 @@ export function CalendarEditor() {
     }
   };
 
-  // ── Live preview ─────────────────────────────────────────────────────────
   const previewPosition = parsePosition(previewInput);
   const draftCalendar: Calendar | null =
     editing && months.length > 0 && eras.length > 0
@@ -342,7 +326,6 @@ export function CalendarEditor() {
     return <Loading />;
   }
 
-  // ── Empty state (no calendar, not editing) ──────────────────────────────
   if (!editing && calendar === null) {
     return (
       <div className="max-w-2xl mx-auto">
@@ -365,7 +348,6 @@ export function CalendarEditor() {
     );
   }
 
-  // ── Editor ───────────────────────────────────────────────────────────────
   return (
     <div className="max-w-2xl mx-auto">
       <h1 className="text-2xl font-semibold tracking-tight">{COPY.PAGE_HEADING}</h1>

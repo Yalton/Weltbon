@@ -1,34 +1,3 @@
-/**
- * Phase 24-03 — cheap-finds unit tests.
- *
- * Tests the four deterministic heuristics in runCheapFinds:
- *   1. Orphan entries (no inbound AND no outbound links) → 'missing-link'
- *   2. Empty summary → 'underdeveloped'
- *   3. Empty meta value → 'underdeveloped'
- *   4. Untagged-but-cluster-eligible (Jaccard ≥ 0.5, min cluster size 3) → 'dangling-thread'
- *
- * Mocking strategy (Strategy A — mock db/client.js):
- *   - vi.mock('../src/db/client.js') intercepts the `db()` getter to return a
- *     controlled Drizzle-shaped query builder per test.
- *   - No real DB required — this is the unit lane.
- *
- * DB call order in runCheapFinds for a 1-orphan scenario:
- *   Call #1: db().select(...) → findOrphanEntries          → returns [orphan]
- *   Call #2: db().insert(...) → persistFinding: INSERT issues → returns [{ id }]
- *   Call #3: db().insert(...) → persistFinding: INSERT issueEntries → returns []
- *   Call #4: db().select(...) → findEmptySummaryEntries    → returns []
- *   Call #5: db().select(...) → findEmptyMetaValueEntries  → returns []
- *   Call #6: db().select(...) → findClusterEligibleEntries: untagged → returns []
- *   Call #7: db().select(...) → findClusterEligibleEntries: tagged   → returns []
- *
- * Zero-token-cost invariant:
- *   - Negative grep asserts cheap-finds.ts imports NO LLM SDKs.
- *
- * D-08 enforcement:
- *   - Negative grep asserts cheap-finds.ts has NO auto-close patterns.
- *   - Behavioral test asserts that a formerly-orphan entry now having a link
- *     does NOT cause dismissed_at to be mutated on a re-run.
- */
 
 import { describe, it, expect, vi, beforeEach } from 'vitest';
 import { readFileSync } from 'node:fs';

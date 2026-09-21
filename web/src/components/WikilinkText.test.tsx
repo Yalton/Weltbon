@@ -1,26 +1,3 @@
-/**
- * WikilinkText resolver tests — Phase 45 Plan 02 (XREF-04) + Phase 46 Plan 01/03 (XREF-02/XREF-03).
- *
- * Phase 45 tests:
- *  1. D-03: case-insensitive title match — [[empire]] resolves to entry "Empire"
- *  2. D-03 regression guard: exact-case [[Entry Title]] still resolves correctly
- *  3. D-01 slot 2: alias match → Link (by alias → entryId map)
- *  4. D-01 precedence: title beats alias — token matching both a title and another entry's alias resolves to the title entry
- *  5. D-04: oldest created_at wins on case-fold title collision (verified via EntryDetail map construction)
- *  6. display-text [[X|label]] renders label as visible anchor
- *  7. unresolved token still renders amber affordance
- *
- * Phase 46 Plan 01 tests (tokenize embed split):
- *  8. tokenize("see ![[Empire]]") yields kind 'embed', inner 'Empire' (via component render)
- *  9. tokenize("see [[Empire]]") still yields kind 'wikilink' (regression guard)
- *  10. Mixed "![[A]] and [[B]]" — embed A, text " and ", wikilink B (order preserved)
- *  11. A bare "!" not immediately followed by [[ stays plain text ("wow!" untouched)
- *  12. WikilinkResolutionData accepts entriesById / embedDepth / currentEntryId (backward-compat type check)
- *
- * Phase 46 Plan 03 tests (embed rendering):
- *  13. top-level ![[Known]] renders EntryEmbed (embed-callout or unavailable affordance)
- *  14. ![[Known]] at embedDepth===1 flattens to a hover-card link (D-05 flatten)
- */
 import { describe, it, expect, vi } from 'vitest';
 import { render, screen } from '@testing-library/react';
 import { MemoryRouter } from 'react-router-dom';
@@ -84,12 +61,12 @@ function EmbedWrapper({ children }: { children: ReactNode }) {
 // Tests
 // ---------------------------------------------------------------------------
 
-describe('WikilinkText — Phase 45 XREF-04 resolution', () => {
+describe('WikilinkText — XREF-04 resolution', () => {
   // ── D-03: case-insensitive title lookup ───────────────────────────────────
 
   it('resolves [[empire]] to entry "Empire" (D-03 case-insensitive title)', () => {
     const wikis = makeWikis({
-      // Build map with lowercased key — new Phase 45 convention
+
       entryTitles: new Map([['empire', 'entry-empire-id']]),
     });
     renderWikilink('see [[empire]]', wikis);
@@ -137,31 +114,6 @@ describe('WikilinkText — Phase 45 XREF-04 resolution', () => {
     const link = screen.getByRole('link', { name: 'SomeAlias' });
     expect(link).toBeDefined();
     expect(link.getAttribute('href')).toBe('/universes/universe-1/entries/entry-aliased-id');
-  });
-
-  // ── #60: source-path aliases from a Markdown import ──────────────────────
-
-  it('resolves a path-form wikilink through the source-path alias an import stored', () => {
-    const wikis = makeWikis({
-      entryTitles: new Map([['ayin pockets', 'entry-ayin-id']]), // H1-derived title
-      entryAliases: new Map([['lore/ayin_pockets', 'entry-ayin-id']]),
-    });
-    renderWikilink('see [[lore/ayin_pockets|Ayin pocket]]', wikis);
-
-    const link = screen.getByRole('link', { name: 'Ayin pocket' });
-    expect(link.getAttribute('href')).toBe('/universes/universe-1/entries/entry-ayin-id');
-  });
-
-  it('resolves a vault-absolute ref to the same alias, label untouched', () => {
-    const wikis = makeWikis({
-      entryTitles: new Map(),
-      entryAliases: new Map([['lore/ayin_pockets', 'entry-ayin-id']]),
-    });
-    renderWikilink('see [[/lore/ayin_pockets]]', wikis);
-
-    // The label keeps the slash the author typed; only the lookup is normalized.
-    const link = screen.getByRole('link', { name: '/lore/ayin_pockets' });
-    expect(link.getAttribute('href')).toBe('/universes/universe-1/entries/entry-ayin-id');
   });
 
   // ── D-01 precedence: title beats alias ────────────────────────────────────
@@ -249,10 +201,10 @@ describe('WikilinkText — Phase 45 XREF-04 resolution', () => {
 });
 
 // ---------------------------------------------------------------------------
-// Phase 46 Plan 01 — tokenize embed split (XREF-02/XREF-03)
+
 // ---------------------------------------------------------------------------
 
-describe('tokenize embed split — Phase 46 Plan 01', () => {
+describe('tokenize embed split', () => {
   // ── Direct tokenize() unit tests (white-box) ─────────────────────────────
 
   it('tokenize("see ![[Empire]]") yields one embed segment with inner "Empire"', () => {
@@ -321,7 +273,7 @@ describe('tokenize embed split — Phase 46 Plan 01', () => {
   });
 
   // ── Component integration: ![[entry]] at top level renders EntryEmbed ──
-  // Phase 46 Plan 03: the embed branch is now wired in WikilinkText. An
+
   // ![[Empire]] with embedDepth undefined (top-level) renders EntryEmbed,
   // which calls useEntry. With no data returned (mock default), it renders
   // the unavailable affordance (D-10).
@@ -347,10 +299,10 @@ describe('tokenize embed split — Phase 46 Plan 01', () => {
 });
 
 // ---------------------------------------------------------------------------
-// Phase 46 Plan 03 — embed branch in WikilinkText (D-05 flatten, EntryEmbed render)
+
 // ---------------------------------------------------------------------------
 
-describe('embed branch — Phase 46 Plan 03', () => {
+describe('embed branch', () => {
   // ── D-05: ![[Known]] at embedDepth===1 flattens to hover-card link ──────
 
   it('![[Known]] with embedDepth===1 flattens to a link (D-05 flatten, no recursive embed)', () => {

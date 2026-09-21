@@ -1,16 +1,3 @@
-/**
- * Plan F (Task 4) — hooks for the universe-scoped `/api/sync/conflicts` surface.
- *
- * Same scaffolding as useSyncLinks.test.tsx: api() mocked at the module
- * boundary, a fresh QueryClient per test with retry off, and invalidation
- * asserted by spying on the client rather than by observing a refetch (which
- * would depend on subscriber timing).
- *
- * THE COUNT FIXTURE HAS TWO ROWS ON PURPOSE. A one-row fixture passes
- * identically whether the hook returns `data.length` or the constant `1`, so
- * the badge test it feeds (components/Sidebar.test.tsx) could not fail. Two
- * rows is the smallest fixture that distinguishes those two implementations.
- */
 import { describe, it, expect, beforeEach, vi } from 'vitest';
 import { renderHook, act, waitFor } from '@testing-library/react';
 import { QueryClient, QueryClientProvider } from '@tanstack/react-query';

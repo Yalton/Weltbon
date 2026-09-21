@@ -14,7 +14,7 @@ The sign-off records `Signed-off-by: Name <email>` and certifies that you have t
 
 Changes to the web app, API, desktop app, database schema and migrations, sync protocol, import/export formats, and general self-hosting behavior belong in this repository. Do not submit production credentials, customer data, private infrastructure, billing configuration, monitoring destinations, or incident evidence.
 
-Public packages must install, build, and test without private repositories or secrets. New extension points must use documented configuration or versioned interfaces; public code may not import the private hosted-production overlay. See [ADR 0001](docs/adr/0001-open-core-and-hosted-boundary.md).
+Public packages must install, build, and test without private repositories or secrets. New extension points must use documented configuration or versioned interfaces; public code may not import the private hosted-production overlay.
 
 ## Before opening a pull request
 
@@ -35,13 +35,13 @@ Security reports do not belong in a pull request or public issue. Follow [SECURI
 ## Adding new authenticated API routes
 
 Any new authenticated route MUST mount via the `requireAuth` middleware (`api/src/middleware/auth.ts`).
-PAT compatibility is automatic by virtue of Phase 9's middleware design — `requireAuth` accepts both
+PAT compatibility is automatic: `requireAuth` accepts both
 JWT and PAT bearers transparently. Route handlers do NOT branch on auth method.
 
 For PAT meta-API endpoints (token issuance/revocation), use `requireJwtAuth` instead — this rejects
 PAT bearer tokens (D-13: a stolen PAT cannot mint or revoke other PATs).
 
-### Route declaration pattern (Phase 10)
+### Route declaration pattern
 
 All new routes MUST use `createRoute()` from `@hono/zod-openapi` so the OpenAPI schema at
 `/api/openapi.json` stays in sync with the actual API surface automatically. The pattern is:

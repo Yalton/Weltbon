@@ -26,30 +26,9 @@ import type {
   ExportPayloadLink,
 } from '../payload.js';
 
-/**
- * DOCX exporter — produces a Word document with:
- *
- *   1. Title page (universe name in Word's Title style + description + counts)
- *   2. "Contents" Heading1 + TableOfContents field (Word evaluates on first
- *      open via features.updateFields = true)
- *   3. Per category (sortOrder, Uncategorized last): Heading1 with page break
- *   4. Per entry (alphabetical): Heading2 + meta line + Quote summary +
- *      walker-rendered markdown body + Links section + Open Issues section
- *
- * Resolved issues are filtered out at the payload level (payload.openIssues
- * already excludes them); we never reach the fullIssues list here.
- *
- * Output is a Uint8Array — the route layer hands it directly to c.body().
- * Buffering the full DOCX is acceptable per CONTEXT.md (DOCX size is
- * bounded; the EXP-05 streaming requirement targets ZIP and PDF).
- */
 
 const md = unified().use(remarkParse).use(remarkGfm);
 
-/**
- * Phase 38 MEDIA-06 (D-08): Build an ImageRun paragraph for a stored asset.
- * Returns null if the asset bytes are not found in storage (graceful skip).
- */
 async function buildCoverParagraph(assetId: string): Promise<Paragraph | null> {
   const bytes = await storageBackend.get(assetId);
   if (!bytes) return null;
@@ -65,13 +44,6 @@ async function buildCoverParagraph(assetId: string): Promise<Paragraph | null> {
   });
 }
 
-/**
- * Phase 38 MEDIA-06 (D-08): Rewrite asset://uuid refs in markdown body to
- * embedded ImageRun paragraphs. Returns array of Paragraphs to splice into the
- * document in place of where the image would appear.
- *
- * Strategy: split the body on asset:// image patterns, process each segment.
- */
 async function resolveInlineAssets(
   body: string,
   assetMap: Map<string, ExportPayloadAsset>,
@@ -96,7 +68,6 @@ async function resolveInlineAssets(
   for (const part of parts) {
     if (part.type === 'text') {
       if (part.text.trim()) {
-        // Render text segment through the existing markdown parser.
         const md = unified().use(remarkParse).use(remarkGfm);
         const root = md.parse(part.text) as Root;
         result.push(...mdastToDocx(root, 3));
@@ -125,7 +96,6 @@ async function resolveInlineAssets(
 
 export async function renderUniverseDocx(payload: ExportPayload): Promise<Uint8Array> {
   const children: Array<Paragraph | Table | TableOfContents> = [];
-  // Phase 38 MEDIA-06 (D-08): build asset map for inline embed resolution.
   const assetMap = new Map(payload.assets.map((a) => [a.id, a] as const));
 
   // ---- Title page ----
@@ -187,7 +157,6 @@ export async function renderUniverseDocx(payload: ExportPayload): Promise<Uint8A
       }),
     );
     for (const entry of group.entries) {
-      // Heading2: entry title
       children.push(
         new Paragraph({
           heading: HeadingLevel.HEADING_2,
@@ -195,7 +164,6 @@ export async function renderUniverseDocx(payload: ExportPayload): Promise<Uint8A
         }),
       );
 
-      // Meta line: "Type: X · Tags: a, b, c"
       const tagText = entry.tags.length ? entry.tags.join(', ') : '—';
       children.push(
         new Paragraph({
@@ -209,13 +177,11 @@ export async function renderUniverseDocx(payload: ExportPayload): Promise<Uint8A
         }),
       );
 
-      // Phase 38 MEDIA-06 (D-08): cover image — between heading and summary.
       if (entry.coverImageId) {
         const coverPara = await buildCoverParagraph(entry.coverImageId);
         if (coverPara) children.push(coverPara);
       }
 
-      // Summary callout (Quote style)
       if (entry.summary) {
         children.push(
           new Paragraph({
@@ -237,7 +203,6 @@ export async function renderUniverseDocx(payload: ExportPayload): Promise<Uint8A
         }
       }
 
-      // Links section (outbound, grouped by relation label)
       const outbound = outboundBySource.get(entry.id);
       if (outbound && outbound.length) {
         children.push(
@@ -246,7 +211,6 @@ export async function renderUniverseDocx(payload: ExportPayload): Promise<Uint8A
             children: [new TextRun('Links')],
           }),
         );
-        // Phase 35 REL-01: label is now nullable; fall back to linkType then 'related'
         const byRelation = groupBy(outbound, (l) => l.label ?? l.linkType ?? 'related');
         for (const [rel, linksInRel] of byRelation) {
           children.push(
@@ -270,7 +234,6 @@ export async function renderUniverseDocx(payload: ExportPayload): Promise<Uint8A
         }
       }
 
-      // Open Issues section (only if any open issues for this entry)
       const issues = openIssuesByEntry.get(entry.id);
       if (issues && issues.length) {
         children.push(
@@ -329,16 +292,10 @@ function groupEntriesByCategory(payload: ExportPayload): CategoryGroup[] {
   return out;
 }
 
-/**
- * Build a map of source entry → outbound links. Bidirectional links appear
- * as outbound on BOTH endpoints (matches the markdown exporter's convention
- * established in plan 04-02).
- */
 function buildOutbound(payload: ExportPayload): Map<string, ExportPayloadLink[]> {
   const map = new Map<string, ExportPayloadLink[]>();
   for (const link of payload.links) {
     push(map, link.sourceEntryId, link);
-    // Phase 35 REL-01: was `if (link.bidirectional)` — undirected links appear on both sides
     if (link.direction === 'undirected') push(map, link.targetEntryId, link);
   }
   return map;

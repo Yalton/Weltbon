@@ -1,13 +1,3 @@
-/**
- * Phase 24-02 — gap-key.ts unit tests.
- *
- * Tests: pure functions only — no DB, no mocks needed.
- *
- * Coverage:
- *   - strictLexNormalize: 5 normalization cases from plan behavior
- *   - computeGapKey: shape, ref-order normalization, title canonicalization,
- *     different-title inequality, cross-universe non-collision (D-08), prefix
- */
 
 import { describe, it, expect } from 'vitest';
 import { strictLexNormalize, computeGapKey } from '../src/services/gap-key.js';

@@ -1,24 +1,6 @@
 import { useCallback, useState } from 'react';
 import type { IngestPreview, ReviewDecisions, SavedDraft } from '../types/ingestReview';
 
-/**
- * localStorage-backed import-draft hook (CONTEXT.md D-20).
- *
- * Storage slot: `weltbon.import.${universeId}` — namespaced under `weltbon.`
- * to avoid collisions with anything else in the same origin.
- *
- * Behavior contract:
- *   - On mount: read the slot once. Corrupt JSON returns null gracefully
- *     (no throw). The user simply starts fresh.
- *   - `save({ preview, decisions })`: stamps `savedAt` (ISO 8601), writes
- *     the slot, updates state. QuotaExceededError (UI-SPEC §7.3) is
- *     swallowed and surfaced via `lastError` — caller (Plan 12-06) renders
- *     a soft amber warning.
- *   - `clear()`: removes the slot, resets draft and lastError.
- *
- * Single-responsibility: this hook is just the read/write of the slot.
- * Debouncing is the caller's concern — pair with `useDebouncedCallback`.
- */
 export function useImportDraft(universeId: string) {
   const key = `weltbon.import.${universeId}`;
 

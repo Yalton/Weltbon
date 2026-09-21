@@ -1,37 +1,3 @@
-/**
- * Phase 23-03 — AnthropicProvider unit tests.
- *
- * Coverage (PROVIDER-02 + PROVIDER-05 Anthropic side + PROVIDER-07 Anthropic side):
- *
- *   1. validate() success path via mocked messages.countTokens
- *   2. validate() error mapping for every SDK subclass listed in
- *      RESEARCH §"SDK Error Taxonomy → 7 LLMError Variants":
- *      AuthenticationError, PermissionDeniedError, RateLimitError,
- *      APIConnectionError, APIConnectionTimeoutError,
- *      APIError.status === 402 / 404 / 529, defensive UnknownProviderError
- *   3. estimate() returns input_tokens from countTokens
- *   4. runAudit() canonical wire-shape output (text + toolUse + usage + costUsd)
- *   5. cache_control gating — positive case (≥ MIN_CACHEABLE_TOKENS) +
- *      negative case (< MIN_CACHEABLE_TOKENS) — locks Pitfall #3 / T-23-03-02
- *   6. Post-call refusal check throws ContentBlockedBySafetyFilter — locks
- *      Pitfall #1 / T-23-03-03
- *   7. listModels() + pricing() consult PRICING.anthropic only
- *
- * Mocking strategy (RESEARCH §"Mock SDK Strategy for Contract Test"):
- *   - vi.mock('@anthropic-ai/sdk') replaces the default export with a callable
- *     that returns a controlled { messages: { create, countTokens } } stub.
- *   - The default mock also carries instanceof-checkable error subclasses
- *     attached as static members (Anthropic.AuthenticationError etc.), each
- *     extending a base error class so the production code's
- *     `err instanceof Anthropic.AuthenticationError` checks succeed.
- *   - Module-scope vi.fn() handles (mockCountTokens, mockCreate) let each
- *     it-body program return values / rejected values per case.
- *
- * vi.hoisted convention (mirrors api/tests/llm-keys.test.ts lines 29-31):
- *   AnthropicProvider does NOT transitively import api/src/db/client.ts, but
- *   matching project convention pre-emptively defuses any future re-import
- *   that could pull config.ts → env() at module evaluation time.
- */
 
 import { describe, it, expect, vi, beforeEach } from 'vitest';
 
@@ -557,10 +523,10 @@ describe('AnthropicProvider (PROVIDER-02 + PROVIDER-05 + PROVIDER-07)', () => {
   });
 
   // -----------------------------------------------------------------------
-  // Phase 27 D-09 — emit_findings tool wire shape
+
   // -----------------------------------------------------------------------
 
-  it('runAudit forwards engine tools (including emit_findings) to messages.create tools[] (Phase 27 D-09)', async () => {
+  it('runAudit forwards engine tools (including emit_findings) to messages.create tools[]', async () => {
     mockCountTokens.mockResolvedValueOnce({ input_tokens: 100 });
     mockCreate.mockResolvedValueOnce(HAPPY_PATH_RESPONSE);
 

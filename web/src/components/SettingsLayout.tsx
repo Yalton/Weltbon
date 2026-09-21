@@ -1,12 +1,3 @@
-/**
- * SettingsLayout — vertical left-rail sub-nav for /settings pages.
- *
- * Per UI-SPEC §4.2-4.5:
- * - Desktop (md+): flex row, w-48 nav rail left, flex-1 main right
- * - Mobile (<md): flex col, horizontal pill row of links stacked above content
- *
- * Active state mirrors Sidebar.tsx SidebarNavLink pattern (UI-SPEC §4.3).
- */
 
 import { NavLink, Outlet } from 'react-router-dom';
 import { useRuntime } from '../runtime/RuntimeProvider';
@@ -36,34 +27,24 @@ export function SettingsLayout() {
               Visual
             </NavLink>
           </li>
-          {/*
-            Personal access tokens are a per-user credential, not an operator
-            control: `/settings/tokens` is not admin-gated and the API routes sit
-            behind `requireJwtAuth`, which scopes every token to its caller. So
-            this item gates on server mode alone. Folding it back into the
-            `isAdmin` block below (as 1dbffc2a did) leaves the page reachable
-            only by typing the URL.
-          */}
-          {authMode === 'server' && (
-            <li>
-              <NavLink
-                to="/settings/tokens"
-                end
-                className={({ isActive }) =>
-                  [
-                    'block rounded px-2 py-1.5 text-sm',
-                    isActive
-                      ? 'bg-[color:var(--color-accent)]/10 text-[color:var(--color-accent)] font-medium'
-                      : 'text-neutral-700 dark:text-neutral-200 hover:bg-neutral-100 dark:hover:bg-neutral-900',
-                  ].join(' ')
-                }
-              >
-                API tokens
-              </NavLink>
-            </li>
-          )}
           {authMode === 'server' && isAdmin && (
             <>
+              <li>
+                <NavLink
+                  to="/settings/tokens"
+                  end
+                  className={({ isActive }) =>
+                    [
+                      'block rounded px-2 py-1.5 text-sm',
+                      isActive
+                        ? 'bg-[color:var(--color-accent)]/10 text-[color:var(--color-accent)] font-medium'
+                        : 'text-neutral-700 dark:text-neutral-200 hover:bg-neutral-100 dark:hover:bg-neutral-900',
+                    ].join(' ')
+                  }
+                >
+                  API tokens
+                </NavLink>
+              </li>
               <li>
                 <NavLink
                   to="/settings/users"
@@ -110,9 +91,7 @@ export function SettingsLayout() {
             </NavLink>
           </li>
           <li>
-            {/* Phase 29 UI-SPEC §F — between Templates and LLM keys.
-                Label "Shares" matches the brevity of adjacent items
-                (Tokens / Invites / LLM keys / Templates). */}
+
             <NavLink
               to="/settings/shares"
               end
@@ -145,9 +124,7 @@ export function SettingsLayout() {
             </NavLink>
           </li>
           <li>
-            {/* Plan F Task 2 — account-scoped sync remotes. The universe-scoped
-                half of sync (links, runs, conflicts) is a tab in universe
-                settings, not an item here. */}
+
             <NavLink
               to="/settings/sync"
               end

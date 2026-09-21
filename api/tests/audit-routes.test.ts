@@ -1,31 +1,3 @@
-/**
- * Phase 24 Plan 05 — audit-routes integration tests.
- *
- * Coverage matrix:
- *   - POST /audit: 202 happy path; 409 concurrent; 403 opt-in off; 400 scope=entry without entryId;
- *     403/404 scope=entry with cross-universe entryId; 401 no auth; 403 cross-tenant
- *   - GET /audits/:runId: 200 state + suggestionCount; 403/404 cross-universe runId; 403 cross-tenant
- *   - D-02 lock: suggestionCount derived from COUNT(*) FROM issues WHERE audit_run_id = :runId
- *   - PATCH /universes/:id: audit fields accepted; auditEnabled=true without provider/model -> 400
- *   - PAT auth: POST /audit works with PAT bearer (audit trigger is normal user action, not meta-API)
- *
- * Mocking strategy:
- *   - getProvider factory mocked (Strategy A): estimate + runAudit never hit real providers
- *   - getDecryptedKey mocked: BYOK path returns a fixture key string
- *   - runAudit mocked to return a never-resolving promise (keeps run in 'pending'/'running'
- *     state for concurrent-409 tests)
- *
- * DB is REAL (createTestDb with isolated schema).
- *
- * All paths use /api prefix (matching how app.route('/api', apiR) mounts the router).
- *
- * Security invariants tested:
- *   T-24-05-01 -- opt-in enforcement (audit_enabled=false -> 403)
- *   T-24-05-02 -- requireUniverse cross-tenant (403)
- *   T-24-05-03 -- cross-universe runId in GET (404)
- *   T-24-05-04 -- no gap_key in POST body (strict() rejects extras; validated via 202 path)
- *   T-24-05-07 -- 409 on concurrent attempt
- */
 
 import { describe, it, expect, beforeAll, afterAll, beforeEach, vi } from 'vitest';
 import { encryptKey } from '../src/services/llm-key.js';
@@ -48,7 +20,7 @@ vi.mock('../src/services/audit-engine.js', async (orig) => {
 });
 
 // Mock the LLM provider factory so estimate never hits real providers
-// #50 Task 6: typed with the LLMProvider.estimate() argument rather than
+
 // `() => Promise<number>` — the shared tests assert WHICH credential reached
 // the provider, and `mock.calls[0][0]` on a zero-arg signature is a
 // compile-time tuple-index error, not a runtime one.

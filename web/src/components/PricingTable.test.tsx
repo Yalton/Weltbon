@@ -1,15 +1,3 @@
-/**
- * Phase 27 Plan 04 Task 2 — PricingTable overflow caption test (D-07).
- *
- * Pins:
- *   - When the live list (`useListModels`) contains models absent from
- *     PRICING for a provider, the table renders a caption beneath it with
- *     the exact CONTEXT copy and the correct N.
- *   - When the live list and PRICING agree (no overflow), no caption appears.
- *
- * PricingTable is mounted with no required prop in production; the live
- * count is summed across both providers (CONTEXT line 175 + PATTERNS line 447).
- */
 
 import { describe, it, expect, beforeEach, vi } from 'vitest';
 import { render, screen, waitFor } from '@testing-library/react';
@@ -43,7 +31,7 @@ const KEYS_BOTH_PROVIDERS = [
   { id: 'k-o', provider: 'openai', bodySuffix: 'oooo', label: 'o', createdAt: '', lastValidatedAt: null, totalSpentUsd: '0.0000' },
 ];
 
-describe('PricingTable — Phase 27 D-07 overflow caption', () => {
+describe('PricingTable — D-07 overflow caption', () => {
   beforeEach(() => {
     vi.mocked(api).mockReset();
   });

@@ -5,7 +5,7 @@ import { useState } from 'react';
 import { MetaEditor } from './MetaEditor';
 import type { FieldRegistryEntry } from '../types/fieldRegistry';
 
-// Phase 36 DATA-02: EntryRefInput consumes useEntries(universeId) as its
+
 // title-substring suggestion source. Mock it so the typed-row + D-02 tests run
 // without a QueryClient. The mock returns a stable universe-scoped entry list.
 const MOCK_ENTRIES = [

@@ -1,60 +1,3 @@
-/**
- * Phase 24-04 — audit-engine.ts unit tests (no DB).
- *
- * Coverage (AUDIT-06 SC-2 LOCK + cap variants + Zod taxonomy + hallucinated drop
- * + provider error classification + cache placement + stream-persist + D-06 wiring):
- *
- *   1.  Infinite-tool-call cap (AUDIT-06 SC-2 LOCK) — mock returns 20+ tool-use
- *       turns; engine aborts at exactly N=20; status=failed, error=budget_exhausted.
- *       mockRunAudit.mock.calls.length === 20 (21st call never made).
- *
- *   2.  Cost cap — cumulative cost exceeds auditMaxCostUsd; status=failed,
- *       error=budget_exhausted.
- *
- *   3.  Wall-clock cap — auditMaxWallClockMs=1 forces immediate cap breach;
- *       status=failed, error=budget_exhausted.
- *
- *   4.  Token cap — usage sums past auditMaxTokensTotal; status=failed,
- *       error=budget_exhausted.
- *
- *   5.  Invalid output (legacy category) — structured-output with
- *       category='influence-gap'; Zod parse fails; status=failed,
- *       error=invalid_output.
- *
- *   6.  Hallucinated referenced_entry_id + counter increment (mandatory) —
- *       suggestion with one unknown UUID; suggestion dropped AND
- *       hallucinatedEntryReferenceCount incremented by exactly 1.
- *
- *   7.  Provider error → taxonomy: LLMProviderError(InvalidApiKey) caught;
- *       status=failed, error=provider_error; raw message NOT in update.
- *
- *   8.  BYOK null → status=failed, error=provider_error.
- *
- *   9.  Happy path stream-persist — valid suggestion; INSERT called with
- *       source='ai', gapKey starts with 'v1:', auditRunId=runId.
- *
- *  10.  gap_key collision tracked — INSERT returns [] (collision);
- *       gapKeyCollisionCount incremented.
- *
- *  11.  Anthropic cache_control placement — provider='anthropic', digest
- *       token estimate ≥ MIN_CACHEABLE_TOKENS; system message contains
- *       CACHE_CONTROL_EPHEMERAL sentinel.
- *
- *  12.  D-06 wiring — mockRunCheapFinds returns createdIssueEntryIds=['entry-A'];
- *       mockBuildStructuralDigest called with (universeId, { excludeEntryIds:
- *       ['entry-A'] }).
- *
- * Mocking strategy (mirrors api/tests/llm-anthropic.test.ts):
- *   - vi.hoisted() for env stub + mock handles
- *   - vi.mock('../src/providers/llm/index.js') Strategy A (spread actual,
- *     override getProvider)
- *   - vi.mock('../src/services/llm-credential.js')
- *   - vi.mock('../src/services/cheap-finds.js')
- *   - vi.mock('../src/services/structural-digest.js')
- *   - Deps injection via the optional `deps` parameter on runAudit() for
- *     db, getProvider, resolveCredential, runCheapFinds, buildStructuralDigest,
- *     computeGapKey, getEntryBody, validateReferencedEntryIds
- */
 
 import { describe, it, expect, vi, beforeEach } from 'vitest';
 
@@ -212,7 +155,7 @@ function makeDbStub(opts: {
   const dbStub = () => {
     const chain: Record<string, unknown> = {};
 
-    // Phase 25 Step 2.5: raw SQL execute calls (SELECT dismissed-set + UPDATE snooze).
+
     // Default: SELECT returns empty rows (no dismissals), UPDATE is a no-op.
     chain.execute = vi.fn(() => Promise.resolve({ rows: [] }));
 
@@ -266,7 +209,7 @@ const RUN_ID = 'aaaaaaaa-aaaa-4aaa-8aaa-aaaaaaaaaaaa';
 const UNIVERSE_ID = 'bbbbbbbb-bbbb-4bbb-8bbb-bbbbbbbbbbbb';
 const VALID_ENTRY_ID = 'cccccccc-cccc-4ccc-8ccc-cccccccccccc';
 
-// Phase 27 D-09/D-10/D-12: the final-turn answer is delivered via the
+
 // emit_findings tool_use block (NOT prose text). The engine's parse path
 // looks for toolUse.find(t => t.name === 'emit_findings') and Zod-parses
 // `input` via AuditOutputStrictSchema.
@@ -362,7 +305,7 @@ beforeEach(() => {
 // Test suite
 // ---------------------------------------------------------------------------
 
-describe('audit-engine runAudit (Phase 24-04)', () => {
+describe('audit-engine runAudit', () => {
   // =========================================================================
   // Test 1: Infinite-tool-call cap (AUDIT-06 SC-2 LOCK)
   // =========================================================================
@@ -688,7 +631,7 @@ describe('audit-engine runAudit (Phase 24-04)', () => {
       // structurally undetectable. With AuditOutputStrictSchema (BL-02), the
       // strict envelope + strict suggestion rejects the whole payload,
       // triggering the engine's INVALID_OUTPUT fall-through.
-      // Phase 27 D-09: smuggled gap_key now arrives inside emit_findings
+
       // tool_use.input — the strict Zod parse still rejects it (BL-02
       // invariant preserved, just applied to tool_use.input).
       mockRunAudit.mockResolvedValue({
@@ -1063,7 +1006,7 @@ describe('audit-engine runAudit (Phase 24-04)', () => {
   );
 
   // =========================================================================
-  // Phase 26-02 Task 2: analyzed_entries atomic increment (AUDIT-07 / D-08)
+
   //
   // Behavior under test: when the engine materializes an entry body via a
   // getEntryBody tool call, audit_runs.analyzed_entries MUST be incremented
@@ -1152,10 +1095,10 @@ describe('audit-engine runAudit (Phase 24-04)', () => {
 });
 
 // ---------------------------------------------------------------------------
-// Phase 25 dismissed-set filter tests
+
 // Helper: makeDbStubWithExecute — extends makeDbStub with .execute() support
 // so Step 2.5 (SELECT dismissed gap_keys + UPDATE snooze decrement) can be
-// mocked per-test without touching the existing Phase 24 tests.
+
 // ---------------------------------------------------------------------------
 
 /**
@@ -1255,7 +1198,7 @@ function makeDbStubWithExecute(opts: {
 // The dismissed gap_key used across these tests.
 const DISMISSED_GAP_KEY = 'v1:abc123deadbeef12';
 
-describe('Phase 25 dismissed-set filter (AISSUE-04, AISSUE-05)', () => {
+describe('dismissed-set filter (AISSUE-04, AISSUE-05)', () => {
   // =========================================================================
   // Test 1: empty dismissed set → engine behaves identically to baseline
   // =========================================================================
@@ -1623,7 +1566,7 @@ describe('Phase 25 dismissed-set filter (AISSUE-04, AISSUE-05)', () => {
 });
 
 // ===========================================================================
-// #50 Task 7 — shared-credential runs
+
 //
 // A shared run spends an administrator's key against a reservation held out
 // of that administrator's monthly allowance. Two things therefore have to be
@@ -1660,7 +1603,7 @@ const SHARED_RUN_ROW = {
   credentialOwnerId: OWNER_ID,
 };
 
-describe('audit-engine shared-credential runs (#50 Task 7)', () => {
+describe('audit-engine shared-credential runs', () => {
   let mockResolveShared: ReturnType<typeof vi.fn>;
   let mockSettle: ReturnType<typeof vi.fn>;
   let mockGetReservation: ReturnType<typeof vi.fn>;
@@ -1830,7 +1773,7 @@ describe('audit-engine shared-credential runs (#50 Task 7)', () => {
   });
 
   it('settles an unpriced run at zero, matching the row it pins to 0.0000', async () => {
-    // Phase 27 D-06 pins cost_usd at '0.0000' for a model absent from
+
     // PRICING. Settling the provider's reported cost anyway would charge the
     // owner's month an amount the run row itself denies.
     const { dbStub } = makeDbStub({ runRow: SHARED_RUN_ROW });

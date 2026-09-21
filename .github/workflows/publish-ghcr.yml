@@ -21,15 +21,10 @@ on:
     tags:
       # Three-part semver ONLY, matching publish-desktop.yml.
       #
-      # `v*` also matched this repo's milestone-archive tags — v1.0 through
-      # v5.3, cut by commits like `chore: archive v5.3 milestone files`. Those
-      # are project-phase markers from a numbering scheme unrelated to the app
       # version, and this workflow has been building and pushing images for them
-      # all along: the runs for v5.0, v5.1 and v5.2 are milestone archives, not
       # releases, and metadata-action tagged each one as `latest`.
       #
       # Release tags are cut by release.yml and are always three-part. A
-      # milestone tag must never move `latest` on a published image again.
       - 'v[0-9]+.[0-9]+.[0-9]+'
 
 permissions:
@@ -49,16 +44,20 @@ jobs:
     # This job DOES build and push an image, which makes it heavier than the
     # release job in three ways worth knowing before touching it:
     #
-    #   - It builds on the dedicated CI VM. Disk is the real constraint; a
-    #     `docker system prune` may become part of routine care there.
+    #   - It builds on the box that also runs production. Disk is the real
+    #     constraint (~19 GB free when this was written, against a ~20 GB image
+    #     store); a `docker system prune` may become part of routine care here.
     #   - buildx and the Docker socket come from the runner container's mounted
     #     /var/run/docker.sock, so builds land in the HOST daemon and outlive
     #     the job.
     #   - It authenticates to GHCR with GITHUB_TOKEN, which is fine on a
-    #     self-hosted runner only because the CI runner group accepts private
-    #     repositories only. A public repository would hand untrusted fork code
-    #     the Docker socket.
-    runs-on: [self-hosted, weltbon-ci-integration]
+    #     self-hosted runner only because this repository is private. A
+    #     self-hosted runner on a public repo executes any fork's pull-request
+    #     code; making this repo public without moving these jobs back to
+    #     hosted runners would hand that code the Docker socket.
+    # The dedicated trusted publishing runner is not provisioned yet. Keep
+    # publishing on the existing production host until its replacement is online.
+    runs-on: [self-hosted, citreum]
     steps:
       - name: Checkout
         uses: actions/checkout@v4

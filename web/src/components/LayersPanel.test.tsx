@@ -1,17 +1,3 @@
-/**
- * Phase 42 Plan 03 — LayersPanel component tests.
- *
- * Asserts:
- *  1. The world-wide scope banner renders with the exact approved copy.
- *  2. When no layers exist, both preset buttons render.
- *  3. Given a mocked ordered layer with 3 bands, the first band's up-arrow
- *     has aria-disabled="true" and the last band's down-arrow has
- *     aria-disabled="true" (boundary enforcement for ordered reorder).
- *  4. The panel root has role="region" aria-label="Layers panel".
- *
- * Uses per-file api mock (convention per CategoryManageDialog.test.tsx)
- * and mocks useMapLayers to control data shapes deterministically.
- */
 
 import { describe, it, expect, vi, beforeEach } from 'vitest';
 import { render, screen, fireEvent } from '@testing-library/react';
@@ -29,7 +15,7 @@ vi.mock('../hooks/useMapLayers', () => ({
   useCreateMapLayer: vi.fn(() => ({ mutate: vi.fn(), isPending: false })),
   useUpdateMapLayer: vi.fn(() => ({ mutate: vi.fn(), isPending: false })),
   useDeleteMapLayer: vi.fn(() => ({ mutate: vi.fn(), isPending: false })),
-  // Phase 52 SECRET-01: secret-toggle mock (Rule 1 fix — mock must match export surface)
+
   useToggleLayerSecret: vi.fn(() => ({ mutate: vi.fn(), isPending: false })),
   useCreateTerrainType: vi.fn(() => ({ mutate: vi.fn(), isPending: false })),
   useUpdateTerrainType: vi.fn(() => ({ mutate: vi.fn(), isPending: false })),

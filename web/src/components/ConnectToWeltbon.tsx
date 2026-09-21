@@ -48,7 +48,6 @@
  * universe in hand, exactly as it does for `done`. Failures at steps 1-3 have
  * no universe to land in and keep their in-pane retry.
  *
- * PICKER + `localState: 'present'` (fix round 1). Adopting a universe the
  * server reports as already `'present'` on this instance is a dead end: the
  * server's 409 (`SyncUniverseAlreadyLocalError`) covers both `'present'` and
  * `'linked'`, but the hook's recovery only works for `'linked'` (it finds an
@@ -82,20 +81,12 @@ const STEP_LABEL: Record<ConnectStep, string> = {
   done: 'All set',
 };
 
-/**
- * `failedStep` is typed as the whole `ConnectStep` union, but only four of its
- * members are ever reachable as a failure — `runFrom`'s catch stores the `from`
- * it was called with, and that is never 'choosing' (no call to fail) or 'done'
- * (not a step). This narrows to the four the copy module knows, and returns
- * null for the unreachable pair rather than inventing a step name for them.
- */
 function asFailureStep(step: ConnectStep | null): ConnectFailureStep | null {
   return step === 'authenticating' || step === 'discovering' || step === 'adopting' || step === 'syncing'
     ? step
     : null;
 }
 
-/** The two lines every failure shows: which step stopped, and why. */
 function failureCopy(
   failedStep: ConnectStep | null,
   error: { message: string; code?: string } | null,
@@ -113,10 +104,7 @@ export function ConnectToWeltbon(props: { onDone(universeId: string): void; onCa
   const state = useConnectToWeltbon();
   const { step, failedStep, error, universes, universeId, start, chooseUniverse, retry } = state;
 
-  // Two ways to end up in the universe: the flow finished, or only the first
   // pull failed after the universe was already adopted (OB-04). The second is
-  // not a lesser outcome that stays here — the EntryList banner IS the
-  // specified UI for it, and it offers the retry.
   const firstSyncFailed = failedStep === 'syncing' && !!universeId;
   useEffect(() => {
     if ((step === 'done' || firstSyncFailed) && universeId) onDone(universeId);
@@ -160,8 +148,6 @@ function CredentialsPane({
   onCancel: () => void;
   error: { message: string; code?: string } | null;
 }) {
-  // Only ever reached with failedStep === 'authenticating' (see the pane
-  // selection above), so the step this names is not a guess.
   const failure = error ? failureCopy('authenticating', error) : null;
   const ids = { baseUrl: useId(), email: useId(), password: useId() };
   const [baseUrl, setBaseUrl] = useState('');
@@ -175,8 +161,6 @@ function CredentialsPane({
     try {
       await start({ baseUrl: baseUrl.trim(), email: email.trim(), password });
     } finally {
-      // Cleared as soon as start() resolves, win or lose — its lifetime ends
-      // here, the same rule SyncRemoteForm.tsx:12 states for a PAT.
       setPassword('');
       setSubmitting(false);
     }
@@ -275,9 +259,7 @@ function PickerPane({
   chooseUniverse: (universeId: string) => Promise<void>;
   onCancel: () => void;
 }) {
-  // A peer account with no universes at all reaches the picker (only a
   // length-of-one list auto-skips it), and "choose one" over an empty list is
-  // an instruction the user cannot follow. Say what is actually true instead.
   if (universes.length === 0) {
     return (
       <div className="space-y-3">

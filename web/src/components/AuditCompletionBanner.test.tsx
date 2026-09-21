@@ -1,15 +1,3 @@
-/**
- * Phase 27 Plan 04 Task 3 — AuditCompletionBanner cost-unknown chip tests.
- *
- * Pins:
- *   - Test 1: when `run.costUnknown === true`, the literal string `cost
- *     unknown` renders inside an amber chip; `$0.0000` does NOT appear.
- *   - Test 2: when `run.costUnknown === false`, the existing cost rendering
- *     (`Cost: $X.XXXX`) is unchanged.
- *
- * Mocks useAuditRun + useEstimateAudit + useIssues + useUniverse at the
- * module boundary so we exercise the cost-rendering branch deterministically.
- */
 
 import { describe, it, expect, vi, beforeEach } from 'vitest';
 import { render, screen } from '@testing-library/react';
@@ -72,7 +60,7 @@ const BASE_RUN = {
   suggestionCount: 3,
 };
 
-describe('AuditCompletionBanner — Phase 27 D-06 cost_unknown chip', () => {
+describe('AuditCompletionBanner — D-06 cost_unknown chip', () => {
   beforeEach(() => {
     vi.mocked(useEstimateAudit).mockReturnValue({ data: undefined } as never);
     vi.mocked(useUniverse).mockReturnValue({ data: { auditEnabled: true } } as never);
@@ -165,45 +153,6 @@ describe('AuditCompletionBanner — context truncation', () => {
   });
 });
 
-/**
- * #50 Task 9 — whether `text` implies something about the OWNER's/
- * administrator's key state (existence, validity, deletion, revocation,
- * rotation), which the server deliberately never discloses to the recipient
- * (see useLlmShares.ts's file header: "a recipient who could tell one
- * owner-side failure from another has been handed an oracle for the
- * administrator roster").
- *
- * This is prose, not a secret value, so it cannot be a literal poison-value
- * scan the way SharedLlmConnections.test.tsx's `expectNoOwnerOrKeyMaterial`
- * is. Two earlier versions were both caught as PERMEABLE, and the second
- * failure is the instructive one:
- *
- *   1. The first used two regexes (`/administrator'?s key/i` plus a
- *      same-clause deleted/revoked proximity scan) and missed "the owner's key
- *      is invalid", "the owner's API key has expired" and "the
- *      administrator... deleted their key".
- *   2. The fix for (1) stripped the phrase `personal ... key` before scanning,
- *      to keep the legitimate remedy sentence ("add a personal API key in
- *      Settings → LLM keys") from tripping a broad proximity match. That
- *      strip removed the very NOUN the proximity patterns need, anywhere it
- *      appeared — so "The administrator's personal API key was revoked." and
- *      "The owner disabled their personal API key." walked straight through,
- *      as did "the admin removed the credential" because `removed` was simply
- *      not in the verb list. The four phrasings the file happened to test all
- *      tripped, so the guard LOOKED validated.
- *
- * What (2) teaches: strip the literal sentence that is known-safe, never a
- * noun phrase, because a noun phrase is exactly what the scan is looking for.
- * REMEDY_SENTENCE below is the actual shipped remedy clause, verbatim.
- *
- * The orderings are enumerated rather than left to one clever regex because
- * English puts these three tokens in every order: "the owner's key was
- * revoked" (S-O-V), "the owner revoked their key" (S-V-O), "the key was
- * revoked by the owner" (O-V-S), "revoked the credential belonging to the
- * administrator" (V-O-S). A guard that only matched the order a reviewer
- * happened to write is the failure mode this branch has already hit
- * ("the owner's key is invalid" passed a guard meant to catch it).
- */
 const REMEDY_SENTENCE = /add a personal API key in Settings\s*(?:\u2192|->)\s*LLM keys\.?/gi;
 
 function impliesOwnerKeyState(rawText: string): boolean {
@@ -240,7 +189,7 @@ function expectNoOwnerKeyStateImplication() {
   expect(impliesOwnerKeyState(text)).toBe(false);
 }
 
-describe('AuditCompletionBanner — #50 Task 9 shared-connection error copy', () => {
+describe('AuditCompletionBanner — shared-connection error copy', () => {
   beforeEach(() => {
     vi.mocked(useEstimateAudit).mockReturnValue({ data: undefined } as never);
     vi.mocked(useUniverse).mockReturnValue({ data: { auditEnabled: true } } as never);
@@ -302,20 +251,14 @@ describe('AuditCompletionBanner — #50 Task 9 shared-connection error copy', ()
   });
 });
 
-describe('AuditCompletionBanner — #50 Task 9 leak simulation for the owner-key-state guard', () => {
+describe('AuditCompletionBanner — leak simulation for the owner-key-state guard', () => {
   beforeEach(() => {
     vi.mocked(useEstimateAudit).mockReturnValue({ data: undefined } as never);
     vi.mocked(useUniverse).mockReturnValue({ data: { auditEnabled: true } } as never);
     vi.mocked(useIssues).mockReturnValue({ data: [] } as never);
   });
 
-  /**
-   * Every phrasing a real copy regression would plausibly produce. The first
-   * four were supplied when the guard was written; the last six are the ones
-   * the final whole-branch review executed the guard against and found it
-   * MISSED — including "the admin removed the credential", the plainest thing
-   * a copy edit could produce, whose verb was simply absent from the list.
-   */
+
   const LEAK_PHRASINGS = [
     // Originally covered.
     "The administrator's key was revoked.",
@@ -331,26 +274,7 @@ describe('AuditCompletionBanner — #50 Task 9 leak simulation for the owner-key
     'This connection stopped working because the admin removed the credential.',
   ];
 
-  /**
-   * Planted in the REAL producer, not in a copy of the assertion.
-   *
-   * ERROR_COPY is the table AuditCompletionBanner actually renders from, so
-   * overwriting one entry and mounting the component sends the poison through
-   * the same path the shipped copy takes — component → JSX → jsdom →
-   * `document.body.textContent` → guard. A leak check that only fed a string
-   * to `impliesOwnerKeyState` would prove the regex works on strings and
-   * nothing about whether the guard sees what the banner renders (this
-   * branch's `'iv'`-matching-`"source":"live"` and `[object Object]` failures
-   * were both exactly that gap).
-   *
-   * try/finally on BOTH the copy entry and the DOM: an assertion that throws
-   * must not leave a regressed line in a module-level table shared with every
-   * later test in this file, nor poison text in a jsdom document that RTL's
-   * `cleanup()` does not own. Task 9 was already bitten by this isolation
-   * class once, and the sibling checks in AuditHistoryTable.test.tsx were
-   * fixed the same way.
-   */
-  it.each(LEAK_PHRASINGS)('LEAK CHECK: catches %j rendered by the real banner', (phrase) => {
+    it.each(LEAK_PHRASINGS)('LEAK CHECK: catches %j rendered by the real banner', (phrase) => {
     const original = ERROR_COPY.shared_access_revoked;
     vi.mocked(useAuditRun).mockReturnValue({
       data: { ...BASE_RUN, status: 'failed', error: 'shared_access_revoked', suggestionCount: 0 },

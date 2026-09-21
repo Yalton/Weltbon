@@ -4,22 +4,6 @@ import userEvent from '@testing-library/user-event';
 import { MemoryRouter, Routes, Route } from 'react-router-dom';
 import { QueryClient, QueryClientProvider } from '@tanstack/react-query';
 
-/**
- * Phase 20 Plan 06 — TimelineView orchestrator test suite.
- *
- * Strategy (per plan §Q10 + acceptance criteria): mock the heavy children
- * (TimelineCanvas, TimelineEntryPanel, TimelineRangeDialog, PinPopover) as
- * identity stubs so each test isolates the orchestrator's wiring decisions:
- *   - range-dialog-vs-canvas gate (window === null branch)
- *   - prop flow (pins.length surfacing into both children)
- *   - Configure-range toolbar button → opens dialog
- *   - Loading state
- *
- * Full @dnd-kit drag → drop → popover wiring is NOT reliably testable in
- * jsdom (no real pointer events, no real layout). That gesture surface is
- * covered by manual UAT (Task 3 checkpoint) and by GraphCanvas.test.tsx /
- * TimelineCanvas.test.tsx for the per-component gesture logic.
- */
 
 // Mock hooks BEFORE importing TimelineView.
 const windowState: { window: { start: number; end: number } | null } = {

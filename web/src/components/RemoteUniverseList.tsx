@@ -1,21 +1,3 @@
-/**
- * What one remote holds, and what this instance can do about it (A-04, A-07,
- * A-12).
- *
- * PLACEMENT. This belongs to the remote's row in /settings/sync, not to a
- * universe's Sync tab: F-01 puts links under the universe they belong to, and
- * an unadopted universe has no local settings page for a tab to live in.
- *
- * ADOPT IS TWO REQUESTS, ON PURPOSE (A-06). Adoption creates the universe and
- * the link; the CONTENT arrives through the ordinary run, so this component
- * calls the same `useRunSyncLink` the Sync tab uses and renders the same
- * summary. A dedicated long-running adopt endpoint would have needed its own
- * progress story, its own error mapping and its own copy about slow first syncs
- * — three things F-02 and F-06 already settled.
- *
- * ERROR COPY. Every failure goes through `syncErrorMessage`; no error prose is
- * written in this file.
- */
 import { useState } from 'react';
 import {
   useRemoteUniverses,
@@ -69,14 +51,6 @@ export function RemoteUniverseList({ remote }: { remote: SyncRemote }) {
   );
 }
 
-/**
- * One universe on the remote, and the single action its state affords.
- *
- * Its own component so `useRunSyncLink` can be called with THIS row's universe
- * id. A list-level hook call would have no universe to name and would need an
- * empty-string sentinel — which is both a smell and a live bug the day that
- * hook's per-universe invalidation starts mattering.
- */
 function RemoteUniverseRow({ remote, universe }: { remote: SyncRemote; universe: RemoteUniverse }) {
   const adopt = useAdoptUniverse();
   const linkExisting = useLinkRemoteUniverse();
@@ -91,8 +65,6 @@ function RemoteUniverseRow({ remote, universe }: { remote: SyncRemote; universe:
     setCopy(null);
     try {
       const link = await adopt.mutateAsync({ remoteId: remote.id, universeId: universe.id });
-      // Only after the adopt RESOLVES — running against a link that was never
-      // created would report a second, misleading failure over the real one.
       setResult(await run.mutateAsync({ id: link.id }));
     } catch (err) {
       setCopy(syncErrorMessage(err));

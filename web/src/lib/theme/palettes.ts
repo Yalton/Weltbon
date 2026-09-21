@@ -2,7 +2,6 @@ import type { UniverseTheme } from '../../types/theme';
 
 export type ThemeVars = Record<string, string>;
 
-/** hex '#rrggbb' → [r,g,b] */
 function rgb(hex: string): [number, number, number] {
   return [
     parseInt(hex.slice(1, 3), 16),
@@ -11,7 +10,6 @@ function rgb(hex: string): [number, number, number] {
   ];
 }
 
-/** mix hex toward white by t (0..1), returns '#rrggbb' */
 function towardWhite(hex: string, t: number): string {
   const [r, g, b] = rgb(hex);
   const c = (v: number) => Math.round(v + (255 - v) * t).toString(16).padStart(2, '0');
@@ -23,14 +21,12 @@ function glow(hex: string, px: number, alpha: number): string {
   return `0 0 ${px}px rgb(${r} ${g} ${b} / ${alpha})`;
 }
 
-/** mix hex toward black by t (0..1), returns '#rrggbb' */
 function towardBlack(hex: string, t: number): string {
   const [r, g, b] = rgb(hex);
   const c = (v: number) => Math.round(v * (1 - t)).toString(16).padStart(2, '0');
   return `#${c(r)}${c(g)}${c(b)}`;
 }
 
-/** All accent-derived tokens from a base accent hex (spec §2.1). */
 export function deriveAccent(hex: string): ThemeVars {
   const strong = towardWhite(hex, 0.3);
   const [r, g, b] = rgb(hex);
@@ -47,7 +43,6 @@ export function deriveAccent(hex: string): ThemeVars {
   };
 }
 
-/** Canvas stops per palette + accent set (mockup-approved values, spec §2.1). */
 export const PALETTES: Record<
   NonNullable<UniverseTheme['palette']>,
   ThemeVars
@@ -98,7 +93,6 @@ export const FONT_STACKS: Record<NonNullable<UniverseTheme['displayFont']>, stri
   crimson: "'Crimson Pro', Georgia, serif",
 };
 
-/** Resolve a UniverseTheme into CSS custom properties for ThemeScope. */
 export function themeToCssVars(theme: UniverseTheme | null | undefined): ThemeVars {
   if (!theme) return {};
   const vars: ThemeVars = {};

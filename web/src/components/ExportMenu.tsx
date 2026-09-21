@@ -20,7 +20,6 @@ const FORMAT_ITEMS: FormatItem[] = [
 
 interface Props {
   universeId: string;
-  /** Used if Content-Disposition is missing/malformed (e.g. universe.name from caller). */
   fallbackFilename: string;
   onToast: (msg: string) => void;
 }
@@ -54,9 +53,7 @@ export function ExportMenu({ universeId, fallbackFilename, onToast }: Props) {
       // eslint-disable-next-line no-console
       console.error('[ExportMenu] export failed:', err);
       // DV-14: prefer the server's named reason (e.g. the local-mode PDF 501)
-      // over the generic message — but the body may be absent, empty, or
       // non-JSON (a plain-text error page), so parse it defensively and never
-      // let a parse failure replace one confusing failure with another.
       let message = 'Export failed. Try again.';
       if (err instanceof Response) {
         try {
@@ -96,7 +93,6 @@ export function ExportMenu({ universeId, fallbackFilename, onToast }: Props) {
                 key={item.format}
                 disabled={isLoading}
                 onSelect={(e) => {
-                  // Keep menu open during async export; user dismisses manually.
                   e.preventDefault();
                   void exportFormat(item.format);
                 }}

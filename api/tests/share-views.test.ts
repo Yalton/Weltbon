@@ -1,28 +1,3 @@
-/**
- * api/tests/share-views.test.ts — Phase 29 SHARE-04 privacy invariants
- * (per-route assertions for the /api/share/* visitor read surface).
- *
- * Asserts the four privacy invariants that the share-views.ts service
- * functions implement, plus the revoke/expire 404 contract:
- *
- *  A. GET /api/share/entries returns ONLY entries where is_public = true
- *     (T-29-23 — regression dropping the is_public filter).
- *  B. GET /api/share/entries/{id} for a private entry returns 404
- *     (T-29-16 + D-13 — private indistinguishable from missing).
- *  C. GET /api/share/entries/{public-id} backlinks omit backlinks whose
- *     source entry is private — silent drop, no count, no placeholder
- *     (T-29-24 + D-12).
- *  D. GET /api/share/graph-data omits private nodes AND drops any edge
- *     with at least one private endpoint (T-29-25 + D-14 + T-29-19 —
- *     cap-after-filter; the cap operates on the public-filtered set).
- *  E. Revoked share-token returns 404 (NOT 401, NOT 200) on the share
- *     read surface (T-29-26 + D-06 — immediate revocation).
- *  F. Expired share-token returns 404 (D-05 — bonus coverage).
- *
- * Lane: DB-gated (integration). Uses createTestDb + cleanDb so each test
- * starts from a known empty state; per-test seeding builds exactly the
- * (public, private) entry / link pairs the test needs.
- */
 
 import { describe, it, expect, beforeAll, afterAll, beforeEach } from 'vitest';
 import { eq } from 'drizzle-orm';
@@ -142,7 +117,7 @@ async function seedLink(opts: { sourceEntryId: string; targetEntryId: string; la
   return row!;
 }
 
-describe('Phase 29 share-view privacy invariants', () => {
+describe('share-view privacy invariants', () => {
   // ────────────────────────────────────────────────────────────────────
   // Test A — T-29-23: list filter on is_public
   // ────────────────────────────────────────────────────────────────────
@@ -155,7 +130,7 @@ describe('Phase 29 share-view privacy invariants', () => {
     });
 
     expect(res.status).toBe(200);
-    // Phase 33: share /entries returns a bare array (matches authenticated contract)
+
     expect(Array.isArray(res.body)).toBe(true);
     // eslint-disable-next-line @typescript-eslint/no-explicit-any
     const list = res.body as any[];
@@ -341,7 +316,7 @@ describe('Phase 29 share-view privacy invariants', () => {
 
   // ────────────────────────────────────────────────────────────────────
   // Test G — T-33-04 + T-33-05: ?type= filter on public share entries
-  // (Phase 33 CONLANG-04 N+1 fix: server-side entryType narrowing)
+
   // ────────────────────────────────────────────────────────────────────
   it('GET /api/share/entries?type=language returns only public language entries (T-33-04/T-33-05)', async () => {
     const publicLang = await seedEntry({ isPublic: true, title: 'Public Language', entryType: 'language' });
@@ -353,7 +328,7 @@ describe('Phase 29 share-view privacy invariants', () => {
     });
 
     expect(res.status).toBe(200);
-    // Phase 33: share /entries returns a bare array (matches authenticated contract)
+
     expect(Array.isArray(res.body)).toBe(true);
     // eslint-disable-next-line @typescript-eslint/no-explicit-any
     const list = res.body as any[];
@@ -381,7 +356,7 @@ describe('Phase 29 share-view privacy invariants', () => {
     });
 
     expect(res.status).toBe(200);
-    // Phase 33: share /entries returns a bare array (matches authenticated contract)
+
     // eslint-disable-next-line @typescript-eslint/no-explicit-any
     const list = res.body as any[];
     expect(
@@ -465,8 +440,8 @@ describe('Phase 29 share-view privacy invariants', () => {
 
   it('H. PARITY: the share entries list exposes every field the auth list does', async () => {
     // This repo has shipped the same bug twice: a field added to the auth list, forgotten
-    // on the share list, tests green because web fixtures injected it (Phase 48 body,
-    // Phase 49.1 aliases). A hardcoded field list cannot catch the NEXT one — so this
+
+
     // compares the full key sets of two LIVE payloads and fails on any unlisted divergence.
     const assetId = await seedAsset('parity.png');
     const pub = await seedEntry({ isPublic: true, title: 'Parity Entry' });
@@ -617,7 +592,7 @@ describe('XREF-07: private-reference leak invariants (hover-card / embed share p
 
     expect(res.status).toBe(200);
 
-    // Phase 33 / T-49-08: share /entries returns a bare array.
+
     expect(
       Array.isArray(res.body),
       `T-49-08: GET /api/share/entries MUST return a bare array (not a wrapper object). ` +
@@ -791,7 +766,7 @@ describe('MAP-UI-03: getPublicMap summary projection (D-09 / share-projection-mi
   // ──────────────────────────────────────────────────────────────────────────────
   // Background: In share mode there is NO client-side useEntries join for map pins.
   // The tooltip excerpt source (summary) MUST come from the server projection.
-  // Plan 50-03 adds `summary: entries.summary` to the getPublicMap pins select.
+
   // The entries table is already INNER JOINed for the is_public=true privacy filter,
   // so no new join is required — summary only ever reflects a public entry.
   //
@@ -953,7 +928,7 @@ describe('MAP-UI-03: getPublicMap summary projection (D-09 / share-projection-mi
 
 // ─── ROUTE-03 RED gate: getPublicMap must return a routes bare array ───────────
 //
-// This minimal test acts as the TDD RED gate for Task 1. It will fail until
+
 // getPublicMap in share-views.ts projects routes. Once the implementation lands
 // (GREEN), the full coverage suite (describe 'ROUTE-03: route projection') takes
 // over with field-presence, field-absence, and standalone assertions.
@@ -1182,7 +1157,7 @@ describe('ROUTE-03: getPublicMap route projection (T-51-02 / T-51-08)', () => {
 
 // ─── NEST-01: getPublicMap pin+region targetMapId projection ──────────────────
 //
-// Phase 53 Plan 03 — TDD RED gate.
+
 //
 // These four tests prove the core NEST-01 share invariants:
 //

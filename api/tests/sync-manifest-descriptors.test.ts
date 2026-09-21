@@ -8,16 +8,6 @@ import {
   type ManifestRow,
 } from '../src/services/sync/manifest.js';
 
-/**
- * Task 3 (Plan B): collection descriptors + manifest types.
- *
- * The drift-proof test below is the load-bearing one: it builds a manifest
- * via the REAL buildManifest from a minimal stub ExportPayload (every
- * collection empty, a minimal universe object). ExportPayload forces every
- * required field to be present — TypeScript enforces the stub is honest.
- * If a new manifest collection is ever added without a matching descriptor
- * (or vice versa), this test fails.
- */
 
 function stubPayload(): ExportPayload {
   const now = new Date('2026-01-01T00:00:00.000Z');
@@ -60,7 +50,7 @@ function stubPayload(): ExportPayload {
   };
 }
 
-describe('sync collection descriptors (Plan B, Task 3)', () => {
+describe('sync collection descriptors', () => {
   it('COLLECTIONS covers EXACTLY the manifest keys minus the singleton/metadata keys', () => {
     const manifest = buildManifest(stubPayload()) as unknown as Record<string, unknown>;
     const manifestCollectionKeys = Object.keys(manifest).filter(
@@ -182,7 +172,7 @@ describe('sync collection descriptors (Plan B, Task 3)', () => {
   });
 });
 
-describe('content-comparison field sets (Plan B, Task 3)', () => {
+describe('content-comparison field sets', () => {
   it('NON_CONTENT_FIELDS excludes updatedAt/createdAt from content comparison (B-02)', () => {
     expect(NON_CONTENT_FIELDS.has('updatedAt')).toBe(true);
     expect(NON_CONTENT_FIELDS.has('createdAt')).toBe(true);

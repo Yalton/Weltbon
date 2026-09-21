@@ -7,36 +7,6 @@ import { useSimSettings } from '../store/simSettings';
 import { useEntries } from '../hooks/useEntries';
 import type { Canvas2dRenderer } from '../lib/sim/canvas2dRenderer';
 
-/**
- * AppBackground — fixed-position Canvas2D constellation sim behind every authenticated route.
- *
- * Mount strategy: first child of Layout.tsx (authenticated layout).
- * The canvas is fixed + z-index -10 + pointer-events:none — never blocks UI.
- *
- * Lifecycle:
- * - On mount: init renderer, detect prefers-reduced-motion.
- *   - If reduced: single static draw; rAF loop never starts.
- *   - If not reduced: start 30fps-capped rAF loop.
- * - visibilitychange: pause loop when hidden, resume when visible + not reduced.
- * - matchMedia change: if reduce fires → cancel rAF + static draw; if no-reduce → start rAF.
- * - MutationObserver on documentElement.class: legacy hook only — the app is dark-only now, no toggle triggers it.
- * - window.resize (debounced 100ms): renderer.resize(innerWidth, innerHeight).
- * - On unmount: cancelAnimationFrame + remove all listeners + disconnect observer + renderer.dispose().
- *
- * Plan 08-03 extension:
- * - Subscribes to useSimSettings (showEntriesAsBodies toggle).
- * - Subscribes to useEntries(universeId) when inside /universes/:uid/* routes.
- * - When toggle ON + universeId present: calls renderer.setEntries(mapped entries).
- * - Otherwise: calls renderer.setEntries([]) to clear entry layer.
- *
- * Error handling: renderer.init() errors are caught; console.warn'd; component stays mounted
- * with an invisible canvas (never crashes the React tree). Per UI-SPEC §10.
- *
- * Accessibility: aria-hidden="true" + role="presentation" + pointer-events-none. Per UI-SPEC §11.5.
- * Threat model: T-08-04 (rAF runaway), T-08-05 (memory leak), T-08-06 (screen reader noise) — all mitigated.
- * Threat model: T-08-09 (only id + entryType cross to renderer; no titles/bodies/sensitive fields) — mitigated.
- * Threat model: T-08-10 (hard cap 80 via renderer.setEntries entryCap) — mitigated.
- */
 export function AppBackground() {
   const canvasRef = useRef<HTMLCanvasElement>(null);
   const rendererRef = useRef<Canvas2dRenderer | null>(null);
@@ -50,19 +20,16 @@ export function AppBackground() {
   const showEntriesAsBodies = useSimSettings((s) => s.showEntriesAsBodies);
 
   // POL-03: detect if we're inside a /universes/:uid/* route
-  // useMatch('/universes/:uid/*') returns a match object with params.uid, or null outside.
   const universeMatch = useMatch('/universes/:uid/*');
   const universeId = universeMatch?.params?.uid ?? null;
 
   // POL-03: fetch entries for current universe (only when inside a universe route)
-  // useEntries is disabled when universeId is null via its own `enabled: !!universeId` guard.
   const { data: entries } = useEntries(universeId ?? '');
 
   useEffect(() => {
     const canvas = canvasRef.current;
     if (!canvas) return;
 
-    // Detect initial theme
     const isDark = document.documentElement.classList.contains('dark');
 
     // Detect reduced-motion preference
@@ -179,17 +146,12 @@ export function AppBackground() {
   }, []); // mount once
 
   // POL-03: update renderer entry layer when toggle state, universe context, or entries change.
-  // This effect runs AFTER the mount effect above (React runs effects in declaration order).
-  // rendererRef.current is set during the mount effect, so it's available here on
-  // subsequent renders triggered by dependency changes.
-  // On first mount: both effects run in order within the same commit, so rendererRef is
   // populated by the time this effect runs (React guarantees intra-commit effect ordering).
   useEffect(() => {
     const renderer = rendererRef.current;
     if (!renderer || initErrorRef.current) return;
 
     if (showEntriesAsBodies && universeId && entries) {
-      // Map Entry objects to the minimal shape the renderer needs.
       // Per T-08-09: only id + entryType cross to renderer — no titles, bodies, or sensitive fields.
       const mapped = entries.map((e) => ({ id: e.id, type: e.entryType }));
       renderer.setEntries(mapped);

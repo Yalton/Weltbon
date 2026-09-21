@@ -15,12 +15,7 @@ export interface DiagramEdge {
   sourceEntryId: string;
   targetEntryId: string;
   label: string | null;
-  // Phase 35 REL-01: Plan 03 changed the diagram edgeSchema to expose direction
-  // instead of bidirectional (direction='directed'|'undirected').
-  // The diagram editor derives its "bidirectional" toggle from direction==='undirected'.
   // The create mutation still sends `bidirectional: boolean` to the server (DIAGRAM-02
-  // API toggle preserved — Plan 03 keeps the request schema for backward compat);
-  // only the response shape carries direction.
   direction: string;
   linkType: string | null;
   diagramId: string | null;
@@ -154,12 +149,6 @@ export interface UpdateEdgeInput {
   color?: string;
 }
 
-/**
- * PATCH /universes/:uid/diagrams/:did/edges/:edgeId
- * Invalidates the isolated diagram key AND the graph-data key (same set as
- * useCreateEdge / useDeleteEdge — never re-keys the ['graph-data'] family).
- * T-31-20: no shared-key re-keying.
- */
 export function useUpdateEdge(universeId: string, diagramId: string) {
   const qc = useQueryClient();
   return useMutation({

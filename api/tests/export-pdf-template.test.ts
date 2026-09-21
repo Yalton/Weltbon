@@ -10,14 +10,6 @@ import {
 } from '../src/services/export/pdf/template.js';
 import type { ExportPayload } from '../src/services/export/payload.js';
 
-/**
- * Plan 04-03 Task 1 unit-level coverage. These tests do NOT need Chromium —
- * they exercise the HTML template + font block generators in isolation.
- *
- * The font block tolerates missing woff2 files on disk; this test runs in
- * environments without bundled fonts and asserts the function still returns
- * a string (possibly empty, with stderr warnings) instead of crashing.
- */
 
 function buildFixturePayload(): ExportPayload {
   // Minimal payload covering the structural cases: 2 categories with sortOrder,
@@ -35,17 +27,17 @@ function buildFixturePayload(): ExportPayload {
       name: 'Pdf Test Universe',
       description: 'A short subtitle',
       entryTypes: ['entity', 'concept'],
-      // Phase 20 D-01 + Phase 35 REL-01: required fields on ExportPayloadUniverse
+
       timelineWindow: null,
       linkTypes: {},
-      // Plan A2 (A2-06): required universe-level fields on ExportPayloadUniverse
+
       calendar: null,
       theme: null,
       fieldRegistry: [],
       auditEnabled: false,
       auditProvider: null,
       auditModel: null,
-      // Plan B (Task 1): required universe identity/timestamps on ExportPayloadUniverse.
+
       createdAt: new Date('2026-01-01T00:00:00Z'),
       updatedAt: new Date('2026-01-01T00:00:00Z'),
     },
@@ -61,7 +53,7 @@ function buildFixturePayload(): ExportPayload {
         summary: 'A short summary',
         body: '## Body Heading\n\nSome **bold** text and a [link](http://example.com).',
         tags: ['tag1', 'tag2'],
-        // Phase 45 XREF-04 (D-08) + Phase 38 MEDIA-04 (D-06): required on ExportPayloadEntry.
+
         aliases: [],
         coverImageId: null,
         meta: {},
@@ -113,10 +105,10 @@ function buildFixturePayload(): ExportPayload {
         sourceEntryId: 'e1',
         targetEntryId: 'e2',
         label: 'knows',
-        // Phase 35 REL-01: direction replaces bidirectional; 'undirected' = was bidirectional=true
+
         direction: 'undirected',
         linkType: null,
-        // Plan C (manifest 2.2.0): diagram edge membership + styling.
+
         diagramId: null,
         lineStyle: null,
         color: null,
@@ -140,7 +132,7 @@ function buildFixturePayload(): ExportPayload {
     graphPositions: [],
     timelinePins: [],
     entrySlugMap: slugMap,
-    // Phase 38 MEDIA-06 (D-07) + Phase 41/44/51: required collections on ExportPayload.
+
     assets: [],
     maps: [],
     mapPins: [],
@@ -148,7 +140,7 @@ function buildFixturePayload(): ExportPayload {
     mapRoutes: [],
     mapLayersData: [],
     terrainTypesData: [],
-    // Plan A2: required new collections on ExportPayload (dictionary/diagrams/shareTokens).
+
     dictionaryWords: [],
     diagrams: [],
     diagramNodes: [],
@@ -156,7 +148,7 @@ function buildFixturePayload(): ExportPayload {
   };
 }
 
-describe('Plan 04-03 Task 1: pdf/fonts.ts', () => {
+describe('pdf/fonts.ts', () => {
   it('buildFontFaceBlock returns a string (possibly empty when fonts are missing)', async () => {
     const block = await buildFontFaceBlock();
     expect(typeof block).toBe('string');
@@ -189,7 +181,7 @@ describe('Plan 04-03 Task 1: pdf/fonts.ts', () => {
   });
 });
 
-describe('Plan 04-03 Task 1: pdf/template.ts', () => {
+describe('pdf/template.ts', () => {
   it('escapeHtml escapes the dangerous five characters', () => {
     expect(escapeHtml('a & b < c > d " e \' f')).toBe(
       'a &amp; b &lt; c &gt; d &quot; e &#39; f',

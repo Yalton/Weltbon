@@ -205,8 +205,8 @@ describe('detectUnstyledHeadings (DOCX-09)', () => {
     expect(detectUnstyledHeadings([para('Just prose.', {}, BODY)]).size).toBe(0);
   });
 
-  // --- Fix round 1: three deviations from the design spec's exact algorithm
-  // (project documentation, "DOCX-09 —
+
+
   // The heuristic, as an algorithm"). Each of these failed against the
   // pre-fix implementation before the corresponding fix landed.
 

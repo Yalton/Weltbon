@@ -55,9 +55,5 @@ const getVersionRoute = createRoute({
 });
 
 export const versionRoutes = new OpenAPIHono().openapi(getVersionRoute, (c) =>
-  // buildInfo() read per request rather than captured at module scope, matching
-  // the env() discipline documented in routes/config.ts: a value frozen at
-  // first import is wrong for any process that can observe the env change,
-  // including this route's own tests.
   c.json(buildInfo(), 200),
 );

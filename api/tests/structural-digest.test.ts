@@ -1,28 +1,3 @@
-/**
- * Phase 24-02 — structural-digest.ts unit tests.
- *
- * Strategy: Strategy A (vi.hoisted + vi.mock db client) — same as audit-tools.test.ts.
- *
- * The mock must support THREE parallel db() queries:
- *   1. entries  (select id, title, entryType, summary, tags — no body)
- *   2. links    (select sourceEntryId, label, targetEntryId)
- *   3. timelinePins (select entryId, position)
- *
- * We stage a universe with 3 entries (A, B, C), one link (A→"knows"→B),
- * and one timeline pin (C) for the main test scenarios.
- *
- * Coverage:
- *   (a) digest contains all entry titles
- *   (b) digest contains link tuples [sourceEntryId, label, targetEntryId]
- *   (c) digest contains timeline-pin tuples [entryId, position]
- *   (d) digest does NOT contain sentinel body text 'BODY_SHOULD_NOT_APPEAR_IN_DIGEST'
- *   (e) validEntryIds matches the entries-table row set
- *   (f) excludeEntryIds filter — full scenario:
- *       - digest does NOT contain excluded entries' titles
- *       - digest does NOT contain link tuples touching excluded entries
- *       - digest DOES contain non-excluded entries' titles and their pins
- *       - validEntryIds STILL contains all entries (allowlist unaffected)
- */
 
 import { describe, it, expect, vi, beforeEach } from 'vitest';
 
@@ -197,10 +172,10 @@ describe('buildStructuralDigest', () => {
 });
 
 // ---------------------------------------------------------------------------
-// BL-03 / scope='entry' narrowing tests (Phase 24-09)
+
 // ---------------------------------------------------------------------------
 
-describe("BL-03 / scope='entry' narrowing (Phase 24-09)", () => {
+describe("BL-03 / scope='entry' narrowing", () => {
   beforeEach(() => {
     vi.clearAllMocks();
   });
@@ -280,7 +255,7 @@ describe("BL-03 / scope='entry' narrowing (Phase 24-09)", () => {
 });
 
 // ---------------------------------------------------------------------------
-// BL-03 regression / scope='universe' default unchanged (Phase 24-09)
+
 // ---------------------------------------------------------------------------
 
 describe("BL-03 regression / scope='universe' default unchanged", () => {

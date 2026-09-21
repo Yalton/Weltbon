@@ -1,18 +1,3 @@
-/**
- * Phase 11-03 Task 1 — ingest-zip streaming unpacker tests (TDD RED → GREEN).
- *
- * Coverage:
- *   - happy path (valid-vault.zip → all .md entries returned)
- *   - file_count cap (D-15 → BatchLimitError{limit:'file_count'})
- *   - file_size cap (D-15 → BatchLimitError{limit:'file_size'})
- *   - total_uncompressed_size cap (D-15b → BatchLimitError aborts mid-stream on bomb)
- *   - directory entries skipped
- *   - non-utf8/binary entries returned as best-effort string (endpoint filters non-md)
- *
- * Fixtures (re-built on demand if missing):
- *   - api/tests/fixtures/ingest/zip/valid-vault.zip
- *   - api/tests/fixtures/ingest/zip/zip-bomb.zip
- */
 
 import { describe, it, expect, beforeAll } from 'vitest';
 import { existsSync, readFileSync, readdirSync, statSync } from 'node:fs';
@@ -72,7 +57,7 @@ async function makeZipBuffer(builder: (zip: ZipFileLike) => void): Promise<Buffe
   });
 }
 
-describe('unpackZip (Phase 11-03 Task 1)', () => {
+describe('unpackZip', () => {
   beforeAll(() => {
     ensureFixtures();
   });
@@ -193,7 +178,7 @@ describe('unpackZip (Phase 11-03 Task 1)', () => {
   });
 });
 
-describe('BatchLimitError (Phase 11-03 Task 1)', () => {
+describe('BatchLimitError', () => {
   it('exposes limit + max properties; message names which limit', () => {
     const e = new BatchLimitError('zip_size', 50 * 1024 * 1024);
     expect(e).toBeInstanceOf(Error);

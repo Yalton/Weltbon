@@ -4,56 +4,28 @@ import { GlyphIcon } from '../lib/mapGlyphs';
 import type { MapPin, MapRegion, TerrainAreaRegion } from '../hooks/useMap';
 import type { MapLayer } from '../hooks/useMapLayers';
 
-// ─── Props ────────────────────────────────────────────────────────────────────
 
 export interface MapLegendProps {
-  /** Enriched pins (with entryType for color fallback). */
   pins: MapPin[];
-  /** Regions (with optional color). */
   regions: MapRegion[];
-  /**
-   * Persisted caption overrides keyed by "{color}:{icon|''}".
-   * Provided by map.legendLabels JSON field (parsed object or null).
-   */
   legendLabels: Record<string, string> | null;
-  /** Called when the user renames a legend row caption. */
   onRenameLabel: (key: string, value: string) => void;
-  /** Whether the panel is visible. */
   visible: boolean;
-  /** Toggle panel open/closed. */
   onToggle: () => void;
 
-  // Phase 43 TERRAIN-05: optional props for per-layer terrain legend blocks.
-  // When all three are present, append a legend block per visible layer that has
-  // at least one terrain area painted on the current map.
-  /** All map layers for this universe (with terrainTypes populated). */
   layers?: MapLayer[];
-  /** All terrain areas on the current map (terrainTypeId non-null). */
   terrainAreas?: TerrainAreaRegion[];
-  /** Per-viewer layer visibility/opacity (from localStorage or MapEditor state). */
   layerViewerState?: Record<string, { visible: boolean; opacity: number }>;
 }
 
-// ─── Row derivation ───────────────────────────────────────────────────────────
 
 interface LegendRow {
-  /** Composite key: "{color}:{icon}" or "{color}:" for regions (no icon). */
   key: string;
   color: string;
-  /** Glyph key from MAP_GLYPHS, or null if this row has no icon. */
   icon: string | null;
-  /** Default caption = entry type name; overridden by legendLabels[key]. */
   defaultLabel: string;
 }
 
-/**
- * Auto-derives one row per distinct (color, icon) combination across all pins
- * and regions (D-03). Entries with no color fall back to entryTypeHexColor.
- * Regions never have icons this phase (D-02).
- *
- * Key difference from RelationLegend.deriveRows: no per-row color editor
- * (D-03 — color is edited on the element itself via the context menu picker).
- */
 function deriveRows(pins: MapPin[], regions: MapRegion[]): LegendRow[] {
   const seen = new Set<string>();
   const rows: LegendRow[] = [];
@@ -76,7 +48,7 @@ function deriveRows(pins: MapPin[], regions: MapRegion[]): LegendRow[] {
 
   for (const region of regions) {
     const color = region.color ?? '#6b7280'; // neutral fallback for standalone regions
-    const icon = null; // regions have no icon this phase (D-02)
+    const icon = null;
     const key = `${color}:`;
     if (seen.has(key)) continue;
     seen.add(key);
@@ -91,23 +63,7 @@ function deriveRows(pins: MapPin[], regions: MapRegion[]): LegendRow[] {
   return rows;
 }
 
-// ─── MapLegend ────────────────────────────────────────────────────────────────
 
-/**
- * Auto-derived map legend panel (D-03).
- *
- * One row per distinct (color, icon) combination across pins + regions.
- * Captions are renamable inline; overrides persist via onRenameLabel.
- *
- * CRITICAL: outer wrapper uses pointer-events-none so d3-zoom is never blocked.
- * Only the panel itself (pointer-events-auto) intercepts pointer events.
- *
- * Key differences from RelationLegend:
- * - NO onColorChange / no per-row color editor (D-03).
- * - Icon glyph swatch added via inline GlyphIcon (D-02).
- * - Derives rows from pins + regions instead of edges.
- * - Caption overrides from legendLabels[key] not from linkType registry.
- */
 export function MapLegend({
   pins,
   regions,
@@ -121,7 +77,6 @@ export function MapLegend({
 }: MapLegendProps) {
   const rows = deriveRows(pins, regions);
 
-  // Track which row is being renamed (by key).
   const [editingKey, setEditingKey] = useState<string | null>(null);
   const [draftLabel, setDraftLabel] = useState('');
 
@@ -144,7 +99,6 @@ export function MapLegend({
 
   return (
     // Pointer-events-none wrapper so the d3-zoom SVG below is never blocked.
-    // Same overlay guard as RelationLegend (lines 104–107).
     <div className="pointer-events-none absolute inset-0">
       {visible && (
         <div
@@ -219,12 +173,7 @@ export function MapLegend({
             </ul>
           )}
 
-          {/* Phase 43 TERRAIN-05: per-layer terrain legend blocks.
-              Rendered only when all three optional props are provided.
-              Each visible layer with at least one terrain area present on this
-              map renders a block: a heading (layer name) + one row per present
-              type in sort_order (reads as a ranked ramp for ordered layers).
-              Hidden layers and absent types are omitted (D-43-06). */}
+
           {layers && terrainAreas && layerViewerState &&
             [...layers]
               .sort((a, b) => a.sortOrder - b.sortOrder)
@@ -232,20 +181,16 @@ export function MapLegend({
                 // Gate: hidden layer drops its block entirely (D-43-06).
                 if (layerViewerState[layer.id]?.visible === false) return null;
 
-                // Derive present type IDs: only terrain types actually used on
-                // THIS map (not the full layer palette).
                 const presentTypeIds = new Set(
                   terrainAreas
                     .filter((a) => a.layerId === layer.id)
                     .map((a) => a.terrainTypeId)
                 );
 
-                // Filtered + sorted terrain types (present on this map only).
                 const presentTypes = (layer.terrainTypes ?? [])
                   .filter((t) => presentTypeIds.has(t.id))
                   .sort((a, b) => a.sortOrder - b.sortOrder);
 
-                // Gate: no present types → render nothing for this layer.
                 if (presentTypes.length === 0) return null;
 
                 return (

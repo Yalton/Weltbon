@@ -1,7 +1,5 @@
-// Review round 1, Finding 2 coverage. Uses node:test / node:assert rather
-// than vitest — this package has no test runner installed, and this review
-// round is explicitly "pnpm install not needed," so no new dependency.
-// Build first (`tsc`), then: node --test dist/*.test.js
+// Uses node:test and node:assert because this package has no separate test-runner dependency.
+// Build first (`tsc`), then run: node --test dist/*.test.js
 import { test, describe, before, after } from 'node:test';
 import assert from 'node:assert/strict';
 import { chmod, mkdir, mkdtemp, readdir, readFile, rm, stat, writeFile } from 'node:fs/promises';
@@ -9,7 +7,7 @@ import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import { loadOrCreateSecrets, secretsPath } from './secrets.js';
 
-describe('loadOrCreateSecrets (DV-10 / review rounds 1-2)', () => {
+describe('loadOrCreateSecrets', () => {
   let dir: string;
 
   before(async () => {
@@ -91,7 +89,7 @@ describe('loadOrCreateSecrets (DV-10 / review rounds 1-2)', () => {
     assert.equal(raw, '{"jwtSecret": "abc');
   });
 
-  // Review round 2, Finding 4: valid JSON that parses fine but is missing a
+  // Valid JSON that parses fine but is missing a
   // key (hand-edited, or written by some other schema) is the same clobber
   // class as the unreadable/malformed cases above, even though it can't
   // arise from a crash mid-write the way a truncated file can.

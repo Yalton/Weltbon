@@ -1,5 +1,4 @@
 /**
- * Phase 22-05 — TanStack Query hooks for /api/llm-keys/*.
  *
  * Wire shape (post-Plan-04 + Plan-05 consent additions):
  *   GET    /api/llm-keys                  → LlmKey[]
@@ -32,23 +31,7 @@ export interface LlmKey {
   label: string;
   createdAt: string;
   lastValidatedAt: string | null;
-  /**
-   * Phase 26 D-14: cumulative cost across all audit runs that consumed this
-   * key's provider (joined server-side by provider + user_id — see Plan 08).
-   * Already 4-decimal-formatted (`"0.0042"`); the LlmKeys view prefixes `$`.
-   * Approximate: multiple keys per (provider, user_id) share the same total
-   * since `audit_runs` does not store `byok_key_id`. Documented as a known
-   * limitation in CONTEXT.md D-14; precise per-key attribution is deferred.
-   */
   totalSpentUsd: string;
-  /**
-   * Phase 27 D-06: count of audit runs against this key's provider for this
-   * user that were charged against an unpriced model (`audit_runs.cost_unknown
-   * = true`). These rows are excluded from `totalSpentUsd` (the SUM); the
-   * LlmKeys view renders a neutral footnote `(plus N runs with unknown
-   * pricing)` when the count is > 0. Optional for backward-compatibility with
-   * older cached payloads; treat absence as `0`.
-   */
   costUnknownCount?: number;
 }
 
@@ -68,15 +51,6 @@ export interface RevalidateResult {
 const LLM_KEYS_QUERY_KEY = ['llm-keys'] as const;
 const LLM_CONSENT_QUERY_KEY = ['llm-consent'] as const;
 
-/**
- * List the caller's LLM provider keys (masked).
- *
- * `staleTime: 60_000` so a second subscriber that mounts within a minute of
- * the first one (e.g. PricingTable mounting under LlmKeys, or UniverseSettings
- * navigating in shortly after) reads the cached value instead of refetching.
- * The mutations in this file all `invalidateQueries(LLM_KEYS_QUERY_KEY)` after
- * success, so user-initiated changes still surface immediately.
- */
 export function useLlmKeys() {
   return useQuery({
     queryKey: LLM_KEYS_QUERY_KEY,
@@ -85,7 +59,6 @@ export function useLlmKeys() {
   });
 }
 
-/** Submit a new (provider, key, label) — strict-state validate→encrypt→insert. */
 export function useCreateLlmKey() {
   const qc = useQueryClient();
   return useMutation({
@@ -100,7 +73,6 @@ export function useCreateLlmKey() {
   });
 }
 
-/** Replace an existing key (provider is taken from the existing row, not the request). */
 export function useReplaceLlmKey() {
   const qc = useQueryClient();
   return useMutation({
@@ -115,7 +87,6 @@ export function useReplaceLlmKey() {
   });
 }
 
-/** Revoke (hard-delete) an LLM key. */
 export function useRevokeLlmKey() {
   const qc = useQueryClient();
   return useMutation({
@@ -127,13 +98,11 @@ export function useRevokeLlmKey() {
       qc.invalidateQueries({ queryKey: LLM_KEYS_QUERY_KEY });
     },
     onError: () => {
-      // Silent invalidate on 404 race (mirrors useRevokeToken pattern).
       qc.invalidateQueries({ queryKey: LLM_KEYS_QUERY_KEY });
     },
   });
 }
 
-/** Re-ping the provider; advances last_validated_at on success. */
 export function useRevalidateLlmKey() {
   const qc = useQueryClient();
   return useMutation({
@@ -147,7 +116,6 @@ export function useRevalidateLlmKey() {
   });
 }
 
-/** Read the caller's consent state. */
 export function useLlmConsent() {
   return useQuery({
     queryKey: LLM_CONSENT_QUERY_KEY,
@@ -155,7 +123,6 @@ export function useLlmConsent() {
   });
 }
 
-/** Persist the caller's consent (idempotent — D-07: never cleared). */
 export function useGrantLlmConsent() {
   const qc = useQueryClient();
   return useMutation({
@@ -165,11 +132,7 @@ export function useGrantLlmConsent() {
       }),
     onSuccess: (data) => {
       // WR-03 fix: optimistically set the consent query data — drop the
-      // redundant invalidate that previously triggered an immediate refetch
-      // overwriting this write. The server's response is authoritative for
-      // this mutation (the POST always returns the persisted consentedAt),
       // so the refetch was a wasted network round-trip; the view's
-      // "consent reveals paste form" transition was waiting on the
       // unnecessary GET round-trip rather than the optimistic write.
       qc.setQueryData<LlmConsentState>(LLM_CONSENT_QUERY_KEY, {
         consentedAt: data.consentedAt,

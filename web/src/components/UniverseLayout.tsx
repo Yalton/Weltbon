@@ -5,17 +5,6 @@ import { AppBackground } from './AppBackground';
 import { ThemeScope } from './theme/ThemeScope';
 import { useUniverse } from '../hooks/useUniverse';
 
-/**
- * Layout shell for universe-scoped routes (/universes/:uid/entries/*,
- * /universes/:uid/graph, /universes/:uid/issues, /universes/:uid/import).
- *
- * Provides the sidebar + outlet split. The header mirrors the header-only
- * Layout so the app feels consistent when transitioning between the
- * universe picker (/universes) and a specific universe. Renders
- * AppBackground so the ambient sim is visible across every authenticated
- * universe-scoped surface (matches the Layout shell used by /universes
- * and /settings).
- */
 export function UniverseLayout() {
   const { uid } = useParams<{ uid: string }>();
   const { data: universe } = useUniverse(uid);

@@ -408,7 +408,7 @@ describe('EntryEditor kebab + SaveAsTemplateDialog (28-06)', () => {
 });
 
 // ---------------------------------------------------------------------------
-// Phase 47 XREF-01 — Wikilink autocomplete integration tests
+
 // ---------------------------------------------------------------------------
 
 // Test entries for the wikilink picker
@@ -435,7 +435,7 @@ function makeTestEntry(
 }
 
 // ---------------------------------------------------------------------------
-// Phase 48 XREF-05 — Two-phase rename-propagation save (D-08/D-09/D-10)
+
 // ---------------------------------------------------------------------------
 
 // Entry that has an existing title so title-change diffing works.
@@ -509,7 +509,7 @@ function renderEditModeForRename({
 }
 
 // ---------------------------------------------------------------------------
-// Content-Forward Views §5 (Task 10) — editor hero
+
 // ---------------------------------------------------------------------------
 
 // Render EntryEditor in edit mode for a fixture entry with caller-supplied
@@ -662,7 +662,7 @@ describe('Content-Forward Views §5 — editor hero', () => {
     const hero = screen.getByTestId('editor-hero');
     await user.click(within(hero).getByRole('button', { name: /set cover image/i }));
 
-    // AssetPickerModal is the pre-existing flow — this task only changed the trigger.
+
     expect(await screen.findByRole('dialog')).toBeInTheDocument();
   });
 
@@ -716,7 +716,7 @@ describe('Content-Forward Views §5 — editor hero', () => {
   });
 });
 
-describe('EntryEditor authoring navigation and recovery (Task 6)', () => {
+describe('EntryEditor authoring navigation and recovery', () => {
   beforeEach(() => {
     vi.mocked(api).mockReset();
     document.body.style.removeProperty('pointer-events');
@@ -807,7 +807,7 @@ describe('EntryEditor authoring navigation and recovery (Task 6)', () => {
   });
 });
 
-describe('EntryEditor rename-propagation two-phase save (Phase 48 XREF-05)', () => {
+describe('EntryEditor rename-propagation two-phase save', () => {
   beforeEach(() => {
     vi.mocked(api).mockReset();
     document.body.style.removeProperty('pointer-events');

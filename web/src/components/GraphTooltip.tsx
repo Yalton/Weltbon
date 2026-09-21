@@ -6,10 +6,6 @@ export interface GraphTooltipProps {
   y: number;
 }
 
-/**
- * Absolute-positioned tooltip rendered outside the SVG, keyed on the
- * currently hovered node. Renders null when no node is hovered.
- */
 export function GraphTooltip({ node, x, y }: GraphTooltipProps) {
   if (!node) return null;
   return (

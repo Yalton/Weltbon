@@ -4,31 +4,21 @@ import type { Entry } from '../hooks/useEntries';
 import { fetchEntryDetail, useUpdateEntry } from '../hooks/useEntries';
 import { isInsideCodeSpan } from './WikilinkAutocomplete';
 
-// Reuse WikilinkText's WIKILINK_RE pattern to locate existing [[ ]] spans so
-// occurrences that are already linked are NOT surfaced as unlinked mentions.
-// Group 2 is the inner ref (group 1 = optional leading `!` for embeds).
 const WIKILINK_RE = /(!?)\[\[([^\]\n]+?)\]\]/g;
 
 interface Mention {
-  /** The source entry that contains the mention. */
   sourceEntryId: string;
   sourceTitle: string;
-  /** Character index of the matched text in the source body. */
   matchIndex: number;
   matchLength: number;
-  /** The exact prose text that matched (may differ in case from canonical title). */
   matchedText: string;
-  /** Short context window around the match for display. */
   snippet: string;
 }
 
 interface Props {
   universeId: string;
-  /** The entry being viewed — its title + aliases are the scan targets. */
   entry: Entry;
-  /** Full corpus: all universe entries from useEntries cache (list rows — body is NOT projected). */
   allEntries: Entry[];
-  /** Called after a successful linkify so EntryDetail can refetch. */
   onLinked?: () => void;
 }
 
@@ -62,13 +52,10 @@ export function UnlinkedMentionsPanel({ universeId, entry, allEntries, onLinked 
   const [pendingId, setPendingId] = useState<string | null>(null);
   const queryClient = useQueryClient();
 
-  // Map from sibling entry id → fetched body string.
   // Populated by the effect below; keyed so re-fetching one entry is cheap.
   const [siblingBodies, setSiblingBodies] = useState<Record<string, string>>({});
 
   // Fetch detail bodies for all non-self siblings whenever allEntries changes.
-  // Uses the existing ['entry', universeId, entryId] cache key so the fetch
-  // hits the cache if the entry was already loaded (e.g. user just visited it).
   useEffect(() => {
     let cancelled = false;
     const siblings = allEntries.filter((e) => e.id !== entry.id);
@@ -97,7 +84,6 @@ export function UnlinkedMentionsPanel({ universeId, entry, allEntries, onLinked 
     };
   }, [allEntries, entry.id, universeId, queryClient]);
 
-  // Compute the list of unlinked mentions across all other entries.
   const mentions = useMemo<Mention[]>(() => {
     // D-13 min-length floor = 3
     const targets = [entry.title, ...(entry.aliases ?? [])].filter(
@@ -119,7 +105,6 @@ export function UnlinkedMentionsPanel({ universeId, entry, allEntries, onLinked 
       const body: string = siblingBodies[sourceEntry.id] ?? '';
       if (!body) continue;
 
-      // Build protected ranges: character spans already inside [[ ]] links.
       // These occurrences are already linked and must be skipped (D-13).
       const linkedRanges: Array<[number, number]> = [];
       WIKILINK_RE.lastIndex = 0;
@@ -139,10 +124,8 @@ export function UnlinkedMentionsPanel({ universeId, entry, allEntries, onLinked 
         const insideLink = linkedRanges.some(([start, end]) => idx >= start && idx + len <= end);
         if (insideLink) continue;
 
-        // Skip if this match is inside a code span (D-13 / Phase 47 D-11).
         if (isInsideCodeSpan(body, idx)) continue;
 
-        // Build a short context snippet around the match (~80 chars).
         const snippetStart = Math.max(0, idx - 40);
         const snippetEnd = Math.min(body.length, idx + len + 40);
         let snippet = body.slice(snippetStart, snippetEnd).trim();
@@ -208,14 +191,6 @@ export function UnlinkedMentionsPanel({ universeId, entry, allEntries, onLinked 
   );
 }
 
-/**
- * Sub-component that owns one useUpdateEntry hook instance per mention row.
- * This satisfies the Rules of Hooks (hook called unconditionally in render,
- * not inside an event handler).
- *
- * Body for the splice is fetched fresh from the detail endpoint on click so
- * the PATCH always uses authoritative, non-stale content.
- */
 function LinkifyButton({
   universeId,
   mention,
@@ -239,13 +214,9 @@ function LinkifyButton({
 
   const handleClick = async () => {
     // HI-01: claim the pending slot BEFORE any await so a double-click within
-    // the fetch window cannot launch a second concurrent handleClick (the
-    // button disables on the first synchronous render after onPending()).
     onPending();
     setError(null);
 
-    // Fetch the authoritative body from the detail endpoint (NOT the list cache).
-    // Reuses the existing ['entry', universeId, entryId] cache key — no new key.
     let detail;
     try {
       detail = await queryClient.fetchQuery({
@@ -254,8 +225,6 @@ function LinkifyButton({
       });
     } catch {
       // ME-01: network/auth failure — surface real feedback and release the
-      // pending slot. Do NOT call onLinked() here: that is the success path and
-      // would trigger a misleading refetch with no error shown to the user.
       setError('Could not load the entry — try again.');
       onReset();
       return;
@@ -264,10 +233,7 @@ function LinkifyButton({
     const body = detail.body ?? '';
 
     // Splice guard (T-48-05-03): if the body changed under the scanned index
-    // (concurrent edit), the slice will not equal matchedText — abort rather
-    // than splicing at the wrong position and corrupting unrelated prose.
     if (body.slice(mention.matchIndex, mention.matchIndex + mention.matchLength) !== mention.matchedText) {
-      // Stale index — call onLinked so the panel refreshes instead of corrupting.
       onLinked();
       return;
     }
@@ -289,8 +255,6 @@ function LinkifyButton({
       { body: newBody },
       {
         onSuccess: () => onLinked(),
-        // Without onError the failed PATCH leaves pendingId set, stranding the
-        // row permanently disabled. Release it and surface feedback instead.
         onError: () => {
           setError('Could not save the link — try again.');
           onReset();

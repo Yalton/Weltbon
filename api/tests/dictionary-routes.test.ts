@@ -1,19 +1,3 @@
-/**
- * api/tests/dictionary-routes.test.ts
- *
- * Integration tests for dictionary CRUD routes (Task 1) and public share read (Task 3).
- * DB-gated: requires a live Postgres database.
- *
- * Covers:
- * - CRUD: POST/GET/PATCH/DELETE /universes/:uid/dictionary
- * - Scope uniqueness (409 on duplicate word in same scope)
- * - PAT parity (Bearer PAT token works identically to JWT)
- * - Cross-tenant 403, missing universe 404, missing word 404
- * - languageEntryId FK-scope validation (400 if entry from different universe)
- * - Share read: GET /api/share/dictionary with valid token returns words
- * - Share boundary: mutation routes reject share-token-only auth
- *   (also covered automatically by share-boundary.test.ts)
- */
 
 import { describe, it, expect, beforeAll, afterAll, beforeEach } from 'vitest';
 import { createApp } from '../src/index.js';
@@ -379,9 +363,9 @@ describe('dictionary routes (CONLANG-01 / CONLANG-02)', () => {
     expect(words[0].word).toBe('anar');
   });
 
-  // NOTE: Share read test (GET /api/share/dictionary) is implemented in Task 3
+
   // (share-views.ts + share.ts extension). The test assertion is added below
-  // and will pass once Task 3 routes are mounted.
+
 
   it('GET /api/share/dictionary with valid share-token returns universe-level words', async () => {
     const { user, hdrs } = await userWithToken('share@test.com');
@@ -408,7 +392,7 @@ describe('dictionary routes (CONLANG-01 / CONLANG-02)', () => {
       { method: 'GET', headers: { 'share-token': seed.plaintext } },
     );
     expect(shareRes.status).toBe(200);
-    // Phase 33: share /dictionary returns a bare array (matches authenticated contract)
+
     const body = await shareRes.json() as any;
     expect(Array.isArray(body)).toBe(true);
     expect(body.length).toBe(1);

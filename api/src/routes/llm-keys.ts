@@ -1,5 +1,4 @@
 /**
- * Phase 22 BYOK — /api/llm-keys/* route table.
  *
  * Five OpenAPI routes mounted at /api/llm-keys/*:
  *   POST   /                    create + validate-before-encrypt-before-insert (D-01..D-03)
@@ -17,7 +16,6 @@
  *   2. Look up auth user (middleware set c.var.userId)
  *   3. Pre-check existing row for (userId, provider) → 409 "Use PUT to replace"
  *   4. Provider validate — InvalidApiKey → 422; other LLMError variants → 503
- *      (Phase 23 D-03 migration; routed through the provider abstraction at
  *      api/src/providers/llm/.)
  *   5. encryptKey(plaintext, cfg.llmKeyEncryptionKey) — missing env → 503
  *   6. INSERT — catch PG 23505 UNIQUE collision → 409
@@ -49,28 +47,15 @@ import { revokeSharedGrantsForOwnerKey } from '../services/llm-sharing.js';
 
 type AppEnv = { Variables: AuthVariables };
 
-// ─── Zod schemas ────────────────────────────────────────────────────────────
 
 const errorSchema = z.object({
   error: z.string(),
 });
 
-// Fix round 1 (#48 review): this route is BYOK-key CRUD — every row it
-// reads/writes lives in llm_api_keys, which Ollama never has a row in (it's
 // endpoint-based, see llm-connections.ts). KEY_PROVIDER_NAMES, not the wider
-// PROVIDER_NAMES: the wider constant let provider:'ollama' pass validation
 // and reach getProvider('ollama').validate(...), whose not-yet-implemented
-// throw isn't an LLMProviderError, so it escaped this route's catch as a
-// bare 500 instead of a clean 4xx.
 const providerEnum = z.enum(KEY_PROVIDER_NAMES);
 
-/**
- * TS-level mirror of KEY_PROVIDER_NAMES (derived, not re-declared) — every
- * `llm_api_keys.provider` value this route reads or writes is one of these
- * two. Using the wider `LlmProvider` here would have re-created Finding 1's
- * exact problem one layer down: `toMaskedRow`'s return type would advertise
- * 'ollama' as a possible response value even though no row can ever have it.
- */
 type KeyProvider = (typeof KEY_PROVIDER_NAMES)[number];
 
 const postBodySchema = z.object({
@@ -97,34 +82,8 @@ const maskedKeySchema = z.object({
   lastValidatedAt: z.string().nullable(),
 });
 
-/**
- * Phase 26 Plan 08 Task 3 (D-14) — masked row + per-provider cumulative cost.
- *
- * `totalSpentUsd` is `SUM(audit_runs.cost_usd) WHERE user_id = caller AND
- * provider = key.provider`, formatted as a 4-decimal string (cost-as-string
- * convention; NEVER a number). Always a string — '0.0000' when no runs match.
- *
- * Approximation: joined by (provider, user_id), not byok_key_id. If a user
- * has multiple keys for the same provider, all rows show the same total
- * (Phase 22 schema choice; documented limitation per CONTEXT D-14).
- */
 const maskedKeyWithSpentSchema = maskedKeySchema.extend({
-  /**
-   * Sum of audit_runs.cost_usd matched by (provider, user_id). Approximation:
-   * not joined by byok_key_id — if the user has multiple keys for the same
-   * provider, all rows show the same total. Per D-14.
-   *
-   * Phase 27 D-06: the SUM now excludes rows with `cost_unknown=true` so a
-   * stale-PRICING run does not contribute a guessed $0.00 to the displayed
-   * total. The count of excluded rows surfaces in `costUnknownCount` below.
-   */
   totalSpentUsd: z.string(),
-  /**
-   * Phase 27 D-06: count of audit_runs rows for this (provider, user) where
-   * `cost_unknown = true`. The UI renders this as a footnote — e.g.
-   * "$0.0042 (plus 3 runs with unknown pricing)" — when > 0. Always an int
-   * ≥ 0; '0' (not omitted) when no unpriced runs exist.
-   */
   costUnknownCount: z.number().int().nonnegative(),
 });
 
@@ -155,10 +114,6 @@ function toMaskedRow(row: LlmApiKeyRow): {
 } {
   return {
     id: row.id,
-    // Fix round 1 (#48 review): narrowed from `as LlmProvider` to
-    // `as KeyProvider` — the column can only ever hold what this route's own
-    // POST validated (KEY_PROVIDER_NAMES), so the wider cast was overclaiming
-    // 'ollama' as a possible stored value.
     provider: row.provider as KeyProvider,
     bodySuffix: row.bodySuffix,
     label: row.label,
@@ -167,7 +122,6 @@ function toMaskedRow(row: LlmApiKeyRow): {
   };
 }
 
-// ─── Routes ─────────────────────────────────────────────────────────────────
 
 const postRoute = createRoute({
   method: 'post',
@@ -371,7 +325,6 @@ const postConsentRoute = createRoute({
   },
 });
 
-// ─── Router ──────────────────────────────────────────────────────────────────
 
 export const llmKeyRoutes = new OpenAPIHono<AppEnv>()
 
@@ -405,8 +358,6 @@ export const llmKeyRoutes = new OpenAPIHono<AppEnv>()
     }
 
     // Validate at provider BEFORE encrypt BEFORE insert (D-01..D-03 strict-state).
-    // Phase 23 D-03: routed through getProvider(provider).validate() — InvalidApiKey → 422,
-    // every other LLMError variant → 503 (preserves Phase 22 HTTP behavior).
     try {
       await getProvider(provider).validate({ apiKey: plaintext });
     } catch (err) {
@@ -456,22 +407,13 @@ export const llmKeyRoutes = new OpenAPIHono<AppEnv>()
       .where(eq(llmApiKeys.userId, userId))
       .orderBy(desc(llmApiKeys.createdAt));
 
-    // Phase 26 Plan 08 Task 3 (D-14) — per-provider cumulative cost.
     // T-26-08-05: strict user_id filter ensures cross-tenant isolation.
-    // Approximation: joined by (provider, user_id), not byok_key_id — if user
-    // has multiple keys per provider, they all show the same total.
     // NUMERIC(10,4) is preserved as a string (cost-as-string convention).
-    //
-    // Phase 27 D-06: the SUM excludes rows with cost_unknown=true. A second
-    // parallel COUNT query computes costUnknownCount per provider so the UI
-    // can render the "(plus N runs with unknown pricing)" footnote. Two
     // separate queries (rather than a CASE-aggregation in one query) keep the
     // SQL simple and the row-level filtering legible — both queries scan the
-    // same predicate index (user_id, provider) so the duplication is cheap.
     const spentRows = await getDb()
       .select({
         provider: auditRuns.provider,
-        // COALESCE → '0' when GROUP BY yields no rows for the provider; toFixed(4)
         // below normalizes to the 4-decimal wire shape.
         total: sql<string>`COALESCE(SUM(${auditRuns.costUsd}), 0)::text`,
       })
@@ -482,14 +424,9 @@ export const llmKeyRoutes = new OpenAPIHono<AppEnv>()
     const spentByProvider = new Map<string, string>();
     for (const r of spentRows) {
       // Normalize to 4-decimal string. Parsing as Number then toFixed preserves
-      // precision for sums within audit_runs.cost_usd's NUMERIC(10,4) range
-      // (~$1,000,000 max) without losing the trailing zeros required by the UI.
       spentByProvider.set(r.provider, Number(r.total).toFixed(4));
     }
 
-    // Phase 27 D-06: parallel count of cost_unknown=true rows per provider for
-    // this user. Surfaced as `costUnknownCount` in the response; defaults to 0
-    // when the provider has no unpriced runs.
     const unknownCountRows = await getDb()
       .select({
         provider: auditRuns.provider,
@@ -501,9 +438,7 @@ export const llmKeyRoutes = new OpenAPIHono<AppEnv>()
 
     const unknownByProvider = new Map<string, number>();
     for (const r of unknownCountRows) {
-      // sql returns the COUNT cast to int but Drizzle types it as `number`
       // (the `::int` cast guarantees a JS-safe value). Defensive Number()
-      // mirrors the spentByProvider normalization.
       unknownByProvider.set(r.provider, Number(r.n));
     }
 
@@ -534,7 +469,6 @@ export const llmKeyRoutes = new OpenAPIHono<AppEnv>()
     const { id } = c.req.valid('param');
     const { key: plaintext, label } = c.req.valid('json');
 
-    // Look up existing row by id + userId; 404 if not found / not owned.
     const existingRows = await getDb()
       .select()
       .from(llmApiKeys)
@@ -544,13 +478,8 @@ export const llmKeyRoutes = new OpenAPIHono<AppEnv>()
       return c.json({ error: 'LLM key not found' }, 404);
     }
     const existingRow = existingRows[0];
-    // Fix round 1 (#48 review): KeyProvider, not LlmProvider — this row can
-    // only ever hold what POST validated (KEY_PROVIDER_NAMES). Still assignable
-    // to getProvider()/getDecryptedKey()'s wider LlmProvider parameter below.
     const provider = existingRow.provider as KeyProvider;
 
-    // Validate new plaintext against the EXISTING row's provider (not from request).
-    // Phase 23 D-03: routed through getProvider(provider).validate().
     try {
       await getProvider(provider).validate({ apiKey: plaintext });
     } catch (err) {
@@ -563,7 +492,6 @@ export const llmKeyRoutes = new OpenAPIHono<AppEnv>()
       throw err;
     }
 
-    // Encrypt + update.
     const enc = encryptKey(plaintext, cfg.llmKeyEncryptionKey);
     const updateValues: {
       ciphertext: string;
@@ -629,7 +557,6 @@ export const llmKeyRoutes = new OpenAPIHono<AppEnv>()
     const userId = c.var.userId;
     const { id } = c.req.valid('param');
 
-    // Look up row first to confirm ownership and obtain provider.
     const rows = await getDb()
       .select()
       .from(llmApiKeys)
@@ -639,7 +566,6 @@ export const llmKeyRoutes = new OpenAPIHono<AppEnv>()
       return c.json({ error: 'LLM key not found' }, 404);
     }
     const row = rows[0];
-    // Fix round 1 (#48 review): see the PUT handler above for why KeyProvider.
     const provider = row.provider as KeyProvider;
 
     // CR-01 fix: pass cfg.llmKeyEncryptionKey explicitly — same source of truth as
@@ -658,7 +584,6 @@ export const llmKeyRoutes = new OpenAPIHono<AppEnv>()
       );
     }
 
-    // Validate at provider. Phase 23 D-03: routed through getProvider(provider).validate().
     try {
       await getProvider(provider).validate({ apiKey: plaintext });
     } catch (err) {
@@ -672,7 +597,6 @@ export const llmKeyRoutes = new OpenAPIHono<AppEnv>()
       throw err;
     }
 
-    // Update last_validated_at and return the new timestamp.
     const now = new Date();
     const [updated] = await getDb()
       .update(llmApiKeys)
@@ -714,16 +638,9 @@ export const llmKeyRoutes = new OpenAPIHono<AppEnv>()
 
     // WR-01 fix: atomic COALESCE UPDATE — set llm_consented_at = NOW() ONLY if
     // currently NULL. This eliminates the read-then-update race (D-07
-    // idempotency contract held only under serial calls; two concurrent POSTs
-    // could each pass an existing=null read and both UPDATE with slightly
-    // different NOW() values, leaving two distinct response timestamps for the
     // same user). The COALESCE keeps any already-set value untouched, makes
-    // the route idempotent under arbitrary concurrency, and saves the SELECT
     // round-trip.
-    //
     // BL-01 fix: detect zero-row UPDATE (user deleted between token issuance
-    // and consent POST). Use .returning() and check row count; never fabricate
-    // a `now` timestamp when nothing was persisted.
     const updatedRows = await getDb()
       .update(users)
       .set({ llmConsentedAt: sql`COALESCE(${users.llmConsentedAt}, NOW())` })
@@ -736,8 +653,6 @@ export const llmKeyRoutes = new OpenAPIHono<AppEnv>()
 
     const persisted = updatedRows[0].llmConsentedAt;
     if (!persisted) {
-      // Defensive: COALESCE with NOW() should never return null, but if the DB
-      // ever surprises us, surface a 500 rather than a fabricated timestamp.
       return c.json({ error: 'Consent state could not be recorded' }, 500);
     }
     return c.json({ consentedAt: persisted.toISOString() }, 200);

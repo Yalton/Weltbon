@@ -1,4 +1,3 @@
--- Issue #44 (AS-05) — the auto_sync scheduling columns on sync_links, plus the
 -- 13 scoping indexes the per-universe fingerprint aggregates read.
 --
 -- ===========================================================================

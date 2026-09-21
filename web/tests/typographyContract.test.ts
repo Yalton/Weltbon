@@ -2,12 +2,12 @@ import { describe, it, expect } from 'vitest';
 import { readFileSync } from 'node:fs';
 import { resolve } from 'node:path';
 
-// POL-04 Task 2 — typography classes from UI-SPEC §2.3 must appear on the
+
 // 5 audit surfaces. Static substring checks against component source.
 const SRC = resolve(__dirname, '..', 'src');
 const read = (rel: string) => readFileSync(resolve(SRC, rel), 'utf8');
 
-describe('typography contract (POL-04 Task 2)', () => {
+describe('typography contract', () => {
   it('EntryDetail.tsx applies the hero display heading + neutral-700/300 body color, NOT the contrast-bug pattern', () => {
     const src = read('views/EntryDetail.tsx');
     // Content-Forward Views §5: the page title moved out of the old form-style header and into

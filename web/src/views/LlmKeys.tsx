@@ -1,5 +1,4 @@
 /**
- * LlmKeys view — /settings/llm (Phase 22-05)
  *
  * Three states (post consent-gate):
  *   - consent gate (LLMKEY-07): non-dismissable block; entry UI hidden until accepted
@@ -23,9 +22,7 @@
  * the masked preview `••••••••<bodySuffix>` is the only thing rendered for a
  * configured key after submission. The view must never read a plaintext field
  * from a fetched row — only `bodySuffix` is rendered. The masking-invariant
- * grep gates in 22-05-PLAN acceptance criteria enforce this.
  *
- * #50 Task 8: SharedLlmConnections mounts above the consent gate in all three
  * branches. It is not gated by `llmConsentedAt` — that consent covers a key
  * the user pays for themselves, and a recipient of an administrator-provided
  * connection may never own one.
@@ -73,33 +70,16 @@ export default function LlmKeys() {
   >({});
 
   // WR-08 fix: surface non-404 revoke failures (5xx / network) with an
-  // inline error. 404 is silently invalidated (the row was already gone —
-  // mirrors useRevokeToken pattern) but other failures previously left
-  // the user with no signal at all (dialog closes, list refetches, row
-  // reappears, no feedback).
   const [revokeError, setRevokeError] = useState<string | null>(null);
 
   const hasConsented = consent.data?.consentedAt != null;
 
-  // ─── Loading consent ──────────────────────────────────────────────────────
   if (consent.isPending) {
     return (
       <div className="max-w-3xl">
-        {/* Issue #48 Task 7: mounted ABOVE the BYOK consent gate deliberately
-            — Ollama is a separate, local-only feature that sends no content
-            to a third party, so it must not wait on the "I accept" consent
-            this section's own copy has nothing to do with. Self-gates on
-            local mode; renders nothing on a hosted instance or while still
-            loading /api/config. */}
+
         <OllamaConnectionSection />
-        {/* #50 Task 8: above the BYOK consent gate, like the Ollama section
-            and for the same reason. A recipient running on an
-            administrator's connection may never add a key of their own, and
-            the gate's copy ("you pay for the tokens") describes an
-            arrangement that is not theirs — gating their only route to the
-            audit feature behind it would strand them on a form they have no
-            reason to fill in. The panel self-hides when there are no
-            grants, so this costs a user without one nothing. */}
+
         <SharedLlmConnections />
         <div className="mt-6 h-24 rounded-md bg-neutral-100 dark:bg-neutral-800 animate-pulse" />
       </div>
@@ -270,10 +250,7 @@ export default function LlmKeys() {
         </div>
       )}
 
-      {/* Phase 26 D-14: Models & pricing transparency. Collapsible <details>
-          mount placed ABOVE the keys table so users discover the pricing
-          surface as the first thing post-consent; default-collapsed keeps the
-          page tight for users who already know the rates. */}
+
       <PricingTable />
 
       {/* Populated state */}
@@ -298,9 +275,7 @@ export default function LlmKeys() {
                 <th scope="col" className="pb-2 text-left text-xs uppercase tracking-wide font-medium text-neutral-500 w-40">
                   Last validated
                 </th>
-                {/* Phase 26 D-14: per-key cumulative spend (approximate;
-                    joined by provider+user_id since audit_runs lacks
-                    byok_key_id — see CONTEXT.md D-14 known limitation). */}
+
                 <th scope="col" className="pb-2 text-left text-xs uppercase tracking-wide font-medium text-neutral-500 w-32">
                   Total spent
                 </th>
@@ -370,17 +345,7 @@ export default function LlmKeys() {
                         </span>
                       )}
                     </td>
-                    {/* Phase 26 D-14: per-key Total spent. Server already
-                        4-decimal-formats `totalSpentUsd` (Plan 08); we prefix
-                        $ literal here. Defensive fallback to "0.0000" handles
-                        any pre-Plan-08 cached row that lacks the field.
 
-                        Phase 27 D-06: when the key's provider has audit runs
-                        flagged `cost_unknown=true`, append a neutral footnote
-                        "(plus N runs with unknown pricing)". Tone is neutral
-                        (NOT amber) per CONTEXT line 174 — this is
-                        informational metadata at the aggregate level; the
-                        amber chip is reserved for per-run cost surfaces. */}
                     <td
                       className="py-3 pr-4 text-sm leading-[1.5] tabular-nums text-neutral-700 dark:text-neutral-300"
                       data-testid={`llmkey-total-spent-${llmKey.id}`}
@@ -445,7 +410,6 @@ export default function LlmKeys() {
             : null
         }
         onCreated={() => {
-          // Optional callback — TanStack Query already invalidates the list.
         }}
       />
 
@@ -467,19 +431,14 @@ export default function LlmKeys() {
               await revoke.mutateAsync({ id: revokeTarget.id });
             } catch (err) {
               // WR-08 fix: 404 races are fine (the row was already gone —
-              // useRevokeLlmKey's onError invalidates the cache so the row
               // disappears). Non-404 failures (5xx, network) need a visible
-              // signal — surface a generic message and stop the silent swallow.
               if (err instanceof ApiError && err.status === 404) {
-                // Silent — the cache invalidate will remove the stale row.
               } else {
                 setRevokeError("Couldn't revoke the key. It may still be active — refresh to confirm.");
               }
             }
             // WR-06 fix: explicitly clear the target so the dialog closes
             // even when ConfirmDialog doesn't auto-close on confirm. Without
-            // this, a successful revoke could leave the dialog open after
-            // the row vanished from the table, looking like the dialog
             // forgot the just-deleted target.
             setRevokeTarget(null);
           }

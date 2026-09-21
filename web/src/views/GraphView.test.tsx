@@ -13,7 +13,7 @@ vi.mock('react-router-dom', async () => {
 });
 
 // Mock api client — GraphView uses useGraphData (GET) and two mutations.
-// getShareToken is needed by useUniverse (added in Plan 05).
+
 vi.mock('../api/client', () => ({ api: vi.fn(), getShareToken: () => null }));
 
 // Mock GraphCanvas for the orchestration-state tests (Tests 4-11). The
@@ -288,9 +288,9 @@ describe('GraphView', () => {
     });
   });
 
-  // ---------- Phase 19 Plan 19-02 ----------
 
-  describe('Phase 19 — edit-mode toggle (GRAPH-01)', () => {
+
+  describe('edit-mode toggle (GRAPH-01)', () => {
     it('Test 1: toggle button initial render carries off-state copy + aria + title', async () => {
       vi.mocked(api).mockResolvedValue({
         nodes: [makeNode('A'), makeNode('B')],
@@ -357,7 +357,7 @@ describe('GraphView', () => {
     });
   });
 
-  describe('Phase 19 — handleLinkDragEnd routing (GRAPH-05)', () => {
+  describe('handleLinkDragEnd routing (GRAPH-05)', () => {
     async function enterEditMode() {
       const btn = await screen.findByRole('button', { name: /enter edit mode/i });
       await userEvent.click(btn);
@@ -473,7 +473,7 @@ describe('GraphView', () => {
     });
   });
 
-  describe('Phase 19 — canvas-level Esc (UI-SPEC §G)', () => {
+  describe('canvas-level Esc (UI-SPEC §G)', () => {
     async function enterEditMode() {
       const btn = await screen.findByRole('button', { name: /enter edit mode/i });
       await userEvent.click(btn);
@@ -584,9 +584,9 @@ describe('GraphView', () => {
     });
   });
 
-  // ---------- Phase 19 Plan 19-04 — CreateLinkPopover integration ----------
 
-  describe('Phase 19 Plan 19-04 — CreateLinkPopover integration', () => {
+
+  describe('CreateLinkPopover integration', () => {
     // Shared harness: GraphCanvas is mocked (above), real CreateLinkPopover
     // renders inside GraphView when popoverState !== null. The api mock
     // discriminates on method+path: GET /universes/.../graph-data resolves
@@ -1030,7 +1030,7 @@ describe('GraphView', () => {
     });
   });
 
-  describe('Phase 19 — subgraph-filter coexistence', () => {
+  describe('subgraph-filter coexistence', () => {
     it('Test 11: toggle button renders + is clickable when canvas is hidden by subgraph filter', async () => {
       const nodes = Array.from({ length: 301 }, (_, i) => makeNode(`n${i}`));
       vi.mocked(api).mockResolvedValue({
@@ -1055,7 +1055,7 @@ describe('GraphView', () => {
     });
   });
 
-  describe('Phase 28 REL-02 — RelationLegend overlay', () => {
+  describe('REL-02 — RelationLegend overlay', () => {
     it('renders the RelationLegend stub when nodes + edges are present', async () => {
       vi.mocked(api).mockResolvedValue({
         nodes: [makeNode('A'), makeNode('B')],

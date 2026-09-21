@@ -1,16 +1,3 @@
-/**
- * Phase 46 CR-01 regression — a RESOLVED `![[entry]]` embed must render through
- * the REAL MarkdownRenderer pipeline without producing invalid DOM nesting
- * (block `<div>` / `<p>` inside a `<p>`).
- *
- * Why this file exists: the original 46-03 tests were structurally blind to the
- * primary embed success path. WikilinkText tests render `WikilinkText` directly
- * (no `<p>` ancestor) and EntryEmbed tests mock `MarkdownRenderer`, so NO test
- * exercised a resolved embed through the `components.p` override that wraps it.
- * That override wrapped EntryEmbed's block callout in a `<p>`, which React 19
- * reparents in the browser — breaking the XREF-03 layout while the suite stayed
- * green. These tests assert the embed callout is NEVER a descendant of `<p>`.
- */
 
 import { describe, it, expect, vi, beforeEach, afterEach } from 'vitest';
 import { render, screen } from '@testing-library/react';

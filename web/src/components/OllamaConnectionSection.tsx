@@ -1,5 +1,4 @@
 /**
- * Issue #48 Task 7 — desktop-only "Local Ollama" settings section, mounted
  * on the LLM keys page (LlmKeys.tsx) alongside the Anthropic/OpenAI key
  * table. Lets a desktop user point Weltbon at their own Ollama server and
  * browse what it has installed.
@@ -43,10 +42,6 @@ import { ApiError } from '../api/client';
 
 export function OllamaConnectionSection() {
   const { localMode } = useInstanceConfig();
-  // Hooks fire before the `localMode !== true` early return below (rules of
-  // hooks), so `enabled` is how a hosted instance — or the brief window
-  // before /api/config resolves — avoids issuing requests the server can
-  // only ever 403.
   const isLocal = localMode === true;
   const { data: connection } = useLlmConnection('ollama', { enabled: isLocal });
   const { data: models, isLoading: modelsLoading } = useOllamaModels('ollama', { enabled: isLocal });
@@ -57,31 +52,16 @@ export function OllamaConnectionSection() {
   const [secret, setSecret] = useState('');
   const [statusError, setStatusError] = useState<string | null>(null);
 
-  // Hydrate the input from the stored row once it loads. Runs only when
-  // `connection?.baseUrl` changes (not on every render) so it does not
-  // clobber text the user is actively editing when an unrelated background
-  // refetch resolves.
   useEffect(() => {
     if (connection?.baseUrl !== undefined) setBaseUrl(connection.baseUrl);
   }, [connection?.baseUrl]);
 
-  // `isLocal` (`localMode === true`, not `!!localMode`) deliberately treats
-  // the "still loading" `undefined` state the same as "hosted": nothing
-  // renders until the instance fact is confirmed local, rather than
-  // flashing the section for hosted users during the brief window before
-  // /config resolves.
   if (!isLocal) return null;
 
   const handleSaveAndTest = async () => {
     setStatusError(null);
     try {
-      // PUT is a plain upsert — it does not itself contact Ollama (see
       // llm-connections.ts's "PUT does not validate" comment). Chaining the
-      // test call here is what makes the button's "Save and test" label
-      // true; a save whose Ollama server turns out to be unreachable still
-      // persists (the user may be about to go start it), but the section
-      // says so immediately instead of leaving that to be discovered when
-      // an audit later fails.
       await save.mutateAsync({ baseUrl, secret: secret === '' ? undefined : secret });
       await test.mutateAsync();
       setSecret(''); // never re-display what was just submitted
@@ -157,16 +137,7 @@ export function OllamaConnectionSection() {
       </div>
 
       <div className="mt-5">
-        {/*
-          A LIST, not a <select>. Fix round 2 (#48 whole-branch review, Minor
-          8): this was a real `<select>` with no `value` and no `onChange` — a
-          control that looks like it sets something and sets nothing. There is
-          nothing here for it to set: the model an audit uses is chosen per
-          universe (see the note below), so this section's only job is to tell
-          the user what their server has installed and which of it can run an
-          audit. Rendering that as a list says so honestly; a dead dropdown
-          reads as a bug and eventually gets reported as one.
-        */}
+
         <p id="ollama-models-heading" className="text-sm mb-1">
           Installed models
         </p>
@@ -186,8 +157,6 @@ export function OllamaConnectionSection() {
           >
             {models.map((m) => (
               // Listed rather than hidden: a user who pulled a vision-only
-              // model like llava should see why it cannot run audits instead
-              // of wondering whether the pull failed.
               <li key={m.name} className="px-3 py-2 flex items-baseline justify-between gap-3">
                 <span className={m.supportsTools ? '' : 'text-neutral-500 dark:text-neutral-400'}>
                   {m.name}
