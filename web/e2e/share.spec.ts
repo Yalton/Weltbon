@@ -61,11 +61,13 @@ test.describe('public share surface', () => {
     // Without timelineWindow in share meta this said "No timeline is available".
     await expect(page.getByText(/No timeline is available/)).toHaveCount(0);
 
-    // The pin is a React-rendered <circle data-pin-id>; clicking it must open
-    // the entry (the d3 click handler was broken + suppressed the React click).
-    const pin = page.locator('circle[data-pin-id]').first();
+    // The pin is a React-rendered medallion <g data-pin-id>; clicking it must
+    // open the entry (the d3 click handler was broken + suppressed the React click).
+    const pin = page.locator('[data-testid="pin-layer"] [data-pin-id]').first();
     await expect(pin).toBeVisible();
-    await pin.click();
+    // Click the disc itself: the pin group's box also spans its label, so its
+    // center can land past the disc on the baseline.
+    await pin.locator('.medallion-disc').click();
 
     await expect(page).toHaveURL(new RegExp(`/share/[^/]+/entries/${seed.mainId}$`));
     await expect(page.getByText('A clash at the keep')).toBeVisible();
