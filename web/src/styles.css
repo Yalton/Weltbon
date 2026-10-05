@@ -171,6 +171,18 @@ body {
 
 @keyframes spinner { to { transform: rotate(360deg); } }
 
+/* Landing page: the constellation's links draw in once, then hold. */
+.landing ::selection { background: var(--color-accent-soft); color: var(--color-ink); }
+.lore-graph line {
+  stroke-opacity: 0.45;
+  stroke-dasharray: calc(var(--link-length) * 1px);
+  animation: lore-link-draw 900ms var(--motion-ease-out) both;
+}
+@keyframes lore-link-draw {
+  from { stroke-dashoffset: calc(var(--link-length) * 1px); }
+  to   { stroke-dashoffset: 0; }
+}
+
 @media (prefers-reduced-motion: reduce) {
   *, *::before, *::after {
     animation-duration: 0.01ms !important;

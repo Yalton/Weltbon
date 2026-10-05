@@ -22,6 +22,11 @@ function mockFetchSequence(...responses: Response[]) {
   return fetchMock;
 }
 
+function LandingChild() {
+  const { landing } = useRuntime();
+  return <div>landing {String(landing.inviteRequestsEnabled)} {landing.repoUrl}</div>;
+}
+
 function RuntimeChild() {
   const { authMode } = useRuntime();
   return <div>application ({authMode})</div>;
@@ -126,5 +131,28 @@ describe('RuntimeProvider', () => {
     await userEvent.click(screen.getByRole('button', { name: 'Retry' }));
     expect(await screen.findByText('application (server)')).toBeInTheDocument();
     expect(fetchMock).toHaveBeenCalledTimes(2);
+  });
+
+  it('passes the landing configuration through to children', async () => {
+    mockFetchSequence(json({
+      authMode: 'server',
+      landing: { inviteRequestsEnabled: true, repoUrl: 'https://git.example.com/me/weltbon' },
+    }));
+
+    render(<RuntimeProvider><LandingChild /></RuntimeProvider>);
+
+    expect(await screen.findByText('landing true https://git.example.com/me/weltbon')).toBeInTheDocument();
+  });
+
+  it.each([
+    ['is missing', undefined],
+    ['has a non-http repo URL', { inviteRequestsEnabled: true, repoUrl: 'javascript:alert(1)' }],
+  ])('falls back to the public repo and no invite form when landing %s', async (_label, landing) => {
+    mockFetchSequence(json({ authMode: 'server', landing }));
+
+    render(<RuntimeProvider><LandingChild /></RuntimeProvider>);
+
+    const expected = landing === undefined ? 'false' : 'true';
+    expect(await screen.findByText(`landing ${expected} https://github.com/Citreum-LLC/Weltbon`)).toBeInTheDocument();
   });
 });

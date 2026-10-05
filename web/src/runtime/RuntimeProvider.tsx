@@ -11,7 +11,34 @@ import { api, setAccessToken } from '../api/client';
 import { useAuthStore } from '../store/auth';
 
 export type AuthMode = 'local' | 'server';
-export interface RuntimeValue { authMode: AuthMode }
+export interface LandingConfig {
+  inviteRequestsEnabled: boolean;
+  repoUrl: string;
+}
+export interface RuntimeValue {
+  authMode: AuthMode;
+  landing: LandingConfig;
+}
+
+interface RuntimeCapabilities {
+  authMode: AuthMode;
+  landing: LandingConfig;
+}
+
+// Used when an older API omits `landing`: no invite form, public repo link.
+const FALLBACK_LANDING: LandingConfig = {
+  inviteRequestsEnabled: false,
+  repoUrl: 'https://github.com/Citreum-LLC/Weltbon',
+};
+
+function parseLanding(raw: unknown): LandingConfig {
+  if (typeof raw !== 'object' || raw === null) return FALLBACK_LANDING;
+  const { inviteRequestsEnabled, repoUrl } = raw as Record<string, unknown>;
+  return {
+    inviteRequestsEnabled: inviteRequestsEnabled === true,
+    repoUrl: typeof repoUrl === 'string' && /^https?:\/\//.test(repoUrl) ? repoUrl : FALLBACK_LANDING.repoUrl,
+  };
+}
 
 interface MeResponse {
   id: string;
@@ -22,6 +49,7 @@ interface MeResponse {
 
 interface RuntimeState {
   authMode: AuthMode | null;
+  landing: LandingConfig;
   status: 'loading' | 'ready' | 'error';
 }
 
@@ -37,30 +65,34 @@ export function RuntimeProvider({ children }: PropsWithChildren) {
   const user = useAuthStore((state) => state.user);
   const [state, setState] = useState<RuntimeState>({
     authMode: null,
+    landing: FALLBACK_LANDING,
     status: 'loading',
   });
   const attemptRef = useRef(0);
-  const runtimeRequestRef = useRef<Promise<AuthMode> | null>(null);
+  const runtimeRequestRef = useRef<Promise<RuntimeCapabilities> | null>(null);
+  const landingRef = useRef<LandingConfig>(FALLBACK_LANDING);
 
   const initialize = useCallback(async (knownMode: AuthMode | null) => {
     const attempt = ++attemptRef.current;
     const isCurrent = () => attemptRef.current === attempt;
     let authMode = knownMode;
 
-    setState({ authMode, status: 'loading' });
+    setState({ authMode, landing: landingRef.current, status: 'loading' });
 
     try {
       if (!authMode) {
         runtimeRequestRef.current ??= (async () => {
           const response = await fetch('/api/runtime');
           if (!response.ok) throw new Error('runtime capabilities unavailable');
-          const runtime = await response.json() as { authMode?: unknown };
+          const runtime = await response.json() as { authMode?: unknown; landing?: unknown };
           if (runtime.authMode !== 'local' && runtime.authMode !== 'server') {
             throw new Error('invalid runtime capabilities');
           }
-          return runtime.authMode;
+          return { authMode: runtime.authMode, landing: parseLanding(runtime.landing) };
         })();
-        authMode = await runtimeRequestRef.current;
+        const capabilities = await runtimeRequestRef.current;
+        authMode = capabilities.authMode;
+        landingRef.current = capabilities.landing;
       }
 
       if (!isCurrent()) return;
@@ -79,10 +111,10 @@ export function RuntimeProvider({ children }: PropsWithChildren) {
         useAuthStore.getState().setSession({ ...me, isAdmin: me.isAdmin ?? false }, accessToken);
       }
 
-      if (isCurrent()) setState({ authMode, status: 'ready' });
+      if (isCurrent()) setState({ authMode, landing: landingRef.current, status: 'ready' });
     } catch {
       if (!authMode) runtimeRequestRef.current = null;
-      if (isCurrent()) setState({ authMode, status: 'error' });
+      if (isCurrent()) setState({ authMode, landing: landingRef.current, status: 'error' });
     }
   }, []);
 
@@ -126,7 +158,7 @@ export function RuntimeProvider({ children }: PropsWithChildren) {
   if (state.status !== 'ready' || !state.authMode) return null;
 
   return (
-    <RuntimeContext.Provider value={{ authMode: state.authMode }}>
+    <RuntimeContext.Provider value={{ authMode: state.authMode, landing: state.landing }}>
       {children}
     </RuntimeContext.Provider>
   );

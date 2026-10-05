@@ -26,6 +26,9 @@ vi.mock('../views/Login', () => ({
 vi.mock('../views/Register', () => ({
   Register: () => <h1>Register</h1>,
 }));
+vi.mock('../views/Landing', () => ({
+  Landing: () => <h1>Landing</h1>,
+}));
 
 function json(body: unknown): Response {
   return new Response(JSON.stringify(body), {
@@ -109,6 +112,30 @@ describe('runtime-aware navigation', () => {
     expect(await screen.findByRole('heading', { name: destination })).toBeInTheDocument();
     expect(screen.queryByRole('heading', { name: /log in|register|api tokens|invite codes/i }))
       .not.toBeInTheDocument();
+  });
+
+  it('sends local mode from / straight to the universes', async () => {
+    renderLocalApp('/');
+
+    expect(await screen.findByRole('heading', { name: 'Universes' })).toBeInTheDocument();
+    expect(screen.queryByRole('heading', { name: 'Landing' })).not.toBeInTheDocument();
+  });
+
+  it('shows the landing page at / to a signed-out server visitor', async () => {
+    renderRuntime('server', '/', <App />);
+
+    expect(await screen.findByRole('heading', { name: 'Landing' })).toBeInTheDocument();
+  });
+
+  it('sends a signed-in server user from / to the universes', async () => {
+    useAuthStore.getState().setSession(
+      { id: 'ada-id', email: 'ada@example.com', displayName: 'Ada' },
+      'server-token',
+    );
+    renderRuntime('server', '/', <App />);
+
+    expect(await screen.findByRole('heading', { name: 'Universes' })).toBeInTheDocument();
+    expect(screen.queryByRole('heading', { name: 'Landing' })).not.toBeInTheDocument();
   });
 
   it('shows a neutral settings-only local user menu', async () => {

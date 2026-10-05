@@ -28,6 +28,7 @@ export const DB_GATED_TESTS = [
   'tests/ingest-commit.test.ts',
   'tests/ingest-endpoint.test.ts',
   'tests/invites.test.ts',
+  'tests/invite-requests.test.ts',
   'tests/issues-audit-run-id-filter.test.ts',
   'tests/issues-dismiss.test.ts',
   'tests/issues-fix01-nulls-distinct.test.ts',

@@ -3,7 +3,7 @@ import { and, desc, eq, isNull } from 'drizzle-orm';
 import { db as getDb } from '../db/client.js';
 import { inviteCodes } from '../db/schema.js';
 import { requireAdmin, type AuthVariables } from '../middleware/auth.js';
-import { generateInviteToken } from '../services/invite.js';
+import { createInviteCode } from '../services/invite.js';
 import { isUniqueViolation } from '../db/pg-error.js';
 
 type AppEnv = { Variables: AuthVariables };
@@ -131,21 +131,8 @@ export const inviteRoutes = new OpenAPIHono<AppEnv>()
   .openapi(postRoute, async (c) => {
     const userId = c.var.userId;
     const { label } = c.req.valid('json');
-    const { plaintext, hash, bodySuffix } = generateInviteToken();
     try {
-      const [row] = await getDb()
-        .insert(inviteCodes)
-        .values({ ownerId: userId, label, hash, bodySuffix })
-        .returning({
-          id: inviteCodes.id,
-          label: inviteCodes.label,
-          bodySuffix: inviteCodes.bodySuffix,
-          createdAt: inviteCodes.createdAt,
-        });
-      return c.json(
-        { ...row, plaintext, createdAt: row.createdAt.toISOString() },
-        200
-      );
+      return c.json(await createInviteCode(getDb(), userId, label), 200);
     } catch (err: any) {
       if (isUniqueViolation(err)) {
         return c.json({ error: 'Invite code collision, please retry' }, 409);

@@ -29,7 +29,18 @@ export interface Env {
    */
   bindHost: string | undefined;
   autoSyncEnabled: boolean;
+  /** INVITE_REQUESTS_ENABLED, default true: landing page offers the invite-request form. */
+  inviteRequestsEnabled: boolean;
+  /** LANDING_REPO_URL: where the landing page sends visitors who want to self-host. */
+  landingRepoUrl: string;
+  /**
+   * WELTBON_TRUST_PROXY, default false: whether X-Forwarded-For names the client.
+   * Only true behind a reverse proxy that overwrites the header (docs/reverse-proxy).
+   */
+  trustProxy: boolean;
 }
+
+const DEFAULT_LANDING_REPO_URL = 'https://github.com/Citreum-LLC/Weltbon';
 
 export function loadEnv(source: NodeJS.ProcessEnv = process.env): Env {
   const jwt = source.JWT_SECRET;
@@ -125,6 +136,30 @@ export function loadEnv(source: NodeJS.ProcessEnv = process.env): Env {
     throw new Error('SHARED_LLM_MONTHLY_COST_USD must be a finite positive number');
   }
 
+  const rawInviteRequests = source.INVITE_REQUESTS_ENABLED ?? 'true';
+  if (rawInviteRequests !== 'true' && rawInviteRequests !== 'false') {
+    throw new Error(
+      `INVITE_REQUESTS_ENABLED must be "true" or "false" (got "${rawInviteRequests}").`
+    );
+  }
+
+  const rawTrustProxy = source.WELTBON_TRUST_PROXY ?? 'false';
+  if (rawTrustProxy !== 'true' && rawTrustProxy !== 'false') {
+    throw new Error(
+      `WELTBON_TRUST_PROXY must be "true" or "false" (got "${rawTrustProxy}").`
+    );
+  }
+
+  // Rendered as an href on a public page, so anything but http(s) is refused.
+  const landingRepoUrl = source.LANDING_REPO_URL ?? DEFAULT_LANDING_REPO_URL;
+  let repoProtocol: string | undefined;
+  try { repoProtocol = new URL(landingRepoUrl).protocol; } catch { /* reported below */ }
+  if (repoProtocol !== 'http:' && repoProtocol !== 'https:') {
+    throw new Error(
+      `LANDING_REPO_URL must be an http:// or https:// URL (got: ${landingRepoUrl.slice(0, 30)}...)`
+    );
+  }
+
   return {
     jwtSecret: new TextEncoder().encode(jwt),
     dbDriver,
@@ -147,6 +182,9 @@ export function loadEnv(source: NodeJS.ProcessEnv = process.env): Env {
     bindHost: source.WELTBON_BIND_HOST || undefined,
     // leaves auto-sync running.
     autoSyncEnabled: source.WELTBON_AUTO_SYNC !== 'off',
+    inviteRequestsEnabled: rawInviteRequests === 'true',
+    landingRepoUrl,
+    trustProxy: rawTrustProxy === 'true',
   };
 }
 

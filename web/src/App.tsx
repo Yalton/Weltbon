@@ -2,8 +2,10 @@ import { Routes, Route, Navigate } from 'react-router-dom';
 import { Layout } from './components/Layout';
 import { UniverseLayout } from './components/UniverseLayout';
 import { ProtectedRoute } from './components/ProtectedRoute';
+import { HomeRoute } from './components/HomeRoute';
 import { Login } from './views/Login';
 import { Register } from './views/Register';
+import { RequestInvite } from './views/RequestInvite';
 import { UniverseList } from './views/UniverseList';
 import { UniverseSettings } from './views/UniverseSettings';
 import { EntryList } from './views/EntryList';
@@ -43,9 +45,10 @@ export default function App() {
 
   return (
     <Routes>
-      <Route path="/" element={<Navigate to="/universes" replace />} />
+      <Route path="/" element={<HomeRoute />} />
       <Route path="/login" element={authMode === 'local' ? <Navigate to="/universes" replace /> : <Login />} />
       <Route path="/register" element={authMode === 'local' ? <Navigate to="/universes" replace /> : <Register />} />
+      <Route path="/request-invite" element={authMode === 'local' ? <Navigate to="/universes" replace /> : <RequestInvite />} />
       <Route element={<ProtectedRoute />}>
         {/* Header-only shell for the universe picker, per-universe settings, and app settings. */}
         <Route element={<Layout />}>
