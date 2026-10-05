@@ -11,6 +11,7 @@ import { tokenRoutes } from './routes/tokens.js';
 import { templates } from './routes/templates.js';
 import { inviteRoutes } from './routes/invites.js';
 import { adminUserRoutes } from './routes/admin-users.js';
+import { adminInviteRequestRoutes, inviteRequestRoutes } from './routes/invite-requests.js';
 import { adminLlmShareRoutes } from './routes/admin-llm-shares.js';
 import { shareCrudRoutes } from './routes/shares.js';
 import { shareRoutes } from './routes/share.js';
@@ -141,6 +142,7 @@ export function createApp() {
   apiR.route('/auth/tokens', tokenRoutes);
   apiR.route('/admin', adminUserRoutes);
   apiR.route('/admin/llm-shares', adminLlmShareRoutes);
+  apiR.route('/admin/invite-requests', adminInviteRequestRoutes);
   apiR.route('/templates', templates);
   apiR.route('/llm-keys', llmKeyRoutes);
   apiR.route('/llm-shares', llmShareRoutes);
@@ -164,6 +166,11 @@ export function createApp() {
     apiR.route('/llm-connections', llmConnectionRoutes);
   }
   apiR.route('/auth/invites', inviteRoutes);
+  // Public and unauthenticated by design: the landing page's invite-request
+  // form. Self-gated on INVITE_REQUESTS_ENABLED / local mode and rate-limited
+  // per client IP; registered with plain .post(), so it is not in the OpenAPI
+  // document the share-boundary sweep reads.
+  apiR.route('/invite-requests', inviteRequestRoutes);
   // DV-11: built fresh on every createApp() call so the local-session route's
 
   apiR.route('/auth', buildAuthRoutes());

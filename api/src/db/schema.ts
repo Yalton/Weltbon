@@ -120,7 +120,8 @@ export const personalAccessTokens = pgTable('personal_access_tokens', {
   revokedAt:  timestamp('revoked_at', { withTimezone: true }),
 });
 
-export type AdminAuditAction = 'promoted' | 'demoted' | 'disabled' | 'enabled' | 'purged' | 'llm_shared_granted' | 'llm_shared_revoked';
+export type AdminAuditAction = 'promoted' | 'demoted' | 'disabled' | 'enabled' | 'purged' | 'llm_shared_granted' | 'llm_shared_revoked'
+  | 'invite_request_issued' | 'invite_request_dismissed';
 
 /**
  * Append-only operator record. User IDs deliberately become null when either
@@ -261,6 +262,38 @@ export const llmSharedUsage = pgTable('llm_shared_usage', {
 export const inviteCodesRelations = relations(inviteCodes, ({ one }) => ({
   owner:       one(users, { fields: [inviteCodes.ownerId], references: [users.id], relationName: 'invite_owner' }),
   consumedBy:  one(users, { fields: [inviteCodes.consumedByUserId], references: [users.id], relationName: 'invite_consumer' }),
+}));
+
+export type InviteRequestStatus = 'pending' | 'issued' | 'dismissed';
+
+/**
+ * Visitor requests for an invite code, from the public landing page. There is
+ * no outbound email, so admins review the queue in-app and contact the
+ * requester themselves. Emails are stored lower-cased; the partial unique
+ * index keeps at most one PENDING request per address.
+ */
+export const inviteRequests = pgTable('invite_requests', {
+  id:           uuid('id').primaryKey().defaultRandom(),
+  name:         text('name').notNull(),
+  email:        text('email').notNull(),
+  note:         text('note'),
+  status:       text('status').$type<InviteRequestStatus>().default('pending').notNull(),
+  inviteCodeId: uuid('invite_code_id').references(() => inviteCodes.id, { onDelete: 'set null' }),
+  createdAt:    timestamp('created_at', { withTimezone: true }).defaultNow().notNull(),
+  reviewedAt:   timestamp('reviewed_at', { withTimezone: true }),
+  reviewedBy:   uuid('reviewed_by').references(() => users.id, { onDelete: 'set null' }),
+}, (t) => ({
+  statusCheck: check('invite_requests_status_check', sql`${t.status} IN ('pending', 'issued', 'dismissed')`),
+  nameLength: check('invite_requests_name_length', sql`char_length(${t.name}) <= 100`),
+  emailLength: check('invite_requests_email_length', sql`char_length(${t.email}) <= 254`),
+  noteLength: check('invite_requests_note_length', sql`${t.note} IS NULL OR char_length(${t.note}) <= 1000`),
+  statusCreatedIdx: index('invite_requests_status_created_idx').on(t.status, t.createdAt),
+  pendingEmailUnique: uniqueIndex('invite_requests_pending_email_unique').on(t.email).where(sql`${t.status} = 'pending'`),
+}));
+
+export const inviteRequestsRelations = relations(inviteRequests, ({ one }) => ({
+  inviteCode: one(inviteCodes, { fields: [inviteRequests.inviteCodeId], references: [inviteCodes.id] }),
+  reviewer:   one(users, { fields: [inviteRequests.reviewedBy], references: [users.id], relationName: 'invite_request_reviewer' }),
 }));
 
 export const shareTokens = pgTable('share_tokens', {

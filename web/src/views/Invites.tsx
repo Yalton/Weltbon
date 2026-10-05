@@ -5,6 +5,210 @@ import { EmptyState } from '../components/EmptyState';
 import { ConfirmDialog } from '../components/ConfirmDialog';
 import { CreateInviteDialog } from '../components/CreateInviteDialog';
 import { formatRelative } from '../utils/formatRelative';
+import {
+  usePendingInviteRequests,
+  useIssueInviteRequest,
+  useDismissInviteRequest,
+  type InviteRequest,
+  type IssuedInviteRequest,
+} from '../hooks/useInviteRequests';
+import { useAuthStore } from '../store/auth';
+import { useRuntime } from '../runtime/RuntimeProvider';
+import { ApiError } from '../api/client';
+
+function reviewErrorMessage(err: unknown): string {
+  if (err instanceof ApiError && err.status === 409) {
+    return 'This request was already reviewed. The list has been refreshed.';
+  }
+  if (err instanceof ApiError && err.status === 404) {
+    return 'This request no longer exists. The list has been refreshed.';
+  }
+  return err instanceof Error ? err.message : 'Something went wrong.';
+}
+
+function invitationMailto(issued: IssuedInviteRequest): string {
+  const subject = 'Your Weltbon invitation code';
+  const body =
+    `Hi ${issued.request.name},\n\n` +
+    `Here is your Weltbon invitation code. It can be used once, to create your account:\n\n` +
+    `${issued.invite.plaintext}\n`;
+  return `mailto:${issued.request.email}?subject=${encodeURIComponent(subject)}&body=${encodeURIComponent(body)}`;
+}
+
+/**
+ * Admin review of public invite requests. Renders nothing unless the viewer is an
+ * admin on a server-mode instance (local mode has no accounts to invite into).
+ */
+function InviteRequestsSection() {
+  const isAdmin = useAuthStore((s) => s.user?.isAdmin === true);
+  const { authMode } = useRuntime();
+  const visible = isAdmin && authMode === 'server';
+
+  const { data, isPending, error: loadError } = usePendingInviteRequests(visible);
+  const issueRequest = useIssueInviteRequest();
+  const dismissRequest = useDismissInviteRequest();
+
+  const [issued, setIssued] = useState<IssuedInviteRequest | null>(null);
+  const [dismissTarget, setDismissTarget] = useState<InviteRequest | null>(null);
+  const [actionError, setActionError] = useState<string | null>(null);
+  const [copied, setCopied] = useState(false);
+  const [copyError, setCopyError] = useState(false);
+
+  if (!visible) return null;
+
+  const handleIssue = async (request: InviteRequest) => {
+    setActionError(null);
+    setCopied(false);
+    setCopyError(false);
+    try {
+      setIssued(await issueRequest.mutateAsync(request.id));
+    } catch (err) {
+      setActionError(reviewErrorMessage(err));
+    }
+  };
+
+  const handleCopy = async () => {
+    if (!issued) return;
+    try {
+      await navigator.clipboard.writeText(issued.invite.plaintext);
+      setCopied(true);
+      setCopyError(false);
+      setTimeout(() => setCopied(false), 1500);
+    } catch {
+      setCopyError(true);
+    }
+  };
+
+  return (
+    <section className="mt-6" aria-labelledby="invite-requests-heading">
+      <h2 id="invite-requests-heading" className="text-lg font-semibold">Requests</h2>
+
+      {/* One-time reveal of a just-issued code — mirrors CreateInviteDialog's reveal phase */}
+      {issued && (
+        <div className="mt-3 rounded-md border border-neutral-200 dark:border-neutral-800 p-4">
+          <p className="text-sm text-neutral-600 dark:text-neutral-400 leading-[1.5]">
+            Code issued for {issued.request.name}. This is the only time you&apos;ll see it — copy it or email it now.
+          </p>
+          <div className="mt-3 rounded-md border border-neutral-200 dark:border-neutral-800 bg-neutral-100 dark:bg-neutral-800 p-3">
+            <code
+              className="font-mono text-sm leading-[1.5] break-all select-all text-neutral-900 dark:text-neutral-100"
+              aria-label="Issued invite code"
+            >{issued.invite.plaintext}</code>
+          </div>
+          <div className="mt-3 flex flex-wrap items-center gap-2">
+            <button
+              type="button"
+              onClick={handleCopy}
+              className="bg-[color:var(--color-accent)] text-white text-sm px-3 py-1.5 rounded-md hover:opacity-90 focus:outline-none focus:ring-2 focus:ring-[color:var(--color-accent)] focus:ring-offset-2"
+            >
+              {copied ? 'Copied!' : 'Copy invite code'}
+            </button>
+            <a
+              href={invitationMailto(issued)}
+              className="px-3 py-1.5 text-sm rounded-md border border-neutral-300 dark:border-neutral-700"
+            >
+              Email {issued.request.email}
+            </a>
+            <button
+              type="button"
+              onClick={() => setIssued(null)}
+              className="ml-auto px-3 py-1.5 text-sm rounded-md border border-neutral-300 dark:border-neutral-700"
+            >
+              Done
+            </button>
+          </div>
+          {copyError && (
+            <p className="mt-2 text-sm text-red-500" role="alert">
+              Couldn&apos;t copy. Select the code above and copy manually.
+            </p>
+          )}
+          <span aria-live="polite" className="sr-only">
+            {copied ? 'Invite code copied to clipboard' : ''}
+          </span>
+        </div>
+      )}
+
+      {actionError && (
+        <p className="mt-3 text-sm text-red-500" role="alert">{actionError}</p>
+      )}
+
+      {isPending && (
+        <div className="mt-3 h-12 rounded-md bg-neutral-100 dark:bg-neutral-800 animate-pulse" aria-busy="true" aria-label="Loading invite requests" />
+      )}
+
+      {loadError && (
+        <p className="mt-3 text-sm text-red-500" role="alert">
+          Couldn&apos;t load invite requests: {(loadError as Error).message}
+        </p>
+      )}
+
+      {!isPending && data && data.length === 0 && (
+        <p className="mt-3 text-sm text-neutral-500">No pending requests</p>
+      )}
+
+      {!isPending && data && data.length > 0 && (
+        <ul data-testid="invite-requests-list" className="mt-3 divide-y divide-neutral-100 dark:divide-neutral-800">
+          {data.map((request) => (
+            <li key={request.id} className="py-3 flex items-start gap-4">
+              <div className="min-w-0 flex-1 text-sm leading-[1.5]">
+                <div className="flex flex-wrap items-baseline gap-x-2">
+                  <span className="font-medium">{request.name}</span>
+                  <span className="text-neutral-600 dark:text-neutral-400 break-all">{request.email}</span>
+                  <time
+                    dateTime={request.createdAt}
+                    title={new Date(request.createdAt).toLocaleString()}
+                    className="text-xs text-neutral-500"
+                  >
+                    {formatRelative(request.createdAt)}
+                  </time>
+                </div>
+                {request.note && (
+                  <p className="mt-1 text-neutral-600 dark:text-neutral-400 whitespace-pre-wrap break-words">{request.note}</p>
+                )}
+              </div>
+              <div className="flex shrink-0 items-center gap-3">
+                <button
+                  type="button"
+                  onClick={() => handleIssue(request)}
+                  disabled={issueRequest.isPending}
+                  className="text-sm text-[color:var(--color-accent)] hover:opacity-80 disabled:opacity-50"
+                >
+                  Issue code
+                </button>
+                <button
+                  type="button"
+                  onClick={() => { setActionError(null); setDismissTarget(request); }}
+                  className="text-sm text-neutral-600 dark:text-neutral-400 hover:text-red-600 dark:hover:text-red-500"
+                >
+                  Dismiss
+                </button>
+              </div>
+            </li>
+          ))}
+        </ul>
+      )}
+
+      <ConfirmDialog
+        open={!!dismissTarget}
+        onOpenChange={(o) => { if (!o) setDismissTarget(null); }}
+        title="Dismiss invite request"
+        body={dismissTarget ? `Dismiss the request from ${dismissTarget.name} (${dismissTarget.email})? No code will be issued, and the request leaves this list.` : ''}
+        confirmLabel="Dismiss request"
+        cancelLabel="Cancel"
+        destructive={true}
+        onConfirm={async () => {
+          if (dismissTarget) {
+            try {
+              await dismissRequest.mutateAsync(dismissTarget.id);
+            } catch (err) {
+              setActionError(reviewErrorMessage(err));
+            }
+          }
+        }}
+      />
+    </section>
+  );
+}
 
 export default function Invites() {
   const { data, isPending } = useInvites();
@@ -40,6 +244,8 @@ export default function Invites() {
       <p className="mt-2 text-sm text-neutral-600 dark:text-neutral-400 leading-[1.5]">
         Invite codes let you onboard new users. Each code is single-use — share it once, and it expires on registration. Treat codes like passwords and never share a code you've already sent.
       </p>
+
+      <InviteRequestsSection />
 
       {/* State-specific body */}
 

@@ -295,6 +295,13 @@
       "when": 1787871760628,
       "tag": "0041_shared_llm_connections",
       "breakpoints": true
+    },
+    {
+      "idx": 42,
+      "version": "7",
+      "when": 1791230177974,
+      "tag": "0042_invite_requests",
+      "breakpoints": true
     }
   ]
 }

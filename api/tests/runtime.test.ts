@@ -11,15 +11,18 @@ describe('GET /api/runtime', () => {
   });
 
   it.each([
-    ['0', 'server'],
-    ['1', 'local'],
-  ] as const)('reports %s as %s mode without auth', async (value, authMode) => {
+    ['0', 'server', true],
+    ['1', 'local', false],
+  ] as const)('reports %s as %s mode without auth', async (value, authMode, inviteRequestsEnabled) => {
     process.env.WELTBON_LOCAL_MODE = value;
     _resetEnvForTests();
     const { createApp } = await import('../src/index.js');
     const response = await createApp().request('/api/runtime');
 
     expect(response.status).toBe(200);
-    expect(await response.json()).toEqual({ authMode });
+    expect(await response.json()).toEqual({
+      authMode,
+      landing: { inviteRequestsEnabled, repoUrl: 'https://github.com/Citreum-LLC/Weltbon' },
+    });
   });
 });
