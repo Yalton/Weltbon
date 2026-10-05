@@ -1,4 +1,4 @@
-import { afterAll, beforeAll, beforeEach, describe, expect, it } from 'vitest';
+import { afterAll, beforeAll, beforeEach, describe, expect, it, vi } from 'vitest';
 import { eq } from 'drizzle-orm';
 import { cleanDb, createTestDb, createTestUser, type TestDbHandle } from './helpers.js';
 import { adminAuditLog, llmApiKeys, llmSharedGrants, personalAccessTokens, users } from '../src/db/schema.js';
@@ -11,6 +11,13 @@ import { consentSharedGrant, createSharedGrant } from '../src/services/llm-shari
 import { resolveSharedGrantCredential } from '../src/services/llm-credential.js';
 
 const ENCRYPTION_KEY = '0'.repeat(64);
+
+// The shared-grant tests seed keys encrypted with ENCRYPTION_KEY, and llm-sharing
+// decrypts with env().llmKeyEncryptionKey. Set it before the first env() call
+// rather than relying on an earlier file in the same fork having set it.
+vi.hoisted(() => {
+  process.env.LLM_KEY_ENCRYPTION_KEY = '0'.repeat(64);
+});
 
 describe('production admin user-management persistence', () => {
   let handle: TestDbHandle;

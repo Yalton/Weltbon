@@ -122,6 +122,12 @@ describe('SettingsLayout', () => {
     expect(cls).toContain('md:flex-row');
   });
 
+  it('wraps the section links on mobile so they never widen the page', () => {
+    renderAt('/settings');
+    const list = screen.getByRole('navigation', { name: 'Settings sections' }).querySelector('ul');
+    expect(list?.getAttribute('class') ?? '').toContain('flex-wrap');
+  });
+
   it('renders <Outlet /> with the nested index route child', () => {
     renderAt('/settings');
     expect(screen.getByTestId('index-child')).toBeInTheDocument();

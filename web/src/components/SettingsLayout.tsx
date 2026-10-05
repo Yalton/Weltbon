@@ -10,7 +10,7 @@ export function SettingsLayout() {
   return (
     <div className="max-w-5xl mx-auto p-6 flex flex-col md:flex-row gap-4 md:gap-8">
       <nav aria-label="Settings sections" className="md:w-48 md:shrink-0">
-        <ul className="flex md:flex-col gap-1">
+        <ul className="flex flex-wrap md:flex-col gap-1">
           <li>
             <NavLink
               to="/settings"

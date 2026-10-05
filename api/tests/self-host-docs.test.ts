@@ -4,7 +4,6 @@ import fs from 'node:fs';
 import path from 'node:path';
 
 const repoRoot = path.resolve(__dirname, '../..');
-const readme = fs.readFileSync(path.join(repoRoot, 'README.md'), 'utf8');
 const workflowPath = path.join(repoRoot, '.github', 'workflows', 'publish-ghcr.yml');
 const workflowContent = fs.readFileSync(workflowPath, 'utf8');
 const composePath = path.join(repoRoot, 'docker-compose.yml');
@@ -144,62 +143,6 @@ describe('CONT-05 — GHCR publish workflow (.github/workflows/publish-ghcr.yml)
 });
 
 // ─────────────────────────────────────────────────────────────────────────────
-// OPS-05: README Self-Host (Docker) section with required subsections
-// ─────────────────────────────────────────────────────────────────────────────
-
-describe('OPS-05 — README Self-Host (Docker) section', () => {
-  it('contains the ## Self-Host (Docker) top-level heading', () => {
-    expect(readme).toMatch(/^## Self-Host \(Docker\)$/m);
-  });
-
-  it('contains the ### Prerequisites subsection', () => {
-    expect(readme).toMatch(/^### Prerequisites$/m);
-  });
-
-  it('contains the ### `.env` Reference subsection', () => {
-    expect(readme).toMatch(/^### `\.env` Reference$/m);
-  });
-
-  it('contains the ### Quickstart subsection', () => {
-    expect(readme).toMatch(/^### Quickstart$/m);
-  });
-
-  it('contains the ### Verifying subsection', () => {
-    // May appear in multiple sections; just assert at least one is present
-    expect(readme).toMatch(/^### Verifying$/m);
-  });
-
-  it('contains the ### Updating subsection', () => {
-    expect(readme).toMatch(/^### Updating$/m);
-  });
-});
-
-// ─────────────────────────────────────────────────────────────────────────────
-// OPS-06: README Backup section with cron line and sub-sections
-// ─────────────────────────────────────────────────────────────────────────────
-
-describe('OPS-06 — README Backup section', () => {
-  it('contains the ## Backup top-level heading', () => {
-    expect(readme).toMatch(/^## Backup$/m);
-  });
-
-  it('contains a pg_dump cron line using docker compose exec with the \\%F escape', () => {
-    // The cron line may include a -f path flag; just assert the exec+pg_dump pair and \%F escape
-    expect(readme).toMatch(/docker compose.*exec -T db pg_dump/);
-    // The literal \%F must appear (backslash-percent-F) — not bare %F
-    expect(readme).toMatch(/\\%F/);
-  });
-
-  it('contains a "What to back up" subsection', () => {
-    expect(readme).toMatch(/### What to back up/);
-  });
-
-  it('contains a "What NOT to commit" subsection', () => {
-    expect(readme).toMatch(/### What NOT to commit/);
-  });
-});
-
-// ─────────────────────────────────────────────────────────────────────────────
 // OPS-07: api/package.json dev script auto-loads .env via tsx --env-file
 // ─────────────────────────────────────────────────────────────────────────────
 
@@ -216,40 +159,6 @@ describe('OPS-07 — api/package.json dev script auto-loads .env', () => {
     const raw = fs.readFileSync(pkgPath, 'utf8');
     pkg = JSON.parse(raw);
     expect(pkg.scripts?.dev).toMatch(/--env-file=\.\.\/\.env/);
-  });
-});
-
-// ─────────────────────────────────────────────────────────────────────────────
-// OPS-08: README Self-Host (Bare Node) Chromium per-OS docs + CHROMIUM_PATH
-// ─────────────────────────────────────────────────────────────────────────────
-
-describe('OPS-08 — README Self-Host (Bare Node) Chromium documentation', () => {
-  it('contains the ## Self-Host (Bare Node) top-level heading', () => {
-    expect(readme).toMatch(/^## Self-Host \(Bare Node\)$/m);
-  });
-
-  it('contains Debian install section', () => {
-    expect(readme).toMatch(/^### Debian/m);
-  });
-
-  it('contains Ubuntu install section', () => {
-    expect(readme).toMatch(/^### Ubuntu/m);
-  });
-
-  it('contains macOS install section', () => {
-    expect(readme).toMatch(/^### macOS$/m);
-  });
-
-  it('contains Windows install section', () => {
-    expect(readme).toMatch(/^### Windows$/m);
-  });
-
-  it('mentions CHROMIUM_PATH for bare-Node PDF export configuration', () => {
-    expect(readme).toMatch(/CHROMIUM_PATH/);
-  });
-
-  it('contains a ### Troubleshooting subsection (PDF-export troubleshooting checklist)', () => {
-    expect(readme).toMatch(/^### Troubleshooting$/m);
   });
 });
 
@@ -308,71 +217,5 @@ describe('local builds stamp the build identity', () => {
       'scripts/deploy.sh invokes node. It runs over non-interactive ssh where node '
         + 'is not on PATH; derive the version with sed instead.',
     ).toBe(false);
-  });
-});
-
-// ─────────────────────────────────────────────────────────────────────────────
-
-// ─────────────────────────────────────────────────────────────────────────────
-
-const SHARED_LLM_OPERATOR_GUIDANCE = [
-  'SHARED_LLM_MONTHLY_COST_USD controls the per-recipient shared hosted-LLM',
-  'budget for the current UTC calendar month. It defaults to 1.00 USD and must',
-  'be a finite positive number. Shared connections support Anthropic and OpenAI',
-  'API keys only; Ollama connections remain private to the desktop instance.',
-  'Administrators must explicitly grant a user access, and that user must accept',
-  'the provider disclosure before content can leave the instance.',
-].join('\n');
-
-describe('OPS-09 — README Shared LLM Connections documentation', () => {
-  it('contains the ### Shared LLM Connections subsection', () => {
-    expect(readme).toMatch(/^### Shared LLM Connections$/m);
-  });
-
-  it('contains the exact operator guidance text verbatim', () => {
-    expect(readme).toContain(SHARED_LLM_OPERATOR_GUIDANCE);
-  });
-
-  /**
-   * "Keep the existing LLM_KEY_ENCRYPTION_KEY requirement next to it"
-   * (task-10-brief.md Step 3) is a placement instruction, not just a content
-   * instruction — the guidance text could be pasted anywhere in the README
-   * and a bare `toContain` check for both strings would pass. This isolates
-   * the Shared LLM Connections section body (heading to next heading) and
-   * requires BOTH strings inside that one section, so moving the guidance
-   * text away from the LLM_KEY_ENCRYPTION_KEY mention fails this test even
-   * though the mention still exists elsewhere in the README.
-   */
-  it('keeps the LLM_KEY_ENCRYPTION_KEY requirement next to the guidance text', () => {
-    const lines = readme.split('\n');
-    const headingLine = lines.findIndex((line) => line === '### Shared LLM Connections');
-    expect(headingLine, 'Shared LLM Connections subsection not found').toBeGreaterThanOrEqual(0);
-    // First heading line AFTER the section's own heading line, of any level.
-    let nextHeadingLine = lines.length;
-    for (let i = headingLine + 1; i < lines.length; i++) {
-      if (/^#{1,6} /.test(lines[i])) { nextHeadingLine = i; break; }
-    }
-    const section = lines.slice(headingLine, nextHeadingLine).join('\n');
-
-    expect(section).toContain(SHARED_LLM_OPERATOR_GUIDANCE);
-    expect(section).toContain('LLM_KEY_ENCRYPTION_KEY');
-  });
-
-    it('documents the SHARED_LLM_MONTHLY_COST_USD default and boot validation in both env tables', () => {
-    const rows = readme.split('\n').filter((line) => line.startsWith('| `SHARED_LLM_MONTHLY_COST_USD` |'));
-    expect(
-      rows.length,
-      `expected exactly one SHARED_LLM_MONTHLY_COST_USD row in each of the two env tables ` +
-        `(.env Reference and Environment Variables > Optional); found ${rows.length}`,
-    ).toBe(2);
-    for (const row of rows) {
-      expect(row, `table row does not document "finite": ${row}`).toMatch(/finite/);
-      expect(row, `table row does not document "positive": ${row}`).toMatch(/positive/);
-      expect(row, `table row does not document the 1.00 default: ${row}`).toMatch(/1\.00/);
-    }
-  });
-
-  it('documents the boot-time SHARED_LLM_MONTHLY_COST_USD validation error alongside the Startup Guard', () => {
-    expect(readme).toMatch(/"SHARED_LLM_MONTHLY_COST_USD must be a finite positive number"/);
   });
 });

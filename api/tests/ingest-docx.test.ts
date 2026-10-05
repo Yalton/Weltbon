@@ -1,7 +1,4 @@
 import { describe, it, expect, beforeAll, afterAll, beforeEach, vi } from 'vitest';
-import { readFileSync } from 'node:fs';
-import { join, dirname } from 'node:path';
-import { fileURLToPath } from 'node:url';
 import { sql } from 'drizzle-orm';
 import yazl from 'yazl';
 import {
@@ -13,6 +10,7 @@ import {
 } from './helpers.js';
 import { universes, entries, links } from '../src/db/schema.js';
 import { makeDocx, documentWith } from './helpers/docx-fixture.js';
+import { DB_GATED_TESTS } from '../ci/integration-tiers.mjs';
 
 /**
  * Item 8's unexpected-throw case. `convertDocx` is imported statically by
@@ -35,7 +33,6 @@ vi.mock('../src/services/ingest-docx/index.js', async (importOriginal) => {
   };
 });
 
-const __dirname = dirname(fileURLToPath(import.meta.url));
 
 const DOCX_MIME =
   'application/vnd.openxmlformats-officedocument.wordprocessingml.document';
@@ -150,8 +147,7 @@ describe('POST /api/universes/:uid/ingest — .docx (#35)', () => {
   // ─── 1. Registration proved ───────────────────────────────────────────────
 
   it('is registered in DB_GATED_TESTS — an unregistered file is silently never run', () => {
-    const config = readFileSync(join(__dirname, '..', 'vitest.config.ts'), 'utf8');
-    expect(config).toContain("'tests/ingest-docx.test.ts'");
+    expect(DB_GATED_TESTS).toContain('tests/ingest-docx.test.ts');
   });
 
   // ─── 2. The rewrite, at the ROUTE layer (the single most important test) ───
