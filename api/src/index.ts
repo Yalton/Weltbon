@@ -1,8 +1,8 @@
 import { pathToFileURL } from 'node:url';
 import { serve } from '@hono/node-server';
-import { serveStatic } from '@hono/node-server/serve-static';
 import { Hono } from 'hono';
 import { cors } from 'hono/cors';
+import { secureHeaders } from 'hono/secure-headers';
 import { logger } from 'hono/logger';
 import { HTTPException } from 'hono/http-exception';
 import { env, type Env } from './config.js';
@@ -53,6 +53,7 @@ import { llmApiKeys, syncRemotes } from './db/schema.js';
 import { seedInviteCode } from './db/seedInviteCode.js';
 import { createApiRouter } from './openapi/app.js';
 import { scalarHtml } from './openapi/scalar.js';
+import { registerWebStatic } from './web-static.js';
 
 const cfg = env();
 
@@ -135,6 +136,17 @@ export function createApp() {
       return origin;
     },
     credentials: true,
+  }));
+  // Baseline hardening. The cross-origin isolation headers stay off: they would
+  // block shares, map tiles and assets loaded by other origins. CSP and HSTS
+  // are not set here (see tests/security-headers.test.ts).
+  app.use('*', secureHeaders({
+    xFrameOptions: 'SAMEORIGIN',
+    referrerPolicy: 'strict-origin-when-cross-origin',
+    strictTransportSecurity: false,
+    crossOriginEmbedderPolicy: false,
+    crossOriginResourcePolicy: false,
+    crossOriginOpenerPolicy: false,
   }));
   // PROXY-02: resolve the public origin once per request from X-Forwarded-* headers.
   app.use('*', forwarded);
@@ -242,10 +254,7 @@ export function createApp() {
   );
   app.get('/health', (c) => c.json({ ok: true }));
 
-  const webDist = cfg.webDist;
-  app.use('*', serveStatic({ root: webDist }));
-  app.get('/', serveStatic({ path: `${webDist}/index.html` }));
-  app.get('*', serveStatic({ path: `${webDist}/index.html` }));
+  registerWebStatic(app, cfg.webDist);
 
   app.onError((err, c) => {
     if (isSharedLlmPath(c.req.path)) {

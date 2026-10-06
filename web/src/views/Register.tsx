@@ -6,6 +6,7 @@ import { useRegister } from '../hooks/useAuth';
 import { Panel } from '../components/ui/Panel';
 import { Input } from '../components/ui/Input';
 import { Button } from '../components/ui/Button';
+import { useDocumentTitle } from '../hooks/useDocumentTitle';
 
 const schema = z.object({
   email: z.string().email('Enter a valid email'),
@@ -16,6 +17,7 @@ const schema = z.object({
 type FormValues = z.infer<typeof schema>;
 
 export function Register() {
+  useDocumentTitle('Create your account');
   const navigate = useNavigate();
   const registerMut = useRegister();
   const { register, handleSubmit, formState: { errors } } = useForm<FormValues>({

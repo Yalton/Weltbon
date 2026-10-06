@@ -8,15 +8,18 @@ import { useRuntime } from '../runtime/RuntimeProvider';
 import { Panel } from '../components/ui/Panel';
 import { Input } from '../components/ui/Input';
 import { Button } from '../components/ui/Button';
+import { useDocumentTitle } from '../hooks/useDocumentTitle';
 
 const schema = z.object({
   name: z.string().trim().min(1, 'Enter your name').max(100, 'Keep your name under 100 characters'),
-  email: z.string().trim().email('Enter a valid email').max(254),
-  note: z.string().max(1000, 'Keep the note under 1000 characters'),
+  // Mirror the API, which lowercases the email and stores a blank note as none.
+  email: z.string().trim().toLowerCase().email('Enter a valid email').max(254),
+  note: z.string().trim().max(1000, 'Keep the note under 1000 characters'),
   // Honeypot: hidden from people, so only bots fill it in.
   website: z.string(),
 });
-type FormValues = z.infer<typeof schema>;
+type FormInput = z.input<typeof schema>;
+type FormValues = z.output<typeof schema>;
 
 function errorMessage(error: unknown): string {
   if (error instanceof ApiError && error.status === 429) return 'Too many requests, try again later.';
@@ -25,11 +28,12 @@ function errorMessage(error: unknown): string {
 
 export function RequestInvite() {
   const { landing } = useRuntime();
+  useDocumentTitle('Request an invitation');
   const send = useMutation({
     mutationFn: (body: FormValues) =>
       api('/invite-requests', { method: 'POST', body: JSON.stringify(body) }),
   });
-  const { register, handleSubmit, formState: { errors } } = useForm<FormValues>({
+  const { register, handleSubmit, formState: { errors } } = useForm<FormInput, unknown, FormValues>({
     resolver: zodResolver(schema),
     defaultValues: { name: '', email: '', note: '', website: '' },
   });
@@ -70,19 +74,32 @@ export function RequestInvite() {
             <div>
               <h1 className="font-display text-2xl font-medium text-ink">Request an invitation</h1>
               <p className="mt-2 text-sm leading-relaxed text-ink-secondary">
-                Accounts on this server are invite-only. Tell the operator who you are and they can
-                send you a code by email.
+                Accounts on this server are invite-only. Tell the person who runs it who you are,
+                and they can send you a code by email.
               </p>
             </div>
             <div>
               <label className="block text-sm mb-1 text-ink-secondary" htmlFor="name">Name</label>
-              <Input id="name" autoComplete="name" aria-invalid={!!errors.name} {...register('name')} />
-              {errors.name && <p className="mt-1 text-xs text-rose-400">{errors.name.message}</p>}
+              <Input
+                id="name"
+                autoComplete="name"
+                aria-invalid={!!errors.name}
+                aria-describedby={errors.name ? 'name-error' : undefined}
+                {...register('name')}
+              />
+              {errors.name && <p id="name-error" className="mt-1 text-xs text-rose-400">{errors.name.message}</p>}
             </div>
             <div>
               <label className="block text-sm mb-1 text-ink-secondary" htmlFor="email">Email</label>
-              <Input id="email" type="email" autoComplete="email" aria-invalid={!!errors.email} {...register('email')} />
-              {errors.email && <p className="mt-1 text-xs text-rose-400">{errors.email.message}</p>}
+              <Input
+                id="email"
+                type="email"
+                autoComplete="email"
+                aria-invalid={!!errors.email}
+                aria-describedby={errors.email ? 'email-error' : undefined}
+                {...register('email')}
+              />
+              {errors.email && <p id="email-error" className="mt-1 text-xs text-rose-400">{errors.email.message}</p>}
             </div>
             <div>
               <label className="block text-sm mb-1 text-ink-secondary" htmlFor="note">
@@ -93,10 +110,11 @@ export function RequestInvite() {
                 rows={4}
                 maxLength={1000}
                 aria-invalid={!!errors.note}
+                aria-describedby={errors.note ? 'note-error' : undefined}
                 className="w-full rounded-lg bg-white/5 border border-glass-border px-3 py-2 text-sm text-ink placeholder:text-ink-muted focus:outline-none focus:ring-2 focus:ring-[color:var(--color-accent)] focus:border-transparent"
                 {...register('note')}
               />
-              {errors.note && <p className="mt-1 text-xs text-rose-400">{errors.note.message}</p>}
+              {errors.note && <p id="note-error" className="mt-1 text-xs text-rose-400">{errors.note.message}</p>}
             </div>
             <div aria-hidden="true" className="absolute -left-[9999px] h-px w-px overflow-hidden">
               <label htmlFor="website">Website</label>

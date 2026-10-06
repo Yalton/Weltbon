@@ -41,6 +41,16 @@ describe('Landing view', () => {
     expect(screen.getByRole('link', { name: /create your account/i })).toHaveAttribute('href', '/register');
   });
 
+  it('resets the tab title and gives every link the same keyboard focus ring', () => {
+    document.title = 'Request an invitation · Weltbon';
+    renderLanding({ inviteRequestsEnabled: true, repoUrl: 'https://github.com/Citreum-LLC/Weltbon' });
+
+    expect(document.title).toBe('Weltbon');
+    for (const link of screen.getAllByRole('link')) {
+      expect(link.className, link.textContent ?? '').toContain('focus-visible:ring-2');
+    }
+  });
+
   it('hides the invitation request when the operator turned it off', () => {
     renderLanding({ inviteRequestsEnabled: false, repoUrl: 'https://github.com/Citreum-LLC/Weltbon' });
 

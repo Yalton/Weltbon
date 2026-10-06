@@ -18,11 +18,14 @@ export type SessionState = 'checking' | 'ok' | 'anonymous';
  */
 export function useSessionCheck(): SessionState {
   const user = useAuthStore((s) => s.user);
+  const signedOut = useAuthStore((s) => s.signedOut);
   const setSession = useAuthStore((s) => s.setSession);
-  const [state, setState] = useState<SessionState>(user ? 'ok' : 'checking');
+  const markSignedOut = useAuthStore((s) => s.markSignedOut);
+  const [state, setState] = useState<SessionState>(user ? 'ok' : signedOut ? 'anonymous' : 'checking');
 
   useEffect(() => {
     if (user) { setState('ok'); return; }
+    if (signedOut) { setState('anonymous'); return; }
     let cancelled = false;
     (async () => {
       try {
@@ -35,7 +38,7 @@ export function useSessionCheck(): SessionState {
         // call; it is not the retry branch, so the /auth/* guard is unaffected.
         const token = await attemptRefresh();
         if (cancelled) return;
-        if (!token) { setState('anonymous'); return; }
+        if (!token) { markSignedOut(); setState('anonymous'); return; }
         setAccessToken(token);
 
         // Step 2 -- rehydrate user identity via /auth/me so the user menu
@@ -47,12 +50,13 @@ export function useSessionCheck(): SessionState {
         setState('ok');
       } catch {
         if (cancelled) return;
-        // UnauthenticatedError OR any network/shape failure -- treat as signed out.
+        // UnauthenticatedError OR any network/shape failure -- treat as signed out
+        // for now, but do not remember it: a later visit should try again.
         setState('anonymous');
       }
     })();
     return () => { cancelled = true; };
-  }, [user, setSession]);
+  }, [user, signedOut, setSession, markSignedOut]);
 
   return state;
 }
