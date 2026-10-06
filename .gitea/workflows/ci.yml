@@ -1,0 +1,51 @@
+# Gitea Actions CI for repo.billbert.co.
+#
+# Gitea runs .gitea/workflows instead of .github/workflows when this directory
+# exists. The .github workflows target the GitHub self-hosted runner labels
+# (weltbon-ci-unit, weltbon-ci-integration, citreum), which no Gitea runner
+# carries, so without this file every Gitea run queues forever.
+name: ci
+on: [push, pull_request, workflow_dispatch]
+jobs:
+  unit:
+    runs-on: ubuntu-latest
+    env:
+      HOME: /tmp
+      PNPM_HOME: /tmp/pnpm
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with: { node-version: 22 }
+      - uses: pnpm/action-setup@v4
+      - run: pnpm install --frozen-lockfile
+      - run: cd api && pnpm test -- --maxWorkers=1
+      - run: cd web && pnpm exec vitest run
+
+  integration-smoke:
+    runs-on: ubuntu-latest
+    env:
+      HOME: /tmp
+      PNPM_HOME: /tmp/pnpm
+      # Job and service containers share a network; the service is reached by name.
+      DATABASE_URL: postgresql://weltbon:weltbon@postgres:5432/weltbon
+    services:
+      postgres:
+        image: postgres:16-alpine
+        env:
+          POSTGRES_DB: weltbon
+          POSTGRES_USER: weltbon
+          POSTGRES_PASSWORD: weltbon
+        options: >-
+          --tmpfs /var/lib/postgresql/data:rw,size=1g
+          --health-cmd "pg_isready -U weltbon -d weltbon"
+          --health-interval 5s
+          --health-timeout 5s
+          --health-retries 10
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with: { node-version: 22 }
+      - uses: pnpm/action-setup@v4
+      - run: pnpm install --frozen-lockfile
+      - run: cd api && pnpm db:migrate
+      - run: cd api && pnpm test:integration:smoke
