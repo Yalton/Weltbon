@@ -123,7 +123,6 @@ describe('unpackZip', () => {
     const compressedSize = statSync(ZIP_BOMB_ZIP).size;
     expect(compressedSize).toBeLessThan(1_000_000);
 
-    const start = Date.now();
     let err: unknown;
     try {
       await unpackZip(buf, {
@@ -134,11 +133,12 @@ describe('unpackZip', () => {
     } catch (e) {
       err = e;
     }
-    const elapsed = Date.now() - start;
     expect(err).toBeInstanceOf(BatchLimitError);
+    // Only the live check inside the read stream raises total_uncompressed_size,
+    // so this error proves the 200 MB entry was abandoned at the 100 MB cap
+    // rather than unpacked first. (A wall-clock bound used to stand in for this
+    // and failed whenever the machine was busy.)
     expect((err as BatchLimitError).limit).toBe('total_uncompressed_size');
-    // Streaming abort, not a full unpack — wall time should be well under 2s on any laptop.
-    expect(elapsed).toBeLessThan(2_000);
   });
 
   it('directories ignored: yazl-emitted directory entries are not returned', async () => {

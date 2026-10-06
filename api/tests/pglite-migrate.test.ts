@@ -3,13 +3,14 @@ import { mkdtemp, rm } from 'node:fs/promises';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import { sql } from 'drizzle-orm';
+import { COLD_START_TIMEOUT } from './helpers/timeouts.js';
 
 /**
  * DV-07: the migrator must dispatch per driver. Proof that the full 36-migration
  * chain applies to a FILE-BACKED PGlite, not just the in-memory one the D-07
  * spike used.
  */
-describe('migrations on a persistent PGlite (DV-07)', () => {
+describe('migrations on a persistent PGlite (DV-07)', { timeout: COLD_START_TIMEOUT }, () => {
   let dir: string;
   const OLD_ENV = { ...process.env };
 

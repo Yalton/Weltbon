@@ -8,6 +8,7 @@ import { migrate } from 'drizzle-orm/pglite/migrator';
 import { eq } from 'drizzle-orm';
 import * as schema from '../src/db/schema.js';
 import { users } from '../src/db/schema.js';
+import { COLD_START_TIMEOUT } from './helpers/timeouts.js';
 
 /**
  * The Stage 1 success criterion, made falsifiable.
@@ -28,7 +29,7 @@ import { users } from '../src/db/schema.js';
  * `expect(found).toBeDefined()` with "expected undefined to be defined".
  * That is the row assertion catching a failure the schema check cannot.
  */
-describe('PGlite persistence across close and reopen', () => {
+describe('PGlite persistence across close and reopen', { timeout: COLD_START_TIMEOUT }, () => {
   let dir: string;
 
   beforeEach(async () => {

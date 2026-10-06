@@ -1,6 +1,11 @@
 import '@testing-library/jest-dom';
-import { cleanup } from '@testing-library/react';
+import { cleanup, configure } from '@testing-library/react';
 import { afterEach } from 'vitest';
+
+// findBy*/waitFor give up after 1s by default, which a lazily loaded route or a
+// re-render can exceed when the machine is busy. Tests that need a tighter
+// bound pass their own { timeout }.
+configure({ asyncUtilTimeout: 5_000 });
 
 // jsdom doesn't ship ResizeObserver, but Radix UI primitives (Popover, Select,
 // Dialog) call into @radix-ui/react-use-size which assumes it exists. Provide

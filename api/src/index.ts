@@ -2,7 +2,6 @@ import { pathToFileURL } from 'node:url';
 import { serve } from '@hono/node-server';
 import { Hono } from 'hono';
 import { cors } from 'hono/cors';
-import { secureHeaders } from 'hono/secure-headers';
 import { logger } from 'hono/logger';
 import { HTTPException } from 'hono/http-exception';
 import { env, type Env } from './config.js';
@@ -54,6 +53,7 @@ import { seedInviteCode } from './db/seedInviteCode.js';
 import { createApiRouter } from './openapi/app.js';
 import { scalarHtml } from './openapi/scalar.js';
 import { registerWebStatic } from './web-static.js';
+import { securityHeaders } from './security-headers.js';
 
 const cfg = env();
 
@@ -137,17 +137,7 @@ export function createApp() {
     },
     credentials: true,
   }));
-  // Baseline hardening. The cross-origin isolation headers stay off: they would
-  // block shares, map tiles and assets loaded by other origins. CSP and HSTS
-  // are not set here (see tests/security-headers.test.ts).
-  app.use('*', secureHeaders({
-    xFrameOptions: 'SAMEORIGIN',
-    referrerPolicy: 'strict-origin-when-cross-origin',
-    strictTransportSecurity: false,
-    crossOriginEmbedderPolicy: false,
-    crossOriginResourcePolicy: false,
-    crossOriginOpenerPolicy: false,
-  }));
+  app.use('*', securityHeaders);
   // PROXY-02: resolve the public origin once per request from X-Forwarded-* headers.
   app.use('*', forwarded);
   const apiR = createApiRouter();

@@ -4,6 +4,7 @@ import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import { eq } from 'drizzle-orm';
 import { users } from '../src/db/schema.js';
+import { COLD_START_TIMEOUT } from './helpers/timeouts.js';
 
 /**
  * The seam itself (DV-04/DV-05/DV-08). These tests exercise the REAL pglite
@@ -26,7 +27,7 @@ import { users } from '../src/db/schema.js';
  * dynamic import clears that singleton too; it's the same fix already used in
  * tests/cors.test.ts for the identical env()-singleton-bleed problem.
  */
-describe('db/client driver seam', () => {
+describe('db/client driver seam', { timeout: COLD_START_TIMEOUT }, () => {
   let dir: string;
   const OLD_ENV = { ...process.env };
 

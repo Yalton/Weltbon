@@ -13,4 +13,10 @@ describe('index.html', () => {
     expect(meta('meta[property="og:description"]')).toBe(meta('meta[name="description"]'));
     expect(meta('meta[property="og:type"]')).toBe('website');
   });
+
+  it('starts dark without an inline script, so the CSP can forbid inline scripts', () => {
+    expect(doc.documentElement.classList.contains('dark')).toBe(true);
+    const inline = [...doc.querySelectorAll('script')].filter((s) => !s.getAttribute('src'));
+    expect(inline).toHaveLength(0);
+  });
 });

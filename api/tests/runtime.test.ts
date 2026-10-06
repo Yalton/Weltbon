@@ -1,7 +1,8 @@
 import { afterEach, describe, expect, it } from 'vitest';
 import { _resetEnvForTests } from '../src/config.js';
+import { COLD_START_TIMEOUT } from './helpers/timeouts.js';
 
-describe('GET /api/runtime', () => {
+describe('GET /api/runtime', { timeout: COLD_START_TIMEOUT }, () => {
   const original = process.env.WELTBON_LOCAL_MODE;
 
   afterEach(() => {

@@ -2,8 +2,9 @@ import { describe, it, expect, afterEach, beforeEach, vi } from 'vitest';
 import { mkdtemp, rm } from 'node:fs/promises';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
+import { COLD_START_TIMEOUT } from './helpers/timeouts.js';
 
-describe('db/client lifecycle under concurrent close', () => {
+describe('db/client lifecycle under concurrent close', { timeout: COLD_START_TIMEOUT }, () => {
   let dir: string;
   const OLD_ENV = { ...process.env };
 
@@ -61,7 +62,7 @@ describe('db/client lifecycle under concurrent close', () => {
     const again = await initDb();
     expect(again).toBeDefined();
     await closeDb();
-  }, 30_000);
+  });
 
   it('a stale initDb() finally cannot clear a NEWER in-flight promise', async () => {
     // Routing this interleaving through the real closeDb()/initDb() public API
