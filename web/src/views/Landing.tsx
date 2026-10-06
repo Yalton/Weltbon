@@ -1,6 +1,7 @@
 import type { CSSProperties } from 'react';
 import { Link } from 'react-router-dom';
 import { useRuntime } from '../runtime/RuntimeProvider';
+import { useDocumentTitle } from '../hooks/useDocumentTitle';
 
 /**
  * Public front door for server-mode instances. Signup is invite-only, so the
@@ -9,6 +10,7 @@ import { useRuntime } from '../runtime/RuntimeProvider';
  */
 export function Landing() {
   const { landing } = useRuntime();
+  useDocumentTitle();
 
   return (
     <div className="landing min-h-full flex flex-col">
@@ -96,7 +98,7 @@ export function Landing() {
             Already have an invitation code?{' '}
             <Link
               to="/register"
-              className="text-accent-ink underline decoration-accent-strong/50 underline-offset-4 hover:decoration-accent-ink"
+              className="rounded-sm text-accent-ink underline decoration-accent-strong/50 underline-offset-4 hover:decoration-accent-ink focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-[color:var(--color-accent)]"
             >
               Create your account
             </Link>

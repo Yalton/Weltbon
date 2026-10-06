@@ -58,6 +58,35 @@ describe('RequestInvite view', () => {
     expect(fetchMock).not.toHaveBeenCalled();
   });
 
+  it('ties each validation error to its field so screen readers read it', async () => {
+    vi.stubGlobal('fetch', vi.fn());
+    renderRequestInvite();
+
+    await fillAndSubmit({ email: 'not-an-email' });
+
+    expect(await screen.findByLabelText(/^name/i)).toHaveAccessibleDescription('Enter your name');
+    expect(screen.getByLabelText(/^email/i)).toHaveAccessibleDescription('Enter a valid email');
+  });
+
+  it('sends the email lowercased and a blank note as empty, like the API stores them', async () => {
+    const fetchMock = vi.fn().mockResolvedValue(respond(202, { ok: true }));
+    vi.stubGlobal('fetch', fetchMock);
+    renderRequestInvite();
+
+    await fillAndSubmit({ name: '  Ada  ', email: 'Ada@Example.COM', note: '   ' });
+
+    await screen.findByRole('heading', { name: /request sent/i });
+    expect(JSON.parse(fetchMock.mock.calls[0][1].body as string)).toEqual({
+      name: 'Ada', email: 'ada@example.com', note: '', website: '',
+    });
+  });
+
+  it('names the page in the document title and avoids jargon', () => {
+    renderRequestInvite();
+    expect(document.title).toBe('Request an invitation · Weltbon');
+    expect(screen.queryByText(/operator/i)).not.toBeInTheDocument();
+  });
+
   it('posts the request and confirms it was sent', async () => {
     const fetchMock = vi.fn().mockResolvedValue(respond(202, { ok: true }));
     vi.stubGlobal('fetch', fetchMock);

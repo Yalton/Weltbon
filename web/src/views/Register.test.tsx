@@ -22,6 +22,11 @@ function renderRegister() {
 describe('Register view', () => {
   beforeEach(() => vi.restoreAllMocks());
 
+  it('names the page in the document title', () => {
+    renderRegister();
+    expect(document.title).toBe('Create your account · Weltbon');
+  });
+
   it('submits all four fields and navigates on 200', async () => {
     const fetchMock = vi.fn().mockResolvedValue(
       new Response(

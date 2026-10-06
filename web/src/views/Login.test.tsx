@@ -24,6 +24,11 @@ describe('Login view', () => {
     vi.restoreAllMocks();
   });
 
+  it('names the page in the document title', () => {
+    renderLogin();
+    expect(document.title).toBe('Log in · Weltbon');
+  });
+
   it('submits credentials and navigates to /universes on success', async () => {
     const fetchMock = vi.fn().mockResolvedValue(
       new Response(
