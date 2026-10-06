@@ -3,6 +3,7 @@ import { mkdtemp, rm } from 'node:fs/promises';
 import { tmpdir, networkInterfaces } from 'node:os';
 import { join } from 'node:path';
 import { sql } from 'drizzle-orm';
+import { COLD_START_TIMEOUT } from './helpers/timeouts.js';
 
 // Same singleton-bleed problem documented in tests/db-client-lifecycle.test.ts
 // and tests/db-client-driver.test.ts: config.ts's `_env` and db/client.ts's
@@ -33,15 +34,9 @@ describe('startServer()', () => {
     await rm(dir, { recursive: true, force: true });
   });
 
-  // Explicit 30s timeouts (matching vitest.config.ts's hookTimeout, bumped for
-  // exactly this reason: "the DB-gated beforeAll/afterAll ... tip over 10s
-  // under CPU contention on a loaded [run]"). These two tests do the SAME
-  // CPU-heavy PGlite work — a full startServer() boot: initDb + runMigrations
-  // + seedInviteCode + assertLlmKeyEncryptionKey + recoverOrphanAuditRuns —
-  // but inline in the `it()` body rather than in a hook, so they are bound by
-  // the global 10s testTimeout instead of the 30s hookTimeout. Observed
-  // flaking under the full unit lane (52 files racing for CPU) at the default
-  // 10s; stable at 30s.
+  // These tests boot the whole server inline (initDb + runMigrations +
+  // seedInviteCode + assertLlmKeyEncryptionKey + recoverOrphanAuditRuns), so
+  // they get the cold-start timeout rather than the default 10s.
   it('boots on an ephemeral port and reports the port it actually bound', async () => {
     vi.resetModules();
     // @ts-expect-error query-suffix import is unresolvable to tsc but fine at runtime
@@ -63,7 +58,7 @@ describe('startServer()', () => {
     const res = await fetch(`http://127.0.0.1:${port}/health`);
     expect(res.status).toBe(200);
     expect(await res.json()).toEqual({ ok: true });
-  }, 30_000);
+  }, COLD_START_TIMEOUT);
 
   it('runs migrations as part of boot, so a fresh data dir is usable immediately', async () => {
     vi.resetModules();
@@ -124,7 +119,7 @@ describe('startServer()', () => {
     const journal = await import('../drizzle/meta/_journal.json', { with: { type: 'json' } });
     const expected = (journal.default as { entries: unknown[] }).entries.length;
     expect(Number(rows[0].n)).toBe(expected);
-  }, 30_000);
+  }, COLD_START_TIMEOUT);
 
 
   // now passes cfg.bindHost through to serve() as `hostname`. Left unset it's
@@ -175,5 +170,5 @@ describe('startServer()', () => {
     await expect(
       fetch(`http://${external.address}:${port}/health`, { signal: AbortSignal.timeout(2000) })
     ).rejects.toThrow();
-  }, 30_000);
+  }, COLD_START_TIMEOUT);
 });

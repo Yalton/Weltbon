@@ -11,6 +11,7 @@
  */
 import { describe, it, expect, beforeEach, afterEach, vi } from 'vitest';
 import { readFileSync } from 'node:fs';
+import { COLD_START_TIMEOUT } from './helpers/timeouts.js';
 
 const PKG_VERSION = JSON.parse(
   readFileSync(new URL('../package.json', import.meta.url), 'utf8'),
@@ -51,7 +52,7 @@ afterEach(() => {
   }
 });
 
-describe('GET /api/version', () => {
+describe('GET /api/version', { timeout: COLD_START_TIMEOUT }, () => {
   it('answers without any credential', async () => {
     const res = await versionResponse();
     expect(res.status).toBe(200);

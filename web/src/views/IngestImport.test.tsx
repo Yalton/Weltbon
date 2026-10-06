@@ -181,6 +181,18 @@ async function uploadSimpleZip() {
   await userEvent.click(screen.getByRole('button', { name: /^Upload$/ }));
 }
 
+/**
+ * Waits until the saved draft includes Alpha's slot. Alpha's editor reports
+ * its metadata when the review opens, and that reaches localStorage through a
+ * 300 ms debounced save, so a snapshot taken earlier races that write.
+ */
+async function waitForSettledDraft() {
+  await waitFor(() => {
+    const saved = JSON.parse(localStorage.getItem(STORAGE_KEY) ?? 'null') as SavedDraft | null;
+    expect(saved?.decisions['alpha.md']).toBeDefined();
+  });
+}
+
 async function uploadDocxBatch() {
   const input = document.querySelector(
     'input[type="file"]',
@@ -355,9 +367,7 @@ describe('IngestImport', () => {
     ).toBeInTheDocument();
 
     // Verify the draft was saved to localStorage during review.
-    await waitFor(() =>
-      expect(localStorage.getItem(STORAGE_KEY)).not.toBeNull(),
-    );
+    await waitForSettledDraft();
     const draftBefore = localStorage.getItem(STORAGE_KEY);
 
     // Commit (mock throws 500).
@@ -817,6 +827,7 @@ describe('IngestImport', () => {
     ).toBeInTheDocument();
     await uploadDocxBatch();
     await screen.findByRole('main', { name: /Import review/i });
+    await waitForSettledDraft();
     const draftBefore = localStorage.getItem(STORAGE_KEY);
 
     act(() => {

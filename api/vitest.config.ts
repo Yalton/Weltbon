@@ -7,8 +7,9 @@ export default defineConfig({
     environment: 'node',
     setupFiles: ['./tests/setup.ts'],
     testTimeout: 10_000,
-    // DB setup/teardown can exceed the per-test timeout under CI contention.
-    hookTimeout: 30_000,
+    // DB setup/teardown and the cold app imports some suites do in beforeAll
+    // take well over 30s when the machine is busy (see tests/helpers/timeouts.ts).
+    hookTimeout: 60_000,
     projects: [
       {
         extends: true,

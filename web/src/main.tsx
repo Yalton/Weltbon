@@ -1,3 +1,5 @@
+// Must stay first: it configures zod before any schema is created.
+import './lib/zodConfig';
 import React from 'react';
 import ReactDOM from 'react-dom/client';
 import { BrowserRouter } from 'react-router-dom';

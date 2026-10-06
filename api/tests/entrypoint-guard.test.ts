@@ -1,4 +1,5 @@
 import { describe, it, expect, afterEach, beforeEach, vi } from 'vitest';
+import { COLD_START_TIMEOUT } from './helpers/timeouts.js';
 
 /**
  * Both `db/migrate.ts` and `index.ts` decide whether to run as a CLI entrypoint
@@ -21,7 +22,7 @@ import { describe, it, expect, afterEach, beforeEach, vi } from 'vitest';
  * close a silent-mismatch class and, in doing so, turned a benign false into a
  * crash in a host nothing tested.
  */
-describe('CLI entrypoint guards tolerate a missing process.argv[1]', () => {
+describe('CLI entrypoint guards tolerate a missing process.argv[1]', { timeout: COLD_START_TIMEOUT }, () => {
   const originalArgv = process.argv;
 
   beforeEach(() => {
