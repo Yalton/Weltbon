@@ -265,6 +265,37 @@ describe('POST /api/universes/:uid/ingest/commit', () => {
     expect(rows).toEqual([{ label: null }, { label: null }]);
   });
 
+  it('creates one link per source/target pair when a note links the same entry twice', async () => {
+    const { userId, jwt } = await createUserAndJwt('wikilink-dupe@commit.test');
+    const u = await createUniverse(userId);
+
+    const body = makeBody([
+      makeEntry({
+        title: 'Alpha',
+        path: 'entries/Alpha.md',
+        linksOut: [
+          { target: 'Beta', target_path: 'entries/Beta.md', label: 'Beta', resolved: true },
+          { target: 'Beta', target_path: 'entries/Beta.md', label: 'B again', resolved: true },
+        ],
+      }),
+      makeEntry({
+        title: 'Beta',
+        path: 'entries/Beta.md',
+        // The reverse direction is a different link and must survive.
+        linksOut: [{ target: 'Alpha', target_path: 'entries/Alpha.md', label: 'Alpha', resolved: true }],
+      }),
+    ]);
+
+    const res = await commitRequest(u.id, body, `Bearer ${jwt}`);
+    expect(res.status).toBe(200);
+    expect(res.body.linksCreated).toBe(2);
+    const rows = await handle.db
+      .select({ id: links.id })
+      .from(links)
+      .where(eq(links.universeId, u.id));
+    expect(rows).toHaveLength(2);
+  });
+
   it('T-HAPPY-02: rename disposition uses newTitle; existing colliding entry untouched', async () => {
     const { userId, jwt } = await createUserAndJwt('happy-02@commit.test');
     const u = await createUniverse(userId);

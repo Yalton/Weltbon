@@ -308,6 +308,9 @@ export async function commitIngest(
 
     type LinkInsert = typeof linksTable.$inferInsert;
     const linksToInsert: LinkInsert[] = [];
+    // A note may mention [[X]] several times; imported links carry no label,
+    // so each repeat would be an identical row.
+    const queuedPairs = new Set<string>();
     for (const e of accepted) {
       const sourceId = entryIdByPath.get(e.path);
       if (!sourceId) continue; // defensive — should always be present
@@ -320,6 +323,9 @@ export async function commitIngest(
           targetId = l.target_id;
         }
         if (!targetId) continue; // skipped/unresolved → silently drop
+        const pair = `${sourceId}:${targetId}`;
+        if (queuedPairs.has(pair)) continue;
+        queuedPairs.add(pair);
         linksToInsert.push({
           universeId: uid,
           sourceEntryId: sourceId,
