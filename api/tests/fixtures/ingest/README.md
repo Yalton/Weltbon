@@ -77,3 +77,22 @@ strings. Expected: `meta.created === "2024-01-15T00:00:00.000Z"`.
 **Decisions:** D-05
 Both resolve to title "Shared Title". The wikilink resolver (11-02) applies first-match-wins
 and emits a warning for the second file. These fixtures drive the duplicate-title collision test.
+
+## docx-gdocs/
+
+Google-Docs-shaped `.docx` worldbuilding notes, rebuilt byte-for-byte by
+`python3 -I docx-gdocs/build_gdocs.py` (stdlib only). The structure copies real
+Docs exports: no Heading styles, direct run formatting, `w14:paraId`/rsid noise,
+an empty header part, a comment. All text is invented.
+
+- `pantheon-tabs.docx` — a tree kept as plain paragraphs; depth is only leading
+  `<w:tab/>` runs or `w:ind firstLine`. Bold+underlined names, `{A||B}` pipes.
+- `ranked-orders.docx` — a decimal `numPr` list of `Name: description` items and
+  a chapter outline of plain lines with bullet lists, one nested.
+- `chronicle.docx` — era titles that are only bold+underlined centred lines
+  (heading-promotion candidates), a paragraph opening with a soft break + tab,
+  dated timeline lines, a fake `1.` list marker, a bold opening quote mark
+  (known flanking bug, Weltbon-izk) and one comment.
+
+Used by `ingest-docx-gdocs-fixtures.test.ts` (conversion) and
+`ingest-docx-gdocs-route.test.ts` (preview + commit through the routes).

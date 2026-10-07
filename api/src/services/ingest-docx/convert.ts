@@ -56,8 +56,8 @@ function escapeLineStarts(text: string): string {
   }).join('\n');
 }
 
-function stripTrailingBreaks(text: string): string {
-  return text.replace(/(?:\\\n)+$/, '');
+function stripEdgeBreaks(text: string): string {
+  return text.replace(/^(?: *\\\n)+/, '').replace(/(?:\\\n)+$/, '');
 }
 
 function flattenBreaks(text: string): string {
@@ -109,9 +109,45 @@ interface RenderContext {
   footnoteOrder: string[];
 }
 
+function isTextRun(r: DocxRun): boolean {
+  return !r.lineBreak && !r.tab && r.footnoteRef === null;
+}
+
+function sameLink(a: DocxRun['hyperlink'], b: DocxRun['hyperlink']): boolean {
+  if (a === null || b === null) return a === b;
+  return a.relId === b.relId && a.anchor === b.anchor;
+}
+
+// Word splits one formatted word across runs (spellcheck, revision ids);
+// decorating each piece alone yields `**Hel****lo**`, which CommonMark reads
+// as literal asterisks. Merge neighbours that would get identical markers.
+function coalesceRuns(runs: DocxRun[], ctx: RenderContext): DocxRun[] {
+  const out: DocxRun[] = [];
+  for (const r of runs) {
+    if (hasDroppedFormatting(r)) ctx.bump('formatting-dropped');
+    const cur: DocxRun = {
+      ...r,
+      text: r.caps ? r.text.toUpperCase() : r.text,
+      caps: false, underline: false, highlight: false, vertAlign: 'baseline',
+    };
+    const prev = out[out.length - 1];
+    if (
+      prev !== undefined && isTextRun(prev) && isTextRun(cur)
+      && prev.bold === cur.bold && prev.italic === cur.italic && prev.strike === cur.strike
+      && sameLink(prev.hyperlink, cur.hyperlink)
+    ) {
+      prev.text += cur.text;
+      continue;
+    }
+    out.push(cur);
+  }
+  return out;
+}
+
 function renderRuns(
-  runs: DocxRun[], ctx: RenderContext, singleLine: boolean, plain = false,
+  rawRuns: DocxRun[], ctx: RenderContext, singleLine: boolean, plain = false,
 ): string {
+  const runs = coalesceRuns(rawRuns, ctx);
   let out = '';
   let i = 0;
   while (i < runs.length) {
@@ -179,7 +215,7 @@ function renderParagraph(
     return { text: `${'#'.repeat(level)} ${text}`, listItem: false };
   }
 
-  const body = stripTrailingBreaks(renderRuns(block.runs, ctx, false));
+  const body = stripEdgeBreaks(renderRuns(block.runs, ctx, false));
   if (body.trim() === '') return null;
 
   if (block.numbering !== null) {
