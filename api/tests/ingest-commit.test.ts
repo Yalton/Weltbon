@@ -237,6 +237,34 @@ describe('POST /api/universes/:uid/ingest/commit', () => {
     expect(after.categories).toBe(1);
   });
 
+  it('stores no relationship label for imported wikilinks, with or without display text', async () => {
+    // A [[wikilink]]'s text is how the note words the link, not a relationship
+    // between entries; storing it as links.label made the graph repeat titles.
+    const { userId, jwt } = await createUserAndJwt('wikilink-label@commit.test');
+    const u = await createUniverse(userId);
+
+    const body = makeBody([
+      makeEntry({
+        title: 'Alpha',
+        path: 'entries/Alpha.md',
+        linksOut: [
+          { target: 'Beta', target_path: 'entries/Beta.md', label: 'Beta', resolved: true },
+          { target: 'Gamma', target_path: 'entries/Gamma.md', label: 'the third one', resolved: true },
+        ],
+      }),
+      makeEntry({ title: 'Beta', path: 'entries/Beta.md' }),
+      makeEntry({ title: 'Gamma', path: 'entries/Gamma.md' }),
+    ]);
+
+    const res = await commitRequest(u.id, body, `Bearer ${jwt}`);
+    expect(res.status).toBe(200);
+    const rows = await handle.db
+      .select({ label: links.label })
+      .from(links)
+      .where(eq(links.universeId, u.id));
+    expect(rows).toEqual([{ label: null }, { label: null }]);
+  });
+
   it('T-HAPPY-02: rename disposition uses newTitle; existing colliding entry untouched', async () => {
     const { userId, jwt } = await createUserAndJwt('happy-02@commit.test');
     const u = await createUniverse(userId);
