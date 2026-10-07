@@ -248,6 +248,26 @@ describe('GraphCanvas', () => {
     expect(labels[0].getAttribute('stroke-width')).toBe('5');
   });
 
+  it('does not draw an edge label that only repeats the target entry title', () => {
+    const nodes = [makeNode({ id: 'A', title: 'Sapient Life' }), makeNode({ id: 'B', title: 'Machine Intelligences' })];
+    const edges = [makeEdge('e1', 'A', 'B', 'Machine Intelligences'), makeEdge('e2', 'B', 'A', 'created by')];
+    const { container } = render(
+      <GraphCanvas
+        nodes={nodes}
+        edges={edges}
+        positions={[]}
+        width={600}
+        height={400}
+        onNodeClick={vi.fn()}
+        onPinNode={vi.fn()}
+        editMode={false}
+        onLinkDragEnd={vi.fn()}
+      />,
+    );
+    const labels = Array.from(container.querySelectorAll('text.edge-label')).map((n) => n.textContent);
+    expect(labels).toEqual(['created by']);
+  });
+
   it('strokes untyped edges with NEUTRAL_EDGE_COLOR (SC#3 backward-compat)', () => {
     const { nodes, edges, positions } = tinyGraph();
     const { container } = render(

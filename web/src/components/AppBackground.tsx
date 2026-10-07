@@ -167,7 +167,6 @@ export function AppBackground() {
       role="presentation"
       data-testid="app-background"
       className="fixed inset-0 -z-10 pointer-events-none w-full h-full"
-      style={{ filter: 'blur(0.5px)' }}
     />
   );
 }
