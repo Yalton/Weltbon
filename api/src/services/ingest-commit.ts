@@ -324,7 +324,9 @@ export async function commitIngest(
           universeId: uid,
           sourceEntryId: sourceId,
           targetEntryId: targetId,
-          label: l.label,
+          // l.label is the wikilink's display text, not a relationship; storing
+          // it made every edge repeat its target's title in the graph.
+          label: null,
           direction: 'directed' as const,
         });
       }
