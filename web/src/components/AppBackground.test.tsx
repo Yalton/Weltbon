@@ -123,6 +123,12 @@ describe('AppBackground', () => {
     expect(canvas!.className).toContain('-z-10');
   });
 
+  it('applies no CSS filter: blurring a full-screen canvas every frame halved the frame rate', () => {
+    vi.stubGlobal('matchMedia', vi.fn(() => makeMqMock(false)));
+    const { container } = renderAt();
+    expect(container.querySelector('canvas')!.style.filter).toBe('');
+  });
+
   it('does NOT start rAF when prefers-reduced-motion is reduce', () => {
     vi.stubGlobal('matchMedia', vi.fn(() => makeMqMock(true)));
     renderAt();

@@ -13,6 +13,7 @@ import { select } from 'd3-selection';
 import { zoom, zoomTransform, type ZoomBehavior } from 'd3-zoom';
 import type { GraphEdge, GraphNode, GraphPosition } from '../hooks/useGraphData';
 import { getLinkTypeColor, type LinkTypeRegistry } from '../lib/linkTypeColor';
+import { edgeLabelAddsMeaning } from '../lib/edgeLabels';
 import { edgeLabelPosition, seededGraphPosition } from '../lib/graphLayout';
 import { appendMedallionNode } from './MedallionSVG';
 import type { MedallionSource } from '../lib/medallion';
@@ -173,12 +174,16 @@ export function GraphCanvas({
 
     const labelsHidden = zoomTransform(svgRef.current).k < LABEL_VISIBLE_ZOOM;
 
-    // Only render labels for edges whose label is non-empty. Uses a separate
+    // Only label edges whose label says more than the target's own title
+    // (lib/edgeLabels.ts). Targets are still id strings here; forceLink swaps
+    // them for node objects once the simulation starts.
     const labelSel = g
       .select<SVGGElement>('g.edge-labels')
       .selectAll<SVGTextElement, SimEdge>('text.edge-label')
       .data(
-        simEdges.filter((e) => e.label && e.label.length > 0),
+        simEdges.filter((e) =>
+          edgeLabelAddsMeaning(e.label, nodeById.get(e.target as string)?.title ?? ''),
+        ),
         (d) => d.id,
       )
       .join(
