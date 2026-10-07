@@ -189,6 +189,32 @@ describe('convertDocument — inline', () => {
     expect(r.markdown).toContain('**bold** after');
   });
 
+  it('merges adjacent runs with the same emphasis instead of abutting markers', () => {
+    // Word splits runs on spellcheck and revision-id boundaries, so one bold
+    // word often arrives as two bold runs. `**Hel****lo**` parses as
+    // <strong>Hel****lo</strong>, leaking literal asterisks.
+    const r = convert([para([
+      run('Hel', { bold: true }), run('lo', { bold: true, underline: true }),
+      run(' and '),
+      run('Wor', { italic: true, caps: true }), run('ld', { italic: true }),
+    ])]);
+    expect(r.markdown).toContain('**Hello** and *WORld*');
+    expect(r.markdown).not.toContain('****');
+    const w = r.warnings.filter((x) => x.code === 'formatting-dropped');
+    expect(w[0].count).toBe(1);
+  });
+
+  it('merges same-emphasis runs inside one hyperlink', () => {
+    const r = convert(
+      [para([
+        run('Wel', { hyperlink: { relId: 'rId7', anchor: null }, bold: true }),
+        run('tbon', { hyperlink: { relId: 'rId7', anchor: null }, bold: true }),
+      ])],
+      { rels: new Map([['rId7', 'https://example.test/vale']]) },
+    );
+    expect(r.markdown).toContain('[**Weltbon**](https://example.test/vale)');
+  });
+
   it('resolves a hyperlink through the rels map', () => {
     const r = convert(
       [para([run('Weltbon', { hyperlink: { relId: 'rId7', anchor: null } })])],
