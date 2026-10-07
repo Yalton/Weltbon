@@ -85,6 +85,7 @@ export const DB_GATED_TESTS = [
   'tests/sync-auto.test.ts',
   'tests/pg-error-driver.test.ts',
   'tests/ingest-docx.test.ts',
+  'tests/ingest-docx-gdocs-route.test.ts',
 ];
 
 const NIGHTLY_ONLY = new Set([
