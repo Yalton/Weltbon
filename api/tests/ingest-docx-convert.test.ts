@@ -563,6 +563,16 @@ describe('convertDocument — prose must not restructure the document', () => {
 });
 
 describe('convertDocument — line breaks and caps', () => {
+  it('drops a leading hard break instead of opening the paragraph with a blank line', () => {
+    // Google Docs exports often start an indented paragraph with a soft
+    // break and a tab; `\\` + newline as the first line adds an empty line.
+    const r = convert([para([
+      run('', { lineBreak: true }), run('', { tab: true }), run('Wardens kept ledgers.'),
+    ])]);
+    expect(r.markdown).not.toContain('\\\n');
+    expect(r.markdown.trim()).toBe('Wardens kept ledgers.');
+  });
+
   it('drops a trailing hard break instead of emitting a stray backslash', () => {
     // Shift+Enter at the end of a paragraph is constant in Word. A trailing
     // backslash at the end of a block is a LITERAL backslash in CommonMark.

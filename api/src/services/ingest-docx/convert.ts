@@ -56,8 +56,8 @@ function escapeLineStarts(text: string): string {
   }).join('\n');
 }
 
-function stripTrailingBreaks(text: string): string {
-  return text.replace(/(?:\\\n)+$/, '');
+function stripEdgeBreaks(text: string): string {
+  return text.replace(/^(?: *\\\n)+/, '').replace(/(?:\\\n)+$/, '');
 }
 
 function flattenBreaks(text: string): string {
@@ -215,7 +215,7 @@ function renderParagraph(
     return { text: `${'#'.repeat(level)} ${text}`, listItem: false };
   }
 
-  const body = stripTrailingBreaks(renderRuns(block.runs, ctx, false));
+  const body = stripEdgeBreaks(renderRuns(block.runs, ctx, false));
   if (body.trim() === '') return null;
 
   if (block.numbering !== null) {
