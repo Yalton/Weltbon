@@ -824,7 +824,7 @@ export const syncClientRoutes = new OpenAPIHono<AppEnv>()
       // ONE branch reading the error's own status/code (C-19 lesson): a
       // per-class instanceof chain silently returns 500 the day a new
       if (err instanceof SyncRunError) {
-        return c.json({ error: err.message, code: err.code }, err.status as 401 | 402 | 403 | 404 | 409 | 413 | 500 | 502);
+        return c.json({ error: err.message, code: err.code }, err.status as 401 | 402 | 404 | 409 | 413 | 500 | 502);
       }
       throw err;
     }

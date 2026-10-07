@@ -32,7 +32,7 @@ export type DismissalReason =
   | 'not_now'
   | 'duplicate_of_human_issue';
 
-export interface IssueApiResponse extends PersistedAuditSuggestion {
+export interface IssueApiResponse extends Omit<PersistedAuditSuggestion, 'category'> {
   dismissedAt: string | null;
   dismissalReason: DismissalReason | null;
   dismissalNotes: string | null;
