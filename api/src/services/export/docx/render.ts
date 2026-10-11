@@ -94,7 +94,7 @@ async function resolveInlineAssets(
   return result;
 }
 
-export async function renderUniverseDocx(payload: ExportPayload): Promise<Uint8Array> {
+export async function renderUniverseDocx(payload: ExportPayload): Promise<Uint8Array<ArrayBuffer>> {
   const children: Array<Paragraph | Table | TableOfContents> = [];
   const assetMap = new Map(payload.assets.map((a) => [a.id, a] as const));
 

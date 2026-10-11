@@ -26,7 +26,7 @@ export class LocalStorageBackend implements StorageBackend {
     }
   }
 
-  async get(key: string): Promise<Buffer | null> {
+  async get(key: string): Promise<Buffer<ArrayBuffer> | null> {
     try {
       return await readFile(this.safeJoin(key));
     } catch (err: unknown) {
