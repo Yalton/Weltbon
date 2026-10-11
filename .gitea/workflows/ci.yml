@@ -49,3 +49,21 @@ jobs:
       - run: pnpm install --frozen-lockfile
       - run: cd api && pnpm db:migrate
       - run: cd api && pnpm test:integration:smoke
+      # EXP-03 (tests/export-pdf.test.ts) drives a system Chromium through
+      # puppeteer-core and skips itself unless CHROMIUM_PATH is set, so it
+      # never ran here. Install Debian's chromium and run it, and fail the job
+      # unless all three tests pass: a skip must not count as green.
+      - name: Install Chromium
+        run: |
+          apt-get update -o Acquire::Retries=3
+          DEBIAN_FRONTEND=noninteractive apt-get install -y --no-install-recommends chromium
+      - name: PDF export tests (EXP-03)
+        shell: bash
+        env:
+          CHROMIUM_PATH: /usr/bin/chromium
+          NO_COLOR: '1'
+        run: |
+          set -o pipefail
+          cd api
+          npx vitest run --project integration tests/export-pdf.test.ts 2>&1 | tee /tmp/export-pdf.log
+          grep -Eq 'Tests +3 passed \(3\)' /tmp/export-pdf.log || { echo 'export-pdf.test.ts did not report 3 passed tests' >&2; exit 1; }

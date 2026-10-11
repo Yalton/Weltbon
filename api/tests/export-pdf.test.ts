@@ -20,6 +20,10 @@ import {
 
 const CHROMIUM_PATH = process.env.CHROMIUM_PATH;
 const HAS_CHROMIUM = Boolean(CHROMIUM_PATH && fs.existsSync(CHROMIUM_PATH));
+// A CHROMIUM_PATH that points nowhere is a broken setup, not a reason to skip.
+if (CHROMIUM_PATH && !HAS_CHROMIUM) {
+  throw new Error(`CHROMIUM_PATH is set to ${CHROMIUM_PATH} but no file exists there`);
+}
 const d = HAS_CHROMIUM ? describe : describe.skip;
 
 /**
