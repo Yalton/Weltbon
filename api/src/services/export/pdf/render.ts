@@ -20,7 +20,10 @@ export async function renderUniversePdf(
   let pdfStream: ReadableStream<Uint8Array>;
   try {
     const page = await browser.newPage();
-    await page.setContent(html, { waitUntil: 'networkidle0' });
+    // 'load', not 'networkidle0': puppeteer 25 dropped the network-idle options
+    // from setContent. Every subresource here is a data: URI or a local file://
+    // font, so the load event already covers images; fonts are awaited below.
+    await page.setContent(html, { waitUntil: 'load' });
     // Belt-and-suspenders: wait for web fonts to fully load before snapshotting.
     await page.evaluateHandle('document.fonts.ready');
 
