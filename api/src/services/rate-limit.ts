@@ -11,6 +11,12 @@
 export interface FixedWindowLimiter {
   /** Count one hit against `key`. `retryAfterSeconds` is 0 when allowed. */
   hit(key: string): { allowed: boolean; retryAfterSeconds: number };
+  /**
+   * Whether `key` has already used up its window, without counting a hit.
+   * Lets a caller count only some outcomes (e.g. failed logins) with `hit()`
+   * while still refusing every request once the budget is gone.
+   */
+  check(key: string): { allowed: boolean; retryAfterSeconds: number };
   /** Forget every key. Tests use this to start each case with a clean budget. */
   reset(): void;
   /** Number of keys currently tracked. */
@@ -61,6 +67,14 @@ export function createFixedWindowLimiter(opts: {
       }
       current.count += 1;
       return { allowed: true, retryAfterSeconds: 0 };
+    },
+    check(key) {
+      const t = now();
+      const current = windows.get(key);
+      if (!current || t - current.start >= windowMs || current.count < limit) {
+        return { allowed: true, retryAfterSeconds: 0 };
+      }
+      return { allowed: false, retryAfterSeconds: Math.max(1, Math.ceil((current.start + windowMs - t) / 1000)) };
     },
     reset() {
       windows.clear();

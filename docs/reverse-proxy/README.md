@@ -9,4 +9,4 @@ Use the [Caddy example](Caddyfile.example) or [nginx example](nginx.conf.example
 
 Caddy obtains and renews a TLS certificate automatically when the domain reaches it. For nginx, configure a valid certificate and key in the example before enabling the site. Keep the forwarded-header settings from the examples: they prevent a client from supplying a false public origin.
 
-`WELTBON_TRUST_PROXY=true` tells Weltbon to take the visitor's address from `X-Forwarded-For`, which the public invitation-request form uses for rate limiting. Without it, every visitor looks like the proxy and shares one limit. Only set it when a proxy that overwrites the header, like the examples, is the only way to reach the app.
+`WELTBON_TRUST_PROXY=true` tells Weltbon to take the visitor's address from `X-Forwarded-For`, which the rate limits on login, registration and the public invitation-request form are keyed on. Without it, every visitor looks like the proxy and shares one limit. Only set it when a proxy that overwrites the header, like the examples, is the only way to reach the app.

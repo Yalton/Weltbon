@@ -21,8 +21,32 @@ import { hashInviteToken } from '../services/invite.js';
 import { ensureLocalUser } from '../services/local-mode.js';
 import { env } from '../config.js';
 import { isUniqueViolation } from '../db/pg-error.js';
+import { clientIp } from '../middleware/forwarded.js';
+import { createFixedWindowLimiter } from '../services/rate-limit.js';
 
 type AppEnv = { Variables: AuthVariables };
+
+// Per-client-IP budgets for the two password/invite-guessing surfaces.
+// In-memory: see services/rate-limit.ts.
+//  - login: 10 FAILED attempts per 15 minutes. Only failures are counted
+//    (hit() after a 401), but once the budget is gone every login from that
+//    address is refused until the window ends, correct password or not, so a
+//    guesser cannot learn anything from the 11th try onwards.
+//  - register: 10 attempts per hour, successful or not. Each one either
+//    guesses an invite code or consumes one, so there is no "good" volume.
+const LOGIN_FAILURE_LIMIT = 10;
+const LOGIN_WINDOW_MS = 15 * 60 * 1000;
+const REGISTER_LIMIT = 10;
+const REGISTER_WINDOW_MS = 60 * 60 * 1000;
+const loginFailureLimiter = createFixedWindowLimiter({ limit: LOGIN_FAILURE_LIMIT, windowMs: LOGIN_WINDOW_MS });
+const registerLimiter = createFixedWindowLimiter({ limit: REGISTER_LIMIT, windowMs: REGISTER_WINDOW_MS });
+
+export function _resetAuthRateLimitForTests(): void {
+  loginFailureLimiter.reset();
+  registerLimiter.reset();
+}
+
+const RATE_LIMITED = { error: 'Too many requests, try again later', code: 'rate_limited' } as const;
 
 // ─── Share-token rejection guard ─────────────────────────────────────────────
 // T-29-22 (SHARE-03): The /api/share/* namespace is the SINGLE auditable
@@ -84,6 +108,17 @@ const errorSchema = z.object({
   error: z.string(),
 });
 
+const rateLimitedResponse = {
+  content: {
+    'application/json': {
+      schema: z.object({ error: z.string(), code: z.literal('rate_limited') }),
+    },
+  },
+  headers: z.object({
+    'Retry-After': z.string().openapi({ description: 'Seconds until the client may try again' }),
+  }),
+} as const;
+
 const REFRESH_TTL_SECONDS = Math.floor(REFRESH_TTL_MS / 1000);
 
 // Cookie path must prefix the URL where the cookie is sent back. The auth
@@ -133,6 +168,10 @@ const registerRoute = createRoute({
       content: { 'application/json': { schema: errorSchema } },
       description: 'Invalid or used invite code (collapses duplicate-email per D-INV-11 to prevent enumeration)',
     },
+    429: {
+      ...rateLimitedResponse,
+      description: `More than ${REGISTER_LIMIT} registration attempts from this client address in ${REGISTER_WINDOW_MS / 60_000} minutes`,
+    },
     500: {
       content: { 'application/json': { schema: errorSchema } },
       description: 'Internal error',
@@ -170,6 +209,10 @@ const loginRoute = createRoute({
     401: {
       content: { 'application/json': { schema: errorSchema } },
       description: 'Invalid credentials',
+    },
+    429: {
+      ...rateLimitedResponse,
+      description: `${LOGIN_FAILURE_LIMIT} failed logins from this client address in the last ${LOGIN_WINDOW_MS / 60_000}-minute window; every login from it is refused until the window ends`,
     },
     500: {
       content: { 'application/json': { schema: errorSchema } },
@@ -293,6 +336,11 @@ export function buildAuthRoutes(): OpenAPIHono<AppEnv> {
   const router = new OpenAPIHono<AppEnv>()
 
   .openapi(registerRoute, async (c) => {
+    const limit = registerLimiter.hit(clientIp(c));
+    if (!limit.allowed) {
+      c.header('Retry-After', String(limit.retryAfterSeconds));
+      return c.json(RATE_LIMITED, 429);
+    }
     const { email, password, displayName, inviteCode } = c.req.valid('json');
 
     // D-INV-11: invalid/used/revoked invite AND duplicate email collapse to
@@ -351,15 +399,23 @@ export function buildAuthRoutes(): OpenAPIHono<AppEnv> {
   })
 
   .openapi(loginRoute, async (c) => {
+    const ip = clientIp(c);
+    const limit = loginFailureLimiter.check(ip);
+    if (!limit.allowed) {
+      c.header('Retry-After', String(limit.retryAfterSeconds));
+      return c.json(RATE_LIMITED, 429);
+    }
     const { email, password } = c.req.valid('json');
     const user = await getDb().query.users.findFirst({ where: eq(users.email, email) });
     // Single 401 message regardless of "no user" vs "wrong password" -- avoid user enumeration
     if (!user) {
       // Constant-time delay to avoid timing-based user enumeration
       await verifyPassword(password, '$2b$12$' + 'x'.repeat(53));
+      loginFailureLimiter.hit(ip);
       return c.json({ error: 'Invalid credentials' }, 401);
     }
     if (!(await verifyPassword(password, user.passwordHash)) || user.disabledAt !== null) {
+      loginFailureLimiter.hit(ip);
       return c.json({ error: 'Invalid credentials' }, 401);
     }
     const accessToken = await issueAccessToken(user.id);

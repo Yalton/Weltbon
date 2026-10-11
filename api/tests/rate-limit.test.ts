@@ -62,4 +62,19 @@ describe('createFixedWindowLimiter', () => {
     now += 60_000;
     expect(limiter.hit('ip-new').allowed).toBe(true);
   });
+
+  it('check() reports an exhausted window without counting a hit', () => {
+    const { limiter, advance } = limiterAt();
+    expect(limiter.check('a')).toEqual({ allowed: true, retryAfterSeconds: 0 });
+    expect(limiter.size()).toBe(0);
+    for (let i = 0; i < 3; i++) {
+      expect(limiter.check('a').allowed).toBe(true);
+      limiter.hit('a');
+    }
+    advance(15_000);
+    expect(limiter.check('a')).toEqual({ allowed: false, retryAfterSeconds: 45 });
+    expect(limiter.check('b').allowed).toBe(true);
+    advance(45_000);
+    expect(limiter.check('a').allowed).toBe(true);
+  });
 });

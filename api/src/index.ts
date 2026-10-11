@@ -236,7 +236,10 @@ export function createApp() {
             'Weltbon is a free, self-hostable worldbuilding API. ' +
             'All authenticated endpoints accept either a JWT access token or a Personal Access Token (PAT). ' +
             'The PAT meta-API (/api/auth/tokens) is JWT-only (D-13). ' +
-            'Rate limiting is not enforced in v2.0 — the operator owns the host.',
+            'POST /api/auth/login (10 failed attempts per client address per 15 minutes), ' +
+            'POST /api/auth/register (10 attempts per client address per hour) and the public ' +
+            'invite-request form are rate limited and answer 429 with Retry-After; other ' +
+            'endpoints are not rate limited by the API.',
         },
         servers: [{ url: '/api', description: 'Weltbon API' }],
       })

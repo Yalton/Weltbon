@@ -10,6 +10,20 @@ instance or the desktop app could key on. Internal refactors do not belong here.
 
 ## Unreleased
 
+### Added — rate limits on `POST /api/auth/login` and `POST /api/auth/register`
+
+Both endpoints can now answer `429` with `code: 'rate_limited'` and a
+`Retry-After` header (seconds), keyed on the client address (from
+`X-Forwarded-For` when `WELTBON_TRUST_PROXY=true`, otherwise the TCP peer).
+
+- **Login:** 10 failed attempts (wrong password, unknown email, or disabled
+  account) per address per 15-minute window. Successful logins do not count.
+  Once the budget is spent, every login from that address is refused until the
+  window ends, including one with the correct password.
+- **Register:** 10 attempts per address per hour, successful or not.
+
+The limiter is in-memory, so counts reset when the API process restarts.
+
 ### Changed — `POST /api/sync/remotes` (from #42)
 
 Two response statuses changed. Both are deliberate, but they are observable
