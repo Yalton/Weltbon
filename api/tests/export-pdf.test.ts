@@ -22,6 +22,25 @@ const CHROMIUM_PATH = process.env.CHROMIUM_PATH;
 const HAS_CHROMIUM = Boolean(CHROMIUM_PATH && fs.existsSync(CHROMIUM_PATH));
 const d = HAS_CHROMIUM ? describe : describe.skip;
 
+/**
+ * Extract the text and page count of a PDF with pdf-parse.
+ *
+ * pdf-parse 2.x has no default export: it exports a `PDFParse` class whose
+ * `getText()` returns `{ text, total }`. The 1.x-style `default(buffer)`
+ * call this file used to make threw "pdfParseMod.default is not a function".
+ * Imported lazily so the module only loads when the Chromium-gated suite runs.
+ */
+async function extractPdfText(buf: Buffer): Promise<{ text: string; numpages: number }> {
+  const { PDFParse } = await import('pdf-parse');
+  const parser = new PDFParse({ data: new Uint8Array(buf) });
+  try {
+    const result = await parser.getText();
+    return { text: result.text, numpages: result.total };
+  } finally {
+    await parser.destroy();
+  }
+}
+
 d('EXP-03: PDF exporter — full integration', () => {
   let handle: TestDbHandle;
   let app: ReturnType<typeof createApp>;
@@ -164,12 +183,7 @@ d('EXP-03: PDF exporter — full integration', () => {
     expect(buf.length).toBeGreaterThan(5000); // a real PDF is at least a few KB
     expect(buf.subarray(0, 4).toString()).toBe('%PDF');
 
-    // Use pdf-parse to extract text — the legacy import path is the only
-    // one that works without invoking pdf-parse's bundled test scripts.
-    const pdfParseMod = (await import('pdf-parse')) as unknown as {
-      default: (b: Buffer) => Promise<{ text: string; numpages: number }>;
-    };
-    const data = await pdfParseMod.default(buf);
+    const data = await extractPdfText(buf);
     expect(data.numpages).toBeGreaterThanOrEqual(2);
     expect(data.text).toContain('Pdf Test World');
     expect(data.text).toContain('People');
@@ -191,10 +205,7 @@ d('EXP-03: PDF exporter — full integration', () => {
       { headers: hdrs },
     );
     const buf = Buffer.from(await res.arrayBuffer());
-    const pdfParseMod = (await import('pdf-parse')) as unknown as {
-      default: (b: Buffer) => Promise<{ text: string; numpages: number }>;
-    };
-    const data = await pdfParseMod.default(buf);
+    const data = await extractPdfText(buf);
 
     // Title page contributes one occurrence; the @page :first margin trick
     // suppresses the page-1 footer, so each subsequent page contributes one
