@@ -3,13 +3,20 @@ import { eq } from 'drizzle-orm';
 import { createTestDb, cleanDb, createTestUser, type TestDbHandle } from './helpers.js';
 import { users, refreshTokens, inviteCodes } from '../src/db/schema.js';
 import { hashInviteToken } from '../src/services/invite.js';
+import { _resetEnvForTests } from '../src/config.js';
 
 describe('auth routes (AUTH-01..06)', () => {
   let handle: TestDbHandle;
   // eslint-disable-next-line @typescript-eslint/no-explicit-any
   let app: any;
+  const originalTrustProxy = process.env.WELTBON_TRUST_PROXY;
 
   beforeAll(async () => {
+    // The rate-limit tests pick each caller's address through X-Forwarded-For,
+    // as the documented reverse proxies set it. Requests without the header
+    // all share one bucket, which beforeEach resets.
+    process.env.WELTBON_TRUST_PROXY = 'true';
+    _resetEnvForTests();
     handle = await createTestDb();
     // Redirect db + pool to isolated test schema
     const { setTestDb } = await import('../src/db/client.js');
@@ -19,11 +26,16 @@ describe('auth routes (AUTH-01..06)', () => {
   });
 
   afterAll(async () => {
+    if (originalTrustProxy === undefined) delete process.env.WELTBON_TRUST_PROXY;
+    else process.env.WELTBON_TRUST_PROXY = originalTrustProxy;
+    _resetEnvForTests();
     await handle.cleanup();
   });
 
   beforeEach(async () => {
     await cleanDb(handle);
+    const { _resetAuthRateLimitForTests } = await import('../src/routes/auth.js');
+    _resetAuthRateLimitForTests();
   });
 
   async function seedInvite(code = 'valid-invite-123') {
@@ -379,5 +391,79 @@ describe('auth routes (AUTH-01..06)', () => {
     expect('llmConsentedAt' in res.body).toBe(false);
     // Defensive: a stringified body must not contain the field name either.
     expect(JSON.stringify(res.body)).not.toContain('llmConsentedAt');
+  });
+
+  describe('rate limiting', () => {
+    const login = (ip: string, password: string, email = 'rl@test.com') =>
+      appRequest('POST', '/api/auth/login', {
+        body: { email, password },
+        headers: { 'X-Forwarded-For': ip },
+      });
+
+    it('login: the 11th failed attempt from one address in the window gets 429 with Retry-After', async () => {
+      await createTestUser(handle, { email: 'rl@test.com', password: 'longenoughpw12' });
+      for (let i = 1; i <= 10; i++) {
+        const res = await login('198.51.100.7', `wrong-password-${i}`);
+        expect(res.status, `attempt ${i}`).toBe(401);
+      }
+
+      const eleventh = await login('198.51.100.7', 'wrong-password-11');
+      expect(eleventh.status).toBe(429);
+      expect(eleventh.body).toEqual({ error: 'Too many requests, try again later', code: 'rate_limited' });
+      const retryAfter = Number(eleventh.headers.get('retry-after'));
+      expect(retryAfter).toBeGreaterThan(0);
+      expect(retryAfter).toBeLessThanOrEqual(15 * 60);
+
+      // Once the budget is spent the right password is refused too, so the
+      // response no longer tells a guesser anything.
+      const correctButBlocked = await login('198.51.100.7', 'longenoughpw12');
+      expect(correctButBlocked.status).toBe(429);
+      expect(correctButBlocked.setCookieHeader).toBeNull();
+
+      // Another address is unaffected, and so is the account itself.
+      const otherIp = await login('198.51.100.8', 'longenoughpw12');
+      expect(otherIp.status).toBe(200);
+    }, 60_000);
+
+    it('login: unknown-email failures count toward the same budget', async () => {
+      for (let i = 1; i <= 10; i++) {
+        expect((await login('198.51.100.9', 'whatever-pw', `nobody${i}@test.com`)).status).toBe(401);
+      }
+      expect((await login('198.51.100.9', 'whatever-pw', 'nobody11@test.com')).status).toBe(429);
+    }, 60_000);
+
+    it('login: successful logins do not use up the failure budget', async () => {
+      await createTestUser(handle, { email: 'rl@test.com', password: 'longenoughpw12' });
+      for (let i = 0; i < 5; i++) {
+        expect((await login('198.51.100.10', 'longenoughpw12')).status).toBe(200);
+      }
+      for (let i = 1; i <= 10; i++) {
+        expect((await login('198.51.100.10', `wrong-password-${i}`)).status, `failure ${i}`).toBe(401);
+      }
+      expect((await login('198.51.100.10', 'wrong-password-11')).status).toBe(429);
+    }, 60_000);
+
+    it('register: the 11th attempt from one address in the window gets 429 with Retry-After', async () => {
+      const register = (ip: string, i: number, inviteCode = `bogus-invite-${i}`) =>
+        appRequest('POST', '/api/auth/register', {
+          body: { email: `reg${i}@test.com`, password: 'longenoughpw12', displayName: `R${i}`, inviteCode },
+          headers: { 'X-Forwarded-For': ip },
+        });
+      for (let i = 1; i <= 10; i++) {
+        expect((await register('198.51.100.20', i)).status, `attempt ${i}`).toBe(400);
+      }
+
+      const code = await seedInvite();
+      const eleventh = await register('198.51.100.20', 11, code);
+      expect(eleventh.status).toBe(429);
+      expect(eleventh.body.code).toBe('rate_limited');
+      const retryAfter = Number(eleventh.headers.get('retry-after'));
+      expect(retryAfter).toBeGreaterThan(0);
+      expect(retryAfter).toBeLessThanOrEqual(60 * 60);
+      // The refused attempt did not consume the invite.
+      expect(await handle.db.$count(users)).toBe(0);
+
+      expect((await register('198.51.100.21', 12, code)).status).toBe(200);
+    });
   });
 });
