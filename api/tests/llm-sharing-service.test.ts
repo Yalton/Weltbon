@@ -1,4 +1,14 @@
-import { afterAll, beforeAll, beforeEach, describe, expect, it } from 'vitest';
+import { afterAll, beforeAll, beforeEach, describe, expect, it, vi } from 'vitest';
+
+// The fixtures below are encrypted with ENCRYPTION_KEY, but createSharedGrant
+// and the credential resolver read the key from env(). Pin it here, as
+// llm-credential.test.ts does: without this the file only passed when an
+// earlier file in the same worker happened to set it, and failed all 15
+// shared-grant cases with owner_key_required when it ran first (CI merge
+// shard 2/4).
+vi.hoisted(() => {
+  process.env.LLM_KEY_ENCRYPTION_KEY = '0'.repeat(64);
+});
 import { and, eq } from 'drizzle-orm';
 import { randomUUID } from 'node:crypto';
 import { cleanDb, createTestDb, createTestUser, type TestDbHandle } from './helpers.js';
