@@ -10,11 +10,9 @@ import { eq } from 'drizzle-orm';
 // file reported green only when invoked with a matching
 // LLM_KEY_ENCRYPTION_KEY and red under the command documented for the branch.
 //
-// Pinned here, as every other credential-bearing test file does. The value
-// must stay '0'.repeat(64): vitest shares one worker process across files, so
-// process.env set here is also what llm-sharing-service.test.ts (which pins
-// the same constant but sets no env of its own) reads. Setting anything else
-// here fixes this file by breaking that one.
+// Pinned here, as every other credential-bearing test file does. Keep it
+// '0'.repeat(64): vitest shares one worker process across files, so a
+// different value here would leak into whichever file runs next.
 vi.hoisted(() => {
   process.env.LLM_KEY_ENCRYPTION_KEY = '0'.repeat(64);
 });
