@@ -85,6 +85,50 @@ for (const [label, rel] of [
   if (!existsSync(join(STAGE, rel))) problems.push(`missing ${label}: ${rel}`);
 }
 
+// ── 5. native binaries are built for the platform the app will run on ──────
+// The Windows installer is staged on Linux. A Linux .node file in it imports
+// nothing until the first bcrypt or sharp call, then the app fails — and a
+// Linux build host cannot load a Windows binary to find out. So check the file
+// format instead: PE for Windows, ELF for Linux, Mach-O for macOS. bcrypt ships
+// prebuilds for every platform; only the target's directory is ever loaded.
+const target = `${process.env.WELTBON_TARGET_PLATFORM || process.platform}-${process.env.WELTBON_TARGET_ARCH || process.arch}`;
+const [targetPlatform] = target.split('-');
+const formatOf = (file) => {
+  const b = readFileSync(file).subarray(0, 4);
+  if (b[0] === 0x4d && b[1] === 0x5a) return 'win32';
+  if (b[0] === 0x7f && b.toString('latin1', 1, 4) === 'ELF') return 'linux';
+  if ([0xcffaedfe, 0xcefaedfe, 0xcafebabe].includes(b.readUInt32BE(0))) return 'darwin';
+  return 'unknown';
+};
+const nativeFiles = [];
+(function walk(dir) {
+  if (!existsSync(dir)) return;
+  for (const entry of readdirSync(dir, { withFileTypes: true })) {
+    const full = join(dir, entry.name);
+    if (entry.isDirectory()) {
+      if (relative(STAGE, dir).split(sep).at(-1) === 'prebuilds' && entry.name !== target) continue;
+      walk(full);
+    } else if (entry.name.endsWith('.node')) {
+      nativeFiles.push(full);
+    }
+  }
+})(join(STAGE, 'node_modules'));
+
+const wrongFormat = nativeFiles.filter((f) => formatOf(f) !== targetPlatform);
+if (wrongFormat.length) {
+  problems.push(
+    `${wrongFormat.length} native binary(ies) are not ${targetPlatform} binaries, so the ${target} app cannot load them:\n    `
+      + wrongFormat.map((f) => `${relative(STAGE, f)} (${formatOf(f)})`).join('\n    '),
+  );
+}
+for (const [name, prefix] of [['bcrypt', join('node_modules', 'bcrypt')], ['sharp', join('node_modules', '@img', 'sharp-')]]) {
+  if (!externals.includes(name)) continue;
+  if (!nativeFiles.some((f) => relative(STAGE, f).startsWith(prefix) && formatOf(f) === targetPlatform)) {
+    problems.push(`no ${target} native binary for ${name} in the staged tree`);
+  }
+}
+if (!wrongFormat.length) note(`native binaries match ${target} (${nativeFiles.length} file(s))`);
+
 if (problems.length) {
   console.error(`\n[assert-stage] FAILED — ${problems.length} problem(s):`);
   for (const p of problems) console.error(`  - ${p}`);
