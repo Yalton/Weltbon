@@ -20,7 +20,8 @@
 #
 # Secrets: RELEASE_DEPLOY_KEY (Forgejo deploy key with write access, allowed to
 # push to protected master), GH_DEPLOY_KEY (GitHub deploy key with write access
-# on the public repository).
+# on the public repository), PACKAGE_TOKEN (personal access token of the
+# repository owner with write:package; the Actions token cannot write packages).
 name: release
 
 on:
@@ -131,6 +132,7 @@ jobs:
         shell: bash
         env:
           FORGEJO_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+          PACKAGE_TOKEN: ${{ secrets.PACKAGE_TOKEN }}
           FORGEJO_SERVER_URL: ${{ github.server_url }}
           FORGEJO_REPOSITORY: ${{ github.repository }}
           RELEASE_TAG: ${{ github.ref_name }}
@@ -174,6 +176,7 @@ jobs:
         shell: bash
         env:
           FORGEJO_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+          PACKAGE_TOKEN: ${{ secrets.PACKAGE_TOKEN }}
           FORGEJO_SERVER_URL: ${{ github.server_url }}
           FORGEJO_REPOSITORY: ${{ github.repository }}
           RELEASE_TAG: ${{ github.ref_name }}
