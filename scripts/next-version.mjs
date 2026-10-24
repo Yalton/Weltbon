@@ -2,14 +2,14 @@
 /**
  * Compute the next release version from conventional commits.
  *
- * Used by .github/workflows/release.yml. Plain `.mjs` with zero dependencies
+ * Used by .forgejo/workflows/release.yml. Plain `.mjs` with zero dependencies
  * and no build step on purpose: the release job runs this BEFORE `pnpm install`,
  * so anything requiring a compile or a node_modules tree would have to be
  * installed first just to answer "is there a release here at all?".
  *
  * WHY NOT release-please / semantic-release. Both do this better in the general
- * case. publish-desktop.yml already records the decision this repo made about
- * third-party actions — they need `contents: write`, and the release path is the
+ * case. This repo decided against third-party release actions:
+ * they need `contents: write`, and the release path is the
  * one place where a supply-chain compromise can push a tag and ship an image to
  * every self-hoster. The rules below are ~40 lines and fully tested; that is a
  * better trade here than granting write to another dependency.

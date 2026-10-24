@@ -1,0 +1,42 @@
+# Keep the public GitHub repository's master in step with Forgejo.
+#
+# Only master is pushed. Forgejo's built-in push mirror would copy every
+# branch, and older branches here still carry history that is not public.
+# Release tags reach GitHub from the publish job in release.yml, after the
+# release assets exist, so GitHub's release workflow always finds them.
+#
+# The push is a fast-forward, never a force: if someone committed directly on
+# GitHub, this fails instead of discarding their work. Bring the commit into
+# Forgejo, and the next push here succeeds.
+name: mirror-github
+
+on:
+  push:
+    branches: [master]
+
+concurrency:
+  group: mirror-github
+  cancel-in-progress: false
+
+jobs:
+  push:
+    runs-on: ubuntu-latest
+    env:
+      HOME: /tmp
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+      - name: Push master to GitHub
+        shell: bash
+        env:
+          DEPLOY_KEY: ${{ secrets.GH_DEPLOY_KEY }}
+          GITHUB_KNOWN_HOST: 'github.com ssh-ed25519 AAAAC3NzaC1lZDI1NTE5AAAAIOMqqnkVzrm0SdG6UOoqKLsabgH5C9okWi0dh2l9GKJl'
+        run: |
+          set -euo pipefail
+          install -d -m 700 "$HOME/.ssh"
+          printf '%s\n' "$DEPLOY_KEY" > "$HOME/.ssh/github_key"
+          chmod 600 "$HOME/.ssh/github_key"
+          printf '%s\n' "$GITHUB_KNOWN_HOST" > "$HOME/.ssh/known_hosts"
+          export GIT_SSH_COMMAND="ssh -i $HOME/.ssh/github_key -o IdentitiesOnly=yes -o UserKnownHostsFile=$HOME/.ssh/known_hosts"
+          git push git@github.com:Yalton/Weltbon.git "${GITHUB_SHA}:refs/heads/master"
