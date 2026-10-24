@@ -59,8 +59,18 @@ ESBUILD="$REPO/desktop/node_modules/.bin/esbuild"
 #   pg-native                optional native peer of pg; pg tolerates its absence
 EXTERNALS=(bcrypt sharp @electric-sql/pglite pg)
 
+# The platform the packaged app will RUN on, which is not always the build host:
+# the Windows installer is built on Linux under Wine. Native binaries must match
+# the target, so step 3 installs the target's prebuilt binaries and step 5 only
+# compiles when target and host agree.
+HOST_PLATFORM="$(node -p process.platform)"
+HOST_ARCH="$(node -p process.arch)"
+TARGET_PLATFORM="${WELTBON_TARGET_PLATFORM:-$HOST_PLATFORM}"
+TARGET_ARCH="${WELTBON_TARGET_ARCH:-$HOST_ARCH}"
+
 echo "[stage] repo:  $REPO"
 echo "[stage] stage: $STAGE"
+echo "[stage] target: $TARGET_PLATFORM-$TARGET_ARCH (host $HOST_PLATFORM-$HOST_ARCH)"
 
 rm -rf "$STAGE_ROOT"
 mkdir -p "$STAGE/dist"
@@ -89,7 +99,11 @@ echo "[stage] 3/6 installing the unbundlable externals as a flat tree"
 # versions come from the api's own installed tree so the staged copies match the
 # lockfile exactly rather than whatever the registry resolves today.
 node "$REPO/desktop/scripts/write-stage-manifest.mjs" "$REPO" "$STAGE" "${EXTERNALS[@]}"
-(cd "$STAGE" && npm install --omit=dev --no-audit --no-fund --loglevel=error)
+# --os/--cpu pick the target's optional dependencies, which is how sharp ships
+# its per-platform binaries (@img/sharp-win32-x64 and so on). bcrypt carries
+# prebuilds for every platform in the package itself.
+(cd "$STAGE" && npm install --omit=dev --no-audit --no-fund --loglevel=error \
+  --os="$TARGET_PLATFORM" --cpu="$TARGET_ARCH")
 
 echo "[stage] 4/6 copying what the bundle cannot carry"
 # Migrations and the SPA are read from disk at runtime. Fonts join them now: the
@@ -128,10 +142,21 @@ echo "[stage] 5/6 rebuilding native modules for Electron's ABI, in the staged tr
 # bcrypt and sharp are compiled against Node's ABI by default. They IMPORT fine
 # either way and fail at the first real call, so this step failing silently is
 # the difference between a working app and one that dies creating its first user.
-(cd "$REPO/desktop" && ./node_modules/.bin/electron-rebuild -f -w bcrypt,sharp -m "$STAGE")
+#
+# A cross-platform stage skips this. electron-rebuild compiles for the HOST, and
+# bcrypt's loader (node-gyp-build) prefers build/Release over its prebuilds, so
+# a Linux-compiled bcrypt_lib.node would shadow the Windows prebuild and the
+# installed app could not hash a password. Both modules use Node-API, whose ABI
+# is stable across Node and Electron, so the shipped prebuilds load as they are.
+if [ "$TARGET_PLATFORM-$TARGET_ARCH" = "$HOST_PLATFORM-$HOST_ARCH" ]; then
+  (cd "$REPO/desktop" && ./node_modules/.bin/electron-rebuild -f -w bcrypt,sharp -m "$STAGE")
+else
+  echo "[stage]     skipped: cross-platform stage keeps the $TARGET_PLATFORM-$TARGET_ARCH prebuilds"
+fi
 
 echo "[stage] 6/6 asserting the properties that only fail on Windows"
-node "$REPO/desktop/scripts/assert-staged-tree.mjs" "$STAGE" "${EXTERNALS[@]}"
+WELTBON_TARGET_PLATFORM="$TARGET_PLATFORM" WELTBON_TARGET_ARCH="$TARGET_ARCH" \
+  node "$REPO/desktop/scripts/assert-staged-tree.mjs" "$STAGE" "${EXTERNALS[@]}"
 
 echo "[stage] done: $STAGE"
 du -sh "$STAGE"
