@@ -9,7 +9,9 @@
 # `upload` also stores each file in the generic package weltbon-desktop/<version>
 # owned by the repository owner: Forgejo serves release attachments of a private
 # repository only to a browser session, while the package registry accepts a
-# token, which is how GitHub's release workflow fetches the files.
+# token, which is how GitHub's release workflow fetches the files. The Actions
+# token cannot write packages (HTTP 401), so this needs PACKAGE_TOKEN: a
+# personal access token of the repository owner with the write:package scope.
 # The release stays a draft until `publish` has checked that every platform
 # delivered, so a half-built release is never visible. A tag containing `-`
 # (v1.2.3-rc.1) is published as a prerelease.
@@ -71,6 +73,8 @@ shift || true
 case "$cmd" in
   upload)
     [ "$#" -gt 0 ] || { echo 'No release assets supplied.' >&2; exit 1; }
+    : "${PACKAGE_TOKEN:?PACKAGE_TOKEN is required to upload to the package registry}"
+    package_auth=(--header "Authorization: token ${PACKAGE_TOKEN}")
     ensure_release
     if [ "$(field draft)" = false ]; then
       echo "Release ${RELEASE_TAG} is already published; refusing to change it." >&2
@@ -90,8 +94,8 @@ case "$cmd" in
         "${api}/releases/$(field id)/assets?name=$(node -p 'encodeURIComponent(process.argv[1])' "$name")"
       encoded=$(node -p 'encodeURIComponent(process.argv[1])' "$name")
       # A rerun replaces the file; a 404 here just means it was not there yet.
-      curl --silent --output /dev/null --request DELETE "${auth[@]}" "${package}/${encoded}" || true
-      curl --fail --silent --show-error --output /dev/null "${auth[@]}" \
+      curl --silent --output /dev/null --request DELETE "${package_auth[@]}" "${package}/${encoded}" || true
+      curl --fail --silent --show-error --output /dev/null "${package_auth[@]}" \
         --upload-file "$asset" "${package}/${encoded}"
     done
     ;;
