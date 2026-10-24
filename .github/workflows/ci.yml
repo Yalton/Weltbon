@@ -1,39 +1,17 @@
+# CI for pull requests on the public GitHub repository.
 #
-#   - Lane 1 (unit, ~30 sec):   pnpm test (api unit project, no DB) + web vitest
-#     sub-second, and root `pnpm install` already installs its deps, so it
-#     rides in this lane rather than adding a job (a new job would need its
-#     own install AND a new required-status-check entry under D-16).
-#   - Lane 2 (integration): postgres:16-alpine service containers; runs
-#     drizzle migrations and the smoke tier, then four sharded merge jobs (the
-#     DB-gated suites registered in api/ci/integration-tiers.mjs) two at a time.
+# Releases are built on Forgejo (see .forgejo/workflows/release.yml); this file
+# only tests. It runs on GitHub-hosted runners: a self-hosted runner on a public
+# repository would execute code from any fork's pull request.
 #
-# Triggers per D-15: every pull_request (any base) + every push to master.
-# No path filter — see CONTEXT.md <deferred> for rationale.
+#   - unit: api unit project (no database), web vitest and desktop tests.
+#   - integration: postgres:16-alpine service containers; migrations and the
+#     smoke tier on every run, then four sharded merge jobs (the database-gated
+#     suites registered in api/ci/integration-tiers.mjs) on pushes to master.
 #
-# Branch protection (D-16) is an operator action: GitHub -> Repo Settings ->
-# Branches -> master -> Branch protection rules -> Require status checks to
-# pass before merging -> mark `ci / unit`, `ci / integration-smoke`, and
-# `ci / integration-merge (...)` as required.
-#
-# Runner labels separate the unit and integration workloads so they can be
-# routed to runners with the right capacity. The repository is PRIVATE, which
-# is what makes self-hosted execution safe: a self-hosted runner on a public
-# repo executes code from any fork's pull request. Do not make this repository
-# public without moving CI back to hosted runners or gating the workflow on
-#
-# GitHub assigns each service container's host port dynamically. The workflow
-# uses `${{ job.services.postgres.ports[5432] }}` in each database step, so CI
-# never assumes a host port and can coexist with local or production services.
-#
-# The repository uses self-hosted runners because GitHub-hosted minutes stopped
-# being billable on the org account, and every job failed before checkout with
-# "The job was not started because recent account payments have failed".
-#
-# Test-only postgres creds (weltbon/weltbon/weltbon) are scoped to the
-# ephemeral service container and mirror docker-compose.yml verbatim per D-14.
-# any repository-secret context for provider API keys; cross-AI smoke against
-# real provider keys is explicitly out of scope and routed to a future
-# hardening phase.
+# GitHub assigns each service container's host port dynamically, so database
+# steps read it from `${{ job.services.postgres.ports[5432] }}`. The postgres
+# credentials are test-only and scoped to the throwaway service container.
 
 name: ci
 
@@ -52,7 +30,7 @@ concurrency:
 jobs:
   unit:
     name: unit
-    runs-on: [self-hosted, weltbon-ci-unit]
+    runs-on: ubuntu-latest
     steps:
       - name: Checkout
         uses: actions/checkout@v4
@@ -89,7 +67,7 @@ jobs:
 
   integration-smoke:
     name: integration-smoke
-    runs-on: [self-hosted, weltbon-ci-integration]
+    runs-on: ubuntu-latest
     services:
       postgres:
         # Disposable CI data: cap each memory-backed filesystem at 1 GiB.
@@ -139,7 +117,7 @@ jobs:
     # lanes at once. Wait for the PR-equivalent gates, then run two shards at
     # a time so unrelated database setup hooks do not starve each other.
     needs: [unit, integration-smoke]
-    runs-on: [self-hosted, weltbon-ci-integration]
+    runs-on: ubuntu-latest
     strategy:
       fail-fast: false
       max-parallel: 2

@@ -57,7 +57,7 @@ FROM node:22-bookworm-slim AS runtime
 #
 # ARGs rather than a file baked into the image: the values differ per build but
 # nothing else in the layer does, and declaring them here keeps the expensive
-# apt layer below cache-stable across releases. publish-ghcr.yml passes the
+# apt layer below cache-stable across releases. The Forgejo release job passes the
 # release tag and commit; a plain `docker compose build` leaves them empty and
 # the API falls back to api/package.json, which is correct for a local build.
 ARG WELTBON_VERSION=""

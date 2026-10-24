@@ -1,9 +1,7 @@
-# Gitea Actions CI for repo.billbert.co.
+# CI on Forgejo (repo.billbert.co), the canonical repository.
 #
-# Gitea runs .gitea/workflows instead of .github/workflows when this directory
-# exists. The .github workflows target the GitHub self-hosted runner labels
-# (weltbon-ci-unit, weltbon-ci-integration, citreum), which no Gitea runner
-# carries, so without this file every Gitea run queues forever.
+# Forgejo reads .forgejo/workflows and ignores .github/workflows whenever this
+# directory exists. The .github workflows run only on the public GitHub mirror.
 name: ci
 on: [push, pull_request, workflow_dispatch]
 jobs:

@@ -1,185 +1,96 @@
-# Cut a release tag from conventional commits.
+# Mirror a finished Forgejo release onto GitHub.
 #
-# On every push to master this computes the next version from the commits since
-# the last release tag (scripts/next-version.mjs — `feat:` minor, `fix:`/`perf:`/
-# `refactor:` patch, `!` or a BREAKING CHANGE footer major, everything else no
-# release). If there is one, it writes that version into all four package.json
-# files, commits, and pushes an annotated tag.
+# Weltbon is built on Forgejo (repo.billbert.co), not here. Forgejo's release
+# workflow pushes a tag to this repository only after its own release is
+# published with every desktop package attached. This workflow then copies
+# those files onto a GitHub release, and copies the container image from the
+# Forgejo registry to GHCR when one was built. Nothing is compiled here.
 #
-# The tag is what ships: publish-ghcr.yml and publish-desktop.yml both trigger on
-# `v[0-9]+.[0-9]+.[0-9]+`, and the version the app reports at /api/version is the
-# same string metadata-action puts on the image tag.
-#
-# ── REQUIRED SETUP: RELEASE_TOKEN ────────────────────────────────────────────
-# A push made with the default GITHUB_TOKEN deliberately does NOT trigger other
-# workflows — GitHub blocks that to stop workflows recursing. So a tag pushed
-# with GITHUB_TOKEN would sit there and build nothing, which is the one failure
-# mode this whole pipeline cannot tolerate: a version that exists but shipped no
-# artifact.
-#
-# Create a fine-grained PAT with `contents: write` on this repo and store it as
-# the `RELEASE_TOKEN` secret. Without it this workflow still tags, but the
-# "verify downstream" step below fails loudly rather than leaving you to discover
-# the missing build later.
+# Secret: FORGEJO_TOKEN, a Forgejo access token for user yalt with the
+# read:repository and read:package scopes. It reads the private release, its
+# files (from the weltbon-desktop generic package) and the container image.
 name: release
 
 on:
   push:
-    branches:
-      - master
+    tags:
+      - 'v[0-9]+.[0-9]+.[0-9]+'
+      - 'v[0-9]+.[0-9]+.[0-9]+-*'
 
 permissions:
   contents: write
-  # `actions: read` is REQUIRED by the verify step's `gh run list`. Without it
-  # the job token carries only Contents+Metadata, gh gets a 403, and under
-  # `set -euo pipefail` the step dies in under a second — with no output, since
-  # everything visible in the log is the script being echoed rather than run.
-  # That failure was misread twice as "the run was not indexed yet" and once as
-  # "RELEASE_TOKEN is unset", and produced a red X on two releases that had in
-  # fact shipped correctly.
-  actions: read
+  packages: write
 
-# A second push while a release is being cut would compute the same version from
-# the same range and race to create the same tag. Serialise instead.
-concurrency:
-  group: release
-  cancel-in-progress: false
+env:
+  FORGEJO_API: https://repo.billbert.co/api/v1/repos/yalt/Weltbon
+  FORGEJO_IMAGE: repo.billbert.co/yalt/weltbon
+  FORGEJO_PACKAGES: https://repo.billbert.co/api/packages/yalt/generic/weltbon-desktop
 
 jobs:
-  release:
-    # Self-hosted, NOT ubuntu-latest. GitHub-hosted runners stopped starting on
-    # 2026-08-29 — every job failed in under three seconds, before checkout,
-    # with "recent account payments have failed or your spending limit needs to
-    # be increased". That is an org billing state, not something a workflow can
-    # retry past, and it left the repo unable to cut a release at all. ci.yml
-    # moved to citreum-runner-01 for the same reason; this follows it so that
-    # tagging keeps working while the billing is sorted out.
-    #
-    # This job needs node (next-version.mjs), git and gh (the verify step). All
-    # three are in the runner image — checked, not assumed. It builds nothing
-    # and needs no Docker.
-    #
-    # Move this back to ubuntu-latest once billing is restored: a release job
-    # holds RELEASE_TOKEN, and a hosted runner is a cleaner place for a
-    # repo-writing credential than a box that also runs production.
-    # The dedicated trusted release runner is not provisioned yet. Keep this
-    # on the existing trusted host until its replacement is online.
-    runs-on: [self-hosted, citreum]
-    # The release commit is itself a push to master. Without this guard the
-    # workflow re-enters, finds `chore(release):` in range (no bump, since chore
-    # is not a releasing type) and does nothing — harmless but a wasted run every
-    # release. Skipping is cheaper and states the intent.
-    if: ${{ !startsWith(github.event.head_commit.message, 'chore(release):') }}
-
-    # The `secrets` context is NOT available in a step-level `if` (only github,
-    # needs, env, steps and friends are). Projecting presence into a job-level
-    # env var is the supported way to branch on whether a secret exists.
-    env:
-      HAS_RELEASE_TOKEN: ${{ secrets.RELEASE_TOKEN != '' }}
-
+  mirror:
+    if: github.repository == 'Yalton/Weltbon'
+    runs-on: ubuntu-latest
     steps:
-      - name: Checkout
-        uses: actions/checkout@v4
-        with:
-          # next-version.mjs walks back to the last release tag; a shallow clone
-          # would hide it and recompute the whole history as one range.
-          fetch-depth: 0
-          token: ${{ secrets.RELEASE_TOKEN || secrets.GITHUB_TOKEN }}
-
-      # The self-hosted runner image provides Node 10, but this repository and
-      # scripts/next-version.mjs require Node 22 (native ESM support included).
-      # Pin it here instead of relying on whichever runtime a runner image has.
-      - name: Set up Node.js
-        uses: actions/setup-node@v4
-        with:
-          node-version: 22
-
-      - name: Warn when the release token is missing
-        if: env.HAS_RELEASE_TOKEN != 'true'
-        run: |
-          echo "::warning title=RELEASE_TOKEN not set::A tag pushed with GITHUB_TOKEN does not trigger publish-ghcr or publish-desktop. This release will produce NO artifacts until the tag is re-pushed by hand."
-
-      # No `pnpm install` — next-version.mjs is dependency-free precisely so this
-      # question can be answered before paying for an install.
-      - name: Compute the next version
-        id: next
-        run: node scripts/next-version.mjs >> "$GITHUB_OUTPUT"
-
-      - name: Report no release
-        if: steps.next.outputs.release != 'true'
-        run: echo "No releasing commits since the last tag — nothing to cut."
-
-      - name: Write the version into every package.json
-        if: steps.next.outputs.release == 'true'
+      - name: Download the release files from Forgejo
         env:
-          VERSION: ${{ steps.next.outputs.version }}
+          FORGEJO_TOKEN: ${{ secrets.FORGEJO_TOKEN }}
+          TAG: ${{ github.ref_name }}
         run: |
           set -euo pipefail
-          for f in package.json api/package.json web/package.json desktop/package.json; do
-            node -e '
-              const fs = require("node:fs");
-              const [file, version] = process.argv.slice(1);
-              const pkg = JSON.parse(fs.readFileSync(file, "utf8"));
-              pkg.version = version;
-              fs.writeFileSync(file, JSON.stringify(pkg, null, 2) + "\n");
-            ' "$f" "$VERSION"
-            echo "  $f -> $VERSION"
+          # Forgejo's publish job pushes the tag here only after its release is
+          # published, so a draft or missing release means something is wrong.
+          curl --fail --silent --show-error --header "Authorization: token ${FORGEJO_TOKEN}" \
+            "${FORGEJO_API}/releases/tags/${TAG}" > release.json
+          jq -e '.draft == false' release.json > /dev/null
+          # Release attachments of a private Forgejo repository are served only
+          # to browser sessions, so the files come from the generic package the
+          # Forgejo build uploads alongside them.
+          version="${TAG#v}"
+          mkdir assets
+          jq -r '.assets[].name' release.json | while IFS= read -r name; do
+            echo "downloading ${name}"
+            curl --fail --silent --show-error --user "yalt:${FORGEJO_TOKEN}" \
+              --output "assets/${name}" \
+              "${FORGEJO_PACKAGES}/${version}/$(jq -rn --arg n "$name" '$n|@uri')"
           done
+          test "$(ls assets | wc -l)" -eq "$(jq '.assets | length' release.json)"
+          ls -l assets
 
-      - name: Commit and tag
-        if: steps.next.outputs.release == 'true'
-        env:
-          VERSION: ${{ steps.next.outputs.version }}
-        run: |
-          set -euo pipefail
-          git config user.name  "github-actions[bot]"
-          git config user.email "github-actions[bot]@users.noreply.github.com"
-          git add package.json api/package.json web/package.json desktop/package.json
-          git commit -m "chore(release): v${VERSION}" \
-                     -m "Automated by .github/workflows/release.yml from the conventional commits since the previous release tag."
-          # Annotated: publish-ghcr's metadata-action reads the tag, and an
-          # annotated tag carries the date and author a lightweight one does not.
-          git tag -a "v${VERSION}" -m "v${VERSION}"
-          git push origin HEAD:master
-          git push origin "v${VERSION}"
-
-      - name: Verify the tag triggered a build
-        if: steps.next.outputs.release == 'true'
+      - name: Create the GitHub release
         env:
           GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
-          VERSION: ${{ steps.next.outputs.version }}
+          TAG: ${{ github.ref_name }}
         run: |
           set -euo pipefail
-          # POLL, do not sample once. The first version of this step slept 20s
-          # and checked a single time; on the v0.2.1 release publish-ghcr HAD
-          # been triggered but was not yet listed, so the step reported the
-          # RELEASE_TOKEN error on a release that was in fact shipping. A check
-          # that cries wolf is worse than no check — it trains you to ignore the
-          # one time it is right.
-          for attempt in $(seq 1 12); do
-            # `|| true` then an explicit emptiness check, NOT a bare command
-            # substitution. Under `set -e` a failing gh kills the step with no
-            # message, which is indistinguishable from a real "nothing shipped"
-            # and is exactly how the permission bug above hid for two releases.
-            # A query that CANNOT run must not look like a query that found
-            # nothing.
-            runs=$(gh run list --workflow=publish-ghcr.yml --limit 20 \
-                     --json headBranch --jq '[.[] | select(.headBranch == "v'"$VERSION"'")] | length' 2>&1) || {
-              echo "::error title=Cannot query workflow runs::\`gh run list\` failed, so whether v${VERSION} shipped is UNKNOWN — this is not a report that it did not. Output: ${runs}. The usual cause is a missing \`actions: read\` permission on this job."
-              exit 1
-            }
-            case "$runs" in
-              ''|*[!0-9]*)
-                echo "::error title=Unexpected query result::Expected a count from gh run list, got: ${runs}"
-                exit 1
-                ;;
-            esac
-            if [ "$runs" -gt 0 ]; then
-              echo "publish-ghcr picked up v${VERSION} after ${attempt} check(s)."
-              exit 0
-            fi
-            echo "  attempt ${attempt}/12: no publish-ghcr run for v${VERSION} yet, waiting 10s"
-            sleep 10
+          prerelease=()
+          [[ "$TAG" == *-* ]] && prerelease=(--prerelease)
+          if gh release view "$TAG" -R "$GITHUB_REPOSITORY" > /dev/null 2>&1; then
+            gh release upload "$TAG" assets/* --clobber -R "$GITHUB_REPOSITORY"
+          else
+            gh release create "$TAG" assets/* -R "$GITHUB_REPOSITORY" \
+              --title "Weltbon ${TAG}" --generate-notes --verify-tag "${prerelease[@]}"
+          fi
+
+      - name: Copy the container image to GHCR
+        env:
+          FORGEJO_TOKEN: ${{ secrets.FORGEJO_TOKEN }}
+          GHCR_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+          TAG: ${{ github.ref_name }}
+        run: |
+          set -euo pipefail
+          version="${TAG#v}"
+          src="docker://${FORGEJO_IMAGE}:${version}"
+          src_creds="yalt:${FORGEJO_TOKEN}"
+          if ! skopeo inspect --creds "$src_creds" "$src" > /dev/null 2>&1; then
+            echo "No image ${FORGEJO_IMAGE}:${version} on Forgejo; this release ships without one."
+            exit 0
+          fi
+          owner=$(echo "$GITHUB_REPOSITORY_OWNER" | tr '[:upper:]' '[:lower:]')
+          dest="ghcr.io/${owner}/weltbon"
+          tags=("$version")
+          [[ "$version" != *-* ]] && tags+=("${version%.*}" latest)
+          for t in "${tags[@]}"; do
+            skopeo copy --all --src-creds "$src_creds" \
+              --dest-creds "${GITHUB_ACTOR}:${GHCR_TOKEN}" \
+              "$src" "docker://${dest}:${t}"
           done
-          echo "::error title=Tag shipped nothing::v${VERSION} was pushed but no publish-ghcr run appeared within 2 minutes. Most likely RELEASE_TOKEN is unset or expired — a GITHUB_TOKEN push cannot trigger another workflow. Re-push the tag with a PAT (git push --delete origin v${VERSION} && git push origin v${VERSION}), or set the secret."
-          exit 1

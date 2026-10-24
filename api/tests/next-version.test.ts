@@ -19,7 +19,7 @@ import { computeBump, nextVersion, computeNextVersion, parseGitLog, GIT_LOG_FORM
 
 const c = (subject: string, body = '') => ({ subject, body });
 const repoRoot = path.resolve(path.dirname(fileURLToPath(import.meta.url)), '../..');
-const releaseWorkflow = fs.readFileSync(path.join(repoRoot, '.github/workflows/release.yml'), 'utf8');
+const releaseWorkflow = fs.readFileSync(path.join(repoRoot, '.forgejo/workflows/release.yml'), 'utf8');
 
 describe('release workflow runtime', () => {
   test('installs the repository Node 22 runtime before executing the ESM version script', () => {

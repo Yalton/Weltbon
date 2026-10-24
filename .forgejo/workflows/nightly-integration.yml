@@ -1,0 +1,46 @@
+# Run every database-gated test once a day on Forgejo.
+#
+# Pull requests run only the smoke tier (ci.yml); this catches the rest. The
+# job and its postgres service share a network, so the service is reached by
+# name, as in ci.yml.
+name: nightly-integration
+
+on:
+  schedule:
+    - cron: '30 6 * * *'
+  workflow_dispatch:
+
+concurrency:
+  group: nightly-integration
+  cancel-in-progress: false
+
+jobs:
+  integration:
+    name: integration-nightly
+    runs-on: ubuntu-latest
+    env:
+      HOME: /tmp
+      PNPM_HOME: /tmp/pnpm
+      DATABASE_URL: postgresql://weltbon:weltbon@postgres:5432/weltbon
+    services:
+      postgres:
+        image: postgres:16-alpine
+        env:
+          POSTGRES_DB: weltbon
+          POSTGRES_USER: weltbon
+          POSTGRES_PASSWORD: weltbon
+        options: >-
+          --tmpfs /var/lib/postgresql/data:rw,size=1g
+          --health-cmd "pg_isready -U weltbon -d weltbon"
+          --health-interval 5s
+          --health-timeout 5s
+          --health-retries 10
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 22
+      - uses: pnpm/action-setup@v4
+      - run: pnpm install --frozen-lockfile
+      - run: cd api && pnpm db:migrate
+      - run: cd api && pnpm test:integration:nightly

@@ -1,0 +1,252 @@
+# Cut, build and publish a Weltbon release on Forgejo.
+#
+# Releases are built here and only here. The public GitHub repository receives
+# the finished release: the publish job pushes the tag to GitHub, and GitHub's
+# own release workflow (.github/workflows/release.yml) copies the assets from
+# this Forgejo release onto a GitHub release.
+#
+#   Run workflow (manual)  -> cut: compute the next version from conventional
+#                             commits, bump every package.json, commit, tag and
+#                             push both to master with RELEASE_DEPLOY_KEY.
+#   Push of tag v1.2.3     -> linux + windows desktop builds (and the container
+#                             image when the IMAGE_BUILDS variable is 'true'),
+#                             each uploaded to a draft Forgejo release; publish
+#                             checks all three desktop files arrived, publishes
+#                             the release and pushes the tag to GitHub.
+#
+# The cut job pushes with a deploy key rather than the Actions token because a
+# push made with the Actions token does not start workflows, so the tag would
+# never be built. A tag with a suffix (v1.2.3-rc.1) builds a prerelease.
+#
+# Secrets: RELEASE_DEPLOY_KEY (Forgejo deploy key with write access, allowed to
+# push to protected master), GH_DEPLOY_KEY (GitHub deploy key with write access
+# on the public repository).
+name: release
+
+on:
+  workflow_dispatch:
+  push:
+    tags:
+      - 'v[0-9]+.[0-9]+.[0-9]+'
+      - 'v[0-9]+.[0-9]+.[0-9]+-*'
+
+concurrency:
+  group: release-${{ github.ref }}
+  cancel-in-progress: false
+
+env:
+  GITHUB_REPOSITORY_SSH: git@github.com:Yalton/Weltbon.git
+  FORGEJO_KNOWN_HOST: 'repo.billbert.co ssh-ed25519 AAAAC3NzaC1lZDI1NTE5AAAAILJMGwpHj1zi0y7OUHwdu/tPDIG9rCoIPQWWJoJmT+Dr'
+  GITHUB_KNOWN_HOST: 'github.com ssh-ed25519 AAAAC3NzaC1lZDI1NTE5AAAAIOMqqnkVzrm0SdG6UOoqKLsabgH5C9okWi0dh2l9GKJl'
+
+jobs:
+  cut:
+    if: github.event_name == 'workflow_dispatch'
+    runs-on: ubuntu-latest
+    env:
+      HOME: /tmp
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          # A dispatch can name any ref in the UI; releases always come from master.
+          ref: master
+          fetch-depth: 0
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 22
+      - name: Compute the next version
+        id: next
+        run: node scripts/next-version.mjs >> "$GITHUB_OUTPUT"
+      - name: Report no release
+        if: steps.next.outputs.release != 'true'
+        run: echo "No releasing commits since the last tag; nothing to cut."
+      - name: Write the version into every package.json
+        if: steps.next.outputs.release == 'true'
+        env:
+          VERSION: ${{ steps.next.outputs.version }}
+        run: |
+          set -euo pipefail
+          for f in package.json api/package.json web/package.json desktop/package.json; do
+            node -e '
+              const fs = require("node:fs");
+              const [file, version] = process.argv.slice(1);
+              const pkg = JSON.parse(fs.readFileSync(file, "utf8"));
+              pkg.version = version;
+              fs.writeFileSync(file, JSON.stringify(pkg, null, 2) + "\n");
+            ' "$f" "$VERSION"
+            echo "  $f -> $VERSION"
+          done
+      - name: Commit, tag and push
+        if: steps.next.outputs.release == 'true'
+        env:
+          VERSION: ${{ steps.next.outputs.version }}
+          DEPLOY_KEY: ${{ secrets.RELEASE_DEPLOY_KEY }}
+        run: |
+          set -euo pipefail
+          install -d -m 700 "$HOME/.ssh"
+          printf '%s\n' "$DEPLOY_KEY" > "$HOME/.ssh/release_key"
+          chmod 600 "$HOME/.ssh/release_key"
+          printf '%s\n' "$FORGEJO_KNOWN_HOST" > "$HOME/.ssh/known_hosts"
+          export GIT_SSH_COMMAND="ssh -i $HOME/.ssh/release_key -o IdentitiesOnly=yes -o UserKnownHostsFile=$HOME/.ssh/known_hosts"
+          git config user.name 'Weltbon release'
+          git config user.email 'release@repo.billbert.co'
+          git add package.json api/package.json web/package.json desktop/package.json
+          git commit -m "chore(release): v${VERSION}"
+          git tag -a "v${VERSION}" -m "v${VERSION}"
+          # One transaction: master never carries a version bump without its tag.
+          git push --atomic "git@repo.billbert.co:${GITHUB_REPOSITORY}.git" HEAD:master "v${VERSION}"
+
+  linux:
+    if: github.event_name == 'push'
+    runs-on: ubuntu-latest
+    env:
+      HOME: /tmp
+      PNPM_HOME: /tmp/pnpm
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 22
+      - uses: pnpm/action-setup@v4
+      - name: Install dependencies
+        run: pnpm install --frozen-lockfile
+      - name: Stage the API for Linux packaging
+        shell: bash
+        run: |
+          set -euo pipefail
+          export WELTBON_VERSION="${GITHUB_REF_NAME#v}"
+          export WELTBON_COMMIT="$(git rev-parse --short HEAD)"
+          export WELTBON_TARGET_PLATFORM=linux
+          export WELTBON_TARGET_ARCH=x64
+          cd desktop && pnpm run build && pnpm run stage
+      - name: Build the AppImage and .deb
+        shell: bash
+        run: |
+          set -euo pipefail
+          ver=$(node -p "require('./desktop/.stage/api/version.json').version")
+          cd desktop
+          ./node_modules/.bin/electron-builder --linux --x64 \
+            --config electron-builder.yml --config.extraMetadata.version="$ver"
+      - name: Upload to the draft release
+        shell: bash
+        env:
+          FORGEJO_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+          FORGEJO_SERVER_URL: ${{ github.server_url }}
+          FORGEJO_REPOSITORY: ${{ github.repository }}
+          RELEASE_TAG: ${{ github.ref_name }}
+          RELEASE_SHA: ${{ github.sha }}
+        run: scripts/forgejo-release.sh upload desktop/release/*.AppImage desktop/release/*.deb
+
+  windows:
+    if: github.event_name == 'push'
+    runs-on: wine-node22
+    env:
+      HOME: /tmp
+      PNPM_HOME: /tmp/pnpm
+      WINEDEBUG: -all
+      WINEPREFIX: /tmp/wine
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 22
+      - uses: pnpm/action-setup@v4
+      - name: Install dependencies
+        run: pnpm install --frozen-lockfile
+      - name: Stage the API for Windows packaging
+        shell: bash
+        run: |
+          set -euo pipefail
+          export WELTBON_VERSION="${GITHUB_REF_NAME#v}"
+          export WELTBON_COMMIT="$(git rev-parse --short HEAD)"
+          export WELTBON_TARGET_PLATFORM=win32
+          export WELTBON_TARGET_ARCH=x64
+          cd desktop && pnpm run build && pnpm run stage
+      - name: Build the Windows installer
+        shell: bash
+        run: |
+          set -euo pipefail
+          ver=$(node -p "require('./desktop/.stage/api/version.json').version")
+          cd desktop
+          ./node_modules/.bin/electron-builder --win --x64 \
+            --config electron-builder.yml --config.extraMetadata.version="$ver"
+      - name: Upload to the draft release
+        shell: bash
+        env:
+          FORGEJO_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+          FORGEJO_SERVER_URL: ${{ github.server_url }}
+          FORGEJO_REPOSITORY: ${{ github.repository }}
+          RELEASE_TAG: ${{ github.ref_name }}
+          RELEASE_SHA: ${{ github.sha }}
+        run: scripts/forgejo-release.sh upload desktop/release/*.exe
+
+  # The container image needs a runner that can reach a Docker daemon. None of
+  # the current runners can (no socket, and user namespaces are blocked, so
+  # buildah and kaniko fail too). Register a runner with the `docker` label that
+  # mounts the host's Docker socket, then set the repository variable
+  # IMAGE_BUILDS to 'true'. Until then this job is skipped and releases ship
+  # without an image.
+  image:
+    if: github.event_name == 'push' && vars.IMAGE_BUILDS == 'true'
+    runs-on: docker
+    env:
+      IMAGE: repo.billbert.co/yalt/weltbon
+    steps:
+      - uses: actions/checkout@v4
+      - name: Build and push the image to the Forgejo registry
+        shell: bash
+        env:
+          REGISTRY_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+        run: |
+          set -euo pipefail
+          version="${GITHUB_REF_NAME#v}"
+          tags=(-t "$IMAGE:$version" -t "$IMAGE:sha-${GITHUB_SHA::7}")
+          # Prereleases get only their own tag; `latest` and X.Y move on releases.
+          if [[ "$version" != *-* ]]; then
+            tags+=(-t "$IMAGE:${version%.*}" -t "$IMAGE:latest")
+          fi
+          printf '%s' "$REGISTRY_TOKEN" | docker login repo.billbert.co -u "$GITHUB_ACTOR" --password-stdin
+          docker build --platform linux/amd64 \
+            --build-arg WELTBON_VERSION="$version" \
+            --build-arg WELTBON_COMMIT="$GITHUB_SHA" \
+            --build-arg WELTBON_BUILT_AT="$(date -u +%Y-%m-%dT%H:%M:%SZ)" \
+            "${tags[@]}" .
+          for t in "${tags[@]}"; do [ "$t" = -t ] || docker push "$t"; done
+
+  publish:
+    needs: [linux, windows, image]
+    if: >-
+      always() && github.event_name == 'push'
+      && needs.linux.result == 'success' && needs.windows.result == 'success'
+      && needs.image.result != 'failure' && needs.image.result != 'cancelled'
+    runs-on: ubuntu-latest
+    env:
+      HOME: /tmp
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 22
+      - name: Publish the Forgejo release
+        shell: bash
+        env:
+          FORGEJO_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+          FORGEJO_SERVER_URL: ${{ github.server_url }}
+          FORGEJO_REPOSITORY: ${{ github.repository }}
+          RELEASE_TAG: ${{ github.ref_name }}
+          RELEASE_SHA: ${{ github.sha }}
+        run: scripts/forgejo-release.sh publish 3
+      - name: Push the tag to GitHub
+        shell: bash
+        env:
+          DEPLOY_KEY: ${{ secrets.GH_DEPLOY_KEY }}
+        run: |
+          set -euo pipefail
+          install -d -m 700 "$HOME/.ssh"
+          printf '%s\n' "$DEPLOY_KEY" > "$HOME/.ssh/github_key"
+          chmod 600 "$HOME/.ssh/github_key"
+          printf '%s\n' "$GITHUB_KNOWN_HOST" > "$HOME/.ssh/known_hosts"
+          export GIT_SSH_COMMAND="ssh -i $HOME/.ssh/github_key -o IdentitiesOnly=yes -o UserKnownHostsFile=$HOME/.ssh/known_hosts"
+          git push "$GITHUB_REPOSITORY_SSH" "refs/tags/${GITHUB_REF_NAME}"
