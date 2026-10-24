@@ -324,7 +324,7 @@ describe('dictionary CSV import (CONLANG-02)', () => {
     const { entries } = await import('../src/db/schema.js');
     const [langEntry] = await handle.db
       .insert(entries)
-      .values({ universeId: otherUniverse!.id, userId: user2.id, title: 'Foreign Lang', entryType: 'language' })
+      .values({ universeId: otherUniverse!.id, title: 'Foreign Lang', entryType: 'language' })
       .returning();
 
     // Attempt to import to OUR universe with the foreign lid

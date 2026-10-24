@@ -11,6 +11,7 @@ import { consentSharedGrant, createSharedGrant } from '../src/services/llm-shari
 import { resolveSharedGrantCredential } from '../src/services/llm-credential.js';
 
 const ENCRYPTION_KEY = '0'.repeat(64);
+const originalEncryptionKey = process.env.LLM_KEY_ENCRYPTION_KEY;
 
 // The shared-grant tests seed keys encrypted with ENCRYPTION_KEY, and llm-sharing
 // decrypts with env().llmKeyEncryptionKey. Set it before the first env() call
@@ -21,9 +22,12 @@ vi.hoisted(() => {
 
 describe('production admin user-management persistence', () => {
   let handle: TestDbHandle;
-  let app: { fetch: (request: Request) => Promise<Response> };
+  let app: { fetch: (request: Request) => Response | Promise<Response> };
 
   beforeAll(async () => {
+    process.env.LLM_KEY_ENCRYPTION_KEY = ENCRYPTION_KEY;
+    const { _resetEnvForTests } = await import('../src/config.js');
+    _resetEnvForTests();
     handle = await createTestDb();
     const { setTestDb } = await import('../src/db/client.js');
     setTestDb(handle.db as never, handle.pool);
@@ -62,6 +66,10 @@ describe('production admin user-management persistence', () => {
 
   afterAll(async () => {
     await handle.cleanup();
+    if (originalEncryptionKey === undefined) delete process.env.LLM_KEY_ENCRYPTION_KEY;
+    else process.env.LLM_KEY_ENCRYPTION_KEY = originalEncryptionKey;
+    const { _resetEnvForTests } = await import('../src/config.js');
+    _resetEnvForTests();
   });
 
   beforeEach(async () => {

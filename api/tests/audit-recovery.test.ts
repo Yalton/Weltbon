@@ -146,7 +146,6 @@ describe('recoverOrphanAuditRuns (AUDIT-12 + CONTEXT D-03)', () => {
     const fixedFinishedAt = new Date('2026-01-01T12:00:00Z');
 
     const succeededRunId = await seedAuditRun(uid, user.id, 'succeeded', {
-      error: null,
       finishedAt: fixedFinishedAt,
     });
     const failedRunId = await seedAuditRun(uid, user.id, 'failed', {

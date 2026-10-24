@@ -12,6 +12,8 @@ import {
   type TestDbHandle,
 } from './helpers.js';
 import { universes, entries, links, categories } from '../src/db/schema.js';
+import { unified } from 'unified';
+import remarkParse from 'remark-parse';
 
 const __filename = fileURLToPath(import.meta.url);
 const __dirname = dirname(__filename);
@@ -189,6 +191,24 @@ describe('POST /api/universes/:uid/ingest', () => {
     const alpha = res.body.entries.find((e: { title: string }) => e.title === 'Alpha');
     expect(alpha.linksOut).toHaveLength(1);
     expect(alpha.linksOut[0].resolved).toBe(true);
+  });
+
+  it('imports a plain .txt upload as literal text', async () => {
+    const { userId, jwt } = await createUserAndJwt('plain-text@test.com');
+    const u = await createUniverse(userId);
+    const fd = new FormData();
+    fd.append('files', new File(['Name: 42\n# not a heading\n*literal*\nKeep &copy; &#169; &#xA9; &amp; & literal'], 'tally.txt',
+      { type: 'text/plain' }));
+    const res = await ingestRequest(u.id, fd, `Bearer ${jwt}`);
+    expect(res.status).toBe(200);
+    expect(res.body.entries).toHaveLength(1);
+    expect(res.body.entries[0].title).toBe('Tally');
+    expect(res.body.entries[0].body).toContain('\\# not a heading');
+    expect(res.body.entries[0].body).toContain('\\*literal\\*');
+    const tree = unified().use(remarkParse).parse(res.body.entries[0].body);
+    expect(tree.children[0].type).toBe('paragraph');
+    expect(JSON.stringify(tree)).toContain('Keep &copy; &#169; &#xA9; &amp; & literal');
+    expect(res.body.summary.non_markdown_files_skipped).toBe(0);
   });
 
   it('200: multipart zip returns IngestPreview; hidden dirs filtered before parseBatch', async () => {
@@ -395,11 +415,21 @@ describe('POST /api/universes/:uid/ingest', () => {
   // ─── Split preview metadata (#37 SP-04) ─────────────────────────────────
 
   describe('preview split metadata (SP-04)', () => {
+    type SplitPreviewBody = {
+      split: {
+        eligible: boolean;
+        detected: number | null;
+        applied: number | null;
+        counts: Record<string, number>;
+      };
+      entries: unknown[];
+    };
+
     it('reports eligibility, the detected level and per-level counts', async () => {
       const res = await postPreview({
         files: [{ path: 'regions.md', content: '# R\n\n## Vale\n\nA.\n\n## Frostmere\n\nB.\n' }],
       });
-      const body = await res.json();
+      const body = (await res.json()) as SplitPreviewBody;
       expect(body.split.eligible).toBe(true);
       expect(body.split.detected).toBe(2);
       expect(body.split.applied).toBe(2);
@@ -413,7 +443,7 @@ describe('POST /api/universes/:uid/ingest', () => {
           { path: 'b.md', content: '## Three\n\nC.\n' },
         ],
       });
-      const body = await res.json();
+      const body = (await res.json()) as SplitPreviewBody;
       expect(body.split.eligible).toBe(false);
       expect(body.split.applied).toBeNull();
     });
@@ -423,7 +453,7 @@ describe('POST /api/universes/:uid/ingest', () => {
         files: [{ path: 'r.md', content: '# A\n\n## B\n\nx.\n\n# C\n\n## D\n\ny.\n' }],
         split_level: 2,
       });
-      const body = await res.json();
+      const body = (await res.json()) as SplitPreviewBody;
       expect(body.split.detected).toBe(1);
       expect(body.split.applied).toBe(2);
     });
@@ -433,7 +463,7 @@ describe('POST /api/universes/:uid/ingest', () => {
         files: [{ path: 'r.md', content: '## Vale\n\nA.\n\n## Frostmere\n\nB.\n' }],
         split_level: null,
       });
-      const body = await res.json();
+      const body = (await res.json()) as SplitPreviewBody;
       expect(body.split.detected).toBe(2);
       expect(body.split.applied).toBeNull();
       expect(body.entries).toHaveLength(1);
@@ -443,7 +473,7 @@ describe('POST /api/universes/:uid/ingest', () => {
       const many = Array.from({ length: 5000 }, (_, i) => `## S${i}\n\nB${i}.\n`).join('\n');
       const res = await postPreview({ files: [{ path: 'r.md', content: many }], split_level: 2 });
       expect(res.status).toBe(413);
-      expect((await res.json()).error).toMatch(/file_count|limit/i);
+      expect(((await res.json()) as { error: string }).error).toMatch(/file_count|limit/i);
     });
   });
 

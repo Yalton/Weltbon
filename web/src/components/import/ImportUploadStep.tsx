@@ -36,11 +36,11 @@ type UploadState =
     };
 
 const COPY_INVALID_FILE_TYPE =
-  'Only .md, .markdown or .docx files, folders of them, or a .zip are accepted.';
+  'Only .md, .markdown, .txt or .docx files, folders of them, or a .zip are accepted.';
 
 function isMarkdown(name: string): boolean {
   const n = name.toLowerCase();
-  return n.endsWith('.md') || n.endsWith('.markdown');
+  return n.endsWith('.md') || n.endsWith('.markdown') || n.endsWith('.txt');
 }
 
 // #35 DOCX-08: a batch may mix .md/.markdown and .docx. `.docx` inside a
@@ -156,14 +156,20 @@ export function describeKind(kind: UploadKind, files: File[]): string {
   if (kind === 'zip') return 'ZIP archive';
   if (kind === 'folder') return `Folder (${files.length} files)`;
   const docxCount = files.filter((f) => isDocx(f.name)).length;
-  const mdCount = files.length - docxCount;
+  const txtCount = files.filter((f) => f.name.toLowerCase().endsWith('.txt')).length;
+  const mdCount = files.length - docxCount - txtCount;
   if (docxCount === 0) {
-    return mdCount === 1 ? '.md file' : `${mdCount} .md files`;
+    if (txtCount === 0) return mdCount === 1 ? '.md file' : `${mdCount} .md files`;
+    if (mdCount === 0) return txtCount === 1 ? '.txt file' : `${txtCount} .txt files`;
   }
-  if (mdCount === 0) {
+  if (mdCount === 0 && txtCount === 0) {
     return docxCount === 1 ? '.docx file' : `${docxCount} .docx files`;
   }
-  return `${files.length} files (${mdCount} .md, ${docxCount} .docx)`;
+  return `${files.length} files (${[
+    mdCount > 0 ? `${mdCount} .md` : '',
+    txtCount > 0 ? `${txtCount} .txt` : '',
+    docxCount > 0 ? `${docxCount} .docx` : '',
+  ].filter(Boolean).join(', ')})`;
 }
 
 function describeSize(files: File[]): string {
@@ -281,7 +287,7 @@ export function ImportUploadStep({
     <div className="max-w-2xl mx-auto py-12">
       <h1 className="text-2xl font-semibold tracking-tight">Import notes</h1>
       <p className="mt-2 text-sm text-neutral-600 dark:text-neutral-400 leading-[1.5]">
-        Upload one or more Markdown files, a folder, or a ZIP. We&apos;ll parse
+        Upload Markdown, text or Word files, a folder, or a ZIP. We&apos;ll parse
         each file and let you review before anything saves.
       </p>
 

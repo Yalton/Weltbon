@@ -1228,7 +1228,7 @@ describe('dismissed-set filter (AISSUE-04, AISSUE-05)', () => {
 
       // cheap-finds was called with a dismissedGapKeys Set (not undefined)
       expect(mockRunCheapFinds).toHaveBeenCalledOnce();
-      const cheapFindsArg = mockRunCheapFinds.mock.calls[0][0] as Record<string, unknown>;
+      const cheapFindsArg = (mockRunCheapFinds.mock.calls[0] as unknown as [Record<string, unknown>])[0];
       expect(cheapFindsArg.dismissedGapKeys).toBeInstanceOf(Set);
       // The Set is empty (no dismissed rows from SELECT)
       expect((cheapFindsArg.dismissedGapKeys as Set<string>).size).toBe(0);
@@ -1349,7 +1349,7 @@ describe('dismissed-set filter (AISSUE-04, AISSUE-05)', () => {
 
       // Assert cheap-finds received the dismissedGapKeys Set
       expect(mockRunCheapFinds).toHaveBeenCalledOnce();
-      const cheapFindsArg = mockRunCheapFinds.mock.calls[0][0] as Record<string, unknown>;
+      const cheapFindsArg = (mockRunCheapFinds.mock.calls[0] as unknown as [Record<string, unknown>])[0];
       expect(cheapFindsArg.dismissedGapKeys).toBeInstanceOf(Set);
       // And that Set contains the dismissed key from the SELECT response
       expect((cheapFindsArg.dismissedGapKeys as Set<string>).has(DISMISSED_GAP_KEY)).toBe(true);

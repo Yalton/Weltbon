@@ -36,7 +36,7 @@ export function escapeMarkdown(text: string): string {
   return text.replace(/[\\*_[\]`#|~<]/g, (ch) => `\\${ch}`);
 }
 
-function escapeLineStarts(text: string): string {
+export function escapeLineStarts(text: string): string {
   return text.split('\n').map((line) => {
     const split = /^([ \t]*)([\s\S]*)$/.exec(line);
     if (split === null) return line;

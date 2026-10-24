@@ -79,8 +79,8 @@ function renderStep(
 function selectFiles(
   container: HTMLElement,
   files: File[],
-  picker: 'Choose Markdown files' | 'Choose folder' | 'Choose ZIP' =
-    'Choose Markdown files',
+  picker: 'Choose files' | 'Choose folder' | 'Choose ZIP' =
+    'Choose files',
 ) {
   const input = container.querySelector(
     `input[type="file"][aria-label="${picker}"]`,
@@ -126,7 +126,7 @@ describe('ImportUploadStep — idle render and interactive flows', () => {
     ).toBeInTheDocument();
     expect(
       screen.getByText(
-        /upload one or more markdown files, a folder, or a zip\. we'll parse each file/i,
+        /upload markdown, text or word files, a folder, or a zip\. we'll parse each file/i,
       ),
     ).toBeInTheDocument();
   });
@@ -141,7 +141,7 @@ describe('ImportUploadStep — idle render and interactive flows', () => {
     renderStep();
 
     expect(
-      screen.getByRole('button', { name: 'Choose Markdown files' }),
+      screen.getByRole('button', { name: 'Choose files' }),
     ).toBeInTheDocument();
     expect(
       screen.getByRole('button', { name: 'Choose folder' }),
@@ -159,7 +159,7 @@ describe('ImportUploadStep — idle render and interactive flows', () => {
     });
     renderStep();
 
-    const markdownInput = screen.getByLabelText('Choose Markdown files');
+    const markdownInput = screen.getByLabelText('Choose files');
     const folderInput = screen.getByLabelText('Choose folder');
     expect(markdownInput).not.toHaveAttribute('webkitdirectory');
     expect(markdownInput).toHaveAttribute('multiple');
@@ -193,16 +193,13 @@ describe('ImportUploadStep — idle render and interactive flows', () => {
     expect(upload).not.toBeDisabled();
   });
 
-  it('rejects a .txt file with the §10 invalid-file-type copy and does NOT call api()', () => {
+  it('accepts a .txt file for upload', () => {
     const { container } = renderStep();
     selectFiles(container, [
       new File(['x'], 'note.txt', { type: 'text/plain' }),
     ]);
-    expect(
-      screen.getByRole('alert'),
-    ).toHaveTextContent(
-      /Only \.md, \.markdown or \.docx files, folders of them, or a \.zip are accepted\./i,
-    );
+    expect(screen.queryByRole('alert')).not.toBeInTheDocument();
+    expect(screen.getByText('note.txt')).toBeInTheDocument();
     expect(api).not.toHaveBeenCalled();
   });
 
@@ -392,6 +389,7 @@ describe('.docx classification (#35)', () => {
   it('accepts .markdown alongside .docx', () => {
     // The server accepts .markdown as of DOCX-13; the client always claimed to.
     expect(classifyAndDetectKind([md('a.markdown'), docx('b.docx')])).toEqual({ kind: 'md' });
+    expect(classifyAndDetectKind([md('notes.txt')])).toEqual({ kind: 'md' });
   });
 
   it('still rejects an unrelated extension', () => {
