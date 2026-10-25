@@ -219,9 +219,11 @@ jobs:
           for t in "${tags[@]}"; do docker push "$t"; done
           docker logout ghcr.io
 
+  # The image does not gate the release: a registry problem should not hold back
+  # the desktop downloads. A failed image job still fails the run, visibly.
   publish:
-    needs: [draft, desktop, image]
-    if: always() && needs.desktop.result == 'success' && needs.image.result == 'success'
+    needs: [draft, desktop]
+    if: always() && needs.desktop.result == 'success'
     runs-on: [self-hosted, weltbon-release]
     steps:
       - name: Publish the release once every desktop file is attached

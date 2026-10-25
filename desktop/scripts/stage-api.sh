@@ -61,8 +61,7 @@ EXTERNALS=(bcrypt sharp @electric-sql/pglite pg)
 
 # The platform the packaged app will RUN on, which is not always the build host:
 # the Windows installer is built on Linux under Wine. Native binaries must match
-# the target, so step 3 installs the target's prebuilt binaries and step 5 only
-# compiles when target and host agree.
+# the target, so step 3 installs the target's prebuilt binaries.
 HOST_PLATFORM="$(node -p process.platform)"
 HOST_ARCH="$(node -p process.arch)"
 TARGET_PLATFORM="${WELTBON_TARGET_PLATFORM:-$HOST_PLATFORM}"
@@ -138,21 +137,15 @@ node -e '
 ' "$STAGE_VERSION" "$STAGE_COMMIT" "$STAGE_BUILT_AT" "$STAGE/version.json"
 echo "[stage]     build identity: $STAGE_VERSION${STAGE_COMMIT:+ ($STAGE_COMMIT)}"
 
-echo "[stage] 5/6 rebuilding native modules for Electron's ABI, in the staged tree"
-# bcrypt and sharp are compiled against Node's ABI by default. They IMPORT fine
-# either way and fail at the first real call, so this step failing silently is
-# the difference between a working app and one that dies creating its first user.
-#
-# A cross-platform stage skips this. electron-rebuild compiles for the HOST, and
-# bcrypt's loader (node-gyp-build) prefers build/Release over its prebuilds, so
-# a Linux-compiled bcrypt_lib.node would shadow the Windows prebuild and the
-# installed app could not hash a password. Both modules use Node-API, whose ABI
-# is stable across Node and Electron, so the shipped prebuilds load as they are.
-if [ "$TARGET_PLATFORM-$TARGET_ARCH" = "$HOST_PLATFORM-$HOST_ARCH" ]; then
-  (cd "$REPO/desktop" && ./node_modules/.bin/electron-rebuild -f -w bcrypt,sharp -m "$STAGE")
-else
-  echo "[stage]     skipped: cross-platform stage keeps the $TARGET_PLATFORM-$TARGET_ARCH prebuilds"
-fi
+echo "[stage] 5/6 native modules: using the prebuilt Node-API binaries"
+# No electron-rebuild. bcrypt and sharp ship prebuilt binaries for each
+# platform, and both use Node-API, whose ABI is the same under Node and
+# Electron, so the prebuilds load as installed (checked: bcrypt hashes and
+# sharp encodes under Electron's runtime with no rebuild). Rebuilding was
+# harmful: it compiles for the HOST, so a Linux bcrypt_lib.node in build/Release
+# shadowed the Windows prebuild in the Windows installer, and it needs a
+# C++20 compiler the release runner image (Ubuntu 20.04, gcc 9) lacks.
+# Step 6 checks every staged binary matches the target platform.
 
 echo "[stage] 6/6 asserting the properties that only fail on Windows"
 WELTBON_TARGET_PLATFORM="$TARGET_PLATFORM" WELTBON_TARGET_ARCH="$TARGET_ARCH" \
