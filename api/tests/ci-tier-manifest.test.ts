@@ -7,9 +7,8 @@ import { shardFiles } from '../scripts/run-integration-tier.mjs';
 
 const runnerPath = fileURLToPath(new URL('../scripts/run-integration-tier.mjs', import.meta.url));
 const ciWorkflow = readFileSync(new URL('../../.github/workflows/ci.yml', import.meta.url), 'utf8');
-const nightlyWorkflow = readFileSync(new URL('../../.forgejo/workflows/nightly-integration.yml', import.meta.url), 'utf8');
-const forgejoRelease = readFileSync(new URL('../../.forgejo/workflows/release.yml', import.meta.url), 'utf8');
-const githubRelease = readFileSync(new URL('../../.github/workflows/release.yml', import.meta.url), 'utf8');
+const nightlyWorkflow = readFileSync(new URL('../../.github/workflows/nightly-integration.yml', import.meta.url), 'utf8');
+const releaseWorkflow = readFileSync(new URL('../../.github/workflows/release.yml', import.meta.url), 'utf8');
 function workflowJob(name: string) {
   const match = new RegExp(`^  ${name}:\\n([\\s\\S]*?)(?=^  \\S|(?![\\s\\S]))`, 'm').exec(ciWorkflow);
   expect(match).not.toBeNull();
@@ -56,14 +55,14 @@ test.each(['integration-smoke', 'integration-merge'])('%s keeps disposable Postg
   expect(options).toContain('--health-retries 5');
 });
 
-test('nightly coverage is scheduled and releases are built only on Forgejo', () => {
+test('nightly coverage is scheduled and releases build on the release runners', () => {
   expect(nightlyWorkflow).toContain("cron: '30 6 * * *'");
   expect(nightlyWorkflow).toContain('pnpm test:integration:nightly');
-  expect(forgejoRelease).toContain('runs-on: wine-node22');
-  expect(forgejoRelease).toContain('scripts/forgejo-release.sh publish 3');
-  // GitHub only copies the finished release; it never builds one.
-  expect(githubRelease).not.toMatch(/electron-builder|docker build|pnpm install/);
-  expect(githubRelease).not.toContain('self-hosted');
+  const releaseRunners = [...releaseWorkflow.matchAll(/^    runs-on: ([^\n]+)$/gm)].map(([, labels]) => labels);
+  expect(releaseRunners.length).toBeGreaterThan(0);
+  expect(new Set(releaseRunners)).toEqual(new Set(['[self-hosted, weltbon-release]']));
+  // Only maintainers may reach the self-hosted runners: no pull_request trigger.
+  expect(releaseWorkflow).not.toMatch(/^\s*pull_request/m);
 });
 
 test('nightly contains every DB-gated file exactly once', () => {

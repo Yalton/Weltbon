@@ -4,9 +4,7 @@ import fs from 'node:fs';
 import path from 'node:path';
 
 const repoRoot = path.resolve(__dirname, '../..');
-const forgejoReleasePath = path.join(repoRoot, '.forgejo', 'workflows', 'release.yml');
-const forgejoRelease = fs.readFileSync(forgejoReleasePath, 'utf8');
-const githubRelease = fs.readFileSync(path.join(repoRoot, '.github', 'workflows', 'release.yml'), 'utf8');
+const releaseWorkflow = fs.readFileSync(path.join(repoRoot, '.github', 'workflows', 'release.yml'), 'utf8');
 const composePath = path.join(repoRoot, 'docker-compose.yml');
 const composeContent = fs.readFileSync(composePath, 'utf8');
 const deployScriptPath = path.join(repoRoot, 'scripts', 'deploy.sh');
@@ -79,33 +77,33 @@ function matchesTagPattern(pattern: string, tag: string): boolean {
 }
 
 // ─────────────────────────────────────────────────────────────────────────────
-// CONT-05: release image pipeline (built on Forgejo, copied to GHCR)
+// CONT-05: release image pipeline (built and pushed to GHCR)
 // ─────────────────────────────────────────────────────────────────────────────
 
-describe('CONT-05 — release image pipeline (.forgejo/workflows/release.yml)', () => {
+describe('CONT-05 — release image pipeline (.github/workflows/release.yml)', () => {
   it('builds on release tag pushes, including prereleases', () => {
     // Pinned exactly. Every assertion below reads this list, and an empty list
     // would make the negative assertions pass while checking nothing.
-    expect(tagTriggerPatterns(forgejoRelease)).toEqual([
+    expect(tagTriggerPatterns(releaseWorkflow)).toEqual([
       'v[0-9]+.[0-9]+.[0-9]+',
       'v[0-9]+.[0-9]+.[0-9]+-*',
     ]);
   });
 
   it('covers three-part release tags and their prereleases', () => {
-    const patterns = tagTriggerPatterns(forgejoRelease);
+    const patterns = tagTriggerPatterns(releaseWorkflow);
     for (const tag of ['v1.2.3', 'v0.2.1', 'v0.9.0-rc.1']) {
       expect(patterns.some((p) => matchesTagPattern(p, tag)), tag).toBe(true);
     }
   });
 
   it('does not fire on two-part milestone-archive tags', () => {
-    const patterns = tagTriggerPatterns(forgejoRelease);
+    const patterns = tagTriggerPatterns(releaseWorkflow);
     expect(patterns.length).toBeGreaterThan(0);
     for (const milestone of ['v5.3', 'v1.0', 'v4.0']) {
       expect(
         patterns.some((p) => matchesTagPattern(p, milestone)),
-        `A tag pattern in .forgejo/workflows/release.yml matches the milestone-archive tag ${milestone}. `
+        `A tag pattern in .github/workflows/release.yml matches the milestone-archive tag ${milestone}. `
           + `Milestone tags are project-phase markers, not releases — publishing for `
           + `one moves \`latest\` to whatever the tree looked like at that moment. `
           + `Patterns found: ${JSON.stringify(patterns)}`,
@@ -114,21 +112,20 @@ describe('CONT-05 — release image pipeline (.forgejo/workflows/release.yml)', 
   });
 
   it('builds a linux/amd64 image with the version build args', () => {
-    expect(forgejoRelease).toMatch(/--platform linux\/amd64/);
+    expect(releaseWorkflow).toMatch(/--platform linux\/amd64/);
     for (const arg of ['WELTBON_VERSION', 'WELTBON_COMMIT', 'WELTBON_BUILT_AT']) {
-      expect(forgejoRelease).toContain(`--build-arg ${arg}=`);
+      expect(releaseWorkflow).toContain(`--build-arg ${arg}=`);
     }
   });
 
   it('moves `latest` only for full releases, never for a prerelease', () => {
-    expect(forgejoRelease).toMatch(/if \[\[ "\$version" != \*-\* \]\]; then\n\s+tags\+=\(.*:latest"\)/);
-    expect(githubRelease).toMatch(/\[\[ "\$version" != \*-\* \]\] && tags\+=\(.*latest\)/);
+    expect(releaseWorkflow).toMatch(/if \[\[ "\$version" != \*-\* \]\]; then\n\s+tags\+=\(.*:latest"\)/);
   });
 
-  it('copies the image to GHCR with GITHUB_TOKEN rather than a long-lived PAT', () => {
-    expect(githubRelease).toMatch(/packages:\s*write/);
-    expect(githubRelease).toMatch(/GHCR_TOKEN:\s*\$\{\{\s*secrets\.GITHUB_TOKEN\s*\}\}/);
-    expect(githubRelease).not.toMatch(/secrets\.(GHCR_PAT|CR_PAT)/);
+  it('pushes to GHCR with GITHUB_TOKEN rather than a long-lived PAT', () => {
+    expect(releaseWorkflow).toMatch(/packages:\s*write/);
+    expect(releaseWorkflow).toMatch(/GHCR_TOKEN:\s*\$\{\{\s*secrets\.GITHUB_TOKEN\s*\}\}/);
+    expect(releaseWorkflow).not.toMatch(/secrets\.(GHCR_PAT|CR_PAT)/);
   });
 
   it('docker-compose.yml has a commented image: switch for operators', () => {

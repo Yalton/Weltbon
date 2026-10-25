@@ -1,17 +1,28 @@
-# Mirror a finished Forgejo release onto GitHub.
+# Cut, build and publish a Weltbon release.
 #
-# Weltbon is built on Forgejo (repo.billbert.co), not here. Forgejo's release
-# workflow pushes a tag to this repository only after its own release is
-# published with every desktop package attached. This workflow then copies
-# those files onto a GitHub release, and copies the container image from the
-# Forgejo registry to GHCR when one was built. Nothing is compiled here.
+#   Run workflow (manual)  -> cut: compute the next version from conventional
+#                             commits, bump every package.json, commit and tag
+#                             on master, then build that tag below.
+#   Push of tag v1.2.3     -> build the tag directly (a tag pushed by hand).
 #
-# Secret: FORGEJO_TOKEN, a Forgejo access token for user yalt with the
-# read:repository and read:package scopes. It reads the private release, its
-# files (from the weltbon-desktop generic package) and the container image.
+# Building happens in this same run rather than in a workflow triggered by the
+# tag, because a tag pushed with GITHUB_TOKEN starts no workflows. No personal
+# token is needed anywhere.
+#
+# Every job runs on the self-hosted `weltbon-release` runners on ci-box
+# (Homelab ci-box/weltbon-release-runners), so releases do not depend on
+# GitHub-hosted minutes. Those runners hold the Docker socket; only maintainers
+# can start this workflow (dispatch or tag push), and pull-request CI runs on
+# GitHub-hosted runners instead.
+#
+# The release is created as a draft, each platform attaches its files, and
+# publish makes it visible only once all three desktop files are attached. A
+# tag with a suffix (v1.2.3-rc.1) becomes a prerelease and does not move the
+# image's `latest` tag.
 name: release
 
 on:
+  workflow_dispatch:
   push:
     tags:
       - 'v[0-9]+.[0-9]+.[0-9]+'
@@ -21,76 +32,209 @@ permissions:
   contents: write
   packages: write
 
-env:
-  FORGEJO_API: https://repo.billbert.co/api/v1/repos/yalt/Weltbon
-  FORGEJO_IMAGE: repo.billbert.co/yalt/weltbon
-  FORGEJO_PACKAGES: https://repo.billbert.co/api/packages/yalt/generic/weltbon-desktop
+concurrency:
+  group: release
+  cancel-in-progress: false
 
 jobs:
-  mirror:
-    if: github.repository == 'Yalton/Weltbon'
-    runs-on: ubuntu-latest
+  cut:
+    if: github.event_name == 'workflow_dispatch'
+    runs-on: [self-hosted, weltbon-release]
+    outputs:
+      tag: ${{ steps.next.outputs.release == 'true' && format('v{0}', steps.next.outputs.version) || '' }}
     steps:
-      - name: Download the release files from Forgejo
+      - uses: actions/checkout@v4
+        with:
+          # A dispatch can name any ref in the UI; releases always come from master.
+          ref: master
+          fetch-depth: 0
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 22
+      - name: Compute the next version
+        id: next
+        run: node scripts/next-version.mjs >> "$GITHUB_OUTPUT"
+      - name: Report no release
+        if: steps.next.outputs.release != 'true'
+        run: echo "No releasing commits since the last tag; nothing to cut."
+      - name: Write the version into every package.json
+        if: steps.next.outputs.release == 'true'
         env:
-          FORGEJO_TOKEN: ${{ secrets.FORGEJO_TOKEN }}
-          TAG: ${{ github.ref_name }}
+          VERSION: ${{ steps.next.outputs.version }}
         run: |
           set -euo pipefail
-          # Forgejo's publish job pushes the tag here only after its release is
-          # published, so a draft or missing release means something is wrong.
-          curl --fail --silent --show-error --header "Authorization: token ${FORGEJO_TOKEN}" \
-            "${FORGEJO_API}/releases/tags/${TAG}" > release.json
-          jq -e '.draft == false' release.json > /dev/null
-          # Release attachments of a private Forgejo repository are served only
-          # to browser sessions, so the files come from the generic package the
-          # Forgejo build uploads alongside them.
-          version="${TAG#v}"
-          mkdir assets
-          jq -r '.assets[].name' release.json | while IFS= read -r name; do
-            echo "downloading ${name}"
-            curl --fail --silent --show-error --user "yalt:${FORGEJO_TOKEN}" \
-              --output "assets/${name}" \
-              "${FORGEJO_PACKAGES}/${version}/$(jq -rn --arg n "$name" '$n|@uri')"
+          for f in package.json api/package.json web/package.json desktop/package.json; do
+            node -e '
+              const fs = require("node:fs");
+              const [file, version] = process.argv.slice(1);
+              const pkg = JSON.parse(fs.readFileSync(file, "utf8"));
+              pkg.version = version;
+              fs.writeFileSync(file, JSON.stringify(pkg, null, 2) + "\n");
+            ' "$f" "$VERSION"
+            echo "  $f -> $VERSION"
           done
-          test "$(ls assets | wc -l)" -eq "$(jq '.assets | length' release.json)"
-          ls -l assets
+      - name: Commit, tag and push
+        if: steps.next.outputs.release == 'true'
+        env:
+          VERSION: ${{ steps.next.outputs.version }}
+        run: |
+          set -euo pipefail
+          git config user.name 'github-actions[bot]'
+          git config user.email 'github-actions[bot]@users.noreply.github.com'
+          git add package.json api/package.json web/package.json desktop/package.json
+          git commit -m "chore(release): v${VERSION}"
+          git tag -a "v${VERSION}" -m "v${VERSION}"
+          # One transaction: master never carries a version bump without its tag.
+          git push --atomic origin HEAD:master "v${VERSION}"
 
-      - name: Create the GitHub release
+  draft:
+    needs: cut
+    if: always() && (github.event_name == 'push' || needs.cut.outputs.tag != '')
+    runs-on: [self-hosted, weltbon-release]
+    outputs:
+      tag: ${{ steps.tag.outputs.tag }}
+    steps:
+      - name: Resolve the tag
+        id: tag
+        env:
+          TAG: ${{ github.event_name == 'push' && github.ref_name || needs.cut.outputs.tag }}
+        run: echo "tag=${TAG}" >> "$GITHUB_OUTPUT"
+      - name: Create the draft release
         env:
           GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
-          TAG: ${{ github.ref_name }}
+          TAG: ${{ steps.tag.outputs.tag }}
         run: |
           set -euo pipefail
-          prerelease=()
-          [[ "$TAG" == *-* ]] && prerelease=(--prerelease)
           if gh release view "$TAG" -R "$GITHUB_REPOSITORY" > /dev/null 2>&1; then
-            gh release upload "$TAG" assets/* --clobber -R "$GITHUB_REPOSITORY"
-          else
-            gh release create "$TAG" assets/* -R "$GITHUB_REPOSITORY" \
-              --title "Weltbon ${TAG}" --generate-notes --verify-tag "${prerelease[@]}"
-          fi
-
-      - name: Copy the container image to GHCR
-        env:
-          FORGEJO_TOKEN: ${{ secrets.FORGEJO_TOKEN }}
-          GHCR_TOKEN: ${{ secrets.GITHUB_TOKEN }}
-          TAG: ${{ github.ref_name }}
-        run: |
-          set -euo pipefail
-          version="${TAG#v}"
-          src="docker://${FORGEJO_IMAGE}:${version}"
-          src_creds="yalt:${FORGEJO_TOKEN}"
-          if ! skopeo inspect --creds "$src_creds" "$src" > /dev/null 2>&1; then
-            echo "No image ${FORGEJO_IMAGE}:${version} on Forgejo; this release ships without one."
+            if [ "$(gh release view "$TAG" -R "$GITHUB_REPOSITORY" --json isDraft --jq .isDraft)" != true ]; then
+              echo "Release ${TAG} is already published; refusing to change it." >&2
+              exit 1
+            fi
             exit 0
           fi
-          owner=$(echo "$GITHUB_REPOSITORY_OWNER" | tr '[:upper:]' '[:lower:]')
-          dest="ghcr.io/${owner}/weltbon"
-          tags=("$version")
-          [[ "$version" != *-* ]] && tags+=("${version%.*}" latest)
-          for t in "${tags[@]}"; do
-            skopeo copy --all --src-creds "$src_creds" \
-              --dest-creds "${GITHUB_ACTOR}:${GHCR_TOKEN}" \
-              "$src" "docker://${dest}:${t}"
-          done
+          prerelease=()
+          [[ "$TAG" == *-* ]] && prerelease=(--prerelease)
+          gh release create "$TAG" -R "$GITHUB_REPOSITORY" --draft --verify-tag \
+            --title "Weltbon ${TAG}" --generate-notes "${prerelease[@]}"
+
+  desktop:
+    needs: draft
+    if: always() && needs.draft.result == 'success'
+    name: desktop-${{ matrix.platform }}
+    runs-on: [self-hosted, weltbon-release]
+    strategy:
+      # A Windows failure must not cancel the Linux build, and the reverse.
+      fail-fast: false
+      matrix:
+        include:
+          - platform: linux
+            builder_flag: --linux
+            globs: desktop/release/*.AppImage desktop/release/*.deb
+          # Built on Linux under Wine. stage-api.sh installs the Windows
+          # prebuilt native modules when WELTBON_TARGET_PLATFORM is win32.
+          - platform: win32
+            builder_flag: --win
+            globs: desktop/release/*.exe
+    env:
+      TAG: ${{ needs.draft.outputs.tag }}
+      WINEDEBUG: -all
+      WINEPREFIX: ${{ github.workspace }}/../wine
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          ref: ${{ needs.draft.outputs.tag }}
+          clean: true
+      - uses: pnpm/action-setup@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 22
+          cache: pnpm
+      - name: Install dependencies
+        run: pnpm install --frozen-lockfile
+      - name: Stage the API for packaging
+        env:
+          WELTBON_TARGET_PLATFORM: ${{ matrix.platform }}
+          WELTBON_TARGET_ARCH: x64
+        run: |
+          set -euo pipefail
+          rm -rf desktop/release
+          export WELTBON_VERSION="${TAG#v}"
+          export WELTBON_COMMIT="$(git rev-parse --short HEAD)"
+          cd desktop && pnpm run build && pnpm run stage
+      - name: Build the desktop package
+        run: |
+          set -euo pipefail
+          ver=$(node -p "require('./desktop/.stage/api/version.json').version")
+          cd desktop
+          ./node_modules/.bin/electron-builder ${{ matrix.builder_flag }} --x64 \
+            --config electron-builder.yml --config.extraMetadata.version="$ver"
+      - name: Attach to the draft release
+        env:
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+          GLOBS: ${{ matrix.globs }}
+        run: |
+          set -euo pipefail
+          shopt -s nullglob
+          files=($GLOBS)
+          if [ ${#files[@]} -eq 0 ]; then
+            echo "No packages matched ${GLOBS}; the build step should have failed first." >&2
+            exit 1
+          fi
+          printf 'uploading: %s\n' "${files[@]}"
+          gh release upload "$TAG" "${files[@]}" --clobber -R "$GITHUB_REPOSITORY"
+
+  image:
+    needs: draft
+    if: always() && needs.draft.result == 'success'
+    runs-on: [self-hosted, weltbon-release]
+    env:
+      TAG: ${{ needs.draft.outputs.tag }}
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          ref: ${{ needs.draft.outputs.tag }}
+      - name: Build and push the image to GHCR
+        env:
+          GHCR_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+        run: |
+          set -euo pipefail
+          image="ghcr.io/$(echo "$GITHUB_REPOSITORY_OWNER" | tr '[:upper:]' '[:lower:]')/weltbon"
+          version="${TAG#v}"
+          # GITHUB_SHA is the dispatch commit, not the release commit the cut made.
+          commit=$(git rev-parse HEAD)
+          tags=("$image:$version" "$image:sha-${commit::7}")
+          # Prereleases get only their own tag; `latest` and X.Y move on releases.
+          if [[ "$version" != *-* ]]; then
+            tags+=("$image:${version%.*}" "$image:latest")
+          fi
+          tag_args=()
+          for t in "${tags[@]}"; do tag_args+=(-t "$t"); done
+          export DOCKER_CONFIG="$RUNNER_TEMP/docker"
+          printf '%s' "$GHCR_TOKEN" | docker login ghcr.io -u "$GITHUB_ACTOR" --password-stdin
+          docker build --platform linux/amd64 \
+            --build-arg WELTBON_VERSION="$version" \
+            --build-arg WELTBON_COMMIT="$commit" \
+            --build-arg WELTBON_BUILT_AT="$(date -u +%Y-%m-%dT%H:%M:%SZ)" \
+            "${tag_args[@]}" .
+          for t in "${tags[@]}"; do docker push "$t"; done
+          docker logout ghcr.io
+
+  publish:
+    needs: [draft, desktop, image]
+    if: always() && needs.desktop.result == 'success' && needs.image.result == 'success'
+    runs-on: [self-hosted, weltbon-release]
+    steps:
+      - name: Publish the release once every desktop file is attached
+        env:
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+          TAG: ${{ needs.draft.outputs.tag }}
+        run: |
+          set -euo pipefail
+          count=$(gh release view "$TAG" -R "$GITHUB_REPOSITORY" --json assets \
+            --jq '[.assets[] | select(.size > 0) | select(.name | test("\\.(exe|AppImage|deb)$"))] | length')
+          if [ "$count" != 3 ]; then
+            echo "Release ${TAG} has ${count} of 3 desktop files; leaving it as a draft." >&2
+            exit 1
+          fi
+          gh release edit "$TAG" -R "$GITHUB_REPOSITORY" --draft=false
+          echo "Release ${TAG} published."
