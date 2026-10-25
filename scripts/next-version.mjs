@@ -2,7 +2,7 @@
 /**
  * Compute the next release version from conventional commits.
  *
- * Used by .forgejo/workflows/release.yml. Plain `.mjs` with zero dependencies
+ * Used by .github/workflows/release.yml. Plain `.mjs` with zero dependencies
  * and no build step on purpose: the release job runs this BEFORE `pnpm install`,
  * so anything requiring a compile or a node_modules tree would have to be
  * installed first just to answer "is there a release here at all?".

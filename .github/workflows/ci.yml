@@ -1,7 +1,7 @@
 # CI for pull requests on the public GitHub repository.
 #
-# Releases are built on Forgejo (see .forgejo/workflows/release.yml); this file
-# only tests. It runs on GitHub-hosted runners: a self-hosted runner on a public
+# Releases are built by .github/workflows/release.yml on self-hosted runners;
+# this file only tests. It runs on GitHub-hosted runners: a self-hosted runner on a public
 # repository would execute code from any fork's pull request.
 #
 #   - unit: api unit project (no database), web vitest and desktop tests.
