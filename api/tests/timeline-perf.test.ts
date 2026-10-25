@@ -44,7 +44,7 @@ describe('Timeline perf (TIME-04 sort-at-scale)', () => {
       );
       latencies.push(performance.now() - start);
       expect(res.status).toBe(200);
-      lastBody = await res.json();
+      lastBody = (await res.json()) as { position: number }[];
       expect(lastBody).toHaveLength(50);
       // ASC sort assertion: positions strictly non-decreasing
       for (let j = 1; j < lastBody.length; j++) {

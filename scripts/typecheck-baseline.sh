@@ -69,7 +69,7 @@ printf '  difference     (tests/ and other excluded)    %s\n' "$IN_TESTS"
 echo
 echo "  shipped-code errors by file:"
 printf '%s\n' "$BUILD_OUT" | grep -E 'error TS' | cut -d'(' -f1 | sort | uniq -c | sort -rn \
-  | sed 's/^/    /'
+  | sed 's/^/    /' || true  # zero build errors leaves grep with status 1
 
 if [ -n "$MAX_BUILD" ]; then
   echo

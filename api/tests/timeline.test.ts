@@ -206,7 +206,7 @@ describe('Timeline API (TIME-01..04)', () => {
       body: { label: '', position: 1, precision: 'exact' },
     });
     expect(res.status).toBe(200);
-    const body = await res.json();
+    const body = (await res.json()) as { label: string };
     expect(body.label).toBe('');
   });
 

@@ -10,6 +10,15 @@ const DEFAULT_ENTRY_TYPES = [
   'artifact', 'species', 'culture', 'thread',
 ];
 
+interface SearchEntry {
+  title: string;
+  entryType: string;
+  tags: string[];
+  categoryId: string | null;
+  rank?: number;
+  updatedAt: string;
+}
+
 // NAV-01..05 integration coverage + FTS perf assertion at 220 entries.
 describe('entry list filters + search (NAV-01..05)', () => {
   let handle: TestDbHandle;
@@ -136,7 +145,7 @@ describe('entry list filters + search (NAV-01..05)', () => {
 
       const res = await fetchList(universe.id, token, 'type=location');
       expect(res.status).toBe(200);
-      const list = await res.json();
+      const list = (await res.json()) as SearchEntry[];
 
       expect(Array.isArray(list)).toBe(true);
       expect(list.length).toBe(2);
@@ -153,7 +162,7 @@ describe('entry list filters + search (NAV-01..05)', () => {
 
       const res = await fetchList(universe.id, token, 'type=nonexistent');
       expect(res.status).toBe(200);
-      const list = await res.json();
+      const list = (await res.json()) as SearchEntry[];
       expect(list).toEqual([]);
     });
   });
@@ -171,7 +180,7 @@ describe('entry list filters + search (NAV-01..05)', () => {
       // NOT index 2 (Dragon Wars — [dragon, war] lacks 'north')
       const res = await fetchList(universe.id, token, 'tag=dragon&tag=north');
       expect(res.status).toBe(200);
-      const list = await res.json();
+      const list = (await res.json()) as SearchEntry[];
 
       expect(list).toHaveLength(2);
       const titles = list.map((r: any) => r.title).sort();
@@ -189,7 +198,7 @@ describe('entry list filters + search (NAV-01..05)', () => {
       const { universe } = await seedSmallFixture(user.id);
 
       const res = await fetchList(universe.id, token, 'tag=dragon');
-      const list = await res.json();
+      const list = (await res.json()) as SearchEntry[];
       expect(list).toHaveLength(3);
       for (const row of list) {
         expect(row.tags).toContain('dragon');
@@ -206,7 +215,7 @@ describe('entry list filters + search (NAV-01..05)', () => {
 
       const res = await fetchList(universe.id, token, `category=${catA.id}`);
       expect(res.status).toBe(200);
-      const list = await res.json();
+      const list = (await res.json()) as SearchEntry[];
 
       expect(list).toHaveLength(2);
       for (const row of list) {
@@ -220,7 +229,7 @@ describe('entry list filters + search (NAV-01..05)', () => {
 
       const res = await fetchList(universe.id, token, 'category=uncategorized');
       expect(res.status).toBe(200);
-      const list = await res.json();
+      const list = (await res.json()) as SearchEntry[];
 
       expect(list).toHaveLength(2);
       for (const row of list) {
@@ -236,7 +245,7 @@ describe('entry list filters + search (NAV-01..05)', () => {
 
       const res = await fetchList(universe.id, token, 'category=not-a-uuid');
       expect(res.status).toBe(400);
-      const body = await res.json();
+      const body = (await res.json()) as { error?: unknown };
       expect(body.error).toBeTruthy();
     });
   });
@@ -251,7 +260,7 @@ describe('entry list filters + search (NAV-01..05)', () => {
       // 'dragon' appears in title/body/tags of multiple entries.
       const res = await fetchList(universe.id, token, 'q=dragon');
       expect(res.status).toBe(200);
-      const list = await res.json();
+      const list = (await res.json()) as SearchEntry[];
 
       // Entries 1 (Dragon of the North), 2 (The Dragon Wars), 3 (Warlord Northern Dragon) should all match.
       expect(list.length).toBeGreaterThanOrEqual(3);
@@ -265,7 +274,7 @@ describe('entry list filters + search (NAV-01..05)', () => {
         expect(typeof row.rank).toBe('number');
       }
       for (let i = 1; i < list.length; i++) {
-        expect(list[i - 1].rank).toBeGreaterThanOrEqual(list[i].rank);
+        expect(list[i - 1].rank!).toBeGreaterThanOrEqual(list[i].rank!);
       }
 
       // An entry that doesn't mention "dragon" anywhere should NOT be in the results
@@ -279,7 +288,7 @@ describe('entry list filters + search (NAV-01..05)', () => {
 
       const res = await fetchList(universe.id, token, 'q=%20%20');
       expect(res.status).toBe(200);
-      const list = await res.json();
+      const list = (await res.json()) as SearchEntry[];
       expect(list).toHaveLength(6);
       for (const row of list) {
         expect(row.rank).toBeUndefined();
@@ -292,7 +301,7 @@ describe('entry list filters + search (NAV-01..05)', () => {
 
       const res = await fetchList(universe.id, token);
       expect(res.status).toBe(200);
-      const list = await res.json();
+      const list = (await res.json()) as SearchEntry[];
       expect(list).toHaveLength(6);
       for (let i = 1; i < list.length; i++) {
         const prev = new Date(list[i - 1].updatedAt).getTime();
@@ -315,7 +324,7 @@ describe('entry list filters + search (NAV-01..05)', () => {
       const qs = `type=entity&tag=dragon&tag=north&tag=war&category=${catB.id}&q=dragon`;
       const res = await fetchList(universe.id, token, qs);
       expect(res.status).toBe(200);
-      const list = await res.json();
+      const list = (await res.json()) as SearchEntry[];
 
       expect(list).toHaveLength(1);
       expect(list[0].title).toBe('Warlord Northern Dragon');

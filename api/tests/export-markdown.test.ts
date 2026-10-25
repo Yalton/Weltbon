@@ -88,7 +88,7 @@ describe('EXP-02: markdown ZIP exporter — full integration', () => {
       headers: { ...hdrs, 'Content-Type': 'application/json' },
       body: JSON.stringify({ name: 'Markdown Test World' }),
     });
-    const universe = await createUniverseRes.json();
+    const universe = (await createUniverseRes.json()) as { id: string };
 
     // ---------- seed 3 categories with explicit sortOrder ----------
     const [people] = await db()

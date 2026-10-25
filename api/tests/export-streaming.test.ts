@@ -49,7 +49,7 @@ describe('EXP-05: markdown ZIP response is streamed (Transfer-Encoding chunked O
       headers: { ...hdrs, 'Content-Type': 'application/json' },
       body: JSON.stringify({ name: 'Stream Test World' }),
     });
-    const universe = await createRes.json();
+    const universe = (await createRes.json()) as { id: string };
 
     const res = await app.request(
       `http://localhost/api/universes/${universe.id}/export?format=markdown`,

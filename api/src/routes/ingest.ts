@@ -59,6 +59,7 @@ import {
   CommitSizeError,
 } from '../services/ingest-commit.js';
 import { convertDocx, DocxFormatError, type DocxConversion } from '../services/ingest-docx/index.js';
+import { escapeMarkdown, escapeLineStarts } from '../services/ingest-docx/convert.js';
 import {
   DOCX_LIMITS,
   createDocxWorkBudget,
@@ -150,7 +151,16 @@ export async function materializeFileParts(
       throw new BatchLimitError('file_size', MAX_FILE_SIZE);
     }
     const buf = Buffer.from(await file.arrayBuffer());
-    inputs.push({ path: file.name, content: buf.toString('utf8') });
+    if (/\.txt$/i.test(file.name)) {
+      inputs.push({
+        path: file.name.replace(/\.txt$/i, '.md'),
+        // `&` is escaped here rather than in escapeMarkdown, whose DOCX
+        // output keeps a bare `&` literal; plain text must not form entities.
+        content: escapeLineStarts(escapeMarkdown(buf.toString('utf8')).replace(/&/g, '\\&')),
+      });
+    } else {
+      inputs.push({ path: file.name, content: buf.toString('utf8') });
+    }
   }
 
   return { inputs, docxConversions };
