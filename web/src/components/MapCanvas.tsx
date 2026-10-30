@@ -529,7 +529,7 @@ function RoutePolyline({
       />
 
       {/* Upright midpoint label chip — shown when route.name !== '' (T-51-12, D-05) */}
-      {/* Glassy chip matching Phase 50 chrome: bg/90 backdrop-blur + accent-color border. */}
+      {/* Solid chip matching the map chrome, with an accent-colour border. */}
       {/* Rendered as React text, NOT dangerouslySetInnerHTML — XSS safe. */}
       {route.name !== '' && (
         <foreignObject
@@ -1244,7 +1244,7 @@ export const MapCanvas = forwardRef<MapCanvasHandle, MapCanvasProps>(function Ma
       {hoveredTooltip && (
         <div
           data-testid="map-tooltip"
-          className="pointer-events-none absolute z-50 max-w-[260px] rounded-md border border-neutral-200 bg-white/90 backdrop-blur-sm shadow-sm dark:border-neutral-800 dark:bg-neutral-900/90 px-3 py-2"
+          className="pointer-events-none absolute z-50 max-w-[260px] rounded-md border border-line-strong bg-raised shadow-sm px-3 py-2"
           style={tooltipStyle}
         >
           {/* Identity row — Content-Forward Views §6. Regions and map-only pins have no

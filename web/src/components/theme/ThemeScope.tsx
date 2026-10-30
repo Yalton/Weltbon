@@ -5,8 +5,8 @@ import type { UniverseTheme } from '../../types/theme';
 const SCRIM_GRADIENT =
   'linear-gradient(180deg, rgb(7 9 18 / 0.78) 0%, rgb(7 9 18 / 0.55) 35%, rgb(7 9 18 / 0.55) 65%, rgb(7 9 18 / 0.78) 100%)';
 
-const CANVAS_GRADIENT =
-  'radial-gradient(140% 110% at 25% -10%, var(--color-canvas-hi) 0%, var(--color-canvas-mid) 50%, var(--color-canvas-lo) 100%)';
+// Night sky is flat: the palette's mid tone, no vignette.
+const CANVAS_FILL = 'var(--color-canvas-mid)';
 
 export function ThemeScope({
   theme,
@@ -72,7 +72,7 @@ export function ThemeScope({
         <div
           data-testid="theme-canvas"
           className="absolute inset-0"
-          style={{ background: CANVAS_GRADIENT }}
+          style={{ background: CANVAS_FILL }}
         />
       </div>
     ) : (
@@ -80,13 +80,13 @@ export function ThemeScope({
         data-testid="theme-canvas"
         aria-hidden="true"
         className="fixed inset-0 -z-20"
-        style={{ background: CANVAS_GRADIENT }}
+        style={{ background: CANVAS_FILL }}
       />
     );
   }
 
   return (
-    <div {...rest} className={className} style={{ ...(vars as CSSProperties), ...style }}>
+    <div {...rest} data-theme-scope="" className={className} style={{ ...(vars as CSSProperties), ...style }}>
       {layers}
       {children}
     </div>

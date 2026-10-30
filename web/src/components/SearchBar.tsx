@@ -1,5 +1,6 @@
 import { useEffect, useState } from 'react';
 import { useFilterParams } from '../hooks/useFilterParams';
+import { Input } from './ui/Input';
 
 const DEBOUNCE_MS = 250;
 
@@ -22,14 +23,13 @@ export function SearchBar() {
   }, [local, filters.q, updateFilters]);
 
   return (
-    <input
+    <Input
       type="search"
       data-testid="search-input"
       value={local}
       onChange={(e) => setLocal(e.target.value)}
       placeholder="Search entries..."
       aria-label="Search entries"
-      className="w-full rounded-md border border-neutral-300 dark:border-neutral-700 bg-white dark:bg-neutral-900 px-3 py-2 text-sm focus:outline-none focus:ring-2 focus:ring-[color:var(--color-accent)]"
     />
   );
 }

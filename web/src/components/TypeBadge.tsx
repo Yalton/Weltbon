@@ -1,10 +1,9 @@
-import { entryTypeColor } from '../lib/entryTypeColor';
+import { TypeStar } from './TypeStar';
 
 export function TypeBadge({ type }: { type: string }) {
-  const colors = entryTypeColor(type);
-
   return (
-    <span className={`inline-block shrink-0 rounded-full px-2 py-1 text-sm font-semibold ${colors}`}>
+    <span className="inline-flex shrink-0 items-center gap-1.5 text-sm text-ink-secondary">
+      <TypeStar type={type} />
       {type}
     </span>
   );

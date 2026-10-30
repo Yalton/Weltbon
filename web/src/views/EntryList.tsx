@@ -17,6 +17,7 @@ import { AuditCostDialog } from '../components/AuditCostDialog';
 import { useShareMode } from '../contexts/ShareModeContext';
 import { Loading } from '../components/ui/Loading';
 import { Glyph } from '../components/CategoryIcon';
+import { buttonClasses } from '../components/ui/Button';
 
 type ToastState = { message: string; variant: 'success' | 'error' } | null;
 
@@ -128,7 +129,7 @@ export function EntryList() {
       </div>
 
       <div className="flex flex-wrap items-center justify-between gap-x-4 gap-y-3 mb-6">
-        <h1 className="text-2xl font-semibold tracking-tight">Entries</h1>
+        <h1 className="font-display text-[28px] font-semibold leading-tight tracking-tight text-ink">Entries</h1>
         <div className="flex flex-wrap items-center gap-2">
 
           {!isShareMode && (
@@ -141,13 +142,13 @@ export function EntryList() {
               <button
                 type="button"
                 onClick={() => setImportOpen(true)}
-                className="rounded-md border border-neutral-300 dark:border-neutral-700 text-sm px-3 py-1.5"
+                className={buttonClasses('ghost')}
               >
                 Import JSON
               </button>
               <Link
                 to={`/universes/${uid}/import`}
-                className="rounded-md border border-neutral-300 dark:border-neutral-700 text-sm px-3 py-1.5"
+                className={buttonClasses('ghost')}
               >
                 Import notes
               </Link>
@@ -155,7 +156,7 @@ export function EntryList() {
                 <button
                   type="button"
                   onClick={() => setAuditDialogOpen(true)}
-                  className="rounded-md border border-neutral-300 dark:border-neutral-700 text-sm px-3 py-1.5 inline-flex items-center gap-1.5 hover:bg-neutral-50 dark:hover:bg-neutral-800"
+                  className={buttonClasses('ghost')}
                   aria-haspopup="dialog"
                 >
                   <Glyph name="scale" />
@@ -166,7 +167,7 @@ export function EntryList() {
                 <button
                   type="button"
                   onClick={() => setPickerOpen(true)}
-                  className="rounded-md btn-accent text-white text-sm px-3 py-1.5"
+                  className={buttonClasses('primary')}
                 >
                   Create entry
                 </button>
@@ -195,7 +196,7 @@ export function EntryList() {
                   fieldFilters: {},
                 })
               }
-              className="btn-accent text-white text-sm font-medium px-4 py-2 rounded-md hover:opacity-90 focus:outline-none focus:ring-2 focus:ring-[color:var(--color-accent)] focus:ring-offset-2"
+              className={buttonClasses('primary')}
             >
               Clear filters
             </button>
@@ -218,7 +219,7 @@ export function EntryList() {
               <button
                 type="button"
                 onClick={() => setPickerOpen(true)}
-                className="btn-accent text-white text-sm font-medium px-4 py-2 rounded-md hover:opacity-90 focus:outline-none focus:ring-2 focus:ring-[color:var(--color-accent)] focus:ring-offset-2"
+                className={buttonClasses('primary')}
               >
                 New entry
               </button>
@@ -226,10 +227,11 @@ export function EntryList() {
           }
         />
       ) : (
-        <div className="space-y-2">
+        <div className="divide-y divide-[color:var(--color-line)] overflow-hidden rounded-lg border border-line bg-panel">
           {entries!.map((entry) => (
             <Link
               key={entry.id}
+              className="block focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-inset focus-visible:ring-[color:var(--color-accent)] hover:bg-white/[0.03]"
               to={
                 isShareMode
                   ? `/share/${token ?? ''}/entries/${entry.id}`

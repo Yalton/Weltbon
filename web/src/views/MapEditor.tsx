@@ -1634,7 +1634,7 @@ export function MapEditor() {
         />
       )}
 
-      {/* ── Glassy map chrome — rendered in BOTH editor and share mode (D-09 parity) ── */}
+      {/* ── Map chrome — rendered in BOTH editor and share mode (D-09 parity) ── */}
       {/* CRITICAL: NOT gated on !isShare — zoom controls + compass are always visible. */}
       {/* MapZoomControls: bottom-right cluster; wired to canvasRef imperative zoom seam (D-04). */}
       <MapZoomControls

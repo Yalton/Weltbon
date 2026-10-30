@@ -28,7 +28,7 @@ export function MapZoomControls({
 
   return (
     <div
-      className="absolute right-4 bottom-4 z-10 flex flex-col items-center gap-1 rounded-md border border-neutral-200 dark:border-neutral-800 bg-white/90 dark:bg-neutral-900/90 backdrop-blur-sm p-1 shadow-sm"
+      className="absolute right-4 bottom-4 z-10 flex flex-col items-center gap-1 rounded-md border border-line-strong bg-raised p-1 shadow-sm"
       role="group"
       aria-label="Map zoom controls"
     >

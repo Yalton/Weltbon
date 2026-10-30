@@ -1,6 +1,9 @@
 import * as DropdownMenu from '@radix-ui/react-dropdown-menu';
 import { useState } from 'react';
 import { getAccessToken } from '../api/client';
+import { buttonClasses } from './ui/Button';
+import { Glyph } from './CategoryIcon';
+import { menuContentClasses, menuItemClasses } from './ui/overlay';
 
 type Format = 'json' | 'markdown' | 'pdf' | 'docx';
 
@@ -74,17 +77,17 @@ export function ExportMenu({ universeId, fallbackFilename, onToast }: Props) {
       <DropdownMenu.Trigger asChild>
         <button
           type="button"
-          className="rounded-md border border-neutral-300 dark:border-neutral-700 text-sm px-3 py-1.5 inline-flex items-center gap-1"
+          className={buttonClasses('ghost')}
         >
           Export
-          <span aria-hidden>↓</span>
+          <Glyph name="chevron-down" />
         </button>
       </DropdownMenu.Trigger>
       <DropdownMenu.Portal>
         <DropdownMenu.Content
           align="end"
           sideOffset={4}
-          className="min-w-[220px] rounded-md border border-neutral-200 dark:border-neutral-800 bg-white dark:bg-neutral-900 p-1 shadow-lg z-50 data-[state=open]:animate-popover-in data-[state=closed]:animate-popover-out"
+          className={`${menuContentClasses} min-w-[220px]`}
         >
           {FORMAT_ITEMS.map((item) => {
             const isLoading = !!loading[item.format];
@@ -96,7 +99,7 @@ export function ExportMenu({ universeId, fallbackFilename, onToast }: Props) {
                   e.preventDefault();
                   void exportFormat(item.format);
                 }}
-                className="px-3 py-2 text-sm rounded-sm cursor-pointer outline-none hover:bg-neutral-100 dark:hover:bg-neutral-800 data-[disabled]:opacity-50"
+                className={`${menuItemClasses} py-2 data-[disabled]:opacity-50`}
               >
                 <div className="flex items-center justify-between gap-3">
                   <span>
@@ -104,7 +107,7 @@ export function ExportMenu({ universeId, fallbackFilename, onToast }: Props) {
                       {isLoading ? `Exporting ${item.label}…` : item.label}
                     </span>
                     {item.hint ? (
-                      <span className="block text-xs text-neutral-500">{item.hint}</span>
+                      <span className="block text-xs text-ink-muted">{item.hint}</span>
                     ) : null}
                   </span>
                   {isLoading ? <Spinner /> : null}

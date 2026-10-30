@@ -26,6 +26,7 @@ import { CategoryManageDialog } from './CategoryManageDialog';
 import { ConfirmDialog } from './ConfirmDialog';
 import { computeNewCategoryOrder } from './categoryReorder';
 import { Loading } from './ui/Loading';
+import { Glyph } from './CategoryIcon';
 
 function NavIcon({ d, circle }: { d?: string; circle?: boolean }) {
   return (
@@ -74,9 +75,9 @@ function SidebarNavLink({
       end
       className={({ isActive }) =>
         [
-          'flex items-center gap-2.5 rounded-lg px-2.5 py-1.5 text-sm transition-colors duration-150',
+          'flex items-center gap-2.5 rounded-md px-2.5 py-1.5 text-[15px] transition-colors duration-150',
           isActive
-            ? 'text-accent-ink bg-gradient-to-r from-accent-strong/15 to-accent-strong/5 [box-shadow:inset_0_0_0_1px_var(--color-accent-ring),var(--shadow-glow-soft)] font-medium'
+            ? 'text-ink bg-accent-soft font-semibold'
             : 'text-ink-secondary hover:bg-white/5 hover:text-ink',
         ].join(' ')
       }
@@ -146,9 +147,9 @@ export function Sidebar({ universeId }: { universeId: string }) {
   return (
     <nav
       aria-label="Universe navigation"
-      className="w-64 shrink-0 border-r border-white/10 bg-[color:var(--color-chrome)] backdrop-blur-md h-full overflow-y-auto py-4 flex flex-col"
+      className="w-60 shrink-0 border-r border-line bg-chrome h-full overflow-y-auto py-4 flex flex-col"
     >
-      <div className="px-3 pb-3 border-b border-white/10 space-y-0.5">
+      <div className="px-3 pb-3 border-b border-line space-y-px">
         <SidebarNavLink to={`/universes/${universeId}/entries`}>Entries</SidebarNavLink>
         <SidebarNavLink to={`/universes/${universeId}/graph`}>Graph</SidebarNavLink>
         <SidebarNavLink to={`/universes/${universeId}/timeline`}>Timeline</SidebarNavLink>
@@ -165,14 +166,15 @@ export function Sidebar({ universeId }: { universeId: string }) {
 
       <div className="mt-4 px-3">
         <div className="flex items-center justify-between">
-          <h3 className="text-xs uppercase tracking-[0.1em] text-ink-muted">Categories</h3>
+          <h3 className="font-display text-sm font-semibold text-ink-secondary">Categories</h3>
           <button
             type="button"
             onClick={openCreate}
             aria-label="New category"
-            className="text-xs px-2 py-0.5 rounded text-accent-strong hover:text-accent-ink hover:bg-white/5"
+            className="inline-flex items-center gap-1 text-xs px-2 py-0.5 rounded text-link hover:text-ink hover:bg-white/5"
           >
-            + New
+            <Glyph name="plus" className="w-3 h-3" />
+            New
           </button>
         </div>
 
@@ -185,14 +187,14 @@ export function Sidebar({ universeId }: { universeId: string }) {
 
         {data && data.categories.length === 0 && (
           <div className="mt-2">
-            <div className="mt-3 rounded-lg border border-dashed border-white/15 p-3 text-center">
+            <div className="mt-3 rounded-md border border-dashed border-line-strong p-3 text-center">
               <p className="text-xs leading-relaxed text-ink-secondary">
                 Categories let you organise entries into folders.
               </p>
               <button
                 type="button"
                 onClick={openCreate}
-                className="mt-2 rounded-lg bg-white/5 border border-glass-border px-3 py-1.5 text-xs text-ink-secondary hover:bg-white/10 hover:text-ink"
+                className="mt-2 rounded-md border border-line-strong px-3 py-1.5 text-xs text-ink-secondary hover:bg-white/5 hover:text-ink"
               >
                 Add a category
               </button>

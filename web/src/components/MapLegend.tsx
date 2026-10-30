@@ -104,7 +104,7 @@ export function MapLegend({
         <div
           role="region"
           aria-label="Map legend"
-          className="pointer-events-auto absolute top-14 right-3 z-50 w-48 max-h-64 overflow-y-auto rounded-md border border-neutral-200 bg-white/90 backdrop-blur-sm shadow-lg dark:border-neutral-800 dark:bg-neutral-900/90"
+          className="pointer-events-auto absolute top-14 right-3 z-50 w-48 max-h-64 overflow-y-auto rounded-md border border-line-strong bg-raised shadow-lg"
         >
           {/* Panel header */}
           <div className="flex items-center justify-between px-3 pt-2 pb-1">

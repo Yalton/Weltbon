@@ -445,14 +445,14 @@ export function EntryEditor() {
                       setPickerMode('set-cover');
                       setPickerOpen(true);
                     }}
-                    className="text-xs rounded-md border border-white/40 bg-black/40 text-white px-3 py-1.5 backdrop-blur hover:bg-black/60"
+                    className="text-xs rounded-md border border-white/40 bg-black/65 text-white px-3 py-1.5 hover:bg-black/80"
                   >
                     Change cover
                   </button>
                   <button
                     type="button"
                     onClick={() => setCoverImageId(null)}
-                    className="text-xs rounded-md border border-white/40 bg-black/40 text-red-300 px-3 py-1.5 backdrop-blur hover:bg-black/60"
+                    className="text-xs rounded-md border border-white/40 bg-black/65 text-red-300 px-3 py-1.5 hover:bg-black/80"
                   >
                     Remove cover
                   </button>

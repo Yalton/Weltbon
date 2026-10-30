@@ -42,7 +42,7 @@ export function UserMenu() {
       >
         <span
           aria-hidden="true"
-          className="flex h-6 w-6 items-center justify-center rounded-full bg-gradient-to-br from-accent-cta to-accent-deep text-[11px] font-semibold text-white shadow-glow-soft"
+          className="flex h-6 w-6 items-center justify-center rounded-full bg-raised border border-line-strong text-[11px] font-semibold text-ink"
         >
           {user.displayName.charAt(0).toLowerCase()}
         </span>

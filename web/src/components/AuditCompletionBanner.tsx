@@ -110,7 +110,7 @@ export function AuditCompletionBanner({
     const suggestionWord = run.suggestionCount === 1 ? 'new suggestion' : 'new suggestions';
 
     return (
-      <div className="border-l-4 border-l-green-500 dark:border-l-green-400 bg-neutral-50 dark:bg-neutral-900 rounded-md p-4">
+      <div className="rounded-md border border-emerald-400/30 bg-emerald-400/[0.06] p-4">
         <div className="flex justify-between items-start">
           <h3 className="flex items-center gap-1.5 text-base font-semibold">
             <Glyph name="check" />
@@ -200,7 +200,7 @@ export function AuditCompletionBanner({
     (run.error && ERROR_COPY[run.error]) ?? ERROR_COPY.fallback;
 
   return (
-    <div className="border-l-4 border-l-red-500 bg-red-50 dark:bg-red-950/30 rounded-md p-4">
+    <div className="rounded-md border border-rose-400/35 bg-rose-500/[0.07] p-4">
       <div className="flex justify-between items-start">
         <h3 className="flex items-center gap-1.5 text-base font-semibold text-red-700 dark:text-red-300">
           <Glyph name="cross" />

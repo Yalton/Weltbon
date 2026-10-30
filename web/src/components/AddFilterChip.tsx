@@ -4,6 +4,7 @@ import type { EntryFilters } from '../hooks/useFilterParams';
 import type { Category } from '../hooks/useCategories';
 import type { FieldRegistryEntry } from '../types/fieldRegistry';
 import { BooleanInput, EntryRefInput, UrlInput } from './MetaEditor';
+import { Glyph } from './CategoryIcon';
 
 export function AddFilterChip({
   universeId,
@@ -96,9 +97,10 @@ export function AddFilterChip({
         <button
           type="button"
           aria-label="Add filter"
-          className="inline-flex items-center gap-1 rounded-full border border-dashed border-neutral-400 dark:border-neutral-600 text-neutral-600 dark:text-neutral-300 px-3 py-1 text-sm hover:border-neutral-600 dark:hover:border-neutral-400"
+          className="inline-flex items-center gap-1 rounded-full border border-dashed border-line-strong text-ink-secondary px-3 py-1 text-sm hover:border-[color:var(--color-ink-muted)] hover:text-ink"
         >
-          + Filter
+          <Glyph name="plus" />
+          Filter
         </button>
       </Popover.Trigger>
       <Popover.Portal>
