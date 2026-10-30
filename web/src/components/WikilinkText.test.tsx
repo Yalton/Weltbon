@@ -348,3 +348,36 @@ describe('embed branch', () => {
     expect(affordance.textContent).toContain('Unknown');
   });
 });
+
+describe('type star on entry links', () => {
+  it('puts the linked entry type star before the label, leaving the accessible name unchanged', () => {
+    const empire = { id: 'entry-empire-id', title: 'Empire', entryType: 'faction', summary: 'An old power.' } as Entry;
+    const wikis = makeWikis({
+      entryTitles: new Map([['empire', empire.id]]),
+      entriesById: new Map([[empire.id, empire]]),
+    });
+
+    render(
+      <EmbedWrapper>
+        <WikilinkText wikis={wikis}>{'Ruled by [[Empire]].'}</WikilinkText>
+      </EmbedWrapper>,
+    );
+
+    const link = screen.getByRole('link', { name: 'Empire' });
+    const star = link.querySelector('svg[aria-hidden="true"]');
+    expect(star).not.toBeNull();
+    expect(link.firstElementChild?.contains(star)).toBe(true);
+  });
+
+  it('omits the star when the linked entry is not loaded', () => {
+    const wikis = makeWikis({ entryTitles: new Map([['empire', 'entry-empire-id']]) });
+
+    render(
+      <EmbedWrapper>
+        <WikilinkText wikis={wikis}>{'Ruled by [[Empire]].'}</WikilinkText>
+      </EmbedWrapper>,
+    );
+
+    expect(screen.getByRole('link', { name: 'Empire' }).querySelector('svg')).toBeNull();
+  });
+});

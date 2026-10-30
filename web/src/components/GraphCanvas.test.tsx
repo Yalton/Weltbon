@@ -198,7 +198,7 @@ describe('GraphCanvas', () => {
   // Content-Forward Views §4: the entry-type hue moved from the node circle's FILL to the
   // medallion disc's ring STROKE — the fill is now that same hue at 18% opacity, because a
   // cover portrait has to show through the disc it is framed by.
-  it('rings each medallion disc with its entryType color from entryTypeHexColor', () => {
+  it('marks each medallion with a type star in its entryType color from entryTypeHexColor', () => {
     const { nodes, edges, positions } = tinyGraph();
     const { container } = render(
       <GraphCanvas
@@ -215,14 +215,14 @@ describe('GraphCanvas', () => {
     );
     const discs = Array.from(container.querySelectorAll('g.nodes circle.medallion-disc'));
     expect(discs).toHaveLength(3);
-    const strokes = discs.map((c) => c.getAttribute('stroke'));
-    expect(strokes).toContain('#3b82f6');
-    expect(strokes).toContain('#f59e0b');
-    expect(strokes).toContain('#a855f7');
-    // The hue still tints the disc itself, just translucently.
-    for (const disc of discs) {
-      expect(disc.getAttribute('fill')).toBe(disc.getAttribute('stroke'));
-    }
+    // Each node's type star carries the hue, and the hue still tints the disc translucently.
+    const stars = Array.from(container.querySelectorAll('g.nodes path.medallion-type-star'));
+    expect(stars).toHaveLength(3);
+    const starFills = stars.map((star) => star.getAttribute('fill'));
+    expect(starFills).toContain('#3b82f6');
+    expect(starFills).toContain('#f59e0b');
+    expect(starFills).toContain('#a855f7');
+    expect(discs.map((disc) => disc.getAttribute('fill')).sort()).toEqual([...starFills].sort());
   });
 
   it('renders edge labels for edges that have a label, visible at the starting zoom', () => {

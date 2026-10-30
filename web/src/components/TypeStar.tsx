@@ -1,5 +1,9 @@
 import { entryTypeHexColor } from '../lib/entryTypeColor';
 
+/** The star outline in a 10x10 box, shared with the SVG medallion badge. */
+export const TYPE_STAR_PATH =
+  'M5 0 C5.4 3.2 6.8 4.6 10 5 C6.8 5.4 5.4 6.8 5 10 C4.6 6.8 3.2 5.4 0 5 C3.2 4.6 4.6 3.2 5 0 Z';
+
 /**
  * The type star: a four-point star in the entry type's colour. It is the one
  * mark that carries type everywhere an entry appears (rows, links, graph nodes,
@@ -17,7 +21,7 @@ export function TypeStar({ type, size = 10 }: { type: string; size?: number }) {
       style={{ color: entryTypeHexColor(type) }}
     >
       <path
-        d="M5 0 C5.4 3.2 6.8 4.6 10 5 C6.8 5.4 5.4 6.8 5 10 C4.6 6.8 3.2 5.4 0 5 C3.2 4.6 4.6 3.2 5 0 Z"
+        d={TYPE_STAR_PATH}
         fill="currentColor"
       />
     </svg>
