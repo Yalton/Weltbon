@@ -154,7 +154,7 @@ export function UniverseList() {
                 >
                   <Link
                     to={`/universes/${u.id}/entries`}
-                    className="absolute inset-0 rounded-[10px] focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-[color:var(--color-accent)] focus-visible:ring-offset-2 focus-visible:ring-offset-neutral-900"
+                    className="absolute inset-0 rounded-[10px] focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-[color:var(--color-accent)] focus-visible:ring-offset-2 focus-visible:ring-offset-[color:var(--color-canvas-mid)]"
                     aria-label={`Open ${u.name}`}
                   >
                     <span className="sr-only">Open {u.name}</span>

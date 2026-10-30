@@ -90,18 +90,18 @@ export function RelationLegend({
         <div
           role="region"
           aria-label="Relation type legend"
-          className="pointer-events-auto absolute top-14 right-3 z-50 w-48 max-h-64 overflow-y-auto rounded-md border border-neutral-200 bg-white shadow-lg dark:border-neutral-800 dark:bg-neutral-900"
+          className="pointer-events-auto absolute top-14 right-3 z-50 w-48 max-h-64 overflow-y-auto rounded-md border shadow-lg border-line bg-panel"
         >
           {/* Panel header */}
           <div className="flex items-center justify-between px-3 pt-2 pb-1">
-            <span className="text-xs font-semibold uppercase tracking-wide text-neutral-500">
+            <span className="text-xs font-semibold uppercase tracking-wide text-ink-muted">
               Relation types
             </span>
             <button
               type="button"
               onClick={onToggle}
               aria-label="Close legend"
-              className="text-xs text-neutral-400 hover:text-neutral-600 dark:hover:text-neutral-300"
+              className="text-xs text-ink-muted hover:text-ink"
             >
               ×
             </button>
@@ -109,7 +109,7 @@ export function RelationLegend({
 
           {/* Type rows */}
           {!hasTypedEdges ? (
-            <p className="px-3 py-2 text-xs text-neutral-400">
+            <p className="px-3 py-2 text-xs text-ink-muted">
               No typed edges in this view.
             </p>
           ) : (
@@ -136,7 +136,7 @@ export function RelationLegend({
                     className={[
                       'w-3 h-3 rounded-full flex-shrink-0 border-0 p-0',
                       row.type && onColorChange
-                        ? 'cursor-pointer hover:ring-2 hover:ring-offset-1 hover:ring-neutral-400'
+                        ? 'cursor-pointer hover:ring-2 hover:ring-offset-1 hover:ring-[color:var(--color-ink-muted)]'
                         : 'cursor-default',
                     ].join(' ')}
                     style={{ backgroundColor: row.color }}
@@ -144,13 +144,13 @@ export function RelationLegend({
                   />
 
                   {/* Type label */}
-                  <span className="flex-1 truncate text-xs text-neutral-700 dark:text-neutral-300">
+                  <span className="flex-1 truncate text-xs text-ink">
                     {row.label}
                   </span>
 
                   {/* Edit color hint (hover only, preset types only) */}
                   {row.type && onColorChange && (
-                    <span className="text-xs text-neutral-400 opacity-0 group-hover:opacity-100">
+                    <span className="text-xs text-ink-muted opacity-0 group-hover:opacity-100">
                       Edit color
                     </span>
                   )}

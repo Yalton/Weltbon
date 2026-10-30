@@ -236,7 +236,7 @@ export function SyncTab({ universeId }: { universeId: string }) {
   return (
     <div>
       <h2 className="text-lg font-medium mb-2">Sync</h2>
-      <p className="text-sm text-neutral-500 mb-3">
+      <p className="text-sm text-ink-muted mb-3">
         Link this universe to a remote instance to keep the two copies in step. Remotes themselves
         are saved once per account in{' '}
         <Link to="/settings/sync" className="text-[color:var(--color-accent)] hover:underline">
@@ -342,7 +342,7 @@ export function SyncTab({ universeId }: { universeId: string }) {
                 id="sync-remote-select"
                 value={chosenRemote}
                 onChange={(e) => setChosenRemote(e.target.value)}
-                className="rounded-md border border-neutral-300 dark:border-neutral-700 bg-transparent px-3 py-2 text-sm"
+                className="rounded-md border border-line-strong bg-transparent px-3 py-2 text-sm"
               >
                 <option value="">Choose a remote</option>
                 {available.map((r) => (

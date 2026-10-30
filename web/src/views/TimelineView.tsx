@@ -222,7 +222,7 @@ export function TimelineView() {
       return (
         <div className="max-w-3xl mx-auto p-6">
           <h1 className="text-2xl font-semibold tracking-tight">Timeline</h1>
-          <p className="mt-4 text-sm text-neutral-600 dark:text-neutral-400">
+          <p className="mt-4 text-sm text-ink-secondary">
             No timeline is available for this universe yet.
           </p>
         </div>
@@ -232,7 +232,7 @@ export function TimelineView() {
       <div ref={containerRef} className="flex h-full flex-col">
         <div className="max-w-3xl mx-auto p-6">
           <h1 className="text-2xl font-semibold tracking-tight">Timeline</h1>
-          <p className="mt-4 text-sm text-neutral-600 dark:text-neutral-400">
+          <p className="mt-4 text-sm text-ink-secondary">
             This universe doesn&rsquo;t have a timeline range yet. Set a start and
             end position to start placing events on it.
           </p>
@@ -271,7 +271,7 @@ export function TimelineView() {
             <button
               type="button"
               onClick={() => setRangeDialogOpen(true)}
-              className="rounded-md border border-neutral-300 bg-white/80 px-3 py-1.5 text-sm shadow-sm hover:bg-white dark:border-neutral-700 dark:bg-neutral-900/80 dark:text-neutral-100 dark:hover:bg-neutral-900"
+              className="rounded-md border px-3 py-1.5 text-sm shadow-sm border-line-strong bg-panel text-ink hover:bg-white/[0.03]"
             >
               Configure range
             </button>

@@ -29,13 +29,13 @@ export function AuditProgressPanel({
 
   const containerClass =
     variant === 'standalone'
-      ? 'p-4 border border-neutral-200 dark:border-neutral-800 rounded-md'
+      ? 'p-4 border border-line rounded-md'
       : '';
 
   if (isPending && !run) {
     return (
       <div className={containerClass} aria-busy="true" aria-label="Loading audit run">
-        <div className="h-6 w-40 rounded bg-neutral-200 dark:bg-neutral-800 animate-pulse" />
+        <div className="h-6 w-40 rounded bg-raised animate-pulse" />
       </div>
     );
   }
@@ -62,7 +62,7 @@ export function AuditProgressPanel({
     return (
       <div className={containerClass}>
         {stale && run.finishedAt && (
-          <p className="text-xs text-neutral-500 mb-2">
+          <p className="text-xs text-ink-muted mb-2">
             {/* formatRelative already ends in "ago" (or reads "Just now"). */}
             Run finished {formatRelative(run.finishedAt).toLowerCase()}
           </p>
@@ -90,13 +90,13 @@ export function AuditProgressPanel({
         <div className="flex items-center gap-3">
           <AuditStatusPill status={run.status} />
         </div>
-        <div className="tabular-nums text-neutral-600 dark:text-neutral-400">
+        <div className="tabular-nums text-ink-secondary">
           Elapsed: <span className="font-medium">{elapsedSec}s</span>
         </div>
-        <div className="tabular-nums text-neutral-600 dark:text-neutral-400">
+        <div className="tabular-nums text-ink-secondary">
           Tool calls: <span className="font-medium">{run.toolCallCount}</span>
         </div>
-        <div className="tabular-nums text-neutral-600 dark:text-neutral-400">
+        <div className="tabular-nums text-ink-secondary">
           Cost:{' '}
           <span aria-live="polite" aria-atomic="true" className="font-medium">
             ${run.costUsd}

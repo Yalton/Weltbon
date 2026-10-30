@@ -112,11 +112,11 @@ export function AddEventDialog({
     <Dialog.Root open={open} onOpenChange={onOpenChange}>
       <Dialog.Portal>
         <Dialog.Overlay className="fixed inset-0 bg-black/50 z-40 data-[state=open]:animate-overlay-in data-[state=closed]:animate-overlay-out" />
-        <Dialog.Content className="fixed left-1/2 top-1/2 -translate-x-1/2 -translate-y-1/2 w-full max-w-md bg-white dark:bg-neutral-900 border border-neutral-200 dark:border-neutral-800 rounded-md p-6 shadow-lg z-50 data-[state=open]:animate-dialog-in data-[state=closed]:animate-dialog-out focus:outline-none">
+        <Dialog.Content className="fixed left-1/2 top-1/2 -translate-x-1/2 -translate-y-1/2 w-full max-w-md bg-panel border border-line rounded-md p-6 shadow-lg z-50 data-[state=open]:animate-dialog-in data-[state=closed]:animate-dialog-out focus:outline-none">
           <Dialog.Title className="text-lg font-semibold">
             {dialogTitle}
           </Dialog.Title>
-          <Dialog.Description className="mt-2 text-sm text-neutral-600 dark:text-neutral-400">
+          <Dialog.Description className="mt-2 text-sm text-ink-secondary">
             {COPY.description}
           </Dialog.Description>
 
@@ -133,7 +133,7 @@ export function AddEventDialog({
                 onChange={(e) => setTitleInput(e.target.value)}
                 placeholder="e.g. The Sundering"
                 autoFocus
-                className="w-full rounded-md border border-neutral-300 dark:border-neutral-700 bg-transparent px-3 py-2 text-sm focus:outline-none focus:ring-2 focus:ring-[color:var(--color-accent)]"
+                className="w-full rounded-md border border-line-strong bg-transparent px-3 py-2 text-sm focus:outline-none focus:ring-2 focus:ring-[color:var(--color-accent)]"
               />
               {errorField === 'title' && errorCopy && (
                 <p className="mt-1 text-xs text-red-500" role="alert">
@@ -152,7 +152,7 @@ export function AddEventDialog({
                 value={descInput}
                 onChange={(e) => setDescInput(e.target.value)}
                 rows={3}
-                className="w-full rounded-md border border-neutral-300 dark:border-neutral-700 bg-transparent px-3 py-2 text-sm focus:outline-none focus:ring-2 focus:ring-[color:var(--color-accent)] resize-none"
+                className="w-full rounded-md border border-line-strong bg-transparent px-3 py-2 text-sm focus:outline-none focus:ring-2 focus:ring-[color:var(--color-accent)] resize-none"
               />
             </div>
 
@@ -167,9 +167,9 @@ export function AddEventDialog({
                 value={positionInput}
                 onChange={(e) => setPositionInput(e.target.value)}
                 placeholder="e.g. 412 or -10000"
-                className="w-full rounded-md border border-neutral-300 dark:border-neutral-700 bg-transparent px-3 py-2 text-sm font-mono focus:outline-none focus:ring-2 focus:ring-[color:var(--color-accent)]"
+                className="w-full rounded-md border border-line-strong bg-transparent px-3 py-2 text-sm font-mono focus:outline-none focus:ring-2 focus:ring-[color:var(--color-accent)]"
               />
-              <p className="mt-1 text-xs text-neutral-500">
+              <p className="mt-1 text-xs text-ink-muted">
                 {positionHint}
               </p>
               {errorField === 'position' && errorCopy && (
@@ -187,7 +187,7 @@ export function AddEventDialog({
             )}
 
             <div className="mt-6 flex justify-end gap-2">
-              <Dialog.Close className="px-3 py-1.5 text-sm rounded-md border border-neutral-300 dark:border-neutral-700">
+              <Dialog.Close className="px-3 py-1.5 text-sm rounded-md border border-line-strong">
                 {COPY.cancel}
               </Dialog.Close>
               <button

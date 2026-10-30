@@ -57,7 +57,7 @@ export function ShareLinksSection({ universeId }: Props) {
       </div>
 
       {/* UI-SPEC §Copywriting Contract §Descriptive Copy verbatim. */}
-      <p className="text-sm text-neutral-600 dark:text-neutral-400 leading-[1.5] mb-4">
+      <p className="text-sm text-ink-secondary leading-[1.5] mb-4">
         Share links let visitors browse this universe without signing in. You control which entries are visible using the Public toggle on each entry.
       </p>
 
@@ -71,7 +71,7 @@ export function ShareLinksSection({ universeId }: Props) {
           {[0, 1, 2].map((i) => (
             <div
               key={i}
-              className="h-12 rounded-md bg-neutral-100 dark:bg-neutral-800 animate-pulse"
+              className="h-12 rounded-md bg-raised animate-pulse"
             />
           ))}
         </div>
@@ -108,46 +108,46 @@ export function ShareLinksSection({ universeId }: Props) {
               Share links for this universe
             </caption>
             <thead>
-              <tr className="border-b border-neutral-200 dark:border-neutral-800">
+              <tr className="border-b border-line">
                 <th
                   scope="col"
-                  className="pb-2 text-left text-xs uppercase tracking-wide font-medium text-neutral-500"
+                  className="pb-2 text-left text-xs uppercase tracking-wide font-medium text-ink-muted"
                 >
                   Label
                 </th>
                 <th
                   scope="col"
-                  className="pb-2 text-left text-xs uppercase tracking-wide font-medium text-neutral-500 w-48"
+                  className="pb-2 text-left text-xs uppercase tracking-wide font-medium text-ink-muted w-48"
                 >
                   Preview
                 </th>
                 <th
                   scope="col"
-                  className="pb-2 text-left text-xs uppercase tracking-wide font-medium text-neutral-500 w-32"
+                  className="pb-2 text-left text-xs uppercase tracking-wide font-medium text-ink-muted w-32"
                 >
                   Created
                 </th>
                 <th
                   scope="col"
-                  className="pb-2 text-left text-xs uppercase tracking-wide font-medium text-neutral-500 w-32"
+                  className="pb-2 text-left text-xs uppercase tracking-wide font-medium text-ink-muted w-32"
                 >
                   Expiry
                 </th>
                 <th
                   scope="col"
-                  className="pb-2 text-left text-xs uppercase tracking-wide font-medium text-neutral-500 w-32"
+                  className="pb-2 text-left text-xs uppercase tracking-wide font-medium text-ink-muted w-32"
                 >
                   Last accessed
                 </th>
                 <th
                   scope="col"
-                  className="pb-2 text-right text-xs uppercase tracking-wide font-medium text-neutral-500 w-20"
+                  className="pb-2 text-right text-xs uppercase tracking-wide font-medium text-ink-muted w-20"
                 >
                   Access count
                 </th>
                 <th
                   scope="col"
-                  className="pb-2 text-right text-xs uppercase tracking-wide font-medium text-neutral-500 w-24"
+                  className="pb-2 text-right text-xs uppercase tracking-wide font-medium text-ink-muted w-24"
                 >
                   {/* action column — no heading text */}
                 </th>
@@ -157,7 +157,7 @@ export function ShareLinksSection({ universeId }: Props) {
               {universeShares.map((s) => (
                 <tr
                   key={s.id}
-                  className="border-b border-neutral-100 dark:border-neutral-800 last:border-0"
+                  className="border-b border-line last:border-0"
                 >
                   <th
                     scope="row"
@@ -166,7 +166,7 @@ export function ShareLinksSection({ universeId }: Props) {
                     {s.label ? (
                       s.label
                     ) : (
-                      <span className="text-neutral-500 italic">(unnamed)</span>
+                      <span className="text-ink-muted italic">(unnamed)</span>
                     )}
                   </th>
                   <td className="py-3 pr-4 font-mono text-sm leading-[1.5]">
@@ -189,7 +189,7 @@ export function ShareLinksSection({ universeId }: Props) {
                         {new Date(s.expiresAt).toLocaleDateString()}
                       </time>
                     ) : (
-                      <span className="italic text-neutral-500">No expiry</span>
+                      <span className="italic text-ink-muted">No expiry</span>
                     )}
                   </td>
                   <td className="py-3 pr-4 text-sm leading-[1.5]">
@@ -201,7 +201,7 @@ export function ShareLinksSection({ universeId }: Props) {
                         {formatRelative(s.lastAccessedAt)}
                       </time>
                     ) : (
-                      <span className="italic text-neutral-500">Never</span>
+                      <span className="italic text-ink-muted">Never</span>
                     )}
                   </td>
                   <td className="py-3 pr-4 text-right tabular-nums text-sm">
@@ -212,7 +212,7 @@ export function ShareLinksSection({ universeId }: Props) {
                       type="button"
                       onClick={() => setRevokeTarget(s)}
                       aria-label={`Revoke share link ${s.label || '(unnamed)'}`}
-                      className="text-sm text-neutral-600 dark:text-neutral-400 hover:text-red-600 dark:hover:text-red-500"
+                      className="text-sm text-ink-secondary hover:text-red-600 dark:hover:text-red-500"
                     >
                       Revoke
                     </button>

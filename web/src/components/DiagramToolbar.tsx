@@ -118,7 +118,7 @@ export function DiagramToolbar({
   return (
     <div className="pointer-events-none absolute inset-x-0 top-3 z-10 flex items-start justify-between gap-3 px-3">
       {/* Left: stat */}
-      <div className="pointer-events-auto text-xs text-neutral-500 dark:text-neutral-400">
+      <div className="pointer-events-auto text-xs text-ink-secondary">
         {COPY.stat(nodeCount, edgeCount)}
       </div>
 
@@ -131,10 +131,10 @@ export function DiagramToolbar({
           aria-pressed={pickerOpen}
           className={[
             'rounded-md px-3 py-1.5 text-sm shadow-sm',
-            'focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-[color:var(--color-accent)] focus-visible:ring-offset-2 focus-visible:ring-offset-white dark:focus-visible:ring-offset-neutral-900',
+            'focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-[color:var(--color-accent)] focus-visible:ring-offset-2 focus-visible:ring-offset-[color:var(--color-canvas-mid)]',
             pickerOpen
               ? 'border border-[color:var(--color-accent)] bg-[color:var(--color-accent-soft)] text-[color:var(--color-accent)]'
-              : 'border border-neutral-300 bg-white/80 hover:bg-white dark:border-neutral-700 dark:bg-neutral-900/80 dark:text-neutral-100 dark:hover:bg-neutral-900',
+              : 'border border-line-strong bg-panel text-ink hover:bg-white/[0.03]',
           ].join(' ')}
         >
           {COPY.addEntries}
@@ -150,7 +150,7 @@ export function DiagramToolbar({
                 'focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-[color:var(--color-accent)]',
                 layoutMode !== null
                   ? 'border-[color:var(--color-accent)] bg-[color:var(--color-accent-soft)] text-[color:var(--color-accent)]'
-                  : 'border-neutral-300 bg-white/80 hover:bg-white dark:border-neutral-700 dark:bg-neutral-900/80 dark:text-neutral-100 dark:hover:bg-neutral-900',
+                  : ' border-line-strong bg-panel text-ink hover:bg-white/[0.03]',
               ].join(' ')}
             >
               <Select.Value />
@@ -159,26 +159,26 @@ export function DiagramToolbar({
 
             <Select.Portal>
               <Select.Content
-                className="z-50 min-w-[160px] overflow-hidden rounded-md border border-neutral-200 bg-white shadow-md dark:border-neutral-700 dark:bg-neutral-900"
+                className="z-50 min-w-[160px] overflow-hidden rounded-md border shadow-md border-line-strong bg-panel"
                 position="popper"
                 sideOffset={4}
               >
                 <Select.Viewport className="p-1">
                   <Select.Item
                     value="none"
-                    className="flex cursor-pointer items-center rounded px-3 py-1.5 text-sm text-neutral-700 outline-none hover:bg-neutral-100 data-[highlighted]:bg-neutral-100 dark:text-neutral-300 dark:hover:bg-neutral-800 dark:data-[highlighted]:bg-neutral-800"
+                    className="flex cursor-pointer items-center rounded px-3 py-1.5 text-sm outline-none text-ink hover:bg-white/5 data-[highlighted]:bg-white/5"
                   >
                     <Select.ItemText>{COPY.layoutModeNone}</Select.ItemText>
                   </Select.Item>
                   <Select.Item
                     value="family-tree"
-                    className="flex cursor-pointer items-center rounded px-3 py-1.5 text-sm text-neutral-700 outline-none hover:bg-neutral-100 data-[highlighted]:bg-neutral-100 dark:text-neutral-300 dark:hover:bg-neutral-800 dark:data-[highlighted]:bg-neutral-800"
+                    className="flex cursor-pointer items-center rounded px-3 py-1.5 text-sm outline-none text-ink hover:bg-white/5 data-[highlighted]:bg-white/5"
                   >
                     <Select.ItemText>{COPY.familyTreeMode}</Select.ItemText>
                   </Select.Item>
                   <Select.Item
                     value="org-chart"
-                    className="flex cursor-pointer items-center rounded px-3 py-1.5 text-sm text-neutral-700 outline-none hover:bg-neutral-100 data-[highlighted]:bg-neutral-100 dark:text-neutral-300 dark:hover:bg-neutral-800 dark:data-[highlighted]:bg-neutral-800"
+                    className="flex cursor-pointer items-center rounded px-3 py-1.5 text-sm outline-none text-ink hover:bg-white/5 data-[highlighted]:bg-white/5"
                   >
                     <Select.ItemText>{COPY.orgChartMode}</Select.ItemText>
                   </Select.Item>
@@ -190,7 +190,7 @@ export function DiagramToolbar({
           {/* Hint text for the selected layout mode */}
           {layoutHint && (
             <span
-              className="text-xs text-neutral-400 dark:text-neutral-500 hidden sm:inline"
+              className="text-xs text-ink-muted hidden sm:inline"
               title={layoutHint}
             >
               {layoutHint}
@@ -209,7 +209,7 @@ export function DiagramToolbar({
             'focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-[color:var(--color-accent)]',
             snapEnabled
               ? 'border border-[color:var(--color-accent)] bg-[color:var(--color-accent-soft)] text-[color:var(--color-accent)]'
-              : 'border border-neutral-300 bg-white/80 hover:bg-white dark:border-neutral-700 dark:bg-neutral-900/80 dark:text-neutral-100 dark:hover:bg-neutral-900',
+              : 'border border-line-strong bg-panel text-ink hover:bg-white/[0.03]',
           ].join(' ')}
         >
           {COPY.snapToGrid}
@@ -235,7 +235,7 @@ export function DiagramToolbar({
                 type="button"
                 onClick={item.handler}
                 aria-label={item['aria-label']}
-                className="rounded-md border border-neutral-300 bg-white/80 px-2 py-1.5 text-xs shadow-sm hover:bg-white dark:border-neutral-700 dark:bg-neutral-900/80 dark:text-neutral-100 dark:hover:bg-neutral-900 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-[color:var(--color-accent)]"
+                className="rounded-md border px-2 py-1.5 text-xs shadow-sm border-line-strong bg-panel text-ink hover:bg-white/[0.03] focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-[color:var(--color-accent)]"
               >
                 {item.label}
               </button>
@@ -246,7 +246,7 @@ export function DiagramToolbar({
                   type="button"
                   onClick={onDistributeH}
                   aria-label="Distribute H"
-                  className="rounded-md border border-neutral-300 bg-white/80 px-2 py-1.5 text-xs shadow-sm hover:bg-white dark:border-neutral-700 dark:bg-neutral-900/80 dark:text-neutral-100 dark:hover:bg-neutral-900 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-[color:var(--color-accent)]"
+                  className="rounded-md border px-2 py-1.5 text-xs shadow-sm border-line-strong bg-panel text-ink hover:bg-white/[0.03] focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-[color:var(--color-accent)]"
                 >
                   {COPY.distributeH}
                 </button>
@@ -254,7 +254,7 @@ export function DiagramToolbar({
                   type="button"
                   onClick={onDistributeV}
                   aria-label="Distribute V"
-                  className="rounded-md border border-neutral-300 bg-white/80 px-2 py-1.5 text-xs shadow-sm hover:bg-white dark:border-neutral-700 dark:bg-neutral-900/80 dark:text-neutral-100 dark:hover:bg-neutral-900 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-[color:var(--color-accent)]"
+                  className="rounded-md border px-2 py-1.5 text-xs shadow-sm border-line-strong bg-panel text-ink hover:bg-white/[0.03] focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-[color:var(--color-accent)]"
                 >
                   {COPY.distributeV}
                 </button>
@@ -269,7 +269,7 @@ export function DiagramToolbar({
             aria-disabled="true"
             aria-label="Align (select 2+ nodes)"
             title={COPY.alignDisabledTitle}
-            className="rounded-md border border-neutral-200 bg-white/50 px-2 py-1.5 text-xs text-neutral-400 dark:border-neutral-800 dark:bg-neutral-900/50 dark:text-neutral-600 cursor-not-allowed"
+            className="rounded-md border px-2 py-1.5 text-xs border-line bg-panel text-ink-muted cursor-not-allowed"
           >
             Align
           </button>
@@ -284,10 +284,10 @@ export function DiagramToolbar({
           title={editMode ? COPY.editTitleOn : COPY.editTitleOff}
           className={[
             'rounded-md px-3 py-1.5 text-sm shadow-sm transition-colors',
-            'focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-[color:var(--color-accent)] focus-visible:ring-offset-2 focus-visible:ring-offset-white dark:focus-visible:ring-offset-neutral-900',
+            'focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-[color:var(--color-accent)] focus-visible:ring-offset-2 focus-visible:ring-offset-[color:var(--color-canvas-mid)]',
             editMode
               ? 'border border-[color:var(--color-accent)] bg-[color:var(--color-accent-soft)] text-[color:var(--color-accent)]'
-              : 'border border-neutral-300 bg-white/80 hover:bg-white dark:border-neutral-700 dark:bg-neutral-900/80 dark:text-neutral-100 dark:hover:bg-neutral-900',
+              : 'border border-line-strong bg-panel text-ink hover:bg-white/[0.03]',
           ].join(' ')}
         >
           {editMode ? COPY.editOn : COPY.editOff}
@@ -298,7 +298,7 @@ export function DiagramToolbar({
           <button
             type="button"
             onClick={onAutoLayout}
-            className="rounded-md border border-neutral-300 bg-white/80 px-3 py-1.5 text-sm shadow-sm hover:bg-white dark:border-neutral-700 dark:bg-neutral-900/80 dark:text-neutral-100 dark:hover:bg-neutral-900 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-[color:var(--color-accent)]"
+            className="rounded-md border px-3 py-1.5 text-sm shadow-sm border-line-strong bg-panel text-ink hover:bg-white/[0.03] focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-[color:var(--color-accent)]"
           >
             {COPY.autoLayout}
           </button>
@@ -315,8 +315,8 @@ export function DiagramToolbar({
             'rounded-md border px-3 py-1.5 text-sm shadow-sm',
             'focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-[color:var(--color-accent)]',
             canUndo
-              ? 'border-neutral-300 bg-white/80 hover:bg-white dark:border-neutral-700 dark:bg-neutral-900/80 dark:text-neutral-100 dark:hover:bg-neutral-900'
-              : 'border-neutral-200 bg-white/50 text-neutral-400 dark:border-neutral-800 dark:bg-neutral-900/50 dark:text-neutral-600 cursor-not-allowed',
+              ? ' border-line-strong bg-panel text-ink hover:bg-white/[0.03]'
+              : ' border-line bg-panel text-ink-muted cursor-not-allowed',
           ].join(' ')}
         >
           {COPY.undoLabel}
@@ -333,8 +333,8 @@ export function DiagramToolbar({
             'rounded-md border px-3 py-1.5 text-sm shadow-sm',
             'focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-[color:var(--color-accent)]',
             canRedo
-              ? 'border-neutral-300 bg-white/80 hover:bg-white dark:border-neutral-700 dark:bg-neutral-900/80 dark:text-neutral-100 dark:hover:bg-neutral-900'
-              : 'border-neutral-200 bg-white/50 text-neutral-400 dark:border-neutral-800 dark:bg-neutral-900/50 dark:text-neutral-600 cursor-not-allowed',
+              ? ' border-line-strong bg-panel text-ink hover:bg-white/[0.03]'
+              : ' border-line bg-panel text-ink-muted cursor-not-allowed',
           ].join(' ')}
         >
           {COPY.redoLabel}
@@ -344,7 +344,7 @@ export function DiagramToolbar({
         <button
           type="button"
           onClick={onExportJson}
-          className="rounded-md border border-neutral-300 bg-white/80 px-3 py-1.5 text-sm shadow-sm hover:bg-white dark:border-neutral-700 dark:bg-neutral-900/80 dark:text-neutral-100 dark:hover:bg-neutral-900 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-[color:var(--color-accent)]"
+          className="rounded-md border px-3 py-1.5 text-sm shadow-sm border-line-strong bg-panel text-ink hover:bg-white/[0.03] focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-[color:var(--color-accent)]"
         >
           {COPY.exportJson}
         </button>
@@ -353,7 +353,7 @@ export function DiagramToolbar({
         <button
           type="button"
           onClick={onExportSvg}
-          className="rounded-md border border-neutral-300 bg-white/80 px-3 py-1.5 text-sm shadow-sm hover:bg-white dark:border-neutral-700 dark:bg-neutral-900/80 dark:text-neutral-100 dark:hover:bg-neutral-900 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-[color:var(--color-accent)]"
+          className="rounded-md border px-3 py-1.5 text-sm shadow-sm border-line-strong bg-panel text-ink hover:bg-white/[0.03] focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-[color:var(--color-accent)]"
         >
           {COPY.exportSvg}
         </button>
@@ -362,7 +362,7 @@ export function DiagramToolbar({
         <button
           type="button"
           onClick={onExportPng}
-          className="rounded-md border border-neutral-300 bg-white/80 px-3 py-1.5 text-sm shadow-sm hover:bg-white dark:border-neutral-700 dark:bg-neutral-900/80 dark:text-neutral-100 dark:hover:bg-neutral-900 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-[color:var(--color-accent)]"
+          className="rounded-md border px-3 py-1.5 text-sm shadow-sm border-line-strong bg-panel text-ink hover:bg-white/[0.03] focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-[color:var(--color-accent)]"
         >
           {COPY.exportPng}
         </button>

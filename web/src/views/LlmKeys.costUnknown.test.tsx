@@ -83,7 +83,7 @@ describe('LlmKeys — D-06 cost_unknown footnote', () => {
     // Footnote tone is NEUTRAL (NOT amber).
     const footnote = cell.querySelector('span');
     expect(footnote).not.toBeNull();
-    expect(footnote!.className).toMatch(/text-neutral-500/);
+    expect(footnote!.className).toMatch(/text-ink-muted/);
     expect(footnote!.className).not.toMatch(/text-amber-700/);
   });
 

@@ -79,7 +79,7 @@ export function ImportDialog({ open, onOpenChange }: Props) {
     <Dialog.Root open={open} onOpenChange={handleOpenChange}>
       <Dialog.Portal>
         <Dialog.Overlay className="fixed inset-0 bg-black/50 z-40 data-[state=open]:animate-overlay-in data-[state=closed]:animate-overlay-out" />
-        <Dialog.Content className="fixed left-1/2 top-1/2 -translate-x-1/2 -translate-y-1/2 w-full max-w-md bg-white dark:bg-neutral-900 border border-neutral-200 dark:border-neutral-800 rounded-md p-6 shadow-lg z-50 data-[state=open]:animate-dialog-in data-[state=closed]:animate-dialog-out focus:outline-none">
+        <Dialog.Content className="fixed left-1/2 top-1/2 -translate-x-1/2 -translate-y-1/2 w-full max-w-md bg-panel border border-line rounded-md p-6 shadow-lg z-50 data-[state=open]:animate-dialog-in data-[state=closed]:animate-dialog-out focus:outline-none">
           <Dialog.Title className="text-lg font-semibold">
             Import universe from JSON
           </Dialog.Title>
@@ -117,7 +117,7 @@ export function ImportDialog({ open, onOpenChange }: Props) {
                     type="button"
                     onClick={() => fileInputRef.current?.click()}
                     disabled={state.step === 'loading'}
-                    className="w-full border-2 border-dashed border-neutral-300 dark:border-neutral-700 rounded-md p-8 text-center text-sm text-neutral-400 hover:border-neutral-400 dark:hover:border-neutral-600 transition-colors cursor-pointer disabled:cursor-not-allowed"
+                    className="w-full border-2 border-dashed border-line-strong rounded-md p-8 text-center text-sm text-ink-muted hover:border-line-strong transition-colors cursor-pointer disabled:cursor-not-allowed"
                   >
                     Drop a .json file here or click to browse
                   </button>
@@ -125,19 +125,19 @@ export function ImportDialog({ open, onOpenChange }: Props) {
 
                 {/* File selected state */}
                 {(state.step === 'selected' || state.step === 'error') && (
-                  <div className="flex items-center justify-between rounded-md border border-neutral-200 dark:border-neutral-800 px-4 py-3">
+                  <div className="flex items-center justify-between rounded-md border border-line px-4 py-3">
                     <div className="text-sm">
                       <p className="font-semibold truncate max-w-[260px]">
                         {(state.step === 'selected' ? state.file : state.file).name}
                       </p>
-                      <p className="text-neutral-400">
+                      <p className="text-ink-muted">
                         {formatBytes((state.step === 'selected' ? state.file : state.file).size)}
                       </p>
                     </div>
                     <button
                       type="button"
                       onClick={handleRemoveFile}
-                      className="text-sm text-neutral-400 hover:text-neutral-200"
+                      className="text-sm text-ink-muted hover:text-ink-muted"
                     >
                       Remove
                     </button>
@@ -146,8 +146,8 @@ export function ImportDialog({ open, onOpenChange }: Props) {
 
                 {/* Loading spinner */}
                 {state.step === 'loading' && (
-                  <div className="flex items-center gap-2 text-sm text-neutral-400">
-                    <span className="inline-block h-4 w-4 border-2 border-neutral-400 border-t-transparent rounded-full animate-spin" />
+                  <div className="flex items-center gap-2 text-sm text-ink-muted">
+                    <span className="inline-block h-4 w-4 border-2 border-[color:var(--color-ink-muted)] border-t-transparent rounded-full animate-spin" />
                     Importing...
                   </div>
                 )}
@@ -163,7 +163,7 @@ export function ImportDialog({ open, onOpenChange }: Props) {
 
                 {/* Actions */}
                 <div className="flex justify-end gap-2">
-                  <Dialog.Close className="px-3 py-1.5 text-sm rounded-md border border-neutral-300 dark:border-neutral-700">
+                  <Dialog.Close className="px-3 py-1.5 text-sm rounded-md border border-line-strong">
                     Cancel
                   </Dialog.Close>
                   <button

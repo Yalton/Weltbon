@@ -158,7 +158,7 @@ export function SyncConflictList({ universeId }: { universeId: string }) {
   return (
     <div className="mt-8 border-t border-glass-border pt-4">
       <h3 className="text-base font-medium">Conflicts</h3>
-      <p className="mt-1 text-sm text-neutral-500">
+      <p className="mt-1 text-sm text-ink-muted">
         When both instances changed the same thing, the more recent change is kept and the other
         version is recorded here so nothing is lost. This list covers this universe only.
       </p>

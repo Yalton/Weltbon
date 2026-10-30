@@ -69,8 +69,8 @@ export function ImportDropZone({ onSelect, disabled }: ImportDropZoneProps) {
         className={[
           'w-full mt-6 border-2 border-dashed rounded-md p-8 text-center transition-colors cursor-pointer disabled:cursor-not-allowed',
           dragActive
-            ? 'border-[color:var(--color-accent)] bg-[color:var(--color-accent)]/5 text-neutral-700 dark:text-neutral-200'
-            : 'border-neutral-300 dark:border-neutral-700 text-neutral-400 hover:border-neutral-400 dark:hover:border-neutral-600',
+            ? 'border-[color:var(--color-accent)] bg-[color:var(--color-accent)]/5 text-ink'
+            : ' border-line-strong text-ink-muted hover:border-line-strong',
         ].join(' ')}
       >
         <p className="text-sm">
@@ -78,7 +78,7 @@ export function ImportDropZone({ onSelect, disabled }: ImportDropZoneProps) {
         </p>
         <p
           id="import-dropzone-helper"
-          className="text-xs text-neutral-500 mt-1 leading-[1.4]"
+          className="text-xs text-ink-muted mt-1 leading-[1.4]"
         >
           Up to {BATCH_LIMIT_FILES} files · {BATCH_LIMIT_MB} MB compressed.
         </p>
@@ -88,7 +88,7 @@ export function ImportDropZone({ onSelect, disabled }: ImportDropZoneProps) {
           type="button"
           onClick={() => markdownInputRef.current?.click()}
           disabled={disabled}
-          className="px-3 py-1.5 text-sm rounded-md border border-neutral-300 dark:border-neutral-700 disabled:opacity-50"
+          className="px-3 py-1.5 text-sm rounded-md border border-line-strong disabled:opacity-50"
         >
           Choose files
         </button>
@@ -96,7 +96,7 @@ export function ImportDropZone({ onSelect, disabled }: ImportDropZoneProps) {
           type="button"
           onClick={() => folderInputRef.current?.click()}
           disabled={disabled || !folderSupported}
-          className="px-3 py-1.5 text-sm rounded-md border border-neutral-300 dark:border-neutral-700 disabled:opacity-50"
+          className="px-3 py-1.5 text-sm rounded-md border border-line-strong disabled:opacity-50"
         >
           Choose folder
         </button>
@@ -104,7 +104,7 @@ export function ImportDropZone({ onSelect, disabled }: ImportDropZoneProps) {
           type="button"
           onClick={() => zipInputRef.current?.click()}
           disabled={disabled}
-          className="px-3 py-1.5 text-sm rounded-md border border-neutral-300 dark:border-neutral-700 disabled:opacity-50"
+          className="px-3 py-1.5 text-sm rounded-md border border-line-strong disabled:opacity-50"
         >
           Choose ZIP
         </button>

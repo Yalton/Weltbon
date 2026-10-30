@@ -121,7 +121,7 @@ export function AuditCompletionBanner({
               type="button"
               onClick={onDismiss}
               aria-label="Dismiss banner"
-              className="text-neutral-400 hover:text-neutral-600 text-xl leading-none"
+              className="text-ink-muted hover:text-ink-secondary text-xl leading-none"
             >
               ×
             </button>
@@ -129,7 +129,7 @@ export function AuditCompletionBanner({
             <button
               type="button"
               onClick={onClearFilter}
-              className="inline-flex items-center gap-1 text-sm text-neutral-600 hover:text-neutral-900 dark:text-neutral-400"
+              className="inline-flex items-center gap-1 text-sm hover:text-ink text-ink-secondary"
             >
               <Glyph name="cross" />
               Clear filter
@@ -138,12 +138,12 @@ export function AuditCompletionBanner({
         </div>
 
         {stale && run.finishedAt && (
-          <p className="text-xs text-neutral-500 mt-1">
+          <p className="text-xs text-ink-muted mt-1">
             Run finished {formatRelative(run.finishedAt)} ago
           </p>
         )}
 
-        <div className="text-sm tabular-nums text-neutral-600 dark:text-neutral-400 mt-2">
+        <div className="text-sm tabular-nums text-ink-secondary mt-2">
 
           {run.costUnknown ? (
             <span
@@ -211,7 +211,7 @@ export function AuditCompletionBanner({
             type="button"
             onClick={onDismiss}
             aria-label="Dismiss banner"
-            className="text-neutral-400 hover:text-neutral-600 text-xl leading-none"
+            className="text-ink-muted hover:text-ink-secondary text-xl leading-none"
           >
             ×
           </button>
@@ -219,7 +219,7 @@ export function AuditCompletionBanner({
           <button
             type="button"
             onClick={onClearFilter}
-            className="inline-flex items-center gap-1 text-sm text-neutral-600 hover:text-neutral-900 dark:text-neutral-400"
+            className="inline-flex items-center gap-1 text-sm hover:text-ink text-ink-secondary"
           >
             <Glyph name="cross" />
             Clear filter

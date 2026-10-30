@@ -41,11 +41,11 @@ export function ImportStickyBar({
 
   return (
     <header
-      className="flex items-center justify-between gap-4 px-4 py-2 border-b border-neutral-200 dark:border-neutral-800 bg-white dark:bg-neutral-900 sticky top-0 z-10"
+      className="flex items-center justify-between gap-4 px-4 py-2 border-b border-line bg-panel sticky top-0 z-10"
     >
       <Link
         to={`/universes/${universeId}/entries`}
-        className="text-sm text-neutral-400 hover:text-neutral-200"
+        className="text-sm text-ink-muted hover:text-ink-muted"
       >
         ← Back to {universeName}
       </Link>
@@ -77,7 +77,7 @@ export function ImportStickyBar({
         <button
           type="button"
           onClick={onDiscard}
-          className="text-sm text-neutral-500 hover:text-red-600 px-2 py-1"
+          className="text-sm text-ink-muted hover:text-red-600 px-2 py-1"
         >
           Discard draft
         </button>

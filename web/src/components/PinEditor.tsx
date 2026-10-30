@@ -80,7 +80,7 @@ export function PinEditor({
     <Dialog.Root open={open} onOpenChange={onOpenChange}>
       <Dialog.Portal>
         <Dialog.Overlay className="fixed inset-0 bg-black/50 z-40 data-[state=open]:animate-overlay-in data-[state=closed]:animate-overlay-out" />
-        <Dialog.Content className="fixed left-1/2 top-1/2 -translate-x-1/2 -translate-y-1/2 w-full max-w-md bg-white dark:bg-neutral-900 border border-neutral-200 dark:border-neutral-800 rounded-md p-6 shadow-lg z-50 data-[state=open]:animate-dialog-in data-[state=closed]:animate-dialog-out focus:outline-none">
+        <Dialog.Content className="fixed left-1/2 top-1/2 -translate-x-1/2 -translate-y-1/2 w-full max-w-md bg-panel border border-line rounded-md p-6 shadow-lg z-50 data-[state=open]:animate-dialog-in data-[state=closed]:animate-dialog-out focus:outline-none">
           <Dialog.Title className="text-lg font-semibold">
             {isEdit ? 'Edit pin' : 'Pin to timeline'}
           </Dialog.Title>
@@ -102,10 +102,10 @@ export function PinEditor({
                 onChange={(e) => setPositionInput(e.target.value)}
                 placeholder="e.g. -10000 or 4.35e17"
                 autoFocus
-                className="w-full rounded-md border border-neutral-300 dark:border-neutral-700 bg-transparent px-3 py-2 text-sm font-mono"
+                className="w-full rounded-md border border-line-strong bg-transparent px-3 py-2 text-sm font-mono"
               />
               {livePosition.ok && positionInput.trim() !== '' && (
-                <p className="mt-1 text-xs text-neutral-500 tabular-nums">
+                <p className="mt-1 text-xs text-ink-muted tabular-nums">
                   → {livePosition.value}
                 </p>
               )}
@@ -121,7 +121,7 @@ export function PinEditor({
                 value={label}
                 onChange={(e) => setLabel(e.target.value)}
                 maxLength={120}
-                className="w-full rounded-md border border-neutral-300 dark:border-neutral-700 bg-transparent px-3 py-2 text-sm"
+                className="w-full rounded-md border border-line-strong bg-transparent px-3 py-2 text-sm"
               />
             </div>
 
@@ -135,7 +135,7 @@ export function PinEditor({
                 onChange={(e) =>
                   setPrecision(e.target.value as 'exact' | 'approximate' | 'era')
                 }
-                className="w-full rounded-md border border-neutral-300 dark:border-neutral-700 bg-transparent px-3 py-2 text-sm"
+                className="w-full rounded-md border border-line-strong bg-transparent px-3 py-2 text-sm"
               >
                 {PRECISIONS.map((p) => (
                   <option key={p} value={p}>
@@ -152,7 +152,7 @@ export function PinEditor({
             )}
 
             <div className="mt-6 flex justify-end gap-2">
-              <Dialog.Close className="px-3 py-1.5 text-sm rounded-md border border-neutral-300 dark:border-neutral-700">
+              <Dialog.Close className="px-3 py-1.5 text-sm rounded-md border border-line-strong">
                 Cancel
               </Dialog.Close>
               <button

@@ -100,14 +100,14 @@ export function LinkEditor({ universeId, entryId, onLinkCreated, children, editL
       <Popover.Trigger asChild>{children}</Popover.Trigger>
       <Popover.Portal>
         <Popover.Content
-          className="w-80 p-4 bg-white dark:bg-neutral-900 border border-neutral-200 dark:border-neutral-800 rounded-md shadow-lg z-50"
+          className="w-80 p-4 bg-panel border border-line rounded-md shadow-lg z-50"
           sideOffset={8}
           align="start"
         >
           <div className="space-y-3">
             {/* Endpoints are immutable while editing: a different target is a new relationship. */}
             {!isEditing && <div>
-              <label className="block text-sm text-neutral-400 mb-1">Link to entry</label>
+              <label className="block text-sm text-ink-muted mb-1">Link to entry</label>
               <input
                 ref={inputRef}
                 type="text"
@@ -119,16 +119,16 @@ export function LinkEditor({ universeId, entryId, onLinkCreated, children, editL
                 }}
                 onFocus={() => setShowDropdown(true)}
                 placeholder="Search entries..."
-                className="w-full rounded-md border border-neutral-300 dark:border-neutral-700 bg-transparent px-3 py-1.5 text-sm outline-none focus:border-[color:var(--color-accent)]"
+                className="w-full rounded-md border border-line-strong bg-transparent px-3 py-1.5 text-sm outline-none focus:border-[color:var(--color-accent)]"
               />
               {showDropdown && search.length > 0 && filtered.length > 0 && (
-                <ul className="mt-1 max-h-48 overflow-y-auto border border-neutral-200 dark:border-neutral-800 rounded-md bg-white dark:bg-neutral-900">
+                <ul className="mt-1 max-h-48 overflow-y-auto border border-line rounded-md bg-panel">
                   {filtered.map((entry) => (
                     <li key={entry.id}>
                       <button
                         type="button"
                         onClick={() => handleSelect(entry)}
-                        className="w-full flex items-center gap-2 px-3 py-2 text-left text-sm hover:bg-neutral-100 dark:hover:bg-neutral-800"
+                        className="w-full flex items-center gap-2 px-3 py-2 text-left text-sm hover:bg-white/5"
                       >
                         {entry.icon && <span>{entry.icon}</span>}
                         <span className="truncate flex-1">{entry.title}</span>
@@ -142,7 +142,7 @@ export function LinkEditor({ universeId, entryId, onLinkCreated, children, editL
 
             {/* Link type selection */}
             <div>
-              <label className="block text-sm text-neutral-400 mb-1">Type</label>
+              <label className="block text-sm text-ink-muted mb-1">Type</label>
               <LinkTypeSelect
                 universeId={universeId}
                 value={linkType}
@@ -154,7 +154,7 @@ export function LinkEditor({ universeId, entryId, onLinkCreated, children, editL
 
             {/* Direction toggle pill group (UI-SPEC Surface 2) */}
             <div>
-              <label className="block text-sm text-neutral-400 mb-1">Direction</label>
+              <label className="block text-sm text-ink-muted mb-1">Direction</label>
               <div className="flex gap-1 mt-1" role="group" aria-label="Direction">
                 <button
                   type="button"
@@ -163,7 +163,7 @@ export function LinkEditor({ universeId, entryId, onLinkCreated, children, editL
                   className={`rounded-md border px-3 py-1 text-sm cursor-pointer ${
                     direction === 'directed'
                       ? 'border-[color:var(--color-accent)] bg-[color:var(--color-accent-soft)] text-[color:var(--color-accent)]'
-                      : 'border-neutral-300 dark:border-neutral-700 text-neutral-600 dark:text-neutral-400'
+                      : ' border-line-strong text-ink-secondary'
                   }`}
                 >
                   A &rarr; B
@@ -175,7 +175,7 @@ export function LinkEditor({ universeId, entryId, onLinkCreated, children, editL
                   className={`rounded-md border px-3 py-1 text-sm cursor-pointer ${
                     direction === 'undirected'
                       ? 'border-[color:var(--color-accent)] bg-[color:var(--color-accent-soft)] text-[color:var(--color-accent)]'
-                      : 'border-neutral-300 dark:border-neutral-700 text-neutral-600 dark:text-neutral-400'
+                      : ' border-line-strong text-ink-secondary'
                   }`}
                 >
                   A &harr; B
@@ -185,7 +185,7 @@ export function LinkEditor({ universeId, entryId, onLinkCreated, children, editL
 
             {/* Display label (optional — demoted from required primary position) */}
             <div>
-              <label className="block text-sm text-neutral-400 mb-1">
+              <label className="block text-sm text-ink-muted mb-1">
                 Display label (optional)
               </label>
               <RelationCombobox
@@ -207,7 +207,7 @@ export function LinkEditor({ universeId, entryId, onLinkCreated, children, editL
               <button
                 type="button"
                 onClick={() => handleOpenChange(false)}
-                className="text-sm px-3 py-1.5 text-neutral-400 hover:text-neutral-200"
+                className="text-sm px-3 py-1.5 text-ink-muted hover:text-ink-muted"
               >
                 Cancel
               </button>
@@ -223,7 +223,7 @@ export function LinkEditor({ universeId, entryId, onLinkCreated, children, editL
               </button>
             </div>
           </div>
-          <Popover.Arrow className="fill-neutral-200 dark:fill-neutral-800" />
+          <Popover.Arrow className="fill-[color:var(--color-raised)]" />
         </Popover.Content>
       </Popover.Portal>
     </Popover.Root>

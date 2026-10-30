@@ -29,7 +29,7 @@ export default function BuildVersion() {
 
   return (
     <p
-      className="mt-8 text-xs text-neutral-500"
+      className="mt-8 text-xs text-ink-muted"
       title={data.builtAt ? `Built ${data.builtAt}` : undefined}
     >
       {label}

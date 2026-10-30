@@ -109,14 +109,14 @@ export function DictionaryImportDialog({
     <Dialog.Root open={open} onOpenChange={handleOpenChange}>
       <Dialog.Portal>
         <Dialog.Overlay className="fixed inset-0 bg-black/50 z-40 data-[state=open]:animate-overlay-in data-[state=closed]:animate-overlay-out" />
-        <Dialog.Content className="fixed left-1/2 top-1/2 -translate-x-1/2 -translate-y-1/2 w-full max-w-md bg-white dark:bg-neutral-900 border border-neutral-200 dark:border-neutral-800 rounded-md p-6 shadow-lg z-50 data-[state=open]:animate-dialog-in data-[state=closed]:animate-dialog-out focus:outline-none">
+        <Dialog.Content className="fixed left-1/2 top-1/2 -translate-x-1/2 -translate-y-1/2 w-full max-w-md bg-panel border border-line rounded-md p-6 shadow-lg z-50 data-[state=open]:animate-dialog-in data-[state=closed]:animate-dialog-out focus:outline-none">
           <Dialog.Title className="text-lg font-semibold">Import CSV</Dialog.Title>
-          <Dialog.Description className="mt-1 text-sm text-neutral-500">
+          <Dialog.Description className="mt-1 text-sm text-ink-muted">
             {scopeHint}
           </Dialog.Description>
 
           {/* Format hint */}
-          <div className="mt-4 rounded-md bg-neutral-50 dark:bg-neutral-800 border border-neutral-200 dark:border-neutral-700 p-3 text-xs text-neutral-600 dark:text-neutral-400">
+          <div className="mt-4 rounded-md bg-raised border border-line-strong p-3 text-xs text-ink-secondary">
             <p className="font-semibold mb-1">CSV format</p>
             <p>
               Required columns: <code className="font-mono">word</code>,{' '}
@@ -149,10 +149,10 @@ export function DictionaryImportDialog({
               accept=".csv"
               disabled={isImporting}
               onChange={handleFileChange}
-              className="block w-full text-sm text-neutral-600 dark:text-neutral-400 file:mr-3 file:py-1 file:px-2 file:rounded-md file:border file:border-neutral-300 dark:file:border-neutral-600 file:text-sm file:bg-neutral-50 dark:file:bg-neutral-800 file:cursor-pointer disabled:opacity-50"
+              className="block w-full text-sm text-ink-secondary file:mr-3 file:py-1 file:px-2 file:rounded-md file:border file:border-line-strong file:text-sm file:bg-raised file:cursor-pointer disabled:opacity-50"
             />
             {file && (
-              <p className="mt-1 text-xs text-neutral-500">{file.name}</p>
+              <p className="mt-1 text-xs text-ink-muted">{file.name}</p>
             )}
           </div>
 
@@ -179,7 +179,7 @@ export function DictionaryImportDialog({
           {/* Import result with row errors */}
           {hasResult && hasRowErrors && (
             <div className="mt-3">
-              <p className="text-sm text-neutral-600 dark:text-neutral-400">
+              <p className="text-sm text-ink-secondary">
                 {importResult!.inserted + importResult!.updated} word(s) imported ·{' '}
                 {rowErrors.length} row(s) failed
               </p>
@@ -195,7 +195,7 @@ export function DictionaryImportDialog({
 
           {/* Actions */}
           <div className="mt-6 flex justify-end gap-2">
-            <Dialog.Close className="px-3 py-1.5 text-sm rounded-md border border-neutral-300 dark:border-neutral-700 hover:bg-neutral-50 dark:hover:bg-neutral-800">
+            <Dialog.Close className="px-3 py-1.5 text-sm rounded-md border border-line-strong hover:bg-white/5">
               Cancel
             </Dialog.Close>
             <button

@@ -33,15 +33,15 @@ interface ShareUniverseResponse {
  * sticky at the top.
  *
  * Lifecycle (T-29-27 leak prevention):
- *  - On render: `setShareToken(token)` is called SYNCHRONOUSLY in the render
- *    body (before any descendant queries fire) so the module-level seam is
- *    ready by the time child hooks call their first queryFn. This closes the
- *    StrictMode race (mount→clear→remount cycle) in combination with the
- *    token-keyed query cache in the share-subtree read hooks (half b of the
- *    Gap 1 fix — see useFilteredEntries, useCategories, useUniverse).
- *  - On mount (useEffect): `setShareToken(token)` is also set here for the
- *    metadata fetch, and cleanup runs `clearShareToken()` so navigating away
- *    guarantees no leak into a subsequent authenticated session (T-29-27).
+ * - On render: `setShareToken(token)` is called SYNCHRONOUSLY in the render
+ * body (before any descendant queries fire) so the module-level seam is
+ * ready by the time child hooks call their first queryFn. This closes the
+ * StrictMode race (mount→clear→remount cycle) in combination with the
+ * token-keyed query cache in the share-subtree read hooks (half b of the
+ * Gap 1 fix — see useFilteredEntries, useCategories, useUniverse).
+ * - On mount (useEffect): `setShareToken(token)` is also set here for the
+ * metadata fetch, and cleanup runs `clearShareToken()` so navigating away
+ * guarantees no leak into a subsequent authenticated session (T-29-27).
  *
  * — `{ universe: { name, ownerDisplayName } }`). A 404 here means the token
  * is invalid, revoked, or expired — render `<ShareNotFound />` per
@@ -86,7 +86,7 @@ export function ShareLayout() {
   if (!universeMeta) {
     return (
       <div className="min-h-full flex items-center justify-center">
-        <div className="h-8 w-48 rounded bg-neutral-100 dark:bg-neutral-800 animate-pulse" />
+        <div className="h-8 w-48 rounded bg-raised animate-pulse" />
       </div>
     );
   }
@@ -105,16 +105,16 @@ export function ShareLayout() {
         {!universeMeta.backdropUrl && <AppBackground />}
         <header
           role="banner"
-          className="border-b border-neutral-200 dark:border-neutral-800 px-6 py-3 sticky top-0 z-10 bg-neutral-100 dark:bg-neutral-900 flex items-center justify-between flex-wrap gap-2"
+          className="border-b border-line px-6 py-3 sticky top-0 z-10 bg-panel flex items-center justify-between flex-wrap gap-2"
         >
-          <p className="text-sm text-neutral-600 dark:text-neutral-400">
+          <p className="text-sm text-ink-secondary">
             Shared read-only view of{' '}
-            <span className="font-semibold text-neutral-900 dark:text-neutral-100">
+            <span className="font-semibold text-ink">
               {universeMeta.name}
             </span>{' '}
             by {universeMeta.ownerDisplayName}
           </p>
-          <p className="text-sm text-neutral-600 dark:text-neutral-400">
+          <p className="text-sm text-ink-secondary">
             · Made with{' '}
             <a
               href={PUBLIC_ROOT_URL}

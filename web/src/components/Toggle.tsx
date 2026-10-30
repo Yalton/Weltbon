@@ -10,7 +10,7 @@ export interface ToggleProps {
 export function Toggle({ checked, onChange, disabled, labelId, title }: ToggleProps) {
   const trackBg = checked
     ? 'bg-[color:var(--color-accent)]'
-    : 'bg-neutral-300 dark:bg-neutral-700';
+    : ' bg-white/10';
   const disabledClasses = disabled ? 'opacity-50 cursor-not-allowed' : '';
   const trackClass = `relative inline-flex w-10 h-6 rounded-full transition-colors duration-150 ${trackBg} ${disabledClasses} focus:outline-none focus:ring-2 focus:ring-[color:var(--color-accent)] focus:ring-offset-2`;
   const thumbTranslate = checked ? 'translate-x-4' : 'translate-x-0.5';

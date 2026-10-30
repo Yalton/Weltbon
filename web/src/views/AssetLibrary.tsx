@@ -54,9 +54,9 @@ function AssetCard({
   };
 
   return (
-    <div className="relative rounded-md border border-neutral-200 dark:border-neutral-800 overflow-hidden bg-neutral-50 dark:bg-neutral-900">
+    <div className="relative rounded-md border border-line overflow-hidden bg-panel">
       {/* Thumbnail */}
-      <div className="aspect-square flex items-center justify-center bg-neutral-100 dark:bg-neutral-800">
+      <div className="aspect-square flex items-center justify-center bg-raised">
         <img
           src={asset.thumbUrl}
           alt={asset.altText ?? asset.filename}
@@ -83,7 +83,7 @@ function AssetCard({
               }
             }}
             autoFocus
-            className="w-full rounded border border-neutral-300 dark:border-neutral-700 bg-transparent px-1 py-0.5 text-xs"
+            className="w-full rounded border border-line-strong bg-transparent px-1 py-0.5 text-xs"
           />
         ) : (
           <p
@@ -98,7 +98,7 @@ function AssetCard({
           <button
             type="button"
             onClick={() => setEditing(true)}
-            className="text-xs text-neutral-400 hover:text-neutral-700 dark:hover:text-neutral-200"
+            className="text-xs text-ink-muted hover:text-ink"
           >
             {COPY.renameLabel}
           </button>
@@ -172,7 +172,7 @@ export function AssetLibrary() {
 
       {/* Content */}
       {isLoading ? (
-        <p className="text-sm text-neutral-500">{COPY.loading}</p>
+        <p className="text-sm text-ink-muted">{COPY.loading}</p>
       ) : isError ? (
         <p className="text-sm text-red-500">{COPY.error}</p>
       ) : !data || data.length === 0 ? (

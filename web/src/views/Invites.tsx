@@ -85,13 +85,13 @@ function InviteRequestsSection() {
 
       {/* One-time reveal of a just-issued code — mirrors CreateInviteDialog's reveal phase */}
       {issued && (
-        <div className="mt-3 rounded-md border border-neutral-200 dark:border-neutral-800 p-4">
-          <p className="text-sm text-neutral-600 dark:text-neutral-400 leading-[1.5]">
+        <div className="mt-3 rounded-md border border-line p-4">
+          <p className="text-sm text-ink-secondary leading-[1.5]">
             Code issued for {issued.request.name}. This is the only time you&apos;ll see it — copy it or email it now.
           </p>
-          <div className="mt-3 rounded-md border border-neutral-200 dark:border-neutral-800 bg-neutral-100 dark:bg-neutral-800 p-3">
+          <div className="mt-3 rounded-md border border-line bg-raised p-3">
             <code
-              className="font-mono text-sm leading-[1.5] break-all select-all text-neutral-900 dark:text-neutral-100"
+              className="font-mono text-sm leading-[1.5] break-all select-all text-ink"
               aria-label="Issued invite code"
             >{issued.invite.plaintext}</code>
           </div>
@@ -105,14 +105,14 @@ function InviteRequestsSection() {
             </button>
             <a
               href={invitationMailto(issued)}
-              className="px-3 py-1.5 text-sm rounded-md border border-neutral-300 dark:border-neutral-700"
+              className="px-3 py-1.5 text-sm rounded-md border border-line-strong"
             >
               Email {issued.request.email}
             </a>
             <button
               type="button"
               onClick={() => setIssued(null)}
-              className="ml-auto px-3 py-1.5 text-sm rounded-md border border-neutral-300 dark:border-neutral-700"
+              className="ml-auto px-3 py-1.5 text-sm rounded-md border border-line-strong"
             >
               Done
             </button>
@@ -133,7 +133,7 @@ function InviteRequestsSection() {
       )}
 
       {isPending && (
-        <div className="mt-3 h-12 rounded-md bg-neutral-100 dark:bg-neutral-800 animate-pulse" aria-busy="true" aria-label="Loading invite requests" />
+        <div className="mt-3 h-12 rounded-md bg-raised animate-pulse" aria-busy="true" aria-label="Loading invite requests" />
       )}
 
       {loadError && (
@@ -143,27 +143,27 @@ function InviteRequestsSection() {
       )}
 
       {!isPending && data && data.length === 0 && (
-        <p className="mt-3 text-sm text-neutral-500">No pending requests</p>
+        <p className="mt-3 text-sm text-ink-muted">No pending requests</p>
       )}
 
       {!isPending && data && data.length > 0 && (
-        <ul data-testid="invite-requests-list" className="mt-3 divide-y divide-neutral-100 dark:divide-neutral-800">
+        <ul data-testid="invite-requests-list" className="mt-3 divide-y divide-[color:var(--color-line)]">
           {data.map((request) => (
             <li key={request.id} className="py-3 flex items-start gap-4">
               <div className="min-w-0 flex-1 text-sm leading-[1.5]">
                 <div className="flex flex-wrap items-baseline gap-x-2">
                   <span className="font-medium">{request.name}</span>
-                  <span className="text-neutral-600 dark:text-neutral-400 break-all">{request.email}</span>
+                  <span className="text-ink-secondary break-all">{request.email}</span>
                   <time
                     dateTime={request.createdAt}
                     title={new Date(request.createdAt).toLocaleString()}
-                    className="text-xs text-neutral-500"
+                    className="text-xs text-ink-muted"
                   >
                     {formatRelative(request.createdAt)}
                   </time>
                 </div>
                 {request.note && (
-                  <p className="mt-1 text-neutral-600 dark:text-neutral-400 whitespace-pre-wrap break-words">{request.note}</p>
+                  <p className="mt-1 text-ink-secondary whitespace-pre-wrap break-words">{request.note}</p>
                 )}
               </div>
               <div className="flex shrink-0 items-center gap-3">
@@ -178,7 +178,7 @@ function InviteRequestsSection() {
                 <button
                   type="button"
                   onClick={() => { setActionError(null); setDismissTarget(request); }}
-                  className="text-sm text-neutral-600 dark:text-neutral-400 hover:text-red-600 dark:hover:text-red-500"
+                  className="text-sm text-ink-secondary hover:text-red-600 dark:hover:text-red-500"
                 >
                   Dismiss
                 </button>
@@ -241,7 +241,7 @@ export default function Invites() {
       </div>
 
       {/* Intro paragraph — UI-SPEC §5.1 + §13 verbatim */}
-      <p className="mt-2 text-sm text-neutral-600 dark:text-neutral-400 leading-[1.5]">
+      <p className="mt-2 text-sm text-ink-secondary leading-[1.5]">
         Invite codes let you onboard new users. Each code is single-use — share it once, and it expires on registration. Treat codes like passwords and never share a code you've already sent.
       </p>
 
@@ -255,7 +255,7 @@ export default function Invites() {
           {[0, 1, 2].map((i) => (
             <div
               key={i}
-              className="h-12 rounded-md bg-neutral-100 dark:bg-neutral-800 animate-pulse"
+              className="h-12 rounded-md bg-raised animate-pulse"
             />
           ))}
         </div>
@@ -286,23 +286,23 @@ export default function Invites() {
           <table data-testid="invites-table" className="w-full text-sm">
             <caption className="sr-only">Your invite codes</caption>
             <thead>
-              <tr className="border-b border-neutral-200 dark:border-neutral-800">
-                <th scope="col" className="pb-2 text-left text-xs uppercase tracking-wide font-medium text-neutral-500 w-auto">
+              <tr className="border-b border-line">
+                <th scope="col" className="pb-2 text-left text-xs uppercase tracking-wide font-medium text-ink-muted w-auto">
                   Label
                 </th>
-                <th scope="col" className="pb-2 text-left text-xs uppercase tracking-wide font-medium text-neutral-500 w-52">
+                <th scope="col" className="pb-2 text-left text-xs uppercase tracking-wide font-medium text-ink-muted w-52">
                   Preview
                 </th>
-                <th scope="col" className="pb-2 text-left text-xs uppercase tracking-wide font-medium text-neutral-500 w-32">
+                <th scope="col" className="pb-2 text-left text-xs uppercase tracking-wide font-medium text-ink-muted w-32">
                   Created
                 </th>
-                <th scope="col" className="pb-2 text-left text-xs uppercase tracking-wide font-medium text-neutral-500 w-24">
+                <th scope="col" className="pb-2 text-left text-xs uppercase tracking-wide font-medium text-ink-muted w-24">
                   Status
                 </th>
-                <th scope="col" className="pb-2 text-left text-xs uppercase tracking-wide font-medium text-neutral-500 w-40">
+                <th scope="col" className="pb-2 text-left text-xs uppercase tracking-wide font-medium text-ink-muted w-40">
                   Used by
                 </th>
-                <th scope="col" className="pb-2 text-right text-xs uppercase tracking-wide font-medium text-neutral-500 w-20">
+                <th scope="col" className="pb-2 text-right text-xs uppercase tracking-wide font-medium text-ink-muted w-20">
                   {/* action column — no heading text */}
                 </th>
               </tr>
@@ -317,7 +317,7 @@ export default function Invites() {
                   <tr
                     key={invite.id}
                     className={[
-                      'border-b border-neutral-100 dark:border-neutral-800 last:border-0',
+                      'border-b border-line last:border-0',
                       status === 'revoked' ? 'opacity-50' : '',
                     ].join(' ')}
                   >
@@ -329,7 +329,7 @@ export default function Invites() {
                       {invite.label ? (
                         invite.label
                       ) : (
-                        <span className="text-neutral-500 italic">(unnamed)</span>
+                        <span className="text-ink-muted italic">(unnamed)</span>
                       )}
                     </th>
 
@@ -354,7 +354,7 @@ export default function Invites() {
                         <span className="inline-flex items-center rounded px-1.5 py-0.5 text-xs font-medium bg-[color:var(--color-accent)]/10 text-[color:var(--color-accent)]">active</span>
                       )}
                       {status === 'used' && (
-                        <span className="inline-flex items-center rounded px-1.5 py-0.5 text-xs font-medium bg-neutral-100 dark:bg-neutral-800 text-neutral-500">used</span>
+                        <span className="inline-flex items-center rounded px-1.5 py-0.5 text-xs font-medium bg-raised text-ink-muted">used</span>
                       )}
                       {status === 'revoked' && (
                         <span className="inline-flex items-center rounded px-1.5 py-0.5 text-xs font-medium bg-red-50 dark:bg-red-950 text-red-600 dark:text-red-400">revoked</span>
@@ -374,7 +374,7 @@ export default function Invites() {
                             </span>
                           )
                           : (
-                            <span className="italic text-neutral-600 dark:text-neutral-400 truncate max-w-[10rem] block leading-[1.5]">
+                            <span className="italic text-ink-secondary truncate max-w-[10rem] block leading-[1.5]">
                               {invite.usedBy.email}
                             </span>
                           )
@@ -387,7 +387,7 @@ export default function Invites() {
                         <button
                           type="button"
                           onClick={() => setRevokeTarget(invite)}
-                          className="text-sm text-neutral-600 dark:text-neutral-400 hover:text-red-600 dark:hover:text-red-500"
+                          className="text-sm text-ink-secondary hover:text-red-600 dark:hover:text-red-500"
                         >
                           Revoke
                         </button>

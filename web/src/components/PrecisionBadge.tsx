@@ -7,10 +7,10 @@ export function precisionDotClass(p: Precision): string {
     case 'era':
       return `${base} bg-[color:var(--color-accent)]`;
     case 'approximate':
-      return `${base} bg-neutral-400`;
+      return `${base} bg-ink-muted`;
     case 'exact':
     default:
-      return `${base} bg-neutral-200 dark:bg-neutral-300`;
+      return `${base} bg-ink-muted`;
   }
 }
 

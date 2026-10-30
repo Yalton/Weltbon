@@ -32,11 +32,11 @@ function CircularEmbedNotice({
   return (
     <span
       data-testid="embed-circular-notice"
-      className="inline-flex items-center gap-1 text-neutral-500 dark:text-neutral-400 bg-neutral-100 dark:bg-neutral-800/40 border border-neutral-300 dark:border-neutral-700 rounded px-1.5 py-0.5 text-sm"
+      className="inline-flex items-center gap-1 text-ink-secondary bg-raised border border-line-strong rounded px-1.5 py-0.5 text-sm"
       aria-label={`circular embed — ${label}`}
     >
       circular embed —{' '}
-      <Link to={entryTo} className="underline hover:text-neutral-700 dark:hover:text-neutral-200">
+      <Link to={entryTo} className="underline hover:text-ink">
         {label}
       </Link>
     </span>
@@ -84,10 +84,10 @@ function UnavailableEmbedNotice({
  * the embedded body renders as a normal hover-card link, not another embed (D-05).
  *
  * Security:
- *   T-46-08 (XSS): body renders ONLY through MarkdownRenderer (react-markdown sanitization) — XSS-safe.
- *   T-46-09 (private entry): fetch uses useEntry → share seam; 404 on is_public=false → D-10 affordance.
- *   T-46-10 (render loop): D-05 flatten (embedDepth:1) + D-06 self/circular guard.
- *   T-46-11 (404/missing): D-10 non-fatal affordance.
+ * T-46-08 (XSS): body renders ONLY through MarkdownRenderer (react-markdown sanitization) — XSS-safe.
+ * T-46-09 (private entry): fetch uses useEntry → share seam; 404 on is_public=false → D-10 affordance.
+ * T-46-10 (render loop): D-05 flatten (embedDepth:1) + D-06 self/circular guard.
+ * T-46-11 (404/missing): D-10 non-fatal affordance.
  */
 export function EntryEmbed({
   targetId,
@@ -139,7 +139,7 @@ export function EntryEmbed({
 
   if (isLoading) {
     return (
-      <span className="inline-block border border-neutral-200 dark:border-neutral-700 rounded px-2 py-1 text-sm text-neutral-400 dark:text-neutral-500 italic">
+      <span className="inline-block border border-line-strong rounded px-2 py-1 text-sm text-ink-muted italic">
         Loading embed…
       </span>
     );

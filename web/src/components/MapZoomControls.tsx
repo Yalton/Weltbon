@@ -17,8 +17,8 @@ export function MapZoomControls({
   const inactiveBtn =
     'rounded-md text-sm w-8 h-8 flex items-center justify-center ' +
     'focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-[color:var(--color-accent)] focus-visible:ring-offset-2 ' +
-    'border border-neutral-300 dark:border-neutral-700 text-neutral-700 dark:text-neutral-300 ' +
-    'hover:bg-neutral-50 dark:hover:bg-neutral-800';
+    'border border-line-strong text-ink ' +
+    ' hover:bg-white/5';
 
   // Active button style (accent-fill) — used for the grid toggle when active
   const activeBtn =
@@ -57,7 +57,7 @@ export function MapZoomControls({
       </button>
 
       {/* Divider */}
-      <div className="w-4 h-px bg-neutral-200 dark:bg-neutral-700 my-0.5" aria-hidden />
+      <div className="w-4 h-px bg-white/10 my-0.5" aria-hidden />
 
       {/* Fit/reset — returns the viewport to the initial fit-to-image transform */}
       <button
@@ -74,7 +74,7 @@ export function MapZoomControls({
       {/* Optional grid toggle — only rendered when onToggleGrid is provided */}
       {onToggleGrid && (
         <>
-          <div className="w-4 h-px bg-neutral-200 dark:bg-neutral-700 my-0.5" aria-hidden />
+          <div className="w-4 h-px bg-white/10 my-0.5" aria-hidden />
           <button
             type="button"
             onClick={onToggleGrid}

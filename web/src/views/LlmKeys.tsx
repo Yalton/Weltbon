@@ -1,20 +1,20 @@
 /**
  *
  * Three states (post consent-gate):
- *   - consent gate (LLMKEY-07): non-dismissable block; entry UI hidden until accepted
- *   - loading skeleton
- *   - empty state
- *   - populated table with Re-validate / Replace / Revoke per row
+ * - consent gate (LLMKEY-07): non-dismissable block; entry UI hidden until accepted
+ * - loading skeleton
+ * - empty state
+ * - populated table with Re-validate / Replace / Revoke per row
  *
  * D-09 consent copy (locked at planning time, ships verbatim):
- *   "Before you add an LLM API key
+ * "Before you add an LLM API key
  *
- *    Your worldbuilding content (entries, summaries, links, tags) will be sent
- *    to the LLM provider you choose to power the gap audit. The provider sees
- *    your text; you pay for the tokens; Weltbon stores your key encrypted at
- *    rest and never logs the plaintext.
+ * Your worldbuilding content (entries, summaries, links, tags) will be sent
+ * to the LLM provider you choose to power the gap audit. The provider sees
+ * your text; you pay for the tokens; Weltbon stores your key encrypted at
+ * rest and never logs the plaintext.
  *
- *    [ I accept ]"
+ * [ I accept ]"
  *
  * D-08: I-accept button enabled immediately on render — no scroll-to-bottom gate.
  *
@@ -81,7 +81,7 @@ export default function LlmKeys() {
         <OllamaConnectionSection />
 
         <SharedLlmConnections />
-        <div className="mt-6 h-24 rounded-md bg-neutral-100 dark:bg-neutral-800 animate-pulse" />
+        <div className="mt-6 h-24 rounded-md bg-raised animate-pulse" />
       </div>
     );
   }
@@ -95,7 +95,7 @@ export default function LlmKeys() {
         <section
           aria-labelledby="llm-consent-heading"
           data-testid="llm-consent-block"
-          className="mt-2 rounded-md border border-neutral-200 dark:border-neutral-800 bg-neutral-50 dark:bg-neutral-900 p-5"
+          className="mt-2 rounded-md border border-line bg-panel p-5"
         >
           <h1
             id="llm-consent-heading"
@@ -103,7 +103,7 @@ export default function LlmKeys() {
           >
             Before you add an LLM API key
           </h1>
-          <p className="mt-3 text-sm text-neutral-700 dark:text-neutral-300 leading-[1.55]">
+          <p className="mt-3 text-sm text-ink leading-[1.55]">
             Your worldbuilding content (entries, summaries, links, tags) will be
             sent to the LLM provider you choose to power the gap audit. The
             provider sees your text; you pay for the tokens; Weltbon stores
@@ -174,7 +174,7 @@ export default function LlmKeys() {
         )}
       </div>
 
-      <p className="mt-2 text-sm text-neutral-600 dark:text-neutral-400 leading-[1.5]">
+      <p className="mt-2 text-sm text-ink-secondary leading-[1.5]">
         Connect an Anthropic or OpenAI API key to enable the gap auditor on
         this account. Your worldbuilding content is sent to the chosen provider
         only; Weltbon stores your key encrypted at rest.
@@ -190,7 +190,7 @@ export default function LlmKeys() {
           {[0, 1, 2].map((i) => (
             <div
               key={i}
-              className="h-12 rounded-md bg-neutral-100 dark:bg-neutral-800 animate-pulse"
+              className="h-12 rounded-md bg-raised animate-pulse"
             />
           ))}
         </div>
@@ -259,27 +259,27 @@ export default function LlmKeys() {
           <table data-testid="llm-keys-table" className="w-full text-sm">
             <caption className="sr-only">Your configured LLM API keys</caption>
             <thead>
-              <tr className="border-b border-neutral-200 dark:border-neutral-800">
-                <th scope="col" className="pb-2 text-left text-xs uppercase tracking-wide font-medium text-neutral-500 w-32">
+              <tr className="border-b border-line">
+                <th scope="col" className="pb-2 text-left text-xs uppercase tracking-wide font-medium text-ink-muted w-32">
                   Provider
                 </th>
-                <th scope="col" className="pb-2 text-left text-xs uppercase tracking-wide font-medium text-neutral-500 w-48">
+                <th scope="col" className="pb-2 text-left text-xs uppercase tracking-wide font-medium text-ink-muted w-48">
                   Preview
                 </th>
-                <th scope="col" className="pb-2 text-left text-xs uppercase tracking-wide font-medium text-neutral-500 w-auto">
+                <th scope="col" className="pb-2 text-left text-xs uppercase tracking-wide font-medium text-ink-muted w-auto">
                   Label
                 </th>
-                <th scope="col" className="pb-2 text-left text-xs uppercase tracking-wide font-medium text-neutral-500 w-32">
+                <th scope="col" className="pb-2 text-left text-xs uppercase tracking-wide font-medium text-ink-muted w-32">
                   Created
                 </th>
-                <th scope="col" className="pb-2 text-left text-xs uppercase tracking-wide font-medium text-neutral-500 w-40">
+                <th scope="col" className="pb-2 text-left text-xs uppercase tracking-wide font-medium text-ink-muted w-40">
                   Last validated
                 </th>
 
-                <th scope="col" className="pb-2 text-left text-xs uppercase tracking-wide font-medium text-neutral-500 w-32">
+                <th scope="col" className="pb-2 text-left text-xs uppercase tracking-wide font-medium text-ink-muted w-32">
                   Total spent
                 </th>
-                <th scope="col" className="pb-2 text-right text-xs uppercase tracking-wide font-medium text-neutral-500 w-56">
+                <th scope="col" className="pb-2 text-right text-xs uppercase tracking-wide font-medium text-ink-muted w-56">
                   {/* action column */}
                 </th>
               </tr>
@@ -290,7 +290,7 @@ export default function LlmKeys() {
                 return (
                   <tr
                     key={llmKey.id}
-                    className="border-b border-neutral-100 dark:border-neutral-800 last:border-0"
+                    className="border-b border-line last:border-0"
                   >
                     <th scope="row" className="py-3 pr-4 text-left font-normal text-sm leading-[1.5]">
                       {PROVIDER_LABELS[llmKey.provider] ?? llmKey.provider}
@@ -305,7 +305,7 @@ export default function LlmKeys() {
                       {llmKey.label ? (
                         llmKey.label
                       ) : (
-                        <span className="italic text-neutral-500">(unnamed)</span>
+                        <span className="italic text-ink-muted">(unnamed)</span>
                       )}
                     </td>
                     <td className="py-3 pr-4 text-sm leading-[1.5]">
@@ -325,7 +325,7 @@ export default function LlmKeys() {
                           {formatRelative(llmKey.lastValidatedAt)}
                         </time>
                       ) : (
-                        <span className="text-neutral-500">Never</span>
+                        <span className="text-ink-muted">Never</span>
                       )}
                       {status?.ok && (
                         <span
@@ -347,12 +347,12 @@ export default function LlmKeys() {
                     </td>
 
                     <td
-                      className="py-3 pr-4 text-sm leading-[1.5] tabular-nums text-neutral-700 dark:text-neutral-300"
+                      className="py-3 pr-4 text-sm leading-[1.5] tabular-nums text-ink"
                       data-testid={`llmkey-total-spent-${llmKey.id}`}
                     >
                       ${llmKey.totalSpentUsd ?? '0.0000'}
                       {(llmKey.costUnknownCount ?? 0) > 0 && (
-                        <span className="text-xs text-neutral-500 ml-1">
+                        <span className="text-xs text-ink-muted ml-1">
                           (plus {llmKey.costUnknownCount} runs with unknown pricing)
                         </span>
                       )}
@@ -362,7 +362,7 @@ export default function LlmKeys() {
                         <button
                           type="button"
                           onClick={() => handleRevalidate(llmKey)}
-                          className="text-sm text-neutral-600 dark:text-neutral-400 hover:text-[color:var(--color-accent)]"
+                          className="text-sm text-ink-secondary hover:text-[color:var(--color-accent)]"
                         >
                           Re-validate
                         </button>
@@ -372,14 +372,14 @@ export default function LlmKeys() {
                             setReplaceTarget(llmKey);
                             setCreateOpen(true);
                           }}
-                          className="text-sm text-neutral-600 dark:text-neutral-400 hover:text-[color:var(--color-accent)]"
+                          className="text-sm text-ink-secondary hover:text-[color:var(--color-accent)]"
                         >
                           Replace
                         </button>
                         <button
                           type="button"
                           onClick={() => setRevokeTarget(llmKey)}
-                          className="text-sm text-neutral-600 dark:text-neutral-400 hover:text-red-600 dark:hover:text-red-500"
+                          className="text-sm text-ink-secondary hover:text-red-600 dark:hover:text-red-500"
                         >
                           Revoke
                         </button>

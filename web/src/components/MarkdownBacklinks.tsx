@@ -207,9 +207,9 @@ export function MarkdownBacklinks({
 
   return (
     <section aria-label="Markdown backlinks and recovery">
-      <h2 className="text-sm font-semibold text-neutral-900 dark:text-neutral-100">Backlinks</h2>
+      <h2 className="text-sm font-semibold text-ink">Backlinks</h2>
       {backlinks.length === 0 ? (
-        <p className="mt-2 text-sm text-neutral-500 dark:text-neutral-400">
+        <p className="mt-2 text-sm text-ink-secondary">
           Backlinks appear after you save.
         </p>
       ) : (
@@ -223,24 +223,24 @@ export function MarkdownBacklinks({
                 {backlink.sourceTitle}
               </Link>
               {backlink.label && (
-                <span className="text-xs text-neutral-400 dark:text-neutral-500">{backlink.label}</span>
+                <span className="text-xs text-ink-muted">{backlink.label}</span>
               )}
             </li>
           ))}
         </ul>
       )}
 
-      <div className="mt-4 border-t border-neutral-200 pt-4 dark:border-neutral-800">
-        <h3 className="text-sm font-semibold text-neutral-900 dark:text-neutral-100">Recovery</h3>
+      <div className="mt-4 border-t pt-4 border-line">
+        <h3 className="text-sm font-semibold text-ink">Recovery</h3>
         {rawReferences.length === 0 && assetRecoveries.length === 0 ? (
-          <p className="mt-2 text-sm text-neutral-500 dark:text-neutral-400">
+          <p className="mt-2 text-sm text-ink-secondary">
             No raw references or missing images need recovery.
           </p>
         ) : (
           <ul className="mt-2 space-y-3">
             {rawReferences.map((reference) => (
               <li key={`${reference.start}-${reference.raw}`} className="space-y-1">
-                <code className="block rounded bg-neutral-100 px-2 py-1 text-xs text-neutral-700 dark:bg-neutral-900 dark:text-neutral-200">
+                <code className="block rounded px-2 py-1 text-xs bg-panel text-ink">
                   {reference.raw}
                 </code>
                 <button
@@ -254,7 +254,7 @@ export function MarkdownBacklinks({
             ))}
             {assetRecoveries.map((asset) => (
               <li key={`${asset.start}-${asset.raw}`} className="space-y-1">
-                <code className="block rounded bg-neutral-100 px-2 py-1 text-xs text-neutral-700 dark:bg-neutral-900 dark:text-neutral-200">
+                <code className="block rounded px-2 py-1 text-xs bg-panel text-ink">
                   {asset.raw}
                 </code>
                 <button

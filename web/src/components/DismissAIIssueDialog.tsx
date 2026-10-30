@@ -22,10 +22,10 @@ interface Props {
  *
  * Step 1: Pick one of 4 reasons via radio buttons.
  * Step 2: Reason-conditional follow-up:
- *   intentional             → plain confirm copy
- *   inaccurate              → optional notes textarea
- *   not_now                 → snooze-count preset picker (D-02)
- *   duplicate_of_human_issue → HumanIssueTypeahead
+ * intentional → plain confirm copy
+ * inaccurate → optional notes textarea
+ * not_now → snooze-count preset picker (D-02)
+ * duplicate_of_human_issue → HumanIssueTypeahead
  *
  * Resets all local state when the dialog closes.
  *
@@ -113,11 +113,11 @@ export function DismissAIIssueDialog({ universeId, issue, open, onOpenChange, on
     <Dialog.Root open={open} onOpenChange={handleOpenChange}>
       <Dialog.Portal>
         <Dialog.Overlay className="fixed inset-0 bg-black/50 z-40" />
-        <Dialog.Content className="fixed left-1/2 top-1/2 -translate-x-1/2 -translate-y-1/2 w-full max-w-md bg-white dark:bg-neutral-900 border border-neutral-200 dark:border-neutral-800 rounded-md p-6 shadow-lg z-50 focus:outline-none">
+        <Dialog.Content className="fixed left-1/2 top-1/2 -translate-x-1/2 -translate-y-1/2 w-full max-w-md bg-panel border border-line rounded-md p-6 shadow-lg z-50 focus:outline-none">
           <Dialog.Title className="text-lg font-semibold">
             Dismiss AI suggestion
           </Dialog.Title>
-          <Dialog.Description className="mt-1 text-sm text-neutral-600 dark:text-neutral-400">
+          <Dialog.Description className="mt-1 text-sm text-ink-secondary">
             {step === 'step1'
               ? 'Why are you dismissing this suggestion?'
               : reason === 'intentional'
@@ -137,7 +137,7 @@ export function DismissAIIssueDialog({ universeId, issue, open, onOpenChange, on
                   {REASONS.map((r) => (
                     <label
                       key={r}
-                      className="flex items-center gap-3 cursor-pointer rounded-md border border-neutral-200 dark:border-neutral-800 px-3 py-2 hover:bg-neutral-50 dark:hover:bg-neutral-800"
+                      className="flex items-center gap-3 cursor-pointer rounded-md border border-line px-3 py-2 hover:bg-white/5"
                     >
                       <input
                         type="radio"
@@ -153,7 +153,7 @@ export function DismissAIIssueDialog({ universeId, issue, open, onOpenChange, on
                 </div>
 
                 <div className="mt-6 flex justify-end gap-2">
-                  <Dialog.Close className="px-3 py-1.5 text-sm rounded-md border border-neutral-300 dark:border-neutral-700">
+                  <Dialog.Close className="px-3 py-1.5 text-sm rounded-md border border-line-strong">
                     Cancel
                   </Dialog.Close>
                   <button
@@ -169,7 +169,7 @@ export function DismissAIIssueDialog({ universeId, issue, open, onOpenChange, on
             ) : (
               <div>
                 {reason === 'intentional' && (
-                  <p className="text-sm text-neutral-600 dark:text-neutral-400">
+                  <p className="text-sm text-ink-secondary">
                     This dismissal is permanent. The AI will never resurface this gap. You can undo
                     via Restore.
                   </p>
@@ -182,7 +182,7 @@ export function DismissAIIssueDialog({ universeId, issue, open, onOpenChange, on
                     maxLength={2000}
                     rows={4}
                     placeholder="Optional: what's wrong about this suggestion?"
-                    className="w-full rounded-md border border-neutral-300 dark:border-neutral-700 bg-transparent px-3 py-2 text-sm resize-none"
+                    className="w-full rounded-md border border-line-strong bg-transparent px-3 py-2 text-sm resize-none"
                   />
                 )}
 
@@ -193,7 +193,7 @@ export function DismissAIIssueDialog({ universeId, issue, open, onOpenChange, on
                       {SNOOZE_PRESETS.map((p) => (
                         <label
                           key={p}
-                          className="flex items-center gap-2 cursor-pointer rounded-md border border-neutral-200 dark:border-neutral-800 px-3 py-2 hover:bg-neutral-50 dark:hover:bg-neutral-800"
+                          className="flex items-center gap-2 cursor-pointer rounded-md border border-line px-3 py-2 hover:bg-white/5"
                         >
                           <input
                             type="radio"
@@ -237,7 +237,7 @@ export function DismissAIIssueDialog({ universeId, issue, open, onOpenChange, on
                   <button
                     type="button"
                     onClick={handleBack}
-                    className="px-3 py-1.5 text-sm rounded-md border border-neutral-300 dark:border-neutral-700"
+                    className="px-3 py-1.5 text-sm rounded-md border border-line-strong"
                   >
                     Back
                   </button>

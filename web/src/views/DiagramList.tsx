@@ -53,7 +53,7 @@ export function DiagramList() {
 
       {/* Content */}
       {isLoading ? (
-        <p className="text-sm text-neutral-500">{COPY.loading}</p>
+        <p className="text-sm text-ink-muted">{COPY.loading}</p>
       ) : isError ? (
         <p className="text-sm text-red-500">{COPY.error}</p>
       ) : !data || data.length === 0 ? (
@@ -75,7 +75,7 @@ export function DiagramList() {
           {data.map((diagram) => (
             <div
               key={diagram.id}
-              className="flex items-center justify-between px-4 py-3 rounded-md border border-neutral-200 dark:border-neutral-800 hover:bg-neutral-50 dark:hover:bg-neutral-900"
+              className="flex items-center justify-between px-4 py-3 rounded-md border border-line hover:bg-white/[0.03]"
             >
               <a
                 href={`/universes/${uid}/diagrams/${diagram.id}`}
@@ -83,7 +83,7 @@ export function DiagramList() {
               >
                 <p className="text-sm font-medium truncate">{diagram.name}</p>
                 {diagram.description && (
-                  <p className="text-xs text-neutral-500 truncate">{diagram.description}</p>
+                  <p className="text-xs text-ink-muted truncate">{diagram.description}</p>
                 )}
               </a>
               <button

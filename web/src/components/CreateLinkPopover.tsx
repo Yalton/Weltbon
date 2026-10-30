@@ -82,27 +82,27 @@ export function CreateLinkPopover({
             onOpenChange(false);
           }}
           onPointerDownOutside={() => onOpenChange(false)}
-          className="w-[300px] bg-white dark:bg-neutral-900 border border-neutral-200 dark:border-neutral-800 rounded-md shadow-lg z-50 p-4 data-[state=open]:animate-popover-in data-[state=closed]:animate-popover-out"
+          className="w-[300px] bg-panel border border-line rounded-md shadow-lg z-50 p-4 data-[state=open]:animate-popover-in data-[state=closed]:animate-popover-out"
         >
           <h3 className="text-sm font-semibold mb-3">Create link</h3>
 
           <div className="flex items-baseline gap-2">
-            <span className="text-xs text-neutral-500 dark:text-neutral-400 w-10 shrink-0">
+            <span className="text-xs text-ink-secondary w-10 shrink-0">
               From
             </span>
             <span
-              className="text-sm font-medium text-neutral-900 dark:text-neutral-100 truncate"
+              className="text-sm font-medium text-ink truncate"
               title={from.title}
             >
               {from.title}
             </span>
           </div>
           <div className="flex items-baseline gap-2 mb-3">
-            <span className="text-xs text-neutral-500 dark:text-neutral-400 w-10 shrink-0">
+            <span className="text-xs text-ink-secondary w-10 shrink-0">
               To
             </span>
             <span
-              className="text-sm font-medium text-neutral-900 dark:text-neutral-100 truncate"
+              className="text-sm font-medium text-ink truncate"
               title={to.title}
             >
               {to.title}
@@ -112,7 +112,7 @@ export function CreateLinkPopover({
           {/* Link type (above display label) */}
           <div className="space-y-3">
             <div>
-              <label className="block text-sm text-neutral-400 mb-1">Type</label>
+              <label className="block text-sm text-ink-muted mb-1">Type</label>
               <LinkTypeSelect
                 universeId={universeId}
                 value={linkType}
@@ -124,7 +124,7 @@ export function CreateLinkPopover({
 
             {/* Direction toggle pill group (UI-SPEC Surface 2) */}
             <div>
-              <label className="block text-sm text-neutral-400 mb-1">Direction</label>
+              <label className="block text-sm text-ink-muted mb-1">Direction</label>
               <div className="flex gap-1 mt-1" role="group" aria-label="Direction">
                 <button
                   type="button"
@@ -133,7 +133,7 @@ export function CreateLinkPopover({
                   className={`rounded-md border px-3 py-1 text-sm cursor-pointer ${
                     direction === 'directed'
                       ? 'border-[color:var(--color-accent)] bg-[color:var(--color-accent-soft)] text-[color:var(--color-accent)]'
-                      : 'border-neutral-300 dark:border-neutral-700 text-neutral-600 dark:text-neutral-400'
+                      : ' border-line-strong text-ink-secondary'
                   }`}
                 >
                   A &rarr; B
@@ -145,7 +145,7 @@ export function CreateLinkPopover({
                   className={`rounded-md border px-3 py-1 text-sm cursor-pointer ${
                     direction === 'undirected'
                       ? 'border-[color:var(--color-accent)] bg-[color:var(--color-accent-soft)] text-[color:var(--color-accent)]'
-                      : 'border-neutral-300 dark:border-neutral-700 text-neutral-600 dark:text-neutral-400'
+                      : ' border-line-strong text-ink-secondary'
                   }`}
                 >
                   A &harr; B
@@ -155,7 +155,7 @@ export function CreateLinkPopover({
 
             {/* Display label (optional — demoted from primary position) */}
             <div>
-              <label className="block text-sm text-neutral-400 mb-1">
+              <label className="block text-sm text-ink-muted mb-1">
                 Display label (optional)
               </label>
               <RelationCombobox
@@ -178,7 +178,7 @@ export function CreateLinkPopover({
               type="button"
               onClick={() => onOpenChange(false)}
               aria-label="Discard link"
-              className="rounded-md border border-neutral-300 dark:border-neutral-700 px-3 py-1.5 text-sm"
+              className="rounded-md border border-line-strong px-3 py-1.5 text-sm"
             >
               &times;
             </button>

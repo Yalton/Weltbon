@@ -35,7 +35,7 @@ export function IssueSection({ universeId, entryId, issues, onChanged }: Props) 
   };
 
   return (
-    <div className="mt-6 pt-6 border-t border-neutral-200 dark:border-neutral-800">
+    <div className="mt-6 pt-6 border-t border-line">
       <div className="flex items-center justify-between">
         <h2 className="text-xl font-semibold">Issues ({issues.length})</h2>
         <div className="flex items-center gap-2">
@@ -43,7 +43,7 @@ export function IssueSection({ universeId, entryId, issues, onChanged }: Props) 
             <button
               type="button"
               onClick={() => setAuditDialogOpen(true)}
-              className="rounded-md border border-neutral-300 dark:border-neutral-700 text-sm px-3 py-1.5 inline-flex items-center gap-1.5 hover:bg-neutral-50 dark:hover:bg-neutral-800"
+              className="rounded-md border border-line-strong text-sm px-3 py-1.5 inline-flex items-center gap-1.5 hover:bg-white/5"
               aria-haspopup="dialog"
             >
               <Glyph name="scale" />
@@ -53,7 +53,7 @@ export function IssueSection({ universeId, entryId, issues, onChanged }: Props) 
           <button
             type="button"
             onClick={() => setEditorOpen(true)}
-            className="rounded-md border border-neutral-300 dark:border-neutral-700 text-sm px-3 py-1.5"
+            className="rounded-md border border-line-strong text-sm px-3 py-1.5"
           >
             Flag issue
           </button>
@@ -98,7 +98,7 @@ export function IssueSection({ universeId, entryId, issues, onChanged }: Props) 
                         onClick={() =>
                           undismissIssue.mutate(issue.id, { onSuccess: () => onChanged?.() })
                         }
-                        className="text-xs text-neutral-400 hover:text-neutral-200"
+                        className="text-xs text-ink-muted hover:text-ink-muted"
                       >
                         Restore
                       </button>
@@ -106,14 +106,14 @@ export function IssueSection({ universeId, entryId, issues, onChanged }: Props) 
                       <button
                         type="button"
                         onClick={() => setDismissing(issue)}
-                        className="text-xs text-neutral-400 hover:text-neutral-200"
+                        className="text-xs text-ink-muted hover:text-ink-muted"
                       >
                         Dismiss
                       </button>
                     )}
                     <Link
                       to={`/universes/${universeId}/issues`}
-                      className="text-xs text-neutral-400 hover:text-neutral-200 ml-2"
+                      className="text-xs text-ink-muted hover:text-ink-muted ml-2"
                     >
                       View reasoning
                     </Link>
@@ -122,7 +122,7 @@ export function IssueSection({ universeId, entryId, issues, onChanged }: Props) 
                   <button
                     type="button"
                     onClick={() => handleResolve(issue.id)}
-                    className="text-xs text-neutral-400 hover:text-neutral-200"
+                    className="text-xs text-ink-muted hover:text-ink-muted"
                   >
                     Resolve
                   </button>

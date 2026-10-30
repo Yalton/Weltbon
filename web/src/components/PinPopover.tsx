@@ -102,7 +102,7 @@ export function PinPopover({
             onOpenChange(false);
           }}
           onPointerDownOutside={() => onOpenChange(false)}
-          className="w-[320px] bg-white dark:bg-neutral-900 border border-neutral-200 dark:border-neutral-800 rounded-md shadow-lg z-50 p-4 data-[state=open]:animate-popover-in data-[state=closed]:animate-popover-out"
+          className="w-[320px] bg-panel border border-line rounded-md shadow-lg z-50 p-4 data-[state=open]:animate-popover-in data-[state=closed]:animate-popover-out"
         >
           <h3 className="text-lg font-semibold mb-3">{COPY.TITLE}</h3>
 
@@ -118,11 +118,11 @@ export function PinPopover({
                 onChange={(e) => setPositionInput(e.target.value)}
                 placeholder="e.g. -10000 or 4.35e17"
                 autoFocus
-                className="w-full rounded-md border border-neutral-300 dark:border-neutral-700 bg-transparent px-3 py-2 text-sm font-mono"
+                className="w-full rounded-md border border-line-strong bg-transparent px-3 py-2 text-sm font-mono"
               />
-              <p className="mt-1 text-xs text-neutral-500">{COPY.POSITION_HINT}</p>
+              <p className="mt-1 text-xs text-ink-muted">{COPY.POSITION_HINT}</p>
               {livePosition.ok && positionInput.trim() !== '' && (
-                <p className="mt-1 text-xs text-neutral-500 tabular-nums">
+                <p className="mt-1 text-xs text-ink-muted tabular-nums">
                   → {livePosition.value}
                 </p>
               )}
@@ -138,7 +138,7 @@ export function PinPopover({
                 value={label}
                 onChange={(e) => setLabel(e.target.value)}
                 maxLength={120}
-                className="w-full rounded-md border border-neutral-300 dark:border-neutral-700 bg-transparent px-3 py-2 text-sm"
+                className="w-full rounded-md border border-line-strong bg-transparent px-3 py-2 text-sm"
               />
             </div>
 
@@ -151,7 +151,7 @@ export function PinPopover({
                   id="pin-popover-precision"
                   value={precision}
                   onChange={(e) => setPrecision(e.target.value as Precision)}
-                  className="flex-1 rounded-md border border-neutral-300 dark:border-neutral-700 bg-transparent px-3 py-2 text-sm"
+                  className="flex-1 rounded-md border border-line-strong bg-transparent px-3 py-2 text-sm"
                 >
                   {PRECISIONS.map((p) => (
                     <option key={p} value={p}>
@@ -174,7 +174,7 @@ export function PinPopover({
             <button
               type="button"
               onClick={() => onOpenChange(false)}
-              className="rounded-md border border-neutral-300 dark:border-neutral-700 px-3 py-1.5 text-sm"
+              className="rounded-md border border-line-strong px-3 py-1.5 text-sm"
             >
               {COPY.CANCEL}
             </button>

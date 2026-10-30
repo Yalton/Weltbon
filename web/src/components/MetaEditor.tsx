@@ -64,14 +64,14 @@ export function UrlInput({
         value={value}
         onChange={(e) => onChange(e.target.value)}
         placeholder="https://"
-        className="flex-1 rounded-md border border-neutral-200 dark:border-neutral-800 bg-transparent px-2 py-1.5 text-sm outline-none focus:border-[color:var(--color-accent)]"
+        className="flex-1 rounded-md border border-line bg-transparent px-2 py-1.5 text-sm outline-none focus:border-[color:var(--color-accent)]"
       />
       {isValidUrl && (
         <a
           href={value}
           target="_blank"
           rel="noopener"
-          className="text-xs text-neutral-400 hover:text-[color:var(--color-accent)] shrink-0"
+          className="text-xs text-ink-muted hover:text-[color:var(--color-accent)] shrink-0"
           aria-label={`Open ${value} in new tab`}
           tabIndex={-1}
         >
@@ -117,7 +117,7 @@ export function BooleanInput({
             className={`rounded-md border px-2 py-1 text-xs transition-colors ${
               isActive
                 ? 'border-[color:var(--color-accent)] bg-[color:var(--color-accent)]/10 text-[color:var(--color-accent)]'
-                : 'border-neutral-300 dark:border-neutral-700 text-neutral-500 hover:border-neutral-400'
+                : ' border-line-strong text-ink-muted hover:border-[color:var(--color-ink-muted)]'
             }`}
           >
             {opt.label}
@@ -212,20 +212,20 @@ export function EntryRefInput({
             className={`w-full rounded-md border bg-transparent px-2 py-1.5 text-sm outline-none focus:border-[color:var(--color-accent)] ${
               isDangling
                 ? 'border-amber-500/60'
-                : 'border-neutral-200 dark:border-neutral-800'
+                : ' border-line'
             }`}
           />
         </Popover.Anchor>
         <Popover.Portal>
           <Popover.Content
             id={suggestionListId}
-            className="w-[var(--radix-popover-trigger-width)] max-h-48 overflow-y-auto bg-white dark:bg-neutral-900 border border-neutral-200 dark:border-neutral-800 rounded-md shadow-lg z-50 data-[state=open]:animate-popover-in data-[state=closed]:animate-popover-out"
+            className="w-[var(--radix-popover-trigger-width)] max-h-48 overflow-y-auto bg-panel border border-line rounded-md shadow-lg z-50 data-[state=open]:animate-popover-in data-[state=closed]:animate-popover-out"
             align="start"
             sideOffset={4}
             onOpenAutoFocus={(e) => e.preventDefault()}
           >
             {filtered.length === 0 ? (
-              <p className="px-3 py-2 text-sm text-neutral-500">No entries found</p>
+              <p className="px-3 py-2 text-sm text-ink-muted">No entries found</p>
             ) : (
               <ul role="listbox">
                 {filtered.map((entry) => (
@@ -233,7 +233,7 @@ export function EntryRefInput({
                     <button
                       type="button"
                       onClick={() => handleSelect(entry.id, entry.title)}
-                      className="w-full px-3 py-1.5 text-left text-sm hover:bg-neutral-100 dark:hover:bg-neutral-800"
+                      className="w-full px-3 py-1.5 text-left text-sm hover:bg-white/5"
                     >
                       {entry.title}
                     </button>
@@ -407,7 +407,7 @@ export function MetaEditor({
       {/* ─── Registered fields section ──────────────────────────── */}
       {hasRegistered && (
         <>
-          <p className="text-xs uppercase tracking-wide text-neutral-500 mt-2 mb-1">
+          <p className="text-xs uppercase tracking-wide text-ink-muted mt-2 mb-1">
             Custom fields
           </p>
           {(registeredFields ?? []).map((field) => {
@@ -420,7 +420,7 @@ export function MetaEditor({
               <div key={field.name} className="flex items-start gap-2">
                 <label
                   htmlFor={inputId}
-                  className="w-2/5 text-sm text-neutral-600 dark:text-neutral-400 truncate flex-shrink-0 pt-1.5"
+                  className="w-2/5 text-sm text-ink-secondary truncate flex-shrink-0 pt-1.5"
                 >
                   {field.name}
                 </label>
@@ -431,7 +431,7 @@ export function MetaEditor({
                       type="text"
                       value={fieldVal}
                       onChange={(e) => updateRegisteredVal(field.name, e.target.value)}
-                      className="w-full rounded-md border border-neutral-200 dark:border-neutral-800 bg-transparent px-2 py-1.5 text-sm outline-none focus:border-[color:var(--color-accent)]"
+                      className="w-full rounded-md border border-line bg-transparent px-2 py-1.5 text-sm outline-none focus:border-[color:var(--color-accent)]"
                       aria-label={field.name}
                     />
                   )}
@@ -442,7 +442,7 @@ export function MetaEditor({
                       value={fieldVal}
                       onChange={(e) => updateRegisteredVal(field.name, e.target.value)}
                       placeholder="0"
-                      className="w-full rounded-md border border-neutral-200 dark:border-neutral-800 bg-transparent px-2 py-1.5 text-sm outline-none focus:border-[color:var(--color-accent)] [appearance:textfield]"
+                      className="w-full rounded-md border border-line bg-transparent px-2 py-1.5 text-sm outline-none focus:border-[color:var(--color-accent)] [appearance:textfield]"
                       aria-label={field.name}
                     />
                   )}
@@ -471,7 +471,7 @@ export function MetaEditor({
                     />
                   )}
                   {field.hint && (
-                    <p className="text-xs text-neutral-400">{field.hint}</p>
+                    <p className="text-xs text-ink-muted">{field.hint}</p>
                   )}
                   {mismatch && (
                     <p className="text-xs text-amber-500">{"Doesn't match type"}</p>
@@ -481,8 +481,8 @@ export function MetaEditor({
             );
           })}
           {/* Divider between registered and freeform fields */}
-          <hr className="border-neutral-200 dark:border-neutral-800 my-2" />
-          <p className="text-xs uppercase tracking-wide text-neutral-500 mb-1">
+          <hr className="border-line my-2" />
+          <p className="text-xs uppercase tracking-wide text-ink-muted mb-1">
             Additional fields
           </p>
         </>
@@ -500,20 +500,20 @@ export function MetaEditor({
               onChange={(e) => updateKey(r.rowId, e.target.value)}
               aria-invalid={isDup}
               title={isDup ? 'Duplicate key' : undefined}
-              className={`w-2/5 rounded-md border border-neutral-200 dark:border-neutral-800 bg-transparent px-2 py-1.5 text-sm outline-none focus:border-[color:var(--color-accent)] ${dupClasses}`}
+              className={`w-2/5 rounded-md border border-line bg-transparent px-2 py-1.5 text-sm outline-none focus:border-[color:var(--color-accent)] ${dupClasses}`}
               placeholder="Key"
             />
             <input
               type="text"
               value={r.val}
               onChange={(e) => updateVal(r.rowId, e.target.value)}
-              className="w-3/5 rounded-md border border-neutral-200 dark:border-neutral-800 bg-transparent px-2 py-1.5 text-sm outline-none focus:border-[color:var(--color-accent)]"
+              className="w-3/5 rounded-md border border-line bg-transparent px-2 py-1.5 text-sm outline-none focus:border-[color:var(--color-accent)]"
               placeholder="Value"
             />
             <button
               type="button"
               onClick={() => removeRow(r.rowId)}
-              className="shrink-0 text-neutral-500 hover:text-red-500 text-sm"
+              className="shrink-0 text-ink-muted hover:text-red-500 text-sm"
               aria-label={`Remove field${r.key ? ` ${r.key}` : ''}`}
             >
               &times;
@@ -524,7 +524,7 @@ export function MetaEditor({
       <button
         type="button"
         onClick={addRow}
-        className="text-sm text-neutral-500 hover:text-neutral-300 dark:hover:text-neutral-300"
+        className="text-sm text-ink-muted hover:text-ink"
       >
         + Add field
       </button>

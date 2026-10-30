@@ -37,7 +37,7 @@ export default function Tokens() {
       </div>
 
       {/* Intro paragraph — UI-SPEC §5.1 + §13 verbatim */}
-      <p className="mt-2 text-sm text-neutral-600 dark:text-neutral-400 leading-[1.5]">
+      <p className="mt-2 text-sm text-ink-secondary leading-[1.5]">
         Tokens authenticate API requests as you. Treat them like passwords — anyone with a token can act as your account.
       </p>
 
@@ -49,7 +49,7 @@ export default function Tokens() {
           {[0, 1, 2].map((i) => (
             <div
               key={i}
-              className="h-12 rounded-md bg-neutral-100 dark:bg-neutral-800 animate-pulse"
+              className="h-12 rounded-md bg-raised animate-pulse"
             />
           ))}
         </div>
@@ -80,33 +80,33 @@ export default function Tokens() {
           <table data-testid="tokens-table" className="w-full text-sm">
             <caption className="sr-only">Your personal access tokens</caption>
             <thead>
-              <tr className="border-b border-neutral-200 dark:border-neutral-800">
-                <th scope="col" className="pb-2 text-left text-xs uppercase tracking-wide font-medium text-neutral-500 w-auto">
+              <tr className="border-b border-line">
+                <th scope="col" className="pb-2 text-left text-xs uppercase tracking-wide font-medium text-ink-muted w-auto">
                   Label
                 </th>
-                <th scope="col" className="pb-2 text-left text-xs uppercase tracking-wide font-medium text-neutral-500 w-48">
+                <th scope="col" className="pb-2 text-left text-xs uppercase tracking-wide font-medium text-ink-muted w-48">
                   Preview
                 </th>
-                <th scope="col" className="pb-2 text-left text-xs uppercase tracking-wide font-medium text-neutral-500 w-32">
+                <th scope="col" className="pb-2 text-left text-xs uppercase tracking-wide font-medium text-ink-muted w-32">
                   Created
                 </th>
-                <th scope="col" className="pb-2 text-left text-xs uppercase tracking-wide font-medium text-neutral-500 w-32">
+                <th scope="col" className="pb-2 text-left text-xs uppercase tracking-wide font-medium text-ink-muted w-32">
                   Last used
                 </th>
-                <th scope="col" className="pb-2 text-right text-xs uppercase tracking-wide font-medium text-neutral-500 w-20">
+                <th scope="col" className="pb-2 text-right text-xs uppercase tracking-wide font-medium text-ink-muted w-20">
                   {/* action column — no heading text */}
                 </th>
               </tr>
             </thead>
             <tbody>
               {data.map((token) => (
-                <tr key={token.id} className="border-b border-neutral-100 dark:border-neutral-800 last:border-0">
+                <tr key={token.id} className="border-b border-line last:border-0">
                   {/* Label cell — row header for screen reader semantics */}
                   <th scope="row" className="py-3 pr-4 text-left font-normal text-sm leading-[1.5]">
                     {token.label ? (
                       token.label
                     ) : (
-                      <span className="italic text-neutral-500">(unnamed)</span>
+                      <span className="italic text-ink-muted">(unnamed)</span>
                     )}
                   </th>
 
@@ -129,7 +129,7 @@ export default function Tokens() {
                         {formatRelative(token.lastUsedAt)}
                       </time>
                     ) : (
-                      <span className="text-neutral-500">Never</span>
+                      <span className="text-ink-muted">Never</span>
                     )}
                   </td>
 
@@ -138,7 +138,7 @@ export default function Tokens() {
                     <button
                       type="button"
                       onClick={() => setRevokeTarget(token)}
-                      className="text-sm text-neutral-600 dark:text-neutral-400 hover:text-red-600 dark:hover:text-red-500"
+                      className="text-sm text-ink-secondary hover:text-red-600 dark:hover:text-red-500"
                     >
                       Revoke
                     </button>

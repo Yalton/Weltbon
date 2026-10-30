@@ -179,14 +179,14 @@ export function IssuesView() {
       <div className="mt-4 flex flex-wrap items-end gap-3">
         {/* Severity */}
         <div>
-          <label htmlFor="issues-severity" className="block text-xs text-neutral-500 mb-1">
+          <label htmlFor="issues-severity" className="block text-xs text-ink-muted mb-1">
             Severity
           </label>
           <select
             id="issues-severity"
             value={severity}
             onChange={(e) => setSeverity(e.target.value as Severity | '')}
-            className="rounded-md border border-neutral-300 dark:border-neutral-700 bg-transparent px-3 py-1.5 text-sm"
+            className="rounded-md border border-line-strong bg-transparent px-3 py-1.5 text-sm"
           >
             <option value="">All</option>
             {SEVERITIES.map((s) => (
@@ -199,14 +199,14 @@ export function IssuesView() {
 
         {/* Source (D-10) */}
         <div>
-          <label htmlFor="issues-source" className="block text-xs text-neutral-500 mb-1">
+          <label htmlFor="issues-source" className="block text-xs text-ink-muted mb-1">
             Source
           </label>
           <select
             id="issues-source"
             value={sourceFilter}
             onChange={(e) => setSourceFilter(e.target.value as 'both' | 'human' | 'ai')}
-            className="rounded-md border border-neutral-300 dark:border-neutral-700 bg-transparent px-3 py-1.5 text-sm"
+            className="rounded-md border border-line-strong bg-transparent px-3 py-1.5 text-sm"
           >
             <option value="both">Both</option>
             <option value="human">Human</option>
@@ -216,7 +216,7 @@ export function IssuesView() {
 
         {/* Category multi-select (D-10) — greyed out when Source=Human */}
         <div className={sourceFilter === 'human' ? 'opacity-50 pointer-events-none' : ''}>
-          <span className="block text-xs text-neutral-500 mb-1">Category</span>
+          <span className="block text-xs text-ink-muted mb-1">Category</span>
           <div className="flex flex-wrap gap-2">
             {AUDIT_CATEGORIES.map((cat) => (
               <label
@@ -240,14 +240,14 @@ export function IssuesView() {
 
         {/* Status (D-09) */}
         <div>
-          <label htmlFor="issues-status" className="block text-xs text-neutral-500 mb-1">
+          <label htmlFor="issues-status" className="block text-xs text-ink-muted mb-1">
             Status
           </label>
           <select
             id="issues-status"
             value={resolutionFilter}
             onChange={(e) => setResolutionFilter(e.target.value as ResolutionFilter)}
-            className="rounded-md border border-neutral-300 dark:border-neutral-700 bg-transparent px-3 py-1.5 text-sm"
+            className="rounded-md border border-line-strong bg-transparent px-3 py-1.5 text-sm"
           >
             <option value="open">Open</option>
             <option value="resolved">Resolved</option>
@@ -282,7 +282,7 @@ export function IssuesView() {
                 <button
                   type="button"
                   onClick={clearAuditFilter}
-                  className="rounded-md border border-neutral-300 dark:border-neutral-700 text-sm px-3 py-1.5"
+                  className="rounded-md border border-line-strong text-sm px-3 py-1.5"
                 >
                   ✕ Clear filter
                 </button>
@@ -321,7 +321,7 @@ export function IssuesView() {
                 body="Issues are open questions, contradictions, or gaps. File one from any entry's Issues section."
               />
               {!auditEnabled && uid && (
-                <p className="text-sm text-neutral-500 dark:text-neutral-400 mt-3 italic text-center">
+                <p className="text-sm text-ink-secondary mt-3 italic text-center">
                   Or let AI surface gaps for you —{' '}
                   <Link
                     to={`/universes/${uid}/settings?tab=ai-auditor`}
@@ -357,7 +357,7 @@ export function IssuesView() {
                       <p
                         className={
                           issue.resolved
-                            ? 'font-medium line-through text-neutral-500'
+                            ? 'font-medium line-through text-ink-muted'
                             : 'font-medium'
                         }
                       >
@@ -373,7 +373,7 @@ export function IssuesView() {
                         {!isAI && (issue.linkedByAiIssueIds?.length ?? 0) > 0 && (
                           <Link
                             to={`/universes/${uid}/issues`}
-                            className="ml-2 inline-flex items-center rounded-full bg-neutral-200 dark:bg-neutral-700 px-1.5 py-0.5 text-xs text-neutral-600 dark:text-neutral-300 hover:bg-neutral-300 dark:hover:bg-neutral-600"
+                            className="ml-2 inline-flex items-center rounded-full bg-white/10 px-1.5 py-0.5 text-xs text-ink hover:bg-white/15"
                             title="An AI suggestion was dismissed as a duplicate of this issue"
                           >
                             AI flagged this too
@@ -381,7 +381,7 @@ export function IssuesView() {
                         )}
                       </p>
                       {issue.description && (
-                        <p className="text-sm text-neutral-500 truncate">{issue.description}</p>
+                        <p className="text-sm text-ink-muted truncate">{issue.description}</p>
                       )}
                       {issue.entries.length > 0 && (
                         <div className="mt-1 flex flex-wrap gap-1">
@@ -389,7 +389,7 @@ export function IssuesView() {
                             <Link
                               key={e.id}
                               to={`/universes/${uid}/entries/${e.id}`}
-                              className="inline-flex items-center rounded-full bg-neutral-200 dark:bg-neutral-800 px-2 py-0.5 text-xs hover:bg-neutral-300 dark:hover:bg-neutral-700"
+                              className="inline-flex items-center rounded-full bg-raised px-2 py-0.5 text-xs hover:bg-white/10"
                             >
                               {e.icon && <span className="mr-1">{e.icon}</span>}
                               {e.title}
@@ -406,7 +406,7 @@ export function IssuesView() {
                           <button
                             type="button"
                             onClick={() => toggleReasoning(issue.id)}
-                            className="text-neutral-400 hover:text-neutral-200"
+                            className="text-ink-muted hover:text-ink-muted"
                           >
                             {isExpanded ? 'Hide' : 'Why?'}
                           </button>
@@ -414,7 +414,7 @@ export function IssuesView() {
                             <button
                               type="button"
                               onClick={() => setDismissingIssue(issue)}
-                              className="text-neutral-400 hover:text-neutral-200"
+                              className="text-ink-muted hover:text-ink-muted"
                             >
                               Dismiss
                             </button>
@@ -423,7 +423,7 @@ export function IssuesView() {
                             <button
                               type="button"
                               onClick={() => handleRestore(issue)}
-                              className="text-neutral-400 hover:text-neutral-200"
+                              className="text-ink-muted hover:text-ink-muted"
                             >
                               Restore
                             </button>
@@ -434,21 +434,21 @@ export function IssuesView() {
                           <button
                             type="button"
                             onClick={() => handleToggleResolved(issue)}
-                            className="text-neutral-400 hover:text-neutral-200"
+                            className="text-ink-muted hover:text-ink-muted"
                           >
                             {issue.resolved ? 'Reopen' : 'Resolve'}
                           </button>
                           <button
                             type="button"
                             onClick={() => setEditor({ open: true, initial: issue })}
-                            className="text-neutral-400 hover:text-neutral-200"
+                            className="text-ink-muted hover:text-ink-muted"
                           >
                             Edit
                           </button>
                           <button
                             type="button"
                             onClick={() => setDeletingId(issue.id)}
-                            className="text-neutral-400 hover:text-red-500"
+                            className="text-ink-muted hover:text-red-500"
                           >
                             Delete
                           </button>

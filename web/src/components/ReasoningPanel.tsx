@@ -13,29 +13,29 @@ export function ReasoningPanel({ issue, expanded, uid }: Props) {
   const costFormatted = `$${Number(issue.costUsd ?? 0).toFixed(4)}`;
 
   return (
-    <div className="mt-2 ml-7 rounded-md border border-neutral-200 dark:border-neutral-800 bg-neutral-50 dark:bg-neutral-900 p-3 text-sm">
+    <div className="mt-2 ml-7 rounded-md border border-line bg-panel p-3 text-sm">
       {/* Model + Cost header */}
-      <div className="flex items-center gap-4 text-xs text-neutral-500">
+      <div className="flex items-center gap-4 text-xs text-ink-muted">
         <span>
           Model:{' '}
-          <span className="font-mono text-neutral-700 dark:text-neutral-300">
+          <span className="font-mono text-ink">
             {issue.model ?? '—'}
           </span>
         </span>
         <span>
           Cost:{' '}
-          <span className="font-mono text-neutral-700 dark:text-neutral-300">
+          <span className="font-mono text-ink">
             {costFormatted}
           </span>
         </span>
       </div>
 
       {/* Consulted entries */}
-      <div className="mt-2 text-xs text-neutral-500 mb-1">
+      <div className="mt-2 text-xs text-ink-muted mb-1">
         Consulted entries ({issue.consultedEntries?.length ?? 0}):
       </div>
       {!issue.consultedEntries || issue.consultedEntries.length === 0 ? (
-        <p className="text-xs text-neutral-400 italic">
+        <p className="text-xs text-ink-muted italic">
           No tool-call trail recorded for this run.
         </p>
       ) : (
@@ -44,7 +44,7 @@ export function ReasoningPanel({ issue, expanded, uid }: Props) {
             <Link
               key={e.id}
               to={`/universes/${uid}/entries/${e.id}`}
-              className="inline-flex items-center rounded-full bg-neutral-200 dark:bg-neutral-800 px-2 py-0.5 text-xs hover:bg-neutral-300 dark:hover:bg-neutral-700"
+              className="inline-flex items-center rounded-full bg-raised px-2 py-0.5 text-xs hover:bg-white/10"
             >
               {e.icon && <span className="mr-1">{e.icon}</span>}
               {e.title}
@@ -54,7 +54,7 @@ export function ReasoningPanel({ issue, expanded, uid }: Props) {
       )}
 
       {/* Rationale paragraph */}
-      <p className="mt-3 text-sm whitespace-pre-wrap text-neutral-700 dark:text-neutral-300">
+      <p className="mt-3 text-sm whitespace-pre-wrap text-ink">
         {issue.rationale ?? issue.description}
       </p>
     </div>

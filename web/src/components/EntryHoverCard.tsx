@@ -57,9 +57,9 @@ export function EntryHoverCard({
   const lazyEntryId = open && !summaryPresent ? entry.id : '';
   const { data: lazyEntry, isLoading: lazyLoading } = useEntry(universeId, lazyEntryId);
 
-  //   - summary present → use it directly
-  //   - summary absent + body fetched → markdown-stripped excerpt
-  //   - summary absent + loading → placeholder
+  // - summary present → use it directly
+  // - summary absent + body fetched → markdown-stripped excerpt
+  // - summary absent + loading → placeholder
   let summaryText: string;
   if (summaryPresent) {
     summaryText = entry.summary;
@@ -161,7 +161,7 @@ export function EntryHoverCard({
           role="button"
           tabIndex={-1}
           aria-label={`Preview ${entry.title}`}
-          className="entry-hover-caret inline-flex items-center justify-center w-4 h-4 text-xs text-neutral-400 hover:text-neutral-600 dark:hover:text-neutral-300 cursor-pointer select-none"
+          className="entry-hover-caret inline-flex items-center justify-center w-4 h-4 text-xs text-ink-muted hover:text-ink cursor-pointer select-none"
         >
           ⓘ
         </span>
@@ -179,7 +179,7 @@ export function EntryHoverCard({
           align="center"
           onMouseEnter={handleMouseEnter}
           onMouseLeave={handleMouseLeave}
-          className="bg-white dark:bg-neutral-900 border border-neutral-200 dark:border-neutral-800 rounded-md shadow-lg z-50 max-w-[300px] overflow-hidden data-[state=open]:animate-popover-in data-[state=closed]:animate-popover-out focus:outline-none"
+          className="bg-panel border border-line rounded-md shadow-lg z-50 max-w-[300px] overflow-hidden data-[state=open]:animate-popover-in data-[state=closed]:animate-popover-out focus:outline-none"
         >
           {/*
             D-12: Cover image banner — rendered only when coverImageId is set.
@@ -209,7 +209,7 @@ export function EntryHoverCard({
               <div className="flex-1 min-w-0">
                 <p
                   data-testid="entry-card-title"
-                  className="font-semibold text-sm text-neutral-900 dark:text-neutral-100 leading-tight truncate"
+                  className="font-semibold text-sm text-ink leading-tight truncate"
                 >
                   {entry.title}
                 </p>
@@ -227,7 +227,7 @@ export function EntryHoverCard({
             {summaryText && (
               <p
                 data-testid="entry-card-summary"
-                className="text-sm text-neutral-600 dark:text-neutral-400 line-clamp-3 mt-1"
+                className="text-sm text-ink-secondary line-clamp-3 mt-1"
               >
                 {summaryText}
               </p>

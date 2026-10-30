@@ -15,7 +15,7 @@ export function EntryCategoryPicker({ universeId, value, onChange, id }: Props) 
       id={id}
       value={value ?? ''}
       onChange={(e) => onChange(e.target.value || null)}
-      className="w-full rounded-md border border-neutral-300 dark:border-neutral-700 bg-transparent px-3 py-2 text-sm"
+      className="w-full rounded-md border border-line-strong bg-transparent px-3 py-2 text-sm"
     >
       <option value="">Uncategorized</option>
       {data?.categories.map((c) => (

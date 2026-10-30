@@ -110,11 +110,11 @@ export function CreateLlmKeyDialog({
     <Dialog.Root open={open} onOpenChange={handleOpenChange}>
       <Dialog.Portal>
         <Dialog.Overlay className="fixed inset-0 bg-black/50 z-40 data-[state=open]:animate-overlay-in data-[state=closed]:animate-overlay-out" />
-        <Dialog.Content className="fixed left-1/2 top-1/2 -translate-x-1/2 -translate-y-1/2 w-full max-w-md bg-white dark:bg-neutral-900 border border-neutral-200 dark:border-neutral-800 rounded-md p-6 shadow-lg z-50 data-[state=open]:animate-dialog-in data-[state=closed]:animate-dialog-out focus:outline-none">
+        <Dialog.Content className="fixed left-1/2 top-1/2 -translate-x-1/2 -translate-y-1/2 w-full max-w-md bg-panel border border-line rounded-md p-6 shadow-lg z-50 data-[state=open]:animate-dialog-in data-[state=closed]:animate-dialog-out focus:outline-none">
           <Dialog.Title className="text-lg font-semibold">
             {isReplace ? 'Replace LLM API key' : 'Add an LLM API key'}
           </Dialog.Title>
-          <Dialog.Description className="mt-2 text-sm text-neutral-600 dark:text-neutral-400 leading-[1.5]">
+          <Dialog.Description className="mt-2 text-sm text-ink-secondary leading-[1.5]">
             {isReplace
               ? 'Paste the new key to replace the existing one. The provider stays the same.'
               : 'Paste an Anthropic or OpenAI API key. Weltbon validates it against the provider, then stores it encrypted.'}
@@ -137,7 +137,7 @@ export function CreateLlmKeyDialog({
                 id="llmkey-provider"
                 disabled={isReplace}
                 {...register('provider')}
-                className="w-full rounded-md border border-neutral-300 dark:border-neutral-700 bg-transparent px-3 py-2 text-sm disabled:opacity-60"
+                className="w-full rounded-md border border-line-strong bg-transparent px-3 py-2 text-sm disabled:opacity-60"
               >
                 <option value="anthropic">Anthropic</option>
                 <option value="openai">OpenAI</option>
@@ -161,7 +161,7 @@ export function CreateLlmKeyDialog({
                 maxLength={100}
                 autoComplete="off"
                 {...register('label')}
-                className="w-full rounded-md border border-neutral-300 dark:border-neutral-700 bg-transparent px-3 py-2 text-sm"
+                className="w-full rounded-md border border-line-strong bg-transparent px-3 py-2 text-sm"
               />
               {errors.label && (
                 <p className="mt-1 text-sm text-red-500" role="alert">
@@ -184,7 +184,7 @@ export function CreateLlmKeyDialog({
                 autoCapitalize="off"
                 spellCheck={false}
                 {...register('key')}
-                className="w-full rounded-md border border-neutral-300 dark:border-neutral-700 bg-transparent px-3 py-2 text-sm font-mono"
+                className="w-full rounded-md border border-line-strong bg-transparent px-3 py-2 text-sm font-mono"
               />
               {errors.key && (
                 <p className="mt-1 text-sm text-red-500" role="alert">
@@ -205,7 +205,7 @@ export function CreateLlmKeyDialog({
             )}
 
             <div className="mt-6 flex justify-end gap-2">
-              <Dialog.Close className="px-3 py-1.5 text-sm rounded-md border border-neutral-300 dark:border-neutral-700">
+              <Dialog.Close className="px-3 py-1.5 text-sm rounded-md border border-line-strong">
                 Cancel
               </Dialog.Close>
               <button

@@ -67,7 +67,7 @@ export function MapList() {
 
       {/* Content */}
       {isLoading ? (
-        <p className="text-sm text-neutral-500">{COPY.loading}</p>
+        <p className="text-sm text-ink-muted">{COPY.loading}</p>
       ) : isError ? (
         <p className="text-sm text-red-500">{COPY.error}</p>
       ) : !data || data.length === 0 ? (
@@ -91,7 +91,7 @@ export function MapList() {
           {data.map((map) => (
             <div
               key={map.id}
-              className="rounded-md border border-neutral-200 dark:border-neutral-700 hover:border-neutral-400 dark:hover:border-neutral-500 overflow-hidden transition-colors"
+              className="rounded-md border border-line-strong hover:border-[color:var(--color-ink-muted)] overflow-hidden transition-colors"
             >
               {/* Tile image — clickable to navigate to map detail */}
               <button
@@ -103,7 +103,7 @@ export function MapList() {
                 <img
                   src={map.thumbUrl ?? ''}
                   alt={map.name}
-                  className="w-full aspect-video object-cover bg-neutral-100 dark:bg-neutral-800"
+                  className="w-full aspect-video object-cover bg-raised"
                 />
               </button>
 

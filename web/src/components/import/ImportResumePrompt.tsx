@@ -23,7 +23,7 @@ export function ImportResumePrompt({
       <h1 className="text-xl font-semibold tracking-tight">
         You have an in-progress import
       </h1>
-      <p className="mt-2 text-sm text-neutral-600 dark:text-neutral-400 leading-[1.5]">
+      <p className="mt-2 text-sm text-ink-secondary leading-[1.5]">
         You started reviewing {pluralize(entryCount, 'entry', 'entries')} {relative}.
         Pick up where you left off, or start over with a fresh upload.
       </p>
@@ -38,7 +38,7 @@ export function ImportResumePrompt({
         <button
           type="button"
           onClick={() => setConfirmOpen(true)}
-          className="text-sm px-3 py-1.5 rounded-md border border-neutral-300 dark:border-neutral-700"
+          className="text-sm px-3 py-1.5 rounded-md border border-line-strong"
         >
           Discard and start over
         </button>

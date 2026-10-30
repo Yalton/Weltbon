@@ -77,7 +77,7 @@ export function AssetPickerModal({
     <Dialog.Root open={open} onOpenChange={onOpenChange}>
       <Dialog.Portal>
         <Dialog.Overlay className="fixed inset-0 bg-black/50 z-40 data-[state=open]:animate-overlay-in data-[state=closed]:animate-overlay-out" />
-        <Dialog.Content className="fixed left-1/2 top-1/2 -translate-x-1/2 -translate-y-1/2 w-full max-w-xl max-h-[80vh] flex flex-col bg-white dark:bg-neutral-900 border border-neutral-200 dark:border-neutral-800 rounded-md p-6 shadow-lg z-50 data-[state=open]:animate-dialog-in data-[state=closed]:animate-dialog-out focus:outline-none">
+        <Dialog.Content className="fixed left-1/2 top-1/2 -translate-x-1/2 -translate-y-1/2 w-full max-w-xl max-h-[80vh] flex flex-col bg-panel border border-line rounded-md p-6 shadow-lg z-50 data-[state=open]:animate-dialog-in data-[state=closed]:animate-dialog-out focus:outline-none">
           <Dialog.Title className="text-lg font-semibold shrink-0">
             {dialogTitle}
           </Dialog.Title>
@@ -88,11 +88,11 @@ export function AssetPickerModal({
               type="button"
               onClick={() => fileInputRef.current?.click()}
               disabled={uploadAsset.isPending}
-              className="rounded-md border border-neutral-300 dark:border-neutral-700 text-sm px-3 py-1.5 hover:bg-neutral-50 dark:hover:bg-neutral-800 disabled:opacity-50"
+              className="rounded-md border border-line-strong text-sm px-3 py-1.5 hover:bg-white/5 disabled:opacity-50"
             >
               {uploadAsset.isPending ? COPY.uploading : COPY.uploadLabel}
             </button>
-            <span className="ml-2 text-xs text-neutral-400">{COPY.uploadAccept}</span>
+            <span className="ml-2 text-xs text-ink-muted">{COPY.uploadAccept}</span>
             <input
               ref={fileInputRef}
               type="file"
@@ -110,9 +110,9 @@ export function AssetPickerModal({
           {/* Asset grid browse */}
           <div className="mt-4 flex-1 overflow-y-auto">
             {isLoading ? (
-              <p className="text-sm text-neutral-500">{COPY.loading}</p>
+              <p className="text-sm text-ink-muted">{COPY.loading}</p>
             ) : !assets || assets.length === 0 ? (
-              <p className="text-sm text-neutral-500">{COPY.empty}</p>
+              <p className="text-sm text-ink-muted">{COPY.empty}</p>
             ) : (
               <div className="grid grid-cols-3 sm:grid-cols-4 gap-3">
                 {assets.map((asset: AssetSummary) => (
@@ -124,7 +124,7 @@ export function AssetPickerModal({
                       'relative rounded-md overflow-hidden border-2 aspect-square focus:outline-none focus:ring-2 focus:ring-[color:var(--color-accent)]',
                       selected === asset.id
                         ? 'border-[color:var(--color-accent)]'
-                        : 'border-neutral-200 dark:border-neutral-700 hover:border-neutral-400 dark:hover:border-neutral-500',
+                        : ' border-line-strong hover:border-[color:var(--color-ink-muted)]',
                     ].join(' ')}
                     aria-label={`Select ${asset.filename}`}
                     aria-pressed={selected === asset.id}
@@ -132,7 +132,7 @@ export function AssetPickerModal({
                     <img
                       src={asset.thumbUrl}
                       alt={asset.altText ?? asset.filename}
-                      className="w-full h-full object-contain bg-neutral-100 dark:bg-neutral-800"
+                      className="w-full h-full object-contain bg-raised"
                       onError={(e) => {
                         (e.target as HTMLImageElement).style.display = 'none';
                       }}
@@ -161,8 +161,8 @@ export function AssetPickerModal({
           </div>
 
           {/* Actions */}
-          <div className="mt-4 flex justify-end gap-2 shrink-0 border-t border-neutral-200 dark:border-neutral-800 pt-4">
-            <Dialog.Close className="px-3 py-1.5 text-sm rounded-md border border-neutral-300 dark:border-neutral-700">
+          <div className="mt-4 flex justify-end gap-2 shrink-0 border-t border-line pt-4">
+            <Dialog.Close className="px-3 py-1.5 text-sm rounded-md border border-line-strong">
               {COPY.cancel}
             </Dialog.Close>
             <button

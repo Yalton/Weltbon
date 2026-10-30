@@ -75,12 +75,12 @@ function EntrySuggestions({
 
   if (results.length === 0) return null;
   return (
-    <ul aria-label="Entry suggestions" className="mt-2 max-h-36 overflow-y-auto rounded border border-neutral-200 dark:border-neutral-700">
+    <ul aria-label="Entry suggestions" className="mt-2 max-h-36 overflow-y-auto rounded border border-line-strong">
       {results.map((entry) => (
         <li key={entry.id}>
           <button
             type="button"
-            className="w-full px-2 py-1 text-left text-sm hover:bg-neutral-100 dark:hover:bg-neutral-800"
+            className="w-full px-2 py-1 text-left text-sm hover:bg-white/5"
             onClick={() => onSelect(entry)}
           >
             {entry.title}
@@ -136,7 +136,7 @@ export function MarkdownLinkDialog({
           <Dialog.Overlay className="fixed inset-0 z-40 bg-black/50" />
           <Dialog.Content
             aria-describedby={undefined}
-            className="fixed left-1/2 top-1/2 z-50 w-[min(32rem,calc(100vw-2rem))] -translate-x-1/2 -translate-y-1/2 rounded-md border border-neutral-200 bg-white p-5 shadow-lg dark:border-neutral-800 dark:bg-neutral-900"
+            className="fixed left-1/2 top-1/2 z-50 w-[min(32rem,calc(100vw-2rem))] -translate-x-1/2 -translate-y-1/2 rounded-md border p-5 shadow-lg border-line bg-panel"
             onOpenAutoFocus={(event) => {
               event.preventDefault();
               targetRef.current?.focus();
@@ -153,7 +153,7 @@ export function MarkdownLinkDialog({
                     setKind(option);
                     if (option === 'external' && !label) setLabel('Link');
                   }}
-                  className="rounded border border-neutral-300 px-2 py-1 text-xs dark:border-neutral-700"
+                  className="rounded border px-2 py-1 text-xs border-line-strong"
                 >
                   {option === 'wikilink' ? 'Wikilink' : option === 'embed' ? 'Embed' : option === 'external' ? 'External URL' : 'Asset image'}
                 </button>
@@ -167,11 +167,11 @@ export function MarkdownLinkDialog({
               aria-label="Link target"
               value={target}
               onChange={(event) => setTarget(event.target.value)}
-              className="mt-1 w-full rounded border border-neutral-300 bg-transparent px-2 py-1.5 text-sm dark:border-neutral-700"
+              className="mt-1 w-full rounded border bg-transparent px-2 py-1.5 text-sm border-line-strong"
               autoComplete="off"
             />
             {kind === 'image' && (
-              <button type="button" className="mt-2 rounded border border-neutral-300 px-2 py-1 text-xs dark:border-neutral-700" onClick={() => setAssetPickerOpen(true)}>
+              <button type="button" className="mt-2 rounded border px-2 py-1 text-xs border-line-strong" onClick={() => setAssetPickerOpen(true)}>
                 Choose existing or upload image
               </button>
             )}
@@ -182,15 +182,15 @@ export function MarkdownLinkDialog({
               aria-label={kind === 'external' ? 'Accessible text' : 'Display text / alt text'}
               value={label}
               onChange={(event) => setLabel(event.target.value)}
-              className="mt-1 w-full rounded border border-neutral-300 bg-transparent px-2 py-1.5 text-sm dark:border-neutral-700"
+              className="mt-1 w-full rounded border bg-transparent px-2 py-1.5 text-sm border-line-strong"
               autoComplete="off"
             />
 
             {(kind === 'wikilink' || kind === 'embed') && entries ? (
-              <ul aria-label="Entry suggestions" className="mt-2 max-h-36 overflow-y-auto rounded border border-neutral-200 dark:border-neutral-700">
+              <ul aria-label="Entry suggestions" className="mt-2 max-h-36 overflow-y-auto rounded border border-line-strong">
                 {rankEntries(entries, target, currentEntryId).map((entry) => (
                   <li key={entry.id}>
-                    <button type="button" className="w-full px-2 py-1 text-left text-sm hover:bg-neutral-100 dark:hover:bg-neutral-800" onClick={() => { setTarget(entry.title); if (!label) setLabel(''); }}>
+                    <button type="button" className="w-full px-2 py-1 text-left text-sm hover:bg-white/5" onClick={() => { setTarget(entry.title); if (!label) setLabel(''); }}>
                       {entry.title}
                     </button>
                   </li>
@@ -201,7 +201,7 @@ export function MarkdownLinkDialog({
             ) : null}
 
             <div className="mt-5 flex justify-end gap-2">
-              <button type="button" onClick={() => onOpenChange(false)} className="rounded border border-neutral-300 px-3 py-1.5 text-sm dark:border-neutral-700">Cancel</button>
+              <button type="button" onClick={() => onOpenChange(false)} className="rounded border px-3 py-1.5 text-sm border-line-strong">Cancel</button>
               <button type="button" disabled={!canInsert} onClick={insert} className="rounded bg-[color:var(--color-accent)] px-3 py-1.5 text-sm text-white disabled:opacity-50">Insert link</button>
             </div>
           </Dialog.Content>

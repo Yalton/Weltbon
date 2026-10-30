@@ -73,7 +73,7 @@ export function NewDiagramDialog({ open, onOpenChange, universeId }: Props) {
     <Dialog.Root open={open} onOpenChange={onOpenChange}>
       <Dialog.Portal>
         <Dialog.Overlay className="fixed inset-0 bg-black/50 z-40 data-[state=open]:animate-overlay-in data-[state=closed]:animate-overlay-out" />
-        <Dialog.Content className="fixed left-1/2 top-1/2 -translate-x-1/2 -translate-y-1/2 w-full max-w-md bg-white dark:bg-neutral-900 border border-neutral-200 dark:border-neutral-800 rounded-md p-6 shadow-lg z-50 data-[state=open]:animate-dialog-in data-[state=closed]:animate-dialog-out focus:outline-none">
+        <Dialog.Content className="fixed left-1/2 top-1/2 -translate-x-1/2 -translate-y-1/2 w-full max-w-md bg-panel border border-line rounded-md p-6 shadow-lg z-50 data-[state=open]:animate-dialog-in data-[state=closed]:animate-dialog-out focus:outline-none">
           <Dialog.Title className="text-lg font-semibold">
             {COPY.dialogTitle}
           </Dialog.Title>
@@ -91,7 +91,7 @@ export function NewDiagramDialog({ open, onOpenChange, universeId }: Props) {
                 onChange={(e) => setNameInput(e.target.value)}
                 placeholder={COPY.placeholderName}
                 autoFocus
-                className="w-full rounded-md border border-neutral-300 dark:border-neutral-700 bg-transparent px-3 py-2 text-sm focus:outline-none focus:ring-2 focus:ring-[color:var(--color-accent)]"
+                className="w-full rounded-md border border-line-strong bg-transparent px-3 py-2 text-sm focus:outline-none focus:ring-2 focus:ring-[color:var(--color-accent)]"
               />
               {errorField === 'name' && errorCopy && (
                 <p className="mt-1 text-xs text-red-500" role="alert">
@@ -111,7 +111,7 @@ export function NewDiagramDialog({ open, onOpenChange, universeId }: Props) {
                 value={descInput}
                 onChange={(e) => setDescInput(e.target.value)}
                 placeholder={COPY.placeholderDescription}
-                className="w-full rounded-md border border-neutral-300 dark:border-neutral-700 bg-transparent px-3 py-2 text-sm focus:outline-none focus:ring-2 focus:ring-[color:var(--color-accent)]"
+                className="w-full rounded-md border border-line-strong bg-transparent px-3 py-2 text-sm focus:outline-none focus:ring-2 focus:ring-[color:var(--color-accent)]"
               />
             </div>
 
@@ -123,7 +123,7 @@ export function NewDiagramDialog({ open, onOpenChange, universeId }: Props) {
             )}
 
             <div className="mt-6 flex justify-end gap-2">
-              <Dialog.Close className="px-3 py-1.5 text-sm rounded-md border border-neutral-300 dark:border-neutral-700">
+              <Dialog.Close className="px-3 py-1.5 text-sm rounded-md border border-line-strong">
                 {COPY.cancel}
               </Dialog.Close>
               <button

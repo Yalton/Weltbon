@@ -35,7 +35,7 @@ export function CategorySidebarItem({
 
   return (
     <li ref={setNodeRef} style={style} className="group">
-      <div className="flex items-center rounded hover:bg-neutral-100 dark:hover:bg-neutral-900">
+      <div className="flex items-center rounded hover:bg-white/[0.03]">
         <button
           type="button"
           onClick={() => onToggleCollapse(category.id)}
@@ -45,18 +45,18 @@ export function CategorySidebarItem({
           {...attributes}
           {...listeners}
         >
-          <span aria-hidden className="w-3 inline-block text-neutral-400">
+          <span aria-hidden className="w-3 inline-block text-ink-muted">
             {isCollapsed ? '▸' : '▾'}
           </span>
           {category.icon && <span aria-hidden>{category.icon}</span>}
           <span className="flex-1 truncate">{category.label}</span>
-          <span className="text-neutral-500 tabular-nums pr-1">{category.entryCount}</span>
+          <span className="text-ink-muted tabular-nums pr-1">{category.entryCount}</span>
         </button>
 
         <DropdownMenu.Root>
           <DropdownMenu.Trigger
             aria-label={`Category actions for ${category.label}`}
-            className="px-2 py-1 text-sm text-neutral-400 hover:text-neutral-600 dark:hover:text-neutral-200 opacity-0 group-hover:opacity-100 focus:opacity-100 data-[state=open]:opacity-100"
+            className="px-2 py-1 text-sm text-ink-muted hover:text-ink opacity-0 group-hover:opacity-100 focus:opacity-100 data-[state=open]:opacity-100"
             onPointerDown={(e) => e.stopPropagation()}
             onKeyDown={(e) => e.stopPropagation()}
           >
@@ -66,17 +66,17 @@ export function CategorySidebarItem({
             <DropdownMenu.Content
               align="end"
               sideOffset={4}
-              className="min-w-[8rem] rounded-md border border-neutral-200 dark:border-neutral-800 bg-white dark:bg-neutral-900 p-1 shadow-lg z-50"
+              className="min-w-[8rem] rounded-md border border-line bg-panel p-1 shadow-lg z-50"
             >
               <DropdownMenu.Item
                 onSelect={() => onRename(category)}
-                className="px-2 py-1.5 text-sm rounded cursor-pointer outline-none data-[highlighted]:bg-neutral-100 dark:data-[highlighted]:bg-neutral-800"
+                className="px-2 py-1.5 text-sm rounded cursor-pointer outline-none data-[highlighted]:bg-white/5"
               >
                 Rename
               </DropdownMenu.Item>
               <DropdownMenu.Item
                 onSelect={() => onDelete(category)}
-                className="px-2 py-1.5 text-sm rounded cursor-pointer outline-none text-red-600 dark:text-red-400 data-[highlighted]:bg-neutral-100 dark:data-[highlighted]:bg-neutral-800"
+                className="px-2 py-1.5 text-sm rounded cursor-pointer outline-none text-red-600 dark:text-red-400 data-[highlighted]:bg-white/5"
               >
                 Delete
               </DropdownMenu.Item>

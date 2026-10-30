@@ -13,11 +13,11 @@ export interface MapBreadcrumbProps {
  * top-16 while this is visible (UI-SPEC §3: toolbar default is left-4 top-4).
  *
  * Chrome: same solid chip as MapToolbar — rounded-md border
- * bg-white/90 dark:bg-neutral-900/90 shadow-sm px-3 py-1.5.
+ * bg-panel shadow-sm px-3 py-1.5.
  *
  * Navigation is share-token-aware (copied verbatim from MapList.tsx:48-54):
- *   - Share mode:  /share/:token/maps/:originMapId
- *   - Auth mode:   /universes/:uid/maps/:originMapId
+ * - Share mode: /share/:token/maps/:originMapId
+ * - Auth mode: /universes/:uid/maps/:originMapId
  *
  * Single-level only — browser/router back handles deeper chains;
  * cycles are harmless (D-03).
@@ -53,7 +53,7 @@ export function MapBreadcrumb({
       title={originMapName}
       className={[
         'absolute left-4 top-4 z-20',
-        'rounded-md border border-neutral-200 dark:border-neutral-800',
+        'rounded-md border border-line',
         'bg-raised shadow-sm',
         'px-3 py-1.5',
         'flex items-center gap-1.5',

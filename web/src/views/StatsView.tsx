@@ -51,16 +51,16 @@ export function StatsView() {
           <article
             key={label}
             aria-label={`${count ?? 'Loading...'} ${label}`}
-            className="rounded-md border border-neutral-200 dark:border-neutral-800 bg-white dark:bg-neutral-900 p-4 flex flex-col gap-1"
+            className="rounded-md border border-line bg-panel p-4 flex flex-col gap-1"
           >
             {isLoading ? (
               <span className="text-sm text-ink-muted">Loading...</span>
             ) : (
-              <span className="text-xl font-semibold tabular-nums text-neutral-900 dark:text-neutral-100">
+              <span className="text-xl font-semibold tabular-nums text-ink">
                 {count}
               </span>
             )}
-            <span className="text-xs text-neutral-500 uppercase tracking-wide">{label}</span>
+            <span className="text-xs text-ink-muted uppercase tracking-wide">{label}</span>
           </article>
         ))}
       </div>
@@ -70,7 +70,7 @@ export function StatsView() {
       {isLoading ? (
         <div className="space-y-2">
           {[1, 2, 3].map((i) => (
-            <div key={i} className="h-4 rounded bg-neutral-200 dark:bg-neutral-800 animate-pulse motion-reduce:animate-none" />
+            <div key={i} className="h-4 rounded bg-raised animate-pulse motion-reduce:animate-none" />
           ))}
         </div>
       ) : (
@@ -85,18 +85,18 @@ export function StatsView() {
                 tabIndex={0}
                 onClick={() => navigate(`/universes/${uid}/entries?type=${encodeURIComponent(type)}`)}
                 aria-label={`${type}: ${count} entries`}
-                className="w-full flex items-center gap-3 py-1 px-2 rounded hover:bg-neutral-100 dark:hover:bg-neutral-800 cursor-pointer text-left"
+                className="w-full flex items-center gap-3 py-1 px-2 rounded hover:bg-white/5 cursor-pointer text-left"
               >
-                <span className="text-sm truncate w-32 flex-shrink-0 text-neutral-700 dark:text-neutral-300">
+                <span className="text-sm truncate w-32 flex-shrink-0 text-ink">
                   {type}
                 </span>
-                <div className="flex-1 h-2 rounded-full bg-neutral-200 dark:bg-neutral-800 overflow-hidden">
+                <div className="flex-1 h-2 rounded-full bg-raised overflow-hidden">
                   <div
                     className="h-full rounded-full bg-[color:var(--color-accent)]"
                     style={{ width: `${pct}%` }}
                   />
                 </div>
-                <span className="text-xs tabular-nums text-neutral-500 w-8 text-right">{count}</span>
+                <span className="text-xs tabular-nums text-ink-muted w-8 text-right">{count}</span>
               </button>
             );
           })}
@@ -108,7 +108,7 @@ export function StatsView() {
       {isLoading ? (
         <div className="space-y-2">
           {[1, 2, 3].map((i) => (
-            <div key={i} className="h-4 rounded bg-neutral-200 dark:bg-neutral-800 animate-pulse motion-reduce:animate-none" />
+            <div key={i} className="h-4 rounded bg-raised animate-pulse motion-reduce:animate-none" />
           ))}
         </div>
       ) : (
@@ -127,18 +127,18 @@ export function StatsView() {
                   )
                 }
                 aria-label={`${label}: ${count} entries`}
-                className="w-full flex items-center gap-3 py-1 px-2 rounded hover:bg-neutral-100 dark:hover:bg-neutral-800 cursor-pointer text-left"
+                className="w-full flex items-center gap-3 py-1 px-2 rounded hover:bg-white/5 cursor-pointer text-left"
               >
-                <span className="text-sm truncate w-32 flex-shrink-0 text-neutral-700 dark:text-neutral-300">
+                <span className="text-sm truncate w-32 flex-shrink-0 text-ink">
                   {label}
                 </span>
-                <div className="flex-1 h-2 rounded-full bg-neutral-200 dark:bg-neutral-800 overflow-hidden">
+                <div className="flex-1 h-2 rounded-full bg-raised overflow-hidden">
                   <div
                     className="h-full rounded-full bg-[color:var(--color-accent)]"
                     style={{ width: `${pct}%` }}
                   />
                 </div>
-                <span className="text-xs tabular-nums text-neutral-500 w-8 text-right">{count}</span>
+                <span className="text-xs tabular-nums text-ink-muted w-8 text-right">{count}</span>
               </button>
             );
           })}
@@ -150,13 +150,13 @@ export function StatsView() {
       {isLoading ? (
         <div className="space-y-2">
           {[1, 2, 3].map((i) => (
-            <div key={i} className="h-4 rounded bg-neutral-200 dark:bg-neutral-800 animate-pulse motion-reduce:animate-none" />
+            <div key={i} className="h-4 rounded bg-raised animate-pulse motion-reduce:animate-none" />
           ))}
         </div>
       ) : (
         <>
           {data && data.recentlyEdited.length === 0 ? (
-            <p className="text-sm text-neutral-500 py-4">No entries yet.</p>
+            <p className="text-sm text-ink-muted py-4">No entries yet.</p>
           ) : (
             <ul aria-label="Recently edited entries" className="space-y-1">
               {(data?.recentlyEdited ?? []).slice(0, 10).map((entry) => (
@@ -165,11 +165,11 @@ export function StatsView() {
                     type="button"
                     aria-label={`${entry.title} — edited ${relativeTime(entry.updatedAt)}`}
                     onClick={() => navigate(`/universes/${uid}/entries/${entry.id}`)}
-                    className="w-full flex items-center gap-3 py-1.5 px-2 rounded hover:bg-neutral-100 dark:hover:bg-neutral-800 cursor-pointer text-left"
+                    className="w-full flex items-center gap-3 py-1.5 px-2 rounded hover:bg-white/5 cursor-pointer text-left"
                   >
                     <span className="text-base">{entry.icon || '○'}</span>
                     <span className="text-sm truncate flex-1">{entry.title}</span>
-                    <span className="text-xs text-neutral-500 flex-shrink-0">
+                    <span className="text-xs text-ink-muted flex-shrink-0">
                       {relativeTime(entry.updatedAt)}
                     </span>
                   </button>

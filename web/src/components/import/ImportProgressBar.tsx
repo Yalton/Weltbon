@@ -18,7 +18,7 @@ export function ImportProgressBar({
       aria-valuemin={0}
       aria-valuemax={100}
       aria-label={ariaLabel}
-      className="h-1 mt-4 bg-neutral-200 dark:bg-neutral-800 rounded-full overflow-hidden"
+      className="h-1 mt-4 bg-raised rounded-full overflow-hidden"
     >
       <div
         className="h-full bg-[color:var(--color-accent)] transition-all duration-150"

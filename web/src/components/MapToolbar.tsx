@@ -57,13 +57,13 @@ export function MapToolbar({
   return (
     <div className={`absolute left-4 ${hasBreadcrumb ? 'top-16' : 'top-4'} z-10 flex flex-wrap items-center gap-2 rounded-md border border-line-strong bg-raised px-3 py-2 shadow-sm max-w-[calc(100vw-2rem)]`}>
       {/* Read-only map name */}
-      <span className="text-sm font-semibold text-neutral-900 dark:text-neutral-100 truncate max-w-[160px]">
+      <span className="text-sm font-semibold text-ink truncate max-w-[160px]">
         {mapName}
       </span>
 
       {/* Mutation-button divider — only shown when any mutation button is present */}
       {hasMutationButtons && (
-        <div className="w-px h-4 bg-neutral-200 dark:bg-neutral-700 mx-1" aria-hidden />
+        <div className="w-px h-4 bg-white/10 mx-1" aria-hidden />
       )}
 
       {/* Add pin mode toggle — accent fill when active, border when inactive.
@@ -78,7 +78,7 @@ export function MapToolbar({
             'focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-[color:var(--color-accent)] focus-visible:ring-offset-2',
             addPinMode
               ? 'bg-[color:var(--color-accent)] text-white'
-              : 'border border-neutral-300 dark:border-neutral-700 text-neutral-700 dark:text-neutral-300 hover:bg-neutral-50 dark:hover:bg-neutral-800',
+              : 'border border-line-strong text-ink hover:bg-white/5',
           ].join(' ')}
         >
           {addPinMode ? COPY.addingPins : COPY.addPin}
@@ -96,7 +96,7 @@ export function MapToolbar({
             'focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-[color:var(--color-accent)] focus-visible:ring-offset-2',
             drawRegionMode
               ? 'bg-[color:var(--color-accent)] text-white'
-              : 'border border-neutral-300 dark:border-neutral-700 text-neutral-700 dark:text-neutral-300 hover:bg-neutral-50 dark:hover:bg-neutral-800',
+              : 'border border-line-strong text-ink hover:bg-white/5',
           ].join(' ')}
         >
           {drawRegionMode ? COPY.drawingRegion : COPY.drawRegion}
@@ -114,7 +114,7 @@ export function MapToolbar({
             'focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-[color:var(--color-accent)] focus-visible:ring-offset-2',
             drawRouteMode
               ? 'bg-[color:var(--color-accent)] text-white'
-              : 'border border-neutral-300 dark:border-neutral-700 text-neutral-700 dark:text-neutral-300 hover:bg-neutral-50 dark:hover:bg-neutral-800',
+              : 'border border-line-strong text-ink hover:bg-white/5',
           ].join(' ')}
         >
           {drawRouteMode ? COPY.drawingRoute : COPY.drawRoute}
@@ -126,7 +126,7 @@ export function MapToolbar({
         <button
           type="button"
           onClick={onChangeImage}
-          className="rounded-md border border-neutral-300 dark:border-neutral-700 text-neutral-700 dark:text-neutral-300 text-sm px-3 py-2 hover:bg-neutral-50 dark:hover:bg-neutral-800 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-[color:var(--color-accent)]"
+          className="rounded-md border border-line-strong text-ink text-sm px-3 py-2 hover:bg-white/5 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-[color:var(--color-accent)]"
         >
           {COPY.changeImage}
         </button>
@@ -143,7 +143,7 @@ export function MapToolbar({
             'focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-[color:var(--color-accent)] focus-visible:ring-offset-2',
             legendVisible
               ? 'bg-[color:var(--color-accent)] text-white'
-              : 'border border-neutral-300 dark:border-neutral-700 text-neutral-700 dark:text-neutral-300 hover:bg-neutral-50 dark:hover:bg-neutral-800',
+              : 'border border-line-strong text-ink hover:bg-white/5',
           ].join(' ')}
         >
           {COPY.legend}
@@ -161,7 +161,7 @@ export function MapToolbar({
             'focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-[color:var(--color-accent)] focus-visible:ring-offset-2',
             layersPanelVisible
               ? 'bg-[color:var(--color-accent)] text-white'
-              : 'border border-neutral-300 dark:border-neutral-700 text-neutral-700 dark:text-neutral-300 hover:bg-neutral-50 dark:hover:bg-neutral-800',
+              : 'border border-line-strong text-ink hover:bg-white/5',
           ].join(' ')}
         >
           {COPY.layers}
@@ -177,7 +177,7 @@ export function MapToolbar({
           onChange={(e) => onSearchQueryChange(e.target.value)}
           placeholder={COPY.searchPlaceholder}
           aria-label="Search map items"
-          className="rounded-md border border-neutral-300 dark:border-neutral-700 text-sm px-3 py-2 bg-white dark:bg-neutral-900 text-neutral-700 dark:text-neutral-300 placeholder:text-neutral-400 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-[color:var(--color-accent)] w-40"
+          className="rounded-md border border-line-strong text-sm px-3 py-2 bg-panel text-ink placeholder:text-ink-muted focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-[color:var(--color-accent)] w-40"
         />
       )}
     </div>

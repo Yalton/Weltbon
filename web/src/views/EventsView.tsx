@@ -128,18 +128,18 @@ export function EventsView() {
             <button
               type="button"
               onClick={() => setParticipantDropdownOpen((v) => !v)}
-              className="text-sm text-neutral-500 hover:text-neutral-900 dark:hover:text-neutral-100 border border-dashed border-neutral-300 dark:border-neutral-700 rounded-full px-3 py-1"
+              className="text-sm text-ink-muted hover:text-ink border border-dashed border-line-strong rounded-full px-3 py-1"
             >
               Filter by participant
             </button>
             {participantDropdownOpen && (
-              <div className="absolute left-0 top-full mt-1 z-10 bg-white dark:bg-neutral-900 border border-neutral-200 dark:border-neutral-800 rounded-md shadow-lg min-w-[200px] max-h-64 overflow-y-auto">
+              <div className="absolute left-0 top-full mt-1 z-10 bg-panel border border-line rounded-md shadow-lg min-w-[200px] max-h-64 overflow-y-auto">
                 {entries && entries.length > 0 ? (
                   entries.map((entry) => (
                     <button
                       key={entry.id}
                       type="button"
-                      className="block w-full text-left px-3 py-2 text-sm hover:bg-neutral-100 dark:hover:bg-neutral-800"
+                      className="block w-full text-left px-3 py-2 text-sm hover:bg-white/5"
                       onClick={() => {
                         setParticipantId(entry.id);
                         setParticipantDropdownOpen(false);
@@ -149,7 +149,7 @@ export function EventsView() {
                     </button>
                   ))
                 ) : (
-                  <p className="px-3 py-2 text-sm text-neutral-500">No entries</p>
+                  <p className="px-3 py-2 text-sm text-ink-muted">No entries</p>
                 )}
               </div>
             )}
@@ -162,7 +162,7 @@ export function EventsView() {
               onChange={(e) =>
                 setEraIndex(e.target.value !== '' ? Number(e.target.value) : undefined)
               }
-              className="text-sm text-neutral-500 border border-dashed border-neutral-300 dark:border-neutral-700 rounded-full px-3 py-1 bg-transparent"
+              className="text-sm text-ink-muted border border-dashed border-line-strong rounded-full px-3 py-1 bg-transparent"
               aria-label="Filter by era"
             >
               <option value="">Filter by era</option>
@@ -182,14 +182,14 @@ export function EventsView() {
                 value={fromPositionInput}
                 onChange={(e) => setFromPositionInput(e.target.value)}
                 placeholder="From position"
-                className="text-sm border border-dashed border-neutral-300 dark:border-neutral-700 rounded-full px-3 py-1 bg-transparent font-mono w-32"
+                className="text-sm border border-dashed border-line-strong rounded-full px-3 py-1 bg-transparent font-mono w-32"
               />
               <input
                 type="text"
                 value={toPositionInput}
                 onChange={(e) => setToPositionInput(e.target.value)}
                 placeholder="To position"
-                className="text-sm border border-dashed border-neutral-300 dark:border-neutral-700 rounded-full px-3 py-1 bg-transparent font-mono w-32"
+                className="text-sm border border-dashed border-line-strong rounded-full px-3 py-1 bg-transparent font-mono w-32"
               />
             </>
           )}
@@ -223,7 +223,7 @@ export function EventsView() {
       ) : (
         <div className="space-y-1">
           {/* Table header */}
-          <div className="flex items-center gap-4 px-3 py-1 text-xs text-neutral-500 border-b border-neutral-200 dark:border-neutral-800">
+          <div className="flex items-center gap-4 px-3 py-1 text-xs text-ink-muted border-b border-line">
             <span className="flex-1">Event</span>
             <span className="w-40 text-right tabular-nums">Date / Position</span>
           </div>
@@ -236,7 +236,7 @@ export function EventsView() {
               <Link
                 key={event.id}
                 to={`/universes/${uid}/entries/${event.entryId}`}
-                className="flex items-center gap-4 px-3 py-2 rounded-md hover:bg-neutral-100 dark:hover:bg-neutral-800 transition-colors"
+                className="flex items-center gap-4 px-3 py-2 rounded-md hover:bg-white/5 transition-colors"
               >
                 <span className="flex-1 text-sm">
                   {event.entryIcon && (
@@ -245,7 +245,7 @@ export function EventsView() {
                   {event.entryTitle ?? event.label}
                 </span>
                 <span
-                  className={`w-40 text-right text-sm text-neutral-500${
+                  className={`w-40 text-right text-sm text-ink-muted${
                     !formatCalendar(event.position, calendar) ? ' tabular-nums font-mono' : ''
                   }`}
                 >

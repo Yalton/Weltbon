@@ -99,12 +99,12 @@ export function WordPopover({
           align="center"
           onMouseEnter={handleMouseEnter}
           onMouseLeave={handleMouseLeave}
-          className="bg-white dark:bg-neutral-900 border border-neutral-200 dark:border-neutral-800 rounded-md shadow-lg p-3 z-50 max-w-[280px] data-[state=open]:animate-popover-in data-[state=closed]:animate-popover-out focus:outline-none"
+          className="bg-panel border border-line rounded-md shadow-lg p-3 z-50 max-w-[280px] data-[state=open]:animate-popover-in data-[state=closed]:animate-popover-out focus:outline-none"
         >
           <div>
             <span className="font-semibold text-sm">{word}</span>
             {ipa && (
-              <span className="block font-mono text-neutral-500 text-sm mt-0.5">
+              <span className="block font-mono text-ink-muted text-sm mt-0.5">
                 <span className="sr-only">IPA: </span>
                 {ipa}
               </span>

@@ -47,13 +47,13 @@ function PinnedEntryCard({ entry }: CardProps) {
     <div
       data-testid={`timeline-entry-card-${entry.id}`}
       aria-disabled="true"
-      className="flex items-center gap-3 px-4 py-3 rounded-md border border-neutral-200 dark:border-neutral-800"
+      className="flex items-center gap-3 px-4 py-3 rounded-md border border-line"
     >
       <EntryIdentity entry={entry} />
       <TypeBadge type={entry.entryType} />
       <span
         aria-label="Already pinned to timeline"
-        className="ml-auto bg-neutral-100 dark:bg-neutral-800 text-neutral-500 text-xs rounded px-2 py-1"
+        className="ml-auto bg-raised text-ink-muted text-xs rounded px-2 py-1"
       >
         Pinned
       </span>
@@ -69,7 +69,7 @@ function DraggableEntryCard({ entry }: CardProps) {
     <div
       ref={setNodeRef}
       data-testid={`timeline-entry-card-${entry.id}`}
-      className={`flex items-center gap-3 px-4 py-3 rounded-md border border-neutral-200 dark:border-neutral-800 cursor-grab hover:border-[color:var(--color-accent)] transition-colors ${
+      className={`flex items-center gap-3 px-4 py-3 rounded-md border border-line cursor-grab hover:border-[color:var(--color-accent)] transition-colors ${
         isDragging ? 'opacity-50' : ''
       }`}
       {...attributes}
@@ -96,7 +96,7 @@ export function TimelineEntryPanel({ universeId, pins }: TimelineEntryPanelProps
   return (
     <aside
       aria-label="Universe entries"
-      className="w-80 flex-shrink-0 overflow-y-auto border-l border-neutral-200 dark:border-neutral-800 p-4 space-y-3"
+      className="w-80 flex-shrink-0 overflow-y-auto border-l border-line p-4 space-y-3"
     >
       <input
         type="search"
@@ -106,7 +106,7 @@ export function TimelineEntryPanel({ universeId, pins }: TimelineEntryPanelProps
         }
         placeholder="Search entries..."
         aria-label="Search entries"
-        className="w-full rounded-md border border-neutral-300 dark:border-neutral-700 bg-transparent px-3 py-2 text-sm focus:outline-none focus:ring-2 focus:ring-[color:var(--color-accent)]"
+        className="w-full rounded-md border border-line-strong bg-transparent px-3 py-2 text-sm focus:outline-none focus:ring-2 focus:ring-[color:var(--color-accent)]"
       />
 
       {isLoading ? (
@@ -114,19 +114,19 @@ export function TimelineEntryPanel({ universeId, pins }: TimelineEntryPanelProps
       ) : list.length === 0 ? (
         filtersActive ? (
           <div className="py-6 text-center">
-            <p className="text-sm font-semibold text-neutral-700 dark:text-neutral-200">
+            <p className="text-sm font-semibold text-ink">
               Nothing matches these filters
             </p>
-            <p className="mt-1 text-xs text-neutral-500">
+            <p className="mt-1 text-xs text-ink-muted">
               Try removing a filter or clearing the search.
             </p>
           </div>
         ) : (
           <div className="py-6 text-center">
-            <p className="text-sm font-semibold text-neutral-700 dark:text-neutral-200">
+            <p className="text-sm font-semibold text-ink">
               No entries
             </p>
-            <p className="mt-1 text-xs text-neutral-500">
+            <p className="mt-1 text-xs text-ink-muted">
               Add entries to this universe before pinning them to the timeline.
             </p>
           </div>

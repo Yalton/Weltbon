@@ -39,19 +39,19 @@ export function ImportListRow({
 
   const buttonClass = [
     'w-full text-left flex flex-col gap-1 px-4 py-2',
-    'border-b border-neutral-200 dark:border-neutral-800',
+    'border-b border-line',
     'border-l-2',
     isFocused
       ? 'border-l-[color:var(--color-accent)] bg-[color:var(--color-accent)]/10'
-      : 'border-l-transparent hover:bg-neutral-100 dark:hover:bg-neutral-900',
-    isReject && 'bg-neutral-100/50 dark:bg-neutral-900/50',
+      : 'border-l-transparent hover:bg-white/[0.03]',
+    isReject && 'bg-white/[0.02]',
   ]
     .filter(Boolean)
     .join(' ');
 
   const titleClass = [
     'flex-1 text-sm font-medium leading-[1.5] truncate',
-    isReject && 'line-through text-neutral-500',
+    isReject && 'line-through text-ink-muted',
   ]
     .filter(Boolean)
     .join(' ');
@@ -67,7 +67,7 @@ export function ImportListRow({
     >
       <div className="flex items-center gap-2 min-w-0">
         <span
-          className="shrink-0 w-5 text-base leading-none text-neutral-500"
+          className="shrink-0 w-5 text-base leading-none text-ink-muted"
           aria-hidden="true"
         >
           {icon}

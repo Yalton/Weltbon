@@ -107,7 +107,7 @@ export function AuditCostDialog({
         <Dialog.Overlay className="fixed inset-0 bg-black/50 z-40" />
         <Dialog.Content
           onKeyDown={handleKeyDown}
-          className="fixed left-1/2 top-1/2 -translate-x-1/2 -translate-y-1/2 w-full max-w-md bg-white dark:bg-neutral-900 border border-neutral-200 dark:border-neutral-800 rounded-md p-6 shadow-lg z-50"
+          className="fixed left-1/2 top-1/2 -translate-x-1/2 -translate-y-1/2 w-full max-w-md bg-panel border border-line rounded-md p-6 shadow-lg z-50"
         >
           <Dialog.Title className="text-lg font-semibold">
             Estimate this audit
@@ -121,8 +121,8 @@ export function AuditCostDialog({
             <div className="mt-4 space-y-3">
               {estimateLoading && (
                 <div>
-                  <p className="text-sm text-neutral-500">Estimating…</p>
-                  <div className="mt-2 h-7 w-48 rounded bg-neutral-200 dark:bg-neutral-800 animate-pulse" />
+                  <p className="text-sm text-ink-muted">Estimating…</p>
+                  <div className="mt-2 h-7 w-48 rounded bg-raised animate-pulse" />
                 </div>
               )}
 
@@ -138,7 +138,7 @@ export function AuditCostDialog({
                   <h2 className="text-2xl font-semibold tabular-nums">
                     Estimated cost: ${estimate.lower.toFixed(2)} – ${estimate.upper.toFixed(2)}
                   </h2>
-                  <p className="text-sm text-neutral-600 dark:text-neutral-400">
+                  <p className="text-sm text-ink-secondary">
                     {estimate.breakdown.scopeEntryCount} entries, ~
                     {estimate.breakdown.basePromptTokens.toLocaleString()} prompt tokens
                   </p>
@@ -151,13 +151,13 @@ export function AuditCostDialog({
                     open={breakdownOpen}
                     onToggle={(e) => setBreakdownOpen((e.target as HTMLDetailsElement).open)}
                   >
-                    <summary className="text-xs text-neutral-500 cursor-pointer select-none">
+                    <summary className="text-xs text-ink-muted cursor-pointer select-none">
                       {breakdownOpen ? '▾' : '▸'} Show cost breakdown
                     </summary>
                     <table className="mt-2 w-full text-xs tabular-nums">
                       <tbody>
                         <tr>
-                          <td className="py-1 text-neutral-600 dark:text-neutral-400">
+                          <td className="py-1 text-ink-secondary">
                             Base prompt: {estimate.breakdown.basePromptTokens.toLocaleString()} tok ×
                             ${estimate.breakdown.ratePerMTokIn}/MTok
                           </td>
@@ -166,7 +166,7 @@ export function AuditCostDialog({
                           </td>
                         </tr>
                         <tr>
-                          <td className="py-1 text-neutral-600 dark:text-neutral-400">
+                          <td className="py-1 text-ink-secondary">
                             Tool calls (up to {estimate.breakdown.maxToolCalls}): {estimate.breakdown.perCallInputTokens.toLocaleString()} tok in / {estimate.breakdown.perCallOutputTokens.toLocaleString()} tok out per call
                           </td>
                           <td className="py-1 text-right">
@@ -181,7 +181,7 @@ export function AuditCostDialog({
                           </td>
                         </tr>
                         <tr>
-                          <td className="py-1 text-neutral-600 dark:text-neutral-400">
+                          <td className="py-1 text-ink-secondary">
                             Max output: {estimate.breakdown.maxOutputTokens.toLocaleString()} tok ×
                             ${estimate.breakdown.ratePerMTokOut}/MTok
                           </td>
@@ -189,7 +189,7 @@ export function AuditCostDialog({
                             ${((estimate.breakdown.maxOutputTokens / 1_000_000) * estimate.breakdown.ratePerMTokOut).toFixed(4)}
                           </td>
                         </tr>
-                        <tr className="font-semibold border-t border-neutral-200 dark:border-neutral-800">
+                        <tr className="font-semibold border-t border-line">
                           <td className="py-1">Total upper-bound</td>
                           <td className="py-1 text-right">${estimate.upper.toFixed(4)}</td>
                         </tr>
@@ -210,7 +210,7 @@ export function AuditCostDialog({
                   ref={cancelButtonRef}
                   type="button"
                   onClick={() => onOpenChange(false)}
-                  className="px-3 py-1.5 text-sm rounded-md border border-neutral-300 dark:border-neutral-700"
+                  className="px-3 py-1.5 text-sm rounded-md border border-line-strong"
                 >
                   Cancel
                 </button>
@@ -241,7 +241,7 @@ export function AuditCostDialog({
                 <button
                   type="button"
                   onClick={() => onOpenChange(false)}
-                  className="px-3 py-1.5 text-sm rounded-md border border-neutral-300 dark:border-neutral-700"
+                  className="px-3 py-1.5 text-sm rounded-md border border-line-strong"
                 >
                   Close
                 </button>
@@ -264,7 +264,7 @@ export function AuditCostDialog({
                 <button
                   type="button"
                   onClick={() => onOpenChange(false)}
-                  className="px-3 py-1.5 text-sm rounded-md border border-neutral-300 dark:border-neutral-700"
+                  className="px-3 py-1.5 text-sm rounded-md border border-line-strong"
                 >
                   Close
                 </button>

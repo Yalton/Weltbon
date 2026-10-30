@@ -286,7 +286,7 @@ export function ImportUploadStep({
   return (
     <div className="max-w-2xl mx-auto py-12">
       <h1 className="text-2xl font-semibold tracking-tight">Import notes</h1>
-      <p className="mt-2 text-sm text-neutral-600 dark:text-neutral-400 leading-[1.5]">
+      <p className="mt-2 text-sm text-ink-secondary leading-[1.5]">
         Upload Markdown, text or Word files, a folder, or a ZIP. We&apos;ll parse
         each file and let you review before anything saves.
       </p>
@@ -306,12 +306,12 @@ export function ImportUploadStep({
           disabled={state.step === 'uploading'}
         />
       ) : state.files && state.kind ? (
-        <div className="mt-6 flex items-center justify-between rounded-md border border-neutral-200 dark:border-neutral-800 px-4 py-3">
+        <div className="mt-6 flex items-center justify-between rounded-md border border-line px-4 py-3">
           <div className="text-sm min-w-0">
             <p className="font-semibold truncate max-w-[400px]">
               {describeSelection(state.files, state.kind)}
             </p>
-            <p className="text-neutral-400">
+            <p className="text-ink-muted">
               {describeSize(state.files)} ·{' '}
               {describeKind(state.kind, state.files)}
             </p>
@@ -319,7 +319,7 @@ export function ImportUploadStep({
           <button
             type="button"
             onClick={handleRemove}
-            className="text-sm text-neutral-400 hover:text-neutral-200"
+            className="text-sm text-ink-muted hover:text-ink-muted"
           >
             Remove
           </button>
@@ -338,7 +338,7 @@ export function ImportUploadStep({
         <Link
           to={`/universes/${universeId}/entries`}
           onClick={onCancel}
-          className="px-3 py-1.5 text-sm rounded-md border border-neutral-300 dark:border-neutral-700"
+          className="px-3 py-1.5 text-sm rounded-md border border-line-strong"
         >
           Cancel
         </Link>

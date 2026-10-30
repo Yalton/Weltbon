@@ -230,13 +230,13 @@ export function WikilinkAutocomplete({
       </Popover.Anchor>
       <Popover.Portal>
         <Popover.Content
-          className="min-w-48 max-w-72 max-h-64 overflow-y-auto bg-white dark:bg-neutral-900 border border-neutral-200 dark:border-neutral-800 rounded-md shadow-lg z-50"
+          className="min-w-48 max-w-72 max-h-64 overflow-y-auto bg-panel border border-line rounded-md shadow-lg z-50"
           align="start"
           sideOffset={4}
           onOpenAutoFocus={(e) => e.preventDefault()}
         >
           {results.length === 0 ? (
-            <p className="px-3 py-2 text-sm text-neutral-500">No matches</p>
+            <p className="px-3 py-2 text-sm text-ink-muted">No matches</p>
           ) : (
             <ul role="listbox">
               {results.map((entry, i) => {
@@ -250,8 +250,8 @@ export function WikilinkAutocomplete({
                   >
                     <button
                       type="button"
-                      className={`w-full flex items-center gap-1 px-3 py-1.5 text-left text-sm hover:bg-neutral-100 dark:hover:bg-neutral-800 ${
-                        isActive ? 'bg-neutral-100 dark:bg-neutral-800' : ''
+                      className={`w-full flex items-center gap-1 px-3 py-1.5 text-left text-sm hover:bg-white/5 ${
+                        isActive ? ' bg-raised' : ''
                       }`}
                       onMouseDown={(e) => {
                         e.preventDefault();
@@ -261,7 +261,7 @@ export function WikilinkAutocomplete({
                     >
                       <span className="flex-1 truncate">{entry.title}</span>
                       {matchedAlias && (
-                        <span className="text-xs text-neutral-500 truncate">
+                        <span className="text-xs text-ink-muted truncate">
                           {` — alias: ${matchedAlias}`}
                         </span>
                       )}

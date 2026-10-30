@@ -32,7 +32,7 @@ export function ImportListPane({
     <div
       role="listbox"
       aria-label="Entries to review"
-      className="flex-1 min-w-0 max-w-md overflow-y-auto border-r border-neutral-200 dark:border-neutral-800"
+      className="flex-1 min-w-0 max-w-md overflow-y-auto border-r border-line"
     >
       {entries.length === 0 ? (
         hasActiveFilters ? (
