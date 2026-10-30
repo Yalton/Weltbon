@@ -165,7 +165,7 @@ export function Sidebar({ universeId }: { universeId: string }) {
 
       <div className="mt-4 px-3">
         <div className="flex items-center justify-between">
-          <h3 className="text-[10px] uppercase tracking-[0.14em] text-ink-muted">Categories</h3>
+          <h3 className="text-xs uppercase tracking-[0.1em] text-ink-muted">Categories</h3>
           <button
             type="button"
             onClick={openCreate}

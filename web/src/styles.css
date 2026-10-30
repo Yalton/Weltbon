@@ -23,6 +23,7 @@
   --color-accent-soft: oklch(0.6 0.18 270 / 0.18);
   --color-accent-strong: #818cf8;  /* indigo-400 — gradients, icons, emphasis */
   --color-accent-deep:   #4f46e5;  /* indigo-600 — CTA gradient end (exact old to-indigo-600) */
+  --color-accent-cta:    #5b5bf0;  /* CTA gradient start — white text stays at 5:1 */
   --color-accent-ink:    #c7d2fe;  /* indigo-200 — accent-tinted text */
   --color-accent-ring:   rgb(165 180 252 / 0.18);  /* inset rings on active pills */
 
@@ -35,7 +36,7 @@
   --color-overlay:      rgb(16 21 43 / 0.95);
   --color-ink:           #eef2ff;
   --color-ink-secondary: #94a3c8;
-  --color-ink-muted:     #5d688a;
+  --color-ink-muted:     #8a94b6;  /* 4.5:1+ on canvas and glass surfaces */
   --shadow-glow-accent: 0 0 20px rgb(99 102 241 / 0.30);
   --shadow-glow-soft:   0 0 18px rgb(129 140 248 / 0.12);
   --shadow-ambient:     0 4px 24px rgb(0 0 0 / 0.25);
@@ -91,7 +92,7 @@ body {
 }
 
 .btn-accent {
-  background: linear-gradient(135deg, var(--color-accent-strong), var(--color-accent-deep));
+  background: linear-gradient(135deg, var(--color-accent-cta), var(--color-accent-deep));
 }
 .btn-accent:enabled:hover { filter: brightness(1.12); }
 

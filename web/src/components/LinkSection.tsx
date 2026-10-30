@@ -86,7 +86,7 @@ export function LinkSection({
                     : formatLinkType(linkTypeKey)}
                   {/* Append freeform label as secondary if different from the type key */}
                   {links[0]?.label && linkTypeKey !== 'untyped' && linkTypeKey !== links[0].label
-                    ? <span className="text-neutral-500 italic ml-1">— {links[0].label}</span>
+                    ? <span className="text-ink-muted italic ml-1">— {links[0].label}</span>
                     : null}
                 </p>
                 <ul className="mt-1 space-y-1">
@@ -110,7 +110,7 @@ export function LinkSection({
                           >
                             <button
                               type="button"
-                              className="text-neutral-500 hover:text-[color:var(--color-accent)] text-xs opacity-0 group-hover:opacity-100 transition-opacity"
+                              className="text-ink-muted hover:text-[color:var(--color-accent)] text-xs opacity-0 group-hover:opacity-100 transition-opacity"
                               aria-label={`Edit link to ${link.targetTitle}`}
                             >
                               Edit
@@ -119,7 +119,7 @@ export function LinkSection({
                           <button
                             type="button"
                             onClick={() => setDeletingLinkId(link.id)}
-                            className="text-neutral-500 hover:text-red-500 text-xs opacity-0 group-hover:opacity-100 transition-opacity"
+                            className="text-ink-muted hover:text-rose-400 text-xs opacity-0 group-hover:opacity-100 transition-opacity"
                             aria-label="Remove link"
                           >
                             &times;
@@ -136,7 +136,7 @@ export function LinkSection({
           // Share-mode empty state: no "Add link" CTA — the visitor has no
           // mutation surface. A short read-only message is more honest than
           // re-using the authenticated EmptyState copy ("Link this entry to
-          <p className="text-sm text-neutral-500 mt-2">No links from this entry.</p>
+          <p className="text-sm text-ink-muted mt-2">No links from this entry.</p>
         ) : (
           <EmptyState
             title="No links yet"
@@ -145,7 +145,7 @@ export function LinkSection({
               <LinkEditor universeId={universeId} entryId={entryId} onLinkCreated={onLinkCreated}>
                 <button
                   type="button"
-                  className="rounded-md bg-[color:var(--color-accent)] text-white text-sm px-4 py-2"
+                  className="rounded-md btn-accent text-white text-sm px-4 py-2"
                 >
                   Add link
                 </button>
@@ -177,7 +177,7 @@ export function LinkSection({
             ))}
           </ul>
         ) : (
-          <p className="text-sm text-neutral-500 mt-2">No other entries link to this one.</p>
+          <p className="text-sm text-ink-muted mt-2">No other entries link to this one.</p>
         )}
       </div>
 

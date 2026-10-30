@@ -152,7 +152,7 @@ export function UnlinkedMentionsPanel({ universeId, entry, allEntries, onLinked 
         <h2 className="text-xl font-semibold">Unlinked mentions ({mentions.length})</h2>
       </div>
       {mentions.length === 0 ? (
-        <p className="mt-2 text-sm text-neutral-500">No unlinked mentions found.</p>
+        <p className="mt-2 text-sm text-ink-muted">No unlinked mentions found.</p>
       ) : (
         <ul className="mt-3 space-y-2">
           {mentions.map((m) => {
@@ -274,7 +274,7 @@ function LinkifyButton({
         {isPending || updateEntry.isPending ? 'Linking…' : 'Link'}
       </button>
       {error && (
-        <span role="alert" className="text-xs text-red-500">
+        <span role="alert" className="text-xs text-rose-400">
           {error}
         </span>
       )}

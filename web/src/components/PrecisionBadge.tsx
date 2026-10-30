@@ -18,7 +18,7 @@ export function PrecisionBadge({ precision }: { precision: Precision }) {
   return (
     <span className="inline-flex items-center gap-1.5">
       <span aria-hidden className={precisionDotClass(precision)} />
-      <span className="text-xs text-neutral-500">{precision}</span>
+      <span className="text-xs text-ink-muted">{precision}</span>
     </span>
   );
 }

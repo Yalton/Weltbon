@@ -43,7 +43,7 @@ export function TimelinePinSection({ universeId, entryId }: Props) {
           <span className="flex items-center gap-3">
             <PrecisionBadge precision={currentPin.precision} />
             <span className="text-sm font-medium">{currentPin.label}</span>
-            <span className="text-sm text-neutral-500 tabular-nums">
+            <span className="text-sm text-ink-muted tabular-nums">
               {currentPin.position}
             </span>
           </span>
@@ -58,7 +58,7 @@ export function TimelinePinSection({ universeId, entryId }: Props) {
             <button
               type="button"
               onClick={() => setConfirmOpen(true)}
-              className="text-xs text-red-500 hover:text-red-400"
+              className="text-xs text-rose-400 hover:text-rose-300"
             >
               Remove
             </button>
@@ -66,7 +66,7 @@ export function TimelinePinSection({ universeId, entryId }: Props) {
         </div>
       ) : (
         <div className="mt-3 flex items-center justify-between">
-          <p className="text-sm text-neutral-500">Not pinned</p>
+          <p className="text-sm text-ink-muted">Not pinned</p>
           <button
             type="button"
             onClick={() => setEditorOpen(true)}
