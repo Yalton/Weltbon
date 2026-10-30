@@ -286,7 +286,7 @@ export function EntryDetail() {
 
         {/* Summary */}
         {entry.summary && (
-          <p className="text-base leading-[1.6] text-ink mt-4">
+          <p className="text-lg leading-relaxed text-ink-secondary mt-4">
             {entry.summary}
           </p>
         )}

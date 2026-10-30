@@ -8,7 +8,7 @@ const SRC = resolve(__dirname, '..', 'src');
 const read = (rel: string) => readFileSync(resolve(SRC, rel), 'utf8');
 
 describe('typography contract', () => {
-  it('EntryDetail.tsx applies the hero display heading + ink summary color, NOT the contrast-bug pattern', () => {
+  it('EntryDetail.tsx applies the hero display heading + secondary-ink summary lede, NOT the contrast-bug pattern', () => {
     const src = read('views/EntryDetail.tsx');
     // Content-Forward Views §5: the page title moved out of the old form-style header and into
     // the hero, where it is set in the universe display serif. It keeps `tracking-tight` — the
@@ -16,7 +16,7 @@ describe('typography contract', () => {
     // still pins tracking-tight, now as part of the full display-heading string.
     expect(src).toContain('tracking-tight');
     expect(src).toContain('font-display text-3xl font-semibold tracking-tight text-ink');
-    expect(src).toContain('text-base leading-[1.6] text-ink');
+    expect(src).toContain('text-lg leading-relaxed text-ink-secondary');
     // Anti-regression: raw neutral pairs (the source of the POL-04 contrast bug) must not return.
     expect(src).not.toMatch(/neutral-[0-9]/);
   });

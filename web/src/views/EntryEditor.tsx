@@ -33,6 +33,7 @@ import { EntryHero } from '../components/EntryHero';
 import type { Entry } from '../hooks/useEntries';
 import type { EntryTemplate } from '../lib/entryTemplates';
 import { Loading } from '../components/ui/Loading';
+import { buttonClasses } from '../components/ui/Button';
 
 const entryFormSchema = z.object({
   title: z.string().min(1, 'Title is required').max(200),
@@ -92,7 +93,7 @@ export function EntryEditor() {
     getValues,
     setValue,
     watch,
-    formState: { errors },
+    formState: { errors, isDirty },
   } = useForm<EntryFormValues>({
     resolver: zodResolver(entryFormSchema),
     defaultValues: {
@@ -285,108 +286,79 @@ export function EntryEditor() {
     setPickerOpen(true);
   };
 
+  const savedCoverImageId =
+    (existingEntry as (Entry & { coverImageId?: string | null }) | undefined)?.coverImageId ?? null;
+  const sameList = (a: readonly string[], b: readonly string[]) =>
+    a.length === b.length && a.every((value, i) => value === b[i]);
+  // Tags, aliases, meta and the toggles live outside react-hook-form, so they are
+  // compared against the loaded entry by hand.
+  const hasUnsavedChanges =
+    isDirty ||
+    (isEditMode &&
+      !!existingEntry &&
+      (!sameList(tags, existingEntry.tags ?? []) ||
+        !sameList(aliases, existingEntry.aliases ?? []) ||
+        JSON.stringify(meta) !== JSON.stringify(existingEntry.meta ?? {}) ||
+        categoryId !== (existingEntry.categoryId ?? null) ||
+        isPublic !== (existingEntry.isPublic ?? true) ||
+        wip !== (existingEntry.wip ?? false) ||
+        coverImageId !== savedCoverImageId));
+  const saveStatus = isPending
+    ? 'Saving…'
+    : !isEditMode
+      ? 'Not saved yet'
+      : hasUnsavedChanges
+        ? 'Unsaved changes'
+        : 'All changes saved';
+
+  const fieldClasses =
+    'w-full rounded-md border border-line-strong bg-canvas-lo px-3 py-2 text-sm text-ink';
+
   return (
     <div className="max-w-6xl mx-auto">
-      <h1 className="text-2xl font-semibold mb-6">
+      <h1 className="text-sm font-semibold uppercase tracking-wide text-ink-muted mb-3">
         {isEditMode ? 'Edit entry' : 'New entry'}
       </h1>
 
-      <form onSubmit={onSubmit} className="space-y-4">
-        {/* Title */}
-        <div>
-          <label htmlFor="entry-title" className="block text-sm mb-1">
-            Title
-          </label>
-          <input
-            id="entry-title"
-            {...register('title')}
-            className="w-full rounded-md border border-line-strong bg-transparent px-3 py-2 text-sm"
-          />
-          {errors.title && (
-            <p className="text-sm text-red-500 mt-1">{errors.title.message}</p>
-          )}
-        </div>
-
-        {/* Icon */}
-        <div>
-          <label htmlFor="entry-icon" className="block text-sm mb-1">
-            Icon
-          </label>
-          <input
-            id="entry-icon"
-            {...register('icon')}
-            placeholder="Emoji"
-            className="w-20 rounded-md border border-line-strong bg-transparent px-3 py-2 text-sm"
-          />
-        </div>
-
-        {/* Type */}
-        <div>
-          <label htmlFor="entry-type" className="block text-sm mb-1">
-            Type
-          </label>
-          <select
-            id="entry-type"
-            {...register('entryType')}
-            className="w-full rounded-md border border-line-strong bg-transparent px-3 py-2 text-sm"
-          >
-            <option value="">Select a type</option>
-            {entryTypes.map((t) => (
-              <option key={t} value={t}>
-                {t}
-              </option>
-            ))}
-          </select>
-          {errors.entryType && (
-            <p className="text-sm text-red-500 mt-1">{errors.entryType.message}</p>
-          )}
-        </div>
-
-        {/* Category */}
-        <div>
-          <label htmlFor="entry-category" className="block text-sm mb-1">
-            Category
-          </label>
-          <EntryCategoryPicker
-            id="entry-category"
-            universeId={uid!}
-            value={categoryId}
-            onChange={setCategoryId}
-          />
-        </div>
-
-        {/* Summary */}
-        <div>
-          <label htmlFor="entry-summary" className="block text-sm mb-1">
-            Summary
-          </label>
-          <textarea
-            id="entry-summary"
-            rows={2}
-            {...register('summary')}
-            className="w-full rounded-md border border-line-strong bg-transparent px-3 py-2 text-sm"
-          />
-        </div>
-
-        {/* Body (Markdown) + Insert image (D-05) */}
-        <div>
-          <div className="flex items-center justify-between mb-1">
-            <label htmlFor="entry-body" className="block text-sm">
-              Body (Markdown)
+      <form
+        onSubmit={onSubmit}
+        className="grid gap-x-8 gap-y-6 lg:grid-cols-[minmax(0,1fr)_18rem]"
+      >
+        {/* Writing column: title and body lead; structured fields follow. */}
+        <div className="min-w-0 space-y-5">
+          <div>
+            <label htmlFor="entry-title" className="sr-only">
+              Title
             </label>
-            <button
-              type="button"
-              onClick={() => {
-                setAssetReplacementSelection(null);
-                setPickerMode('insert-embed');
-                setPickerOpen(true);
-              }}
-              className="text-xs text-[color:var(--color-accent)] hover:underline"
-            >
-              Insert image
-            </button>
+            <input
+              id="entry-title"
+              {...register('title')}
+              placeholder="Untitled entry"
+              className="w-full border-0 border-b border-line bg-transparent px-0 pb-2 font-display text-[28px] font-semibold leading-tight tracking-tight text-ink placeholder:text-ink-muted focus:border-[color:var(--color-accent)] focus:outline-none"
+            />
+            {errors.title && (
+              <p className="text-sm text-rose-300 mt-1">{errors.title.message}</p>
+            )}
           </div>
-          <div className="grid gap-4 xl:grid-cols-[minmax(0,1fr)_16rem]">
+
+          {/* Body (Markdown) + Insert image (D-05) */}
+          <div>
+            <div className="flex items-center justify-between mb-1">
+              <label htmlFor="entry-body" className="block text-sm text-ink-secondary">
+                Body
+              </label>
+              <button
+                type="button"
+                onClick={() => {
+                  setAssetReplacementSelection(null);
+                  setPickerMode('insert-embed');
+                  setPickerOpen(true);
+                }}
+                className="text-xs text-link hover:underline"
+              >
+                Insert image
+              </button>
+            </div>
             <MarkdownAuthoringEditor
               ref={markdownEditorRef}
               value={watchedBody}
@@ -395,127 +367,176 @@ export function EntryEditor() {
               entryId={entryId}
               disabled={isPending}
             />
-            <aside className="space-y-3">
-              <details className="rounded-md border p-3 border-line bg-panel">
-                <summary className="cursor-pointer text-sm font-medium text-ink">
-                  Outline
-                </summary>
-                <div className="mt-3">
-                  <MarkdownOutline markdown={watchedBody} onNavigate={handleOutlineNavigate} />
-                </div>
-              </details>
-              <details className="rounded-md border p-3 border-line bg-panel">
-                <summary className="cursor-pointer text-sm font-medium text-ink">
-                  Backlinks &amp; Recovery
-                </summary>
-                <div className="mt-3">
-                  <MarkdownBacklinks
-                    universeId={uid ?? ''}
-                    backlinks={existingEntry?.backlinks ?? []}
-                    draftMarkdown={watchedBody}
-                    savedMarkdown={existingEntry?.body ?? ''}
-                    savedAssetUrls={existingEntry?.assetUrls ?? {}}
-                    assets={assets}
-                    entries={allEntries}
-                    onRevealSelection={revealMarkdownSelection}
-                    onReplaceAsset={handleReplaceAsset}
-                  />
-                </div>
-              </details>
-            </aside>
+          </div>
+
+          {/* Meta */}
+          <div>
+            <label className="block text-sm mb-1 text-ink-secondary">Details</label>
+            <MetaEditor
+              value={meta}
+              onChange={setMeta}
+              onValidityChange={setMetaValid}
+              registeredFields={universe?.fieldRegistry ?? []}
+              universeId={uid}
+            />
           </div>
         </div>
 
-
-        <div>
-          <label className="block text-sm mb-1">Cover image</label>
-          <EntryHero
-            testId="editor-hero"
-            // on it — so the src is built directly. Authenticated-only surface: no share path.
-            coverSrc={coverImageId ? `/api/universes/${uid}/assets/${coverImageId}/thumb` : null}
-            coverAlt={`Cover image for ${watchedTitle || 'this entry'}`}
-            medallion={heroMedallion}
-          >
-            <div className="flex items-center gap-2 p-4">
-              {coverImageId ? (
-                <>
-                  <button
-                    type="button"
-                    onClick={() => {
-                      setPickerMode('set-cover');
-                      setPickerOpen(true);
-                    }}
-                    className="text-xs rounded-md border border-white/40 bg-black/65 text-white px-3 py-1.5 hover:bg-black/80"
-                  >
-                    Change cover
-                  </button>
-                  <button
-                    type="button"
-                    onClick={() => setCoverImageId(null)}
-                    className="text-xs rounded-md border border-white/40 bg-black/65 text-red-300 px-3 py-1.5 hover:bg-black/80"
-                  >
-                    Remove cover
-                  </button>
-                </>
-              ) : (
-                <button
-                  type="button"
-                  onClick={() => {
-                    setPickerMode('set-cover');
-                    setPickerOpen(true);
-                  }}
-                  className="text-sm rounded-md border border-line-strong px-3 py-1.5 hover:bg-white/5"
-                >
-                  Set cover image
-                </button>
+        {/* Entry metadata: what the entry is, how it is filed, how it looks. */}
+        <aside className="min-w-0 space-y-3">
+          <section aria-label="Entry settings" className="space-y-4 rounded-md border border-line bg-panel p-4">
+            <div>
+              <label htmlFor="entry-type" className="block text-sm mb-1 text-ink-secondary">
+                Type
+              </label>
+              <select id="entry-type" {...register('entryType')} className={fieldClasses}>
+                <option value="">Select a type</option>
+                {entryTypes.map((t) => (
+                  <option key={t} value={t}>
+                    {t}
+                  </option>
+                ))}
+              </select>
+              {errors.entryType && (
+                <p className="text-sm text-rose-300 mt-1">{errors.entryType.message}</p>
               )}
             </div>
-          </EntryHero>
-        </div>
 
-        {/* Tags */}
-        <div>
-          <label className="block text-sm mb-1">Tags</label>
-          <div className="rounded-md border border-line-strong px-3 py-2">
-            <TagInput value={tags} onChange={setTags} />
-          </div>
-        </div>
+            <div>
+              <label htmlFor="entry-category" className="block text-sm mb-1 text-ink-secondary">
+                Category
+              </label>
+              <EntryCategoryPicker
+                id="entry-category"
+                universeId={uid!}
+                value={categoryId}
+                onChange={setCategoryId}
+              />
+            </div>
 
+            <div>
+              <label htmlFor="entry-icon" className="block text-sm mb-1 text-ink-secondary">
+                Icon
+              </label>
+              <input
+                id="entry-icon"
+                {...register('icon')}
+                placeholder="Emoji"
+                className="w-20 rounded-md border border-line-strong bg-canvas-lo px-3 py-2 text-sm text-ink"
+              />
+            </div>
 
-        <div>
-          <label className="block text-sm mb-1">Aliases</label>
-          <div className="rounded-md border border-line-strong px-3 py-2">
-            <TagInput value={aliases} onChange={setAliases} />
-          </div>
-        </div>
+            <div>
+              <label htmlFor="entry-summary" className="block text-sm mb-1 text-ink-secondary">
+                Summary
+              </label>
+              <textarea id="entry-summary" rows={3} {...register('summary')} className={fieldClasses} />
+            </div>
 
-        {/* Meta */}
-        <div>
-          <label className="block text-sm mb-1">Details</label>
-          <MetaEditor
-            value={meta}
-            onChange={setMeta}
-            onValidityChange={setMetaValid}
-            registeredFields={universe?.fieldRegistry ?? []}
-            universeId={uid}
-          />
-        </div>
+            <div>
+              <label className="block text-sm mb-1 text-ink-secondary">Tags</label>
+              <div className="rounded-md border border-line-strong bg-canvas-lo px-3 py-2">
+                <TagInput value={tags} onChange={setTags} />
+              </div>
+            </div>
 
+            <div>
+              <label className="block text-sm mb-1 text-ink-secondary">Aliases</label>
+              <div className="rounded-md border border-line-strong bg-canvas-lo px-3 py-2">
+                <TagInput value={aliases} onChange={setAliases} />
+              </div>
+            </div>
 
-        <div className="flex flex-wrap justify-between items-center gap-y-2 mt-8 pt-6 border-t border-line">
+            <div>
+              <label className="block text-sm mb-1 text-ink-secondary">Cover image</label>
+              <EntryHero
+                testId="editor-hero"
+                // on it — so the src is built directly. Authenticated-only surface: no share path.
+                coverSrc={coverImageId ? `/api/universes/${uid}/assets/${coverImageId}/thumb` : null}
+                coverAlt={`Cover image for ${watchedTitle || 'this entry'}`}
+                medallion={heroMedallion}
+              >
+                <div className="flex items-center gap-2 p-4">
+                  {coverImageId ? (
+                    <>
+                      <button
+                        type="button"
+                        onClick={() => {
+                          setPickerMode('set-cover');
+                          setPickerOpen(true);
+                        }}
+                        className="text-xs rounded-md border border-white/40 bg-black/65 text-white px-3 py-1.5 hover:bg-black/80"
+                      >
+                        Change cover
+                      </button>
+                      <button
+                        type="button"
+                        onClick={() => setCoverImageId(null)}
+                        className="text-xs rounded-md border border-white/40 bg-black/65 text-red-300 px-3 py-1.5 hover:bg-black/80"
+                      >
+                        Remove cover
+                      </button>
+                    </>
+                  ) : (
+                    <button
+                      type="button"
+                      onClick={() => {
+                        setPickerMode('set-cover');
+                        setPickerOpen(true);
+                      }}
+                      className="text-sm rounded-md border border-line-strong px-3 py-1.5 hover:bg-white/5"
+                    >
+                      Set cover image
+                    </button>
+                  )}
+                </div>
+              </EntryHero>
+            </div>
+          </section>
+
+          <details className="rounded-md border p-3 border-line bg-panel">
+            <summary className="cursor-pointer text-sm font-medium text-ink">
+              Outline
+            </summary>
+            <div className="mt-3">
+              <MarkdownOutline markdown={watchedBody} onNavigate={handleOutlineNavigate} />
+            </div>
+          </details>
+          <details className="rounded-md border p-3 border-line bg-panel">
+            <summary className="cursor-pointer text-sm font-medium text-ink">
+              Backlinks &amp; Recovery
+            </summary>
+            <div className="mt-3">
+              <MarkdownBacklinks
+                universeId={uid ?? ''}
+                backlinks={existingEntry?.backlinks ?? []}
+                draftMarkdown={watchedBody}
+                savedMarkdown={existingEntry?.body ?? ''}
+                savedAssetUrls={existingEntry?.assetUrls ?? {}}
+                assets={assets}
+                entries={allEntries}
+                onRevealSelection={revealMarkdownSelection}
+                onReplaceAsset={handleReplaceAsset}
+              />
+            </div>
+          </details>
+        </aside>
+
+        {/* Action bar, sticky from md up so Save stays reachable on long bodies; on phones it would cover a quarter of the screen. */}
+        <div className="z-10 flex flex-wrap items-center justify-between gap-3 border-t border-line bg-chrome px-4 py-3 md:sticky md:bottom-0 lg:col-span-2">
           <Link
             to={
               isEditMode
                 ? `/universes/${uid}/entries/${entryId}`
                 : `/universes/${uid}/entries`
             }
-            className="text-sm text-ink-muted hover:text-ink-muted"
+            className="text-sm text-ink-muted hover:text-ink"
           >
             {isEditMode ? 'Discard changes' : 'Cancel'}
           </Link>
 
           {/* Right cluster — UI-SPEC §B: [Kebab] [Public toggle + label] [Save]. */}
-          <div className="flex items-center gap-3">
+          <div className="flex flex-wrap items-center gap-3">
 
           {/* Kebab overflow menu — D-14 / UI-SPEC §B */}
           <DropdownMenu.Root>
@@ -594,10 +615,17 @@ export function EntryEditor() {
             </span>
           </div>
 
+          <p role="status" aria-live="polite" className="flex items-center gap-1.5 text-xs text-ink-muted">
+            {hasUnsavedChanges && !isPending && (
+              <span aria-hidden="true" className="h-1.5 w-1.5 rounded-full bg-amber-400" />
+            )}
+            {saveStatus}
+          </p>
+
           <button
             type="submit"
             disabled={isPending || !metaValid}
-            className="rounded-md bg-[color:var(--color-accent)] text-white text-sm px-3 py-1.5 disabled:opacity-50"
+            className={buttonClasses('primary')}
           >
             {isPending
               ? 'Saving...'
