@@ -1,9 +1,5 @@
 import { useEffect, useRef, useState } from 'react';
 import {
-  forceCenter,
-  forceCollide,
-  forceLink,
-  forceManyBody,
   forceSimulation,
   type Simulation,
   type SimulationNodeDatum,
@@ -14,7 +10,7 @@ import { zoom, zoomTransform, type ZoomBehavior } from 'd3-zoom';
 import type { GraphEdge, GraphNode, GraphPosition } from '../hooks/useGraphData';
 import { getLinkTypeColor, type LinkTypeRegistry } from '../lib/linkTypeColor';
 import { edgeLabelAddsMeaning } from '../lib/edgeLabels';
-import { edgeLabelPosition, seededGraphPosition } from '../lib/graphLayout';
+import { applyGraphForces, edgeLabelPosition, seededGraphPosition } from '../lib/graphLayout';
 import { appendMedallionNode } from './MedallionSVG';
 import type { MedallionSource } from '../lib/medallion';
 
@@ -308,20 +304,13 @@ export function GraphCanvas({
       });
 
     // Simulation. alphaMin default (0.001) — d3 auto-stops.
-    const linkDistance = Math.min(
-      220,
-      Math.max(120, Math.sqrt((width * height) / Math.max(nodes.length, 1)) * 0.55),
+    const sim: Simulation<SimNode, SimEdge> = applyGraphForces(
+      forceSimulation<SimNode, SimEdge>(simNodes),
+      simEdges,
+      width,
+      height,
+      (d) => collisionRadiusOf(d.id),
     );
-    const sim: Simulation<SimNode, SimEdge> = forceSimulation<SimNode>(simNodes)
-      .force(
-        'link',
-        forceLink<SimNode, SimEdge>(simEdges)
-          .id((d) => d.id)
-          .distance(linkDistance),
-      )
-      .force('charge', forceManyBody<SimNode>().strength(-Math.min(650, linkDistance * 2.5)))
-      .force('center', forceCenter(width / 2, height / 2))
-      .force('collide', forceCollide<SimNode>((d) => collisionRadiusOf(d.id)));
 
     // Drag — dual intent gated by editModeRef.current per the mirrored-ref
     // pattern. View-mode keeps the existing pin-and-position behavior; edit-

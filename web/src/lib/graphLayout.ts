@@ -1,3 +1,15 @@
+import {
+  forceCenter,
+  forceCollide,
+  forceLink,
+  forceManyBody,
+  forceX,
+  forceY,
+  type Simulation,
+  type SimulationLinkDatum,
+  type SimulationNodeDatum,
+} from 'd3-force';
+
 export type GraphPoint = {
   x: number;
   y: number;
@@ -47,4 +59,38 @@ export function edgeLabelPosition(
     x: midpoint.x - (dy / length) * offset,
     y: midpoint.y + (dx / length) * offset,
   };
+}
+
+// Without edges nothing pulls nodes together: forceCenter only recentres the centroid, so the
+// charge alone spread ten unlinked entries well past the canvas. A weak pull toward the middle
+// keeps unlinked entries (and stray islands in a linked graph) on screen.
+const CENTER_PULL = 0.05;
+
+/** Installs the graph's forces on `sim`. Shared by GraphCanvas and its layout test. */
+export function applyGraphForces<
+  N extends SimulationNodeDatum & { id: string },
+  L extends SimulationLinkDatum<N>,
+>(
+  sim: Simulation<N, L>,
+  links: L[],
+  width: number,
+  height: number,
+  collisionRadius: (node: N) => number,
+): Simulation<N, L> {
+  const linkDistance = Math.min(
+    220,
+    Math.max(120, Math.sqrt((width * height) / Math.max(sim.nodes().length, 1)) * 0.55),
+  );
+  return sim
+    .force(
+      'link',
+      forceLink<N, L>(links)
+        .id((d) => d.id)
+        .distance(linkDistance),
+    )
+    .force('charge', forceManyBody<N>().strength(-Math.min(650, linkDistance * 2.5)))
+    .force('center', forceCenter(width / 2, height / 2))
+    .force('x', forceX<N>(width / 2).strength(CENTER_PULL))
+    .force('y', forceY<N>(height / 2).strength(CENTER_PULL))
+    .force('collide', forceCollide<N>(collisionRadius));
 }
