@@ -18,6 +18,7 @@ import { useLlmConnection } from '../hooks/useLlmConnection';
 import { RECOMMENDED_CHEAP_MODEL } from '../data/pricing';
 import type { ModelListingWithCoverage } from '../types/audit';
 import { Loading } from '../components/ui/Loading';
+import { buttonClasses } from '../components/ui/Button';
 
 /**
  *
@@ -232,7 +233,7 @@ export function UniverseSettings() {
               <button
                 type="button"
                 onClick={() => setConfirmOpen(true)}
-                className="rounded-md bg-red-600 text-white text-sm px-3 py-1.5"
+                className={buttonClasses('danger')}
               >
                 Delete universe
               </button>

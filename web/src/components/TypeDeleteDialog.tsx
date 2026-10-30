@@ -1,5 +1,6 @@
 import { useEffect, useState } from 'react';
 import * as Dialog from '@radix-ui/react-dialog';
+import { buttonClasses } from './ui/Button';
 
 interface Props {
   open: boolean;
@@ -78,7 +79,7 @@ export function TypeDeleteDialog({
               type="button"
               onClick={handleConfirm}
               disabled={!fallback || pending}
-              className="rounded-md bg-red-600 text-white text-sm px-3 py-1.5 disabled:opacity-50"
+              className={buttonClasses('danger')}
             >
               {pending ? 'Deleting…' : `Delete and reassign to "${fallback}"`}
             </button>
