@@ -2,7 +2,7 @@ import { useMemo, useState } from 'react';
 import { useNavigate } from 'react-router-dom';
 import { useAuditHistory, type AuditHistoryRow } from '../hooks/useAudits';
 import { AuditStatusPill } from './AuditStatusPill';
-import { EMOJI } from './CategoryIcon';
+import { CategoryIcon } from './CategoryIcon';
 import { EmptyState } from './EmptyState';
 import { formatRelative } from '../utils/formatRelative';
 import type { AuditCategory } from '../hooks/useIssues';
@@ -244,7 +244,7 @@ export function AuditHistoryTable({
                     ? '—'
                     : findingsEntries.map(([cat, n]) => (
                         <span key={cat} className="mr-2">
-                          {EMOJI[cat]} ×{n}
+                          <CategoryIcon category={cat} withLabel /> ×{n}
                         </span>
                       ))}
                 </td>

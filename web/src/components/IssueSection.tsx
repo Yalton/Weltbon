@@ -5,7 +5,7 @@ import { useUpdateIssue, useUndismissIssue } from '../hooks/useIssues';
 import { useUniverse } from '../hooks/useUniverse';
 import { SeverityPill } from './SeverityPill';
 import { AIBadge } from './AIBadge';
-import { CategoryIcon, CATEGORY_STRIPE } from './CategoryIcon';
+import { CategoryIcon, CATEGORY_STRIPE, Glyph } from './CategoryIcon';
 import { DismissAIIssueDialog } from './DismissAIIssueDialog';
 import { IssueEditor } from './IssueEditor';
 import { AuditCostDialog } from './AuditCostDialog';
@@ -46,7 +46,8 @@ export function IssueSection({ universeId, entryId, issues, onChanged }: Props) 
               className="rounded-md border border-neutral-300 dark:border-neutral-700 text-sm px-3 py-1.5 inline-flex items-center gap-1.5 hover:bg-neutral-50 dark:hover:bg-neutral-800"
               aria-haspopup="dialog"
             >
-              ⚖ Audit this entry
+              <Glyph name="scale" />
+              Audit this entry
             </button>
           )}
           <button
@@ -60,7 +61,7 @@ export function IssueSection({ universeId, entryId, issues, onChanged }: Props) 
       </div>
 
       {issues.length === 0 ? (
-        <p className="mt-3 text-sm text-neutral-500">
+        <p className="mt-3 text-sm text-ink-muted">
           No open issues for this entry.
         </p>
       ) : (
@@ -85,7 +86,9 @@ export function IssueSection({ universeId, entryId, issues, onChanged }: Props) 
                 <span className="flex items-center gap-3">
                   {isAI && (
                     <>
-                      <CategoryIcon category={cat} />
+                      <span className="text-xs text-ink-secondary">
+                        <CategoryIcon category={cat} withLabel />
+                      </span>
                       <AIBadge />
                     </>
                   )}

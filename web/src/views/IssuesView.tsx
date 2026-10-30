@@ -231,7 +231,7 @@ export function IssuesView() {
                   className="accent-[color:var(--color-accent)]"
                 />
                 <span>
-                  <CategoryIcon category={cat} /> {cat}
+                  <CategoryIcon category={cat} withLabel />
                 </span>
               </label>
             ))}
@@ -368,7 +368,9 @@ export function IssuesView() {
                       >
                         {isAI && issue.category && (
                           <>
-                            <CategoryIcon category={issue.category} />{' '}
+                            <span className="mr-2 text-xs font-normal text-ink-secondary">
+                              <CategoryIcon category={issue.category} withLabel />
+                            </span>
                           </>
                         )}
                         {issue.title}
