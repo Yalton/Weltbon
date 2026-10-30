@@ -633,7 +633,7 @@ export function TimelineCanvas({
           return (
             <div
               key={`label-${pin.id}`}
-              className="pointer-events-none absolute select-none whitespace-nowrap rounded bg-ink-muted px-1.5 py-0.5 text-xs font-medium text-ink-muted shadow"
+              className="pointer-events-none absolute select-none whitespace-nowrap rounded bg-raised px-1.5 py-0.5 text-xs font-medium text-ink shadow"
               style={{
                 left: sx,
                 top: sy - PIN_RADIUS - 6,
@@ -663,14 +663,14 @@ export function TimelineCanvas({
               }}
             >
               <div className="min-w-[180px] max-w-[260px] rounded-lg border border-line-strong bg-raised px-3 py-2 shadow-xl">
-                <div className="text-sm font-semibold text-ink-muted">{displayName}</div>
+                <div className="text-sm font-semibold text-ink">{displayName}</div>
                 <div className="mt-0.5 text-xs text-ink-muted">
                   {formatCalendar(pin.position, calendar)?.compact ?? POSITION_FORMAT.format(pin.position)}
                   <span className="mx-1 text-ink-secondary">·</span>
                   {pin.precision}
                 </div>
                 {pin.label && pin.label !== pin.entryTitle && (
-                  <div className="mt-1 truncate text-xs italic text-ink-muted">
+                  <div className="mt-1 truncate text-xs italic text-ink-secondary">
                     “{pin.label}”
                   </div>
                 )}
