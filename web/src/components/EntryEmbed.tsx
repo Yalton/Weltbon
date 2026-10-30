@@ -156,14 +156,14 @@ export function EntryEmbed({
   return (
     <div
       data-testid="embed-callout"
-      className="my-4 border-l-4 border-[color:var(--color-accent)] bg-neutral-50 dark:bg-neutral-800/40 rounded-r-md overflow-hidden"
+      className="my-4 rounded-md border border-line-strong bg-panel overflow-hidden"
     >
       {/* D-08 Attribution header: icon + title + nav glyph, as a link to the target */}
-      <div className="px-4 pt-3 pb-2 border-b border-neutral-200 dark:border-neutral-700">
+      <div className="px-4 pt-3 pb-2 border-b border-line">
         <Link
           data-testid="embed-attribution-link"
           to={entryTo!}
-          className="inline-flex items-center gap-1.5 text-sm font-semibold text-[color:var(--color-accent)] hover:underline"
+          className="inline-flex items-center gap-1.5 font-display text-[15px] font-semibold text-link hover:underline"
         >
           {entryData.icon && (
             <span className="text-base leading-none">{entryData.icon}</span>

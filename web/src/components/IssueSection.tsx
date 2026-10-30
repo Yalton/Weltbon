@@ -5,7 +5,7 @@ import { useUpdateIssue, useUndismissIssue } from '../hooks/useIssues';
 import { useUniverse } from '../hooks/useUniverse';
 import { SeverityPill } from './SeverityPill';
 import { AIBadge } from './AIBadge';
-import { CategoryIcon, CATEGORY_STRIPE, Glyph } from './CategoryIcon';
+import { CategoryIcon, Glyph } from './CategoryIcon';
 import { DismissAIIssueDialog } from './DismissAIIssueDialog';
 import { IssueEditor } from './IssueEditor';
 import { AuditCostDialog } from './AuditCostDialog';
@@ -71,17 +71,11 @@ export function IssueSection({ universeId, entryId, issues, onChanged }: Props) 
             const cat = (issue as any).category as AuditCategory | undefined;
             const isDismissed = Boolean((issue as any).dismissedAt);
 
-            const stripeClass =
-              isAI
-                ? cat
-                  ? CATEGORY_STRIPE[cat]
-                  : 'border-l-neutral-300 dark:border-l-neutral-700'
-                : '';
 
             return (
               <li
                 key={issue.id}
-                className={`flex items-center justify-between rounded-md border border-neutral-200 dark:border-neutral-800 px-3 py-2 ${isAI ? `border-l-2 ${stripeClass}` : ''}`}
+                className="flex items-center justify-between rounded-md border border-line bg-panel px-3 py-2"
               >
                 <span className="flex items-center gap-3">
                   {isAI && (

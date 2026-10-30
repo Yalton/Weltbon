@@ -8,14 +8,6 @@ export const CATEGORY_LABEL: Record<AuditCategory, string> = {
   'dangling-thread': 'Dangling thread',
 };
 
-export const CATEGORY_STRIPE: Record<AuditCategory, string> = {
-  'contradiction': 'border-l-red-400 dark:border-l-red-500',
-  'missing-link': 'border-l-blue-400 dark:border-l-blue-500',
-  'underdeveloped': 'border-l-emerald-400 dark:border-l-emerald-500',
-  'timeline-inconsistency': 'border-l-amber-400 dark:border-l-amber-500',
-  'dangling-thread': 'border-l-violet-400 dark:border-l-violet-500',
-};
-
 // 16x16 stroke paths in the style of the sidebar's NavIcon.
 const GLYPH_PATHS = {
   'underdeveloped': 'M8 14V8m0 0C8 5 6 3.5 3 3.5 3 6.5 5 8 8 8zm0 0c0-2.5 1.7-4 4.5-4 0 2.7-1.8 4-4.5 4z',

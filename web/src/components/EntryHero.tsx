@@ -19,7 +19,7 @@ export function EntryHero({
   return (
     <div
       data-testid={testId}
-      className={`relative min-h-24 max-h-[300px] overflow-hidden rounded-xl border border-glass-border ${className}`}
+      className={`relative min-h-24 max-h-[300px] overflow-hidden rounded-lg border border-line ${className}`}
     >
       {coverSrc ? (
         <img
@@ -31,9 +31,9 @@ export function EntryHero({
           }}
         />
       ) : (
-        // No cover: a band tinted with the entry-type hue, carrying an oversized watermark of the
-        // low-alpha gradient on the page surface, and a from-black/70 wash would both mute the hue
-        <div className="absolute inset-0" style={{ background: medallion.html.discBackground }}>
+        // No cover: a flat panel carrying an oversized watermark of the entry's mark in the
+        // entry-type hue. Tinting the panel itself with a warm hue greys out the navy.
+        <div className="absolute inset-0 bg-panel">
           {/* The identity contract (lib/medallion) resolves cover → icon → monogram, and the list
               rows and graph nodes draw the icon tier — so the watermark honours it too: an entry
               with an emoji watermarks the emoji, not a letter it never chose. */}

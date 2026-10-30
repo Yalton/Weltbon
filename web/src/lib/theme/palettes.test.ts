@@ -5,7 +5,6 @@ const TOKEN_KEYS = [
   '--color-canvas-hi', '--color-canvas-mid', '--color-canvas-lo',
   '--color-accent', '--color-accent-strong', '--color-accent-deep',
   '--color-accent-ink', '--color-accent-ring', '--color-accent-soft',
-  '--shadow-glow-accent', '--shadow-glow-soft',
 ] as const;
 
 describe('PALETTES', () => {
@@ -26,7 +25,8 @@ describe('deriveAccent', () => {
     expect(d['--color-accent-strong']).toMatch(/^#[0-9a-f]{6}$/);
     expect(d['--color-accent-ring']).toContain('0.18');
     expect(d['--color-accent-soft']).toContain('0.18');
-    expect(d['--shadow-glow-accent']).toContain('0 0 20px');
+    // Night sky has no glows; a theme must not bring them back.
+    expect(d['--shadow-glow-accent']).toBeUndefined();
   });
 
   it('emits every accent token the @theme contract expects (drift guard)', () => {
@@ -38,8 +38,6 @@ describe('deriveAccent', () => {
         '--color-accent-ink',
         '--color-accent-ring',
         '--color-accent-soft',
-        '--shadow-glow-accent',
-        '--shadow-glow-soft',
       ]),
     );
   });

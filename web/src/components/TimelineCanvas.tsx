@@ -662,7 +662,7 @@ export function TimelineCanvas({
                 transform: 'translate(-50%, -100%)',
               }}
             >
-              <div className="min-w-[180px] max-w-[260px] rounded-lg border border-neutral-700 bg-neutral-900/95 px-3 py-2 shadow-xl backdrop-blur-sm">
+              <div className="min-w-[180px] max-w-[260px] rounded-lg border border-line-strong bg-raised px-3 py-2 shadow-xl">
                 <div className="text-sm font-semibold text-neutral-50">{displayName}</div>
                 <div className="mt-0.5 text-xs text-neutral-400">
                   {formatCalendar(pin.position, calendar)?.compact ?? POSITION_FORMAT.format(pin.position)}

@@ -20,6 +20,7 @@
     "@fontsource/cormorant-garamond": "^5.2.11",
     "@fontsource/crimson-pro": "^5.2.8",
     "@fontsource/inter": "5.2.5",
+    "@fontsource/source-sans-3": "5.2.9",
     "@fontsource/spectral": "^5.2.8",
     "@hookform/resolvers": "5.2.2",
     "@mdxeditor/editor": "^4.2.1",

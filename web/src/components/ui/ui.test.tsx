@@ -18,7 +18,7 @@ describe('Button', () => {
     const { rerender } = render(<Button>go</Button>);
     expect(screen.getByRole('button')).toHaveClass('btn-accent');
     rerender(<Button variant="ghost">go</Button>);
-    expect(screen.getByRole('button')).toHaveClass('border-glass-border');
+    expect(screen.getByRole('button')).toHaveClass('border-line-strong');
     rerender(<Button variant="danger">go</Button>);
     expect(screen.getByRole('button')).toHaveClass('text-rose-300');
   });
@@ -30,18 +30,19 @@ describe('Button', () => {
 });
 
 describe('Panel', () => {
-  it('renders children with glass classes', () => {
+  it('renders children on a solid panel surface with no blur', () => {
     render(<Panel data-testid="p">content</Panel>);
     const el = screen.getByTestId('p');
     expect(el).toHaveTextContent('content');
-    expect(el).toHaveClass('bg-glass', 'border-glass-border');
+    expect(el).toHaveClass('bg-panel', 'border-line');
+    expect(el.className).not.toMatch(/backdrop-blur/);
   });
 
   it('adds hover treatment only when hover is set', () => {
     const { rerender } = render(<Panel data-testid="p" />);
-    expect(screen.getByTestId('p')).not.toHaveClass('hover:shadow-glow-soft');
+    expect(screen.getByTestId('p')).not.toHaveClass('hover:bg-raised');
     rerender(<Panel data-testid="p" hover />);
-    expect(screen.getByTestId('p')).toHaveClass('hover:shadow-glow-soft');
+    expect(screen.getByTestId('p')).toHaveClass('hover:bg-raised');
   });
 });
 

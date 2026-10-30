@@ -33,7 +33,13 @@ describe('motion contract', () => {
   });
 
   it('at least 2 of 3 popover surfaces apply animate-popover-in', () => {
-    const hits = POPOVER_CANDIDATES.filter((rel) => read(rel).includes('animate-popover-in'));
+    // A surface either applies the class itself or takes the shared menu classes from
+    // ui/overlay.ts, which carry it.
+    expect(read('components/ui/overlay.ts')).toContain('animate-popover-in');
+    const hits = POPOVER_CANDIDATES.filter((rel) => {
+      const src = read(rel);
+      return src.includes('animate-popover-in') || src.includes('menuContentClasses');
+    });
     expect(
       hits.length,
       `Expected >=2 of 3 popover files to use animate-popover-in. Found ${hits.length}: ${hits.join(', ')}`,

@@ -2,7 +2,7 @@
 export function MapCompass() {
   return (
     <div
-      className="absolute left-4 bottom-4 z-10 rounded-md border border-neutral-200 dark:border-neutral-800 bg-white/90 dark:bg-neutral-900/90 backdrop-blur-sm p-1.5 shadow-sm"
+      className="absolute left-4 bottom-4 z-10 rounded-md border border-line-strong bg-raised p-1.5 shadow-sm"
       aria-hidden="true"
       role="none"
     >

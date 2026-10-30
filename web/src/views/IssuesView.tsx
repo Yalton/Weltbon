@@ -15,7 +15,7 @@ import {
 import { useUniverse } from '../hooks/useUniverse';
 import { SeverityPill } from '../components/SeverityPill';
 import { AIBadge } from '../components/AIBadge';
-import { CategoryIcon, CATEGORY_STRIPE } from '../components/CategoryIcon';
+import { CategoryIcon } from '../components/CategoryIcon';
 import { ReasoningPanel } from '../components/ReasoningPanel';
 import { DismissAIIssueDialog } from '../components/DismissAIIssueDialog';
 import { IssueEditor } from '../components/IssueEditor';
@@ -337,17 +337,12 @@ export function IssuesView() {
           <ul className="space-y-2">
             {displayedIssues.map((issue) => {
               const isAI = issue.source === 'ai';
-              const stripeClass = isAI
-                ? issue.category
-                  ? CATEGORY_STRIPE[issue.category as AuditCategory]
-                  : 'border-l-neutral-300 dark:border-l-neutral-700'
-                : '';
               const isExpanded = expandedReasoning.get(issue.id) ?? false;
 
               return (
                 <li
                   key={issue.id}
-                  className={`rounded-md border border-neutral-200 dark:border-neutral-800 p-3 ${isAI ? `border-l-2 ${stripeClass}` : ''}`}
+                  className="rounded-md border border-line bg-panel p-3"
                 >
                   {/* Row content */}
                   <div className="flex items-start gap-3">
@@ -462,7 +457,7 @@ export function IssuesView() {
                     </div>
                   </div>
 
-                  {/* ReasoningPanel — outside the flex container but inside <li> so stripe wraps it */}
+                  {/* ReasoningPanel — outside the flex container but inside the <li> */}
                   {isAI && (
                     <ReasoningPanel
                       issue={issue}

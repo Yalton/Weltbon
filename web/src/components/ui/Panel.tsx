@@ -10,9 +10,8 @@ export function Panel({
     <div
       {...props}
       className={cx(
-        'rounded-[10px] bg-glass border border-glass-border backdrop-blur-[5px]',
-        hover &&
-          'transition-all duration-150 hover:bg-white/10 hover:border-accent-strong/25 hover:shadow-glow-soft',
+        'rounded-lg bg-panel border border-line',
+        hover && 'transition-colors duration-150 hover:bg-raised hover:border-line-strong',
         className,
       )}
     />

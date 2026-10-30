@@ -16,11 +16,6 @@ function towardWhite(hex: string, t: number): string {
   return `#${c(r)}${c(g)}${c(b)}`;
 }
 
-function glow(hex: string, px: number, alpha: number): string {
-  const [r, g, b] = rgb(hex);
-  return `0 0 ${px}px rgb(${r} ${g} ${b} / ${alpha})`;
-}
-
 function towardBlack(hex: string, t: number): string {
   const [r, g, b] = rgb(hex);
   const c = (v: number) => Math.round(v * (1 - t)).toString(16).padStart(2, '0');
@@ -38,8 +33,6 @@ export function deriveAccent(hex: string): ThemeVars {
     '--color-accent-ink': towardWhite(hex, 0.7),
     '--color-accent-ring': `rgb(${sr} ${sg} ${sb} / 0.18)`,
     '--color-accent-soft': `rgb(${r} ${g} ${b} / 0.18)`,
-    '--shadow-glow-accent': glow(hex, 20, 0.3),
-    '--shadow-glow-soft': glow(strong, 18, 0.12),
   };
 }
 
@@ -48,17 +41,10 @@ export const PALETTES: Record<
   ThemeVars
 > = {
   observatory: {
-    '--color-canvas-hi': '#151b31',
-    '--color-canvas-mid': '#0b0e1c',
-    '--color-canvas-lo': '#070912',
-    ...deriveAccent('#6366f1'),
-    // Preserve the exact Wave-1 defaults rather than derived approximations:
-    '--color-accent': 'oklch(0.6 0.18 270)',
-    '--color-accent-strong': '#818cf8',
-    '--color-accent-deep': '#4f46e5',
-    '--color-accent-ink': '#c7d2fe',
-    '--color-accent-ring': 'rgb(165 180 252 / 0.18)',
-    '--color-accent-soft': 'oklch(0.6 0.18 270 / 0.18)',
+    '--color-canvas-hi': '#131a2c',
+    '--color-canvas-mid': '#0b0f1c',
+    '--color-canvas-lo': '#070a13',
+    ...deriveAccent('#8ea2d4'),
   },
   ember: {
     '--color-canvas-hi': '#2b1712',

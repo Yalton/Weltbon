@@ -12,7 +12,7 @@ export interface MapBreadcrumbProps {
  * Placement: absolute left-4 top-4 z-20 — the parent must shift MapToolbar to
  * top-16 while this is visible (UI-SPEC §3: toolbar default is left-4 top-4).
  *
- * Chrome: same glassy chip as MapToolbar — backdrop-blur-sm rounded-md border
+ * Chrome: same solid chip as MapToolbar — rounded-md border
  * bg-white/90 dark:bg-neutral-900/90 shadow-sm px-3 py-1.5.
  *
  * Navigation is share-token-aware (copied verbatim from MapList.tsx:48-54):
@@ -54,7 +54,7 @@ export function MapBreadcrumb({
       className={[
         'absolute left-4 top-4 z-20',
         'rounded-md border border-neutral-200 dark:border-neutral-800',
-        'bg-white/90 dark:bg-neutral-900/90 backdrop-blur-sm shadow-sm',
+        'bg-raised shadow-sm',
         'px-3 py-1.5',
         'flex items-center gap-1.5',
         'text-sm text-[color:var(--color-accent)] hover:underline',
