@@ -25,6 +25,11 @@ const repoRoot = resolve(here, '..');
  * (the webServer block below will `up -d` an already-built image if it's down,
  *  but it will NOT rebuild — rebuild yourself after changing app source.)
  */
+// WELTBON_E2E_URL points the suite at an already-running stack (for example a
+// host-run API on another port when :3000 is taken); the webServer block is
+// then skipped because it can only start the default Compose stack.
+const BASE_URL = process.env.WELTBON_E2E_URL || 'http://localhost:3000';
+
 const CHROMIUM =
   process.env.PLAYWRIGHT_CHROMIUM_PATH ||
   ['/usr/bin/chromium', '/usr/bin/chromium-browser'].find(existsSync) ||
@@ -48,7 +53,7 @@ export default defineConfig({
   expect: { timeout: 7_000 },
   reporter: process.env.CI ? 'list' : [['list'], ['html', { open: 'never' }]],
   use: {
-    baseURL: 'http://localhost:3000',
+    baseURL: BASE_URL,
     trace: 'retain-on-failure',
     screenshot: 'only-on-failure',
     viewport: { width: 1280, height: 800 },
@@ -58,11 +63,13 @@ export default defineConfig({
     },
   },
   projects: [{ name: 'chromium' }],
-  webServer: {
-    command: 'docker compose up -d',
-    cwd: repoRoot,
-    url: 'http://localhost:3000',
-    reuseExistingServer: true,
-    timeout: 120_000,
-  },
+  webServer: process.env.WELTBON_E2E_URL
+    ? undefined
+    : {
+        command: 'docker compose up -d',
+        cwd: repoRoot,
+        url: BASE_URL,
+        reuseExistingServer: true,
+        timeout: 120_000,
+      },
 });

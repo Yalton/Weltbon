@@ -2,6 +2,7 @@ import { writeFileSync } from 'node:fs';
 import { createHash, randomBytes } from 'node:crypto';
 import {
   API,
+  BASE_URL,
   E2E_CALENDAR,
   E2E_PIN_POSITION,
   SEED_FILE,
@@ -27,7 +28,7 @@ export default async function globalSetup() {
     if (!health.ok) throw new Error(String(health.status));
   } catch (e) {
     throw new Error(
-      `App not reachable at http://localhost:3000 (${e}). Start it with: docker compose up -d --build`,
+      `App not reachable at ${BASE_URL} (${e}). Start it with: docker compose up -d --build`,
     );
   }
 

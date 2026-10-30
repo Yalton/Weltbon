@@ -16,6 +16,7 @@ import { Toast } from '../components/Toast';
 import { AuditCostDialog } from '../components/AuditCostDialog';
 import { useShareMode } from '../contexts/ShareModeContext';
 import { Loading } from '../components/ui/Loading';
+import { Glyph } from '../components/CategoryIcon';
 
 type ToastState = { message: string; variant: 'success' | 'error' } | null;
 
@@ -126,9 +127,9 @@ export function EntryList() {
         <FilterChipRow universeId={uid!} />
       </div>
 
-      <div className="flex items-center justify-between mb-6">
+      <div className="flex flex-wrap items-center justify-between gap-x-4 gap-y-3 mb-6">
         <h1 className="text-2xl font-semibold tracking-tight">Entries</h1>
-        <div className="flex items-center gap-2">
+        <div className="flex flex-wrap items-center gap-2">
 
           {!isShareMode && (
             <>
@@ -157,14 +158,15 @@ export function EntryList() {
                   className="rounded-md border border-neutral-300 dark:border-neutral-700 text-sm px-3 py-1.5 inline-flex items-center gap-1.5 hover:bg-neutral-50 dark:hover:bg-neutral-800"
                   aria-haspopup="dialog"
                 >
-                  ⚖ Audit gaps
+                  <Glyph name="scale" />
+                  Audit gaps
                 </button>
               )}
               {!isEmpty && (
                 <button
                   type="button"
                   onClick={() => setPickerOpen(true)}
-                  className="rounded-md bg-[color:var(--color-accent)] text-white text-sm px-3 py-1.5"
+                  className="rounded-md btn-accent text-white text-sm px-3 py-1.5"
                 >
                   Create entry
                 </button>
@@ -193,7 +195,7 @@ export function EntryList() {
                   fieldFilters: {},
                 })
               }
-              className="bg-[color:var(--color-accent)] text-white text-sm font-medium px-4 py-2 rounded-md hover:opacity-90 focus:outline-none focus:ring-2 focus:ring-[color:var(--color-accent)] focus:ring-offset-2"
+              className="btn-accent text-white text-sm font-medium px-4 py-2 rounded-md hover:opacity-90 focus:outline-none focus:ring-2 focus:ring-[color:var(--color-accent)] focus:ring-offset-2"
             >
               Clear filters
             </button>
@@ -216,7 +218,7 @@ export function EntryList() {
               <button
                 type="button"
                 onClick={() => setPickerOpen(true)}
-                className="bg-[color:var(--color-accent)] text-white text-sm font-medium px-4 py-2 rounded-md hover:opacity-90 focus:outline-none focus:ring-2 focus:ring-[color:var(--color-accent)] focus:ring-offset-2"
+                className="btn-accent text-white text-sm font-medium px-4 py-2 rounded-md hover:opacity-90 focus:outline-none focus:ring-2 focus:ring-[color:var(--color-accent)] focus:ring-offset-2"
               >
                 New entry
               </button>
@@ -250,7 +252,7 @@ export function EntryList() {
         universeId={uid!}
       />
 
-      {/* Audit cost / progress dialog — opened by ⚖ Audit gaps button.
+      {/* Audit cost / progress dialog — opened by the Audit gaps button.
           Mount only when the audit feature is enabled on this universe so the
           dialog's useEstimateAudit query never fires for opted-out universes. */}
       {universe?.auditEnabled === true && (

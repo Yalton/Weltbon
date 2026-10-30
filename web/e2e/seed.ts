@@ -8,7 +8,9 @@ export const SEED_FILE = resolve(
   'seed.json',
 );
 
-export const API = 'http://localhost:3000/api';
+/** The stack under test. Override when :3000 belongs to another app. */
+export const BASE_URL = process.env.WELTBON_E2E_URL || 'http://localhost:3000';
+export const API = `${BASE_URL}/api`;
 const PG_PASSWORD = 'weltbon';
 const PG_USER = 'weltbon';
 const PG_DB = 'weltbon';
