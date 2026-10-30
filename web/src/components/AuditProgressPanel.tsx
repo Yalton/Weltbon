@@ -63,7 +63,8 @@ export function AuditProgressPanel({
       <div className={containerClass}>
         {stale && run.finishedAt && (
           <p className="text-xs text-neutral-500 mb-2">
-            Run finished {formatRelative(run.finishedAt)} ago
+            {/* formatRelative already ends in "ago" (or reads "Just now"). */}
+            Run finished {formatRelative(run.finishedAt).toLowerCase()}
           </p>
         )}
         <AuditCompletionBanner

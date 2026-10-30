@@ -1,3 +1,4 @@
+import { readFileSync } from 'node:fs';
 
 function envOrNull(key: string): string | null {
   const v = process.env[key];
@@ -6,9 +7,6 @@ function envOrNull(key: string): string | null {
 
 function packageVersion(): string {
   try {
-    // a single low-traffic route, and a top-level await would make importing
-    // eslint-disable-next-line @typescript-eslint/no-var-requires
-    const { readFileSync } = require('node:fs') as typeof import('node:fs');
     const url = new URL('../package.json', import.meta.url);
     const pkg = JSON.parse(readFileSync(url, 'utf8')) as { version?: unknown };
     return typeof pkg.version === 'string' ? pkg.version : 'unknown';
