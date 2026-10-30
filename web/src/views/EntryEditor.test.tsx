@@ -1148,3 +1148,39 @@ describe('EntryEditor rename-propagation two-phase save', () => {
     });
   });
 });
+
+describe('EntryEditor save status', () => {
+  beforeEach(() => {
+    vi.mocked(api).mockReset();
+  });
+
+  it('reports a freshly loaded entry as saved, then flags a typed edit as unsaved', async () => {
+    const user = userEvent.setup();
+    renderEditorForExistingEntry({ summary: 'Old summary' });
+
+    await screen.findByDisplayValue('Old summary');
+    expect(screen.getByRole('status')).toHaveTextContent('All changes saved');
+
+    await user.type(screen.getByLabelText(/summary/i), ' plus more');
+    expect(screen.getByRole('status')).toHaveTextContent('Unsaved changes');
+  });
+
+  it('flags changes to state kept outside the form, such as removing the cover', async () => {
+    const user = userEvent.setup();
+    renderEditorForExistingEntry({ coverImageId: 'a1' } as Partial<Entry>);
+
+    await user.click(await screen.findByRole('button', { name: /remove cover/i }));
+    expect(screen.getByRole('status')).toHaveTextContent('Unsaved changes');
+  });
+
+  it('labels a new entry as not saved yet', async () => {
+    setupApi({
+      universe: { entryTypes: ['character'] },
+      categories: [],
+      createResponse: { id: 'new-id' },
+    });
+    renderEditor();
+
+    expect(await screen.findByRole('status')).toHaveTextContent('Not saved yet');
+  });
+});
