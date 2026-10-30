@@ -155,7 +155,7 @@ export function TimelineRangeDialog({ open, onOpenChange, universeId }: Props) {
 
             <div className="mt-6 flex justify-end gap-2">
               <Dialog.Close className="px-3 py-1.5 text-sm rounded-md border border-neutral-300 dark:border-neutral-700">
-                Keep current range
+                {persistedWindow ? 'Keep current range' : 'Cancel'}
               </Dialog.Close>
               <button
                 type="submit"

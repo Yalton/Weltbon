@@ -18,6 +18,7 @@ import { useShareMode, useShareCalendar } from '../contexts/ShareModeContext';
 import { resolveMedallion } from '../lib/medallion';
 import { EntryHero } from '../components/EntryHero';
 import { Panel } from '../components/ui/Panel';
+import { Button } from '../components/ui/Button';
 import { Loading } from '../components/ui/Loading';
 
 export function EntryDetail() {
@@ -213,7 +214,7 @@ export function EntryDetail() {
               {entry.wip && <WipPill wip />}
 
               {entry.isPublic && (
-                <span className="inline-flex items-center gap-1 rounded px-2 py-1 text-sm font-semibold bg-[color:var(--color-accent)]/10 text-[color:var(--color-accent)]">
+                <span className="inline-flex items-center gap-1 rounded px-2 py-1 text-sm font-semibold bg-[color:var(--color-accent)]/10 text-accent-ink">
                   <svg
                     aria-hidden="true"
                     width="10"
@@ -235,17 +236,13 @@ export function EntryDetail() {
           <div className="flex gap-2 mt-3">
             <Link
               to={`/universes/${uid}/entries/${entryId}/edit`}
-              className="rounded-md border border-neutral-300 dark:border-neutral-700 text-sm px-3 py-1.5"
+              className="btn-accent rounded-lg px-4 py-2 text-sm font-semibold text-white focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-[color:var(--color-accent)]"
             >
               Edit
             </Link>
-            <button
-              type="button"
-              onClick={() => setConfirmOpen(true)}
-              className="rounded-md bg-red-600 text-white text-sm px-3 py-1.5"
-            >
+            <Button variant="danger" onClick={() => setConfirmOpen(true)}>
               Delete
-            </button>
+            </Button>
           </div>
         )}
 
@@ -264,7 +261,7 @@ export function EntryDetail() {
                     {calendarDate.year} {calendarDate.eraAbbr}
                   </span>
                   {calendarDate.moonPhases.length > 0 && (
-                    <span className="ml-2 text-neutral-500">
+                    <span className="ml-2 text-ink-muted">
                       {calendarDate.moonPhases
                         .map((mp) => `${mp.name}: ${mp.phase}`)
                         .join(', ')}

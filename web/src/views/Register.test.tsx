@@ -56,6 +56,27 @@ describe('Register view', () => {
     await waitFor(() => expect(screen.queryByText(/universes page/i)).toBeInTheDocument());
   });
 
+  it('tells the user to ask the admin for a new invite when the code is rejected', async () => {
+    vi.stubGlobal(
+      'fetch',
+      vi.fn().mockResolvedValue(
+        new Response(JSON.stringify({ error: 'Invalid or used invite code' }), {
+          status: 400,
+          headers: { 'Content-Type': 'application/json' },
+        })
+      )
+    );
+
+    renderRegister();
+    await userEvent.type(screen.getByLabelText(/display name/i), 'Alice');
+    await userEvent.type(screen.getByLabelText(/email/i), 'alice@test.com');
+    await userEvent.type(screen.getByLabelText(/password/i), 'longenoughpw12');
+    await userEvent.type(screen.getByLabelText(/invite code/i), 'USED');
+    await userEvent.click(screen.getByRole('button', { name: /create account/i }));
+
+    expect(await screen.findByRole('alert')).toHaveTextContent(/ask your instance admin for a new invite/i);
+  });
+
   it('rejects password shorter than 12 chars via client-side validation', async () => {
     renderRegister();
     await userEvent.type(screen.getByLabelText(/display name/i), 'Bob');

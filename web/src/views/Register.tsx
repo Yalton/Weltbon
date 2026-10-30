@@ -16,6 +16,14 @@ const schema = z.object({
 });
 type FormValues = z.infer<typeof schema>;
 
+// The API answers a bad invite with a bare reason; tell the user what to do next.
+function registerErrorMessage(error: Error): string {
+  if (/invalid or used invite code/i.test(error.message)) {
+    return 'That invite code is invalid or has already been used. Ask your instance admin for a new invite.';
+  }
+  return error.message;
+}
+
 export function Register() {
   useDocumentTitle('Create your account');
   const navigate = useNavigate();
@@ -61,7 +69,7 @@ export function Register() {
             {errors.inviteCode && <p className="mt-1 text-xs text-rose-400">{errors.inviteCode.message}</p>}
           </div>
           {registerMut.isError && (
-            <p role="alert" className="text-sm text-rose-400">{(registerMut.error as Error).message}</p>
+            <p role="alert" className="text-sm text-rose-400">{registerErrorMessage(registerMut.error as Error)}</p>
           )}
           <Button type="submit" disabled={registerMut.isPending} className="w-full">
             {registerMut.isPending ? 'Creating...' : 'Create account'}

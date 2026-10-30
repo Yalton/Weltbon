@@ -3,7 +3,7 @@ import { Link } from 'react-router-dom';
 import { useAuditRun, useEstimateAudit } from '../hooks/useAudits';
 import { useUniverse } from '../hooks/useUniverse';
 import { useIssues, type AuditCategory } from '../hooks/useIssues';
-import { EMOJI } from './CategoryIcon';
+import { CategoryIcon, Glyph } from './CategoryIcon';
 import { formatRelative } from '../utils/formatRelative';
 
 
@@ -112,7 +112,10 @@ export function AuditCompletionBanner({
     return (
       <div className="border-l-4 border-l-green-500 dark:border-l-green-400 bg-neutral-50 dark:bg-neutral-900 rounded-md p-4">
         <div className="flex justify-between items-start">
-          <h3 className="text-base font-semibold">✓ Audit complete</h3>
+          <h3 className="flex items-center gap-1.5 text-base font-semibold">
+            <Glyph name="check" />
+            Audit complete
+          </h3>
           {dismissible ? (
             <button
               type="button"
@@ -126,9 +129,10 @@ export function AuditCompletionBanner({
             <button
               type="button"
               onClick={onClearFilter}
-              className="text-sm text-neutral-600 hover:text-neutral-900 dark:text-neutral-400"
+              className="inline-flex items-center gap-1 text-sm text-neutral-600 hover:text-neutral-900 dark:text-neutral-400"
             >
-              ✕ Clear filter
+              <Glyph name="cross" />
+              Clear filter
             </button>
           )}
         </div>
@@ -160,7 +164,7 @@ export function AuditCompletionBanner({
             .filter(([, n]) => n > 0)
             .map(([cat, n]) => (
               <span key={cat}>
-                {EMOJI[cat]} ×{n}
+                <CategoryIcon category={cat} withLabel /> ×{n}
               </span>
             ))}
           {showPartial && (
@@ -169,7 +173,8 @@ export function AuditCompletionBanner({
               title="The provider may have flagged some content."
               aria-label="Warning: partial coverage. Click for documentation."
             >
-              ⚠ Partial coverage{' '}
+              <Glyph name="warning" />
+              Partial coverage{' '}
               <a
                 href="/docs/audit-caps"
                 className="underline text-amber-700 dark:text-amber-300"
@@ -197,8 +202,9 @@ export function AuditCompletionBanner({
   return (
     <div className="border-l-4 border-l-red-500 bg-red-50 dark:bg-red-950/30 rounded-md p-4">
       <div className="flex justify-between items-start">
-        <h3 className="text-base font-semibold text-red-700 dark:text-red-300">
-          ✗ Audit failed
+        <h3 className="flex items-center gap-1.5 text-base font-semibold text-red-700 dark:text-red-300">
+          <Glyph name="cross" />
+          Audit failed
         </h3>
         {dismissible ? (
           <button
@@ -213,9 +219,10 @@ export function AuditCompletionBanner({
           <button
             type="button"
             onClick={onClearFilter}
-            className="text-sm text-neutral-600 hover:text-neutral-900 dark:text-neutral-400"
+            className="inline-flex items-center gap-1 text-sm text-neutral-600 hover:text-neutral-900 dark:text-neutral-400"
           >
-            ✕ Clear filter
+            <Glyph name="cross" />
+            Clear filter
           </button>
         )}
       </div>

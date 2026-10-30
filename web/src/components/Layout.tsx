@@ -1,5 +1,6 @@
 import { Outlet, Link } from 'react-router-dom';
 import { UserMenu } from './UserMenu';
+import { KeyboardShortcuts } from './KeyboardShortcuts';
 import { AppBackground } from './AppBackground';
 import { InFlightAuditsBadge } from './InFlightAuditsBadge';
 
@@ -14,6 +15,7 @@ export function Layout() {
 
         <div className="flex items-center gap-2">
           <InFlightAuditsBadge />
+          <KeyboardShortcuts />
           <UserMenu />
         </div>
       </header>

@@ -5,9 +5,10 @@ import { QueryClient, QueryClientProvider } from '@tanstack/react-query';
 
 // Mock the hook BEFORE importing the component under test.
 const setWindow = vi.fn();
+const hookState = vi.hoisted(() => ({ window: null as { start: number; end: number } | null }));
 vi.mock('../hooks/useTimelineWindow', () => ({
   useTimelineWindow: () => ({
-    window: null,
+    window: hookState.window,
     setWindow,
     isLoading: false,
     isPending: false,
@@ -35,6 +36,7 @@ function renderDialog(props: Partial<Parameters<typeof TimelineRangeDialog>[0]> 
 describe('TimelineRangeDialog', () => {
   beforeEach(() => {
     setWindow.mockReset();
+    hookState.window = null;
   });
 
   it('renders the locked title "Configure timeline range"', () => {
@@ -156,11 +158,18 @@ describe('TimelineRangeDialog', () => {
     expect(onOpenChange).not.toHaveBeenCalledWith(false);
   });
 
-  it('renders Cancel button with exact text "Keep current range"', () => {
+  it('labels the dismiss button "Keep current range" when a range is saved', () => {
+    hookState.window = { start: 0, end: 100 };
     renderDialog();
     expect(
       screen.getByRole('button', { name: /^keep current range$/i }),
     ).toBeInTheDocument();
+  });
+
+  it('labels the dismiss button "Cancel" when no range exists yet', () => {
+    renderDialog();
+    expect(screen.getByRole('button', { name: /^cancel$/i })).toBeInTheDocument();
+    expect(screen.queryByRole('button', { name: /keep current range/i })).not.toBeInTheDocument();
   });
 
   it('renders Save button with exact text "Save range"', () => {

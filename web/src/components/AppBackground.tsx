@@ -22,6 +22,9 @@ export function AppBackground() {
   // POL-03: detect if we're inside a /universes/:uid/* route
   const universeMatch = useMatch('/universes/:uid/*');
   const universeId = universeMatch?.params?.uid ?? null;
+  // The graph draws its own nodes and edges; full-strength constellation lines
+  // behind it read as more graph.
+  const onGraph = useMatch('/universes/:uid/graph') !== null;
 
   // POL-03: fetch entries for current universe (only when inside a universe route)
   const { data: entries } = useEntries(universeId ?? '');
@@ -166,7 +169,7 @@ export function AppBackground() {
       aria-hidden="true"
       role="presentation"
       data-testid="app-background"
-      className="fixed inset-0 -z-10 pointer-events-none w-full h-full"
+      className={`fixed inset-0 -z-10 pointer-events-none w-full h-full${onGraph ? ' opacity-25' : ''}`}
     />
   );
 }

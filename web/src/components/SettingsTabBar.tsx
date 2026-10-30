@@ -18,15 +18,17 @@ export function SettingsTabBar({ tabs, defaultTab }: SettingsTabBarProps) {
   return (
     <nav
       role="tablist"
-      className="flex gap-1 border-b border-neutral-200 dark:border-neutral-800 mb-6"
+      // Scrolls sideways on narrow screens instead of widening the page. The
+      // divider is an inset shadow because a border would sit outside the
+      // scroll box and the active tab's underline could no longer cover it.
+      className="flex gap-1 overflow-x-auto shadow-[inset_0_-1px_0_var(--color-neutral-200)] dark:shadow-[inset_0_-1px_0_var(--color-neutral-800)] mb-6"
     >
       {tabs.map((tab) => {
         const active = tab.id === activeId;
         // Active vs inactive styling per 26-UI-SPEC §Component Inventory
-        // SettingsTabBar. `-mb-px` makes the active tab's bottom border sit
         const className = active
-          ? 'text-sm px-3 py-2 border-b-2 border-[color:var(--color-accent)] text-neutral-900 dark:text-neutral-100 -mb-px'
-          : 'text-sm px-3 py-2 text-neutral-600 dark:text-neutral-400 hover:text-neutral-900 dark:hover:text-neutral-100';
+          ? 'shrink-0 whitespace-nowrap text-sm px-3 py-2 border-b-2 border-[color:var(--color-accent)] text-neutral-900 dark:text-neutral-100'
+          : 'shrink-0 whitespace-nowrap text-sm px-3 py-2 text-neutral-600 dark:text-neutral-400 hover:text-neutral-900 dark:hover:text-neutral-100';
         return (
           <button
             key={tab.id}

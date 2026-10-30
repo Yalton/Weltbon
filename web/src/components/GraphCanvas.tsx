@@ -58,7 +58,9 @@ function radiusForDegree(degree: number): number {
   return Math.min(26, Math.max(NODE_RADIUS, NODE_RADIUS + 2 * degree));
 }
 
-const LABEL_VISIBLE_ZOOM = 1.2;
+// Labels show at the starting zoom (k = 1) and fade only once the user zooms
+// out far enough for titles to collide.
+const LABEL_VISIBLE_ZOOM = 0.75;
 
 const LABEL_OFFSET = 13;
 
@@ -166,8 +168,8 @@ export function GraphCanvas({
             .append('line')
             .attr('data-edge-id', (d) => d.id)
             .attr('stroke', (d) => getLinkTypeColor(d.linkType, linkTypeRegistry))
-            .attr('stroke-opacity', 0.7)
-            .attr('stroke-width', 1.25),
+            .attr('stroke-opacity', 0.9)
+            .attr('stroke-width', 1.75),
         (update) => update.attr('stroke', (d) => getLinkTypeColor(d.linkType, linkTypeRegistry)),
         (exit) => exit.remove(),
       );
@@ -383,7 +385,7 @@ export function GraphCanvas({
       .scaleExtent([0.1, 4])
       .on('zoom', (evt) => {
         g.attr('transform', evt.transform.toString());
-        // Keep overview text-free; titles and relationships appear only after zoom-in.
+        // Keep a zoomed-out overview text-free; titles and relationships return on zoom-in.
         g.selectAll<SVGTextElement, unknown>('text.node-label, text.edge-label')
           .attr('opacity', evt.transform.k < LABEL_VISIBLE_ZOOM ? 0 : 1);
       });
