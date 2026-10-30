@@ -37,3 +37,6 @@ web/playwright/.cache/
 # `pnpm --filter weltbon-desktop dist` and must never be committed.
 desktop/.stage/
 desktop/release/
+
+# Impeccable design-critique snapshots
+.impeccable/
