@@ -20,6 +20,8 @@ const GLYPH_PATHS = {
   'warning': 'M8 2.5l6 10.5H2zM8 6.5v3M8 11.5v.01',
   'cross': 'M4 4l8 8M12 4l-8 8',
   'scale': 'M8 2.5v11M5 13.5h6M3 5h10M3 5l-1.5 4a1.5 1.5 0 0 0 3 0zm10 0l-1.5 4a1.5 1.5 0 0 0 3 0z',
+  'plus': 'M8 3.5v9M3.5 8h9',
+  'chevron-down': 'M4.5 6.5L8 10l3.5-3.5',
 } as const;
 
 export type GlyphName = keyof typeof GLYPH_PATHS;

@@ -2,6 +2,7 @@ import * as DropdownMenu from '@radix-ui/react-dropdown-menu';
 import { useState } from 'react';
 import { getAccessToken } from '../api/client';
 import { buttonClasses } from './ui/Button';
+import { Glyph } from './CategoryIcon';
 import { menuContentClasses, menuItemClasses } from './ui/overlay';
 
 type Format = 'json' | 'markdown' | 'pdf' | 'docx';
@@ -79,7 +80,7 @@ export function ExportMenu({ universeId, fallbackFilename, onToast }: Props) {
           className={buttonClasses('ghost')}
         >
           Export
-          <span aria-hidden>↓</span>
+          <Glyph name="chevron-down" />
         </button>
       </DropdownMenu.Trigger>
       <DropdownMenu.Portal>

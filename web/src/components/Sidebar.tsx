@@ -26,6 +26,7 @@ import { CategoryManageDialog } from './CategoryManageDialog';
 import { ConfirmDialog } from './ConfirmDialog';
 import { computeNewCategoryOrder } from './categoryReorder';
 import { Loading } from './ui/Loading';
+import { Glyph } from './CategoryIcon';
 
 function NavIcon({ d, circle }: { d?: string; circle?: boolean }) {
   return (
@@ -170,9 +171,10 @@ export function Sidebar({ universeId }: { universeId: string }) {
             type="button"
             onClick={openCreate}
             aria-label="New category"
-            className="text-xs px-2 py-0.5 rounded text-link hover:text-ink hover:bg-white/5"
+            className="inline-flex items-center gap-1 text-xs px-2 py-0.5 rounded text-link hover:text-ink hover:bg-white/5"
           >
-            + New
+            <Glyph name="plus" className="w-3 h-3" />
+            New
           </button>
         </div>
 
