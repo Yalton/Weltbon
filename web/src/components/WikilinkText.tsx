@@ -5,6 +5,7 @@ import type { Entry } from '../hooks/useEntries';
 import { WordPopover } from './WordPopover';
 import { EntryHoverCard } from './EntryHoverCard';
 import { EntryEmbed } from './EntryEmbed';
+import { TypeStar } from './TypeStar';
 
 // ---------------------------------------------------------------------------
 // ---------------------------------------------------------------------------
@@ -99,6 +100,15 @@ export function tokenize(text: string): Segment[] {
 // ---------------------------------------------------------------------------
 // ---------------------------------------------------------------------------
 
+// The linked entry's type star, sitting on the text baseline just before the label.
+function InlineTypeStar({ type }: { type: string }) {
+  return (
+    <span className="mr-0.5 inline-block align-[-1px]">
+      <TypeStar type={type} size={9} />
+    </span>
+  );
+}
+
 interface WikilinkTextProps {
   children: React.ReactNode;
   wikis: WikilinkResolutionData;
@@ -134,18 +144,19 @@ export function WikilinkText({ children, wikis }: WikilinkTextProps) {
         isShareMode && shareToken
           ? `/share/${shareToken}/entries/${entryId}`
           : `/universes/${universeId}/entries/${entryId}`;
+      const entryObj = entriesById?.get(entryId);
       const link = (
         <Link
           key={key}
           to={entryTo}
           className="text-sm text-[color:var(--color-accent)] hover:underline"
         >
+          {entryObj?.entryType && <InlineTypeStar type={entryObj.entryType} />}
           {label}
         </Link>
       );
       // so hovering shows the preview card (D-01..D-04, D-11..D-13).
       // Graceful degradation: if entriesById is undefined (caller predating 46-01)
-      const entryObj = entriesById?.get(entryId);
       if (entryObj) {
         return (
           <EntryHoverCard key={key} entry={entryObj} universeId={universeId}>
@@ -162,16 +173,17 @@ export function WikilinkText({ children, wikis }: WikilinkTextProps) {
         isShareMode && shareToken
           ? `/share/${shareToken}/entries/${entryId}`
           : `/universes/${universeId}/entries/${entryId}`;
+      const entryObj = entriesById?.get(entryId);
       const link = (
         <Link
           key={key}
           to={entryTo}
           className="text-sm text-[color:var(--color-accent)] hover:underline"
         >
+          {entryObj?.entryType && <InlineTypeStar type={entryObj.entryType} />}
           {label}
         </Link>
       );
-      const entryObj = entriesById?.get(entryId);
       if (entryObj) {
         return (
           <EntryHoverCard key={key} entry={entryObj} universeId={universeId}>

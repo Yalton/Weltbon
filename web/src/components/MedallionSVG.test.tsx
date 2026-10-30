@@ -50,11 +50,15 @@ describe('MedallionSVGNode (React)', () => {
     expect(text.getAttribute('font-family')).toBe('var(--font-display)');
   });
 
-  it('rings the disc in the entry-type hue', () => {
+  it('carries the entry type in a corner star, with a neutral ring', () => {
     const c = renderNode({ id: 'e4', title: 'Vale', entryType: 'location', radius: 9 });
     const disc = c.querySelector('circle.medallion-disc')!;
-    expect(disc.getAttribute('stroke')).toBe('#f59e0b');
+    expect(disc.getAttribute('stroke')).toBe('rgb(255 255 255 / 0.18)');
     expect(disc.getAttribute('r')).toBe('9');
+    const star = c.querySelector('path.medallion-type-star')!;
+    expect(star.getAttribute('fill')).toBe('#f59e0b');
+    expect(star.getAttribute('aria-hidden')).toBe('true');
+    expect(star.getAttribute('pointer-events')).toBe('none');
   });
 
   it('lets pointer events fall through the glyph and the cover to the disc beneath', () => {
@@ -105,7 +109,7 @@ describe('appendMedallionNode (imperative twin for the d3 join)', () => {
     });
     expect(g.querySelector('image')?.getAttribute('href')).toBe('/thumb.png');
     expect(g.querySelector('clipPath#medallion-clip-n1')).toBeTruthy();
-    expect(g.querySelector('circle.medallion-disc')?.getAttribute('stroke')).toBe('#10b981');
+    expect(g.querySelector('path.medallion-type-star')?.getAttribute('fill')).toBe('#10b981');
   });
 
   it('produces a monogram <text> when the entry has no cover and no icon', () => {

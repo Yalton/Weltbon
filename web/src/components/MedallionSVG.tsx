@@ -5,14 +5,23 @@ import {
   resolveMedallion,
   type MedallionSource,
 } from '../lib/medallion';
+import { TYPE_STAR_PATH } from './TypeStar';
 
 const SVG_NS = 'http://www.w3.org/2000/svg';
 
 const CLASS_ROOT = 'medallion-node';
 const CLASS_DISC = 'medallion-disc';
 const CLASS_GLYPH = 'medallion-glyph';
+const CLASS_STAR = 'medallion-type-star';
 
-const RING_STROKE_WIDTH = 2;
+const RING_STROKE_WIDTH = 1.5;
+// The ring stays neutral: the type colour lives in the corner star, as on the entry list.
+const RING_COLOR = 'rgb(255 255 255 / 0.18)';
+// A canvas-coloured outline separates the star from the ring it overlaps.
+const STAR_OUTLINE = 'var(--color-canvas-mid)';
+const STAR_MIN_SIZE = 9;
+const STAR_RADIUS_RATIO = 0.85;
+const STAR_OFFSET_RATIO = 0.72;
 
 const DECORATIVE_OVERLAY = {
   'pointer-events': 'none',
@@ -55,10 +64,26 @@ function describeMedallionSVG(props: MedallionSVGProps): ElementSpec {
       r: radius,
       fill: m.svg.discFill,
       'fill-opacity': fillOpacity,
-      stroke: m.hue,
+      stroke: RING_COLOR,
       'stroke-width': RING_STROKE_WIDTH,
     },
   });
+
+  const starSize = Math.max(STAR_MIN_SIZE, radius * STAR_RADIUS_RATIO);
+  const starOffset = radius * STAR_OFFSET_RATIO;
+  const typeStar: ElementSpec = {
+    tag: 'path',
+    className: CLASS_STAR,
+    attrs: {
+      d: TYPE_STAR_PATH,
+      fill: m.hue,
+      stroke: STAR_OUTLINE,
+      'stroke-width': 1.6,
+      'paint-order': 'stroke',
+      transform: `translate(${starOffset - starSize / 2} ${-starOffset - starSize / 2}) scale(${starSize / 10})`,
+      ...DECORATIVE_OVERLAY,
+    },
+  };
 
   if (m.kind === 'cover') {
     return {
@@ -89,6 +114,7 @@ function describeMedallionSVG(props: MedallionSVGProps): ElementSpec {
           },
         },
         disc(0),
+        typeStar,
       ],
     };
   }
@@ -117,6 +143,7 @@ function describeMedallionSVG(props: MedallionSVGProps): ElementSpec {
         style: GLYPH_STYLE,
         text: isIcon ? m.icon : m.monogram,
       },
+      typeStar,
     ],
   };
 }
@@ -131,6 +158,7 @@ const REACT_ATTR_NAME: Record<string, string> = {
   'font-family': 'fontFamily',
   'font-weight': 'fontWeight',
   'clip-path': 'clipPath',
+  'paint-order': 'paintOrder',
 };
 
 function toReactAttrs(attrs: ElementSpec['attrs']): Record<string, string | number> {
