@@ -6,11 +6,11 @@ import { entryTypeHexColor } from '../lib/entryTypeColor';
 // Default is the neutral fallback gray; remaining 5 are stable entry-type hexes.
 export const EDGE_PALETTE: readonly string[] = [
   '#6b7280', // gray — ENTRY_TYPE_HEX_FALLBACK (neutral default)
-  entryTypeHexColor('concept'),   // #3b82f6 blue
-  entryTypeHexColor('entity'),    // #10b981 emerald
-  entryTypeHexColor('location'),  // #f59e0b amber
-  entryTypeHexColor('event'),     // #f43f5e rose
-  entryTypeHexColor('faction'),   // #a855f7 purple
+  entryTypeHexColor('concept'), // #3b82f6 blue
+  entryTypeHexColor('entity'), // #10b981 emerald
+  entryTypeHexColor('location'), // #f59e0b amber
+  entryTypeHexColor('event'), // #f43f5e rose
+  entryTypeHexColor('faction'), // #a855f7 purple
 ] as const;
 
 export type LineStyle = 'solid' | 'dashed' | 'dotted';
@@ -131,28 +131,28 @@ export function DrawEdgePopover({
             handleOpenChange(false);
           }}
           onPointerDownOutside={() => handleOpenChange(false)}
-          className="w-[300px] bg-white dark:bg-neutral-900 border border-neutral-200 dark:border-neutral-800 rounded-md shadow-lg z-50 p-4 data-[state=open]:animate-popover-in data-[state=closed]:animate-popover-out"
+          className="w-[300px] bg-panel border border-line rounded-md shadow-lg z-50 p-4 data-[state=open]:animate-popover-in data-[state=closed]:animate-popover-out"
         >
           <h3 className="text-sm font-semibold mb-3">{isEdit ? COPY.titleEdit : COPY.title}</h3>
 
           {/* From / To rows */}
           <div className="flex items-baseline gap-2">
-            <span className="text-xs text-neutral-500 dark:text-neutral-400 w-10 shrink-0">
+            <span className="text-xs text-ink-secondary w-10 shrink-0">
               {COPY.fromCaption}
             </span>
             <span
-              className="text-sm font-medium text-neutral-900 dark:text-neutral-100 truncate"
+              className="text-sm font-medium text-ink truncate"
               title={fromTitle}
             >
               {fromTitle}
             </span>
           </div>
           <div className="flex items-baseline gap-2 mb-3">
-            <span className="text-xs text-neutral-500 dark:text-neutral-400 w-10 shrink-0">
+            <span className="text-xs text-ink-secondary w-10 shrink-0">
               {COPY.toCaption}
             </span>
             <span
-              className="text-sm font-medium text-neutral-900 dark:text-neutral-100 truncate"
+              className="text-sm font-medium text-ink truncate"
               title={toTitle}
             >
               {toTitle}
@@ -165,12 +165,12 @@ export function DrawEdgePopover({
             value={label}
             onChange={(e) => setLabel(e.target.value)}
             placeholder={COPY.labelPlaceholder}
-            className="w-full rounded-md border border-neutral-300 dark:border-neutral-700 bg-transparent px-3 py-2 text-sm focus:outline-none focus:ring-2 focus:ring-[color:var(--color-accent)]"
+            className="w-full rounded-md border border-line-strong bg-transparent px-3 py-2 text-sm focus:outline-none focus:ring-2 focus:ring-[color:var(--color-accent)]"
           />
 
           {/* Line style radio group */}
           <div className="mt-3">
-            <p className="text-xs text-neutral-500 dark:text-neutral-400 mb-1.5">
+            <p className="text-xs text-ink-secondary mb-1.5">
               {COPY.styleLabel}
             </p>
             <div className="flex gap-2">
@@ -184,7 +184,7 @@ export function DrawEdgePopover({
                     onChange={() => setLineStyle(opt.value)}
                     className="accent-[var(--color-accent)]"
                   />
-                  <span className="text-xs text-neutral-700 dark:text-neutral-300">
+                  <span className="text-xs text-ink">
                     {opt.label}
                   </span>
                 </label>
@@ -194,7 +194,7 @@ export function DrawEdgePopover({
 
           {/* Color picker — 6 circular 20x20 swatches */}
           <div className="mt-3">
-            <p className="text-xs text-neutral-500 dark:text-neutral-400 mb-1.5">
+            <p className="text-xs text-ink-secondary mb-1.5">
               {COPY.colorLabel}
             </p>
             <div className="flex gap-2">
@@ -228,7 +228,7 @@ export function DrawEdgePopover({
             <button
               type="button"
               onClick={() => handleOpenChange(false)}
-              className="rounded-md border border-neutral-300 dark:border-neutral-700 px-3 py-1.5 text-sm"
+              className="rounded-md border border-line-strong px-3 py-1.5 text-sm"
             >
               {COPY.cancel}
             </button>

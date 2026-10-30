@@ -29,7 +29,7 @@ export class ErrorBoundary extends Component<ErrorBoundaryProps, ErrorBoundarySt
         return this.props.fallback;
       }
       return (
-        <div className="p-6 text-sm text-neutral-600 dark:text-neutral-400">
+        <div className="p-6 text-sm text-ink-secondary">
           Something went wrong.
         </div>
       );

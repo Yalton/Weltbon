@@ -255,12 +255,12 @@ export function TimelineCanvas({
           group
             .append('line')
             .attr('stroke', 'currentColor')
-            .attr('class', 'text-neutral-400 dark:text-neutral-500');
+            .attr('class', ' text-ink-muted');
           group
             .append('text')
             .attr('font-size', 10)
             .attr('fill', 'currentColor')
-            .attr('class', 'text-neutral-600 dark:text-neutral-300');
+            .attr('class', ' text-ink');
           return group;
         })
         .attr('data-axis-tick', (datum) => String(datum.value));
@@ -471,7 +471,7 @@ export function TimelineCanvas({
               y1={baselineY - 5}
               y2={baselineY + 5}
               stroke="currentColor"
-              className="text-neutral-400 dark:text-neutral-500"
+              className="text-ink-muted"
             />
             <text
               x={tick.x}
@@ -479,7 +479,7 @@ export function TimelineCanvas({
               textAnchor={axisTextAnchor(tick.x, width)}
               fontSize={10}
               fill="currentColor"
-              className="text-neutral-600 dark:text-neutral-300"
+              className="text-ink"
             >
               {tick.label}
             </text>
@@ -493,7 +493,7 @@ export function TimelineCanvas({
           fontSize={11}
           fontWeight={600}
           fill="currentColor"
-          className="text-neutral-600 dark:text-neutral-300"
+          className="text-ink"
         >
           {formatAxisPosition(timelineWindow.start, calendar)} –{' '}
           {formatAxisPosition(timelineWindow.end, calendar)}
@@ -508,7 +508,7 @@ export function TimelineCanvas({
             y2={baselineY}
             stroke="currentColor"
             strokeWidth={2}
-            className="text-neutral-300 dark:text-neutral-700"
+            className="text-ink-muted"
           />
         </g>
         <g className="pins">
@@ -602,7 +602,7 @@ export function TimelineCanvas({
                 y={cy + 4}
                 textAnchor={clampSide === 'before' ? 'start' : 'end'}
                 fontSize={16}
-                className="text-neutral-400 opacity-40"
+                className="text-ink-muted opacity-40"
                 fill="currentColor"
                 pointerEvents="none"
                 aria-hidden="true"
@@ -633,7 +633,7 @@ export function TimelineCanvas({
           return (
             <div
               key={`label-${pin.id}`}
-              className="pointer-events-none absolute select-none whitespace-nowrap rounded bg-neutral-900/85 px-1.5 py-0.5 text-xs font-medium text-neutral-100 shadow"
+              className="pointer-events-none absolute select-none whitespace-nowrap rounded bg-ink-muted px-1.5 py-0.5 text-xs font-medium text-ink-muted shadow"
               style={{
                 left: sx,
                 top: sy - PIN_RADIUS - 6,
@@ -663,18 +663,18 @@ export function TimelineCanvas({
               }}
             >
               <div className="min-w-[180px] max-w-[260px] rounded-lg border border-line-strong bg-raised px-3 py-2 shadow-xl">
-                <div className="text-sm font-semibold text-neutral-50">{displayName}</div>
-                <div className="mt-0.5 text-xs text-neutral-400">
+                <div className="text-sm font-semibold text-ink-muted">{displayName}</div>
+                <div className="mt-0.5 text-xs text-ink-muted">
                   {formatCalendar(pin.position, calendar)?.compact ?? POSITION_FORMAT.format(pin.position)}
-                  <span className="mx-1 text-neutral-600">·</span>
+                  <span className="mx-1 text-ink-secondary">·</span>
                   {pin.precision}
                 </div>
                 {pin.label && pin.label !== pin.entryTitle && (
-                  <div className="mt-1 truncate text-xs italic text-neutral-300">
+                  <div className="mt-1 truncate text-xs italic text-ink-muted">
                     “{pin.label}”
                   </div>
                 )}
-                <div className="mt-1 text-[10px] uppercase tracking-wide text-neutral-500">
+                <div className="mt-1 text-[10px] uppercase tracking-wide text-ink-muted">
                   Click to open
                 </div>
               </div>

@@ -66,11 +66,11 @@ export function TemplatePicker({
       <Dialog.Root open={open} onOpenChange={onOpenChange}>
         <Dialog.Portal>
           <Dialog.Overlay className="fixed inset-0 bg-black/50 z-40 data-[state=open]:animate-overlay-in data-[state=closed]:animate-overlay-out" />
-          <Dialog.Content className="fixed left-1/2 top-1/2 -translate-x-1/2 -translate-y-1/2 w-full max-w-3xl max-h-[80vh] overflow-y-auto bg-white dark:bg-neutral-900 rounded-md p-6 z-50 border border-neutral-200 dark:border-neutral-800 data-[state=open]:animate-dialog-in data-[state=closed]:animate-dialog-out focus:outline-none">
+          <Dialog.Content className="fixed left-1/2 top-1/2 -translate-x-1/2 -translate-y-1/2 w-full max-w-3xl max-h-[80vh] overflow-y-auto bg-panel rounded-md p-6 z-50 border border-line data-[state=open]:animate-dialog-in data-[state=closed]:animate-dialog-out focus:outline-none">
             <Dialog.Title className="text-xl font-semibold">
               Start a new entry
             </Dialog.Title>
-            <Dialog.Description className="text-sm text-neutral-500 mt-1">
+            <Dialog.Description className="text-sm text-ink-muted mt-1">
               Pick a template to prefill structure, or start with a blank entry.
             </Dialog.Description>
 
@@ -82,14 +82,14 @@ export function TemplatePicker({
                   navigate(`/universes/${universeId}/entries/new`);
                   onOpenChange(false);
                 }}
-                className="w-full text-left rounded-md border border-dashed border-neutral-300 dark:border-neutral-700 p-3 hover:border-[color:var(--color-accent)] transition-colors"
+                className="w-full text-left rounded-md border border-dashed border-line-strong p-3 hover:border-[color:var(--color-accent)] transition-colors"
               >
                 <div className="font-medium">Empty entry</div>
-                <div className="text-xs text-neutral-500 mt-0.5">Start with no scaffold.</div>
+                <div className="text-xs text-ink-muted mt-0.5">Start with no scaffold.</div>
               </button>
 
               {/* Section 2: Default templates */}
-              <h3 className="text-xs uppercase tracking-wide text-neutral-500 mb-2 mt-6">
+              <h3 className="text-xs uppercase tracking-wide text-ink-muted mb-2 mt-6">
                 Default templates
               </h3>
               <div className="grid grid-cols-2 gap-3">
@@ -106,7 +106,7 @@ export function TemplatePicker({
                         handleSelectDefault(t);
                       }
                     }}
-                    className="group relative text-left rounded-md border border-neutral-200 dark:border-neutral-800 p-3 hover:border-[color:var(--color-accent)] transition-colors cursor-pointer"
+                    className="group relative text-left rounded-md border border-line p-3 hover:border-[color:var(--color-accent)] transition-colors cursor-pointer"
                   >
                     {/* Card header row: label + Default badge */}
                     <div className="flex items-start justify-between gap-2">
@@ -115,7 +115,7 @@ export function TemplatePicker({
                         Default
                       </span>
                     </div>
-                    <div className="text-xs text-neutral-500 mt-0.5">
+                    <div className="text-xs text-ink-muted mt-0.5">
                       Type: {t.entryType}
                     </div>
                     {/* Clone-to-personal affordance — visible on hover/focus-within */}
@@ -135,14 +135,14 @@ export function TemplatePicker({
               {/* Section 3: Your templates — only rendered when user has personal templates */}
               {userTemplatesQuery.isPending && (
                 <>
-                  <p className="text-xs uppercase tracking-wide text-neutral-500 mb-2 mt-8">
+                  <p className="text-xs uppercase tracking-wide text-ink-muted mb-2 mt-8">
                     Your templates
                   </p>
                   <div className="space-y-2" aria-busy="true" aria-label="Loading your templates">
                     {[0, 1, 2].map((i) => (
                       <div
                         key={i}
-                        className="h-12 rounded-md bg-neutral-100 dark:bg-neutral-800 animate-pulse"
+                        className="h-12 rounded-md bg-raised animate-pulse"
                       />
                     ))}
                   </div>
@@ -151,7 +151,7 @@ export function TemplatePicker({
 
               {!userTemplatesQuery.isPending && userTemplates.length > 0 && (
                 <>
-                  <h3 className="text-xs uppercase tracking-wide text-neutral-500 mb-2 mt-8">
+                  <h3 className="text-xs uppercase tracking-wide text-ink-muted mb-2 mt-8">
                     Your templates
                   </h3>
                   <div className="grid grid-cols-2 gap-3">
@@ -160,10 +160,10 @@ export function TemplatePicker({
                         key={ut.id}
                         type="button"
                         onClick={() => handleSelectPersonal(ut)}
-                        className="text-left rounded-md border border-neutral-200 dark:border-neutral-800 p-3 hover:border-[color:var(--color-accent)] transition-colors"
+                        className="text-left rounded-md border border-line p-3 hover:border-[color:var(--color-accent)] transition-colors"
                       >
                         <div className="font-medium">{ut.name}</div>
-                        <div className="text-xs text-neutral-500 mt-0.5">
+                        <div className="text-xs text-ink-muted mt-0.5">
                           Type: {ut.entryType}
                         </div>
                       </button>

@@ -67,7 +67,7 @@ export function AuditHistoryTable({
         {[0, 1, 2].map((i) => (
           <div
             key={i}
-            className="h-12 rounded-md bg-neutral-100 dark:bg-neutral-800 animate-pulse"
+            className="h-12 rounded-md bg-raised animate-pulse"
           />
         ))}
       </div>
@@ -104,10 +104,10 @@ export function AuditHistoryTable({
       <table className="w-full text-sm">
         <caption className="sr-only">History of audit runs for this universe</caption>
         <thead>
-          <tr className="border-b border-neutral-200 dark:border-neutral-800">
+          <tr className="border-b border-line">
             <th
               scope="col"
-              className="pb-2 text-left text-xs uppercase tracking-wide font-medium text-neutral-500"
+              className="pb-2 text-left text-xs uppercase tracking-wide font-medium text-ink-muted"
             >
               <button
                 type="button"
@@ -119,19 +119,19 @@ export function AuditHistoryTable({
             </th>
             <th
               scope="col"
-              className="pb-2 text-left text-xs uppercase tracking-wide font-medium text-neutral-500"
+              className="pb-2 text-left text-xs uppercase tracking-wide font-medium text-ink-muted"
             >
               Scope
             </th>
             <th
               scope="col"
-              className="pb-2 text-left text-xs uppercase tracking-wide font-medium text-neutral-500"
+              className="pb-2 text-left text-xs uppercase tracking-wide font-medium text-ink-muted"
             >
               Model
             </th>
             <th
               scope="col"
-              className="pb-2 text-right text-xs uppercase tracking-wide font-medium text-neutral-500"
+              className="pb-2 text-right text-xs uppercase tracking-wide font-medium text-ink-muted"
             >
               <button
                 type="button"
@@ -143,13 +143,13 @@ export function AuditHistoryTable({
             </th>
             <th
               scope="col"
-              className="pb-2 text-left text-xs uppercase tracking-wide font-medium text-neutral-500"
+              className="pb-2 text-left text-xs uppercase tracking-wide font-medium text-ink-muted"
             >
               Findings
             </th>
             <th
               scope="col"
-              className="pb-2 text-left text-xs uppercase tracking-wide font-medium text-neutral-500"
+              className="pb-2 text-left text-xs uppercase tracking-wide font-medium text-ink-muted"
             >
               <button
                 type="button"
@@ -182,8 +182,8 @@ export function AuditHistoryTable({
                     navigateToRun(row.id);
                   }
                 }}
-                className={`border-b border-neutral-100 dark:border-neutral-800 last:border-0 hover:bg-neutral-50 dark:hover:bg-neutral-800 cursor-pointer ${
-                  isHighlight ? 'bg-neutral-100 dark:bg-neutral-800' : ''
+                className={`border-b border-line last:border-0 hover:bg-white/5 cursor-pointer ${
+                  isHighlight ? ' bg-raised' : ''
                 }`}
                 aria-label={`Audit run from ${formatRelative(row.startedAt)}, ${row.scope}, status ${row.status}`}
               >
@@ -215,11 +215,11 @@ export function AuditHistoryTable({
                     </>
                   )}
                 </td>
-                <td className="py-3 pr-4 text-sm leading-[1.5] text-neutral-700 dark:text-neutral-300">
+                <td className="py-3 pr-4 text-sm leading-[1.5] text-ink">
                   {row.provider} / {row.model}
 
                   {row.credentialSource === 'shared' && (
-                    <span className="ml-2 inline-block text-xs text-neutral-500 dark:text-neutral-400 border border-neutral-300 dark:border-neutral-700 rounded px-1.5 py-0.5 align-middle">
+                    <span className="ml-2 inline-block text-xs text-ink-secondary border border-line-strong rounded px-1.5 py-0.5 align-middle">
                       Shared connection
                     </span>
                   )}

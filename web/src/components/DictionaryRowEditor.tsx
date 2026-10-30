@@ -39,7 +39,7 @@ export function DictionaryRowEditor({
   });
 
   const inputClass =
-    'w-full rounded-md border border-neutral-300 dark:border-neutral-700 bg-transparent px-2 py-1 text-sm focus:outline-none focus:ring-2 focus:ring-[color:var(--color-accent)] disabled:opacity-50 disabled:cursor-not-allowed';
+    'w-full rounded-md border border-line-strong bg-transparent px-2 py-1 text-sm focus:outline-none focus:ring-2 focus:ring-[color:var(--color-accent)] disabled:opacity-50 disabled:cursor-not-allowed';
 
   async function handleSave() {
     if (!draft.word.trim() || !draft.gloss.trim()) return;
@@ -74,7 +74,7 @@ export function DictionaryRowEditor({
 
   return (
     <tr
-      className="border-b border-neutral-100 dark:border-neutral-800 last:border-0"
+      className="border-b border-line last:border-0"
       style={{ minHeight: '44px' }} // UI-SPEC: 44px touch target minimum (WCAG 2.5.5)
     >
       {/* Word */}
@@ -175,7 +175,7 @@ export function DictionaryRowEditor({
             type="button"
             onClick={onDiscard}
             disabled={isSaving}
-            className="px-3 py-1.5 text-sm rounded-md border border-neutral-300 dark:border-neutral-700 hover:bg-neutral-50 dark:hover:bg-neutral-800 focus:outline-none focus:ring-2 focus:ring-[color:var(--color-accent)] disabled:opacity-50 disabled:cursor-not-allowed"
+            className="px-3 py-1.5 text-sm rounded-md border border-line-strong hover:bg-white/5 focus:outline-none focus:ring-2 focus:ring-[color:var(--color-accent)] disabled:opacity-50 disabled:cursor-not-allowed"
           >
             Discard changes
           </button>

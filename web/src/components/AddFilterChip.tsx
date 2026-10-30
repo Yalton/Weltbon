@@ -107,15 +107,15 @@ export function AddFilterChip({
         <Popover.Content
           sideOffset={6}
           align="start"
-          className="z-50 w-64 rounded-md border border-neutral-200 dark:border-neutral-800 bg-white dark:bg-neutral-950 p-3 shadow-lg text-sm space-y-3"
+          className="z-50 w-64 rounded-md border border-line bg-canvas-lo p-3 shadow-lg text-sm space-y-3"
         >
           <label className="block space-y-1">
-            <span className="text-xs font-medium text-neutral-500">Type</span>
+            <span className="text-xs font-medium text-ink-muted">Type</span>
             <select
               aria-label="Add type filter"
               defaultValue=""
               onChange={(e) => addType(e.target.value)}
-              className="w-full rounded border border-neutral-300 dark:border-neutral-700 bg-white dark:bg-neutral-900 px-2 py-1"
+              className="w-full rounded border border-line-strong bg-panel px-2 py-1"
             >
               <option value="" disabled>
                 Select type...
@@ -129,7 +129,7 @@ export function AddFilterChip({
           </label>
 
           <label className="block space-y-1">
-            <span className="text-xs font-medium text-neutral-500">Tag</span>
+            <span className="text-xs font-medium text-ink-muted">Tag</span>
             <input
               type="text"
               aria-label="Add tag filter"
@@ -142,17 +142,17 @@ export function AddFilterChip({
                 }
               }}
               placeholder="Type tag, press Enter"
-              className="w-full rounded border border-neutral-300 dark:border-neutral-700 bg-white dark:bg-neutral-900 px-2 py-1"
+              className="w-full rounded border border-line-strong bg-panel px-2 py-1"
             />
           </label>
 
           <label className="block space-y-1">
-            <span className="text-xs font-medium text-neutral-500">Category</span>
+            <span className="text-xs font-medium text-ink-muted">Category</span>
             <select
               aria-label="Add category filter"
               defaultValue=""
               onChange={(e) => addCategory(e.target.value)}
-              className="w-full rounded border border-neutral-300 dark:border-neutral-700 bg-white dark:bg-neutral-900 px-2 py-1"
+              className="w-full rounded border border-line-strong bg-panel px-2 py-1"
             >
               <option value="" disabled>
                 Select category...
@@ -168,12 +168,12 @@ export function AddFilterChip({
 
           {/* Status group — three-state WIP filter */}
           <div className="space-y-1">
-            <span className="text-xs font-medium text-neutral-500">Status</span>
+            <span className="text-xs font-medium text-ink-muted">Status</span>
             <select
               aria-label="Add status filter"
               value={filters.wip === null ? '' : String(filters.wip)}
               onChange={(e) => handleWipChange(e.target.value)}
-              className="w-full rounded border border-neutral-300 dark:border-neutral-700 bg-white dark:bg-neutral-900 px-2 py-1"
+              className="w-full rounded border border-line-strong bg-panel px-2 py-1"
             >
               <option value="">All entries</option>
               <option value="true">WIP only</option>
@@ -184,14 +184,14 @@ export function AddFilterChip({
           {/* Fields group — only when the universe has registered fields */}
           {registeredFields.length > 0 && (
             <div className="space-y-2">
-              <span className="text-xs font-medium text-neutral-500">Fields</span>
+              <span className="text-xs font-medium text-ink-muted">Fields</span>
               <label className="block space-y-1">
-                <span className="text-xs font-medium text-neutral-500">Field</span>
+                <span className="text-xs font-medium text-ink-muted">Field</span>
                 <select
                   aria-label="Select field to filter"
                   value={selectedFieldName}
                   onChange={(e) => handleFieldPickerChange(e.target.value)}
-                  className="w-full rounded border border-neutral-300 dark:border-neutral-700 bg-white dark:bg-neutral-900 px-2 py-1 text-sm"
+                  className="w-full rounded border border-line-strong bg-panel px-2 py-1 text-sm"
                 >
                   <option value="" disabled>
                     Select field...
@@ -209,7 +209,7 @@ export function AddFilterChip({
                   UrlInput) so the value entry matches the field's type. */}
               {selectedField && (
                 <div className="space-y-1">
-                  <span className="text-xs font-medium text-neutral-500">Value</span>
+                  <span className="text-xs font-medium text-ink-muted">Value</span>
                   {selectedField.type === 'boolean' ? (
                     <BooleanInput
                       inputId={fieldValueInputId}
@@ -251,7 +251,7 @@ export function AddFilterChip({
                           applyFieldFilter(fieldValueDraft);
                         }
                       }}
-                      className="w-full rounded border border-neutral-300 dark:border-neutral-700 bg-white dark:bg-neutral-900 px-2 py-1 text-sm"
+                      className="w-full rounded border border-line-strong bg-panel px-2 py-1 text-sm"
                     />
                   )}
                 </div>
@@ -264,7 +264,7 @@ export function AddFilterChip({
                   type="button"
                   onClick={() => applyFieldFilter(fieldValueDraft)}
                   disabled={!fieldValueDraft}
-                  className="text-xs rounded border border-neutral-300 dark:border-neutral-700 px-2 py-1 hover:bg-neutral-100 dark:hover:bg-neutral-800 disabled:opacity-50"
+                  className="text-xs rounded border border-line-strong px-2 py-1 hover:bg-white/5 disabled:opacity-50"
                 >
                   Apply
                 </button>

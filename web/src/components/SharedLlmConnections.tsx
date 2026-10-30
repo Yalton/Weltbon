@@ -59,23 +59,23 @@ function GrantCard({ grant }: { grant: SharedGrant }) {
   return (
     <li
       data-testid={`shared-llm-grant-${grant.id}`}
-      className="rounded-md border border-neutral-200 dark:border-neutral-800 p-4"
+      className="rounded-md border border-line p-4"
     >
       <div className="flex items-baseline justify-between gap-3">
         <h3 className="text-sm font-medium">{providerName} (shared)</h3>
-        <span className="text-xs text-neutral-500 dark:text-neutral-400">
+        <span className="text-xs text-ink-secondary">
           {accepted ? 'Accepted' : 'Not yet accepted'}
         </span>
       </div>
 
-      <p className="mt-2 text-sm text-neutral-700 dark:text-neutral-300 leading-[1.55]">
+      <p className="mt-2 text-sm text-ink leading-[1.55]">
         Your content leaves this instance: entries, summaries, links and tags
         are sent to {providerName} to run the audit. The credential is
         administrator-managed — an administrator pays for the tokens, and can
         withdraw this connection at any time.
       </p>
 
-      <dl className="mt-3 grid grid-cols-2 gap-x-4 gap-y-1 text-xs text-neutral-600 dark:text-neutral-400">
+      <dl className="mt-3 grid grid-cols-2 gap-x-4 gap-y-1 text-xs text-ink-secondary">
         <dt>Monthly allowance</dt>
         <dd>
           ${grant.usage.settledUsd} used of ${grant.usage.limitUsd} monthly limit
@@ -100,7 +100,7 @@ function GrantCard({ grant }: { grant: SharedGrant }) {
             type="button"
             onClick={() => setConfirmWithdraw(true)}
             disabled={pending}
-            className="text-sm px-3 py-1.5 rounded-md border border-neutral-300 dark:border-neutral-700 hover:bg-neutral-50 dark:hover:bg-neutral-800 focus:outline-none focus:ring-2 focus:ring-[color:var(--color-accent)] focus:ring-offset-2 disabled:opacity-50"
+            className="text-sm px-3 py-1.5 rounded-md border border-line-strong hover:bg-white/5 focus:outline-none focus:ring-2 focus:ring-[color:var(--color-accent)] focus:ring-offset-2 disabled:opacity-50"
           >
             {`Withdraw consent for ${providerName} shared connection`}
           </button>
@@ -126,7 +126,7 @@ function GrantCard({ grant }: { grant: SharedGrant }) {
 
       <p
         aria-live="polite"
-        className="mt-2 text-xs text-neutral-500 dark:text-neutral-400 empty:mt-0"
+        className="mt-2 text-xs text-ink-secondary empty:mt-0"
       >
         {pending ? 'Saving…' : outcome}
       </p>
@@ -199,7 +199,7 @@ export function SharedLlmConnections() {
       <h2 id="shared-llm-heading" className="text-lg font-semibold tracking-tight">
         Shared LLM connections
       </h2>
-      <p className="mt-1 text-sm text-neutral-600 dark:text-neutral-400">
+      <p className="mt-1 text-sm text-ink-secondary">
         An administrator has made a provider connection available to you. You
         can run audits on it without adding a key of your own.
       </p>

@@ -63,11 +63,11 @@ describe('ImportListRow', () => {
     // Title should have line-through class
     const title = screen.getByText('Foo');
     expect(title.className).toMatch(/line-through/);
-    expect(title.className).toMatch(/text-neutral-500/);
+    expect(title.className).toMatch(/text-ink-muted/);
 
     // Outer button should have rejected tinted bg
     const button = container.querySelector('button');
-    expect(button?.className).toMatch(/bg-neutral-100\/50/);
+    expect(button?.className).toMatch(/bg-white\/\[0\.02\]/);
   });
 
   it('skip disposition with conflictTitle renders ConflictChip variant=skip with sr-only matchedTitle text', () => {
@@ -179,7 +179,7 @@ describe('ImportListRow', () => {
     // aria-current omitted (or absent) when not focused
     expect(button.hasAttribute('aria-current')).toBe(false);
     expect(button.className).toMatch(/border-l-transparent/);
-    expect(button.className).toMatch(/hover:bg-neutral-100/);
+    expect(button.className).toMatch(/hover:bg-white\/\[0\.03\]/);
   });
 
   it('class strings are static (no template-string concat present in the rendered classes)', () => {
@@ -212,7 +212,7 @@ describe('ImportListRow', () => {
     );
     const idle = idleContainer.querySelector('button')!.className;
     expect(idle).toContain('border-l-transparent');
-    expect(idle).toContain('hover:bg-neutral-100');
+    expect(idle).toContain('hover:bg-white/[0.03]');
   });
 
   it('renders an icon (first character of title, uppercased) in the row icon slot', () => {

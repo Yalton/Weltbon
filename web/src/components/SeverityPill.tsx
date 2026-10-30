@@ -4,7 +4,7 @@ const COLORS: Record<Severity, string> = {
   critical: 'bg-red-600',
   major: 'bg-orange-500',
   moderate: 'bg-yellow-500',
-  minor: 'bg-neutral-500',
+  minor: 'bg-ink-muted',
 };
 
 interface Props {
@@ -20,7 +20,7 @@ export function SeverityPill({ severity, showLabel = true }: Props) {
         aria-hidden="true"
       />
       {showLabel && (
-        <span className="text-xs text-neutral-400">{severity}</span>
+        <span className="text-xs text-ink-muted">{severity}</span>
       )}
     </span>
   );

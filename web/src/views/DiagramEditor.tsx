@@ -606,7 +606,7 @@ export function DiagramEditor() {
 
 
   if (isLoading) {
-    return <p className="p-6 text-sm text-neutral-500">{COPY.loading}</p>;
+    return <p className="p-6 text-sm text-ink-muted">{COPY.loading}</p>;
   }
 
   if (isError || !diagram) {
@@ -655,7 +655,7 @@ export function DiagramEditor() {
               'rounded-full px-3 py-1 text-xs shadow-sm whitespace-nowrap',
               editMode
                 ? 'border border-[color:var(--color-accent)] bg-[color:var(--color-accent-soft)] text-[color:var(--color-accent)]'
-                : 'border border-neutral-300 bg-white/80 text-neutral-500 dark:border-neutral-700 dark:bg-neutral-900/80 dark:text-neutral-400',
+                : 'border border-line-strong bg-panel text-ink-secondary',
             ].join(' ')}
           >
             {editMode
@@ -732,9 +732,9 @@ export function DiagramEditor() {
       {renameNodeState && (
         <div
           data-testid="rename-node-panel"
-          className="absolute left-1/2 top-24 z-30 -translate-x-1/2 flex items-center gap-2 rounded-md border border-neutral-200 dark:border-neutral-700 bg-white dark:bg-neutral-900 shadow-lg px-3 py-2"
+          className="absolute left-1/2 top-24 z-30 -translate-x-1/2 flex items-center gap-2 rounded-md border border-line-strong bg-panel shadow-lg px-3 py-2"
         >
-          <span className="text-xs text-neutral-500 dark:text-neutral-400 shrink-0">
+          <span className="text-xs text-ink-secondary shrink-0">
             {COPY.renameLabel}
           </span>
           <input
@@ -748,7 +748,7 @@ export function DiagramEditor() {
             }}
             placeholder={COPY.renamePlaceholder}
             autoFocus
-            className="rounded border border-neutral-300 dark:border-neutral-700 bg-transparent px-2 py-1 text-sm focus:outline-none focus:ring-2 focus:ring-[color:var(--color-accent)] w-48"
+            className="rounded border border-line-strong bg-transparent px-2 py-1 text-sm focus:outline-none focus:ring-2 focus:ring-[color:var(--color-accent)] w-48"
           />
           <button
             type="button"
@@ -760,7 +760,7 @@ export function DiagramEditor() {
           <button
             type="button"
             onClick={() => setRenameNodeState(null)}
-            className="rounded border border-neutral-300 dark:border-neutral-700 text-xs px-2 py-1"
+            className="rounded border border-line-strong text-xs px-2 py-1"
           >
             {COPY.renameCancel}
           </button>

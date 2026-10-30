@@ -34,12 +34,12 @@ export function MarkdownFrontmatterPanel({
   return (
     <section
       ref={panelRef}
-      className="border-b border-neutral-800 px-3 py-2 dark:border-neutral-800"
+      className="border-b px-3 py-2 border-line"
       role="region"
       aria-labelledby="document-tags-heading"
       aria-disabled={disabled || undefined}
     >
-      <h2 id="document-tags-heading" className="mb-1 text-xs font-semibold uppercase tracking-wide text-neutral-400">
+      <h2 id="document-tags-heading" className="mb-1 text-xs font-semibold uppercase tracking-wide text-ink-muted">
         Document tags
       </h2>
       {parsed.diagnostics.length > 0 && (

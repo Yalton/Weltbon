@@ -44,7 +44,7 @@ export function GraphSubgraphFilter({
                 onFocusChange({ entryId: id, hops: focus?.hops ?? 1 });
               }
             }}
-            className="w-full rounded-md border border-neutral-300 bg-transparent px-2 py-1 text-sm text-neutral-900 dark:border-neutral-700 dark:text-neutral-100"
+            className="w-full rounded-md border bg-transparent px-2 py-1 text-sm border-line-strong text-ink"
           >
             <option value="">Pick focus entry…</option>
             {nodes.slice(0, 2000).map((n) => (
@@ -66,7 +66,7 @@ export function GraphSubgraphFilter({
               }
             }}
             disabled={!focus}
-            className="rounded-md border border-neutral-300 bg-transparent px-2 py-1 text-sm text-neutral-900 disabled:opacity-60 dark:border-neutral-700 dark:text-neutral-100"
+            className="rounded-md border bg-transparent px-2 py-1 text-sm disabled:opacity-60 border-line-strong text-ink"
           >
             <option value="1">1 hop</option>
             <option value="2">2 hops</option>

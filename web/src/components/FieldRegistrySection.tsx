@@ -152,11 +152,11 @@ export function FieldRegistrySection({ universe }: Props) {
     <div>
       {/* Empty state */}
       {registry.length === 0 && (
-        <div className="mt-4 rounded-md border border-dashed border-neutral-300 dark:border-neutral-700 p-8 text-center">
-          <p className="text-sm font-medium text-neutral-600 dark:text-neutral-400">
+        <div className="mt-4 rounded-md border border-dashed border-line-strong p-8 text-center">
+          <p className="text-sm font-medium text-ink-secondary">
             No custom fields
           </p>
-          <p className="text-xs text-neutral-500 mt-1">
+          <p className="text-xs text-ink-muted mt-1">
             Add a field to give every entry a consistent set of typed data slots.
           </p>
         </div>
@@ -169,7 +169,7 @@ export function FieldRegistrySection({ universe }: Props) {
             editingName === field.name ? (
               <li
                 key={field.name}
-                className="rounded-md border border-neutral-200 dark:border-neutral-800 p-3 space-y-2"
+                className="rounded-md border border-line p-3 space-y-2"
               >
                 <div className="flex gap-2">
                   <input
@@ -178,7 +178,7 @@ export function FieldRegistrySection({ universe }: Props) {
                     onChange={(e) => setEditName(e.target.value)}
                     maxLength={50}
                     placeholder="e.g. Born in year"
-                    className="flex-1 rounded-md border border-neutral-300 dark:border-neutral-700 bg-transparent px-3 py-1.5 text-sm outline-none focus:border-[color:var(--color-accent)]"
+                    className="flex-1 rounded-md border border-line-strong bg-transparent px-3 py-1.5 text-sm outline-none focus:border-[color:var(--color-accent)]"
                     onKeyDown={(e) => {
                       if (e.key === 'Enter') {
                         e.preventDefault();
@@ -194,7 +194,7 @@ export function FieldRegistrySection({ universe }: Props) {
                     onChange={(e) =>
                       setEditType(e.target.value as FieldRegistryEntry['type'])
                     }
-                    className="rounded-md border border-neutral-300 dark:border-neutral-700 bg-transparent px-2 py-1.5 text-sm outline-none focus:border-[color:var(--color-accent)]"
+                    className="rounded-md border border-line-strong bg-transparent px-2 py-1.5 text-sm outline-none focus:border-[color:var(--color-accent)]"
                   >
                     <option value="" disabled>
                       Select type...
@@ -211,7 +211,7 @@ export function FieldRegistrySection({ universe }: Props) {
                   value={editHint}
                   onChange={(e) => setEditHint(e.target.value)}
                   placeholder="e.g. Use the in-world calendar year"
-                  className="w-full rounded-md border border-neutral-300 dark:border-neutral-700 bg-transparent px-3 py-1.5 text-sm outline-none focus:border-[color:var(--color-accent)]"
+                  className="w-full rounded-md border border-line-strong bg-transparent px-3 py-1.5 text-sm outline-none focus:border-[color:var(--color-accent)]"
                 />
                 {editError && (
                   <p role="alert" className="text-xs text-red-500">
@@ -230,7 +230,7 @@ export function FieldRegistrySection({ universe }: Props) {
                   <button
                     type="button"
                     onClick={cancelEdit}
-                    className="text-sm text-neutral-500 hover:text-neutral-700 px-2 py-1"
+                    className="text-sm text-ink-muted hover:text-ink px-2 py-1"
                   >
                     Cancel
                   </button>
@@ -239,17 +239,17 @@ export function FieldRegistrySection({ universe }: Props) {
             ) : (
               <li
                 key={field.name}
-                className="group flex items-center gap-3 rounded-md border border-neutral-200 dark:border-neutral-800 px-3 py-2"
+                className="group flex items-center gap-3 rounded-md border border-line px-3 py-2"
               >
                 <span className="flex-1 text-sm font-medium truncate">
                   {field.name}
                 </span>
-                <span className="text-xs rounded-full border border-neutral-300 dark:border-neutral-700 px-2 py-0.5 text-neutral-500">
+                <span className="text-xs rounded-full border border-line-strong px-2 py-0.5 text-ink-muted">
                   {FIELD_TYPE_OPTIONS.find((o) => o.value === field.type)?.label ??
                     field.type}
                 </span>
                 {field.hint && (
-                  <span className="text-xs text-neutral-400 truncate max-w-[120px]">
+                  <span className="text-xs text-ink-muted truncate max-w-[120px]">
                     {field.hint}
                   </span>
                 )}
@@ -257,7 +257,7 @@ export function FieldRegistrySection({ universe }: Props) {
                   type="button"
                   onClick={() => startEdit(field)}
                   aria-label={`Edit ${field.name}`}
-                  className="opacity-0 group-hover:opacity-100 transition-opacity text-neutral-400 hover:text-neutral-700 dark:hover:text-neutral-200 text-xs ml-1"
+                  className="opacity-0 group-hover:opacity-100 transition-opacity text-ink-muted hover:text-ink text-xs ml-1"
                 >
                   ✏
                 </button>
@@ -268,7 +268,7 @@ export function FieldRegistrySection({ universe }: Props) {
                     setConfirmDeleteName(field.name);
                   }}
                   aria-label={`Delete ${field.name}`}
-                  className="opacity-0 group-hover:opacity-100 transition-opacity text-neutral-400 hover:text-red-500 text-xs"
+                  className="opacity-0 group-hover:opacity-100 transition-opacity text-ink-muted hover:text-red-500 text-xs"
                 >
                   ✕
                 </button>
@@ -295,7 +295,7 @@ export function FieldRegistrySection({ universe }: Props) {
           }}
           placeholder="e.g. Born in year"
           maxLength={50}
-          className="flex-1 min-w-[160px] rounded-md border border-neutral-300 dark:border-neutral-700 bg-transparent px-3 py-1.5 text-sm outline-none focus:border-[color:var(--color-accent)]"
+          className="flex-1 min-w-[160px] rounded-md border border-line-strong bg-transparent px-3 py-1.5 text-sm outline-none focus:border-[color:var(--color-accent)]"
           aria-label="Name"
         />
         <select
@@ -305,7 +305,7 @@ export function FieldRegistrySection({ universe }: Props) {
             setNewType(e.target.value as FieldRegistryEntry['type'] | '');
             setAddError(null);
           }}
-          className="rounded-md border border-neutral-300 dark:border-neutral-700 bg-transparent px-2 py-1.5 text-sm outline-none focus:border-[color:var(--color-accent)]"
+          className="rounded-md border border-line-strong bg-transparent px-2 py-1.5 text-sm outline-none focus:border-[color:var(--color-accent)]"
         >
           <option value="" disabled>
             Select type...
@@ -321,7 +321,7 @@ export function FieldRegistrySection({ universe }: Props) {
           value={newHint}
           onChange={(e) => setNewHint(e.target.value)}
           placeholder="e.g. Use the in-world calendar year"
-          className="flex-1 min-w-[160px] rounded-md border border-neutral-300 dark:border-neutral-700 bg-transparent px-3 py-1.5 text-sm outline-none focus:border-[color:var(--color-accent)]"
+          className="flex-1 min-w-[160px] rounded-md border border-line-strong bg-transparent px-3 py-1.5 text-sm outline-none focus:border-[color:var(--color-accent)]"
           aria-label="Hint (optional)"
         />
         <button

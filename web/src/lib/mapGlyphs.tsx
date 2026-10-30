@@ -79,12 +79,12 @@ export const MAP_GLYPHS: Record<string, string> = {
 export const MAP_GLYPH_KEYS: string[] = Object.keys(MAP_GLYPHS);
 
 export const MAP_GLYPH_GROUPS: Record<string, string[]> = {
-  settlements:  ['city', 'keep', 'fort', 'ruin', 'village', 'inn', 'harbor'],
-  terrain:      ['mountain', 'mountain-pass', 'cave', 'volcano', 'desert', 'lake'],
+  settlements: ['city', 'keep', 'fort', 'ruin', 'village', 'inn', 'harbor'],
+  terrain: ['mountain', 'mountain-pass', 'cave', 'volcano', 'desert', 'lake'],
   'danger-war': ['skull', 'crossed-swords', 'watchtower', 'plague'],
-  poi:          ['anchor', 'crown', 'temple', 'market', 'library', 'shrine'],
-  nature:       ['tree', 'forest', 'swamp', 'flower'],
-  mystical:     ['star', 'eye', 'crystal', 'portal'],
+  poi: ['anchor', 'crown', 'temple', 'market', 'library', 'shrine'],
+  nature: ['tree', 'forest', 'swamp', 'flower'],
+  mystical: ['star', 'eye', 'crystal', 'portal'],
 };
 
 export function getGlyphPath(key: string): string | null {
@@ -120,17 +120,17 @@ export function GlyphIcon({ glyph, size = 16, color = 'currentColor' }: GlyphIco
 
 export const MAP_COLOR_PALETTE: string[] = [
   // Entry-type hex colors (from entryTypeColor.ts ENTRY_TYPE_HEX)
-  '#3b82f6', // blue-500   — concept
+  '#3b82f6', // blue-500 — concept
   '#10b981', // emerald-500 — entity
-  '#f59e0b', // amber-500  — location
-  '#f43f5e', // rose-500   — event
+  '#f59e0b', // amber-500 — location
+  '#f43f5e', // rose-500 — event
   '#a855f7', // purple-500 — faction
   '#f97316', // orange-500 — artifact
-  '#14b8a6', // teal-500   — species
-  '#ec4899', // pink-500   — culture
-  '#06b6d4', // cyan-500   — thread
-  '#22c55e', // green-500  — located_in / ally-of group
-  '#ef4444', // red-500    — enemy / danger
-  '#78716c', // stone-500  — neutral / created_by
+  '#14b8a6', // teal-500 — species
+  '#ec4899', // pink-500 — culture
+  '#06b6d4', // cyan-500 — thread
+  '#22c55e', // green-500 — located_in / ally-of group
+  '#ef4444', // red-500 — enemy / danger
+  '#78716c', // stone-500 — neutral / created_by
   '#6b7280', // neutral-500 — fallback / untyped
 ];

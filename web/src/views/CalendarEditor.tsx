@@ -330,7 +330,7 @@ export function CalendarEditor() {
     return (
       <div className="max-w-2xl mx-auto">
         <h1 className="text-2xl font-semibold tracking-tight">{COPY.PAGE_HEADING}</h1>
-        <p className="mt-2 text-sm text-neutral-600 dark:text-neutral-400">{COPY.PAGE_SUBTITLE}</p>
+        <p className="mt-2 text-sm text-ink-secondary">{COPY.PAGE_SUBTITLE}</p>
         <EmptyState
           title={COPY.EMPTY_HEADING}
           body={COPY.EMPTY_BODY}
@@ -351,7 +351,7 @@ export function CalendarEditor() {
   return (
     <div className="max-w-2xl mx-auto">
       <h1 className="text-2xl font-semibold tracking-tight">{COPY.PAGE_HEADING}</h1>
-      <p className="mt-2 text-sm text-neutral-600 dark:text-neutral-400">{COPY.PAGE_SUBTITLE}</p>
+      <p className="mt-2 text-sm text-ink-secondary">{COPY.PAGE_SUBTITLE}</p>
 
       <div className="mt-6 space-y-6">
 
@@ -371,7 +371,7 @@ export function CalendarEditor() {
                   }
                   placeholder={COPY.LABEL_NAME}
                   aria-label={`${COPY.LABEL_NAME} for era ${idx + 1}`}
-                  className="flex-1 rounded-md border border-neutral-200 dark:border-neutral-800 bg-transparent px-2 py-1.5 text-sm outline-none focus:border-[color:var(--color-accent)]"
+                  className="flex-1 rounded-md border border-line bg-transparent px-2 py-1.5 text-sm outline-none focus:border-[color:var(--color-accent)]"
                 />
                 <input
                   type="text"
@@ -383,7 +383,7 @@ export function CalendarEditor() {
                   }
                   placeholder={COPY.LABEL_ABBR}
                   aria-label={`${COPY.LABEL_ABBR} for era ${idx + 1}`}
-                  className="w-20 rounded-md border border-neutral-200 dark:border-neutral-800 bg-transparent px-2 py-1.5 text-sm outline-none focus:border-[color:var(--color-accent)]"
+                  className="w-20 rounded-md border border-line bg-transparent px-2 py-1.5 text-sm outline-none focus:border-[color:var(--color-accent)]"
                 />
                 <input
                   type="text"
@@ -396,7 +396,7 @@ export function CalendarEditor() {
                   }}
                   placeholder={COPY.LABEL_START_POSITION}
                   aria-label={`${COPY.LABEL_START_POSITION} for era ${idx + 1}`}
-                  className="w-28 rounded-md border border-neutral-200 dark:border-neutral-800 bg-transparent px-2 py-1.5 text-sm font-mono outline-none focus:border-[color:var(--color-accent)]"
+                  className="w-28 rounded-md border border-line bg-transparent px-2 py-1.5 text-sm font-mono outline-none focus:border-[color:var(--color-accent)]"
                 />
                 <button
                   type="button"
@@ -405,7 +405,7 @@ export function CalendarEditor() {
                   }
                   disabled={idx === 0}
                   aria-label="Move era up"
-                  className="shrink-0 text-neutral-500 hover:text-neutral-900 dark:hover:text-neutral-100 text-sm disabled:opacity-30"
+                  className="shrink-0 text-ink-muted hover:text-ink text-sm disabled:opacity-30"
                 >
                   ↑
                 </button>
@@ -416,7 +416,7 @@ export function CalendarEditor() {
                   }
                   disabled={idx === eras.length - 1}
                   aria-label="Move era down"
-                  className="shrink-0 text-neutral-500 hover:text-neutral-900 dark:hover:text-neutral-100 text-sm disabled:opacity-30"
+                  className="shrink-0 text-ink-muted hover:text-ink text-sm disabled:opacity-30"
                 >
                   ↓
                 </button>
@@ -426,7 +426,7 @@ export function CalendarEditor() {
                     setEras((rs) => rs.filter((r) => r.rowId !== row.rowId))
                   }
                   aria-label="Remove era"
-                  className="shrink-0 text-neutral-500 hover:text-red-500 text-sm"
+                  className="shrink-0 text-ink-muted hover:text-red-500 text-sm"
                 >
                   &times;
                 </button>
@@ -449,7 +449,7 @@ export function CalendarEditor() {
                 { rowId: newRowId(), name: '', abbr: '', startPosition: '' },
               ])
             }
-            className="mt-2 text-sm text-neutral-500 hover:text-neutral-300 dark:hover:text-neutral-300"
+            className="mt-2 text-sm text-ink-muted hover:text-ink"
           >
             + {COPY.ADD_ERA}
           </button>
@@ -471,7 +471,7 @@ export function CalendarEditor() {
                   }
                   placeholder={COPY.LABEL_NAME}
                   aria-label={`${COPY.LABEL_NAME} for month ${idx + 1}`}
-                  className="flex-1 rounded-md border border-neutral-200 dark:border-neutral-800 bg-transparent px-2 py-1.5 text-sm outline-none focus:border-[color:var(--color-accent)]"
+                  className="flex-1 rounded-md border border-line bg-transparent px-2 py-1.5 text-sm outline-none focus:border-[color:var(--color-accent)]"
                 />
                 <input
                   type="text"
@@ -484,7 +484,7 @@ export function CalendarEditor() {
                   }}
                   placeholder={COPY.LABEL_LENGTH_DAYS}
                   aria-label={`${COPY.LABEL_LENGTH_DAYS} for month ${idx + 1}`}
-                  className="w-28 rounded-md border border-neutral-200 dark:border-neutral-800 bg-transparent px-2 py-1.5 text-sm font-mono outline-none focus:border-[color:var(--color-accent)]"
+                  className="w-28 rounded-md border border-line bg-transparent px-2 py-1.5 text-sm font-mono outline-none focus:border-[color:var(--color-accent)]"
                 />
                 <button
                   type="button"
@@ -493,7 +493,7 @@ export function CalendarEditor() {
                   }
                   disabled={idx === 0}
                   aria-label="Move month up"
-                  className="shrink-0 text-neutral-500 hover:text-neutral-900 dark:hover:text-neutral-100 text-sm disabled:opacity-30"
+                  className="shrink-0 text-ink-muted hover:text-ink text-sm disabled:opacity-30"
                 >
                   ↑
                 </button>
@@ -504,7 +504,7 @@ export function CalendarEditor() {
                   }
                   disabled={idx === months.length - 1}
                   aria-label="Move month down"
-                  className="shrink-0 text-neutral-500 hover:text-neutral-900 dark:hover:text-neutral-100 text-sm disabled:opacity-30"
+                  className="shrink-0 text-ink-muted hover:text-ink text-sm disabled:opacity-30"
                 >
                   ↓
                 </button>
@@ -514,7 +514,7 @@ export function CalendarEditor() {
                     setMonths((rs) => rs.filter((r) => r.rowId !== row.rowId))
                   }
                   aria-label="Remove month"
-                  className="shrink-0 text-neutral-500 hover:text-red-500 text-sm"
+                  className="shrink-0 text-ink-muted hover:text-red-500 text-sm"
                 >
                   &times;
                 </button>
@@ -537,7 +537,7 @@ export function CalendarEditor() {
                 { rowId: newRowId(), name: '', lengthDays: '30' },
               ])
             }
-            className="mt-2 text-sm text-neutral-500 hover:text-neutral-300 dark:hover:text-neutral-300"
+            className="mt-2 text-sm text-ink-muted hover:text-ink"
           >
             + {COPY.ADD_MONTH}
           </button>
@@ -559,7 +559,7 @@ export function CalendarEditor() {
                   }
                   placeholder={COPY.LABEL_NAME}
                   aria-label={`${COPY.LABEL_NAME} for weekday ${idx + 1}`}
-                  className="flex-1 rounded-md border border-neutral-200 dark:border-neutral-800 bg-transparent px-2 py-1.5 text-sm outline-none focus:border-[color:var(--color-accent)]"
+                  className="flex-1 rounded-md border border-line bg-transparent px-2 py-1.5 text-sm outline-none focus:border-[color:var(--color-accent)]"
                 />
                 <button
                   type="button"
@@ -568,7 +568,7 @@ export function CalendarEditor() {
                   }
                   disabled={idx === 0}
                   aria-label="Move weekday up"
-                  className="shrink-0 text-neutral-500 hover:text-neutral-900 dark:hover:text-neutral-100 text-sm disabled:opacity-30"
+                  className="shrink-0 text-ink-muted hover:text-ink text-sm disabled:opacity-30"
                 >
                   ↑
                 </button>
@@ -579,7 +579,7 @@ export function CalendarEditor() {
                   }
                   disabled={idx === weekdays.length - 1}
                   aria-label="Move weekday down"
-                  className="shrink-0 text-neutral-500 hover:text-neutral-900 dark:hover:text-neutral-100 text-sm disabled:opacity-30"
+                  className="shrink-0 text-ink-muted hover:text-ink text-sm disabled:opacity-30"
                 >
                   ↓
                 </button>
@@ -589,7 +589,7 @@ export function CalendarEditor() {
                     setWeekdays((rs) => rs.filter((r) => r.rowId !== row.rowId))
                   }
                   aria-label="Remove weekday"
-                  className="shrink-0 text-neutral-500 hover:text-red-500 text-sm"
+                  className="shrink-0 text-ink-muted hover:text-red-500 text-sm"
                 >
                   &times;
                 </button>
@@ -601,7 +601,7 @@ export function CalendarEditor() {
             onClick={() =>
               setWeekdays((rs) => [...rs, { rowId: newRowId(), name: '' }])
             }
-            className="mt-2 text-sm text-neutral-500 hover:text-neutral-300 dark:hover:text-neutral-300"
+            className="mt-2 text-sm text-ink-muted hover:text-ink"
           >
             + {COPY.ADD_WEEKDAY}
           </button>
@@ -623,7 +623,7 @@ export function CalendarEditor() {
                   }
                   placeholder={COPY.LABEL_NAME}
                   aria-label={`${COPY.LABEL_NAME} for moon ${idx + 1}`}
-                  className="flex-1 rounded-md border border-neutral-200 dark:border-neutral-800 bg-transparent px-2 py-1.5 text-sm outline-none focus:border-[color:var(--color-accent)]"
+                  className="flex-1 rounded-md border border-line bg-transparent px-2 py-1.5 text-sm outline-none focus:border-[color:var(--color-accent)]"
                 />
                 <input
                   type="text"
@@ -636,7 +636,7 @@ export function CalendarEditor() {
                   }}
                   placeholder={COPY.LABEL_CYCLE_DAYS}
                   aria-label={`${COPY.LABEL_CYCLE_DAYS} for moon ${idx + 1}`}
-                  className="w-28 rounded-md border border-neutral-200 dark:border-neutral-800 bg-transparent px-2 py-1.5 text-sm font-mono outline-none focus:border-[color:var(--color-accent)]"
+                  className="w-28 rounded-md border border-line bg-transparent px-2 py-1.5 text-sm font-mono outline-none focus:border-[color:var(--color-accent)]"
                 />
                 <button
                   type="button"
@@ -644,7 +644,7 @@ export function CalendarEditor() {
                     setMoons((rs) => rs.filter((r) => r.rowId !== row.rowId))
                   }
                   aria-label="Remove moon"
-                  className="shrink-0 text-neutral-500 hover:text-red-500 text-sm"
+                  className="shrink-0 text-ink-muted hover:text-red-500 text-sm"
                 >
                   &times;
                 </button>
@@ -664,7 +664,7 @@ export function CalendarEditor() {
                 { rowId: newRowId(), name: '', cycleDays: '28' },
               ])
             }
-            className="mt-2 text-sm text-neutral-500 hover:text-neutral-300 dark:hover:text-neutral-300"
+            className="mt-2 text-sm text-ink-muted hover:text-ink"
           >
             + {COPY.ADD_MOON}
           </button>
@@ -684,9 +684,9 @@ export function CalendarEditor() {
             value={beforeEraAbbr}
             onChange={(e) => setBeforeEraAbbr(e.target.value)}
             placeholder="BE"
-            className="w-32 rounded-md border border-neutral-200 dark:border-neutral-800 bg-transparent px-2 py-1.5 text-sm outline-none focus:border-[color:var(--color-accent)]"
+            className="w-32 rounded-md border border-line bg-transparent px-2 py-1.5 text-sm outline-none focus:border-[color:var(--color-accent)]"
           />
-          <p className="mt-1 text-xs text-neutral-500">{COPY.BEFORE_ERA_HINT}</p>
+          <p className="mt-1 text-xs text-ink-muted">{COPY.BEFORE_ERA_HINT}</p>
         </div>
 
         {/* ── Live preview ───────────────────────────────────────────── */}
@@ -698,10 +698,10 @@ export function CalendarEditor() {
             onChange={(e) => setPreviewInput(e.target.value)}
             placeholder="412"
             aria-label="Preview position"
-            className="w-32 rounded-md border border-neutral-200 dark:border-neutral-800 bg-transparent px-2 py-1.5 text-sm font-mono tabular-nums outline-none focus:border-[color:var(--color-accent)]"
+            className="w-32 rounded-md border border-line bg-transparent px-2 py-1.5 text-sm font-mono tabular-nums outline-none focus:border-[color:var(--color-accent)]"
           />
           {previewPosition.ok && previewFormatted && (
-            <p className="mt-1 text-xs text-neutral-500">
+            <p className="mt-1 text-xs text-ink-muted">
               <span className="tabular-nums">
                 {COPY.PREVIEW_LINE(previewPosition.value, previewFormatted)}
               </span>
@@ -715,7 +715,7 @@ export function CalendarEditor() {
         )}
 
         {/* ── Action buttons ─────────────────────────────────────────── */}
-        <div className="flex items-center gap-3 pt-4 border-t border-neutral-200 dark:border-neutral-800">
+        <div className="flex items-center gap-3 pt-4 border-t border-line">
           <button
             type="button"
             onClick={() => void handleSave()}
@@ -728,7 +728,7 @@ export function CalendarEditor() {
             type="button"
             onClick={handleDiscard}
             disabled={isPending}
-            className="px-3 py-1.5 text-sm rounded-md border border-neutral-300 dark:border-neutral-700 disabled:opacity-50"
+            className="px-3 py-1.5 text-sm rounded-md border border-line-strong disabled:opacity-50"
           >
             {COPY.CTA_DISCARD}
           </button>
@@ -737,7 +737,7 @@ export function CalendarEditor() {
               type="button"
               onClick={() => setRemoveOpen(true)}
               disabled={isPending}
-              className="ml-auto px-3 py-1.5 text-sm rounded-md border border-neutral-300 dark:border-neutral-700 text-neutral-600 dark:text-neutral-400 hover:text-red-600 dark:hover:text-red-400 disabled:opacity-50"
+              className="ml-auto px-3 py-1.5 text-sm rounded-md border border-line-strong text-ink-secondary hover:text-red-600 dark:hover:text-red-400 disabled:opacity-50"
             >
               Remove calendar
             </button>

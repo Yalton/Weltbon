@@ -131,7 +131,7 @@ export function Dictionary() {
           <div className="flex items-center gap-1.5">
             <label
               htmlFor="lang-switcher"
-              className="text-xs font-semibold uppercase tracking-wide text-neutral-500"
+              className="text-xs font-semibold uppercase tracking-wide text-ink-muted"
             >
               Dictionary
             </label>
@@ -139,7 +139,7 @@ export function Dictionary() {
               id="lang-switcher"
               value={lid ?? ''}
               onChange={(e) => handleLangSwitch(e.target.value || null)}
-              className="rounded-md border border-neutral-300 dark:border-neutral-700 bg-white dark:bg-neutral-900 px-2 py-1 text-sm focus:outline-none focus:ring-2 focus:ring-[color:var(--color-accent)]"
+              className="rounded-md border border-line-strong bg-panel px-2 py-1 text-sm focus:outline-none focus:ring-2 focus:ring-[color:var(--color-accent)]"
             >
               <option value="">Universe dictionary</option>
               {(langEntries ?? []).map((e) => (
@@ -157,7 +157,7 @@ export function Dictionary() {
             onChange={(e) => handleSearchChange(e.target.value)}
             placeholder="Search words..."
             aria-label="Search dictionary words"
-            className="flex-1 min-w-[200px] rounded-md border border-neutral-300 dark:border-neutral-700 bg-white dark:bg-neutral-900 px-3 py-2 text-sm focus:outline-none focus:ring-2 focus:ring-[color:var(--color-accent)]"
+            className="flex-1 min-w-[200px] rounded-md border border-line-strong bg-panel px-3 py-2 text-sm focus:outline-none focus:ring-2 focus:ring-[color:var(--color-accent)]"
           />
 
           {/* CTA buttons */}
@@ -171,7 +171,7 @@ export function Dictionary() {
           <button
             type="button"
             onClick={() => setImportOpen(true)}
-            className="px-3 py-2 text-sm rounded-md border border-neutral-300 dark:border-neutral-700 hover:bg-neutral-50 dark:hover:bg-neutral-800 focus:outline-none focus:ring-2 focus:ring-[color:var(--color-accent)]"
+            className="px-3 py-2 text-sm rounded-md border border-line-strong hover:bg-white/5 focus:outline-none focus:ring-2 focus:ring-[color:var(--color-accent)]"
           >
             Import CSV
           </button>
@@ -183,7 +183,7 @@ export function Dictionary() {
             <div className="flex items-center gap-1.5">
               <label
                 htmlFor="pos-filter"
-                className="text-xs font-semibold uppercase tracking-wide text-neutral-500"
+                className="text-xs font-semibold uppercase tracking-wide text-ink-muted"
               >
                 POS
               </label>
@@ -191,7 +191,7 @@ export function Dictionary() {
                 id="pos-filter"
                 value={posFilter}
                 onChange={(e) => setPosFilter(e.target.value)}
-                className="rounded-md border border-neutral-300 dark:border-neutral-700 bg-white dark:bg-neutral-900 px-2 py-1 text-sm focus:outline-none focus:ring-2 focus:ring-[color:var(--color-accent)]"
+                className="rounded-md border border-line-strong bg-panel px-2 py-1 text-sm focus:outline-none focus:ring-2 focus:ring-[color:var(--color-accent)]"
               >
                 <option value="">All</option>
                 {posOptions.map((pos) => (
@@ -207,7 +207,7 @@ export function Dictionary() {
             <div className="flex items-center gap-1.5">
               <label
                 htmlFor="tag-filter"
-                className="text-xs font-semibold uppercase tracking-wide text-neutral-500"
+                className="text-xs font-semibold uppercase tracking-wide text-ink-muted"
               >
                 Tag
               </label>
@@ -215,7 +215,7 @@ export function Dictionary() {
                 id="tag-filter"
                 value={tagFilter}
                 onChange={(e) => setTagFilter(e.target.value)}
-                className="rounded-md border border-neutral-300 dark:border-neutral-700 bg-white dark:bg-neutral-900 px-2 py-1 text-sm focus:outline-none focus:ring-2 focus:ring-[color:var(--color-accent)]"
+                className="rounded-md border border-line-strong bg-panel px-2 py-1 text-sm focus:outline-none focus:ring-2 focus:ring-[color:var(--color-accent)]"
               >
                 <option value="">All</option>
                 {tagOptions.map((tag) => (
@@ -231,39 +231,39 @@ export function Dictionary() {
           {hasActiveFilters && (
             <div className="flex items-center gap-2 flex-wrap">
               {urlQ && (
-                <span className="inline-flex items-center gap-1 rounded-full bg-neutral-100 dark:bg-neutral-800 px-2 py-1 text-xs">
+                <span className="inline-flex items-center gap-1 rounded-full bg-raised px-2 py-1 text-xs">
                   Search: {urlQ}
                   <button
                     type="button"
                     onClick={() => handleSearchChange('')}
                     aria-label="Clear search filter"
-                    className="text-neutral-500 hover:text-neutral-700 dark:hover:text-neutral-300"
+                    className="text-ink-muted hover:text-ink"
                   >
                     ×
                   </button>
                 </span>
               )}
               {posFilter && (
-                <span className="inline-flex items-center gap-1 rounded-full bg-neutral-100 dark:bg-neutral-800 px-2 py-1 text-xs">
+                <span className="inline-flex items-center gap-1 rounded-full bg-raised px-2 py-1 text-xs">
                   POS: {posFilter}
                   <button
                     type="button"
                     onClick={() => setPosFilter('')}
                     aria-label="Clear POS filter"
-                    className="text-neutral-500 hover:text-neutral-700 dark:hover:text-neutral-300"
+                    className="text-ink-muted hover:text-ink"
                   >
                     ×
                   </button>
                 </span>
               )}
               {tagFilter && (
-                <span className="inline-flex items-center gap-1 rounded-full bg-neutral-100 dark:bg-neutral-800 px-2 py-1 text-xs">
+                <span className="inline-flex items-center gap-1 rounded-full bg-raised px-2 py-1 text-xs">
                   Tag: {tagFilter}
                   <button
                     type="button"
                     onClick={() => setTagFilter('')}
                     aria-label="Clear tag filter"
-                    className="text-neutral-500 hover:text-neutral-700 dark:hover:text-neutral-300"
+                    className="text-ink-muted hover:text-ink"
                   >
                     ×
                   </button>
@@ -272,7 +272,7 @@ export function Dictionary() {
               <button
                 type="button"
                 onClick={clearAllFilters}
-                className="text-xs text-neutral-500 hover:text-neutral-700 dark:hover:text-neutral-300"
+                className="text-xs text-ink-muted hover:text-ink"
               >
                 Clear all
               </button>

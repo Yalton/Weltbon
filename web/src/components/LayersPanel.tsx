@@ -210,14 +210,14 @@ export function LayersPanel({
         >
           {/* Panel header */}
           <div className="flex items-center justify-between px-4 py-2">
-            <span className="text-xs font-semibold uppercase tracking-wide text-neutral-500">
+            <span className="text-xs font-semibold uppercase tracking-wide text-ink-muted">
               Layers
             </span>
             <button
               type="button"
               onClick={onToggle}
               aria-label="Close layers panel"
-              className="text-xs text-neutral-400 hover:text-neutral-600 dark:hover:text-neutral-300 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-[color:var(--color-accent)] focus-visible:ring-offset-2 min-h-[44px] min-w-[44px] flex items-center justify-center"
+              className="text-xs text-ink-muted hover:text-ink focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-[color:var(--color-accent)] focus-visible:ring-offset-2 min-h-[44px] min-w-[44px] flex items-center justify-center"
             >
               ×
             </button>
@@ -226,7 +226,7 @@ export function LayersPanel({
           {/* World-wide scope banner (D-42-04) — persistent, no dismiss */}
           <div
             role="note"
-            className="bg-neutral-100 dark:bg-neutral-800 px-4 py-2 text-xs text-neutral-500 dark:text-neutral-400 border-b border-neutral-200 dark:border-neutral-700"
+            className="bg-raised px-4 py-2 text-xs text-ink-secondary border-b border-line-strong"
           >
             World-wide — changes apply to all maps in this universe
           </div>
@@ -234,14 +234,14 @@ export function LayersPanel({
           {/* Empty state + preset CTAs (shown only when no layers exist) */}
           {layers.length === 0 ? (
             <div className="px-4 py-4">
-              <p className="text-sm font-semibold text-neutral-700 dark:text-neutral-300 mb-1">
+              <p className="text-sm font-semibold text-ink mb-1">
                 No layers yet
               </p>
-              <p className="text-xs text-neutral-500 dark:text-neutral-400 mb-3">
+              <p className="text-xs text-ink-secondary mb-3">
                 Define thematic layers (Biomes, Elevation&hellip;) and their terrain
                 types. Start with a preset or add a layer.
               </p>
-              <p className="text-xs font-semibold text-neutral-500 dark:text-neutral-400 mb-2">
+              <p className="text-xs font-semibold text-ink-secondary mb-2">
                 Start with a preset:
               </p>
               <div className="flex flex-col gap-2">
@@ -279,7 +279,7 @@ export function LayersPanel({
                   );
 
                   return (
-                    <li key={layer.id} className="border-b border-neutral-100 dark:border-neutral-800">
+                    <li key={layer.id} className="border-b border-line">
                       {/* Layer row */}
                       <div className="flex items-center gap-2 px-4 py-2">
                         {/* Expand/collapse chevron */}
@@ -287,7 +287,7 @@ export function LayersPanel({
                           type="button"
                           onClick={() => toggleExpand(layer.id)}
                           aria-label={isExpanded ? `Collapse ${layer.name}` : `Expand ${layer.name}`}
-                          className="text-neutral-400 hover:text-neutral-600 dark:hover:text-neutral-300 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-[color:var(--color-accent)] focus-visible:ring-offset-1 text-xs min-h-[44px] min-w-[20px] flex items-center justify-center"
+                          className="text-ink-muted hover:text-ink focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-[color:var(--color-accent)] focus-visible:ring-offset-1 text-xs min-h-[44px] min-w-[20px] flex items-center justify-center"
                         >
                           {isExpanded ? '▾' : '▸'}
                         </button>
@@ -306,7 +306,7 @@ export function LayersPanel({
                               onKeyDown={(e) => handleRenameKeyDown(e, 'layer', layer.id)}
                               autoFocus
                               aria-label="Edit layer name"
-                              className="w-full text-sm border border-[color:var(--color-accent)] rounded px-1 py-0.5 outline-none bg-white dark:bg-neutral-900 text-neutral-900 dark:text-neutral-100 focus-visible:ring-2 focus-visible:ring-[color:var(--color-accent)] focus-visible:ring-offset-2"
+                              className="w-full text-sm border border-[color:var(--color-accent)] rounded px-1 py-0.5 outline-none bg-panel text-ink focus-visible:ring-2 focus-visible:ring-[color:var(--color-accent)] focus-visible:ring-offset-2"
                             />
                             {renameError && (
                               <p className="text-red-600 text-xs mt-0.5">{renameError}</p>
@@ -317,13 +317,13 @@ export function LayersPanel({
                             <button
                               type="button"
                               onDoubleClick={() => startRename(layer.id, layer.name)}
-                              className="flex-1 min-w-0 truncate text-sm text-left text-neutral-700 dark:text-neutral-300 hover:text-neutral-900 dark:hover:text-neutral-100 focus-visible:outline-none focus-visible:underline"
+                              className="flex-1 min-w-0 truncate text-sm text-left text-ink hover:text-ink focus-visible:outline-none focus-visible:underline"
                               title="Double-click to rename"
                             >
                               {layer.name}
                             </button>
                             {layer.ordered && (
-                              <span className="text-xs bg-neutral-100 dark:bg-neutral-800 px-1 rounded text-neutral-500 flex-shrink-0">
+                              <span className="text-xs bg-raised px-1 rounded text-ink-muted flex-shrink-0">
                                 ranked
                               </span>
                             )}
@@ -358,7 +358,7 @@ export function LayersPanel({
                             'text-xs focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-[color:var(--color-accent)] focus-visible:ring-offset-2 min-h-[44px] min-w-[28px] flex items-center justify-center',
                             layer.secret
                               ? 'text-amber-500 hover:text-amber-600'
-                              : 'text-neutral-400 hover:text-neutral-600',
+                              : 'text-ink-muted hover:text-ink-secondary',
                           ].join(' ')}
                         >
                           {/* Padlock SVG: filled when secret, outline when not */}
@@ -394,7 +394,7 @@ export function LayersPanel({
                       <div className="px-4 pb-2 flex items-center gap-2">
                         <label
                           htmlFor={`opacity-${layer.id}`}
-                          className="text-xs text-neutral-500 flex-shrink-0"
+                          className="text-xs text-ink-muted flex-shrink-0"
                         >
                           Default opacity
                         </label>
@@ -422,7 +422,7 @@ export function LayersPanel({
                         <div className="px-4 pb-2 flex items-center gap-2">
                           <label
                             htmlFor={`viewer-opacity-${layer.id}`}
-                            className="text-xs text-neutral-500 flex-shrink-0"
+                            className="text-xs text-ink-muted flex-shrink-0"
                           >
                             Your opacity
                           </label>
@@ -466,7 +466,7 @@ export function LayersPanel({
                                     aria-label={`Change color for ${type.name} — current: ${type.color}`}
                                     title={`Change color for ${type.name}`}
                                     className={[
-                                      'w-4 h-4 rounded-full flex-shrink-0 border border-neutral-300 dark:border-neutral-600 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-[color:var(--color-accent)] focus-visible:ring-offset-2 min-h-[44px] min-w-[44px]',
+                                      'w-4 h-4 rounded-full flex-shrink-0 border border-line-strong focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-[color:var(--color-accent)] focus-visible:ring-offset-2 min-h-[44px] min-w-[44px]',
                                       // Armed highlight ring (43-04) — shows armed state even via color swatch
                                       armedTerrainTypeId === type.id
                                         ? 'ring-2 ring-[color:var(--color-accent)] ring-offset-1'
@@ -492,7 +492,7 @@ export function LayersPanel({
                                         'flex-shrink-0 text-xs px-1.5 py-0.5 rounded border focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-[color:var(--color-accent)] focus-visible:ring-offset-2',
                                         armedTerrainTypeId === type.id
                                           ? 'border-[color:var(--color-accent)] bg-[color:var(--color-accent-soft)] text-[color:var(--color-accent)]'
-                                          : 'border-neutral-200 dark:border-neutral-700 text-neutral-500 hover:text-neutral-700 dark:hover:text-neutral-300 hover:bg-neutral-50 dark:hover:bg-neutral-800',
+                                          : ' border-line-strong text-ink-muted hover:text-ink hover:bg-white/5',
                                       ].join(' ')}
                                     >
                                       {armedTerrainTypeId === type.id ? '✓' : '✎'}
@@ -517,7 +517,7 @@ export function LayersPanel({
                                         }
                                         autoFocus
                                         aria-label="Edit terrain type name"
-                                        className="w-full text-xs border border-[color:var(--color-accent)] rounded px-1 py-0.5 outline-none bg-white dark:bg-neutral-900 text-neutral-900 dark:text-neutral-100"
+                                        className="w-full text-xs border border-[color:var(--color-accent)] rounded px-1 py-0.5 outline-none bg-panel text-ink"
                                       />
                                       {renameError && (
                                         <p className="text-red-600 text-xs mt-0.5">
@@ -529,7 +529,7 @@ export function LayersPanel({
                                     <button
                                       type="button"
                                       onDoubleClick={() => startRename(type.id, type.name)}
-                                      className="flex-1 min-w-0 truncate text-xs text-left text-neutral-700 dark:text-neutral-300 hover:text-neutral-900 dark:hover:text-neutral-100 focus-visible:outline-none focus-visible:underline"
+                                      className="flex-1 min-w-0 truncate text-xs text-left text-ink hover:text-ink focus-visible:outline-none focus-visible:underline"
                                       title="Double-click to rename"
                                     >
                                       {type.name}
@@ -548,7 +548,7 @@ export function LayersPanel({
                                         aria-label={`Move ${type.name} up`}
                                         aria-disabled={isFirst ? 'true' : 'false'}
                                         disabled={isFirst}
-                                        className="text-xs text-neutral-400 hover:text-neutral-600 dark:hover:text-neutral-300 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-[color:var(--color-accent)] focus-visible:ring-offset-1 min-h-[44px] min-w-[20px] flex items-center justify-center disabled:opacity-40 disabled:cursor-not-allowed"
+                                        className="text-xs text-ink-muted hover:text-ink focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-[color:var(--color-accent)] focus-visible:ring-offset-1 min-h-[44px] min-w-[20px] flex items-center justify-center disabled:opacity-40 disabled:cursor-not-allowed"
                                       >
                                         ▲
                                       </button>
@@ -561,7 +561,7 @@ export function LayersPanel({
                                         aria-label={`Move ${type.name} down`}
                                         aria-disabled={isLast ? 'true' : 'false'}
                                         disabled={isLast}
-                                        className="text-xs text-neutral-400 hover:text-neutral-600 dark:hover:text-neutral-300 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-[color:var(--color-accent)] focus-visible:ring-offset-1 min-h-[44px] min-w-[20px] flex items-center justify-center disabled:opacity-40 disabled:cursor-not-allowed"
+                                        className="text-xs text-ink-muted hover:text-ink focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-[color:var(--color-accent)] focus-visible:ring-offset-1 min-h-[44px] min-w-[20px] flex items-center justify-center disabled:opacity-40 disabled:cursor-not-allowed"
                                       >
                                         ▼
                                       </button>
@@ -580,7 +580,7 @@ export function LayersPanel({
                                             label: val,
                                           });
                                         }}
-                                        className="w-20 text-xs border border-neutral-200 dark:border-neutral-700 rounded px-1 py-0.5 bg-white dark:bg-neutral-900 text-neutral-700 dark:text-neutral-300 placeholder-neutral-400 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-[color:var(--color-accent)] focus-visible:ring-offset-2"
+                                        className="w-20 text-xs border border-line-strong rounded px-1 py-0.5 bg-panel text-ink placeholder:text-ink-muted focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-[color:var(--color-accent)] focus-visible:ring-offset-2"
                                       />
                                     </>
                                   )}

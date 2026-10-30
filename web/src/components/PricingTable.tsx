@@ -55,7 +55,7 @@ export function PricingTable() {
       <summary className="text-sm font-medium cursor-pointer list-none">
         {open ? '▾' : '▸'} Models & pricing
       </summary>
-      <p className="text-xs text-neutral-500 mt-1">
+      <p className="text-xs text-ink-muted mt-1">
         pricing as of {PRICING_AS_OF}
       </p>
       <div className="mt-3 overflow-x-auto">
@@ -64,34 +64,34 @@ export function PricingTable() {
             Per-model pricing for configured LLM providers
           </caption>
           <thead>
-            <tr className="border-b border-neutral-200 dark:border-neutral-800">
+            <tr className="border-b border-line">
               <th
                 scope="col"
-                className="pb-2 text-left text-xs uppercase tracking-wide font-medium text-neutral-500"
+                className="pb-2 text-left text-xs uppercase tracking-wide font-medium text-ink-muted"
               >
                 Model
               </th>
               <th
                 scope="col"
-                className="pb-2 text-left text-xs uppercase tracking-wide font-medium text-neutral-500"
+                className="pb-2 text-left text-xs uppercase tracking-wide font-medium text-ink-muted"
               >
                 Input $/MTok
               </th>
               <th
                 scope="col"
-                className="pb-2 text-left text-xs uppercase tracking-wide font-medium text-neutral-500"
+                className="pb-2 text-left text-xs uppercase tracking-wide font-medium text-ink-muted"
               >
                 Output $/MTok
               </th>
               <th
                 scope="col"
-                className="pb-2 text-left text-xs uppercase tracking-wide font-medium text-neutral-500"
+                className="pb-2 text-left text-xs uppercase tracking-wide font-medium text-ink-muted"
               >
                 Cached input $/MTok
               </th>
               <th
                 scope="col"
-                className="pb-2 text-right text-xs uppercase tracking-wide font-medium text-neutral-500"
+                className="pb-2 text-right text-xs uppercase tracking-wide font-medium text-ink-muted"
               >
                 Context window
               </th>
@@ -99,11 +99,11 @@ export function PricingTable() {
           </thead>
           <tbody>
             {/* Anthropic group */}
-            <tr className="bg-neutral-50 dark:bg-neutral-900">
+            <tr className="bg-panel">
               <th
                 colSpan={5}
                 scope="colgroup"
-                className="text-left px-3 py-2 text-xs uppercase tracking-wide font-medium text-neutral-500"
+                className="text-left px-3 py-2 text-xs uppercase tracking-wide font-medium text-ink-muted"
               >
                 {PROVIDER_LABELS.anthropic}
               </th>
@@ -111,7 +111,7 @@ export function PricingTable() {
             {anthropicRows.map(([modelName, row]) => (
               <tr
                 key={`anthropic-${modelName}`}
-                className="border-b border-neutral-100 dark:border-neutral-800 last:border-0"
+                className="border-b border-line last:border-0"
               >
                 <td className="py-3 pr-4 text-sm leading-[1.5]">{modelName}</td>
                 <td className="py-3 pr-4 tabular-nums text-sm leading-[1.5]">
@@ -132,11 +132,11 @@ export function PricingTable() {
             ))}
 
             {/* OpenAI group */}
-            <tr className="bg-neutral-50 dark:bg-neutral-900">
+            <tr className="bg-panel">
               <th
                 colSpan={5}
                 scope="colgroup"
-                className="text-left px-3 py-2 text-xs uppercase tracking-wide font-medium text-neutral-500"
+                className="text-left px-3 py-2 text-xs uppercase tracking-wide font-medium text-ink-muted"
               >
                 {PROVIDER_LABELS.openai}
               </th>
@@ -144,7 +144,7 @@ export function PricingTable() {
             {openaiRows.map(([modelName, row]) => (
               <tr
                 key={`openai-${modelName}`}
-                className="border-b border-neutral-100 dark:border-neutral-800 last:border-0"
+                className="border-b border-line last:border-0"
               >
                 <td className="py-3 pr-4 text-sm leading-[1.5]">{modelName}</td>
                 <td className="py-3 pr-4 tabular-nums text-sm leading-[1.5]">
@@ -167,7 +167,7 @@ export function PricingTable() {
         </table>
 
         {liveOnlyCount > 0 && (
-          <p className="text-xs text-neutral-500 mt-2">
+          <p className="text-xs text-ink-muted mt-2">
             {liveOnlyCount} additional models available without published rates — see model picker in universe settings.
           </p>
         )}

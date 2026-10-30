@@ -23,13 +23,13 @@ function MetaChips({ meta }: { meta: Array<{ name: string; default_value: string
         {shown.map((f) => (
           <span
             key={f.name}
-            className="bg-neutral-100 dark:bg-neutral-800 text-neutral-700 dark:text-neutral-300 text-xs font-mono px-1.5 py-0.5 rounded-sm"
+            className="bg-raised text-ink text-xs font-mono px-1.5 py-0.5 rounded-sm"
           >
             {f.name}
           </span>
         ))}
         {overflow > 0 && (
-          <span className="bg-neutral-100 dark:bg-neutral-800 text-neutral-700 dark:text-neutral-300 text-xs font-mono px-1.5 py-0.5 rounded-sm">
+          <span className="bg-raised text-ink text-xs font-mono px-1.5 py-0.5 rounded-sm">
             +{overflow} more
           </span>
         )}
@@ -88,46 +88,46 @@ export default function Templates() {
     <div className="max-w-3xl">
       {/* Page header — NO "New template" button per UI-SPEC §D */}
       <h1 className="text-2xl font-semibold tracking-tight">Entry templates</h1>
-      <p className="mt-2 text-sm text-neutral-600 dark:text-neutral-400 leading-[1.5]">
+      <p className="mt-2 text-sm text-ink-secondary leading-[1.5]">
         {'Templates scaffold new entries with a pre-defined structure. Defaults ship with Weltbon and can be cloned. Your saved templates travel across all your universes.'}
       </p>
 
       {/* ── Section A: Default templates (always rendered, in-tree data) ── */}
-      <h3 className="text-xs uppercase tracking-wide text-neutral-500 mb-2 mt-8">
+      <h3 className="text-xs uppercase tracking-wide text-ink-muted mb-2 mt-8">
         Default templates
       </h3>
       <div className="overflow-x-auto">
         <table className="w-full text-sm">
           <caption className="sr-only">Default entry templates</caption>
           <thead>
-            <tr className="border-b border-neutral-200 dark:border-neutral-800">
+            <tr className="border-b border-line">
               <th
                 scope="col"
-                className="pb-2 text-left text-xs uppercase tracking-wide font-medium text-neutral-500 w-32"
+                className="pb-2 text-left text-xs uppercase tracking-wide font-medium text-ink-muted w-32"
               >
                 Type
               </th>
               <th
                 scope="col"
-                className="pb-2 text-left text-xs uppercase tracking-wide font-medium text-neutral-500 w-auto"
+                className="pb-2 text-left text-xs uppercase tracking-wide font-medium text-ink-muted w-auto"
               >
                 Name
               </th>
               <th
                 scope="col"
-                className="pb-2 text-left text-xs uppercase tracking-wide font-medium text-neutral-500 w-auto"
+                className="pb-2 text-left text-xs uppercase tracking-wide font-medium text-ink-muted w-auto"
               >
                 Fields
               </th>
               <th
                 scope="col"
-                className="pb-2 text-left text-xs uppercase tracking-wide font-medium text-neutral-500 w-32"
+                className="pb-2 text-left text-xs uppercase tracking-wide font-medium text-ink-muted w-32"
               >
                 Last used
               </th>
               <th
                 scope="col"
-                className="pb-2 text-right text-xs uppercase tracking-wide font-medium text-neutral-500 w-20"
+                className="pb-2 text-right text-xs uppercase tracking-wide font-medium text-ink-muted w-20"
               >
                 {/* action column — no header text */}
               </th>
@@ -137,10 +137,10 @@ export default function Templates() {
             {TEMPLATES.map((template) => (
               <tr
                 key={template.id}
-                className="border-b border-neutral-200 dark:border-neutral-800"
+                className="border-b border-line"
               >
                 {/* Type */}
-                <td className="py-3 pr-4 text-neutral-700 dark:text-neutral-300">
+                <td className="py-3 pr-4 text-ink">
                   {template.entryType}
                 </td>
                 {/* Name */}
@@ -149,7 +149,7 @@ export default function Templates() {
                 <MetaChips meta={template.meta} />
                 {/* Last used — defaults always show "Never" (no DB row to stamp) */}
                 <td className="py-3 pr-4">
-                  <span className="italic text-neutral-500">Never</span>
+                  <span className="italic text-ink-muted">Never</span>
                 </td>
                 {/* Action — empty; defaults have NO kebab per UI-SPEC §D */}
                 <td className="py-3 text-right" />
@@ -160,7 +160,7 @@ export default function Templates() {
       </div>
 
       {/* ── Section B: Your templates ── */}
-      <h3 className="text-xs uppercase tracking-wide text-neutral-500 mb-2 mt-8">
+      <h3 className="text-xs uppercase tracking-wide text-ink-muted mb-2 mt-8">
         Your templates
       </h3>
 
@@ -170,7 +170,7 @@ export default function Templates() {
           {[0, 1, 2].map((i) => (
             <div
               key={i}
-              className="h-12 rounded-md bg-neutral-100 dark:bg-neutral-800 animate-pulse"
+              className="h-12 rounded-md bg-raised animate-pulse"
             />
           ))}
         </div>
@@ -190,34 +190,34 @@ export default function Templates() {
           <table className="w-full text-sm">
             <caption className="sr-only">Your entry templates</caption>
             <thead>
-              <tr className="border-b border-neutral-200 dark:border-neutral-800">
+              <tr className="border-b border-line">
                 <th
                   scope="col"
-                  className="pb-2 text-left text-xs uppercase tracking-wide font-medium text-neutral-500 w-32"
+                  className="pb-2 text-left text-xs uppercase tracking-wide font-medium text-ink-muted w-32"
                 >
                   Type
                 </th>
                 <th
                   scope="col"
-                  className="pb-2 text-left text-xs uppercase tracking-wide font-medium text-neutral-500 w-auto"
+                  className="pb-2 text-left text-xs uppercase tracking-wide font-medium text-ink-muted w-auto"
                 >
                   Name
                 </th>
                 <th
                   scope="col"
-                  className="pb-2 text-left text-xs uppercase tracking-wide font-medium text-neutral-500 w-auto"
+                  className="pb-2 text-left text-xs uppercase tracking-wide font-medium text-ink-muted w-auto"
                 >
                   Fields
                 </th>
                 <th
                   scope="col"
-                  className="pb-2 text-left text-xs uppercase tracking-wide font-medium text-neutral-500 w-32"
+                  className="pb-2 text-left text-xs uppercase tracking-wide font-medium text-ink-muted w-32"
                 >
                   Last used
                 </th>
                 <th
                   scope="col"
-                  className="pb-2 text-right text-xs uppercase tracking-wide font-medium text-neutral-500 w-20"
+                  className="pb-2 text-right text-xs uppercase tracking-wide font-medium text-ink-muted w-20"
                 >
                   {/* action column — no header text */}
                 </th>
@@ -227,10 +227,10 @@ export default function Templates() {
               {userTemplates.map((t) => (
                 <tr
                   key={t.id}
-                  className="border-b border-neutral-200 dark:border-neutral-800"
+                  className="border-b border-line"
                 >
                   {/* Type */}
-                  <td className="py-3 pr-4 text-neutral-700 dark:text-neutral-300">
+                  <td className="py-3 pr-4 text-ink">
                     {t.entryType}
                   </td>
 
@@ -254,7 +254,7 @@ export default function Templates() {
                             cancelRename();
                           }
                         }}
-                        className="rounded-md border border-neutral-300 dark:border-neutral-700 bg-transparent px-2 py-1 text-sm w-full focus:outline-none focus:ring-2 focus:ring-[color:var(--color-accent)]"
+                        className="rounded-md border border-line-strong bg-transparent px-2 py-1 text-sm w-full focus:outline-none focus:ring-2 focus:ring-[color:var(--color-accent)]"
                       />
                       {renameError && (
                         <p className="mt-1 text-sm text-red-500" role="alert">
@@ -279,7 +279,7 @@ export default function Templates() {
                         {formatRelative(t.lastUsedAt)}
                       </time>
                     ) : (
-                      <span className="italic text-neutral-500">Never</span>
+                      <span className="italic text-ink-muted">Never</span>
                     )}
                   </td>
 
@@ -290,7 +290,7 @@ export default function Templates() {
                         <button
                           type="button"
                           aria-label={`Actions for ${t.name}`}
-                          className="inline-flex items-center justify-center h-8 w-8 rounded-md text-neutral-500 dark:text-neutral-400 bg-transparent hover:text-neutral-900 dark:hover:text-neutral-100 hover:bg-neutral-100 dark:hover:bg-neutral-800 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-[color:var(--color-accent)] focus-visible:ring-offset-2 focus-visible:ring-offset-white dark:focus-visible:ring-offset-neutral-900 data-[state=open]:bg-neutral-100 dark:data-[state=open]:bg-neutral-800 data-[state=open]:text-neutral-900 dark:data-[state=open]:text-neutral-100"
+                          className="inline-flex items-center justify-center h-8 w-8 rounded-md text-ink-secondary bg-transparent hover:text-ink hover:bg-white/5 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-[color:var(--color-accent)] focus-visible:ring-offset-2 focus-visible:ring-offset-[color:var(--color-canvas-mid)] data-[state=open]:bg-white/5 data-[state=open]:text-ink"
                         >
                           <svg
                             viewBox="0 0 16 16"
@@ -314,7 +314,7 @@ export default function Templates() {
                           // auto-restore so the input keeps focus until the user explicitly
                           // cancels (Esc or click-away).
                           onCloseAutoFocus={(e) => e.preventDefault()}
-                          className="min-w-[160px] rounded-md border border-neutral-200 dark:border-neutral-800 bg-white dark:bg-neutral-900 p-1 shadow-lg z-50 data-[state=open]:animate-popover-in data-[state=closed]:animate-popover-out"
+                          className="min-w-[160px] rounded-md border border-line bg-panel p-1 shadow-lg z-50 data-[state=open]:animate-popover-in data-[state=closed]:animate-popover-out"
                         >
                           <DropdownMenu.Item
                             onSelect={() => {
@@ -327,7 +327,7 @@ export default function Templates() {
                                 setRenameError(null);
                               });
                             }}
-                            className="px-3 py-2 text-sm rounded-sm cursor-pointer outline-none data-[highlighted]:bg-neutral-100 dark:data-[highlighted]:bg-neutral-800"
+                            className="px-3 py-2 text-sm rounded-sm cursor-pointer outline-none data-[highlighted]:bg-white/5"
                           >
                             Rename…
                           </DropdownMenu.Item>

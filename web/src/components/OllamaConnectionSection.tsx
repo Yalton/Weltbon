@@ -77,12 +77,12 @@ export function OllamaConnectionSection() {
   return (
     <section
       aria-labelledby="ollama-section-heading"
-      className="mt-8 rounded-md border border-neutral-200 dark:border-neutral-800 p-5"
+      className="mt-8 rounded-md border border-line p-5"
     >
       <h2 id="ollama-section-heading" className="text-lg font-semibold tracking-tight">
         Local Ollama
       </h2>
-      <p className="mt-2 text-sm text-neutral-600 dark:text-neutral-400 leading-[1.5]">
+      <p className="mt-2 text-sm text-ink-secondary leading-[1.5]">
         Point the gap auditor at an Ollama server on this machine. Audits run
         entirely on your own hardware — no worldbuilding content leaves your
         network.
@@ -97,13 +97,13 @@ export function OllamaConnectionSection() {
           value={baseUrl}
           placeholder="http://localhost:11434"
           onChange={(e) => setBaseUrl(e.target.value)}
-          className="w-full rounded-md border border-neutral-300 dark:border-neutral-700 bg-transparent px-3 py-2 text-sm"
+          className="w-full rounded-md border border-line-strong bg-transparent px-3 py-2 text-sm"
         />
       </div>
 
       <div className="mt-3">
         <label htmlFor="ollama-secret" className="block text-sm mb-1">
-          Bearer token <span className="text-neutral-500">(optional — only if a proxy sits in front of Ollama)</span>
+          Bearer token <span className="text-ink-muted">(optional — only if a proxy sits in front of Ollama)</span>
         </label>
         <input
           id="ollama-secret"
@@ -111,7 +111,7 @@ export function OllamaConnectionSection() {
           value={secret}
           placeholder={connection?.bodySuffix ? `••••••••${connection.bodySuffix}` : ''}
           onChange={(e) => setSecret(e.target.value)}
-          className="w-full rounded-md border border-neutral-300 dark:border-neutral-700 bg-transparent px-3 py-2 text-sm"
+          className="w-full rounded-md border border-line-strong bg-transparent px-3 py-2 text-sm"
         />
       </div>
 
@@ -142,10 +142,10 @@ export function OllamaConnectionSection() {
           Installed models
         </p>
         {modelsLoading && (
-          <p className="text-sm text-neutral-500 italic">Checking your Ollama server…</p>
+          <p className="text-sm text-ink-muted italic">Checking your Ollama server…</p>
         )}
         {!modelsLoading && (models === undefined || models.length === 0) && (
-          <p role="status" className="text-sm text-neutral-500 dark:text-neutral-400 italic">
+          <p role="status" className="text-sm text-ink-secondary italic">
             No models found. Save a reachable server address, then pull a model with tool support
             (e.g. <code>ollama pull qwen3</code>).
           </p>
@@ -153,16 +153,16 @@ export function OllamaConnectionSection() {
         {!modelsLoading && models !== undefined && models.length > 0 && (
           <ul
             aria-labelledby="ollama-models-heading"
-            className="rounded-md border border-neutral-200 dark:border-neutral-800 divide-y divide-neutral-200 dark:divide-neutral-800 text-sm"
+            className="rounded-md border border-line divide-y divide-[color:var(--color-line)] text-sm"
           >
             {models.map((m) => (
               // Listed rather than hidden: a user who pulled a vision-only
               <li key={m.name} className="px-3 py-2 flex items-baseline justify-between gap-3">
-                <span className={m.supportsTools ? '' : 'text-neutral-500 dark:text-neutral-400'}>
+                <span className={m.supportsTools ? '' : ' text-ink-secondary'}>
                   {m.name}
                 </span>
                 {!m.supportsTools && (
-                  <span className="text-xs text-neutral-500 dark:text-neutral-400 shrink-0">
+                  <span className="text-xs text-ink-secondary shrink-0">
                     no tool support, cannot run audits
                   </span>
                 )}
@@ -170,7 +170,7 @@ export function OllamaConnectionSection() {
             ))}
           </ul>
         )}
-        <p className="mt-1 text-xs text-neutral-500">
+        <p className="mt-1 text-xs text-ink-muted">
           The actual model used for an audit is chosen per universe, in that universe&rsquo;s Settings
           → AI Gap Auditor tab.
         </p>

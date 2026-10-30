@@ -31,7 +31,7 @@ export function TimelinePinSection({ universeId, entryId }: Props) {
   };
 
   return (
-    <div className="mt-6 pt-6 border-t border-neutral-200 dark:border-neutral-800">
+    <div className="mt-6 pt-6 border-t border-line">
       <div className="flex items-center justify-between">
         <h2 className="text-xl font-semibold">Timeline</h2>
       </div>
@@ -39,7 +39,7 @@ export function TimelinePinSection({ universeId, entryId }: Props) {
       {isLoading ? (
         <Loading />
       ) : currentPin ? (
-        <div className="mt-3 flex items-center justify-between rounded-md border border-neutral-200 dark:border-neutral-800 px-3 py-2">
+        <div className="mt-3 flex items-center justify-between rounded-md border border-line px-3 py-2">
           <span className="flex items-center gap-3">
             <PrecisionBadge precision={currentPin.precision} />
             <span className="text-sm font-medium">{currentPin.label}</span>
@@ -51,7 +51,7 @@ export function TimelinePinSection({ universeId, entryId }: Props) {
             <button
               type="button"
               onClick={() => setEditorOpen(true)}
-              className="text-xs text-neutral-400 hover:text-neutral-200"
+              className="text-xs text-ink-muted hover:text-ink-muted"
             >
               Edit
             </button>
@@ -70,7 +70,7 @@ export function TimelinePinSection({ universeId, entryId }: Props) {
           <button
             type="button"
             onClick={() => setEditorOpen(true)}
-            className="rounded-md border border-neutral-300 dark:border-neutral-700 text-sm px-3 py-1.5"
+            className="rounded-md border border-line-strong text-sm px-3 py-1.5"
           >
             Add pin
           </button>

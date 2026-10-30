@@ -134,7 +134,7 @@ export function ImportDetailPane({
             aria-required="true"
             aria-invalid={titleDraft.trim() === ''}
             aria-label="Title"
-            className="w-full text-2xl font-semibold tracking-tight bg-transparent border-b border-transparent hover:border-neutral-300 dark:hover:border-neutral-700 focus:border-[color:var(--color-accent)] focus:outline-none px-0 py-1"
+            className="w-full text-2xl font-semibold tracking-tight bg-transparent border-b border-transparent hover:border-line-strong focus:border-[color:var(--color-accent)] focus:outline-none px-0 py-1"
           />
           {titleDraft.trim() === '' && (
             <p role="alert" className="text-xs text-red-500 mt-1">
@@ -159,7 +159,7 @@ export function ImportDetailPane({
               value={currentType}
               onChange={(e) => onUpdateField('entryType', e.target.value)}
               aria-invalid={!typeIsValid}
-              className="w-full rounded-md border border-neutral-300 dark:border-neutral-700 bg-transparent px-3 py-2 text-sm"
+              className="w-full rounded-md border border-line-strong bg-transparent px-3 py-2 text-sm"
             >
               {/*
                 If currentType is NOT in validTypes, render a non-disabled
@@ -198,9 +198,9 @@ export function ImportDetailPane({
         </div>
 
         {/* 4. Tags */}
-        <div className="mt-6 pt-6 border-t border-neutral-200 dark:border-neutral-800">
+        <div className="mt-6 pt-6 border-t border-line">
           <h2 className="text-xl font-semibold mb-2">Tags</h2>
-          <div className="rounded-md border border-neutral-300 dark:border-neutral-700 px-3 py-2">
+          <div className="rounded-md border border-line-strong px-3 py-2">
             <TagInput
               value={edits.tags ?? entry.tags}
               onChange={(tags) => onUpdateField('tags', tags)}
@@ -210,7 +210,7 @@ export function ImportDetailPane({
 
         {/* 5. Warnings (one amber inline pill per unresolved link) */}
         {unresolvedLinks.length > 0 && (
-          <div className="mt-6 pt-6 border-t border-neutral-200 dark:border-neutral-800">
+          <div className="mt-6 pt-6 border-t border-line">
             <h2 className="text-xl font-semibold mb-2">Warnings</h2>
             <div className="flex flex-wrap gap-2">
               {unresolvedLinks.map((w, i) => (
@@ -228,19 +228,19 @@ export function ImportDetailPane({
         )}
 
         {/* 6. Body — Edit/Preview toggle */}
-        <div className="mt-6 pt-6 border-t border-neutral-200 dark:border-neutral-800">
+        <div className="mt-6 pt-6 border-t border-line">
           <div className="flex items-center justify-between mb-2">
             <h2 className="text-xl font-semibold">
               <label htmlFor={bodyId}>Body</label>
             </h2>
-            <div className="inline-flex rounded-md border border-neutral-300 dark:border-neutral-700 overflow-hidden text-xs">
+            <div className="inline-flex rounded-md border border-line-strong overflow-hidden text-xs">
               <button
                 type="button"
                 onClick={() => setBodyMode('edit')}
                 className={
                   bodyMode === 'edit'
-                    ? 'px-3 py-1 bg-neutral-200 dark:bg-neutral-800 font-medium'
-                    : 'px-3 py-1 text-neutral-500'
+                    ? 'px-3 py-1 bg-raised font-medium'
+                    : 'px-3 py-1 text-ink-muted'
                 }
               >
                 Edit
@@ -250,8 +250,8 @@ export function ImportDetailPane({
                 onClick={() => setBodyMode('preview')}
                 className={
                   bodyMode === 'preview'
-                    ? 'px-3 py-1 bg-neutral-200 dark:bg-neutral-800 font-medium'
-                    : 'px-3 py-1 text-neutral-500'
+                    ? 'px-3 py-1 bg-raised font-medium'
+                    : 'px-3 py-1 text-ink-muted'
                 }
               >
                 Preview
@@ -269,17 +269,17 @@ export function ImportDetailPane({
                   onUpdateField('body', bodyDraft);
                 }
               }}
-              className="w-full rounded-md border border-neutral-300 dark:border-neutral-700 bg-transparent px-3 py-2 text-sm font-mono leading-[1.5]"
+              className="w-full rounded-md border border-line-strong bg-transparent px-3 py-2 text-sm font-mono leading-[1.5]"
             />
           ) : (
-            <div className="rounded-md border border-neutral-200 dark:border-neutral-800 px-4 py-3">
+            <div className="rounded-md border border-line px-4 py-3">
               <MarkdownRenderer content={bodyDraft} />
             </div>
           )}
         </div>
 
         {/* 7. Details (Meta) */}
-        <div className="mt-6 pt-6 border-t border-neutral-200 dark:border-neutral-800">
+        <div className="mt-6 pt-6 border-t border-line">
           <h2 className="text-xl font-semibold mb-2">Details</h2>
           <MetaEditor
             value={metaForEditor}
@@ -292,13 +292,13 @@ export function ImportDetailPane({
         <ImportLinksList linksOut={entry.linksOut} />
 
         {/* 9. Reject / Restore */}
-        <div className="mt-6 pt-6 border-t border-neutral-200 dark:border-neutral-800 flex justify-end">
+        <div className="mt-6 pt-6 border-t border-line flex justify-end">
           {decision.disposition === 'reject' ? (
             <button
               type="button"
               onClick={onRestore}
               aria-pressed="true"
-              className="text-sm text-neutral-700 dark:text-neutral-200 hover:text-[color:var(--color-accent)] px-3 py-1.5"
+              className="text-sm text-ink hover:text-[color:var(--color-accent)] px-3 py-1.5"
             >
               Restore this entry
             </button>
@@ -307,7 +307,7 @@ export function ImportDetailPane({
               type="button"
               onClick={onReject}
               aria-pressed="false"
-              className="text-sm text-neutral-700 dark:text-neutral-200 hover:text-red-600 px-3 py-1.5"
+              className="text-sm text-ink hover:text-red-600 px-3 py-1.5"
             >
               Reject this entry
             </button>

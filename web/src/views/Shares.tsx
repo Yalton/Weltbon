@@ -83,7 +83,7 @@ export default function Shares() {
       <h1 className="text-2xl font-semibold tracking-tight">Share links</h1>
 
       {/* Intro paragraph — UI-SPEC §F + §Copywriting Contract verbatim. */}
-      <p className="mt-2 text-sm text-neutral-600 dark:text-neutral-400 leading-[1.5]">
+      <p className="mt-2 text-sm text-ink-secondary leading-[1.5]">
         Share links give anyone with the URL read-only access to a universe. Manage all your active links here, or create new ones from a{' '}
         <Link
           to="/universes"
@@ -104,7 +104,7 @@ export default function Shares() {
           {[0, 1, 2].map((i) => (
             <div
               key={i}
-              className="h-12 rounded-md bg-neutral-100 dark:bg-neutral-800 animate-pulse"
+              className="h-12 rounded-md bg-raised animate-pulse"
             />
           ))}
         </div>
@@ -127,58 +127,58 @@ export default function Shares() {
           <table className="w-full text-sm">
             <caption className="sr-only">Your share links</caption>
             <thead>
-              <tr className="border-b border-neutral-200 dark:border-neutral-800">
+              <tr className="border-b border-line">
                 <th
                   scope="col"
-                  className="pb-2 text-left text-xs uppercase tracking-wide font-medium text-neutral-500 w-40"
+                  className="pb-2 text-left text-xs uppercase tracking-wide font-medium text-ink-muted w-40"
                 >
                   Universe
                 </th>
                 <th
                   scope="col"
-                  className="pb-2 text-left text-xs uppercase tracking-wide font-medium text-neutral-500"
+                  className="pb-2 text-left text-xs uppercase tracking-wide font-medium text-ink-muted"
                 >
                   Label
                 </th>
                 <th
                   scope="col"
-                  className="pb-2 text-left text-xs uppercase tracking-wide font-medium text-neutral-500 w-24"
+                  className="pb-2 text-left text-xs uppercase tracking-wide font-medium text-ink-muted w-24"
                 >
                   Status
                 </th>
                 <th
                   scope="col"
-                  className="pb-2 text-left text-xs uppercase tracking-wide font-medium text-neutral-500 w-48"
+                  className="pb-2 text-left text-xs uppercase tracking-wide font-medium text-ink-muted w-48"
                 >
                   Preview
                 </th>
                 <th
                   scope="col"
-                  className="pb-2 text-left text-xs uppercase tracking-wide font-medium text-neutral-500 w-32"
+                  className="pb-2 text-left text-xs uppercase tracking-wide font-medium text-ink-muted w-32"
                 >
                   Created
                 </th>
                 <th
                   scope="col"
-                  className="pb-2 text-left text-xs uppercase tracking-wide font-medium text-neutral-500 w-32"
+                  className="pb-2 text-left text-xs uppercase tracking-wide font-medium text-ink-muted w-32"
                 >
                   Last accessed
                 </th>
                 <th
                   scope="col"
-                  className="pb-2 text-left text-xs uppercase tracking-wide font-medium text-neutral-500 w-32"
+                  className="pb-2 text-left text-xs uppercase tracking-wide font-medium text-ink-muted w-32"
                 >
                   Expiry
                 </th>
                 <th
                   scope="col"
-                  className="pb-2 text-right text-xs uppercase tracking-wide font-medium text-neutral-500 w-20"
+                  className="pb-2 text-right text-xs uppercase tracking-wide font-medium text-ink-muted w-20"
                 >
                   Access count
                 </th>
                 <th
                   scope="col"
-                  className="pb-2 text-right text-xs uppercase tracking-wide font-medium text-neutral-500 w-24"
+                  className="pb-2 text-right text-xs uppercase tracking-wide font-medium text-ink-muted w-24"
                 >
                   {/* Actions — no heading text. */}
                 </th>
@@ -192,7 +192,7 @@ export default function Shares() {
                   <tr
                     key={s.id}
                     className={[
-                      'border-b border-neutral-100 dark:border-neutral-800 last:border-0',
+                      'border-b border-line last:border-0',
                       status === 'revoked' ? 'opacity-50' : '',
                     ].join(' ')}
                   >
@@ -223,7 +223,7 @@ export default function Shares() {
                             autoFocus
                             maxLength={100}
                             aria-label="Rename share link"
-                            className="w-full rounded-md border border-neutral-300 dark:border-neutral-700 bg-transparent px-2 py-1 text-sm"
+                            className="w-full rounded-md border border-line-strong bg-transparent px-2 py-1 text-sm"
                           />
                           {renameError && (
                             <p
@@ -244,7 +244,7 @@ export default function Shares() {
                           {s.label ? (
                             s.label
                           ) : (
-                            <span className="text-neutral-500 italic">
+                            <span className="text-ink-muted italic">
                               (unnamed)
                             </span>
                           )}
@@ -252,7 +252,7 @@ export default function Shares() {
                       ) : s.label ? (
                         s.label
                       ) : (
-                        <span className="text-neutral-500 italic">
+                        <span className="text-ink-muted italic">
                           (unnamed)
                         </span>
                       )}
@@ -272,7 +272,7 @@ export default function Shares() {
                         </span>
                       )}
                       {status === 'expired' && (
-                        <span className="inline-flex items-center rounded px-1.5 py-0.5 text-xs font-medium bg-neutral-100 dark:bg-neutral-800 text-neutral-500">
+                        <span className="inline-flex items-center rounded px-1.5 py-0.5 text-xs font-medium bg-raised text-ink-muted">
                           expired
                         </span>
                       )}
@@ -303,7 +303,7 @@ export default function Shares() {
                           {formatRelative(s.lastAccessedAt)}
                         </time>
                       ) : (
-                        <span className="italic text-neutral-500">Never</span>
+                        <span className="italic text-ink-muted">Never</span>
                       )}
                     </td>
 
@@ -317,7 +317,7 @@ export default function Shares() {
                           {new Date(s.expiresAt).toLocaleDateString()}
                         </time>
                       ) : (
-                        <span className="italic text-neutral-500">No expiry</span>
+                        <span className="italic text-ink-muted">No expiry</span>
                       )}
                     </td>
 
@@ -333,7 +333,7 @@ export default function Shares() {
                           type="button"
                           onClick={() => setRevokeTarget(s)}
                           aria-label={`Revoke share link ${s.label || '(unnamed)'}`}
-                          className="text-sm text-neutral-600 dark:text-neutral-400 hover:text-red-600 dark:hover:text-red-500"
+                          className="text-sm text-ink-secondary hover:text-red-600 dark:hover:text-red-500"
                         >
                           Revoke
                         </button>

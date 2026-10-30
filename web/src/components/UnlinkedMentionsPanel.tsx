@@ -38,10 +38,10 @@ interface Props {
  * Skip inside [[ ]]: occurrences already in a wikilink span are excluded.
  * Skip inside code (D-13): uses isInsideCodeSpan from WikilinkAutocomplete.
  * Linkify form (D-14): bare [[Title]] when text matches title exactly, else
- *   [[Title|matchedText]] so the sentence still reads as written.
+ * [[Title|matchedText]] so the sentence still reads as written.
  * Single-occurrence linkify (D-15): only the selected occurrence is rewritten.
  * Splice guard: if body.slice(matchIndex, matchIndex+matchLength) !== matchedText
- *   (stale index after a concurrent edit), the click aborts rather than corrupting.
+ * (stale index after a concurrent edit), the click aborts rather than corrupting.
  *
  * Does NOT introduce any new shared query key — reuses the existing
  * ['entry', universeId, entryId] key (memory: react-query-key-change-blast-radius).
@@ -147,7 +147,7 @@ export function UnlinkedMentionsPanel({ universeId, entry, allEntries, onLinked 
   }, [allEntries, entry, siblingBodies]);
 
   return (
-    <div className="mt-6 pt-6 border-t border-neutral-200 dark:border-neutral-800">
+    <div className="mt-6 pt-6 border-t border-line">
       <div className="flex items-center justify-between">
         <h2 className="text-xl font-semibold">Unlinked mentions ({mentions.length})</h2>
       </div>
@@ -160,13 +160,13 @@ export function UnlinkedMentionsPanel({ universeId, entry, allEntries, onLinked 
             return (
               <li
                 key={mentionKey}
-                className="flex items-start justify-between gap-3 rounded-md border border-neutral-200 dark:border-neutral-800 px-3 py-2"
+                className="flex items-start justify-between gap-3 rounded-md border border-line px-3 py-2"
               >
                 <div className="min-w-0 flex-1">
-                  <p className="text-xs text-neutral-400 mb-0.5 font-medium truncate">
+                  <p className="text-xs text-ink-muted mb-0.5 font-medium truncate">
                     {m.sourceTitle}
                   </p>
-                  <p className="text-sm text-neutral-300 break-words">
+                  <p className="text-sm text-ink-muted break-words">
                     {m.snippet}
                   </p>
                 </div>
@@ -269,7 +269,7 @@ function LinkifyButton({
         type="button"
         onClick={() => { void handleClick(); }}
         disabled={isPending || updateEntry.isPending}
-        className="rounded-md border border-neutral-300 dark:border-neutral-700 text-sm px-3 py-1.5 hover:bg-neutral-50 dark:hover:bg-neutral-800 disabled:opacity-50"
+        className="rounded-md border border-line-strong text-sm px-3 py-1.5 hover:bg-white/5 disabled:opacity-50"
       >
         {isPending || updateEntry.isPending ? 'Linking…' : 'Link'}
       </button>

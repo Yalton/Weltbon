@@ -1379,7 +1379,7 @@ export const MarkdownAuthoringEditor = forwardRef<
 
   return (
     <section
-      className="markdown-authoring-surface rounded-md border border-neutral-700 bg-neutral-950 text-neutral-100 dark:border-neutral-700 dark:bg-neutral-950 dark:text-neutral-100"
+      className="markdown-authoring-surface rounded-md border border-line-strong bg-canvas-lo text-ink"
       role="region"
       aria-label="Markdown authoring editor"
       onKeyDown={(event) => {
@@ -1413,12 +1413,12 @@ export const MarkdownAuthoringEditor = forwardRef<
           setPaletteOpen(true);
         }}
       />
-      <div className="flex items-center justify-end gap-1 border-b border-neutral-800 px-2 py-1 dark:border-neutral-800" role="group" aria-label="Editor mode">
+      <div className="flex items-center justify-end gap-1 border-b px-2 py-1 border-line" role="group" aria-label="Editor mode">
         <button
           type="button"
           aria-pressed={mode === 'live'}
           onClick={() => switchMode('live')}
-          className="rounded px-2 py-1 text-xs data-[state=active]:bg-neutral-800 dark:data-[state=active]:bg-neutral-800"
+          className="rounded px-2 py-1 text-xs data-[state=active]:bg-white/5"
           data-state={mode === 'live' ? 'active' : 'inactive'}
         >
           Live Preview
@@ -1427,7 +1427,7 @@ export const MarkdownAuthoringEditor = forwardRef<
           type="button"
           aria-pressed={mode === 'source'}
           onClick={() => switchMode('source')}
-          className="rounded px-2 py-1 text-xs data-[state=active]:bg-neutral-800 dark:data-[state=active]:bg-neutral-800"
+          className="rounded px-2 py-1 text-xs data-[state=active]:bg-white/5"
           data-state={mode === 'source' ? 'active' : 'inactive'}
         >
           Source
@@ -1449,7 +1449,7 @@ export const MarkdownAuthoringEditor = forwardRef<
             tabIndex={0}
             onFocus={() => { activeRawBlockIndex.current = 0; sourceSelection.current = { start: value.length, end: value.length }; setTableSelection(null); }}
             onClick={() => { activeRawBlockIndex.current = 0; sourceSelection.current = { start: value.length, end: value.length }; setTableSelection(null); }}
-            className="m-3 overflow-x-auto rounded bg-neutral-900 p-3 text-sm text-neutral-100 dark:bg-neutral-900 dark:text-neutral-100"
+            className="m-3 overflow-x-auto rounded p-3 text-sm bg-panel text-ink"
             aria-label="Raw Markdown block"
           >
             <code>{value}</code>
@@ -1465,7 +1465,7 @@ export const MarkdownAuthoringEditor = forwardRef<
                   tabIndex={0}
                   onFocus={() => { activeRawBlockIndex.current = index; sourceSelection.current = { start: start + part.content.length, end: start + part.content.length }; setTableSelection(null); }}
                   onClick={() => { activeRawBlockIndex.current = index; sourceSelection.current = { start: start + part.content.length, end: start + part.content.length }; setTableSelection(null); }}
-                  className="m-3 overflow-x-auto rounded bg-neutral-900 p-3 text-sm text-neutral-100 dark:bg-neutral-900 dark:text-neutral-100"
+                  className="m-3 overflow-x-auto rounded p-3 text-sm bg-panel text-ink"
                   aria-label="Raw Markdown block"
                 >
                   <code>{part.content}</code>

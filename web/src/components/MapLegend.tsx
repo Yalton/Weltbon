@@ -108,21 +108,21 @@ export function MapLegend({
         >
           {/* Panel header */}
           <div className="flex items-center justify-between px-3 pt-2 pb-1">
-            <span className="text-xs font-semibold uppercase tracking-wide text-neutral-500">
+            <span className="text-xs font-semibold uppercase tracking-wide text-ink-muted">
               Legend
             </span>
             <button
               type="button"
               onClick={onToggle}
               aria-label="Close legend"
-              className="text-xs text-neutral-400 hover:text-neutral-600 dark:hover:text-neutral-300"
+              className="text-xs text-ink-muted hover:text-ink"
             >
               ×
             </button>
           </div>
 
           {rows.length === 0 ? (
-            <p className="px-3 py-2 text-xs text-neutral-400">
+            <p className="px-3 py-2 text-xs text-ink-muted">
               No pins or regions yet.
             </p>
           ) : (
@@ -153,7 +153,7 @@ export function MapLegend({
                         onChange={(e) => setDraftLabel(e.target.value)}
                         onBlur={() => commitRename(row.key)}
                         onKeyDown={(e) => handleInputKeyDown(e, row.key)}
-                        className="flex-1 min-w-0 text-xs border border-[color:var(--color-accent)] rounded px-1 py-0.5 outline-none bg-white dark:bg-neutral-900 text-neutral-900 dark:text-neutral-100"
+                        className="flex-1 min-w-0 text-xs border border-[color:var(--color-accent)] rounded px-1 py-0.5 outline-none bg-panel text-ink"
                         autoFocus
                         aria-label="Edit legend caption"
                       />
@@ -161,7 +161,7 @@ export function MapLegend({
                       <button
                         type="button"
                         onClick={() => startRename(row.key, label)}
-                        className="flex-1 min-w-0 truncate text-xs text-left text-neutral-700 dark:text-neutral-300 hover:text-neutral-900 dark:hover:text-neutral-100 focus-visible:outline-none focus-visible:underline"
+                        className="flex-1 min-w-0 truncate text-xs text-left text-ink hover:text-ink focus-visible:outline-none focus-visible:underline"
                         title="Click to rename"
                       >
                         {label}
@@ -196,10 +196,10 @@ export function MapLegend({
                 return (
                   <div
                     key={layer.id}
-                    className="border-t border-neutral-100 dark:border-neutral-800 pt-2 pb-1 px-3 mt-2"
+                    className="border-t border-line pt-2 pb-1 px-3 mt-2"
                   >
                     {/* Block heading — matches the "Legend" heading style (L144). */}
-                    <p className="text-xs font-semibold uppercase tracking-wide text-neutral-500 mb-1">
+                    <p className="text-xs font-semibold uppercase tracking-wide text-ink-muted mb-1">
                       {layer.name}
                     </p>
                     <ul role="list">
@@ -211,12 +211,12 @@ export function MapLegend({
                             style={{ backgroundColor: type.color }}
                             aria-hidden="true"
                           />
-                          <span className="text-xs text-neutral-700 dark:text-neutral-300">
+                          <span className="text-xs text-ink">
                             {type.name}
                             {/* Ordered layers: append band label in parentheses when set.
                                 sort_order ascending renders as a ranked ramp top-to-bottom. */}
                             {layer.ordered && type.label && (
-                              <span className="text-neutral-500"> ({type.label})</span>
+                              <span className="text-ink-muted"> ({type.label})</span>
                             )}
                           </span>
                         </li>

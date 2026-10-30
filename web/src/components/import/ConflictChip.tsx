@@ -9,7 +9,7 @@ export function ConflictChip({ variant, matchedTitle }: ConflictChipProps) {
     return (
       <span
         role="status"
-        className="inline-block text-xs font-medium uppercase tracking-wide bg-neutral-100 dark:bg-neutral-800 text-neutral-600 dark:text-neutral-400 rounded-full px-2 py-0.5"
+        className="inline-block text-xs font-medium uppercase tracking-wide bg-raised text-ink-secondary rounded-full px-2 py-0.5"
       >
         → Renamed
         {matchedTitle && (

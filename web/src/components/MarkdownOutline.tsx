@@ -13,9 +13,9 @@ export function MarkdownOutline({ markdown, onNavigate }: MarkdownOutlineProps) 
 
   return (
     <section aria-label="Markdown outline">
-      <h2 className="text-sm font-semibold text-neutral-900 dark:text-neutral-100">Outline</h2>
+      <h2 className="text-sm font-semibold text-ink">Outline</h2>
       {headings.length === 0 ? (
-        <p className="mt-2 text-sm text-neutral-500 dark:text-neutral-400">
+        <p className="mt-2 text-sm text-ink-secondary">
           Add a heading to build the outline.
         </p>
       ) : (
@@ -25,7 +25,7 @@ export function MarkdownOutline({ markdown, onNavigate }: MarkdownOutlineProps) 
               <button
                 type="button"
                 onClick={() => onNavigate(heading)}
-                className="w-full rounded-md px-2 py-1 text-left text-sm text-[color:var(--color-accent)] hover:bg-neutral-100 hover:underline focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-[color:var(--color-accent)] dark:hover:bg-neutral-800"
+                className="w-full rounded-md px-2 py-1 text-left text-sm text-[color:var(--color-accent)] hover:underline focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-[color:var(--color-accent)] hover:bg-white/5"
                 style={{ paddingLeft: `${heading.depth * 0.75}rem` }}
               >
                 {heading.text}

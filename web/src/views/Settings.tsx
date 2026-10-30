@@ -17,7 +17,7 @@ export default function Settings() {
         <h2 className="text-xl font-semibold">Visual</h2>
 
         {/* Helper text — UI-SPEC §10 copy */}
-        <p className="mt-2 text-sm text-neutral-600 dark:text-neutral-400 leading-[1.5]">
+        <p className="mt-2 text-sm text-ink-secondary leading-[1.5]">
           Show this universe&apos;s entries as additional bodies in the background simulation. Off by default.
         </p>
 

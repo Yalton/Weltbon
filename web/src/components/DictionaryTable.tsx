@@ -12,7 +12,7 @@ import { DICTIONARY_TERMS } from './dictionaryTerms';
 
 // Dotted-underline cue signalling a hover definition is available on a term.
 const TERM_HINT =
-  'cursor-help underline decoration-dotted decoration-neutral-400 dark:decoration-neutral-600 underline-offset-2';
+  'cursor-help underline decoration-dotted decoration-[color:var(--color-ink-muted)] underline-offset-2';
 
 
 type SortKey = 'word' | 'partOfSpeech';
@@ -145,7 +145,7 @@ export function DictionaryTable({
         {[0, 1, 2].map((i) => (
           <div
             key={i}
-            className="h-12 rounded-md bg-neutral-100 dark:bg-neutral-800 animate-pulse"
+            className="h-12 rounded-md bg-raised animate-pulse"
           />
         ))}
       </div>
@@ -188,11 +188,11 @@ export function DictionaryTable({
         <table className="w-full text-sm">
           <caption className="sr-only">Dictionary words for this language</caption>
           <thead>
-            <tr className="border-b border-neutral-200 dark:border-neutral-800">
+            <tr className="border-b border-line">
               {/* Word — sortable (UI-SPEC: accent when active) */}
               <th
                 scope="col"
-                className="pb-2 text-left text-xs font-semibold uppercase tracking-wide text-neutral-500"
+                className="pb-2 text-left text-xs font-semibold uppercase tracking-wide text-ink-muted"
                 aria-sort={sortAriaSort('word')}
               >
                 <button
@@ -211,7 +211,7 @@ export function DictionaryTable({
               {/* IPA — not sortable */}
               <th
                 scope="col"
-                className="pb-2 text-left text-xs font-semibold uppercase tracking-wide text-neutral-500"
+                className="pb-2 text-left text-xs font-semibold uppercase tracking-wide text-ink-muted"
               >
                 <span className={TERM_HINT} title={DICTIONARY_TERMS.ipa}>
                   IPA
@@ -221,7 +221,7 @@ export function DictionaryTable({
               {/* POS — sortable */}
               <th
                 scope="col"
-                className="pb-2 text-left text-xs font-semibold uppercase tracking-wide text-neutral-500"
+                className="pb-2 text-left text-xs font-semibold uppercase tracking-wide text-ink-muted"
                 aria-sort={sortAriaSort('partOfSpeech')}
               >
                 <button
@@ -243,7 +243,7 @@ export function DictionaryTable({
               {/* Gloss */}
               <th
                 scope="col"
-                className="pb-2 text-left text-xs font-semibold uppercase tracking-wide text-neutral-500"
+                className="pb-2 text-left text-xs font-semibold uppercase tracking-wide text-ink-muted"
               >
                 <span className={TERM_HINT} title={DICTIONARY_TERMS.gloss}>
                   Gloss
@@ -253,7 +253,7 @@ export function DictionaryTable({
               {/* Etymology */}
               <th
                 scope="col"
-                className="pb-2 text-left text-xs font-semibold uppercase tracking-wide text-neutral-500"
+                className="pb-2 text-left text-xs font-semibold uppercase tracking-wide text-ink-muted"
               >
                 <span className={TERM_HINT} title={DICTIONARY_TERMS.etymology}>
                   Etymology
@@ -263,7 +263,7 @@ export function DictionaryTable({
               {/* Tags */}
               <th
                 scope="col"
-                className="pb-2 text-left text-xs font-semibold uppercase tracking-wide text-neutral-500"
+                className="pb-2 text-left text-xs font-semibold uppercase tracking-wide text-ink-muted"
               >
                 <span className={TERM_HINT} title={DICTIONARY_TERMS.tags}>
                   Tags
@@ -294,7 +294,7 @@ export function DictionaryTable({
               return (
                 <tr
                   key={row.id}
-                  className="border-b border-neutral-100 dark:border-neutral-800 last:border-0 hover:bg-neutral-50 dark:hover:bg-neutral-800 group"
+                  className="border-b border-line last:border-0 hover:bg-white/5 group"
                 >
                   {/* Word */}
                   <td className="py-3 pr-4 text-sm leading-[1.5] font-semibold">
@@ -302,12 +302,12 @@ export function DictionaryTable({
                   </td>
 
                   {/* IPA */}
-                  <td className="py-3 pr-4 text-sm leading-[1.5] font-mono text-neutral-500">
+                  <td className="py-3 pr-4 text-sm leading-[1.5] font-mono text-ink-muted">
                     {row.ipa || '—'}
                   </td>
 
                   {/* POS */}
-                  <td className="py-3 pr-4 text-sm leading-[1.5] text-neutral-600 dark:text-neutral-400">
+                  <td className="py-3 pr-4 text-sm leading-[1.5] text-ink-secondary">
                     {row.partOfSpeech || '—'}
                   </td>
 
@@ -320,13 +320,13 @@ export function DictionaryTable({
                   <td className="py-3 pr-4 text-sm leading-[1.5] max-w-[200px]">
                     {row.etymology ? (
                       <span
-                        className="line-clamp-2 text-neutral-600 dark:text-neutral-400"
+                        className="line-clamp-2 text-ink-secondary"
                         title={row.etymology}
                       >
                         {row.etymology}
                       </span>
                     ) : (
-                      <span className="text-neutral-400">—</span>
+                      <span className="text-ink-muted">—</span>
                     )}
                   </td>
 
@@ -337,14 +337,14 @@ export function DictionaryTable({
                         {row.tags.map((tag) => (
                           <span
                             key={tag}
-                            className="inline-flex items-center rounded-full bg-neutral-100 dark:bg-neutral-800 px-2 py-0.5 text-xs"
+                            className="inline-flex items-center rounded-full bg-raised px-2 py-0.5 text-xs"
                           >
                             {tag}
                           </span>
                         ))}
                       </div>
                     ) : (
-                      <span className="text-neutral-400">—</span>
+                      <span className="text-ink-muted">—</span>
                     )}
                   </td>
 
@@ -355,7 +355,7 @@ export function DictionaryTable({
                         type="button"
                         onClick={() => onEdit(row.id)}
                         aria-label={`Edit ${row.word}`}
-                        className="rounded p-1 text-neutral-500 hover:text-neutral-700 dark:hover:text-neutral-300 hover:bg-neutral-100 dark:hover:bg-neutral-700 focus:outline-none focus:ring-2 focus:ring-[color:var(--color-accent)]"
+                        className="rounded p-1 text-ink-muted hover:text-ink hover:bg-white/10 focus:outline-none focus:ring-2 focus:ring-[color:var(--color-accent)]"
                       >
                         ✎
                       </button>
@@ -363,7 +363,7 @@ export function DictionaryTable({
                         type="button"
                         onClick={() => setDeletingWord(row)}
                         aria-label={`Delete ${row.word}`}
-                        className="rounded p-1 text-neutral-500 hover:text-red-600 dark:hover:text-red-400 hover:bg-neutral-100 dark:hover:bg-neutral-700 focus:outline-none focus:ring-2 focus:ring-[color:var(--color-accent)]"
+                        className="rounded p-1 text-ink-muted hover:text-red-600 dark:hover:text-red-400 hover:bg-white/10 focus:outline-none focus:ring-2 focus:ring-[color:var(--color-accent)]"
                       >
                         🗑
                       </button>

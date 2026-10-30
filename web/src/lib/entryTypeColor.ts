@@ -33,7 +33,7 @@ const TYPE_CLASSES: Record<string, string> = {
 };
 
 const TYPE_CLASSES_FALLBACK =
-  'bg-neutral-200 text-neutral-700 dark:bg-neutral-800 dark:text-neutral-300';
+  ' bg-raised text-ink';
 
 const ENTRY_TYPE_HEX: Record<string, string> = {
   concept: '#3b82f6', // blue-500

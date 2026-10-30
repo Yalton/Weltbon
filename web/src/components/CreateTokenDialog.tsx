@@ -80,7 +80,7 @@ export function CreateTokenDialog({ open, onOpenChange }: Props) {
     <Dialog.Root open={open} onOpenChange={handleOpenChange}>
       <Dialog.Portal>
         <Dialog.Overlay className="fixed inset-0 bg-black/50 z-40 data-[state=open]:animate-overlay-in data-[state=closed]:animate-overlay-out" />
-        <Dialog.Content className="fixed left-1/2 top-1/2 -translate-x-1/2 -translate-y-1/2 w-full max-w-md bg-white dark:bg-neutral-900 border border-neutral-200 dark:border-neutral-800 rounded-md p-6 shadow-lg z-50 data-[state=open]:animate-dialog-in data-[state=closed]:animate-dialog-out focus:outline-none">
+        <Dialog.Content className="fixed left-1/2 top-1/2 -translate-x-1/2 -translate-y-1/2 w-full max-w-md bg-panel border border-line rounded-md p-6 shadow-lg z-50 data-[state=open]:animate-dialog-in data-[state=closed]:animate-dialog-out focus:outline-none">
 
           {phase === 'form' ? (
             <>
@@ -88,7 +88,7 @@ export function CreateTokenDialog({ open, onOpenChange }: Props) {
               <Dialog.Title className="text-lg font-semibold">
                 Create a personal access token
               </Dialog.Title>
-              <Dialog.Description className="mt-2 text-sm text-neutral-600 dark:text-neutral-400 leading-[1.5]">
+              <Dialog.Description className="mt-2 text-sm text-ink-secondary leading-[1.5]">
                 Tokens authenticate API requests as you. Pick a label that helps you remember where you&apos;ll use it.
               </Dialog.Description>
 
@@ -104,7 +104,7 @@ export function CreateTokenDialog({ open, onOpenChange }: Props) {
                     autoFocus
                     maxLength={100}
                     {...register('label')}
-                    className="w-full rounded-md border border-neutral-300 dark:border-neutral-700 bg-transparent px-3 py-2 text-sm"
+                    className="w-full rounded-md border border-line-strong bg-transparent px-3 py-2 text-sm"
                   />
                   {errors.label && (
                     <p className="mt-1 text-sm text-red-500" role="alert">
@@ -114,7 +114,7 @@ export function CreateTokenDialog({ open, onOpenChange }: Props) {
                 </div>
 
                 <div className="mt-6 flex justify-end gap-2">
-                  <Dialog.Close className="px-3 py-1.5 text-sm rounded-md border border-neutral-300 dark:border-neutral-700">
+                  <Dialog.Close className="px-3 py-1.5 text-sm rounded-md border border-line-strong">
                     Cancel
                   </Dialog.Close>
                   <button
@@ -133,14 +133,14 @@ export function CreateTokenDialog({ open, onOpenChange }: Props) {
               <Dialog.Title className="text-lg font-semibold">
                 Save this token now
               </Dialog.Title>
-              <Dialog.Description className="mt-2 text-sm text-neutral-600 dark:text-neutral-400 leading-[1.5]">
+              <Dialog.Description className="mt-2 text-sm text-ink-secondary leading-[1.5]">
                 This is the only time you&apos;ll see this token. Copy it somewhere safe — once you close this dialog, it can&apos;t be retrieved.
               </Dialog.Description>
 
               {/* Token display block — UI-SPEC §8.2 */}
-              <div className="mt-4 rounded-md border border-neutral-200 dark:border-neutral-800 bg-neutral-100 dark:bg-neutral-800 p-3">
+              <div className="mt-4 rounded-md border border-line bg-raised p-3">
                 <code
-                  className="font-mono text-sm leading-[1.5] break-all select-all text-neutral-900 dark:text-neutral-100"
+                  className="font-mono text-sm leading-[1.5] break-all select-all text-ink"
                   aria-label="Your new personal access token"
                 >{tokenData?.plaintext}</code>
               </div>
@@ -172,7 +172,7 @@ export function CreateTokenDialog({ open, onOpenChange }: Props) {
                 <button
                   type="button"
                   onClick={() => handleOpenChange(false)}
-                  className="px-3 py-1.5 text-sm rounded-md border border-neutral-300 dark:border-neutral-700"
+                  className="px-3 py-1.5 text-sm rounded-md border border-line-strong"
                 >
                   Done
                 </button>

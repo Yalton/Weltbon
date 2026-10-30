@@ -16,8 +16,8 @@ const labelMap: Record<AuditRunStatus, string> = {
 };
 
 const colorMap: Record<AuditRunStatus, string> = {
-  pending: 'text-neutral-600',
-  running: 'text-neutral-600',
+  pending: 'text-ink-secondary',
+  running: 'text-ink-secondary',
   succeeded: 'text-green-700 dark:text-green-300',
   failed: 'text-red-600 dark:text-red-400',
 };

@@ -75,19 +75,19 @@ export function LinkTypeSelect({
           aria-expanded={open}
           aria-controls="link-type-suggestions"
           aria-autocomplete="list"
-          className="w-full rounded-md border border-neutral-300 dark:border-neutral-700 bg-transparent px-3 py-1 text-sm outline-none focus:border-[color:var(--color-accent)]"
+          className="w-full rounded-md border border-line-strong bg-transparent px-3 py-1 text-sm outline-none focus:border-[color:var(--color-accent)]"
         />
       </Popover.Anchor>
       <Popover.Portal>
         <Popover.Content
           id="link-type-suggestions"
-          className="w-[var(--radix-popover-trigger-width)] max-h-48 overflow-y-auto bg-white dark:bg-neutral-900 border border-neutral-200 dark:border-neutral-800 rounded-md shadow-lg z-50 data-[state=open]:animate-popover-in data-[state=closed]:animate-popover-out"
+          className="w-[var(--radix-popover-trigger-width)] max-h-48 overflow-y-auto bg-panel border border-line rounded-md shadow-lg z-50 data-[state=open]:animate-popover-in data-[state=closed]:animate-popover-out"
           align="start"
           sideOffset={4}
           onOpenAutoFocus={(e) => e.preventDefault()}
         >
           {filtered.length === 0 ? (
-            <p className="px-3 py-2 text-sm text-neutral-500">
+            <p className="px-3 py-2 text-sm text-ink-muted">
               No matches — Enter to use this type
             </p>
           ) : (
@@ -97,7 +97,7 @@ export function LinkTypeSelect({
                   <button
                     type="button"
                     onClick={() => handleSelect(s.type)}
-                    className="w-full flex items-center justify-between px-3 py-1 text-left text-sm hover:bg-neutral-100 dark:hover:bg-neutral-800"
+                    className="w-full flex items-center justify-between px-3 py-1 text-left text-sm hover:bg-white/5"
                   >
                     <span className="flex items-center gap-2">
                       <span
@@ -108,7 +108,7 @@ export function LinkTypeSelect({
                       {s.type}
                     </span>
                     {s.count !== undefined && (
-                      <span className="text-xs text-neutral-500 tabular-nums">{s.count}</span>
+                      <span className="text-xs text-ink-muted tabular-nums">{s.count}</span>
                     )}
                   </button>
                 </li>

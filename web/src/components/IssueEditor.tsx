@@ -87,7 +87,7 @@ export function IssueEditor({
     <Dialog.Root open={open} onOpenChange={onOpenChange}>
       <Dialog.Portal>
         <Dialog.Overlay className="fixed inset-0 bg-black/50 z-40" />
-        <Dialog.Content className="fixed left-1/2 top-1/2 -translate-x-1/2 -translate-y-1/2 w-full max-w-md bg-white dark:bg-neutral-900 border border-neutral-200 dark:border-neutral-800 rounded-md p-6 shadow-lg z-50">
+        <Dialog.Content className="fixed left-1/2 top-1/2 -translate-x-1/2 -translate-y-1/2 w-full max-w-md bg-panel border border-line rounded-md p-6 shadow-lg z-50">
           <Dialog.Title className="text-lg font-semibold">
             {isEdit ? 'Edit issue' : 'New issue'}
           </Dialog.Title>
@@ -109,7 +109,7 @@ export function IssueEditor({
                 onChange={(e) => setTitle(e.target.value)}
                 maxLength={200}
                 autoFocus
-                className="w-full rounded-md border border-neutral-300 dark:border-neutral-700 bg-transparent px-3 py-2 text-sm"
+                className="w-full rounded-md border border-line-strong bg-transparent px-3 py-2 text-sm"
               />
             </div>
 
@@ -123,7 +123,7 @@ export function IssueEditor({
                 onChange={(e) => setDescription(e.target.value)}
                 maxLength={2000}
                 rows={3}
-                className="w-full rounded-md border border-neutral-300 dark:border-neutral-700 bg-transparent px-3 py-2 text-sm"
+                className="w-full rounded-md border border-line-strong bg-transparent px-3 py-2 text-sm"
               />
             </div>
 
@@ -135,7 +135,7 @@ export function IssueEditor({
                 id="issue-severity"
                 value={severity}
                 onChange={(e) => setSeverity(e.target.value as Severity)}
-                className="w-full rounded-md border border-neutral-300 dark:border-neutral-700 bg-transparent px-3 py-2 text-sm"
+                className="w-full rounded-md border border-line-strong bg-transparent px-3 py-2 text-sm"
               >
                 {SEVERITIES.map((s) => (
                   <option key={s} value={s}>
@@ -152,7 +152,7 @@ export function IssueEditor({
                   {entryChips.map((chip) => (
                     <span
                       key={chip.id}
-                      className="inline-flex items-center rounded-full bg-neutral-200 dark:bg-neutral-800 px-2 py-0.5 text-xs"
+                      className="inline-flex items-center rounded-full bg-raised px-2 py-0.5 text-xs"
                     >
                       {chip.label}
                     </span>
@@ -166,7 +166,7 @@ export function IssueEditor({
             <div className="mt-4 flex justify-end gap-2">
               <Dialog.Close
                 type="button"
-                className="px-3 py-1.5 text-sm rounded-md border border-neutral-300 dark:border-neutral-700"
+                className="px-3 py-1.5 text-sm rounded-md border border-line-strong"
               >
                 Cancel
               </Dialog.Close>

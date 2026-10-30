@@ -42,11 +42,11 @@ export function TypeDeleteDialog({
     <Dialog.Root open={open} onOpenChange={onOpenChange}>
       <Dialog.Portal>
         <Dialog.Overlay className="fixed inset-0 bg-black/50 z-40" />
-        <Dialog.Content className="fixed left-1/2 top-1/2 -translate-x-1/2 -translate-y-1/2 w-full max-w-md bg-white dark:bg-neutral-900 rounded-md p-6 z-50 border border-neutral-200 dark:border-neutral-800">
+        <Dialog.Content className="fixed left-1/2 top-1/2 -translate-x-1/2 -translate-y-1/2 w-full max-w-md bg-panel rounded-md p-6 z-50 border border-line">
           <Dialog.Title className="text-lg font-semibold">
             Delete &ldquo;{typeName}&rdquo;?
           </Dialog.Title>
-          <Dialog.Description className="text-sm text-neutral-500 mt-2">
+          <Dialog.Description className="text-sm text-ink-muted mt-2">
             {count} {count === 1 ? 'entry uses' : 'entries use'} this type. Pick a
             fallback type to reassign them to.
           </Dialog.Description>
@@ -57,7 +57,7 @@ export function TypeDeleteDialog({
             id="fallback-select"
             value={fallback}
             onChange={(e) => setFallback(e.target.value)}
-            className="mt-4 w-full rounded-md border border-neutral-300 dark:border-neutral-700 bg-transparent px-3 py-2 text-sm"
+            className="mt-4 w-full rounded-md border border-line-strong bg-transparent px-3 py-2 text-sm"
           >
             {candidates.map((c) => (
               <option key={c} value={c}>
@@ -69,7 +69,7 @@ export function TypeDeleteDialog({
             <Dialog.Close asChild>
               <button
                 type="button"
-                className="text-sm px-3 py-1.5 rounded-md border border-neutral-300 dark:border-neutral-700"
+                className="text-sm px-3 py-1.5 rounded-md border border-line-strong"
               >
                 Cancel
               </button>

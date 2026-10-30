@@ -51,21 +51,21 @@ export function HumanIssueTypeahead({ universeId, value, onChange, onSelect }: P
           aria-expanded={open}
           aria-controls="human-issue-suggestions"
           aria-autocomplete="list"
-          className="w-full rounded-md border border-neutral-300 dark:border-neutral-700 bg-transparent px-3 py-1.5 text-sm outline-none focus:border-[color:var(--color-accent)]"
+          className="w-full rounded-md border border-line-strong bg-transparent px-3 py-1.5 text-sm outline-none focus:border-[color:var(--color-accent)]"
         />
       </Popover.Anchor>
       <Popover.Portal>
         <Popover.Content
           id="human-issue-suggestions"
-          className="w-[var(--radix-popover-trigger-width)] max-h-48 overflow-y-auto bg-white dark:bg-neutral-900 border border-neutral-200 dark:border-neutral-800 rounded-md shadow-lg z-50 data-[state=open]:animate-popover-in data-[state=closed]:animate-popover-out"
+          className="w-[var(--radix-popover-trigger-width)] max-h-48 overflow-y-auto bg-panel border border-line rounded-md shadow-lg z-50 data-[state=open]:animate-popover-in data-[state=closed]:animate-popover-out"
           align="start"
           sideOffset={4}
           onOpenAutoFocus={(e) => e.preventDefault()}
         >
           {isLoading ? (
-            <p className="px-3 py-2 text-sm text-neutral-500">Loading issues…</p>
+            <p className="px-3 py-2 text-sm text-ink-muted">Loading issues…</p>
           ) : filtered.length === 0 ? (
-            <p className="px-3 py-2 text-sm text-neutral-500">No matches</p>
+            <p className="px-3 py-2 text-sm text-ink-muted">No matches</p>
           ) : (
             <ul role="listbox">
               {filtered.map((i) => (
@@ -73,7 +73,7 @@ export function HumanIssueTypeahead({ universeId, value, onChange, onSelect }: P
                   <button
                     type="button"
                     onClick={() => handleSelect({ id: i.id, title: i.title })}
-                    className="w-full flex items-center px-3 py-1.5 text-left text-sm hover:bg-neutral-100 dark:hover:bg-neutral-800"
+                    className="w-full flex items-center px-3 py-1.5 text-left text-sm hover:bg-white/5"
                   >
                     {i.title}
                   </button>

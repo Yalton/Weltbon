@@ -15,10 +15,10 @@ interface FormatItem {
 }
 
 const FORMAT_ITEMS: FormatItem[] = [
-  { format: 'json',     label: 'JSON',         hint: 'Universe data (round-trip)', fallbackExt: 'json' },
-  { format: 'markdown', label: 'Markdown ZIP', hint: 'Obsidian-compatible',        fallbackExt: 'zip' },
-  { format: 'pdf',      label: 'PDF',          hint: 'Title page + TOC',           fallbackExt: 'pdf' },
-  { format: 'docx',     label: 'DOCX',         hint: 'Word / Google Docs',         fallbackExt: 'docx' },
+  { format: 'json', label: 'JSON', hint: 'Universe data (round-trip)', fallbackExt: 'json' },
+  { format: 'markdown', label: 'Markdown ZIP', hint: 'Obsidian-compatible', fallbackExt: 'zip' },
+  { format: 'pdf', label: 'PDF', hint: 'Title page + TOC', fallbackExt: 'pdf' },
+  { format: 'docx', label: 'DOCX', hint: 'Word / Google Docs', fallbackExt: 'docx' },
 ];
 
 interface Props {
@@ -124,7 +124,7 @@ export function ExportMenu({ universeId, fallbackFilename, onToast }: Props) {
 function Spinner() {
   return (
     <span
-      className="inline-block w-3 h-3 border-2 border-neutral-300 border-t-neutral-700 rounded-full animate-spin"
+      className="inline-block w-3 h-3 border-2 border-line-strong border-t-[color:var(--color-ink-muted)] rounded-full animate-spin"
       aria-label="loading"
     />
   );
@@ -132,7 +132,7 @@ function Spinner() {
 
 function parseContentDisposition(header: string | null): string | null {
   if (!header) return null;
-  // Match: attachment; filename="universe-2026-04-25.zip"  OR  attachment; filename=universe-2026-04-25.zip
+  // Match: attachment; filename="universe-2026-04-25.zip" OR attachment; filename=universe-2026-04-25.zip
   const m = header.match(/filename\*?=(?:"([^"]+)"|([^;]+))/i);
   const raw = m?.[1] ?? m?.[2];
   return raw ? raw.trim() : null;

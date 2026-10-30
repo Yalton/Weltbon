@@ -11,11 +11,11 @@ import { Medallion } from './Medallion';
 import { TypeBadge } from './TypeBadge';
 import type { MedallionSource } from '../lib/medallion';
 
-const HIT_RADIUS = 22;         // transparent hit area — 44px diameter touch target
-const DRAG_THRESHOLD_PX = 4;   // pointer movement below this is treated as a click
-const SNAP_DISTANCE_PX = 18;   // first-vertex snap radius in IMAGE pixels (scaled)
-const GRID_PX = 100;           // grid spacing in image pixels (T-50-03: bounded by imageWidth/GRID_PX)
-const ROUTE_HIT_WIDTH = 20;    // wide transparent hit-stroke for route polylines (image-space units)
+const HIT_RADIUS = 22; // transparent hit area — 44px diameter touch target
+const DRAG_THRESHOLD_PX = 4; // pointer movement below this is treated as a click
+const SNAP_DISTANCE_PX = 18; // first-vertex snap radius in IMAGE pixels (scaled)
+const GRID_PX = 100; // grid spacing in image pixels (T-50-03: bounded by imageWidth/GRID_PX)
+const ROUTE_HIT_WIDTH = 20; // wide transparent hit-stroke for route polylines (image-space units)
 const ROUTE_LABEL_MAX_CHARS = 24; // label truncation length for route midpoint chip
 
 const TEARDROP_D =
@@ -625,9 +625,9 @@ function TerrainAreaPolygon({
   return (
     <polygon
       points={svgPoints}
-      fill={region.terrainTypeColor}   // derived color — NOT region.color (D-43-04)
-      fillOpacity={viewerOpacity}       // per-viewer, 0..1
-      stroke="none"                     // borderless (D-43-04)
+      fill={region.terrainTypeColor} // derived color — NOT region.color (D-43-04)
+      fillOpacity={viewerOpacity} // per-viewer, 0..1
+      stroke="none" // borderless (D-43-04)
       strokeWidth={0}
       style={{ cursor: 'default', pointerEvents: isDrawing ? 'none' : 'auto' }}
       onClick={handleClick}
@@ -946,7 +946,7 @@ export const MapCanvas = forwardRef<MapCanvasHandle, MapCanvasProps>(function Ma
       onPointerMove={handleSvgPointerMove}
     >
       {/* ── SVG filter definitions (D-03) ──────────────────────────────────── */}
-      {/* Placed OUTSIDE <g.viewport> so they are not zoom-transformed.        */}
+      {/* Placed OUTSIDE <g.viewport> so they are not zoom-transformed. */}
       <defs>
         {/* Drop shadow — always applied to the teardrop marker.
             Colors driven by CSS custom properties (Task 3 design tokens). */}
@@ -1035,7 +1035,7 @@ export const MapCanvas = forwardRef<MapCanvasHandle, MapCanvasProps>(function Ma
           {[...layers]
             .sort((a, b) => a.sortOrder - b.sortOrder)
             .map((layer) => {
-              if (!layerViewerState[layer.id]?.visible) return null;   // hidden layer → render nothing
+              if (!layerViewerState[layer.id]?.visible) return null; // hidden layer → render nothing
               const viewerOpacity = layerViewerState[layer.id]?.opacity ?? 0.6;
               const layerAreas = terrainAreas.filter((a) => a.layerId === layer.id);
               return (
@@ -1265,7 +1265,7 @@ export const MapCanvas = forwardRef<MapCanvasHandle, MapCanvasProps>(function Ma
           {hasExcerpt && (
             <p
               data-testid="tooltip-excerpt"
-              className="mt-1 text-xs text-neutral-600 dark:text-neutral-300 line-clamp-2"
+              className="mt-1 text-xs text-ink line-clamp-2"
             >
               {excerptText}
             </p>
@@ -1277,7 +1277,7 @@ export const MapCanvas = forwardRef<MapCanvasHandle, MapCanvasProps>(function Ma
               onPointerEnter cancels the hover-leave grace timer; onPointerLeave dismisses immediately. */}
           {hoveredTooltip.entryId && hoveredTooltip.targetMapId && (
             <>
-              <p className="mt-1 text-xs text-neutral-500 dark:text-neutral-400">Opens map</p>
+              <p className="mt-1 text-xs text-ink-secondary">Opens map</p>
               <a
                 data-testid="tooltip-view-entry"
                 href="#"

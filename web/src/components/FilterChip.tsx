@@ -6,13 +6,13 @@ export function FilterChip({
   onRemove: () => void;
 }) {
   return (
-    <span className="inline-flex items-center gap-1 rounded-full bg-neutral-200 dark:bg-neutral-800 text-neutral-800 dark:text-neutral-200 px-3 py-1 text-sm">
+    <span className="inline-flex items-center gap-1 rounded-full bg-raised text-ink px-3 py-1 text-sm">
       <span>{label}</span>
       <button
         type="button"
         onClick={onRemove}
         aria-label={`Remove ${label}`}
-        className="text-neutral-500 dark:text-neutral-400 hover:text-neutral-900 dark:hover:text-white leading-none"
+        className="text-ink-secondary hover:text-white leading-none"
       >
         ×
       </button>

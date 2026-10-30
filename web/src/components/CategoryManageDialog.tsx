@@ -54,7 +54,7 @@ export function CategoryManageDialog({ universeId, open, onOpenChange, initialCa
     <Dialog.Root open={open} onOpenChange={onOpenChange}>
       <Dialog.Portal>
         <Dialog.Overlay className="fixed inset-0 bg-black/50 z-40 data-[state=open]:animate-overlay-in data-[state=closed]:animate-overlay-out" />
-        <Dialog.Content className="fixed left-1/2 top-1/2 -translate-x-1/2 -translate-y-1/2 w-full max-w-sm bg-white dark:bg-neutral-900 border border-neutral-200 dark:border-neutral-800 rounded-md p-6 shadow-lg z-50 data-[state=open]:animate-dialog-in data-[state=closed]:animate-dialog-out focus:outline-none">
+        <Dialog.Content className="fixed left-1/2 top-1/2 -translate-x-1/2 -translate-y-1/2 w-full max-w-sm bg-panel border border-line rounded-md p-6 shadow-lg z-50 data-[state=open]:animate-dialog-in data-[state=closed]:animate-dialog-out focus:outline-none">
           <Dialog.Title className="text-lg font-semibold">
             {isEdit ? 'Rename category' : 'New category'}
           </Dialog.Title>
@@ -74,7 +74,7 @@ export function CategoryManageDialog({ universeId, open, onOpenChange, initialCa
                 onChange={(e) => setLabel(e.target.value)}
                 maxLength={80}
                 autoFocus
-                className="w-full rounded-md border border-neutral-300 dark:border-neutral-700 bg-transparent px-3 py-2 text-sm"
+                className="w-full rounded-md border border-line-strong bg-transparent px-3 py-2 text-sm"
               />
             </div>
 
@@ -89,14 +89,14 @@ export function CategoryManageDialog({ universeId, open, onOpenChange, initialCa
                 onChange={(e) => setIcon(e.target.value)}
                 maxLength={10}
                 placeholder="e.g. 🧝"
-                className="w-24 rounded-md border border-neutral-300 dark:border-neutral-700 bg-transparent px-3 py-2 text-sm"
+                className="w-24 rounded-md border border-line-strong bg-transparent px-3 py-2 text-sm"
               />
             </div>
 
             {error && <p className="text-sm text-red-500">{error}</p>}
 
             <div className="mt-4 flex justify-end gap-2">
-              <Dialog.Close className="px-3 py-1.5 text-sm rounded-md border border-neutral-300 dark:border-neutral-700">
+              <Dialog.Close className="px-3 py-1.5 text-sm rounded-md border border-line-strong">
                 Cancel
               </Dialog.Close>
               <button

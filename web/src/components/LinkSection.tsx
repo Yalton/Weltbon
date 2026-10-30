@@ -60,14 +60,14 @@ export function LinkSection({
   return (
     <>
       {/* Outbound Links */}
-      <div className="mt-8 pt-6 border-t border-neutral-200 dark:border-neutral-800">
+      <div className="mt-8 pt-6 border-t border-line">
         <div className="flex items-center justify-between">
           <h2 className="text-xl font-semibold">Links</h2>
           {hasOutbound && !isShareMode && (
             <LinkEditor universeId={universeId} entryId={entryId} onLinkCreated={onLinkCreated}>
               <button
                 type="button"
-                className="rounded-md border border-neutral-300 dark:border-neutral-700 text-sm px-3 py-1.5"
+                className="rounded-md border border-line-strong text-sm px-3 py-1.5"
               >
                 Add link
               </button>
@@ -80,7 +80,7 @@ export function LinkSection({
             {Object.entries(grouped).map(([linkTypeKey, links]) => (
               <div key={linkTypeKey}>
                 {/* Group heading (UI-SPEC Surface 2 + "New Surfaces — typed group heading") */}
-                <p className="text-xs text-neutral-400 uppercase tracking-wide">
+                <p className="text-xs text-ink-muted uppercase tracking-wide">
                   {linkTypeKey === 'untyped'
                     ? (links[0]?.label ?? 'Linked')
                     : formatLinkType(linkTypeKey)}
@@ -156,7 +156,7 @@ export function LinkSection({
       </div>
 
       {/* Backlinks */}
-      <div className="mt-6 pt-6 border-t border-neutral-200 dark:border-neutral-800">
+      <div className="mt-6 pt-6 border-t border-line">
         <h2 className="text-xl font-semibold">Backlinks</h2>
         {filteredBacklinks.length > 0 ? (
           <ul className="mt-2 space-y-1">
@@ -170,7 +170,7 @@ export function LinkSection({
                   {bl.sourceTitle}
                 </Link>
                 {/* Backlink inverse label: derived from linkType if preset; falls back to freeform label */}
-                <span className="text-xs text-neutral-400 ml-2">
+                <span className="text-xs text-ink-muted ml-2">
                   {getInverseLabel(bl.linkType, linkTypeRegistry) ?? bl.label ?? ''}
                 </span>
               </li>

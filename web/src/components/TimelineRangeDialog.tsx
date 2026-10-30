@@ -79,19 +79,19 @@ export function TimelineRangeDialog({ open, onOpenChange, universeId }: Props) {
     <Dialog.Root open={open} onOpenChange={onOpenChange}>
       <Dialog.Portal>
         <Dialog.Overlay className="fixed inset-0 bg-black/50 z-40 data-[state=open]:animate-overlay-in data-[state=closed]:animate-overlay-out" />
-        <Dialog.Content className="fixed left-1/2 top-1/2 -translate-x-1/2 -translate-y-1/2 w-full max-w-md bg-white dark:bg-neutral-900 border border-neutral-200 dark:border-neutral-800 rounded-md p-6 shadow-lg z-50 data-[state=open]:animate-dialog-in data-[state=closed]:animate-dialog-out focus:outline-none">
+        <Dialog.Content className="fixed left-1/2 top-1/2 -translate-x-1/2 -translate-y-1/2 w-full max-w-md bg-panel border border-line rounded-md p-6 shadow-lg z-50 data-[state=open]:animate-dialog-in data-[state=closed]:animate-dialog-out focus:outline-none">
           <Dialog.Close
             type="button"
             aria-label="Close timeline settings"
             title="Close without saving"
-            className="absolute right-3 top-3 inline-flex h-8 w-8 items-center justify-center rounded-md text-xl leading-none text-neutral-600 hover:bg-neutral-100 hover:text-neutral-950 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-[color:var(--color-accent)] dark:text-neutral-300 dark:hover:bg-neutral-800 dark:hover:text-white"
+            className="absolute right-3 top-3 inline-flex h-8 w-8 items-center justify-center rounded-md text-xl leading-none focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-[color:var(--color-accent)] text-ink hover:bg-white/5 hover:text-white"
           >
             <span aria-hidden="true">×</span>
           </Dialog.Close>
           <Dialog.Title className="text-lg font-semibold">
             Configure timeline range
           </Dialog.Title>
-          <Dialog.Description className="mt-2 text-sm text-neutral-600 dark:text-neutral-400">
+          <Dialog.Description className="mt-2 text-sm text-ink-secondary">
             Set the start and end positions for this universe&rsquo;s timeline.
             Plain numbers work (e.g. -10000), and scientific notation is accepted
             for very large values (e.g. 4.35e17).
@@ -109,10 +109,10 @@ export function TimelineRangeDialog({ open, onOpenChange, universeId }: Props) {
                 onChange={(e) => setStartInput(e.target.value)}
                 placeholder="e.g. -10000"
                 autoFocus
-                className="w-full rounded-md border border-neutral-300 dark:border-neutral-700 bg-transparent px-3 py-2 text-sm font-mono focus:outline-none focus:ring-2 focus:ring-[color:var(--color-accent)]"
+                className="w-full rounded-md border border-line-strong bg-transparent px-3 py-2 text-sm font-mono focus:outline-none focus:ring-2 focus:ring-[color:var(--color-accent)]"
               />
               {liveStart.ok && startInput.trim() !== '' && (
-                <p className="mt-1 text-xs text-neutral-500 tabular-nums">
+                <p className="mt-1 text-xs text-ink-muted tabular-nums">
                   → {liveStart.value}
                 </p>
               )}
@@ -133,10 +133,10 @@ export function TimelineRangeDialog({ open, onOpenChange, universeId }: Props) {
                 value={endInput}
                 onChange={(e) => setEndInput(e.target.value)}
                 placeholder="e.g. 3000"
-                className="w-full rounded-md border border-neutral-300 dark:border-neutral-700 bg-transparent px-3 py-2 text-sm font-mono focus:outline-none focus:ring-2 focus:ring-[color:var(--color-accent)]"
+                className="w-full rounded-md border border-line-strong bg-transparent px-3 py-2 text-sm font-mono focus:outline-none focus:ring-2 focus:ring-[color:var(--color-accent)]"
               />
               {liveEnd.ok && endInput.trim() !== '' && (
-                <p className="mt-1 text-xs text-neutral-500 tabular-nums">
+                <p className="mt-1 text-xs text-ink-muted tabular-nums">
                   → {liveEnd.value}
                 </p>
               )}
@@ -154,7 +154,7 @@ export function TimelineRangeDialog({ open, onOpenChange, universeId }: Props) {
             )}
 
             <div className="mt-6 flex justify-end gap-2">
-              <Dialog.Close className="px-3 py-1.5 text-sm rounded-md border border-neutral-300 dark:border-neutral-700">
+              <Dialog.Close className="px-3 py-1.5 text-sm rounded-md border border-line-strong">
                 {persistedWindow ? 'Keep current range' : 'Cancel'}
               </Dialog.Close>
               <button

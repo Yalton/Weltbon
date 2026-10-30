@@ -41,7 +41,7 @@ function toggleSet(set: Set<string>, label: string): Set<string> {
 
 function SectionHeading({ children }: { children: ReactNode }) {
   return (
-    <h3 className="text-xs uppercase tracking-wide font-medium text-neutral-500 mb-2">
+    <h3 className="text-xs uppercase tracking-wide font-medium text-ink-muted mb-2">
       {children}
     </h3>
   );
@@ -64,7 +64,7 @@ export function ImportSidebarFilters({
   return (
     <aside
       role="complementary"
-      className="w-56 shrink-0 border-r border-neutral-200 dark:border-neutral-800 overflow-y-auto p-4"
+      className="w-56 shrink-0 border-r border-line overflow-y-auto p-4"
     >
       <nav aria-label="Review filters">
         {/* Status (radio) */}
@@ -73,7 +73,7 @@ export function ImportSidebarFilters({
           <ul className="space-y-1">
             {STATUS_OPTIONS.map((opt) => (
               <li key={opt.id}>
-                <label className="flex items-center justify-between gap-2 px-2 py-1 rounded cursor-pointer hover:bg-neutral-100 dark:hover:bg-neutral-800">
+                <label className="flex items-center justify-between gap-2 px-2 py-1 rounded cursor-pointer hover:bg-white/5">
                   <span className="flex items-center gap-2">
                     <input
                       type="radio"
@@ -99,7 +99,7 @@ export function ImportSidebarFilters({
               const checked = filters.categories.has(cat.label);
               return (
                 <li key={cat.label}>
-                  <label className="flex items-center justify-between gap-2 px-2 py-1 rounded cursor-pointer hover:bg-neutral-100 dark:hover:bg-neutral-800">
+                  <label className="flex items-center justify-between gap-2 px-2 py-1 rounded cursor-pointer hover:bg-white/5">
                     <span className="flex items-center gap-2">
                       <input
                         type="checkbox"
@@ -114,7 +114,7 @@ export function ImportSidebarFilters({
                       />
                       <span className="text-sm">{cat.label}</span>
                     </span>
-                    <span className="text-xs text-neutral-500">{cat.count}</span>
+                    <span className="text-xs text-ink-muted">{cat.count}</span>
                   </label>
                 </li>
               );
@@ -130,7 +130,7 @@ export function ImportSidebarFilters({
               const checked = filters.types.has(t.label);
               return (
                 <li key={t.label}>
-                  <label className="flex items-center justify-between gap-2 px-2 py-1 rounded cursor-pointer hover:bg-neutral-100 dark:hover:bg-neutral-800">
+                  <label className="flex items-center justify-between gap-2 px-2 py-1 rounded cursor-pointer hover:bg-white/5">
                     <span className="flex items-center gap-2">
                       <input
                         type="checkbox"
@@ -145,7 +145,7 @@ export function ImportSidebarFilters({
                       />
                       <span className="text-sm">{t.label}</span>
                     </span>
-                    <span className="text-xs text-neutral-500">{t.count}</span>
+                    <span className="text-xs text-ink-muted">{t.count}</span>
                   </label>
                 </li>
               );
@@ -154,14 +154,14 @@ export function ImportSidebarFilters({
         </section>
 
         {/* Bulk actions */}
-        <section className="mt-6 pt-6 border-t border-neutral-200 dark:border-neutral-800">
+        <section className="mt-6 pt-6 border-t border-line">
           <SectionHeading>Bulk actions</SectionHeading>
           <div className="space-y-2">
             <button
               type="button"
               onClick={onRejectAllWithWarnings}
               disabled={warningCount === 0}
-              className="w-full text-left text-sm px-2 py-1 rounded hover:bg-neutral-100 dark:hover:bg-neutral-800 disabled:opacity-50 disabled:cursor-not-allowed"
+              className="w-full text-left text-sm px-2 py-1 rounded hover:bg-white/5 disabled:opacity-50 disabled:cursor-not-allowed"
             >
               Reject all with warnings ({warningCount})
             </button>
@@ -169,7 +169,7 @@ export function ImportSidebarFilters({
               type="button"
               onClick={onRejectAllInCategory}
               disabled={singleCategorySelected === null}
-              className="w-full text-left text-sm px-2 py-1 rounded hover:bg-neutral-100 dark:hover:bg-neutral-800 disabled:opacity-50 disabled:cursor-not-allowed"
+              className="w-full text-left text-sm px-2 py-1 rounded hover:bg-white/5 disabled:opacity-50 disabled:cursor-not-allowed"
             >
               {singleCategorySelected === null
                 ? 'Reject all in …'
@@ -179,7 +179,7 @@ export function ImportSidebarFilters({
               type="button"
               onClick={onRestoreAllRejected}
               disabled={rejectedCount === 0}
-              className="w-full text-left text-sm px-2 py-1 rounded hover:bg-neutral-100 dark:hover:bg-neutral-800 disabled:opacity-50 disabled:cursor-not-allowed"
+              className="w-full text-left text-sm px-2 py-1 rounded hover:bg-white/5 disabled:opacity-50 disabled:cursor-not-allowed"
             >
               Restore {rejectedCount} rejected
             </button>

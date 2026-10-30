@@ -98,7 +98,7 @@ const COPY = {
   routeContextMenuArrow: (on: boolean) => on ? 'Remove arrow' : 'Add arrow',
   contextMenuMarkSecret: 'Mark secret',
   contextMenuUnmarkSecret: 'Unmark secret',
-  linkToMap: 'Link to map…',    // 'Link to map…' — literal ellipsis character
+  linkToMap: 'Link to map…', // 'Link to map…' — literal ellipsis character
   unlinkMap: 'Unlink map',
   linkMapError: "Couldn't link the map. Try again.",
 } as const;
@@ -209,7 +209,7 @@ export function MapEditor() {
   const canvasRef = useRef<MapCanvasHandle>(null);
 
   // searchInputRef is forwarded to the input element for the `/` focus shortcut (D-04).
-  //   cleared after the pulse animation completes (D-05a).
+  // cleared after the pulse animation completes (D-05a).
   // selectedResultIndex tracks arrow-key navigation in the dropdown (-1 = no selection).
   const [searchQuery, setSearchQuery] = useState('');
   const searchInputRef = useRef<HTMLInputElement>(null);
@@ -274,7 +274,7 @@ export function MapEditor() {
         ...pin,
         entryTitle: entry?.title ?? pin.entryTitle,
         entryType: entry?.entryType ?? pin.entryType,
-        summary: entry?.summary ?? pin.summary,  // D-07: tooltip excerpt source (NEVER body)
+        summary: entry?.summary ?? pin.summary, // D-07: tooltip excerpt source (NEVER body)
       };
     });
   }, [map?.pins, entriesData]);
@@ -352,9 +352,9 @@ export function MapEditor() {
   }, [map?.legendLabels]);
 
   // Case-insensitive substring match over:
-  //   - enrichedPins: linked-entry title only (D-06). Skip pins with no entryTitle.
-  //   - regions: region name (D-06). Skip unnamed regions.
-  //   - map.routes: route name/label (D-06). Skip unnamed routes.
+  // - enrichedPins: linked-entry title only (D-06). Skip pins with no entryTitle.
+  // - regions: region name (D-06). Skip unnamed regions.
+  // - map.routes: route name/label (D-06). Skip unnamed routes.
   // Normalised 0..1 coords (nx, ny) are included for panZoomTo on select (D-05a).
   // D-06a: secret items are absent from the share payload (52-02) — they can never appear
   // in share-view search results; no separate search-side secret filtering needed.
@@ -366,7 +366,7 @@ export function MapEditor() {
 
     // Pins — match linked-entry title; position = pin.x / pin.y (already normalized)
     for (const pin of enrichedPins) {
-      if (!pin.entryTitle) continue;                           // no linked-entry title → skip (D-06)
+      if (!pin.entryTitle) continue; // no linked-entry title → skip (D-06)
       if (pin.entryTitle.toLowerCase().includes(q)) {
         results.push({ type: 'pin', id: pin.id, label: pin.entryTitle, nx: pin.x, ny: pin.y });
       }
@@ -374,7 +374,7 @@ export function MapEditor() {
     }
 
     for (const region of regions) {
-      if (!region.name) continue;                              // unnamed → skip (D-06)
+      if (!region.name) continue; // unnamed → skip (D-06)
       if (region.name.toLowerCase().includes(q)) {
         let nx = 0.5;
         let ny = 0.5;
@@ -391,7 +391,7 @@ export function MapEditor() {
     }
 
     for (const route of (map?.routes ?? [])) {
-      if (!route.name) continue;                               // unnamed → skip (D-06)
+      if (!route.name) continue; // unnamed → skip (D-06)
       if (route.name.toLowerCase().includes(q)) {
         let nx = 0.5;
         let ny = 0.5;
@@ -1428,7 +1428,7 @@ export function MapEditor() {
 
 
   if (isLoading) {
-    return <p className="p-6 text-sm text-neutral-500">{COPY.loading}</p>;
+    return <p className="p-6 text-sm text-ink-muted">{COPY.loading}</p>;
   }
 
   if (isError || !map) {
@@ -1495,10 +1495,10 @@ export function MapEditor() {
           id="map-search-dropdown"
           role="listbox"
           aria-label="Search results"
-          className="absolute left-4 top-14 z-50 min-w-[260px] max-w-[320px] rounded-md border border-neutral-200 dark:border-neutral-800 bg-white dark:bg-neutral-900 shadow-lg overflow-hidden"
+          className="absolute left-4 top-14 z-50 min-w-[260px] max-w-[320px] rounded-md border border-line bg-panel shadow-lg overflow-hidden"
         >
           {searchResults.length === 0 ? (
-            <div className="px-3 py-2 text-sm text-neutral-500 dark:text-neutral-400 italic">
+            <div className="px-3 py-2 text-sm text-ink-secondary italic">
               No matches
             </div>
           ) : (
@@ -1513,8 +1513,8 @@ export function MapEditor() {
                 className={[
                   'w-full text-left text-sm px-3 py-2 flex items-center gap-2',
                   idx === selectedResultIndex
-                    ? 'bg-[color:var(--color-accent-soft,#eff6ff)] dark:bg-neutral-800'
-                    : 'hover:bg-neutral-50 dark:hover:bg-neutral-800',
+                    ? 'bg-[color:var(--color-accent-soft,#eff6ff)] bg-raised'
+                    : ' hover:bg-white/5',
                 ].join(' ')}
               >
                 {/* Type badge (D-05) — colored pill, no emoji */}
@@ -1532,7 +1532,7 @@ export function MapEditor() {
                   {result.type === 'pin' ? 'Pin' : result.type === 'region' ? 'Region' : 'Route'}
                 </span>
                 {/* Label — truncated to keep dropdown compact */}
-                <span className="flex-1 truncate text-neutral-900 dark:text-neutral-100">
+                <span className="flex-1 truncate text-ink">
                   {result.label}
                 </span>
               </button>
@@ -1547,7 +1547,7 @@ export function MapEditor() {
           <button
             type="button"
             onClick={() => setLegendVisible((v) => !v)}
-            className="rounded-md border border-neutral-200 dark:border-neutral-800 bg-white dark:bg-neutral-900 shadow-sm px-3 py-1.5 text-xs text-neutral-700 dark:text-neutral-300 hover:bg-neutral-50 dark:hover:bg-neutral-800"
+            className="rounded-md border border-line bg-panel shadow-sm px-3 py-1.5 text-xs text-ink hover:bg-white/5"
             aria-label="Toggle legend"
           >
             Legend
@@ -1792,14 +1792,14 @@ export function MapEditor() {
           id="map-context-menu"
           role="menu"
           aria-label="Pin actions"
-          className="fixed z-50 min-w-[140px] rounded-md border border-neutral-200 dark:border-neutral-800 bg-white dark:bg-neutral-900 shadow-lg"
+          className="fixed z-50 min-w-[140px] rounded-md border border-line bg-panel shadow-lg"
           style={{ top: contextMenu.clientY, left: contextMenu.clientX }}
         >
           <button
             type="button"
             role="menuitem"
             onClick={handleContextMenuDelete}
-            className="w-full text-left text-sm px-3 py-2 hover:bg-neutral-50 dark:hover:bg-neutral-800 text-red-600 dark:text-red-400"
+            className="w-full text-left text-sm px-3 py-2 hover:bg-white/5 text-red-600 dark:text-red-400"
           >
             {COPY.contextMenuDelete}
           </button>
@@ -1807,7 +1807,7 @@ export function MapEditor() {
             type="button"
             role="menuitem"
             onClick={handleContextMenuRelink}
-            className="w-full text-left text-sm px-3 py-2 hover:bg-neutral-50 dark:hover:bg-neutral-800"
+            className="w-full text-left text-sm px-3 py-2 hover:bg-white/5"
           >
             {COPY.contextMenuRelink}
           </button>
@@ -1815,7 +1815,7 @@ export function MapEditor() {
             type="button"
             role="menuitem"
             onClick={handleContextMenuPinColor}
-            className="w-full text-left text-sm px-3 py-2 hover:bg-neutral-50 dark:hover:bg-neutral-800"
+            className="w-full text-left text-sm px-3 py-2 hover:bg-white/5"
           >
             Change color...
           </button>
@@ -1823,7 +1823,7 @@ export function MapEditor() {
             type="button"
             role="menuitem"
             onClick={handleContextMenuPinGlyph}
-            className="w-full text-left text-sm px-3 py-2 hover:bg-neutral-50 dark:hover:bg-neutral-800"
+            className="w-full text-left text-sm px-3 py-2 hover:bg-white/5"
           >
             Change icon...
           </button>
@@ -1832,7 +1832,7 @@ export function MapEditor() {
             type="button"
             role="menuitem"
             onClick={handleContextMenuTogglePinSecret}
-            className="w-full text-left text-sm px-3 py-2 hover:bg-neutral-50 dark:hover:bg-neutral-800"
+            className="w-full text-left text-sm px-3 py-2 hover:bg-white/5"
           >
             {contextMenu?.pin.secret ? COPY.contextMenuUnmarkSecret : COPY.contextMenuMarkSecret}
           </button>
@@ -1840,7 +1840,7 @@ export function MapEditor() {
           {contextMenu.pin.targetMapId && (() => {
             const targetMap = allMaps.find((m) => m.id === contextMenu.pin.targetMapId);
             return (
-              <p className="text-xs text-neutral-500 dark:text-neutral-400 px-3 py-1.5 truncate" role="presentation">
+              <p className="text-xs text-ink-secondary px-3 py-1.5 truncate" role="presentation">
                 Opens: {targetMap?.name ?? '…'}
               </p>
             );
@@ -1849,7 +1849,7 @@ export function MapEditor() {
             type="button"
             role="menuitem"
             onClick={handleContextMenuLinkMap}
-            className="w-full text-left text-sm px-3 py-2 hover:bg-neutral-50 dark:hover:bg-neutral-800"
+            className="w-full text-left text-sm px-3 py-2 hover:bg-white/5"
           >
             {COPY.linkToMap}
           </button>
@@ -1858,7 +1858,7 @@ export function MapEditor() {
               type="button"
               role="menuitem"
               onClick={handleContextMenuUnlinkMapPin}
-              className="w-full text-left text-sm px-3 py-2 hover:bg-neutral-50 dark:hover:bg-neutral-800"
+              className="w-full text-left text-sm px-3 py-2 hover:bg-white/5"
             >
               {COPY.unlinkMap}
             </button>
@@ -1872,14 +1872,14 @@ export function MapEditor() {
           id="map-region-context-menu"
           role="menu"
           aria-label="Region actions"
-          className="fixed z-50 min-w-[140px] rounded-md border border-neutral-200 dark:border-neutral-800 bg-white dark:bg-neutral-900 shadow-lg"
+          className="fixed z-50 min-w-[140px] rounded-md border border-line bg-panel shadow-lg"
           style={{ top: regionContextMenu.clientY, left: regionContextMenu.clientX }}
         >
           <button
             type="button"
             role="menuitem"
             onClick={handleRegionContextMenuDelete}
-            className="w-full text-left text-sm px-3 py-2 hover:bg-neutral-50 dark:hover:bg-neutral-800 text-red-600 dark:text-red-400"
+            className="w-full text-left text-sm px-3 py-2 hover:bg-white/5 text-red-600 dark:text-red-400"
           >
             {COPY.regionContextMenuDelete}
           </button>
@@ -1887,7 +1887,7 @@ export function MapEditor() {
             type="button"
             role="menuitem"
             onClick={handleRegionContextMenuRelink}
-            className="w-full text-left text-sm px-3 py-2 hover:bg-neutral-50 dark:hover:bg-neutral-800"
+            className="w-full text-left text-sm px-3 py-2 hover:bg-white/5"
           >
             {COPY.regionContextMenuRelink}
           </button>
@@ -1895,7 +1895,7 @@ export function MapEditor() {
             type="button"
             role="menuitem"
             onClick={handleRegionContextMenuRename}
-            className="w-full text-left text-sm px-3 py-2 hover:bg-neutral-50 dark:hover:bg-neutral-800"
+            className="w-full text-left text-sm px-3 py-2 hover:bg-white/5"
           >
             {COPY.regionContextMenuRename}
           </button>
@@ -1903,7 +1903,7 @@ export function MapEditor() {
             type="button"
             role="menuitem"
             onClick={handleRegionContextMenuColor}
-            className="w-full text-left text-sm px-3 py-2 hover:bg-neutral-50 dark:hover:bg-neutral-800"
+            className="w-full text-left text-sm px-3 py-2 hover:bg-white/5"
           >
             {COPY.regionContextMenuColor}
           </button>
@@ -1912,7 +1912,7 @@ export function MapEditor() {
             type="button"
             role="menuitem"
             onClick={handleRegionContextMenuToggleSecret}
-            className="w-full text-left text-sm px-3 py-2 hover:bg-neutral-50 dark:hover:bg-neutral-800"
+            className="w-full text-left text-sm px-3 py-2 hover:bg-white/5"
           >
             {regionContextMenu?.region.secret ? COPY.contextMenuUnmarkSecret : COPY.contextMenuMarkSecret}
           </button>
@@ -1920,7 +1920,7 @@ export function MapEditor() {
           {regionContextMenu.region.targetMapId && (() => {
             const targetMap = allMaps.find((m) => m.id === regionContextMenu.region.targetMapId);
             return (
-              <p className="text-xs text-neutral-500 dark:text-neutral-400 px-3 py-1.5 truncate" role="presentation">
+              <p className="text-xs text-ink-secondary px-3 py-1.5 truncate" role="presentation">
                 Opens: {targetMap?.name ?? '…'}
               </p>
             );
@@ -1929,7 +1929,7 @@ export function MapEditor() {
             type="button"
             role="menuitem"
             onClick={handleRegionContextMenuLinkMap}
-            className="w-full text-left text-sm px-3 py-2 hover:bg-neutral-50 dark:hover:bg-neutral-800"
+            className="w-full text-left text-sm px-3 py-2 hover:bg-white/5"
           >
             {COPY.linkToMap}
           </button>
@@ -1938,7 +1938,7 @@ export function MapEditor() {
               type="button"
               role="menuitem"
               onClick={handleRegionContextMenuUnlinkMap}
-              className="w-full text-left text-sm px-3 py-2 hover:bg-neutral-50 dark:hover:bg-neutral-800"
+              className="w-full text-left text-sm px-3 py-2 hover:bg-white/5"
             >
               {COPY.unlinkMap}
             </button>
@@ -1952,7 +1952,7 @@ export function MapEditor() {
           id="map-terrain-context-menu"
           role="menu"
           aria-label="Terrain area actions"
-          className="fixed z-50 min-w-[140px] rounded-md border border-neutral-200 dark:border-neutral-800 bg-white dark:bg-neutral-900 shadow-lg"
+          className="fixed z-50 min-w-[140px] rounded-md border border-line bg-panel shadow-lg"
           style={{ top: terrainContextMenu.clientY, left: terrainContextMenu.clientX }}
         >
           {/* Reclassify ▸ — opens grouped submenu */}
@@ -1960,7 +1960,7 @@ export function MapEditor() {
             type="button"
             role="menuitem"
             onClick={() => setReclassifySubmenuOpen((v) => !v)}
-            className="w-full text-left text-sm px-3 py-2 hover:bg-neutral-50 dark:hover:bg-neutral-800"
+            className="w-full text-left text-sm px-3 py-2 hover:bg-white/5"
           >
             {COPY.terrainContextMenuReclassify}
           </button>
@@ -1970,7 +1970,7 @@ export function MapEditor() {
             role="menuitem"
             aria-label="Delete terrain area"
             onClick={handleTerrainContextMenuDelete}
-            className="w-full text-left text-sm px-3 py-2 hover:bg-neutral-50 dark:hover:bg-neutral-800 text-red-600 dark:text-red-400"
+            className="w-full text-left text-sm px-3 py-2 hover:bg-white/5 text-red-600 dark:text-red-400"
           >
             {COPY.terrainContextMenuDelete}
           </button>
@@ -1979,7 +1979,7 @@ export function MapEditor() {
             <div
               role="menu"
               aria-label="Reclassify terrain area"
-              className="border-t border-neutral-100 dark:border-neutral-800"
+              className="border-t border-line"
             >
               {[...layers]
                 .sort((a, b) => a.sortOrder - b.sortOrder)
@@ -1993,7 +1993,7 @@ export function MapEditor() {
                       {/* Layer group heading (role=presentation per UI-SPEC) */}
                       <div
                         role="presentation"
-                        className="text-xs font-semibold uppercase text-neutral-500 px-3 py-1"
+                        className="text-xs font-semibold uppercase text-ink-muted px-3 py-1"
                       >
                         {layer.name}
                       </div>
@@ -2005,14 +2005,14 @@ export function MapEditor() {
                             type="button"
                             role="menuitem"
                             onClick={() => handleTerrainReclassify(type.id)}
-                            className="w-full text-left text-sm px-3 py-1.5 hover:bg-neutral-50 dark:hover:bg-neutral-800 flex items-center gap-2"
+                            className="w-full text-left text-sm px-3 py-1.5 hover:bg-white/5 flex items-center gap-2"
                           >
                             <span
                               className="w-3 h-3 rounded-full flex-shrink-0"
                               style={{ backgroundColor: type.color }}
                               aria-hidden="true"
                             />
-                            <span className="text-neutral-700 dark:text-neutral-300">
+                            <span className="text-ink">
                               {isCurrent && <span className="mr-1">✓</span>}
                               {type.name}
                             </span>
@@ -2033,7 +2033,7 @@ export function MapEditor() {
           id="map-route-context-menu"
           role="menu"
           aria-label="Route actions"
-          className="fixed z-50 min-w-[160px] rounded-md border border-neutral-200 dark:border-neutral-800 bg-white dark:bg-neutral-900 shadow-lg"
+          className="fixed z-50 min-w-[160px] rounded-md border border-line bg-panel shadow-lg"
           style={{ top: routeContextMenu.clientY, left: routeContextMenu.clientX }}
         >
           {/* Route-only restyle controls (D-06) */}
@@ -2041,12 +2041,12 @@ export function MapEditor() {
             type="button"
             role="menuitem"
             onClick={handleRouteContextMenuLineStyle}
-            className="w-full text-left text-sm px-3 py-2 hover:bg-neutral-50 dark:hover:bg-neutral-800"
+            className="w-full text-left text-sm px-3 py-2 hover:bg-white/5"
           >
             {COPY.routeContextMenuLineStyle(routeContextMenu.route.lineStyle)}
           </button>
           {/* Width preset picker: thin(2) / medium(4) / thick(7) */}
-          <div role="presentation" className="text-xs uppercase text-neutral-500 px-3 py-1 border-t border-neutral-100 dark:border-neutral-800">
+          <div role="presentation" className="text-xs uppercase text-ink-muted px-3 py-1 border-t border-line">
             Width
           </div>
           {([['Thin', 2], ['Medium', 4], ['Thick', 7]] as const).map(([label, w]) => (
@@ -2056,7 +2056,7 @@ export function MapEditor() {
               role="menuitem"
               onClick={() => handleRouteContextMenuWidth(w)}
               className={[
-                'w-full text-left text-sm px-3 py-1.5 hover:bg-neutral-50 dark:hover:bg-neutral-800 flex items-center gap-2',
+                'w-full text-left text-sm px-3 py-1.5 hover:bg-white/5 flex items-center gap-2',
                 routeContextMenu.route.width === w ? 'font-semibold text-[color:var(--color-accent)]' : '',
               ].join(' ')}
             >
@@ -2068,7 +2068,7 @@ export function MapEditor() {
             type="button"
             role="menuitem"
             onClick={handleRouteContextMenuArrow}
-            className="w-full text-left text-sm px-3 py-2 hover:bg-neutral-50 dark:hover:bg-neutral-800 border-t border-neutral-100 dark:border-neutral-800"
+            className="w-full text-left text-sm px-3 py-2 hover:bg-white/5 border-t border-line"
           >
             {COPY.routeContextMenuArrow(routeContextMenu.route.showArrow)}
           </button>
@@ -2077,7 +2077,7 @@ export function MapEditor() {
             type="button"
             role="menuitem"
             onClick={handleRouteContextMenuRename}
-            className="w-full text-left text-sm px-3 py-2 hover:bg-neutral-50 dark:hover:bg-neutral-800 border-t border-neutral-100 dark:border-neutral-800"
+            className="w-full text-left text-sm px-3 py-2 hover:bg-white/5 border-t border-line"
           >
             {COPY.routeContextMenuRename}
           </button>
@@ -2085,7 +2085,7 @@ export function MapEditor() {
             type="button"
             role="menuitem"
             onClick={handleRouteContextMenuRelink}
-            className="w-full text-left text-sm px-3 py-2 hover:bg-neutral-50 dark:hover:bg-neutral-800"
+            className="w-full text-left text-sm px-3 py-2 hover:bg-white/5"
           >
             {COPY.routeContextMenuRelink}
           </button>
@@ -2093,7 +2093,7 @@ export function MapEditor() {
             type="button"
             role="menuitem"
             onClick={handleRouteContextMenuColor}
-            className="w-full text-left text-sm px-3 py-2 hover:bg-neutral-50 dark:hover:bg-neutral-800"
+            className="w-full text-left text-sm px-3 py-2 hover:bg-white/5"
           >
             {COPY.routeContextMenuColor}
           </button>
@@ -2102,7 +2102,7 @@ export function MapEditor() {
             type="button"
             role="menuitem"
             onClick={handleRouteContextMenuToggleSecret}
-            className="w-full text-left text-sm px-3 py-2 hover:bg-neutral-50 dark:hover:bg-neutral-800"
+            className="w-full text-left text-sm px-3 py-2 hover:bg-white/5"
           >
             {routeContextMenu?.route.secret ? COPY.contextMenuUnmarkSecret : COPY.contextMenuMarkSecret}
           </button>
@@ -2110,7 +2110,7 @@ export function MapEditor() {
             type="button"
             role="menuitem"
             onClick={handleRouteContextMenuDelete}
-            className="w-full text-left text-sm px-3 py-2 hover:bg-neutral-50 dark:hover:bg-neutral-800 text-red-600 dark:text-red-400 border-t border-neutral-100 dark:border-neutral-800"
+            className="w-full text-left text-sm px-3 py-2 hover:bg-white/5 text-red-600 dark:text-red-400 border-t border-line"
           >
             {COPY.routeContextMenuDelete}
           </button>
@@ -2158,8 +2158,8 @@ export function MapEditor() {
               className="fixed inset-0 z-50 flex items-center justify-center bg-black/40"
               onClick={(e) => { if (e.target === e.currentTarget) setRenameRegionTarget(null); }}
             >
-              <div className="bg-white dark:bg-neutral-900 rounded-lg border border-neutral-200 dark:border-neutral-800 shadow-xl p-5 w-72 flex flex-col gap-3">
-                <p className="text-sm font-semibold text-neutral-900 dark:text-neutral-100">Rename region</p>
+              <div className="bg-panel rounded-lg border border-line shadow-xl p-5 w-72 flex flex-col gap-3">
+                <p className="text-sm font-semibold text-ink">Rename region</p>
                 <input
                   type="text"
                   value={renameRegionDraft}
@@ -2168,7 +2168,7 @@ export function MapEditor() {
                     if (e.key === 'Enter') handleRegionRenameConfirm();
                     if (e.key === 'Escape') setRenameRegionTarget(null);
                   }}
-                  className="rounded-md border border-neutral-300 dark:border-neutral-700 bg-white dark:bg-neutral-800 text-sm px-3 py-2 outline-none focus:ring-2 focus:ring-[color:var(--color-accent)]"
+                  className="rounded-md border border-line-strong bg-raised text-sm px-3 py-2 outline-none focus:ring-2 focus:ring-[color:var(--color-accent)]"
                   autoFocus
                   placeholder="Region name"
                 />
@@ -2176,7 +2176,7 @@ export function MapEditor() {
                   <button
                     type="button"
                     onClick={() => setRenameRegionTarget(null)}
-                    className="text-sm px-3 py-1.5 rounded-md border border-neutral-300 dark:border-neutral-700 text-neutral-700 dark:text-neutral-300 hover:bg-neutral-50 dark:hover:bg-neutral-800"
+                    className="text-sm px-3 py-1.5 rounded-md border border-line-strong text-ink hover:bg-white/5"
                   >
                     Cancel
                   </button>
@@ -2200,8 +2200,8 @@ export function MapEditor() {
               className="fixed inset-0 z-50 flex items-center justify-center bg-black/40"
               onClick={(e) => { if (e.target === e.currentTarget) setPinColorTarget(null); }}
             >
-              <div className="bg-white dark:bg-neutral-900 rounded-lg border border-neutral-200 dark:border-neutral-800 shadow-xl p-5 flex flex-col gap-3">
-                <p className="text-sm font-semibold text-neutral-900 dark:text-neutral-100">Pin color</p>
+              <div className="bg-panel rounded-lg border border-line shadow-xl p-5 flex flex-col gap-3">
+                <p className="text-sm font-semibold text-ink">Pin color</p>
                 <div className="flex flex-wrap gap-2">
                   {MAP_COLOR_PALETTE.map((color) => (
                     <button
@@ -2220,7 +2220,7 @@ export function MapEditor() {
                   <button
                     type="button"
                     onClick={() => handlePinColorSelect(entryTypeHexColor(pinColorTarget.entryType ?? 'concept'))}
-                    className="text-xs px-2 py-1 rounded border border-neutral-300 dark:border-neutral-700 text-neutral-600 dark:text-neutral-400 hover:bg-neutral-50 dark:hover:bg-neutral-800"
+                    className="text-xs px-2 py-1 rounded border border-line-strong text-ink-secondary hover:bg-white/5"
                     title="Reset to entry type color"
                   >
                     Reset
@@ -2229,7 +2229,7 @@ export function MapEditor() {
                 <button
                   type="button"
                   onClick={() => setPinColorTarget(null)}
-                  className="text-xs text-neutral-400 hover:text-neutral-600 self-end"
+                  className="text-xs text-ink-muted hover:text-ink-secondary self-end"
                 >
                   Cancel
                 </button>
@@ -2245,8 +2245,8 @@ export function MapEditor() {
               className="fixed inset-0 z-50 flex items-center justify-center bg-black/40"
               onClick={(e) => { if (e.target === e.currentTarget) setGlyphPickerTarget(null); }}
             >
-              <div className="bg-white dark:bg-neutral-900 rounded-lg border border-neutral-200 dark:border-neutral-800 shadow-xl p-5 flex flex-col gap-3">
-                <p className="text-sm font-semibold text-neutral-900 dark:text-neutral-100">Pin icon</p>
+              <div className="bg-panel rounded-lg border border-line shadow-xl p-5 flex flex-col gap-3">
+                <p className="text-sm font-semibold text-ink">Pin icon</p>
                 <div className="flex flex-wrap gap-2 max-w-xs">
                   {MAP_GLYPH_KEYS.map((key) => (
                     <button
@@ -2254,10 +2254,10 @@ export function MapEditor() {
                       type="button"
                       onClick={() => handlePinGlyphSelect(key)}
                       className={[
-                        'w-9 h-9 rounded-md border flex items-center justify-center hover:bg-neutral-50 dark:hover:bg-neutral-800 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-[color:var(--color-accent)]',
+                        'w-9 h-9 rounded-md border flex items-center justify-center hover:bg-white/5 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-[color:var(--color-accent)]',
                         glyphPickerTarget.icon === key
                           ? 'border-[color:var(--color-accent)] bg-[color:var(--color-accent-soft)]'
-                          : 'border-neutral-300 dark:border-neutral-700',
+                          : ' border-line-strong',
                       ].join(' ')}
                       aria-label={key}
                       title={key}
@@ -2270,7 +2270,7 @@ export function MapEditor() {
                   <button
                     type="button"
                     onClick={() => handlePinGlyphSelect(null)}
-                    className="text-xs px-2 py-1 rounded border border-neutral-300 dark:border-neutral-700 text-neutral-600 dark:text-neutral-400 hover:bg-neutral-50 dark:hover:bg-neutral-800"
+                    className="text-xs px-2 py-1 rounded border border-line-strong text-ink-secondary hover:bg-white/5"
                     title="Remove icon"
                   >
                     None
@@ -2279,7 +2279,7 @@ export function MapEditor() {
                 <button
                   type="button"
                   onClick={() => setGlyphPickerTarget(null)}
-                  className="text-xs text-neutral-400 hover:text-neutral-600 self-end"
+                  className="text-xs text-ink-muted hover:text-ink-secondary self-end"
                 >
                   Cancel
                 </button>
@@ -2295,8 +2295,8 @@ export function MapEditor() {
               className="fixed inset-0 z-50 flex items-center justify-center bg-black/40"
               onClick={(e) => { if (e.target === e.currentTarget) setRegionColorTarget(null); }}
             >
-              <div className="bg-white dark:bg-neutral-900 rounded-lg border border-neutral-200 dark:border-neutral-800 shadow-xl p-5 flex flex-col gap-3">
-                <p className="text-sm font-semibold text-neutral-900 dark:text-neutral-100">Region color</p>
+              <div className="bg-panel rounded-lg border border-line shadow-xl p-5 flex flex-col gap-3">
+                <p className="text-sm font-semibold text-ink">Region color</p>
                 <div className="flex flex-wrap gap-2">
                   {MAP_COLOR_PALETTE.map((color) => (
                     <button
@@ -2316,7 +2316,7 @@ export function MapEditor() {
                 <button
                   type="button"
                   onClick={() => setRegionColorTarget(null)}
-                  className="text-xs text-neutral-400 hover:text-neutral-600 self-end"
+                  className="text-xs text-ink-muted hover:text-ink-secondary self-end"
                 >
                   Cancel
                 </button>
@@ -2345,8 +2345,8 @@ export function MapEditor() {
               className="fixed inset-0 z-50 flex items-center justify-center bg-black/40"
               onClick={(e) => { if (e.target === e.currentTarget) setRenameRouteTarget(null); }}
             >
-              <div className="bg-white dark:bg-neutral-900 rounded-lg border border-neutral-200 dark:border-neutral-800 shadow-xl p-5 w-72 flex flex-col gap-3">
-                <p className="text-sm font-semibold text-neutral-900 dark:text-neutral-100">Rename route</p>
+              <div className="bg-panel rounded-lg border border-line shadow-xl p-5 w-72 flex flex-col gap-3">
+                <p className="text-sm font-semibold text-ink">Rename route</p>
                 <input
                   type="text"
                   value={renameRouteDraft}
@@ -2355,7 +2355,7 @@ export function MapEditor() {
                     if (e.key === 'Enter') void handleRouteRenameConfirm();
                     if (e.key === 'Escape') setRenameRouteTarget(null);
                   }}
-                  className="rounded-md border border-neutral-300 dark:border-neutral-700 bg-white dark:bg-neutral-800 text-sm px-3 py-2 outline-none focus:ring-2 focus:ring-[color:var(--color-accent)]"
+                  className="rounded-md border border-line-strong bg-raised text-sm px-3 py-2 outline-none focus:ring-2 focus:ring-[color:var(--color-accent)]"
                   autoFocus
                   placeholder="Route name"
                 />
@@ -2363,7 +2363,7 @@ export function MapEditor() {
                   <button
                     type="button"
                     onClick={() => setRenameRouteTarget(null)}
-                    className="text-sm px-3 py-1.5 rounded-md border border-neutral-300 dark:border-neutral-700 text-neutral-700 dark:text-neutral-300 hover:bg-neutral-50 dark:hover:bg-neutral-800"
+                    className="text-sm px-3 py-1.5 rounded-md border border-line-strong text-ink hover:bg-white/5"
                   >
                     Cancel
                   </button>
@@ -2387,8 +2387,8 @@ export function MapEditor() {
               className="fixed inset-0 z-50 flex items-center justify-center bg-black/40"
               onClick={(e) => { if (e.target === e.currentTarget) setRouteColorTarget(null); }}
             >
-              <div className="bg-white dark:bg-neutral-900 rounded-lg border border-neutral-200 dark:border-neutral-800 shadow-xl p-5 flex flex-col gap-3">
-                <p className="text-sm font-semibold text-neutral-900 dark:text-neutral-100">Route color</p>
+              <div className="bg-panel rounded-lg border border-line shadow-xl p-5 flex flex-col gap-3">
+                <p className="text-sm font-semibold text-ink">Route color</p>
                 <div className="flex flex-wrap gap-2">
                   {MAP_COLOR_PALETTE.map((color) => (
                     <button
@@ -2408,7 +2408,7 @@ export function MapEditor() {
                 <button
                   type="button"
                   onClick={() => setRouteColorTarget(null)}
-                  className="text-xs text-neutral-400 hover:text-neutral-600 self-end"
+                  className="text-xs text-ink-muted hover:text-ink-secondary self-end"
                 >
                   Cancel
                 </button>
@@ -2430,8 +2430,8 @@ export function MapEditor() {
                 }
               }}
             >
-              <div className="bg-white dark:bg-neutral-900 rounded-lg border border-neutral-200 dark:border-neutral-800 shadow-xl p-5 flex flex-col gap-3">
-                <p className="text-sm font-semibold text-neutral-900 dark:text-neutral-100">Terrain type color</p>
+              <div className="bg-panel rounded-lg border border-line shadow-xl p-5 flex flex-col gap-3">
+                <p className="text-sm font-semibold text-ink">Terrain type color</p>
                 <div className="flex flex-wrap gap-2">
                   {MAP_COLOR_PALETTE.map((color) => (
                     <button
@@ -2458,7 +2458,7 @@ export function MapEditor() {
                     setLayersColorPickerOpen(false);
                     setLayersColorPickerCallback(null);
                   }}
-                  className="text-xs text-neutral-400 hover:text-neutral-600 self-end"
+                  className="text-xs text-ink-muted hover:text-ink-secondary self-end"
                 >
                   Cancel
                 </button>

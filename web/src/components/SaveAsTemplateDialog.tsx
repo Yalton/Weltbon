@@ -85,11 +85,11 @@ export function SaveAsTemplateDialog({
     <Dialog.Root open={open} onOpenChange={handleOpenChange}>
       <Dialog.Portal>
         <Dialog.Overlay className="fixed inset-0 bg-black/50 z-40 data-[state=open]:animate-overlay-in data-[state=closed]:animate-overlay-out" />
-        <Dialog.Content className="fixed left-1/2 top-1/2 -translate-x-1/2 -translate-y-1/2 w-full max-w-md bg-white dark:bg-neutral-900 border border-neutral-200 dark:border-neutral-800 rounded-md p-6 shadow-lg z-50 data-[state=open]:animate-dialog-in data-[state=closed]:animate-dialog-out focus:outline-none">
+        <Dialog.Content className="fixed left-1/2 top-1/2 -translate-x-1/2 -translate-y-1/2 w-full max-w-md bg-panel border border-line rounded-md p-6 shadow-lg z-50 data-[state=open]:animate-dialog-in data-[state=closed]:animate-dialog-out focus:outline-none">
           <Dialog.Title className="text-lg font-semibold">
             Save as template
           </Dialog.Title>
-          <Dialog.Description className="mt-2 text-sm text-neutral-600 dark:text-neutral-400 leading-[1.5]">
+          <Dialog.Description className="mt-2 text-sm text-ink-secondary leading-[1.5]">
             This captures the current entry&apos;s meta fields, summary, and body as a reusable template scoped to {entryType}. The template appears in the picker for future {entryType} entries.
           </Dialog.Description>
 
@@ -105,7 +105,7 @@ export function SaveAsTemplateDialog({
                 autoFocus
                 maxLength={80}
                 {...register('name')}
-                className="w-full rounded-md border border-neutral-300 dark:border-neutral-700 bg-transparent px-3 py-2 text-sm"
+                className="w-full rounded-md border border-line-strong bg-transparent px-3 py-2 text-sm"
               />
               {errors.name && (
                 <p role="alert" className="mt-1 text-sm text-red-500">
@@ -120,7 +120,7 @@ export function SaveAsTemplateDialog({
             </div>
 
             <div className="mt-6 flex justify-end gap-2">
-              <Dialog.Close className="px-3 py-1.5 text-sm rounded-md border border-neutral-300 dark:border-neutral-700">
+              <Dialog.Close className="px-3 py-1.5 text-sm rounded-md border border-line-strong">
                 Cancel
               </Dialog.Close>
               <button

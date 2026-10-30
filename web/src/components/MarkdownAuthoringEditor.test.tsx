@@ -941,10 +941,9 @@ describe('MarkdownAuthoringEditor', () => {
 
     expect(screen.getByRole('region', { name: 'Markdown authoring editor' })).toHaveClass(
       'markdown-authoring-surface',
-      'bg-neutral-950',
-      'text-neutral-100',
-      'dark:bg-neutral-950',
-      'dark:text-neutral-100',
+      // Tokens, not dark: variants, so the surface is readable with or without a dark parent.
+      'bg-canvas-lo',
+      'text-ink',
     );
     const editorTheme = screen.getByRole('textbox').closest('.markdown-authoring-editor-theme');
     expect(editorTheme).not.toBeNull();

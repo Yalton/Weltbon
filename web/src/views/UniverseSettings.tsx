@@ -24,10 +24,10 @@ import { Loading } from '../components/ui/Loading';
  * URL `?tab=<id>` is the source of truth for the active tab (via SettingsTabBar
  * which writes setSearchParams on click). The four tabs are:
  *
- *   - general        — existing name/description edit + Delete universe
- *   - entry-types    — existing EntryTypesSection mount
- *   - ai-auditor     — AI Gap Auditor opt-in (Toggle + provider/model dropdowns + Save)
- *   - audit-history  — <AuditHistoryTable universeId={id} />
+ * - general — existing name/description edit + Delete universe
+ * - entry-types — existing EntryTypesSection mount
+ * - ai-auditor — AI Gap Auditor opt-in (Toggle + provider/model dropdowns + Save)
+ * - audit-history — <AuditHistoryTable universeId={id} />
  *
  * derivation, never trust untrusted URL state to gate panel rendering).
  *
@@ -191,7 +191,7 @@ export function UniverseSettings() {
                 id="name"
                 value={name}
                 onChange={(e) => setName(e.target.value)}
-                className="w-full rounded-md border border-neutral-300 dark:border-neutral-700 bg-transparent px-3 py-2 text-sm"
+                className="w-full rounded-md border border-line-strong bg-transparent px-3 py-2 text-sm"
               />
             </div>
             <div>
@@ -201,14 +201,14 @@ export function UniverseSettings() {
                 rows={4}
                 value={description}
                 onChange={(e) => setDescription(e.target.value)}
-                className="w-full rounded-md border border-neutral-300 dark:border-neutral-700 bg-transparent px-3 py-2 text-sm"
+                className="w-full rounded-md border border-line-strong bg-transparent px-3 py-2 text-sm"
               />
             </div>
 
             {id && (
-              <div className="pt-4 border-t border-neutral-200 dark:border-neutral-800">
+              <div className="pt-4 border-t border-line">
                 <h2 className="text-lg font-medium mb-2">Calendar</h2>
-                <p className="text-sm text-neutral-500 mb-2">
+                <p className="text-sm text-ink-muted mb-2">
                   Define an in-world calendar so timeline positions display as dates.
                 </p>
                 <Link
@@ -220,7 +220,7 @@ export function UniverseSettings() {
               </div>
             )}
 
-            <div className="flex items-center justify-between pt-4 border-t border-neutral-200 dark:border-neutral-800">
+            <div className="flex items-center justify-between pt-4 border-t border-line">
               <button
                 type="button"
                 onClick={handleSave}
@@ -253,7 +253,7 @@ export function UniverseSettings() {
         {safeTab === 'entry-types' && (
           <div>
             <h2 className="text-lg font-medium mb-2">Entry types</h2>
-            <p className="text-sm text-neutral-500 mb-3">
+            <p className="text-sm text-ink-muted mb-3">
               The default types ship with every universe. Add custom types or remove ones you don&rsquo;t need.
               Removing a type used by entries will prompt for a fallback.
             </p>
@@ -266,7 +266,7 @@ export function UniverseSettings() {
         {safeTab === 'fields' && data && (
           <div>
             <h2 className="text-lg font-medium mb-2">Custom fields</h2>
-            <p className="text-sm text-neutral-500 mb-3">
+            <p className="text-sm text-ink-muted mb-3">
               Define typed data slots that appear in the meta editor of every entry.
               Field names are unique per universe; editing or removing a field never
               deletes the values already stored on your entries.
@@ -296,7 +296,7 @@ export function UniverseSettings() {
                 Enable AI Gap Auditor
               </span>
             </div>
-            <p className="text-sm text-neutral-600 dark:text-neutral-400 mt-2">
+            <p className="text-sm text-ink-secondary mt-2">
               {auditEnabled
                 ? 'On — you can trigger audits from this universe and its entries.'
                 : 'Off — no LLM calls will be made for this universe.'}
@@ -313,7 +313,7 @@ export function UniverseSettings() {
                 setAuditModel('');
               }}
               disabled={!auditEnabled}
-              className={`w-full rounded-md border border-neutral-300 dark:border-neutral-700 bg-transparent px-3 py-2 text-sm ${!auditEnabled ? 'opacity-50 cursor-not-allowed' : ''}`}
+              className={`w-full rounded-md border border-line-strong bg-transparent px-3 py-2 text-sm ${!auditEnabled ? 'opacity-50 cursor-not-allowed' : ''}`}
             >
               <option value="">Select provider</option>
 
@@ -382,7 +382,7 @@ export function UniverseSettings() {
               <p
                 id="model"
                 role="status"
-                className="text-sm text-neutral-500 dark:text-neutral-400 italic"
+                className="text-sm text-ink-secondary italic"
               >
                 No models available for the selected provider.
               </p>
@@ -392,7 +392,7 @@ export function UniverseSettings() {
                 value={auditModel}
                 onChange={(e) => setAuditModel(e.target.value)}
                 disabled={!auditEnabled || auditProvider === ''}
-                className={`w-full rounded-md border border-neutral-300 dark:border-neutral-700 bg-transparent px-3 py-2 text-sm ${!auditEnabled || auditProvider === '' ? 'opacity-50 cursor-not-allowed' : ''}`}
+                className={`w-full rounded-md border border-line-strong bg-transparent px-3 py-2 text-sm ${!auditEnabled || auditProvider === '' ? 'opacity-50 cursor-not-allowed' : ''}`}
               >
                 {auditProvider === '' && <option value="">Select a provider first</option>}
                 {auditProvider !== '' && modelOptions.length === 0 && (
@@ -411,12 +411,12 @@ export function UniverseSettings() {
                 type="button"
                 onClick={handleSave}
                 disabled={update.isPending || aiPatchEmpty}
-                className="rounded-md border border-neutral-300 dark:border-neutral-700 text-sm px-3 py-1.5 disabled:opacity-50 disabled:cursor-not-allowed hover:bg-neutral-50 dark:hover:bg-neutral-800"
+                className="rounded-md border border-line-strong text-sm px-3 py-1.5 disabled:opacity-50 disabled:cursor-not-allowed hover:bg-white/5"
               >
                 Save
               </button>
               {update.isPending && (
-                <span className="text-xs text-neutral-500">Saving…</span>
+                <span className="text-xs text-ink-muted">Saving…</span>
               )}
               {update.error && (
                 <span className="text-xs text-red-600 dark:text-red-400">

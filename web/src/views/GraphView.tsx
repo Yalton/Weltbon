@@ -176,7 +176,7 @@ export function GraphView() {
   }, [data, focus]);
 
   if (isLoading || !data) {
-    return <p className="p-6 text-sm text-neutral-500">Loading graph…</p>;
+    return <p className="p-6 text-sm text-ink-muted">Loading graph…</p>;
   }
 
   if (data.nodes.length === 0) {
@@ -233,7 +233,7 @@ export function GraphView() {
       className="relative h-full w-full overflow-hidden"
     >
       <div className="pointer-events-none absolute inset-x-0 top-3 z-10 flex items-start justify-between gap-3 px-3">
-        <div className="pointer-events-auto text-xs text-neutral-500">
+        <div className="pointer-events-auto text-xs text-ink-muted">
           {data.nodes.length} {data.nodes.length === 1 ? 'entry' : 'entries'} · {data.edges.length}{' '}
           {data.edges.length === 1 ? 'link' : 'links'}
         </div>
@@ -253,10 +253,10 @@ export function GraphView() {
                 }
                 className={[
                   'rounded-md px-3 py-1.5 text-sm shadow-sm transition-colors',
-                  'focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-[color:var(--color-accent)] focus-visible:ring-offset-2 focus-visible:ring-offset-white dark:focus-visible:ring-offset-neutral-900',
+                  'focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-[color:var(--color-accent)] focus-visible:ring-offset-2 focus-visible:ring-offset-[color:var(--color-canvas-mid)]',
                   editMode
                     ? 'border border-[color:var(--color-accent)] bg-[color:var(--color-accent-soft)] text-[color:var(--color-accent)]'
-                    : 'border border-neutral-300 bg-white/80 hover:bg-white dark:border-neutral-700 dark:bg-neutral-900/80 dark:text-neutral-100 dark:hover:bg-neutral-900',
+                    : 'border border-line-strong bg-panel text-ink hover:bg-white/[0.03]',
                 ].join(' ')}
               >
                 {editMode ? 'Editing' : 'Edit'}
@@ -265,7 +265,7 @@ export function GraphView() {
                 type="button"
                 onClick={() => reset.mutate()}
                 disabled={reset.isPending}
-                className="rounded-md border border-neutral-300 bg-white/80 px-3 py-1.5 text-sm shadow-sm hover:bg-white dark:border-neutral-700 dark:bg-neutral-900/80 dark:text-neutral-100 dark:hover:bg-neutral-900"
+                className="rounded-md border px-3 py-1.5 text-sm shadow-sm border-line-strong bg-panel text-ink hover:bg-white/[0.03]"
               >
                 Reset layout
               </button>
@@ -275,7 +275,7 @@ export function GraphView() {
                   onClick={handleLegendToggle}
                   aria-pressed={legendVisible}
                   aria-label={legendVisible ? 'Hide relation legend' : 'Show relation legend'}
-                  className="rounded-md border border-neutral-300 bg-white/80 px-3 py-1.5 text-sm shadow-sm hover:bg-white dark:border-neutral-700 dark:bg-neutral-900/80 dark:text-neutral-100 dark:hover:bg-neutral-900"
+                  className="rounded-md border px-3 py-1.5 text-sm shadow-sm border-line-strong bg-panel text-ink hover:bg-white/[0.03]"
                 >
                   {legendVisible ? 'Hide legend' : 'Show legend'}
                 </button>

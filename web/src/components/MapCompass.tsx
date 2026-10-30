@@ -17,7 +17,7 @@ export function MapCompass() {
         fill="none"
         aria-hidden="true"
         role="none"
-        className="text-neutral-600 dark:text-neutral-400"
+        className="text-ink-secondary"
       >
         {/* Outer ring */}
         <circle

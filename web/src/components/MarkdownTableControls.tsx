@@ -313,7 +313,7 @@ export function removeMarkdownTableColumn(markdown: string, selection?: Markdown
 }
 
 export function insertMarkdownTable(markdown: string): string {
-  const table = '| Header 1 | Header 2 |\n| --- | --- |\n|  |  |';
+  const table = '| Header 1 | Header 2 |\n| --- | --- |\n| | |';
   if (!markdown) return table;
   const separator = markdown.endsWith('\n\n') ? '' : markdown.endsWith('\n') ? '\n' : '\n\n';
   return `${markdown}${separator}${table}`;
@@ -341,13 +341,13 @@ export function MarkdownTableControls({ markdown, onChange, disabled = false, se
   };
 
   return (
-    <div className="flex flex-wrap items-center gap-1 border-t border-neutral-800 px-2 py-1 text-xs" role="group" aria-label="Table controls">
+    <div className="flex flex-wrap items-center gap-1 border-t border-[color:var(--color-ink-muted)] px-2 py-1 text-xs" role="group" aria-label="Table controls">
       {children}
-      <button type="button" disabled={disabled || !table} onClick={() => action(addMarkdownTableRow)} className="rounded border border-neutral-700 px-2 py-1 disabled:opacity-50">Add table row</button>
-      <button type="button" disabled={disabled || !canRemoveRow} onClick={() => action(removeMarkdownTableRow)} className="rounded border border-neutral-700 px-2 py-1 disabled:opacity-50">Remove table row</button>
-      <button type="button" disabled={disabled || !table} onClick={() => action(addMarkdownTableColumn)} className="rounded border border-neutral-700 px-2 py-1 disabled:opacity-50">Add table column</button>
-      <button type="button" disabled={disabled || !canRemoveColumn} onClick={() => action(removeMarkdownTableColumn)} className="rounded border border-neutral-700 px-2 py-1 disabled:opacity-50">Remove table column</button>
-      {!table && <button type="button" disabled={disabled} onClick={() => onChange(insertMarkdownTable(markdown))} className="rounded border border-neutral-700 px-2 py-1 disabled:opacity-50">Insert table</button>}
+      <button type="button" disabled={disabled || !table} onClick={() => action(addMarkdownTableRow)} className="rounded border border-[color:var(--color-ink-muted)] px-2 py-1 disabled:opacity-50">Add table row</button>
+      <button type="button" disabled={disabled || !canRemoveRow} onClick={() => action(removeMarkdownTableRow)} className="rounded border border-[color:var(--color-ink-muted)] px-2 py-1 disabled:opacity-50">Remove table row</button>
+      <button type="button" disabled={disabled || !table} onClick={() => action(addMarkdownTableColumn)} className="rounded border border-[color:var(--color-ink-muted)] px-2 py-1 disabled:opacity-50">Add table column</button>
+      <button type="button" disabled={disabled || !canRemoveColumn} onClick={() => action(removeMarkdownTableColumn)} className="rounded border border-[color:var(--color-ink-muted)] px-2 py-1 disabled:opacity-50">Remove table column</button>
+      {!table && <button type="button" disabled={disabled} onClick={() => onChange(insertMarkdownTable(markdown))} className="rounded border border-[color:var(--color-ink-muted)] px-2 py-1 disabled:opacity-50">Insert table</button>}
     </div>
   );
 }

@@ -115,7 +115,7 @@ export function EntryTypesSection({ universe }: Props) {
           return (
             <li
               key={type}
-              className="inline-flex items-center gap-1 rounded-full border border-neutral-300 dark:border-neutral-700 px-3 py-1 text-sm"
+              className="inline-flex items-center gap-1 rounded-full border border-line-strong px-3 py-1 text-sm"
             >
               {isRenaming ? (
                 <input
@@ -142,7 +142,7 @@ export function EntryTypesSection({ universe }: Props) {
                     type="button"
                     aria-label={`Rename ${type}`}
                     onClick={() => startRename(type)}
-                    className="ml-1 text-xs text-neutral-400 hover:text-neutral-700 dark:hover:text-neutral-200"
+                    className="ml-1 text-xs text-ink-muted hover:text-ink"
                   >
                     ✎
                   </button>
@@ -150,7 +150,7 @@ export function EntryTypesSection({ universe }: Props) {
                     type="button"
                     aria-label={`Remove ${type}`}
                     onClick={() => requestRemove(type)}
-                    className="text-xs text-neutral-400 hover:text-red-600"
+                    className="text-xs text-ink-muted hover:text-red-600"
                   >
                     ×
                   </button>
@@ -178,7 +178,7 @@ export function EntryTypesSection({ universe }: Props) {
           }}
           placeholder="Add type"
           maxLength={50}
-          className="rounded-md border border-neutral-300 dark:border-neutral-700 bg-transparent px-3 py-1.5 text-sm outline-none focus:border-[color:var(--color-accent)]"
+          className="rounded-md border border-line-strong bg-transparent px-3 py-1.5 text-sm outline-none focus:border-[color:var(--color-accent)]"
         />
         <button
           type="button"

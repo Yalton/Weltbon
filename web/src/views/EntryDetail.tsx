@@ -109,7 +109,7 @@ export function EntryDetail() {
   const { words: universeWords } = useUniverseDictionary(uid!);
 
   // Build dictionaryWords map per D-02 scope rule:
-  //   no linked language entry → use the universe-wide union (universeWords)
+  // no linked language entry → use the universe-wide union (universeWords)
   const dictionaryWords = useMemo<Map<string, DictionaryWord>>(() => {
     const map = new Map<string, DictionaryWord>();
     const source = linkedLanguageEntryId ? (langScopedWords ?? []) : universeWords;
@@ -184,7 +184,7 @@ export function EntryDetail() {
               ? `/share/${token ?? ''}`
               : `/universes/${uid}/entries`
           }
-          className="text-sm text-neutral-400 hover:text-neutral-200"
+          className="text-sm text-ink-muted hover:text-ink-muted"
         >
           &larr; Back to entries
         </Link>
@@ -250,7 +250,7 @@ export function EntryDetail() {
         {entryPin && (
           <div className="mt-4 flex flex-col gap-1">
             {/* Calendar date (full form) or raw position fallback */}
-            <div className="text-sm text-neutral-600 dark:text-neutral-400">
+            <div className="text-sm text-ink-secondary">
               {calendarDate ? (
                 <>
                   {calendarDate.weekday && (
@@ -286,7 +286,7 @@ export function EntryDetail() {
 
         {/* Summary */}
         {entry.summary && (
-          <p className="text-base leading-[1.6] text-neutral-700 dark:text-neutral-300 mt-4">
+          <p className="text-base leading-[1.6] text-ink mt-4">
             {entry.summary}
           </p>
         )}
@@ -297,7 +297,7 @@ export function EntryDetail() {
             {entry.tags.map((tag) => (
               <span
                 key={tag}
-                className="rounded-full bg-neutral-800 dark:bg-neutral-800 px-2 py-1 text-sm"
+                className="rounded-full bg-raised px-2 py-1 text-sm"
               >
                 {tag}
               </span>

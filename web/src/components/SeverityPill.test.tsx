@@ -14,7 +14,7 @@ describe('SeverityPill', () => {
     expect(c3.querySelector('.bg-yellow-500')).not.toBeNull();
 
     const { container: c4 } = render(<SeverityPill severity="minor" />);
-    expect(c4.querySelector('.bg-neutral-500')).not.toBeNull();
+    expect(c4.querySelector('.bg-ink-muted')).not.toBeNull();
   });
 
   it('renders text label next to the dot by default', () => {
