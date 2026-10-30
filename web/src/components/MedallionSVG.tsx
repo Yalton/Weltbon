@@ -109,6 +109,8 @@ function describeMedallionSVG(props: MedallionSVGProps): ElementSpec {
           ...GLYPH_ANCHORING,
           ...DECORATIVE_OVERLAY,
           'font-size': diameter * ratio,
+          // SVG text defaults to black, which vanishes on the dark disc.
+          fill: 'var(--color-ink)',
           // font-family opinion of its own.
           ...(isIcon ? {} : { 'font-family': 'var(--font-display)' }),
         },
