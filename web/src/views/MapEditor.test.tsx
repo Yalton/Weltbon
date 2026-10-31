@@ -744,6 +744,19 @@ describe('MapEditor route interactions', () => {
     });
   });
 
+  it('marks the route\'s current colour with a visible ring in the colour picker', async () => {
+    setupEditorApi();
+    renderEditorMode();
+    await openRouteContextMenu();
+    fireEvent.click(screen.getByRole('menuitem', { name: /change color/i }));
+
+    const current = await screen.findByRole('button', { name: '#3b82f6' });
+    expect(current).toHaveAttribute('aria-pressed', 'true');
+    expect(current.style.borderColor).toBe('var(--color-ink)');
+    const other = screen.getByRole('button', { name: '#ef4444' });
+    expect(other).toHaveAttribute('aria-pressed', 'false');
+  });
+
   it('R2: width preset fires updateRoute PATCH with width 2 (Thin)', async () => {
     setupEditorApi();
     renderEditorMode();
