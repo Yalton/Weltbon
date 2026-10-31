@@ -101,7 +101,7 @@ export function RelationLegend({
               type="button"
               onClick={onToggle}
               aria-label="Close legend"
-              className="text-xs text-ink-muted hover:text-ink"
+              className="text-xs text-ink-secondary hover:text-ink"
             >
               ×
             </button>
@@ -109,7 +109,7 @@ export function RelationLegend({
 
           {/* Type rows */}
           {!hasTypedEdges ? (
-            <p className="px-3 py-2 text-xs text-ink-muted">
+            <p className="px-3 py-2 text-xs text-ink-secondary">
               No typed edges in this view.
             </p>
           ) : (
@@ -150,7 +150,7 @@ export function RelationLegend({
 
                   {/* Edit color hint (hover only, preset types only) */}
                   {row.type && onColorChange && (
-                    <span className="text-xs text-ink-muted opacity-0 group-hover:opacity-100">
+                    <span className="text-xs text-ink-secondary opacity-0 group-hover:opacity-100">
                       Edit color
                     </span>
                   )}

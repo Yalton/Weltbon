@@ -177,7 +177,7 @@ export function MapToolbar({
           onChange={(e) => onSearchQueryChange(e.target.value)}
           placeholder={COPY.searchPlaceholder}
           aria-label="Search map items"
-          className="rounded-md border border-line-strong text-sm px-3 py-2 bg-panel text-ink placeholder:text-ink-muted focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-[color:var(--color-accent)] w-40"
+          className="rounded-md border border-line-strong text-sm px-3 py-2 bg-panel text-ink placeholder:text-ink-secondary focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-[color:var(--color-accent)] w-40"
         />
       )}
     </div>

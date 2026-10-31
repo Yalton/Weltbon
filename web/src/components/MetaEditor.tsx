@@ -71,7 +71,7 @@ export function UrlInput({
           href={value}
           target="_blank"
           rel="noopener"
-          className="text-xs text-ink-muted hover:text-[color:var(--color-accent)] shrink-0"
+          className="text-xs text-ink-secondary hover:text-[color:var(--color-accent)] shrink-0"
           aria-label={`Open ${value} in new tab`}
           tabIndex={-1}
         >
@@ -471,7 +471,7 @@ export function MetaEditor({
                     />
                   )}
                   {field.hint && (
-                    <p className="text-xs text-ink-muted">{field.hint}</p>
+                    <p className="text-xs text-ink-secondary">{field.hint}</p>
                   )}
                   {mismatch && (
                     <p className="text-xs text-amber-500">{"Doesn't match type"}</p>

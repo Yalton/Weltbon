@@ -249,7 +249,7 @@ export function FieldRegistrySection({ universe }: Props) {
                     field.type}
                 </span>
                 {field.hint && (
-                  <span className="text-xs text-ink-muted truncate max-w-[120px]">
+                  <span className="text-xs text-ink-secondary truncate max-w-[120px]">
                     {field.hint}
                   </span>
                 )}
@@ -257,7 +257,7 @@ export function FieldRegistrySection({ universe }: Props) {
                   type="button"
                   onClick={() => startEdit(field)}
                   aria-label={`Edit ${field.name}`}
-                  className="opacity-0 group-hover:opacity-100 transition-opacity text-ink-muted hover:text-ink text-xs ml-1"
+                  className="opacity-0 group-hover:opacity-100 transition-opacity text-ink-secondary hover:text-ink text-xs ml-1"
                 >
                   ✏
                 </button>
@@ -268,7 +268,7 @@ export function FieldRegistrySection({ universe }: Props) {
                     setConfirmDeleteName(field.name);
                   }}
                   aria-label={`Delete ${field.name}`}
-                  className="opacity-0 group-hover:opacity-100 transition-opacity text-ink-muted hover:text-red-500 text-xs"
+                  className="opacity-0 group-hover:opacity-100 transition-opacity text-ink-secondary hover:text-red-500 text-xs"
                 >
                   ✕
                 </button>

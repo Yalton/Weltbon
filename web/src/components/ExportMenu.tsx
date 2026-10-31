@@ -124,7 +124,7 @@ export function ExportMenu({ universeId, fallbackFilename, onToast }: Props) {
 function Spinner() {
   return (
     <span
-      className="inline-block w-3 h-3 border-2 border-line-strong border-t-[color:var(--color-ink-muted)] rounded-full animate-spin"
+      className="inline-block w-3 h-3 border-2 border-line-strong border-t-line-strong rounded-full animate-spin"
       aria-label="loading"
     />
   );

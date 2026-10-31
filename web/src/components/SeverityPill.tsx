@@ -20,7 +20,7 @@ export function SeverityPill({ severity, showLabel = true }: Props) {
         aria-hidden="true"
       />
       {showLabel && (
-        <span className="text-xs text-ink-muted">{severity}</span>
+        <span className="text-xs text-ink-secondary">{severity}</span>
       )}
     </span>
   );

@@ -115,14 +115,14 @@ export function MapLegend({
               type="button"
               onClick={onToggle}
               aria-label="Close legend"
-              className="text-xs text-ink-muted hover:text-ink"
+              className="text-xs text-ink-secondary hover:text-ink"
             >
               ×
             </button>
           </div>
 
           {rows.length === 0 ? (
-            <p className="px-3 py-2 text-xs text-ink-muted">
+            <p className="px-3 py-2 text-xs text-ink-secondary">
               No pins or regions yet.
             </p>
           ) : (

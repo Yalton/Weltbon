@@ -2229,7 +2229,7 @@ export function MapEditor() {
                 <button
                   type="button"
                   onClick={() => setPinColorTarget(null)}
-                  className="text-xs text-ink-muted hover:text-ink-secondary self-end"
+                  className="text-xs text-ink-secondary hover:text-ink self-end"
                 >
                   Cancel
                 </button>
@@ -2279,7 +2279,7 @@ export function MapEditor() {
                 <button
                   type="button"
                   onClick={() => setGlyphPickerTarget(null)}
-                  className="text-xs text-ink-muted hover:text-ink-secondary self-end"
+                  className="text-xs text-ink-secondary hover:text-ink self-end"
                 >
                   Cancel
                 </button>
@@ -2316,7 +2316,7 @@ export function MapEditor() {
                 <button
                   type="button"
                   onClick={() => setRegionColorTarget(null)}
-                  className="text-xs text-ink-muted hover:text-ink-secondary self-end"
+                  className="text-xs text-ink-secondary hover:text-ink self-end"
                 >
                   Cancel
                 </button>
@@ -2408,7 +2408,7 @@ export function MapEditor() {
                 <button
                   type="button"
                   onClick={() => setRouteColorTarget(null)}
-                  className="text-xs text-ink-muted hover:text-ink-secondary self-end"
+                  className="text-xs text-ink-secondary hover:text-ink self-end"
                 >
                   Cancel
                 </button>
@@ -2458,7 +2458,7 @@ export function MapEditor() {
                     setLayersColorPickerOpen(false);
                     setLayersColorPickerCallback(null);
                   }}
-                  className="text-xs text-ink-muted hover:text-ink-secondary self-end"
+                  className="text-xs text-ink-secondary hover:text-ink self-end"
                 >
                   Cancel
                 </button>

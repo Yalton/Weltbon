@@ -98,7 +98,7 @@ export function IssueSection({ universeId, entryId, issues, onChanged }: Props) 
                         onClick={() =>
                           undismissIssue.mutate(issue.id, { onSuccess: () => onChanged?.() })
                         }
-                        className="text-xs text-ink-muted hover:text-ink-muted"
+                        className="text-xs text-ink-secondary hover:text-ink"
                       >
                         Restore
                       </button>
@@ -106,14 +106,14 @@ export function IssueSection({ universeId, entryId, issues, onChanged }: Props) 
                       <button
                         type="button"
                         onClick={() => setDismissing(issue)}
-                        className="text-xs text-ink-muted hover:text-ink-muted"
+                        className="text-xs text-ink-secondary hover:text-ink"
                       >
                         Dismiss
                       </button>
                     )}
                     <Link
                       to={`/universes/${universeId}/issues`}
-                      className="text-xs text-ink-muted hover:text-ink-muted ml-2"
+                      className="text-xs text-ink-secondary hover:text-ink ml-2"
                     >
                       View reasoning
                     </Link>
@@ -122,7 +122,7 @@ export function IssueSection({ universeId, entryId, issues, onChanged }: Props) 
                   <button
                     type="button"
                     onClick={() => handleResolve(issue.id)}
-                    className="text-xs text-ink-muted hover:text-ink-muted"
+                    className="text-xs text-ink-secondary hover:text-ink"
                   >
                     Resolve
                   </button>

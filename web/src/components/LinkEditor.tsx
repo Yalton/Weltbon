@@ -107,7 +107,7 @@ export function LinkEditor({ universeId, entryId, onLinkCreated, children, editL
           <div className="space-y-3">
             {/* Endpoints are immutable while editing: a different target is a new relationship. */}
             {!isEditing && <div>
-              <label className="block text-sm text-ink-muted mb-1">Link to entry</label>
+              <label className="block text-sm text-ink-secondary mb-1">Link to entry</label>
               <input
                 ref={inputRef}
                 type="text"
@@ -142,7 +142,7 @@ export function LinkEditor({ universeId, entryId, onLinkCreated, children, editL
 
             {/* Link type selection */}
             <div>
-              <label className="block text-sm text-ink-muted mb-1">Type</label>
+              <label className="block text-sm text-ink-secondary mb-1">Type</label>
               <LinkTypeSelect
                 universeId={universeId}
                 value={linkType}
@@ -154,7 +154,7 @@ export function LinkEditor({ universeId, entryId, onLinkCreated, children, editL
 
             {/* Direction toggle pill group (UI-SPEC Surface 2) */}
             <div>
-              <label className="block text-sm text-ink-muted mb-1">Direction</label>
+              <label className="block text-sm text-ink-secondary mb-1">Direction</label>
               <div className="flex gap-1 mt-1" role="group" aria-label="Direction">
                 <button
                   type="button"
@@ -185,7 +185,7 @@ export function LinkEditor({ universeId, entryId, onLinkCreated, children, editL
 
             {/* Display label (optional — demoted from required primary position) */}
             <div>
-              <label className="block text-sm text-ink-muted mb-1">
+              <label className="block text-sm text-ink-secondary mb-1">
                 Display label (optional)
               </label>
               <RelationCombobox
@@ -207,7 +207,7 @@ export function LinkEditor({ universeId, entryId, onLinkCreated, children, editL
               <button
                 type="button"
                 onClick={() => handleOpenChange(false)}
-                className="text-sm px-3 py-1.5 text-ink-muted hover:text-ink-muted"
+                className="text-sm px-3 py-1.5 text-ink-secondary hover:text-ink"
               >
                 Cancel
               </button>

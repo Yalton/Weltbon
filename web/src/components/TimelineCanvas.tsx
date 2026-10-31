@@ -602,7 +602,7 @@ export function TimelineCanvas({
                 y={cy + 4}
                 textAnchor={clampSide === 'before' ? 'start' : 'end'}
                 fontSize={16}
-                className="text-ink-muted opacity-40"
+                className="text-ink-secondary opacity-40"
                 fill="currentColor"
                 pointerEvents="none"
                 aria-hidden="true"
@@ -664,7 +664,7 @@ export function TimelineCanvas({
             >
               <div className="min-w-[180px] max-w-[260px] rounded-lg border border-line-strong bg-raised px-3 py-2 shadow-xl">
                 <div className="text-sm font-semibold text-ink">{displayName}</div>
-                <div className="mt-0.5 text-xs text-ink-muted">
+                <div className="mt-0.5 text-xs text-ink-secondary">
                   {formatCalendar(pin.position, calendar)?.compact ?? POSITION_FORMAT.format(pin.position)}
                   <span className="mx-1 text-ink-secondary">·</span>
                   {pin.precision}

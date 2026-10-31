@@ -80,7 +80,7 @@ export function LinkSection({
             {Object.entries(grouped).map(([linkTypeKey, links]) => (
               <div key={linkTypeKey}>
                 {/* Group heading (UI-SPEC Surface 2 + "New Surfaces — typed group heading") */}
-                <p className="text-xs text-ink-muted uppercase tracking-wide">
+                <p className="text-xs text-ink-secondary uppercase tracking-wide">
                   {linkTypeKey === 'untyped'
                     ? (links[0]?.label ?? 'Linked')
                     : formatLinkType(linkTypeKey)}
@@ -170,7 +170,7 @@ export function LinkSection({
                   {bl.sourceTitle}
                 </Link>
                 {/* Backlink inverse label: derived from linkType if preset; falls back to freeform label */}
-                <span className="text-xs text-ink-muted ml-2">
+                <span className="text-xs text-ink-secondary ml-2">
                   {getInverseLabel(bl.linkType, linkTypeRegistry) ?? bl.label ?? ''}
                 </span>
               </li>

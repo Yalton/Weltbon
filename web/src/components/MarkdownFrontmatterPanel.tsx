@@ -39,7 +39,7 @@ export function MarkdownFrontmatterPanel({
       aria-labelledby="document-tags-heading"
       aria-disabled={disabled || undefined}
     >
-      <h2 id="document-tags-heading" className="mb-1 text-xs font-semibold uppercase tracking-wide text-ink-muted">
+      <h2 id="document-tags-heading" className="mb-1 text-xs font-semibold uppercase tracking-wide text-ink-secondary">
         Document tags
       </h2>
       {parsed.diagnostics.length > 0 && (

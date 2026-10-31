@@ -92,7 +92,7 @@ export function AssetPickerModal({
             >
               {uploadAsset.isPending ? COPY.uploading : COPY.uploadLabel}
             </button>
-            <span className="ml-2 text-xs text-ink-muted">{COPY.uploadAccept}</span>
+            <span className="ml-2 text-xs text-ink-secondary">{COPY.uploadAccept}</span>
             <input
               ref={fileInputRef}
               type="file"

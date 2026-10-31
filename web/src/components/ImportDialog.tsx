@@ -117,7 +117,7 @@ export function ImportDialog({ open, onOpenChange }: Props) {
                     type="button"
                     onClick={() => fileInputRef.current?.click()}
                     disabled={state.step === 'loading'}
-                    className="w-full border-2 border-dashed border-line-strong rounded-md p-8 text-center text-sm text-ink-muted hover:border-line-strong transition-colors cursor-pointer disabled:cursor-not-allowed"
+                    className="w-full border-2 border-dashed border-line-strong rounded-md p-8 text-center text-sm text-ink-secondary hover:border-line-strong transition-colors cursor-pointer disabled:cursor-not-allowed"
                   >
                     Drop a .json file here or click to browse
                   </button>
@@ -130,14 +130,14 @@ export function ImportDialog({ open, onOpenChange }: Props) {
                       <p className="font-semibold truncate max-w-[260px]">
                         {(state.step === 'selected' ? state.file : state.file).name}
                       </p>
-                      <p className="text-ink-muted">
+                      <p className="text-ink-secondary">
                         {formatBytes((state.step === 'selected' ? state.file : state.file).size)}
                       </p>
                     </div>
                     <button
                       type="button"
                       onClick={handleRemoveFile}
-                      className="text-sm text-ink-muted hover:text-ink-muted"
+                      className="text-sm text-ink-secondary hover:text-ink"
                     >
                       Remove
                     </button>
@@ -146,7 +146,7 @@ export function ImportDialog({ open, onOpenChange }: Props) {
 
                 {/* Loading spinner */}
                 {state.step === 'loading' && (
-                  <div className="flex items-center gap-2 text-sm text-ink-muted">
+                  <div className="flex items-center gap-2 text-sm text-ink-secondary">
                     <span className="inline-block h-4 w-4 border-2 border-[color:var(--color-ink-muted)] border-t-transparent rounded-full animate-spin" />
                     Importing...
                   </div>

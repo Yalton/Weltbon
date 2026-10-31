@@ -98,7 +98,7 @@ function AssetCard({
           <button
             type="button"
             onClick={() => setEditing(true)}
-            className="text-xs text-ink-muted hover:text-ink"
+            className="text-xs text-ink-secondary hover:text-ink"
           >
             {COPY.renameLabel}
           </button>
