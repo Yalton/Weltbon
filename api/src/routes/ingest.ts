@@ -154,9 +154,9 @@ export async function materializeFileParts(
     if (/\.txt$/i.test(file.name)) {
       inputs.push({
         path: file.name.replace(/\.txt$/i, '.md'),
-        // `&` is escaped here rather than in escapeMarkdown, whose DOCX
-        // output keeps a bare `&` literal; plain text must not form entities.
-        content: escapeLineStarts(escapeMarkdown(buf.toString('utf8')).replace(/&/g, '\\&')),
+        // escapeMarkdown already escapes an `&` that would start an entity,
+        // so plain text keeps `&copy;` literal without a second pass here.
+        content: escapeLineStarts(escapeMarkdown(buf.toString('utf8'))),
       });
     } else {
       inputs.push({ path: file.name, content: buf.toString('utf8') });
