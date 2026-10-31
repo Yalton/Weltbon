@@ -24,6 +24,19 @@ vi.mock('mdast-util-from-markdown', async (importOriginal) => {
   return { ...actual, fromMarkdown: vi.fn(actual.fromMarkdown) };
 });
 
+vi.mock('../hooks/useEntries', async (importOriginal) => {
+  const actual = await importOriginal<typeof import('../hooks/useEntries')>();
+  return {
+    ...actual,
+    useEntries: () => ({
+      data: [
+        { id: 'E2', title: 'River Vael', aliases: [] },
+        { id: 'E3', title: 'Riverwatch', aliases: [] },
+      ],
+    }),
+  };
+});
+
 const fromMarkdownMock = vi.mocked(fromMarkdown);
 
 const UNSUPPORTED_BLOCK = ':::mermaid\ngraph TD\n  A --> B\n:::';
@@ -142,6 +155,24 @@ function selectLiveSubstring(textValue: string, occurrence = 0, collapsed = fals
 
 function clearLiveSelection() {
   act(() => window.getSelection()?.removeAllRanges());
+}
+
+function placeLiveCaretAfter(textValue: string) {
+  const editor = screen.getByRole('textbox');
+  editor.focus();
+  fireEvent.focus(editor);
+  const walker = document.createTreeWalker(editor, NodeFilter.SHOW_TEXT);
+  let node = walker.nextNode() as Text | null;
+  while (node && !node.data.includes(textValue)) node = walker.nextNode() as Text | null;
+  const offset = node!.data.indexOf(textValue) + textValue.length;
+  const range = document.createRange();
+  range.setStart(node!, offset);
+  range.collapse(true);
+  act(() => {
+    window.getSelection()?.removeAllRanges();
+    window.getSelection()?.addRange(range);
+    document.dispatchEvent(new Event('selectionchange'));
+  });
 }
 
 describe('MarkdownAuthoringEditor', () => {
@@ -298,6 +329,31 @@ describe('MarkdownAuthoringEditor', () => {
 
     await waitFor(() => expect(onChange).toHaveBeenLastCalledWith('[Example](https://example.com)'));
     expect(screen.getByRole('textbox')).toHaveFocus();
+  });
+
+  it('suggests entries for a [[ typed in Live Preview and inserts the picked wikilink', async () => {
+    render(<ControlledEditor value={'See \\[\\[Riv'} />);
+    placeLiveCaretAfter('[[Riv');
+
+    expect(await screen.findByRole('option', { name: 'River Vael' })).toBeInTheDocument();
+    expect(screen.getByRole('option', { name: 'Riverwatch' })).toBeInTheDocument();
+
+    fireEvent.keyDown(screen.getByRole('textbox'), { key: 'ArrowDown' });
+    fireEvent.keyDown(screen.getByRole('textbox'), { key: 'Enter' });
+
+    await waitFor(() => expect(screen.getByTestId('markdown-value').textContent).toBe('See [[Riverwatch]]'));
+    expect(screen.queryByRole('option')).not.toBeInTheDocument();
+  });
+
+  it('closes the Live Preview wikilink picker on Escape', async () => {
+    render(<ControlledEditor value={'See \\[\\[Riv'} />);
+    placeLiveCaretAfter('[[Riv');
+    await screen.findByRole('option', { name: 'River Vael' });
+
+    fireEvent.keyDown(screen.getByRole('textbox'), { key: 'Escape' });
+
+    await waitFor(() => expect(screen.queryByRole('option')).not.toBeInTheDocument());
+    expect(screen.getByTestId('markdown-value').textContent).toBe('See \\[\\[Riv');
   });
 
   it('adds a row through the safe table controls in Source mode', () => {
