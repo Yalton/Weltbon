@@ -62,11 +62,18 @@ export function ImportDetailPane({
   const typeIsValid = validTypes.includes(currentType);
 
   // string-typed updates back (a Record<string,string> is a valid
-  const metaForEditor: Record<string, string> = useMemo(() => {
+  // Structured values (such as the `docx` block of document properties) are
+  // not text fields: keep them out of the editor and carry them through edits
+  // unchanged, so they never show or save as "[object Object]".
+  const [metaForEditor, structuredMeta] = useMemo(() => {
     const source = edits.meta ?? entry.meta;
-    return Object.fromEntries(
-      Object.entries(source).map(([k, v]) => [k, v == null ? '' : String(v)]),
-    );
+    const editable: Record<string, string> = {};
+    const structured: Record<string, unknown> = {};
+    for (const [k, v] of Object.entries(source)) {
+      if (v !== null && typeof v === 'object') structured[k] = v;
+      else editable[k] = v == null ? '' : String(v);
+    }
+    return [editable, structured] as const;
   }, [edits.meta, entry.meta]);
 
   const titleId = `detail-title-${entry.path}`;
@@ -283,7 +290,7 @@ export function ImportDetailPane({
           <h2 className="text-xl font-semibold mb-2">Details</h2>
           <MetaEditor
             value={metaForEditor}
-            onChange={(meta) => onUpdateField('meta', meta)}
+            onChange={(meta) => onUpdateField('meta', { ...structuredMeta, ...meta })}
             onValidityChange={onMetaValidityChange}
           />
         </div>

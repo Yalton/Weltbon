@@ -73,6 +73,18 @@ describe('ImportDetailPane', () => {
     expect(props.onUpdateField).toHaveBeenCalledWith('title', 'Foo Renamed');
   });
 
+  it('keeps structured meta such as docx properties out of Details and through edits', async () => {
+    const user = userEvent.setup();
+    const docx = { created: '2026-10-31T02:58:00Z', modified: '2026-10-31T02:58:00Z' };
+    const { props } = renderPane({ entry: { ...baseEntry, meta: { docx, Region: 'North' } } });
+    expect(screen.queryByDisplayValue('[object Object]')).not.toBeInTheDocument();
+    expect(screen.queryByDisplayValue('docx')).not.toBeInTheDocument();
+    const region = screen.getByDisplayValue('North');
+    await user.type(region, 'ern');
+    await user.tab();
+    expect(props.onUpdateField).toHaveBeenLastCalledWith('meta', { docx, Region: 'Northern' });
+  });
+
   it('blur with unchanged title does NOT call onUpdateField', async () => {
     const user = userEvent.setup();
     const { props } = renderPane();
