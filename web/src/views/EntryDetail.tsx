@@ -184,7 +184,7 @@ export function EntryDetail() {
               ? `/share/${token ?? ''}`
               : `/universes/${uid}/entries`
           }
-          className="text-sm text-ink-muted hover:text-ink-muted"
+          className="text-sm text-ink-secondary hover:text-ink"
         >
           &larr; Back to entries
         </Link>

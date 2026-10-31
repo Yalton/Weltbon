@@ -121,7 +121,7 @@ export function AuditCompletionBanner({
               type="button"
               onClick={onDismiss}
               aria-label="Dismiss banner"
-              className="text-ink-muted hover:text-ink-secondary text-xl leading-none"
+              className="text-ink-secondary hover:text-ink text-xl leading-none"
             >
               ×
             </button>
@@ -211,7 +211,7 @@ export function AuditCompletionBanner({
             type="button"
             onClick={onDismiss}
             aria-label="Dismiss banner"
-            className="text-ink-muted hover:text-ink-secondary text-xl leading-none"
+            className="text-ink-secondary hover:text-ink text-xl leading-none"
           >
             ×
           </button>

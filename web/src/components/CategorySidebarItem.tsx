@@ -45,7 +45,7 @@ export function CategorySidebarItem({
           {...attributes}
           {...listeners}
         >
-          <span aria-hidden className="w-3 inline-block text-ink-muted">
+          <span aria-hidden className="w-3 inline-block text-ink-secondary">
             {isCollapsed ? '▸' : '▾'}
           </span>
           {category.icon && <span aria-hidden>{category.icon}</span>}
@@ -56,7 +56,7 @@ export function CategorySidebarItem({
         <DropdownMenu.Root>
           <DropdownMenu.Trigger
             aria-label={`Category actions for ${category.label}`}
-            className="px-2 py-1 text-sm text-ink-muted hover:text-ink opacity-0 group-hover:opacity-100 focus:opacity-100 data-[state=open]:opacity-100"
+            className="px-2 py-1 text-sm text-ink-secondary hover:text-ink opacity-0 group-hover:opacity-100 focus:opacity-100 data-[state=open]:opacity-100"
             onPointerDown={(e) => e.stopPropagation()}
             onKeyDown={(e) => e.stopPropagation()}
           >

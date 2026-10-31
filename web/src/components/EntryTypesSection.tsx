@@ -142,7 +142,7 @@ export function EntryTypesSection({ universe }: Props) {
                     type="button"
                     aria-label={`Rename ${type}`}
                     onClick={() => startRename(type)}
-                    className="ml-1 text-xs text-ink-muted hover:text-ink"
+                    className="ml-1 text-xs text-ink-secondary hover:text-ink"
                   >
                     ✎
                   </button>
@@ -150,7 +150,7 @@ export function EntryTypesSection({ universe }: Props) {
                     type="button"
                     aria-label={`Remove ${type}`}
                     onClick={() => requestRemove(type)}
-                    className="text-xs text-ink-muted hover:text-red-600"
+                    className="text-xs text-ink-secondary hover:text-red-600"
                   >
                     ×
                   </button>

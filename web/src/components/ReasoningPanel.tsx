@@ -35,7 +35,7 @@ export function ReasoningPanel({ issue, expanded, uid }: Props) {
         Consulted entries ({issue.consultedEntries?.length ?? 0}):
       </div>
       {!issue.consultedEntries || issue.consultedEntries.length === 0 ? (
-        <p className="text-xs text-ink-muted italic">
+        <p className="text-xs text-ink-secondary italic">
           No tool-call trail recorded for this run.
         </p>
       ) : (

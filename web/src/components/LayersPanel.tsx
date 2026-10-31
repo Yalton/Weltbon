@@ -217,7 +217,7 @@ export function LayersPanel({
               type="button"
               onClick={onToggle}
               aria-label="Close layers panel"
-              className="text-xs text-ink-muted hover:text-ink focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-[color:var(--color-accent)] focus-visible:ring-offset-2 min-h-[44px] min-w-[44px] flex items-center justify-center"
+              className="text-xs text-ink-secondary hover:text-ink focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-[color:var(--color-accent)] focus-visible:ring-offset-2 min-h-[44px] min-w-[44px] flex items-center justify-center"
             >
               ×
             </button>
@@ -287,7 +287,7 @@ export function LayersPanel({
                           type="button"
                           onClick={() => toggleExpand(layer.id)}
                           aria-label={isExpanded ? `Collapse ${layer.name}` : `Expand ${layer.name}`}
-                          className="text-ink-muted hover:text-ink focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-[color:var(--color-accent)] focus-visible:ring-offset-1 text-xs min-h-[44px] min-w-[20px] flex items-center justify-center"
+                          className="text-ink-secondary hover:text-ink focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-[color:var(--color-accent)] focus-visible:ring-offset-1 text-xs min-h-[44px] min-w-[20px] flex items-center justify-center"
                         >
                           {isExpanded ? '▾' : '▸'}
                         </button>
@@ -358,7 +358,7 @@ export function LayersPanel({
                             'text-xs focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-[color:var(--color-accent)] focus-visible:ring-offset-2 min-h-[44px] min-w-[28px] flex items-center justify-center',
                             layer.secret
                               ? 'text-amber-500 hover:text-amber-600'
-                              : 'text-ink-muted hover:text-ink-secondary',
+                              : 'text-ink-secondary hover:text-ink',
                           ].join(' ')}
                         >
                           {/* Padlock SVG: filled when secret, outline when not */}
@@ -548,7 +548,7 @@ export function LayersPanel({
                                         aria-label={`Move ${type.name} up`}
                                         aria-disabled={isFirst ? 'true' : 'false'}
                                         disabled={isFirst}
-                                        className="text-xs text-ink-muted hover:text-ink focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-[color:var(--color-accent)] focus-visible:ring-offset-1 min-h-[44px] min-w-[20px] flex items-center justify-center disabled:opacity-40 disabled:cursor-not-allowed"
+                                        className="text-xs text-ink-secondary hover:text-ink focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-[color:var(--color-accent)] focus-visible:ring-offset-1 min-h-[44px] min-w-[20px] flex items-center justify-center disabled:opacity-40 disabled:cursor-not-allowed"
                                       >
                                         ▲
                                       </button>
@@ -561,7 +561,7 @@ export function LayersPanel({
                                         aria-label={`Move ${type.name} down`}
                                         aria-disabled={isLast ? 'true' : 'false'}
                                         disabled={isLast}
-                                        className="text-xs text-ink-muted hover:text-ink focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-[color:var(--color-accent)] focus-visible:ring-offset-1 min-h-[44px] min-w-[20px] flex items-center justify-center disabled:opacity-40 disabled:cursor-not-allowed"
+                                        className="text-xs text-ink-secondary hover:text-ink focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-[color:var(--color-accent)] focus-visible:ring-offset-1 min-h-[44px] min-w-[20px] flex items-center justify-center disabled:opacity-40 disabled:cursor-not-allowed"
                                       >
                                         ▼
                                       </button>

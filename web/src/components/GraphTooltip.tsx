@@ -18,7 +18,7 @@ export function GraphTooltip({ node, x, y }: GraphTooltipProps) {
         {node.icon && <span aria-hidden="true">{node.icon}</span>}
         <span>{node.title}</span>
       </div>
-      <div className="text-xs text-ink-muted">{node.entryType}</div>
+      <div className="text-xs text-ink-secondary">{node.entryType}</div>
       {node.summary && <p className="mt-1 text-xs text-ink-secondary">{node.summary}</p>}
     </div>
   );

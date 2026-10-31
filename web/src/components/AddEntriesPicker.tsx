@@ -79,7 +79,7 @@ export function AddEntriesPicker({
             type="button"
             onClick={onClose}
             aria-label={COPY.close}
-            className="rounded-md px-1.5 text-lg leading-none text-ink-muted hover:text-ink focus:outline-none focus-visible:ring-2 focus-visible:ring-[color:var(--color-accent)]"
+            className="rounded-md px-1.5 text-lg leading-none text-ink-secondary hover:text-ink focus:outline-none focus-visible:ring-2 focus-visible:ring-[color:var(--color-accent)]"
           >
             ×
           </button>

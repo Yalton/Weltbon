@@ -45,7 +45,7 @@ export function ImportStickyBar({
     >
       <Link
         to={`/universes/${universeId}/entries`}
-        className="text-sm text-ink-muted hover:text-ink-muted"
+        className="text-sm text-ink-secondary hover:text-ink"
       >
         ← Back to {universeName}
       </Link>

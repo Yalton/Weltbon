@@ -311,7 +311,7 @@ export function ImportUploadStep({
             <p className="font-semibold truncate max-w-[400px]">
               {describeSelection(state.files, state.kind)}
             </p>
-            <p className="text-ink-muted">
+            <p className="text-ink-secondary">
               {describeSize(state.files)} ·{' '}
               {describeKind(state.kind, state.files)}
             </p>
@@ -319,7 +319,7 @@ export function ImportUploadStep({
           <button
             type="button"
             onClick={handleRemove}
-            className="text-sm text-ink-muted hover:text-ink-muted"
+            className="text-sm text-ink-secondary hover:text-ink"
           >
             Remove
           </button>

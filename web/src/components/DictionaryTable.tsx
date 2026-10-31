@@ -326,7 +326,7 @@ export function DictionaryTable({
                         {row.etymology}
                       </span>
                     ) : (
-                      <span className="text-ink-muted">—</span>
+                      <span className="text-ink-secondary">—</span>
                     )}
                   </td>
 
@@ -344,7 +344,7 @@ export function DictionaryTable({
                         ))}
                       </div>
                     ) : (
-                      <span className="text-ink-muted">—</span>
+                      <span className="text-ink-secondary">—</span>
                     )}
                   </td>
 

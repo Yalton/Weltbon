@@ -161,7 +161,7 @@ export function EntryHoverCard({
           role="button"
           tabIndex={-1}
           aria-label={`Preview ${entry.title}`}
-          className="entry-hover-caret inline-flex items-center justify-center w-4 h-4 text-xs text-ink-muted hover:text-ink cursor-pointer select-none"
+          className="entry-hover-caret inline-flex items-center justify-center w-4 h-4 text-xs text-ink-secondary hover:text-ink cursor-pointer select-none"
         >
           ⓘ
         </span>

@@ -51,7 +51,7 @@ export function TimelinePinSection({ universeId, entryId }: Props) {
             <button
               type="button"
               onClick={() => setEditorOpen(true)}
-              className="text-xs text-ink-muted hover:text-ink-muted"
+              className="text-xs text-ink-secondary hover:text-ink"
             >
               Edit
             </button>

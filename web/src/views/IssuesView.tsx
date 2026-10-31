@@ -406,7 +406,7 @@ export function IssuesView() {
                           <button
                             type="button"
                             onClick={() => toggleReasoning(issue.id)}
-                            className="text-ink-muted hover:text-ink-muted"
+                            className="text-ink-secondary hover:text-ink"
                           >
                             {isExpanded ? 'Hide' : 'Why?'}
                           </button>
@@ -414,7 +414,7 @@ export function IssuesView() {
                             <button
                               type="button"
                               onClick={() => setDismissingIssue(issue)}
-                              className="text-ink-muted hover:text-ink-muted"
+                              className="text-ink-secondary hover:text-ink"
                             >
                               Dismiss
                             </button>
@@ -423,7 +423,7 @@ export function IssuesView() {
                             <button
                               type="button"
                               onClick={() => handleRestore(issue)}
-                              className="text-ink-muted hover:text-ink-muted"
+                              className="text-ink-secondary hover:text-ink"
                             >
                               Restore
                             </button>
@@ -434,21 +434,21 @@ export function IssuesView() {
                           <button
                             type="button"
                             onClick={() => handleToggleResolved(issue)}
-                            className="text-ink-muted hover:text-ink-muted"
+                            className="text-ink-secondary hover:text-ink"
                           >
                             {issue.resolved ? 'Reopen' : 'Resolve'}
                           </button>
                           <button
                             type="button"
                             onClick={() => setEditor({ open: true, initial: issue })}
-                            className="text-ink-muted hover:text-ink-muted"
+                            className="text-ink-secondary hover:text-ink"
                           >
                             Edit
                           </button>
                           <button
                             type="button"
                             onClick={() => setDeletingId(issue.id)}
-                            className="text-ink-muted hover:text-red-500"
+                            className="text-ink-secondary hover:text-red-500"
                           >
                             Delete
                           </button>

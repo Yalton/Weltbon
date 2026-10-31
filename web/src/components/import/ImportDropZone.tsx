@@ -70,7 +70,7 @@ export function ImportDropZone({ onSelect, disabled }: ImportDropZoneProps) {
           'w-full mt-6 border-2 border-dashed rounded-md p-8 text-center transition-colors cursor-pointer disabled:cursor-not-allowed',
           dragActive
             ? 'border-[color:var(--color-accent)] bg-[color:var(--color-accent)]/5 text-ink'
-            : ' border-line-strong text-ink-muted hover:border-line-strong',
+            : ' border-line-strong text-ink-secondary hover:border-line-strong',
         ].join(' ')}
       >
         <p className="text-sm">

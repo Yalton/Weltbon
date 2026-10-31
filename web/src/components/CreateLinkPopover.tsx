@@ -112,7 +112,7 @@ export function CreateLinkPopover({
           {/* Link type (above display label) */}
           <div className="space-y-3">
             <div>
-              <label className="block text-sm text-ink-muted mb-1">Type</label>
+              <label className="block text-sm text-ink-secondary mb-1">Type</label>
               <LinkTypeSelect
                 universeId={universeId}
                 value={linkType}
@@ -124,7 +124,7 @@ export function CreateLinkPopover({
 
             {/* Direction toggle pill group (UI-SPEC Surface 2) */}
             <div>
-              <label className="block text-sm text-ink-muted mb-1">Direction</label>
+              <label className="block text-sm text-ink-secondary mb-1">Direction</label>
               <div className="flex gap-1 mt-1" role="group" aria-label="Direction">
                 <button
                   type="button"
@@ -155,7 +155,7 @@ export function CreateLinkPopover({
 
             {/* Display label (optional — demoted from primary position) */}
             <div>
-              <label className="block text-sm text-ink-muted mb-1">
+              <label className="block text-sm text-ink-secondary mb-1">
                 Display label (optional)
               </label>
               <RelationCombobox
