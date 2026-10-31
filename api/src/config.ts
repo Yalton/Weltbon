@@ -40,7 +40,7 @@ export interface Env {
   trustProxy: boolean;
 }
 
-const DEFAULT_LANDING_REPO_URL = 'https://github.com/Citreum-LLC/Weltbon';
+const DEFAULT_LANDING_REPO_URL = 'https://github.com/Yalton/Weltbon';
 
 export function loadEnv(source: NodeJS.ProcessEnv = process.env): Env {
   const jwt = source.JWT_SECRET;

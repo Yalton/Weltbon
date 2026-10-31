@@ -153,6 +153,6 @@ describe('RuntimeProvider', () => {
     render(<RuntimeProvider><LandingChild /></RuntimeProvider>);
 
     const expected = landing === undefined ? 'false' : 'true';
-    expect(await screen.findByText(`landing ${expected} https://github.com/Citreum-LLC/Weltbon`)).toBeInTheDocument();
+    expect(await screen.findByText(`landing ${expected} https://github.com/Yalton/Weltbon`)).toBeInTheDocument();
   });
 });

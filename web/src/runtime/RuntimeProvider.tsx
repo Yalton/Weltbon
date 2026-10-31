@@ -28,7 +28,7 @@ interface RuntimeCapabilities {
 // Used when an older API omits `landing`: no invite form, public repo link.
 const FALLBACK_LANDING: LandingConfig = {
   inviteRequestsEnabled: false,
-  repoUrl: 'https://github.com/Citreum-LLC/Weltbon',
+  repoUrl: 'https://github.com/Yalton/Weltbon',
 };
 
 function parseLanding(raw: unknown): LandingConfig {

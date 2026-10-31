@@ -1,6 +1,33 @@
 # Weltbon
 
-Self-hosted worldbuilding: write entries, link them, explore the graph, and export your work.
+Weltbon is a self-hosted workspace for worldbuilding. Write entries for the people, places and events of your setting, link them to one another, and explore how it all connects in a graph, on a timeline and on your own maps. Run it on your own server with Docker, or use the desktop app on your computer.
+
+![An entry for the city of Highcrown, with its cover art, details and links](docs/screenshots/entry.jpg)
+
+## Features
+
+- **Entries** for characters, places, events, factions and anything else, written in Markdown with a live preview. Type `[[` to link another entry.
+- **Links and backlinks** between entries, with relationship labels such as *rules*, *serves* or *enemy of*.
+- **Graph** of every entry and how they connect.
+- **Timeline** with your own calendar and eras.
+- **Maps**: upload a map image and pin entries to it.
+- **Diagrams** for family trees, courts and org charts.
+- **Dictionary** for your constructed languages, plus stats and an issue tracker for loose ends.
+- **Import** from Markdown, plain text, Word (`.docx`) or an Obsidian-style vault ZIP; **export** to Markdown, JSON, Word or PDF.
+- **Sync** between the desktop app and a self-hosted server.
+
+| Graph | Map | Diagram |
+| --- | --- | --- |
+| ![Graph of entries and their relationships](docs/screenshots/graph.jpg) | ![World map with pinned places](docs/screenshots/map.jpg) | ![Diagram of a royal court](docs/screenshots/diagram.jpg) |
+
+## Desktop app
+
+Download the desktop app from [GitHub Releases](https://github.com/Yalton/Weltbon/releases/latest):
+
+- **Linux:** `Weltbon-<version>.AppImage`, or `weltbon-desktop_<version>_amd64.deb` for Debian and Ubuntu.
+- **Windows:** `Weltbon.Setup.<version>.exe`.
+
+macOS builds are not published yet; build from source as described in [Desktop app](docs/desktop-app.md). The desktop app keeps your universes on your computer and can sync with a self-hosted server.
 
 ## Self-Host (Docker)
 
@@ -9,7 +36,7 @@ Docker Compose is the recommended way to run Weltbon. It starts the API and Post
 ### Prerequisites
 
 - Docker Engine and Docker Compose v2.
-- Git access to the Weltbon repository. The SSH clone URL requires a key registered with Gitea.
+- Git.
 - `openssl` to generate secrets.
 
 ### `.env` Reference
@@ -32,7 +59,7 @@ Copy `.env.example` to `.env` and replace the example credentials. Paste generat
 ### Quickstart
 
 ```bash
-git clone git@repo.billbert.co:yalt/Weltbon.git Weltbon
+git clone https://github.com/Yalton/Weltbon.git
 cd Weltbon
 cp .env.example .env
 ```
@@ -64,7 +91,7 @@ git pull --ff-only origin master
 ./scripts/deploy.sh --no-pull
 ```
 
-The deploy script makes a PostgreSQL dump before migrations when the database container exists, builds the app, restarts it, and checks `/api/version`. Review `docker compose logs --tail=50 app` if deployment fails. For a published image, the `docker-compose.yml` app service has a commented `image: ghcr.io/...` example; enable it and remove the local `build:` configuration to use that image.
+The deploy script makes a PostgreSQL dump before migrations when the database container exists, builds the app, restarts it, and checks `/api/version`. Review `docker compose logs --tail=50 app` if deployment fails. Each release also publishes a container image, `ghcr.io/yalton/weltbon:<version>`. To use it instead of building locally, set `image: ghcr.io/yalton/weltbon:<version>` on the `docker-compose.yml` app service (there is a commented example) and remove its `build:` section.
 
 ## Backup
 
