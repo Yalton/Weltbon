@@ -12,8 +12,11 @@ export interface WikilinkAutocompleteProps {
   universeId: string;
   currentEntryId: string | null;
   query: string;
-  textareaRef: React.RefObject<HTMLTextAreaElement | null>;
+  /** Source mode: the caret is measured from this textarea. */
+  textareaRef?: React.RefObject<HTMLTextAreaElement | null>;
   triggerStart: number;
+  /** Live mode: caret position already measured, relative to the offset parent. */
+  anchor?: CaretCoords;
   activeIndex: number;
   onActiveIndexChange: (next: number) => void;
   onResultCountChange: (count: number) => void;
@@ -177,6 +180,7 @@ export function WikilinkAutocomplete({
   query,
   textareaRef,
   triggerStart,
+  anchor,
   activeIndex,
   onActiveIndexChange,
   onResultCountChange,
@@ -195,11 +199,15 @@ export function WikilinkAutocomplete({
   const [caretCoords, setCaretCoords] = useState<CaretCoords>({ top: 0, left: 0 });
 
   useEffect(() => {
-    const textarea = textareaRef.current;
+    if (anchor) {
+      setCaretCoords(anchor);
+      return;
+    }
+    const textarea = textareaRef?.current;
     if (!textarea) return;
     const coords = getCaretCoordinates(textarea, triggerStart);
     setCaretCoords(coords);
-  }, [textareaRef, triggerStart, query]);
+  }, [textareaRef, triggerStart, query, anchor?.top, anchor?.left]);
 
   useEffect(() => {
     onResultCountChange(results.length);

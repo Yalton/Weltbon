@@ -19,6 +19,7 @@ import { MarkdownAuthoringToolbar } from './MarkdownAuthoringToolbar';
 import { MarkdownCommandPalette } from './MarkdownCommandPalette';
 import { MarkdownFrontmatterPanel } from './MarkdownFrontmatterPanel';
 import { MarkdownLinkDialog, parseMarkdownLink, type MarkdownLinkKind } from './MarkdownLinkDialog';
+import { WikilinkAutocomplete } from './WikilinkAutocomplete';
 import {
   findMalformedMarkdownTableRanges,
   findMarkdownTableRanges,
@@ -934,6 +935,44 @@ function liveMarkdownSelection(editable: HTMLElement, markdown: string): Selecti
   };
 }
 
+type LiveWikilinkTrigger = { query: string; selection: Selection; caret: DOMRect };
+
+// A `[[query` typed before a collapsed caret, mapped to its Markdown range so
+// the picked link can replace it. Null inside code or when the rendered text
+// cannot be mapped back to the Markdown source exactly.
+function liveWikilinkTrigger(editable: HTMLElement, markdown: string): LiveWikilinkTrigger | null {
+  const domSelection = window.getSelection();
+  if (!domSelection?.rangeCount || !domSelection.isCollapsed) return null;
+  const range = domSelection.getRangeAt(0);
+  if (!editable.contains(range.startContainer)) return null;
+  const element = range.startContainer instanceof Element ? range.startContainer : range.startContainer.parentElement;
+  if (element?.closest('code, pre')) return null;
+  const block = selectionBlock(editable, range.startContainer);
+  if (!block) return null;
+  const caret = domTextOffset(block, range.startContainer, range.startOffset);
+  if (caret === null) return null;
+  const text = renderedBlockText(block);
+  const match = /\[\[([^[\]\n]{0,80})$/.exec(text.slice(0, caret));
+  if (!match) return null;
+  const markdownBlock = markdownBlocks(markdown)[Array.from(editable.children).indexOf(block)];
+  if (!markdownBlock) return null;
+  const source = markdown.slice(markdownBlock.start, markdownBlock.end);
+  // The live editor exports a typed `[` as `\[`, so boundaries are not exact;
+  // the visible text must still match for the offsets to be trusted.
+  if (markdownTextMap(source).text !== text) return null;
+  let start = markdownOffsetForVisibleText(source, caret - match[0].length);
+  if (source[start - 1] === '\\') start -= 1;
+  const rect = range.getBoundingClientRect();
+  return {
+    query: match[1],
+    selection: {
+      start: markdownBlock.start + start,
+      end: markdownBlock.start + markdownOffsetForVisibleText(source, caret),
+    },
+    caret: rect.height > 0 || rect.width > 0 ? rect : block.getBoundingClientRect(),
+  };
+}
+
 function tableFromNode(node: Node | null): HTMLTableElement | null {
   const element = node instanceof Element ? node : node?.parentElement;
   return element?.closest('table') as HTMLTableElement | null;
@@ -990,6 +1029,14 @@ export const MarkdownAuthoringEditor = forwardRef<
     markdown?: string;
   } | null>(null);
   const pendingHeadingAnchor = useRef<string | null>(null);
+  const [wikilink, setWikilink] = useState<{
+    index: number; query: string; selection: Selection; anchor: { top: number; left: number };
+  } | null>(null);
+  const [wikilinkActiveIndex, setWikilinkActiveIndex] = useState(0);
+  const wikilinkResultCount = useRef(0);
+  const wikilinkActiveInsert = useRef<string | null>(null);
+  // Escape closes the picker for this `[[` only; typing elsewhere re-arms it.
+  const dismissedWikilinkStart = useRef<number | null>(null);
   const parts = splitUnsupportedBlocks(value);
   const frontmatter = parseMarkdownFrontmatter(value);
   const rawFallback = liveParserError !== null || frontmatter.diagnostics.length > 0;
@@ -1084,7 +1131,73 @@ export const MarkdownAuthoringEditor = forwardRef<
     onChange(next);
   };
 
+  const updateWikilink = () => {
+    const index = activeLiveEditorIndex.current;
+    const wrapper = liveEditorWrappers.current[index];
+    const editable = wrapper?.querySelector<HTMLElement>('[contenteditable="true"]');
+    const editor = mdxEditorRefs.current[index];
+    const trigger = mode === 'live' && !disabled && wrapper && editable && editor
+      ? liveWikilinkTrigger(editable, editor.getMarkdown())
+      : null;
+    if (!trigger || trigger.selection.start !== dismissedWikilinkStart.current) dismissedWikilinkStart.current = null;
+    if (!trigger || dismissedWikilinkStart.current !== null) {
+      setWikilink((current) => current === null ? current : null);
+      return;
+    }
+    const box = wrapper!.getBoundingClientRect();
+    const anchor = { top: trigger.caret.bottom - box.top, left: trigger.caret.left - box.left };
+    setWikilink((current) => {
+      if (current && current.index === index && current.query === trigger.query
+        && current.selection.start === trigger.selection.start && current.selection.end === trigger.selection.end
+        && current.anchor.top === anchor.top && current.anchor.left === anchor.left) return current;
+      if (current?.query !== trigger.query) setWikilinkActiveIndex(0);
+      return { index, query: trigger.query, selection: trigger.selection, anchor };
+    });
+  };
+
+  const insertWikilink = (insertText: string) => {
+    const target = wikilink;
+    if (!target) return;
+    setWikilink(null);
+    const editor = mdxEditorRefs.current[target.index];
+    const editable = liveEditorWrappers.current[target.index]?.querySelector<HTMLElement>('[contenteditable="true"]');
+    if (!editor) return;
+    const replaced = replaceMarkdownSelection(editor.getMarkdown(), target.selection, insertText);
+    const canonical = canonicalizeLiveMarkdown(replaced.markdown, parts[target.index]?.content);
+    editor.setMarkdown(canonical);
+    changeLivePart(target.index, canonical);
+    requestAnimationFrame(() => {
+      if (!editable?.isConnected) return;
+      editable.focus();
+      restoreLiveMarkdownSelection(editable, canonical, replaced.selection);
+    });
+  };
+
+  const handleWikilinkKey = (event: React.KeyboardEvent) => {
+    if (!wikilink) return;
+    const count = wikilinkResultCount.current;
+    if (event.key === 'ArrowDown' || event.key === 'ArrowUp') {
+      if (count === 0) return;
+      event.preventDefault();
+      event.stopPropagation();
+      const step = event.key === 'ArrowDown' ? 1 : count - 1;
+      setWikilinkActiveIndex((index) => (index + step) % count);
+    } else if (event.key === 'Enter' || event.key === 'Tab') {
+      const insertText = wikilinkActiveInsert.current;
+      if (!insertText) return;
+      event.preventDefault();
+      event.stopPropagation();
+      insertWikilink(insertText);
+    } else if (event.key === 'Escape') {
+      event.preventDefault();
+      event.stopPropagation();
+      dismissedWikilinkStart.current = wikilink.selection.start;
+      setWikilink(null);
+    }
+  };
+
   const switchMode = (nextMode: 'live' | 'source') => {
+    setWikilink(null);
     if (nextMode === 'source') {
       const liveIndex = activeLiveEditorIndex.current;
       const activeElement = liveEditorWrappers.current[liveIndex]
@@ -1369,7 +1482,10 @@ export const MarkdownAuthoringEditor = forwardRef<
 
   useEffect(() => {
     if (mode !== 'live') return;
-    const handleSelectionChange = () => updateTableSelection();
+    const handleSelectionChange = () => {
+      updateTableSelection();
+      updateWikilink();
+    };
     document.addEventListener('selectionchange', handleSelectionChange);
     updateTableSelection();
     return () => document.removeEventListener('selectionchange', handleSelectionChange);
@@ -1474,7 +1590,9 @@ export const MarkdownAuthoringEditor = forwardRef<
                 <div
                   key={index}
                   ref={(element) => { liveEditorWrappers.current[index] = element; }}
+                  className="relative"
                   onFocusCapture={() => { activeRawBlockIndex.current = null; activeLiveEditorIndex.current = index; updateTableSelection(index); }}
+                  onKeyDownCapture={handleWikilinkKey}
                   onClick={() => { mdxEditorRefs.current[index]?.focus(); updateTableSelection(index); }}
                 >
                   <MDXEditor
@@ -1486,10 +1604,27 @@ export const MarkdownAuthoringEditor = forwardRef<
                     placeholder="Write in Markdown..."
                     contentEditableClassName="prose prose-neutral prose-invert max-w-none min-h-48 px-3 py-2 focus:outline-none"
                     onChange={(markdown, initialMarkdownNormalize) => {
-                      if (!initialMarkdownNormalize) changeLivePart(index, markdown);
+                      if (initialMarkdownNormalize) return;
+                      changeLivePart(index, markdown);
+                      requestAnimationFrame(updateWikilink);
                     }}
                     onError={({ error }) => setLiveParserError(error)}
                   />
+                  {wikilink?.index === index && (
+                    <WikilinkAutocomplete
+                      universeId={universeId}
+                      currentEntryId={entryId ?? null}
+                      query={wikilink.query}
+                      triggerStart={wikilink.selection.start}
+                      anchor={wikilink.anchor}
+                      activeIndex={wikilinkActiveIndex}
+                      onActiveIndexChange={setWikilinkActiveIndex}
+                      onResultCountChange={(count) => { wikilinkResultCount.current = count; }}
+                      onActiveInsertChange={(insertText) => { wikilinkActiveInsert.current = insertText; }}
+                      onSelect={insertWikilink}
+                      onDismiss={() => setWikilink(null)}
+                    />
+                  )}
                 </div>
               );
             })}
