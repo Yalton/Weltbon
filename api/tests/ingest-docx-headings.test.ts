@@ -89,6 +89,19 @@ describe('buildStyleIndex / resolveStyledHeading (DOCX-04)', () => {
 describe('detectUnstyledHeadings (DOCX-09)', () => {
   const BODY = { sizeHalfPoints: 22 };  // 11pt
 
+  it('keeps bold quoted dialogue in the body and groups nearby title sizes', () => {
+    const blocks = [
+      para('Story One', {}, { bold: true, sizeHalfPoints: 28 }),
+      para('Prose.', {}, BODY),
+      para('“Online”', {}, { bold: true, sizeHalfPoints: 28 }),
+      para('More prose.', {}, BODY),
+      para('Story Two', {}, { bold: true, sizeHalfPoints: 24 }),
+      para('Prose.', {}, BODY),
+    ];
+    const headings = detectUnstyledHeadings(blocks);
+    expect([...headings]).toEqual([[0, 1], [4, 1]]);
+  });
+
   it('promotes a bold short line followed by prose', () => {
     const blocks = [
       para('The Vale', {}, { bold: true, ...BODY }),

@@ -15,6 +15,8 @@ import { DocxFormatError } from '../src/services/ingest-docx/unpack.js';
 import { makeDocx, documentWith } from './helpers/docx-fixture.js';
 import { parseFrontmatter, inferTitle } from '../src/services/ingest-markdown.js';
 import { splitMarkdownFile } from '../src/services/ingest-split.js';
+import { unified } from 'unified';
+import remarkParse from 'remark-parse';
 
 const NO_COUNTERS = {
   insertionsKept: 0, deletionsDropped: 0, commentsDropped: 0,
@@ -71,11 +73,55 @@ describe('escapeMarkdown', () => {
   it('escapes the remaining structural characters', () => {
     // `|` matters inside table cells, `` ` `` would open a code span, and `~`
     // would collide with the strikethrough this converter emits itself.
-    expect(escapeMarkdown('a|b`c~d')).toBe('a\\|b\\`c\\~d');
+    expect(escapeMarkdown('a|b`c~d &copy;')).toBe('a\\|b\\`c\\~d \\&copy;');
+    // A plain ampersand is not an entity reference and stays unescaped.
+    expect(escapeMarkdown('The Weigher & The Tallyman')).toBe('The Weigher & The Tallyman');
   });
 });
 
 describe('convertDocument — blocks', () => {
+  it('keeps tab and paragraph indentation as nested outline items', () => {
+    const result = convert([
+      para([run('Pantheon')]),
+      para([run('', { tab: true }), run('Elders')]),
+      para([run('', { tab: true }), run('', { tab: true }), run('Aster')]),
+      para([run('', { tab: true }), run('Wardens')]),
+      para([run('Deep child')], { indentTwips: 1440 }),
+    ]);
+    expect(result.markdown).toContain('- Pantheon\n  - Elders\n    - Aster\n  - Wardens\n    - Deep child');
+    const tree = unified().use(remarkParse).parse(result.markdown);
+    expect(tree.children[0].type).toBe('list');
+    if (tree.children[0].type === 'list') {
+      const root = tree.children[0].children[0];
+      expect(root.children.some((node) => node.type === 'list')).toBe(true);
+    }
+  });
+
+  it('keeps a heading above a later tabbed outline, even across empty paragraphs', () => {
+    const result = convert([
+      para([run('Title')], { styleId: 'Heading1' }),
+      para([]),
+      para([run('', { tab: true }), run('Child')]),
+      para([run('Quote')], { styleId: 'Quote' }),
+      para([run('', { tab: true }), run('Other child')]),
+    ]);
+    const tree = unified().use(remarkParse).parse(result.markdown);
+    expect(tree.children[0].type).toBe('heading');
+    expect(result.markdown).toContain('# Title\n\n- Child');
+    expect(result.markdown).toContain('> Quote\n\n- Other child');
+  });
+
+  it('keeps promoted headings available as split boundaries beside outlines', () => {
+    const result = convert([
+      para([run('Story One')]), para([]),
+      para([run('', { tab: true }), run('Child one')]),
+      para([run('Story Two')]), para([]),
+      para([run('', { tab: true }), run('Child two')]),
+    ], { promotedHeadings: new Map([[0, 1], [3, 1]]) });
+    expect(splitMarkdownFile({ path: 'stories.md', content: result.markdown }, 1)).toHaveLength(2);
+    expect(result.markdown).toContain('# Story One\n\n- Child one');
+    expect(result.markdown).toContain('# Story Two\n\n- Child two');
+  });
   it('renders a styled heading at its level', () => {
     const r = convert([para([run('The Vale')], { styleId: 'Heading2' })]);
     expect(r.markdown).toContain('## The Vale');
@@ -172,6 +218,66 @@ describe('convertDocument — blocks', () => {
 });
 
 describe('convertDocument — inline', () => {
+  it('renders punctuation-adjacent bold text without literal markers', () => {
+    const markdown = convert([para([
+      run('“', { bold: true }), run('Who keeps the gate?'),
+      run(' Name:', { bold: true }), run('Tallies'),
+    ])]).markdown;
+    const tree = unified().use(remarkParse).parse(markdown);
+    expect(JSON.stringify(tree)).not.toContain('**“**');
+    expect(markdown).toContain('“Who keeps the gate? **Name**:Tallies');
+    expect(tree.children[0].type).toBe('paragraph');
+  });
+
+  it('handles symbols and combining marks at emphasis boundaries', () => {
+    const markdown = convert([para([
+      run('Price$', { bold: true }), run('', { bold: true }), run('USD'),
+      run(' Name:', { bold: true }), run('\u0301mark'),
+    ])]).markdown;
+    expect(markdown).toContain('**Price**$USD');
+    expect(markdown).toContain('**Name**:\u0301mark');
+    const tree = unified().use(remarkParse).parse(markdown);
+    expect(tree.children[0].type).toBe('paragraph');
+    if (tree.children[0].type === 'paragraph') {
+      expect(tree.children[0].children.some((node) => node.type === 'strong')).toBe(true);
+    }
+    expect(convert([para([run('$', { bold: true }), run(' USD')])]).markdown)
+      .toContain('**$** USD');
+    const joiner = convert([para([
+      run('Price$', { bold: true }), run('\u200dUSD'),
+    ])]).markdown;
+    expect(joiner).toContain('**Price**$\u200dUSD');
+    const joinedTree = unified().use(remarkParse).parse(joiner);
+    expect(joinedTree.children[0].type).toBe('paragraph');
+    if (joinedTree.children[0].type === 'paragraph') {
+      expect(joinedTree.children[0].children[0].type).toBe('strong');
+    }
+    expect(convert([para([run('USD'), run(' $', { bold: true })])]).markdown)
+      .toContain('USD **$**');
+    expect(convert([para([run(' Price: ', { bold: true }), run('USD')])]).markdown)
+      .toContain('**Price:** USD');
+  });
+
+  it('keeps differently formatted neighboring runs parseable as emphasis', () => {
+    const markdown = convert([para([
+      run('a', { bold: true }), run('b', { bold: true, italic: true }),
+      run('c', { italic: true }),
+    ])]).markdown;
+    const tree = unified().use(remarkParse).parse(markdown);
+    expect(tree.children[0].type).toBe('paragraph');
+    if (tree.children[0].type === 'paragraph') {
+      expect(tree.children[0].children.every((node) => node.type !== 'text')).toBe(true);
+    }
+  });
+
+  it('handles many empty runs without repeated neighbor scans', () => {
+    const emptyRuns = Array.from({ length: 50_000 }, () => run(''));
+    const started = performance.now();
+    const markdown = convert([para([run('Price$', { bold: true }), ...emptyRuns, run('USD')])]).markdown;
+    expect(markdown).toContain('**Price**$USD');
+    expect(performance.now() - started).toBeLessThan(3_000);
+  });
+
   it('renders bold, italic and strikethrough', () => {
     const r = convert([para([
       run('b', { bold: true }), run('i', { italic: true }), run('s', { strike: true }),
@@ -681,6 +787,21 @@ describe('convertDocument — list indentation', () => {
  * leaves the manifest's contentType null, and neither throws).
  */
 describe('convertDocx — end to end', () => {
+  it('preserves a tab-indented outline and punctuation-adjacent bold from DOCX XML', async () => {
+    const buf = await makeDocx({ documentXml: documentWith(
+      '<w:p><w:r><w:t>Pantheon</w:t></w:r></w:p>'
+      + '<w:p><w:r><w:tab/><w:t>Elders</w:t></w:r></w:p>'
+      + '<w:p><w:r><w:tab/><w:tab/><w:t>Aster</w:t></w:r></w:p>'
+      + '<w:p><w:pPr><w:ind w:firstLine="720"/></w:pPr><w:r><w:t>Ordinary prose.</w:t></w:r></w:p>'
+      + '<w:p><w:r><w:rPr><w:b/></w:rPr><w:t>“</w:t></w:r>'
+      + '<w:r><w:t>Who remains?</w:t></w:r></w:p>',
+    ) });
+    const out = await convertDocx(buf, { promoteHeadings: false });
+    expect(out.markdown).toContain('- Pantheon\n  - Elders\n    - Aster');
+    expect(out.markdown).toContain('\n\nOrdinary prose.\n\n');
+    expect(out.markdown).toContain('“Who remains?');
+    expect(out.markdown).not.toContain('**“**');
+  });
   it('converts a styled document to Markdown headings', async () => {
     const buf = await makeDocx({
       documentXml: documentWith(

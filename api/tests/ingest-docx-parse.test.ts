@@ -108,6 +108,15 @@ describe('parseDocumentXml — resource caps (T-35-04)', () => {
 });
 
 describe('parseDocumentXml — paragraphs and runs', () => {
+  it('reads paragraph indentation for unnumbered outlines', () => {
+    const doc = p('<w:p><w:pPr><w:ind w:left="720" w:firstLine="720"/></w:pPr><w:r><w:t>Child</w:t></w:r></w:p>');
+    expect(doc.blocks[0]).toMatchObject({ kind: 'paragraph', indentTwips: 720 });
+  });
+
+  it('does not treat a manuscript first-line indent as an outline depth', () => {
+    const doc = p('<w:p><w:pPr><w:ind w:firstLine="720"/></w:pPr><w:r><w:t>Ordinary prose.</w:t></w:r></w:p>');
+    expect(doc.blocks[0]).toMatchObject({ kind: 'paragraph', indentTwips: 0 });
+  });
   it('reads a plain paragraph', () => {
     const doc = p('<w:p><w:r><w:t>Hello</w:t></w:r></w:p>');
     expect(doc.blocks).toHaveLength(1);

@@ -33,7 +33,9 @@ export interface ConvertResult {
 }
 
 export function escapeMarkdown(text: string): string {
-  return text.replace(/[\\*_[\]`#|~<]/g, (ch) => `\\${ch}`);
+  // `&` only where it would start an entity reference (`&copy;`), so a
+  // plain ampersand stays readable in the stored markdown.
+  return text.replace(/[\\*_[\]`#|~<]|&(?=#?[a-z0-9]+;)/gi, (ch) => `\\${ch}`);
 }
 
 export function escapeLineStarts(text: string): string {
@@ -76,15 +78,23 @@ function isQuoteStyle(styleId: string | null): boolean {
   return styleId !== null && /^(intense)?quote$/i.test(styleId.replace(/\s+/g, ''));
 }
 
-function decorate(escaped: string, r: DocxRun): string {
-  if (!r.bold && !r.italic && !r.strike) return escaped;
-  const m = /^(\s*)([\s\S]*?)(\s*)$/.exec(escaped);
-  if (m === null || m[2] === '') return escaped;
-  let core = m[2];
+function decorate(raw: string, r: DocxRun, previous = '', next = ''): string {
+  if (!r.bold && !r.italic && !r.strike) return escapeMarkdown(raw);
+  const m = /^(\s*)([\s\S]*?)(\s*)$/.exec(raw);
+  if (m === null || m[2] === '') return escapeMarkdown(raw);
+  // CommonMark cannot close emphasis after punctuation directly before a word.
+  // Keep edge punctuation as text so a bold quote or colon cannot expose **.
+  const leading = m[1] === '' && /[^\s\p{P}\p{S}]$/u.test(previous)
+    ? /^[\p{P}\p{S}]+/u.exec(m[2])?.[0] ?? '' : '';
+  const trailing = m[3] === '' && /^[^\s\p{P}\p{S}]/u.test(next)
+    ? /[\p{P}\p{S}]+$/u.exec(m[2])?.[0] ?? '' : '';
+  let core = m[2].slice(leading.length, m[2].length - trailing.length);
+  if (core === '') return escapeMarkdown(raw);
+  core = escapeMarkdown(core);
   if (r.strike) core = `~~${core}~~`;
   if (r.italic) core = `*${core}*`;
   if (r.bold) core = `**${core}**`;
-  return `${m[1]}${core}${m[3]}`;
+  return `${m[1]}${escapeMarkdown(leading)}${core}${escapeMarkdown(trailing)}${m[3]}`;
 }
 
 function formatDestination(url: string): string {
@@ -150,11 +160,28 @@ function renderRuns(
   const runs = coalesceRuns(rawRuns, ctx);
   let out = '';
   let i = 0;
+  const previousText: string[] = new Array(runs.length);
+  const nextText: string[] = new Array(runs.length);
+  let nearby = '';
+  for (let j = 0; j < runs.length; j += 1) {
+    previousText[j] = nearby;
+    const r = runs[j];
+    if (r.tab || r.lineBreak) nearby = ' ';
+    else if (r.text !== '') nearby = r.text;
+  }
+  nearby = '';
+  for (let j = runs.length - 1; j >= 0; j -= 1) {
+    nextText[j] = nearby;
+    const r = runs[j];
+    if (r.tab || r.lineBreak) nearby = ' ';
+    else if (r.text !== '') nearby = r.text;
+  }
   while (i < runs.length) {
     const link = runs[i].hyperlink;
     const dest = link === null ? null : resolveLink(link, ctx.opts.rels);
     if (plain || link === null || dest === null) {
-      out += renderRun(runs[i], ctx, singleLine, plain);
+      out += renderRun(runs[i], ctx, singleLine, plain,
+        previousText[i], nextText[i]);
       i += 1;
       continue;
     }
@@ -162,7 +189,8 @@ function renderRuns(
     while (i < runs.length) {
       const next = runs[i].hyperlink;
       if (next === null || next.relId !== link.relId || next.anchor !== link.anchor) break;
-      text += renderRun(runs[i], ctx, true);
+      text += renderRun(runs[i], ctx, true, false,
+        previousText[i], nextText[i]);
       i += 1;
     }
     out += text === '' ? '' : `[${text}](${formatDestination(dest)})`;
@@ -186,6 +214,7 @@ function resolveLink(
 
 function renderRun(
   r: DocxRun, ctx: RenderContext, singleLine: boolean, plain = false,
+  previous = '', next = '',
 ): string {
   if (hasDroppedFormatting(r)) ctx.bump('formatting-dropped');
   if (r.lineBreak) return singleLine ? ' ' : HARD_BREAK;
@@ -198,12 +227,12 @@ function renderRun(
   }
   const text = r.caps ? r.text.toUpperCase() : r.text;
   if (plain) return text;
-  return decorate(escapeMarkdown(text), r);
+  return decorate(text, r, previous, next);
 }
 
 function renderParagraph(
   block: DocxParagraph, index: number, ctx: RenderContext,
-  counts: { headings: number },
+  counts: { headings: number }, outlineDepth: number,
 ): Chunk | null {
   const styled = resolveStyledHeading(block, ctx.opts.styleIndex);
   const level = styled ?? ctx.opts.promotedHeadings.get(index) ?? null;
@@ -215,7 +244,11 @@ function renderParagraph(
     return { text: `${'#'.repeat(level)} ${text}`, listItem: false };
   }
 
-  const body = stripEdgeBreaks(renderRuns(block.runs, ctx, false));
+  const firstContent = block.runs.findIndex((r) => !r.tab && r.text.trim() !== '');
+  const bodyRuns = outlineDepth > 0
+    ? block.runs.filter((r, i) => !(r.tab && (firstContent < 0 || i < firstContent)))
+    : block.runs;
+  const body = stripEdgeBreaks(renderRuns(bodyRuns, ctx, false));
   if (body.trim() === '') return null;
 
   if (block.numbering !== null) {
@@ -223,6 +256,10 @@ function renderParagraph(
     const marker = format === 'ordered' ? '1.' : '-';
     const indent = (marker === '-' ? '  ' : '   ').repeat(Math.max(0, block.numbering.ilvl));
     return { text: `${indent}${marker} ${escapeLineStarts(flattenBreaks(body))}`, listItem: true };
+  }
+
+  if (outlineDepth > 0) {
+    return { text: escapeLineStarts(flattenBreaks(body)), listItem: true };
   }
 
   const escaped = escapeLineStarts(body);
@@ -344,6 +381,21 @@ const WARNING_SPECS: WarningSpec[] = [
   },
 ];
 
+/** Leading tabs or left indent (in 720-twip steps) of an unnumbered paragraph. */
+function outlineDepth(block: DocxParagraph): number {
+  if (block.numbering !== null) return 0;
+  const firstContent = block.runs.findIndex((r) => !r.tab && r.text.trim() !== '');
+  const tabs = (firstContent < 0 ? block.runs : block.runs.slice(0, firstContent))
+    .filter((r) => r.tab).length;
+  return Math.max(tabs, Math.round((block.indentTwips ?? 0) / 720));
+}
+
+/** Short and not a finished sentence: reads as an outline entry, not prose. */
+function isItemLike(block: DocxParagraph): boolean {
+  const text = block.runs.map((r) => r.text).join('').trim();
+  return text !== '' && text.length <= 100 && !/[.!?]$/.test(text);
+}
+
 export function convertDocument(doc: DocxDocument, opts: ConvertOptions): ConvertResult {
   const counts = new Map<DocxWarningCode, number>();
   const bump = (code: DocxWarningCode, n = 1): void => {
@@ -355,26 +407,90 @@ export function convertDocument(doc: DocxDocument, opts: ConvertOptions): Conver
   const ctx: RenderContext = { opts, bump, footnoteOrder: [] };
   const tally = { headings: 0 };
   const chunks: Chunk[] = [];
+  // Outline state for tab- or indent-nested paragraphs that carry no Word
+  // numbering. `outlineDepths` holds the raw depth of each open nesting
+  // level, so a jump of two tabs still nests only one level deeper and never
+  // reaches a four-space code indent; `outlineBase` is null outside an outline.
+  let outlineBase: number | null = null;
+  let outlineDepths: number[] = [];
+  let previousParagraph: DocxParagraph | null = null;
+  let previousChunkIndex = -1;
+
+  const depths = doc.blocks.map((b) => (b.kind === 'paragraph' ? outlineDepth(b) : 0));
+  // A lone indented paragraph of prose (a manuscript habit) stays a
+  // paragraph. An outline starts at an item-like line, or at a run of at
+  // least two consecutive indented paragraphs.
+  const startsOutline = (block: DocxParagraph, index: number): boolean => {
+    if (isItemLike(block)) return true;
+    for (let j = index + 1; j < doc.blocks.length; j += 1) {
+      const next = doc.blocks[j];
+      if (next.kind !== 'paragraph') return false;
+      if (next.runs.every((r) => r.tab || r.text.trim() === '')) continue;
+      return depths[j] > 0;
+    }
+    return false;
+  };
 
   doc.blocks.forEach((block: DocxBlock, index) => {
     switch (block.kind) {
       case 'paragraph': {
-        const chunk = renderParagraph(block, index, ctx, tally);
-        if (chunk !== null) chunks.push(chunk);
+        const depth = depths[index] > 0 && (outlineBase !== null || startsOutline(block, index))
+          ? depths[index] : 0;
+        const chunk = renderParagraph(block, index, ctx, tally, depth);
+        if (chunk !== null) {
+          if (depth > 0 && chunk.listItem) {
+            if (outlineBase === null && previousParagraph !== null && chunks.length > 0
+              && previousChunkIndex === index - 1
+              && !chunks[chunks.length - 1].listItem
+              && resolveStyledHeading(previousParagraph, opts.styleIndex) === null
+              && !isQuoteStyle(previousParagraph.styleId)
+              && !opts.promotedHeadings.has(index - 1)
+              && chunks[chunks.length - 1].text.length <= 100
+              && !/[.!?]$/.test(chunks[chunks.length - 1].text)) {
+              const root = chunks[chunks.length - 1];
+              root.text = `- ${escapeLineStarts(flattenBreaks(root.text))}`;
+              root.listItem = true;
+              outlineBase = 0;
+              outlineDepths = [0];
+            }
+            if (outlineBase === null) outlineDepths = [depth];
+            else {
+              while (outlineDepths.length > 1 && outlineDepths[outlineDepths.length - 1] >= depth) {
+                outlineDepths.pop();
+              }
+              if (outlineDepths[outlineDepths.length - 1] < depth) outlineDepths.push(depth);
+            }
+            outlineBase = outlineDepths[0];
+            chunk.text = `${'  '.repeat(outlineDepths.length - 1)}- ${chunk.text}`;
+          } else {
+            outlineBase = null;
+          }
+          chunks.push(chunk);
+          previousChunkIndex = index;
+        }
+        previousParagraph = block;
         break;
       }
       case 'table': {
+        outlineBase = null;
+        previousParagraph = null;
         const chunk = renderTable(block, ctx);
         if (chunk !== null) chunks.push(chunk);
         break;
       }
       case 'image':
+        outlineBase = null;
+        previousParagraph = null;
         chunks.push(renderImage(block, index, ctx, media));
         break;
       case 'equation':
+        outlineBase = null;
+        previousParagraph = null;
         bump('equation-dropped');
         break;
       case 'textbox':
+        outlineBase = null;
+        previousParagraph = null;
         bump('textbox-dropped');
         break;
       default:
