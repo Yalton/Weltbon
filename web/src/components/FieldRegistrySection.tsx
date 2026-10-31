@@ -223,7 +223,7 @@ export function FieldRegistrySection({ universe }: Props) {
                     type="button"
                     onClick={() => void commitEdit()}
                     disabled={update.isPending}
-                    className="rounded-md bg-[color:var(--color-accent)] text-white text-sm px-3 py-1.5 disabled:opacity-50"
+                    className="rounded-md btn-accent text-sm px-3 py-1.5 disabled:opacity-50"
                   >
                     Save
                   </button>
@@ -328,7 +328,7 @@ export function FieldRegistrySection({ universe }: Props) {
           type="button"
           onClick={() => void submitAdd()}
           disabled={update.isPending}
-          className="rounded-md bg-[color:var(--color-accent)] text-white text-sm px-3 py-1.5 disabled:opacity-50 whitespace-nowrap"
+          className="rounded-md btn-accent text-sm px-3 py-1.5 disabled:opacity-50 whitespace-nowrap"
         >
           Add field
         </button>

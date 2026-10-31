@@ -160,7 +160,7 @@ export function TimelineRangeDialog({ open, onOpenChange, universeId }: Props) {
               <button
                 type="submit"
                 disabled={isPending}
-                className="px-3 py-1.5 text-sm rounded-md bg-[color:var(--color-accent)] text-white disabled:opacity-50"
+                className="px-3 py-1.5 text-sm rounded-md btn-accent disabled:opacity-50"
               >
                 {isPending ? 'Saving…' : 'Save range'}
               </button>

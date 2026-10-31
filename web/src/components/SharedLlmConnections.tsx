@@ -116,7 +116,7 @@ function GrantCard({ grant }: { grant: SharedGrant }) {
               );
             }}
             disabled={pending}
-            className="bg-[color:var(--color-accent)] text-white text-sm font-medium px-4 py-2 rounded-md hover:opacity-90 focus:outline-none focus:ring-2 focus:ring-[color:var(--color-accent)] focus:ring-offset-2 disabled:opacity-50"
+            className="btn-accent text-sm font-medium px-4 py-2 rounded-md hover:opacity-90 focus:outline-none focus:ring-2 focus:ring-[color:var(--color-accent)] focus:ring-offset-2 disabled:opacity-50"
           >
             {`Accept ${providerName} shared connection`}
           </button>

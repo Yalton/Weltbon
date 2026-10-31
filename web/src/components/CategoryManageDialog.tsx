@@ -102,7 +102,7 @@ export function CategoryManageDialog({ universeId, open, onOpenChange, initialCa
               <button
                 type="submit"
                 disabled={!canSubmit}
-                className="px-3 py-1.5 text-sm rounded-md bg-[color:var(--color-accent)] text-white disabled:opacity-50 disabled:cursor-not-allowed"
+                className="px-3 py-1.5 text-sm rounded-md btn-accent disabled:opacity-50 disabled:cursor-not-allowed"
               >
                 {createCategory.isPending || updateCategory.isPending ? 'Saving…' : 'Save'}
               </button>

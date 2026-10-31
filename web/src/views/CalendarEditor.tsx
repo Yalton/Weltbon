@@ -338,7 +338,7 @@ export function CalendarEditor() {
             <button
               type="button"
               onClick={startEditing}
-              className="px-3 py-1.5 text-sm rounded-md bg-[color:var(--color-accent)] text-white"
+              className="px-3 py-1.5 text-sm rounded-md btn-accent"
             >
               {COPY.EMPTY_ACTION}
             </button>
@@ -720,7 +720,7 @@ export function CalendarEditor() {
             type="button"
             onClick={() => void handleSave()}
             disabled={isPending}
-            className="px-3 py-1.5 text-sm rounded-md bg-[color:var(--color-accent)] text-white disabled:opacity-50"
+            className="px-3 py-1.5 text-sm rounded-md btn-accent disabled:opacity-50"
           >
             {isPending ? 'Saving…' : calendar === null ? COPY.CTA_ADD : COPY.CTA_SAVE}
           </button>

@@ -164,7 +164,7 @@ export function Dictionary() {
           <button
             type="button"
             onClick={handleAddWord}
-            className="px-3 py-2 text-sm rounded-md bg-[color:var(--color-accent)] text-white hover:opacity-90 focus:outline-none focus:ring-2 focus:ring-[color:var(--color-accent)] focus:ring-offset-2"
+            className="px-3 py-2 text-sm rounded-md btn-accent hover:opacity-90 focus:outline-none focus:ring-2 focus:ring-[color:var(--color-accent)] focus:ring-offset-2"
           >
             Add word
           </button>

@@ -202,7 +202,7 @@ export function MarkdownLinkDialog({
 
             <div className="mt-5 flex justify-end gap-2">
               <button type="button" onClick={() => onOpenChange(false)} className="rounded border px-3 py-1.5 text-sm border-line-strong">Cancel</button>
-              <button type="button" disabled={!canInsert} onClick={insert} className="rounded bg-[color:var(--color-accent)] px-3 py-1.5 text-sm text-white disabled:opacity-50">Insert link</button>
+              <button type="button" disabled={!canInsert} onClick={insert} className="rounded btn-accent px-3 py-1.5 text-sm disabled:opacity-50">Insert link</button>
             </div>
           </Dialog.Content>
         </Dialog.Portal>

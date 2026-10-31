@@ -184,7 +184,7 @@ export function EntryTypesSection({ universe }: Props) {
           type="button"
           onClick={() => void submitAdd()}
           disabled={!newType.trim() || addType.isPending}
-          className="rounded-md bg-[color:var(--color-accent)] text-white text-sm px-3 py-1.5 disabled:opacity-50"
+          className="rounded-md btn-accent text-sm px-3 py-1.5 disabled:opacity-50"
         >
           +
         </button>

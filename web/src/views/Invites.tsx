@@ -99,7 +99,7 @@ function InviteRequestsSection() {
             <button
               type="button"
               onClick={handleCopy}
-              className="bg-[color:var(--color-accent)] text-white text-sm px-3 py-1.5 rounded-md hover:opacity-90 focus:outline-none focus:ring-2 focus:ring-[color:var(--color-accent)] focus:ring-offset-2"
+              className="btn-accent text-sm px-3 py-1.5 rounded-md hover:opacity-90 focus:outline-none focus:ring-2 focus:ring-[color:var(--color-accent)] focus:ring-offset-2"
             >
               {copied ? 'Copied!' : 'Copy invite code'}
             </button>
@@ -233,7 +233,7 @@ export default function Invites() {
           <button
             type="button"
             onClick={() => setCreateOpen(true)}
-            className="bg-[color:var(--color-accent)] text-white text-sm px-3 py-1.5 rounded-md focus:outline-none focus:ring-2 focus:ring-[color:var(--color-accent)] focus:ring-offset-2"
+            className="btn-accent text-sm px-3 py-1.5 rounded-md focus:outline-none focus:ring-2 focus:ring-[color:var(--color-accent)] focus:ring-offset-2"
           >
             New invite code
           </button>
@@ -271,7 +271,7 @@ export default function Invites() {
               <button
                 type="button"
                 onClick={() => setCreateOpen(true)}
-                className="bg-[color:var(--color-accent)] text-white text-sm font-medium px-4 py-2 rounded-md hover:opacity-90 focus:outline-none focus:ring-2 focus:ring-[color:var(--color-accent)] focus:ring-offset-2"
+                className="btn-accent text-sm font-medium px-4 py-2 rounded-md hover:opacity-90 focus:outline-none focus:ring-2 focus:ring-[color:var(--color-accent)] focus:ring-offset-2"
               >
                 New invite code
               </button>

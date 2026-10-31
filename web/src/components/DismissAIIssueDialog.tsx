@@ -160,7 +160,7 @@ export function DismissAIIssueDialog({ universeId, issue, open, onOpenChange, on
                     type="button"
                     disabled={!reason}
                     onClick={handleContinue}
-                    className="px-3 py-1.5 text-sm rounded-md bg-[color:var(--color-accent)] text-white disabled:opacity-50 disabled:cursor-not-allowed"
+                    className="px-3 py-1.5 text-sm rounded-md btn-accent disabled:opacity-50 disabled:cursor-not-allowed"
                   >
                     Continue
                   </button>
@@ -245,7 +245,7 @@ export function DismissAIIssueDialog({ universeId, issue, open, onOpenChange, on
                     type="button"
                     disabled={isConfirmDisabled}
                     onClick={handleConfirm}
-                    className="px-3 py-1.5 text-sm rounded-md bg-[color:var(--color-accent)] text-white disabled:opacity-50 disabled:cursor-not-allowed"
+                    className="px-3 py-1.5 text-sm rounded-md btn-accent disabled:opacity-50 disabled:cursor-not-allowed"
                   >
                     {dismiss.isPending ? 'Dismissing…' : 'Confirm'}
                   </button>

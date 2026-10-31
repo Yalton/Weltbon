@@ -158,7 +158,7 @@ export function NewMapDialog({ open, onOpenChange, universeId }: Props) {
                 <button
                   type="submit"
                   disabled={createMap.isPending || !nameInput.trim() || !imageAssetId}
-                  className="px-3 py-1.5 text-sm rounded-md bg-[color:var(--color-accent)] text-white disabled:opacity-50"
+                  className="px-3 py-1.5 text-sm rounded-md btn-accent disabled:opacity-50"
                 >
                   {createMap.isPending ? COPY.ctaPending : COPY.ctaCreate}
                 </button>

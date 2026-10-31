@@ -249,7 +249,7 @@ export function LayersPanel({
                   type="button"
                   onClick={() => addBiomes.mutate()}
                   disabled={addBiomes.isPending}
-                  className="bg-[color:var(--color-accent)] text-white text-xs px-4 py-2 rounded-md hover:opacity-90 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-[color:var(--color-accent)] focus-visible:ring-offset-2 min-h-[44px] disabled:opacity-60"
+                  className="btn-accent text-xs px-4 py-2 rounded-md hover:opacity-90 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-[color:var(--color-accent)] focus-visible:ring-offset-2 min-h-[44px] disabled:opacity-60"
                 >
                   Add starter Biomes
                 </button>
@@ -257,7 +257,7 @@ export function LayersPanel({
                   type="button"
                   onClick={() => addElevation.mutate()}
                   disabled={addElevation.isPending}
-                  className="bg-[color:var(--color-accent)] text-white text-xs px-4 py-2 rounded-md hover:opacity-90 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-[color:var(--color-accent)] focus-visible:ring-offset-2 min-h-[44px] disabled:opacity-60"
+                  className="btn-accent text-xs px-4 py-2 rounded-md hover:opacity-90 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-[color:var(--color-accent)] focus-visible:ring-offset-2 min-h-[44px] disabled:opacity-60"
                 >
                   Add starter Elevation
                 </button>

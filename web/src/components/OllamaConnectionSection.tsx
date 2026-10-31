@@ -120,7 +120,7 @@ export function OllamaConnectionSection() {
           type="button"
           onClick={handleSaveAndTest}
           disabled={isSaving || baseUrl === ''}
-          className="bg-[color:var(--color-accent)] text-white text-sm px-3 py-1.5 rounded-md disabled:opacity-50"
+          className="btn-accent text-sm px-3 py-1.5 rounded-md disabled:opacity-50"
         >
           {isSaving ? 'Saving…' : 'Save and test'}
         </button>

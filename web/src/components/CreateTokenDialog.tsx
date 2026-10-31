@@ -120,7 +120,7 @@ export function CreateTokenDialog({ open, onOpenChange }: Props) {
                   <button
                     type="submit"
                     disabled={createToken.isPending}
-                    className="px-3 py-1.5 text-sm rounded-md bg-[color:var(--color-accent)] text-white disabled:opacity-50"
+                    className="px-3 py-1.5 text-sm rounded-md btn-accent disabled:opacity-50"
                   >
                     {createToken.isPending ? 'Creating…' : 'Create token'}
                   </button>
@@ -150,7 +150,7 @@ export function CreateTokenDialog({ open, onOpenChange }: Props) {
                 ref={copyButtonRef}
                 type="button"
                 onClick={handleCopy}
-                className="mt-4 w-full bg-[color:var(--color-accent)] text-white text-sm font-medium px-4 py-2 rounded-md hover:opacity-90 focus:outline-none focus:ring-2 focus:ring-[color:var(--color-accent)] focus:ring-offset-2"
+                className="mt-4 w-full btn-accent text-sm font-medium px-4 py-2 rounded-md hover:opacity-90 focus:outline-none focus:ring-2 focus:ring-[color:var(--color-accent)] focus:ring-offset-2"
               >
                 {copied ? 'Copied!' : 'Copy token'}
               </button>

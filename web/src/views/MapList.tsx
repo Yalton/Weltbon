@@ -58,7 +58,7 @@ export function MapList() {
           <button
             type="button"
             onClick={() => setNewDialogOpen(true)}
-            className="rounded-md bg-[color:var(--color-accent)] text-white text-sm px-3 py-2"
+            className="rounded-md btn-accent text-sm px-3 py-2"
           >
             {COPY.ctaNew}
           </button>
@@ -79,7 +79,7 @@ export function MapList() {
               <button
                 type="button"
                 onClick={() => setNewDialogOpen(true)}
-                className="bg-[color:var(--color-accent)] text-white text-sm px-4 py-2 rounded-md hover:opacity-90 focus:outline-none focus:ring-2 focus:ring-[color:var(--color-accent)] focus:ring-offset-2"
+                className="btn-accent text-sm px-4 py-2 rounded-md hover:opacity-90 focus:outline-none focus:ring-2 focus:ring-[color:var(--color-accent)] focus:ring-offset-2"
               >
                 {COPY.emptyCtaNew}
               </button>

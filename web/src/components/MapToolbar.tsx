@@ -77,7 +77,7 @@ export function MapToolbar({
             'rounded-md text-sm px-3 py-2',
             'focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-[color:var(--color-accent)] focus-visible:ring-offset-2',
             addPinMode
-              ? 'bg-[color:var(--color-accent)] text-white'
+              ? 'btn-accent'
               : 'border border-line-strong text-ink hover:bg-white/5',
           ].join(' ')}
         >
@@ -95,7 +95,7 @@ export function MapToolbar({
             'rounded-md text-sm px-3 py-2',
             'focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-[color:var(--color-accent)] focus-visible:ring-offset-2',
             drawRegionMode
-              ? 'bg-[color:var(--color-accent)] text-white'
+              ? 'btn-accent'
               : 'border border-line-strong text-ink hover:bg-white/5',
           ].join(' ')}
         >
@@ -113,7 +113,7 @@ export function MapToolbar({
             'rounded-md text-sm px-3 py-2',
             'focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-[color:var(--color-accent)] focus-visible:ring-offset-2',
             drawRouteMode
-              ? 'bg-[color:var(--color-accent)] text-white'
+              ? 'btn-accent'
               : 'border border-line-strong text-ink hover:bg-white/5',
           ].join(' ')}
         >
@@ -142,7 +142,7 @@ export function MapToolbar({
             'rounded-md text-sm px-3 py-2',
             'focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-[color:var(--color-accent)] focus-visible:ring-offset-2',
             legendVisible
-              ? 'bg-[color:var(--color-accent)] text-white'
+              ? 'btn-accent'
               : 'border border-line-strong text-ink hover:bg-white/5',
           ].join(' ')}
         >
@@ -160,7 +160,7 @@ export function MapToolbar({
             'rounded-md text-sm px-3 py-2',
             'focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-[color:var(--color-accent)] focus-visible:ring-offset-2',
             layersPanelVisible
-              ? 'bg-[color:var(--color-accent)] text-white'
+              ? 'btn-accent'
               : 'border border-line-strong text-ink hover:bg-white/5',
           ].join(' ')}
         >
