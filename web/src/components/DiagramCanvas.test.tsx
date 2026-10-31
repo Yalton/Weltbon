@@ -123,6 +123,22 @@ describe('DiagramCanvas', () => {
     expect(fills).toContain('#f59e0b');
   });
 
+  it('draws node names in the ink colour so they read on the dark canvas', () => {
+    const { container } = render(
+      <DiagramCanvas
+        nodes={[makeNode('n1', 'e1')]}
+        edges={[]}
+        selection={new Set()}
+        selectedEdgeId={null}
+        editMode={false}
+        {...emptyHandlers()}
+      />,
+    );
+
+    const label = container.querySelector('g.nodes text[data-node-label]');
+    expect(label?.getAttribute('fill')).toBe('var(--color-ink)');
+  });
+
   it('dashed edge renders a line with a non-empty stroke-dasharray (DIAGRAM-02)', () => {
     const nodes: CanvasNode[] = [
       makeNode('n1', 'e1', { x: 50, y: 50 }),

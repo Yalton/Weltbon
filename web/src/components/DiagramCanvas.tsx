@@ -264,13 +264,13 @@ export const DiagramCanvas = forwardRef<SVGSVGElement | null, DiagramCanvasProps
     // Update circle fill and node label text on every re-join.
     nodeSel.select<SVGCircleElement>('circle')
       .attr('fill', (d) => entryTypeHexColor(d.entryType))
-      .attr('stroke', '#111827')
+      .attr('stroke', 'var(--color-canvas-mid)')
       .attr('stroke-width', 1);
 
     nodeSel.select<SVGTextElement>('text')
       .attr('dy', NODE_RADIUS + 14) // below circle
       .text((d) => d.title)
-      .attr('fill', '#111827')
+      .attr('fill', 'var(--color-ink)')
       .attr('class', 'diagram-node-label');
 
     // Node click handler: select / multi-select / clear.
