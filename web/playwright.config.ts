@@ -38,10 +38,11 @@ const CHROMIUM =
 export default defineConfig({
   testDir: './e2e',
 
-  // different topology (the two-instance dev rig: Vite on :5173 + a peer on
-  // :3001) and has its own global setup. It runs from playwright.sync.config.ts;
-  // without this it would be swept up here and run against the wrong stack.
-  testIgnore: 'sync.spec.ts',
+  // The sync specs need a different topology (the two-instance dev rig: Vite on
+  // :5173 + a peer on :3001) and have their own global setup. They run from
+  // playwright.sync.config.ts; without this they would be swept up here and run
+  // against the wrong stack.
+  testIgnore: ['sync.spec.ts', 'connect-to-weltbon.spec.ts'],
   globalSetup: './e2e/global-setup.ts',
   globalTeardown: './e2e/global-teardown.ts',
   // Seeding + the single shared universe mean tests must not race each other.
