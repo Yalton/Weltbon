@@ -60,9 +60,21 @@ describe('Google Docs fixture: pantheon-tabs.docx (tab-indented tree)', () => {
     // they nest as list items instead, one level per step even when the
     // tabs jump by two.
     expect(nodes(tree, 'code')).toHaveLength(0);
-    expect(c.markdown).toContain('- **Ilsa** (Keeper of Order)\n  - Pell (Keeper of Making)\n  - Quen');
-    expect(c.markdown).toContain('  - Corvane (Keeper of Wants; Lord of the Under-Market)\n    - Hesk');
-    expect(c.markdown).not.toMatch(/^ {6}/m);
+    // Nesting of every name: list depth, or null for a plain paragraph. Dorn
+    // and Ruvane carry only a first-line indent, which is not outline depth,
+    // and Brannoch has none; Ruvane becomes a root because Selk nests under it.
+    const depthOf = (name: string): number | null => {
+      const line = c.markdown.split('\n').find((l) => l.includes(name))!;
+      const m = /^( *)- /.exec(line);
+      return m === null ? null : m[1].length / 2;
+    };
+    expect(Object.fromEntries(['Ostra', 'Vell', 'Dorn', 'Ilsa', 'Pell', 'Quen', 'Tamsin',
+      'Corvane', 'Hesk', 'Ferries', 'Brannoch', 'Liss', 'Mereth', 'Folk', 'Gath’Orrin',
+      'Ruvane', 'Selk'].map((n) => [n, depthOf(n)]))).toEqual({
+      Ostra: 0, Vell: 1, Dorn: null, Ilsa: 0, Pell: 1, Quen: 1, Tamsin: 0,
+      Corvane: 1, Hesk: 2, Ferries: 2, Brannoch: null, Liss: 0, Mereth: 1, Folk: 2,
+      'Gath’Orrin': 2, Ruvane: 0, Selk: 1,
+    });
     expect(strayMarkers(tree)).toEqual([]);
     // Bold+underline name runs keep the bold, lose the underline (with a warning).
     expect(nodes(tree, 'strong').length).toBe(6);
