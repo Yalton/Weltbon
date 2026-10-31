@@ -172,6 +172,7 @@ export function detectUnstyledHeadings(blocks: DocxBlock[]): Map<number, Heading
   blocks.forEach((b, index) => {
     if (b.kind !== 'paragraph') return;
     if (b.numbering !== null) return;
+    if ((b.indentTwips ?? 0) > 0 || b.runs.some((r) => r.tab)) return;
     if (b.runs.some((r) => r.lineBreak)) return;
     const sig = uniformSignature(b);
     if (sig === null) return;
@@ -211,6 +212,8 @@ export function detectUnstyledHeadings(blocks: DocxBlock[]): Map<number, Heading
     if (!prominent.has(e.index)) continue;
     const text = e.text.trim();
     if (text.length === 0 || text.length > 100) continue;
+    // A quoted line is dialogue even when its entire run is bold.
+    if (/^["'“‘«„]/u.test(text)) continue;
     if (TERMINAL_PUNCTUATION.has(text[text.length - 1])) continue;
     shapeOk.add(e.index);
   }
@@ -244,8 +247,20 @@ export function detectUnstyledHeadings(blocks: DocxBlock[]): Map<number, Heading
   });
 
   const levelByKey = new Map<string, HeadingLevel>();
+  let level = 1;
   rankedKeys.forEach((key, rank) => {
-    levelByKey.set(key, Math.min(rank + 1, 6) as HeadingLevel);
+    if (rank > 0) {
+      const previous = bySignature.get(rankedKeys[rank - 1])!;
+      const current = bySignature.get(key)!;
+      // Small font changes within the same treatment are usually document
+      // variation, not a deliberate extra outline depth.
+      const sameTier = previous.bold === current.bold
+        && previous.caps === current.caps
+        && previous.size !== null && current.size !== null
+        && previous.size - current.size <= 4;
+      if (!sameTier) level += 1;
+    }
+    levelByKey.set(key, Math.min(level, 6) as HeadingLevel);
   });
 
   for (const e of finalCandidates) {

@@ -18,6 +18,7 @@ export interface DocxParagraph {
   kind: 'paragraph';
   styleId: string | null;
   outlineLvl: number | null;
+  indentTwips?: number | null;
   numbering: { numId: string; ilvl: number } | null;
   runs: DocxRun[];
 }
@@ -235,7 +236,8 @@ export function parseDocumentXml(
         if (top(cells) === null) {
           paras.push({
             para: pushBlock<DocxParagraph>({
-              kind: 'paragraph', styleId: null, outlineLvl: null, numbering: null, runs: [],
+              kind: 'paragraph', styleId: null, outlineLvl: null, indentTwips: null,
+              numbering: null, runs: [],
             }),
             depth,
           });
@@ -250,6 +252,17 @@ export function parseDocumentXml(
       case 'w:outlineLvl': {
         const para = top(paras);
         if (para !== null) para.para.outlineLvl = intOrNull(attr(attrs, 'w:val'));
+        break;
+      }
+      case 'w:ind': {
+        const para = top(paras);
+        if (para !== null) {
+          const left = intOrNull(attr(attrs, 'w:left'))
+            ?? intOrNull(attr(attrs, 'w:start')) ?? 0;
+          // First-line indents are common in prose; only the paragraph's
+          // whole-line offset can indicate an outline depth.
+          para.para.indentTwips = Math.max(0, left);
+        }
         break;
       }
       case 'w:numPr':

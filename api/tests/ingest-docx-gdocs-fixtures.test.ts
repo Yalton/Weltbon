@@ -56,9 +56,13 @@ describe('Google Docs fixture: pantheon-tabs.docx (tab-indented tree)', () => {
       'Hesk', 'Brannoch', 'Liss', 'Mereth', 'Gath’Orrin', 'Ruvane', 'Selk']) {
       expect(c.markdown).toContain(name);
     }
-    // Three leading tabs must not become a four-space indented code block.
+    // Three leading tabs must not become a four-space indented code block;
+    // they nest as list items instead, one level per step even when the
+    // tabs jump by two.
     expect(nodes(tree, 'code')).toHaveLength(0);
-    expect(c.markdown).not.toMatch(/^ {4}/m);
+    expect(c.markdown).toContain('- **Ilsa** (Keeper of Order)\n  - Pell (Keeper of Making)\n  - Quen');
+    expect(c.markdown).toContain('  - Corvane (Keeper of Wants; Lord of the Under-Market)\n    - Hesk');
+    expect(c.markdown).not.toMatch(/^ {6}/m);
     expect(strayMarkers(tree)).toEqual([]);
     // Bold+underline name runs keep the bold, lose the underline (with a warning).
     expect(nodes(tree, 'strong').length).toBe(6);
@@ -144,8 +148,8 @@ describe('Google Docs fixture: chronicle.docx (unstyled era headings)', () => {
 
   // Weltbon-izk: a bold opening quote mark followed by plain text emits
   // `**“**Who`, whose closing ** is not right-flanking, so the asterisks
-  // render literally. Flip to it() when that bead lands.
-  it.fails('renders a bold opening quote mark without literal asterisks', async () => {
+  // render literally.
+  it('renders a bold opening quote mark without literal asterisks', async () => {
     const c = await convertDocx(load('chronicle.docx'), {});
     expect(strayMarkers(mdTree(c.markdown))).toEqual([]);
   });

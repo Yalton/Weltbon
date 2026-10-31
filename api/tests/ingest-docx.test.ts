@@ -192,14 +192,15 @@ describe('POST /api/universes/:uid/ingest — .docx (#35)', () => {
     expect(body.entries[0].title).toBe('Plain');
   });
 
-  it('notes.docx.txt is skipped as a non-markdown file, not converted', async () => {
+  it('notes.docx.txt imports as text, not as a Word document', async () => {
     const body = await preview([
       ['files', new File(['not markdown'], 'notes.docx.txt', { type: 'text/plain' })],
     ]);
     expect(body.summary.docx_files_converted).toBe(0);
-    expect(body.summary.non_markdown_files_skipped).toBe(1);
-    expect(body.summary.markdown_files_parsed).toBe(0);
-    expect(body.entries).toHaveLength(0);
+    expect(body.summary.non_markdown_files_skipped).toBe(0);
+    expect(body.summary.markdown_files_parsed).toBe(1);
+    expect(body.entries).toHaveLength(1);
+    expect(body.entries[0].path).toBe('notes.docx.md');
     expect(body.docx.files).toHaveLength(0);
   });
 
