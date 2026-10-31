@@ -753,7 +753,7 @@ export function DiagramEditor() {
           <button
             type="button"
             onClick={handleRenameSubmit}
-            className="rounded bg-[color:var(--color-accent)] text-white text-xs px-2 py-1"
+            className="rounded btn-accent text-xs px-2 py-1"
           >
             {COPY.renameSave}
           </button>

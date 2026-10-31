@@ -365,7 +365,7 @@ export function SyncTab({ universeId }: { universeId: string }) {
                   setFormError(syncErrorMessage(err));
                 }
               }}
-              className="rounded-md bg-[color:var(--color-accent)] text-white text-sm px-3 py-2 disabled:opacity-50"
+              className="rounded-md btn-accent text-sm px-3 py-2 disabled:opacity-50"
             >
               Link universe
             </button>

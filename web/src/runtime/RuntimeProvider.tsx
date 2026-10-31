@@ -145,7 +145,7 @@ export function RuntimeProvider({ children }: PropsWithChildren) {
             : 'Weltbon could not reach its server. Your data is unaffected.'}
         </p>
         <button
-          className="mt-6 w-fit rounded bg-[color:var(--color-accent)] px-4 py-2 text-sm font-medium text-white"
+          className="mt-6 w-fit rounded btn-accent px-4 py-2 text-sm font-medium"
           type="button"
           onClick={() => { void initialize(state.authMode); }}
         >

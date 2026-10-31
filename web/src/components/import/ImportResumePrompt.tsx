@@ -31,7 +31,7 @@ export function ImportResumePrompt({
         <button
           type="button"
           onClick={onContinue}
-          className="bg-[color:var(--color-accent)] text-white text-sm px-3 py-1.5 rounded-md"
+          className="btn-accent text-sm px-3 py-1.5 rounded-md"
         >
           Continue review
         </button>

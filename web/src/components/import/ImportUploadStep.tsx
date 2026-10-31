@@ -346,7 +346,7 @@ export function ImportUploadStep({
           type="button"
           onClick={handleUpload}
           disabled={uploadDisabled}
-          className="bg-[color:var(--color-accent)] text-white text-sm px-3 py-1.5 rounded-md disabled:opacity-50 disabled:cursor-not-allowed"
+          className="btn-accent text-sm px-3 py-1.5 rounded-md disabled:opacity-50 disabled:cursor-not-allowed"
         >
           {state.step === 'uploading' ? 'Parsing…' : 'Upload'}
         </button>

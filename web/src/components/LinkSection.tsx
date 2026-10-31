@@ -145,7 +145,7 @@ export function LinkSection({
               <LinkEditor universeId={universeId} entryId={entryId} onLinkCreated={onLinkCreated}>
                 <button
                   type="button"
-                  className="rounded-md btn-accent text-white text-sm px-4 py-2"
+                  className="rounded-md btn-accent text-sm px-4 py-2"
                 >
                   Add link
                 </button>

@@ -236,7 +236,7 @@ export function EntryDetail() {
           <div className="flex gap-2 mt-3">
             <Link
               to={`/universes/${uid}/entries/${entryId}/edit`}
-              className="btn-accent rounded-lg px-4 py-2 text-sm font-semibold text-white focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-[color:var(--color-accent)]"
+              className="btn-accent rounded-lg px-4 py-2 text-sm font-semibold focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-[color:var(--color-accent)]"
             >
               Edit
             </Link>

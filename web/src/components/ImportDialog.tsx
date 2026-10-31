@@ -103,7 +103,7 @@ export function ImportDialog({ open, onOpenChange }: Props) {
                   <button
                     type="button"
                     onClick={handleDone}
-                    className="rounded-md bg-[color:var(--color-accent)] text-white text-sm px-3 py-1.5"
+                    className="rounded-md btn-accent text-sm px-3 py-1.5"
                   >
                     Done
                   </button>
@@ -170,7 +170,7 @@ export function ImportDialog({ open, onOpenChange }: Props) {
                     type="button"
                     onClick={handleImport}
                     disabled={state.step !== 'selected' && state.step !== 'error'}
-                    className="rounded-md bg-[color:var(--color-accent)] text-white text-sm px-3 py-1.5 disabled:opacity-50 disabled:cursor-not-allowed"
+                    className="rounded-md btn-accent text-sm px-3 py-1.5 disabled:opacity-50 disabled:cursor-not-allowed"
                   >
                     Import
                   </button>

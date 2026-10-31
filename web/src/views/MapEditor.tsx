@@ -1698,7 +1698,7 @@ export function MapEditor() {
                     if (armedTerrainTypeId) { setArmedTerrainTypeId(null); setArmedLayerId(null); }
                     setAddPinMode(true);
                   }}
-                  className="rounded-md bg-[color:var(--color-accent)] text-white text-sm px-3 py-2"
+                  className="rounded-md btn-accent text-sm px-3 py-2"
                 >
                   {COPY.noPinsCta}
                 </button>
@@ -2183,7 +2183,7 @@ export function MapEditor() {
                   <button
                     type="button"
                     onClick={handleRegionRenameConfirm}
-                    className="text-sm px-3 py-1.5 rounded-md bg-[color:var(--color-accent)] text-white hover:opacity-90"
+                    className="text-sm px-3 py-1.5 rounded-md btn-accent hover:opacity-90"
                   >
                     Save
                   </button>
@@ -2370,7 +2370,7 @@ export function MapEditor() {
                   <button
                     type="button"
                     onClick={() => void handleRouteRenameConfirm()}
-                    className="text-sm px-3 py-1.5 rounded-md bg-[color:var(--color-accent)] text-white hover:opacity-90"
+                    className="text-sm px-3 py-1.5 rounded-md btn-accent hover:opacity-90"
                   >
                     Save
                   </button>

@@ -186,7 +186,7 @@ export function CreateLinkPopover({
               type="button"
               onClick={handleCreate}
               disabled={pending}
-              className="rounded-md bg-[color:var(--color-accent)] text-white text-sm px-3 py-1.5 disabled:opacity-50 disabled:cursor-not-allowed"
+              className="rounded-md btn-accent text-sm px-3 py-1.5 disabled:opacity-50 disabled:cursor-not-allowed"
             >
               {pending ? 'Creating...' : 'Create link'}
             </button>

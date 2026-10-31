@@ -169,7 +169,7 @@ export function IssuesView() {
         <button
           type="button"
           onClick={() => setEditor({ open: true, initial: null })}
-          className="rounded-md bg-[color:var(--color-accent)] text-white text-sm px-3 py-1.5"
+          className="rounded-md btn-accent text-sm px-3 py-1.5"
         >
           New issue
         </button>
@@ -306,7 +306,7 @@ export function IssuesView() {
                     setSourceFilter('both');
                     setCategoryFilter(new Set());
                   }}
-                  className="bg-[color:var(--color-accent)] text-white text-sm font-medium px-4 py-2 rounded-md hover:opacity-90 focus:outline-none focus:ring-2 focus:ring-[color:var(--color-accent)] focus:ring-offset-2"
+                  className="btn-accent text-sm font-medium px-4 py-2 rounded-md hover:opacity-90 focus:outline-none focus:ring-2 focus:ring-[color:var(--color-accent)] focus:ring-offset-2"
                 >
                   Reset filters
                 </button>

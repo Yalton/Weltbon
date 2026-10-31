@@ -239,7 +239,7 @@ export function TimelineView() {
           <button
             type="button"
             onClick={() => setFirstVisitDialogOpen(true)}
-            className="mt-4 rounded-md bg-[color:var(--color-accent)] text-white text-sm px-3 py-1.5"
+            className="mt-4 rounded-md btn-accent text-sm px-3 py-1.5"
           >
             Configure timeline
           </button>

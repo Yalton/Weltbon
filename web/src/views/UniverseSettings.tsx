@@ -226,7 +226,7 @@ export function UniverseSettings() {
                 type="button"
                 onClick={handleSave}
                 disabled={update.isPending}
-                className="rounded-md bg-[color:var(--color-accent)] text-white text-sm px-3 py-1.5 disabled:opacity-50"
+                className="rounded-md btn-accent text-sm px-3 py-1.5 disabled:opacity-50"
               >
                 {update.isPending ? 'Saving...' : 'Save'}
               </button>

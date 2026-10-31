@@ -218,7 +218,7 @@ export function AuditCostDialog({
                   type="button"
                   onClick={handleRun}
                   disabled={!canRun}
-                  className="px-3 py-1.5 text-sm rounded-md bg-[color:var(--color-accent)] text-white disabled:opacity-50 disabled:cursor-not-allowed inline-flex items-center gap-1.5"
+                  className="px-3 py-1.5 text-sm rounded-md btn-accent disabled:opacity-50 disabled:cursor-not-allowed inline-flex items-center gap-1.5"
                 >
                   {startAudit.isPending ? (
                     <>
@@ -248,7 +248,7 @@ export function AuditCostDialog({
                 <button
                   type="button"
                   onClick={handleOpenInHistory}
-                  className="px-3 py-1.5 text-sm rounded-md bg-[color:var(--color-accent)] text-white"
+                  className="px-3 py-1.5 text-sm rounded-md btn-accent"
                 >
                   Open in history →
                 </button>
@@ -271,7 +271,7 @@ export function AuditCostDialog({
                 <button
                   type="button"
                   onClick={handleOpenInHistory}
-                  className="px-3 py-1.5 text-sm rounded-md bg-[color:var(--color-accent)] text-white"
+                  className="px-3 py-1.5 text-sm rounded-md btn-accent"
                 >
                   Open in history →
                 </button>

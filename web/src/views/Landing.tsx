@@ -58,7 +58,7 @@ export function Landing() {
                 <div className="mt-auto pt-7">
                   <Link
                     to="/request-invite"
-                    className="btn-accent inline-flex items-center gap-2 rounded-lg px-5 py-2.5 text-sm font-semibold text-white [box-shadow:var(--shadow-glow-accent),inset_0_1px_0_rgb(255_255_255/0.25)] transition-[filter] hover:brightness-110 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-accent-ink focus-visible:ring-offset-2 focus-visible:ring-offset-canvas-mid"
+                    className="btn-accent inline-flex items-center gap-2 rounded-lg px-5 py-2.5 text-sm font-semibold [box-shadow:var(--shadow-glow-accent),inset_0_1px_0_rgb(255_255_255/0.25)] transition-[filter] hover:brightness-110 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-accent-ink focus-visible:ring-offset-2 focus-visible:ring-offset-canvas-mid"
                   >
                     Request an invitation
                     <ArrowIcon />

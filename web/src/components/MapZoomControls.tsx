@@ -24,7 +24,7 @@ export function MapZoomControls({
   const activeBtn =
     'rounded-md text-sm w-8 h-8 flex items-center justify-center ' +
     'focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-[color:var(--color-accent)] focus-visible:ring-offset-2 ' +
-    'bg-[color:var(--color-accent)] text-white';
+    'btn-accent';
 
   return (
     <div

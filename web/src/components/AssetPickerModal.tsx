@@ -169,7 +169,7 @@ export function AssetPickerModal({
               type="button"
               disabled={!selected}
               onClick={handleSelect}
-              className="px-3 py-1.5 text-sm rounded-md bg-[color:var(--color-accent)] text-white disabled:opacity-50"
+              className="px-3 py-1.5 text-sm rounded-md btn-accent disabled:opacity-50"
             >
               {selectLabel}
             </button>
