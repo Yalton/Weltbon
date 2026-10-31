@@ -2211,8 +2211,9 @@ export function MapEditor() {
                       className="w-7 h-7 rounded-full border-2 border-transparent hover:scale-110 transition-transform focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-[color:var(--color-accent)]"
                       style={{
                         backgroundColor: color,
-                        borderColor: pinColorTarget.color === color ? '#111827' : 'transparent',
+                        borderColor: pinColorTarget.color === color ? 'var(--color-ink)' : 'transparent',
                       }}
+                      aria-pressed={pinColorTarget.color === color}
                       aria-label={color}
                       title={color}
                     />
@@ -2306,8 +2307,9 @@ export function MapEditor() {
                       className="w-7 h-7 rounded-full border-2 border-transparent hover:scale-110 transition-transform focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-[color:var(--color-accent)]"
                       style={{
                         backgroundColor: color,
-                        borderColor: regionColorTarget.color === color ? '#111827' : 'transparent',
+                        borderColor: regionColorTarget.color === color ? 'var(--color-ink)' : 'transparent',
                       }}
+                      aria-pressed={regionColorTarget.color === color}
                       aria-label={color}
                       title={color}
                     />
@@ -2398,8 +2400,9 @@ export function MapEditor() {
                       className="w-7 h-7 rounded-full border-2 border-transparent hover:scale-110 transition-transform focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-[color:var(--color-accent)]"
                       style={{
                         backgroundColor: color,
-                        borderColor: routeColorTarget.color === color ? '#111827' : 'transparent',
+                        borderColor: routeColorTarget.color === color ? 'var(--color-ink)' : 'transparent',
                       }}
+                      aria-pressed={routeColorTarget.color === color}
                       aria-label={color}
                       title={color}
                     />
@@ -2445,8 +2448,9 @@ export function MapEditor() {
                       className="w-7 h-7 rounded-full border-2 border-transparent hover:scale-110 transition-transform focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-[color:var(--color-accent)]"
                       style={{
                         backgroundColor: color,
-                        borderColor: layersColorPickerCurrent === color ? '#111827' : 'transparent',
+                        borderColor: layersColorPickerCurrent === color ? 'var(--color-ink)' : 'transparent',
                       }}
+                      aria-pressed={layersColorPickerCurrent === color}
                       aria-label={color}
                       title={color}
                     />
