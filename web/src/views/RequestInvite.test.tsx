@@ -18,7 +18,7 @@ function respond(status: number, body: unknown = {}) {
 function renderRequestInvite(inviteRequestsEnabled = true) {
   mockUseRuntime.mockReturnValue({
     authMode: 'server',
-    landing: { inviteRequestsEnabled, repoUrl: 'https://github.com/Citreum-LLC/Weltbon' },
+    landing: { inviteRequestsEnabled, repoUrl: 'https://github.com/Yalton/Weltbon' },
   });
   const qc = new QueryClient({ defaultOptions: { queries: { retry: false }, mutations: { retry: false } } });
   return render(

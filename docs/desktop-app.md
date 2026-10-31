@@ -2,7 +2,16 @@
 
 The desktop app runs Weltbon locally with an embedded database. Your universes and uploads stay on this computer unless you sync them to another Weltbon instance.
 
-## Build and launch
+## Download
+
+Prebuilt packages are on [GitHub Releases](https://github.com/Yalton/Weltbon/releases/latest):
+
+- **Linux:** the `.AppImage` runs on most distributions (`chmod +x` it, then run it); the `.deb` installs on Debian and Ubuntu.
+- **Windows:** run the `Weltbon.Setup.<version>.exe` installer.
+
+macOS packages are not built yet. On a Mac, build from source as below.
+
+## Build from source
 
 You need Node.js 22 and pnpm 9. From the repository root:
 

@@ -3,7 +3,7 @@ services:
     # To use a published image instead of building locally:
     #   1. Uncomment the `image:` line below
     #   2. Comment out (or delete) the `build: .` line
-    # image: ghcr.io/<owner>/weltbon:latest
+    # image: ghcr.io/yalton/weltbon:latest
     build:
       context: .
       # Build identity for GET /api/version.

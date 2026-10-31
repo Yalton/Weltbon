@@ -35,7 +35,7 @@ describe('Landing view', () => {
   });
 
   it('links to sign-in and to registration for people who already have a code', () => {
-    renderLanding({ inviteRequestsEnabled: true, repoUrl: 'https://github.com/Citreum-LLC/Weltbon' });
+    renderLanding({ inviteRequestsEnabled: true, repoUrl: 'https://github.com/Yalton/Weltbon' });
 
     expect(screen.getByRole('link', { name: /sign in/i })).toHaveAttribute('href', '/login');
     expect(screen.getByRole('link', { name: /create your account/i })).toHaveAttribute('href', '/register');
@@ -43,7 +43,7 @@ describe('Landing view', () => {
 
   it('resets the tab title and gives every link the same keyboard focus ring', () => {
     document.title = 'Request an invitation · Weltbon';
-    renderLanding({ inviteRequestsEnabled: true, repoUrl: 'https://github.com/Citreum-LLC/Weltbon' });
+    renderLanding({ inviteRequestsEnabled: true, repoUrl: 'https://github.com/Yalton/Weltbon' });
 
     expect(document.title).toBe('Weltbon');
     for (const link of screen.getAllByRole('link')) {
@@ -52,7 +52,7 @@ describe('Landing view', () => {
   });
 
   it('hides the invitation request when the operator turned it off', () => {
-    renderLanding({ inviteRequestsEnabled: false, repoUrl: 'https://github.com/Citreum-LLC/Weltbon' });
+    renderLanding({ inviteRequestsEnabled: false, repoUrl: 'https://github.com/Yalton/Weltbon' });
 
     expect(screen.queryByRole('link', { name: /request an invitation/i })).not.toBeInTheDocument();
     expect(screen.queryByRole('heading', { name: /request an invitation/i })).not.toBeInTheDocument();

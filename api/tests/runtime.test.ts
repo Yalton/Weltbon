@@ -23,7 +23,7 @@ describe('GET /api/runtime', { timeout: COLD_START_TIMEOUT }, () => {
     expect(response.status).toBe(200);
     expect(await response.json()).toEqual({
       authMode,
-      landing: { inviteRequestsEnabled, repoUrl: 'https://github.com/Citreum-LLC/Weltbon' },
+      landing: { inviteRequestsEnabled, repoUrl: 'https://github.com/Yalton/Weltbon' },
     });
   });
 });

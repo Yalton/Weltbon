@@ -10,7 +10,7 @@ describe('landing page configuration', () => {
   it('enables invite requests and points at the public repo by default', () => {
     const loaded = loadEnv(base);
     expect(loaded.inviteRequestsEnabled).toBe(true);
-    expect(loaded.landingRepoUrl).toBe('https://github.com/Citreum-LLC/Weltbon');
+    expect(loaded.landingRepoUrl).toBe('https://github.com/Yalton/Weltbon');
   });
 
   it.each([
