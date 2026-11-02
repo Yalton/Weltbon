@@ -1,0 +1,23 @@
+{
+  "$schema": "https://docs.renovatebot.com/renovate-schema.json",
+  "description": "Same rules as the homelab-stacks preset renovate-apps.json on repo.billbert.co, copied here because the hosted Renovate app cannot read that server. No automerge: nothing health-checks or rolls back the image a merge produces.",
+  "extends": ["config:recommended"],
+  "dependencyDashboard": true,
+  "dependencyDashboardTitle": "Renovate: dependency updates",
+  "separateMinorPatch": true,
+  "prConcurrentLimit": 5,
+  "prHourlyLimit": 0,
+  "commitMessagePrefix": "deps:",
+  "packageRules": [
+    {
+      "description": "Pin Dockerfile FROM lines to digests so a rebuild uses the same base image until a PR moves it.",
+      "matchManagers": ["dockerfile"],
+      "pinDigests": true
+    },
+    {
+      "description": "Group non-major updates per manager to keep the PR count low.",
+      "matchUpdateTypes": ["minor", "patch", "digest"],
+      "groupName": "{{manager}} non-major"
+    }
+  ]
+}

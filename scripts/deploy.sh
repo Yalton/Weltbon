@@ -60,7 +60,7 @@ fi
 
 echo "[deploy] version=${WELTBON_VERSION} commit=${WELTBON_COMMIT} built=${WELTBON_BUILT_AT}"
 
-docker compose build app
+docker compose build --pull app
 docker compose up -d app
 
 # ── Verify ───────────────────────────────────────────────────────────────────
