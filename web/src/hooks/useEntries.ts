@@ -140,6 +140,8 @@ export function useCreateEntry(universeId: string) {
       }),
     onSuccess: () => {
       qc.invalidateQueries({ queryKey: ['entries', universeId] });
+      // The sidebar's per-category counts live in the categories query.
+      qc.invalidateQueries({ queryKey: ['categories', universeId] });
     },
   });
 }
@@ -155,6 +157,8 @@ export function useUpdateEntry(universeId: string, entryId: string) {
     onSuccess: () => {
       qc.invalidateQueries({ queryKey: ['entries', universeId] });
       qc.invalidateQueries({ queryKey: ['entry', universeId, entryId] });
+      // An update can move the entry between categories.
+      qc.invalidateQueries({ queryKey: ['categories', universeId] });
     },
   });
 }
@@ -169,6 +173,7 @@ export function useDeleteEntry(universeId: string) {
     onSuccess: () => {
       qc.invalidateQueries({ queryKey: ['entries', universeId] });
       qc.invalidateQueries({ queryKey: ['entry', universeId] });
+      qc.invalidateQueries({ queryKey: ['categories', universeId] });
     },
   });
 }

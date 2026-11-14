@@ -100,7 +100,9 @@ function SidebarNavLink({
 export function Sidebar({ universeId }: { universeId: string }) {
   const { data, isLoading, error } = useCategories(universeId);
   const conflictCount = useSyncConflictCount(universeId);
-  const [collapsed, setCollapsed] = useState<Record<string, boolean>>({});
+  // Categories start collapsed: an expanded one fetches and lists its entries,
+  // so opening every category on load would cost one request per category.
+  const [expanded, setExpanded] = useState<Record<string, boolean>>({});
 
   const [dialogOpen, setDialogOpen] = useState(false);
   const [editingCategory, setEditingCategory] = useState<Category | null>(null);
@@ -115,7 +117,7 @@ export function Sidebar({ universeId }: { universeId: string }) {
   );
 
   const toggle = (id: string) =>
-    setCollapsed((prev) => ({ ...prev, [id]: !prev[id] }));
+    setExpanded((prev) => ({ ...prev, [id]: !prev[id] }));
 
   const openCreate = () => {
     setEditingCategory(null);
@@ -223,8 +225,9 @@ export function Sidebar({ universeId }: { universeId: string }) {
                 {data.categories.map((c) => (
                   <CategorySidebarItem
                     key={c.id}
+                    universeId={universeId}
                     category={c}
-                    isCollapsed={!!collapsed[c.id]}
+                    isCollapsed={!expanded[c.id]}
                     onToggleCollapse={toggle}
                     onRename={openRename}
                     onDelete={setDeleteTarget}
