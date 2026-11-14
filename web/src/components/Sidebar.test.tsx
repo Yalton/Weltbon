@@ -95,31 +95,108 @@ describe('Sidebar', () => {
     expect(await screen.findByText(/uncategorized/i)).toBeInTheDocument();
   });
 
-  it('toggles the category collapse state when a category row is clicked', async () => {
-    vi.mocked(api).mockResolvedValue({
-      categories: [
-        { id: 'c1', label: 'Characters', icon: '🧝', sortOrder: 0, entryCount: 12 },
-      ],
-      uncategorizedCount: 0,
-    });
+  it('starts each category collapsed and toggles it when the row is clicked', async () => {
+    vi.mocked(api).mockImplementation(
+      makeApiDispatcher({
+        '/universes/U1/categories': {
+          categories: [
+            { id: 'c1', label: 'Characters', icon: '🧝', sortOrder: 0, entryCount: 12 },
+          ],
+          uncategorizedCount: 0,
+        },
+        '/universes/U1/entries?category=c1': [],
+      }),
+    );
 
     renderSidebar();
 
-
-    // button via exact name match on the category label.
     const button = await screen.findByRole('button', { name: 'Characters' });
-    expect(button).toHaveAttribute('data-collapsed', 'false');
+    expect(button).toHaveAttribute('data-collapsed', 'true');
+    expect(button).toHaveAttribute('aria-expanded', 'false');
+
+    await userEvent.click(button);
+
+    await waitFor(() => {
+      expect(button).toHaveAttribute('data-collapsed', 'false');
+    });
+    expect(button).toHaveAttribute('aria-expanded', 'true');
 
     await userEvent.click(button);
 
     await waitFor(() => {
       expect(button).toHaveAttribute('data-collapsed', 'true');
     });
+  });
 
-    await userEvent.click(button);
+  // GitHub issue #25: the row had an expand caret and an entry count, but
+  // expanding it rendered nothing, so a category's entries were unreachable
+  // from the sidebar.
+  describe('entries under an expanded category', () => {
+    const routes = (entries: unknown) =>
+      makeApiDispatcher({
+        '/universes/U1/categories': {
+          categories: [
+            { id: 'c1', label: 'Regions', icon: '', sortOrder: 0, entryCount: 2 },
+            { id: 'c2', label: 'People', icon: '', sortOrder: 1, entryCount: 0 },
+          ],
+          uncategorizedCount: 0,
+        },
+        '/universes/U1/entries?category=c1': entries,
+        '/universes/U1/entries?category=c2': [],
+      });
 
-    await waitFor(() => {
-      expect(button).toHaveAttribute('data-collapsed', 'false');
+    it('lists the category’s entries as links to each entry when expanded', async () => {
+      vi.mocked(api).mockImplementation(
+        routes([
+          { id: 'e1', title: 'Darrow County, Washington' },
+          { id: 'e2', title: 'The Southern Choke Point' },
+        ]),
+      );
+
+      renderSidebar();
+      await userEvent.click(await screen.findByRole('button', { name: 'Regions' }));
+
+      const first = await screen.findByRole('link', { name: 'Darrow County, Washington' });
+      expect(first).toHaveAttribute('href', '/universes/U1/entries/e1');
+      expect(screen.getByRole('link', { name: 'The Southern Choke Point' })).toHaveAttribute(
+        'href',
+        '/universes/U1/entries/e2',
+      );
+    });
+
+    it('does not fetch or show a category’s entries while it is collapsed', async () => {
+      const dispatcher = routes([{ id: 'e1', title: 'Darrow County, Washington' }]);
+      vi.mocked(api).mockImplementation(dispatcher);
+
+      renderSidebar();
+      await screen.findByRole('button', { name: 'Regions' });
+
+      expect(screen.queryByRole('link', { name: 'Darrow County, Washington' })).not.toBeInTheDocument();
+      expect(dispatcher).not.toHaveBeenCalledWith('/universes/U1/entries?category=c1');
+    });
+
+    it('hides the entries again when the category is collapsed', async () => {
+      vi.mocked(api).mockImplementation(routes([{ id: 'e1', title: 'Darrow County, Washington' }]));
+
+      renderSidebar();
+      const row = await screen.findByRole('button', { name: 'Regions' });
+      await userEvent.click(row);
+      await screen.findByRole('link', { name: 'Darrow County, Washington' });
+
+      await userEvent.click(row);
+
+      await waitFor(() => {
+        expect(screen.queryByRole('link', { name: 'Darrow County, Washington' })).not.toBeInTheDocument();
+      });
+    });
+
+    it('says so when an expanded category has no entries', async () => {
+      vi.mocked(api).mockImplementation(routes([]));
+
+      renderSidebar();
+      await userEvent.click(await screen.findByRole('button', { name: 'People' }));
+
+      expect(await screen.findByText('No entries yet')).toBeInTheDocument();
     });
   });
 

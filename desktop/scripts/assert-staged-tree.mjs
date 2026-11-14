@@ -15,6 +15,7 @@
 
 import { readFileSync, existsSync, readdirSync, statSync } from 'node:fs';
 import { join, relative, sep } from 'node:path';
+import { spawnSync } from 'node:child_process';
 
 const [, , STAGE, ...externals] = process.argv;
 if (!STAGE) {
@@ -35,6 +36,19 @@ if (!existsSync(entry)) {
   problems.push(`entry point is implausibly small (${statSync(entry).size} bytes) — bundle likely failed`);
 } else {
   note(`entry point ok (${(statSync(entry).size / 1e6).toFixed(1)} MB)`);
+  // The bundle must also PARSE as the ES module the app imports it as. esbuild
+  // does not read the --banner, so a name the banner declares can collide with a
+  // top-level name hoisted out of a bundled dependency. esbuild exits 0 on that
+  // and Node rejects the whole file at launch: v0.9.1 shipped unable to start on
+  // `Identifier '__dirname' has already been declared` (GitHub issue #24).
+  // The staged package.json sets "type": "module", so --check parses it as ESM.
+  const parsed = spawnSync(process.execPath, ['--check', entry], { encoding: 'utf8' });
+  if (parsed.status !== 0) {
+    const reason = (parsed.stderr || '').split('\n').find((l) => /Error/.test(l)) || 'unknown error';
+    problems.push(`entry point does not parse as an ES module, so the app cannot start: ${reason.trim()}`);
+  } else {
+    note('entry point parses as an ES module');
+  }
 }
 
 // ── 2. NO symlinks outside .bin ─────────────────────────────────────────────

@@ -1,9 +1,12 @@
 import { useSortable } from '@dnd-kit/sortable';
 import { CSS } from '@dnd-kit/utilities';
 import * as DropdownMenu from '@radix-ui/react-dropdown-menu';
+import { NavLink } from 'react-router-dom';
 import type { Category } from '../hooks/useCategories';
+import { useFilteredEntries } from '../hooks/useFilteredEntries';
 
 interface Props {
+  universeId: string;
   category: Category;
   isCollapsed: boolean;
   onToggleCollapse: (id: string) => void;
@@ -11,7 +14,51 @@ interface Props {
   onDelete: (category: Category) => void;
 }
 
+/**
+ * The entries filed under one category, shown beneath its expanded row.
+ *
+ * Mounted only while the row is expanded, so a collapsed category costs no
+ * request. It reads the same ['entries', universeId, …] query family as the
+ * entries list, so every entry mutation refreshes it.
+ */
+function CategoryEntries({ universeId, categoryId }: { universeId: string; categoryId: string }) {
+  const { data, isLoading, error } = useFilteredEntries(universeId, {
+    q: '',
+    type: null,
+    tags: [],
+    category: categoryId,
+    wip: null,
+    fieldFilters: {},
+  });
+
+  if (isLoading) return <p className="py-1 pl-7 text-xs text-ink-muted">Loading…</p>;
+  if (error) return <p className="py-1 pl-7 text-xs text-rose-400">Failed to load entries</p>;
+  if (!data || data.length === 0) {
+    return <p className="py-1 pl-7 text-xs text-ink-muted">No entries yet</p>;
+  }
+
+  return (
+    <ul className="space-y-px">
+      {data.map((entry) => (
+        <li key={entry.id}>
+          <NavLink
+            to={`/universes/${universeId}/entries/${entry.id}`}
+            className={({ isActive }) =>
+              `block truncate rounded py-1 pl-7 pr-2 text-sm hover:bg-white/[0.03] hover:text-ink ${
+                isActive ? 'text-ink bg-white/5' : 'text-ink-secondary'
+              }`
+            }
+          >
+            {entry.title}
+          </NavLink>
+        </li>
+      ))}
+    </ul>
+  );
+}
+
 export function CategorySidebarItem({
+  universeId,
   category,
   isCollapsed,
   onToggleCollapse,
@@ -40,6 +87,7 @@ export function CategorySidebarItem({
           type="button"
           onClick={() => onToggleCollapse(category.id)}
           data-collapsed={isCollapsed ? 'true' : 'false'}
+          aria-expanded={!isCollapsed}
           aria-label={category.label}
           className="flex items-center gap-2 flex-1 py-1 pl-2 text-sm text-left"
           {...attributes}
@@ -84,6 +132,7 @@ export function CategorySidebarItem({
           </DropdownMenu.Portal>
         </DropdownMenu.Root>
       </div>
+      {!isCollapsed && <CategoryEntries universeId={universeId} categoryId={category.id} />}
     </li>
   );
 }
