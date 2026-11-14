@@ -81,6 +81,14 @@ echo "[stage] 2/6 bundling the api into a single file"
 # --banner: ESM output has no `require`, but bundled CJS dependencies still call
 # it. Without this the app dies at startup on `Dynamic require of "fs" is not
 # supported`. __filename/__dirname are provided for the same reason.
+#
+# --define: esbuild never reads the banner, so it cannot keep the banner's names
+# clear of the bundle's. A banner that declared `__dirname` outright collided
+# with the top-level `var __dirname` hoisted out of yargs (via puppeteer-core),
+# and v0.9.1 could not start: `Identifier '__dirname' has already been declared`
+# (GitHub issue #24). So the banner declares names nothing else uses, and
+# --define points every FREE __dirname/__filename reference at them. A
+# dependency's own declaration is a bound name, which --define leaves alone.
 test -x "$ESBUILD" || { echo "[stage] FATAL: esbuild missing — run pnpm install in desktop/"; exit 1; }
 "$ESBUILD" "$REPO/api/src/index.ts" \
   --bundle \
@@ -89,7 +97,9 @@ test -x "$ESBUILD" || { echo "[stage] FATAL: esbuild missing — run pnpm instal
   --target=node22 \
   $(printf -- '--external:%s ' "${EXTERNALS[@]}") \
   --external:pg-native \
-  --banner:js='import{createRequire as __cr}from"node:module";import{fileURLToPath as __f}from"node:url";import{dirname as __d}from"node:path";const require=__cr(import.meta.url);const __filename=__f(import.meta.url);const __dirname=__d(__filename);' \
+  --banner:js='import{createRequire as __cr}from"node:module";import{fileURLToPath as __f}from"node:url";import{dirname as __d}from"node:path";const require=__cr(import.meta.url);const __weltbonBundleFilename=__f(import.meta.url);const __weltbonBundleDirname=__d(__weltbonBundleFilename);' \
+  --define:__filename=__weltbonBundleFilename \
+  --define:__dirname=__weltbonBundleDirname \
   --outfile="$STAGE/dist/index.js"
 test -f "$STAGE/dist/index.js" || { echo "[stage] FATAL: bundle missing after esbuild"; exit 1; }
 
